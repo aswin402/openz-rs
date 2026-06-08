@@ -45,7 +45,13 @@ impl Tool for GsdBrowserTool {
         let action = arguments.get("action").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
 
-        let mut cmd = Command::new("gsd-browser");
+        let bin_path = if let Some(home) = dirs::home_dir() {
+            let p = home.join(".cargo").join("bin").join("gsd-browser");
+            if p.exists() { p } else { std::path::PathBuf::from("gsd-browser") }
+        } else {
+            std::path::PathBuf::from("gsd-browser")
+        };
+        let mut cmd = Command::new(bin_path);
 
         match action {
             "navigate" => {

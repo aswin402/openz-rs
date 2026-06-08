@@ -42,7 +42,13 @@ impl Tool for AstGrepTool {
         let lang = arguments.get("lang").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'lang' parameter"))?;
 
-        let mut cmd = Command::new("ast-grep");
+        let bin_path = if let Some(home) = dirs::home_dir() {
+            let p = home.join(".cargo").join("bin").join("ast-grep");
+            if p.exists() { p } else { std::path::PathBuf::from("ast-grep") }
+        } else {
+            std::path::PathBuf::from("ast-grep")
+        };
+        let mut cmd = Command::new(bin_path);
         cmd.arg("run");
         cmd.arg("--pattern").arg(pattern);
         cmd.arg("--lang").arg(lang);
