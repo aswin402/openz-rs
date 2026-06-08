@@ -45,6 +45,8 @@ pub trait Tool: Send + Sync {
 * **`cargo_manager`** (`src/tools/cargo_manager.rs`): Executes cargo toolchain commands (build, test, clippy, fmt) in a workspace.
 * **`clipboard`** (`src/tools/clipboard.rs`): Gets or sets text content in the system clipboard.
 * **`open_path`** (`src/tools/open.rs`): Opens a file, folder, or URL using the user's default system application.
+* **`file_watcher`** (`src/tools/watcher.rs`): Starts, stops, or queries a background filesystem watcher to run commands on file modifications.
+
 
 
 

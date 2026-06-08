@@ -317,6 +317,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::cargo_manager::CargoManagerTool));
     registry.register(std::sync::Arc::new(crate::tools::clipboard::ClipboardTool));
     registry.register(std::sync::Arc::new(crate::tools::open::OpenTool));
+    registry.register(std::sync::Arc::new(crate::tools::watcher::FileWatcherTool));
 
     // Register configured MCP tools
     for (name, mcp_config) in &config.mcp_servers {
