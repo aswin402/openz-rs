@@ -5,6 +5,7 @@ use crate::tools::subagent::DelegateTaskTool;
 use crate::session::{Session, SessionManager, Message};
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
+use serde::Deserialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnState {
@@ -162,7 +163,7 @@ impl AgentLoop {
                         if let Some(cmd) = parts.first() {
                             match *cmd {
                                 "/help" => {
-                                    final_content = "OpenZ Rebranded AI Agent Command Menu:\n/help - Show this menu\n/history - Show history\n/clear - Reset session history\n/status - Print active model and configuration info\n/memory - Show or manage agent memory (/memory, /memory clear, /memory add <fact>)\n/delegate <goal> - Directly delegate a task to a focused subagent".to_string();
+                                    final_content = "OpenZ Rebranded AI Agent Command Menu:\n/help - Show this menu\n/history - Show history\n/clear - Reset session history\n/status - Print active model and configuration info\n/memory - Show or manage agent memory (/memory, /memory clear, /memory add <fact>)\n/skills - List active skills (/skills, /skills clear)\n/skill - Manage skills (/skill view <name>, /skill add <name> <content>, /skill delete <name>)\n/delegate <goal> - Directly delegate a task to a focused subagent".to_string();
                                     state = TurnState::Done;
                                     continue;
                                 }
@@ -232,6 +233,88 @@ impl AgentLoop {
                                     state = TurnState::Done;
                                     continue;
                                 }
+                                "/skills" => {
+                                    if parts.len() > 1 && parts[1] == "clear" {
+                                        if let Err(e) = crate::agent::skills::clear_skills() {
+                                            final_content = format!("Error clearing skills: {}", e);
+                                        } else {
+                                            final_content = "All agent skills have been cleared.".to_string();
+                                        }
+                                    } else {
+                                        match crate::agent::skills::load_skills() {
+                                            Ok(skills) => {
+                                                if skills.is_empty() {
+                                                    final_content = "No active skills recorded yet.".to_string();
+                                                } else {
+                                                    let list: Vec<String> = skills.iter().map(|s| format!("* {}", s.name)).collect();
+                                                    final_content = format!("=== Agent Skills ===\n{}", list.join("\n"));
+                                                }
+                                            }
+                                            Err(e) => {
+                                                final_content = format!("Error loading skills: {}", e);
+                                            }
+                                        }
+                                    }
+                                    state = TurnState::Done;
+                                    continue;
+                                }
+                                "/skill" => {
+                                    if parts.len() < 2 {
+                                        final_content = "Usage: /skill view <name>, /skill add <name> <content>, /skill delete <name>".to_string();
+                                    } else {
+                                        match parts[1] {
+                                            "view" => {
+                                                if parts.len() < 3 {
+                                                    final_content = "Usage: /skill view <name>".to_string();
+                                                } else {
+                                                    let name = parts[2];
+                                                    match crate::agent::skills::load_skills() {
+                                                        Ok(skills) => {
+                                                            if let Some(skill) = skills.iter().find(|s| s.name == name) {
+                                                                final_content = format!("=== Skill: {} ===\n{}", skill.name, skill.content);
+                                                            } else {
+                                                                final_content = format!("Skill '{}' not found.", name);
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            final_content = format!("Error: {}", e);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            "add" | "set" => {
+                                                if parts.len() < 4 {
+                                                    final_content = "Usage: /skill add <name> <content>".to_string();
+                                                } else {
+                                                    let name = parts[2];
+                                                    let content = parts[3..].join(" ");
+                                                    if let Err(e) = crate::agent::skills::save_skill(name, &content) {
+                                                        final_content = format!("Error saving skill: {}", e);
+                                                    } else {
+                                                        final_content = format!("Skill '{}' added/updated successfully.", name);
+                                                    }
+                                                }
+                                            }
+                                            "delete" | "remove" => {
+                                                if parts.len() < 3 {
+                                                    final_content = "Usage: /skill delete <name>".to_string();
+                                                } else {
+                                                    let name = parts[2];
+                                                    if let Err(e) = crate::agent::skills::delete_skill(name) {
+                                                        final_content = format!("Error deleting skill: {}", e);
+                                                    } else {
+                                                        final_content = format!("Skill '{}' deleted successfully.", name);
+                                                    }
+                                                }
+                                            }
+                                            _ => {
+                                                final_content = "Unknown skill command. Options: /skill view <name>, /skill add <name> <content>, /skill delete <name>".to_string();
+                                            }
+                                        }
+                                    }
+                                    state = TurnState::Done;
+                                    continue;
+                                }
                                 "/delegate" | "/subagent" => {
                                     if parts.len() < 2 {
                                         final_content = "Usage: /delegate <goal>".to_string();
@@ -282,6 +365,15 @@ impl AgentLoop {
                             memory_part = format!("\n\nHere is the long-term memory of key facts, preferences, and decisions from this session:\n{}\n", memory);
                         }
                     }
+                    let mut skills_part = String::new();
+                    if let Ok(skills) = crate::agent::skills::load_skills() {
+                        if !skills.is_empty() {
+                            skills_part = "\n\nHere are the active guidelines and procedural skills you should follow:\n".to_string();
+                            for skill in skills {
+                                skills_part.push_str(&format!("=== Skill: {} ===\n{}\n\n", skill.name, skill.content));
+                            }
+                        }
+                    }
                     let mut vision_instruction = "";
                     if !crate::providers::model_supports_vision(&self.config.agents.defaults.model) {
                         vision_instruction = " If a message contains a markdown image link (e.g. ![](file://...)) and you need to analyze or describe the image, you MUST delegate the visual analysis task to the specialized 'vision_agent' tool (or the 'delegate_task' tool) to see and report on the image contents.";
@@ -293,7 +385,7 @@ impl AgentLoop {
                         summary_part,
                         memory_part,
                         vision_instruction,
-                        ""
+                        skills_part
                     );
                     messages = session.messages.clone();
                     state = TurnState::Run;
@@ -432,6 +524,19 @@ impl AgentLoop {
             let messages = messages.clone();
 
             tokio::spawn(async move {
+                #[derive(Deserialize)]
+                struct ReviewSkill {
+                    name: String,
+                    content: String,
+                }
+
+                #[derive(Deserialize)]
+                struct ReviewResponse {
+                    memory_updated: bool,
+                    memory_content: String,
+                    skills_to_save: Vec<ReviewSkill>,
+                }
+
                 // 1. Get existing memory from current file
                 let existing_memory = if let Ok(s) = session_manager.load(&session_key) {
                     s.metadata.get("memory")
@@ -442,19 +547,40 @@ impl AgentLoop {
                     String::new()
                 };
 
-                // 2. Setup prompts for self-improvement review
-                let system_prompt_review = "You are a specialized Self-Improvement Curator. Review the conversation history between the User and the AI Agent.\n\
-                    Your task is to extract:\n\
-                    1. Explicit corrections, preferences, or style guidelines the user stated (e.g. \"explain less\", \"stop doing X\", \"prefer Y format\").\n\
-                    2. Durable facts, constraints, or decisions about the project/task.\n\n\
-                    Incorporate these new facts/preferences into the existing memory list. Remove deprecated or contradicted information. \
-                    Format the output as a clean Markdown list of memory facts. If nothing new is worth saving, output exactly 'Nothing to save.'. Do not include any other text.";
+                // 2. Get existing skills list and contents
+                let mut existing_skills_desc = String::new();
+                if let Ok(skills) = crate::agent::skills::load_skills() {
+                    for skill in skills {
+                        existing_skills_desc.push_str(&format!("Skill Name: {}\nContent:\n{}\n\n", skill.name, skill.content));
+                    }
+                }
+
+                // 3. Setup prompts for self-improvement review
+                let system_prompt_review = "You are a specialized Self-Improvement Curator. Your job is to review the conversation between the User and the AI Agent and consolidate two types of learnings:\n\n\
+                    1. MEMORY: Facts about the user (e.g. persona, desires, expectations) or the project (e.g. settings, environment details).\n\
+                    2. SKILLS: Task-specific procedural guidelines, coding styles, workarounds, or workflows (e.g. 'do not explain code', 'always use async-trait', 'cargo build guidelines').\n\n\
+                    You MUST return your response as a raw JSON object with the following structure. Do not output anything else besides the raw JSON (do not wrap it in explanation text). \
+                    If no memory or skill updates are needed, return the keys with empty or unchanged values.\n\n\
+                    JSON Format:\n\
+                    {\n\
+                      \"memory_updated\": true/false,\n\
+                      \"memory_content\": \"<updated memory markdown content. If memory_updated is false, keep it identical to existing memory or empty>\",\n\
+                      \"skills_to_save\": [\n\
+                        {\n\
+                          \"name\": \"<name of skill, lowercase with underscores>\",\n\
+                          \"content\": \"<complete updated or new markdown content for the skill. Include headers, rules, and examples. Keep existing rules and merge any new ones.>\"\n\
+                        }\n\
+                      ]\n\
+                    }";
 
                 let mut prompt_content = String::new();
                 if !existing_memory.is_empty() {
                     prompt_content.push_str(&format!("Existing Memory:\n{}\n\n", existing_memory));
                 }
-                prompt_content.push_str("Conversation history to review:\n");
+                if !existing_skills_desc.is_empty() {
+                    prompt_content.push_str(&format!("Existing Skills:\n{}\n\n", existing_skills_desc));
+                }
+                prompt_content.push_str("Recent conversation history to review:\n");
                 for msg in &messages {
                     prompt_content.push_str(&format!("[{}]: {}\n", msg.role, msg.content));
                 }
@@ -472,18 +598,41 @@ impl AgentLoop {
                     reasoning_effort: None,
                 };
 
-                // 3. Query the LLM
+                // 4. Query the LLM
                 if let Ok(resp) = provider.chat(&system_prompt_review, &review_msgs, &[], &settings).await {
-                    if let Some(new_memory) = resp.content {
-                        let trimmed = new_memory.trim();
-                        if !trimmed.is_empty() && trimmed != "Nothing to save." {
-                            // 4. Reload latest session from disk to prevent overwriting new messages
-                            if let Ok(mut latest_session) = session_manager.load(&session_key) {
-                                latest_session.metadata.insert("memory".to_string(), serde_json::Value::String(trimmed.to_string()));
-                                if let Err(e) = session_manager.save(&latest_session) {
-                                    eprintln!("Warning: Failed to save self-improvement memory: {}", e);
-                                } else {
-                                    println!("\n💾 [Self-Improvement] Memory updated based on recent conversation.");
+                    if let Some(content) = resp.content {
+                        let trimmed = content.trim();
+                        // Strip markdown code block markers if any (e.g. ```json ... ```)
+                        let clean_json = if trimmed.starts_with("```") {
+                            let lines: Vec<&str> = trimmed.lines().collect();
+                            let start = if lines.get(0).map(|l| l.starts_with("```")).unwrap_or(false) { 1 } else { 0 };
+                            let end = if lines.last().map(|l| l.starts_with("```")).unwrap_or(false) { lines.len() - 1 } else { lines.len() };
+                            lines[start..end].join("\n")
+                        } else {
+                            trimmed.to_string()
+                        };
+
+                        if let Ok(review) = serde_json::from_str::<ReviewResponse>(&clean_json) {
+                            // Update memory
+                            if review.memory_updated {
+                                if let Ok(mut latest_session) = session_manager.load(&session_key) {
+                                    latest_session.metadata.insert("memory".to_string(), serde_json::Value::String(review.memory_content.trim().to_string()));
+                                    if let Err(e) = session_manager.save(&latest_session) {
+                                        eprintln!("Warning: Failed to save self-improvement memory: {}", e);
+                                    } else {
+                                        println!("\n💾 [Self-Improvement] Memory updated based on recent conversation.");
+                                    }
+                                }
+                            }
+                            
+                            // Save skills
+                            for skill in review.skills_to_save {
+                                if !skill.name.is_empty() && !skill.content.is_empty() {
+                                    if let Err(e) = crate::agent::skills::save_skill(&skill.name, &skill.content) {
+                                        eprintln!("Warning: Failed to save self-improvement skill '{}': {}", skill.name, e);
+                                    } else {
+                                        println!("💾 [Self-Improvement] Skill '{}' updated/created based on recent conversation.", skill.name);
+                                    }
                                 }
                             }
                         }

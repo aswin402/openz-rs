@@ -1,0 +1,94 @@
+# OpenZ Self-Improvement: Memory & Skills 🧠🦀
+
+OpenZ implements a closed-loop self-improvement learning system modeled after the background review curation pattern of `hermes-agent`. It operates across two tiers to ensure the agent continuously refines its understanding of the user/project and upgrades its task execution capabilities over time.
+
+---
+
+## 1. Dynamic Architecture Overview
+
+```mermaid
+graph TD
+    UserQuery["User Input (prompt / paste / cron)"] --> Restore["Restore Session"]
+    Restore --> CheckLimit{"Active Messages > max_messages?"}
+    
+    CheckLimit -->|Yes| Compaction["Context Compaction State"]
+    CheckLimit -->|No| BuildPrompt["Build Prompt State"]
+    
+    Compaction --> SumLLM["LLM: Summarize Old History"]
+    Compaction --> MemLLM["LLM: Extract & Merge Memory Facts"]
+    
+    SumLLM --> UpdateMetadata["Save session.metadata.summary"]
+    MemLLM --> UpdateMemory["Save session.metadata.memory"]
+    
+    UpdateMetadata & UpdateMemory --> BuildPrompt
+    
+    BuildPrompt --> InjectPrompt["Construct System Prompt:<br>Base Prompt + Summary + Memory + Active Skills"]
+    InjectPrompt --> LLMRun["LLM Chat Completion & Tool execution loop"]
+    
+    LLMRun --> FinishTurn["Finish Turn (Respond to User)"]
+    FinishTurn --> SpawnCurator["tokio::spawn: Self-Improvement Curator (Async Background)"]
+    SpawnCurator --> ReviewLLM["LLM: Review turn for corrections & guidelines"]
+    ReviewLLM --> SaveMemDisk["Update Memory & Write Skills to disk (~/.openz/skills/)"]
+```
+
+---
+
+## 2. Memory vs. Skills
+
+OpenZ distinguishes between factual awareness and procedural capability:
+
+| Tier | Component | Location | Purpose | Format |
+| :--- | :--- | :--- | :--- | :--- |
+| **Tier 1** | **Memory** | `session.metadata["memory"]` | Captures "who the user is" (desires, preferences, persona) and specific project setup/context details (compiler versions, database selection, entry points). | Markdown list inside session JSON. |
+| **Tier 2** | **Skills** | `~/.openz/skills/<skill_name>.md` | Captures "how to perform a class of task" (coding styles, command conventions, workarounds, API usage rules, troubleshooting recipes). | Individual Markdown files in a global directory. |
+
+---
+
+## 3. Dynamic Prompt Injection
+
+When building the system prompt for a new turn, OpenZ automatically loads both memory and skills:
+
+1. **Memory:** Read from session metadata and injected as:
+   ```text
+   Here is the long-term memory of key facts, preferences, and decisions from this session:
+   <memory_markdown>
+   ```
+2. **Skills:** Scans `~/.openz/skills/` for all `.md` files and appends them to the system prompt:
+   ```text
+   Here are the active guidelines and procedural skills you should follow:
+   === Skill: <name> ===
+   <skill_markdown_content>
+   ```
+
+---
+
+## 4. Closed-Loop Background Curator (Self-Improvement)
+
+After every assistant response (excluding slash commands), OpenZ spawns a background thread using `tokio::spawn`. This curator reviews the recent turn asynchronously to extract lessons:
+
+1. **System Prompt for Review:** The review LLM call is configured with a specialized prompt requesting a raw JSON containing:
+   - `memory_updated`: Boolean indicating if memory has been modified.
+   - `memory_content`: The updated markdown list of facts.
+   - `skills_to_save`: A list of objects containing `name` and `content` for new or updated skills.
+2. **JSON Extraction:** The background curator processes the LLM output, handles markdown code block stripping, and deserializes the response.
+3. **Saving to Disk:**
+   - **Memory:** Reloads the latest session from disk to prevent message race conditions, updates the metadata memory block, and writes it back.
+   - **Skills:** Writes or updates individual markdown skill files under `~/.openz/skills/`.
+
+---
+
+## 5. Slash Commands
+
+Users have direct control over the self-improvement databases through the CLI:
+
+### Memory Management:
+* `/memory` - Print the current markdown memory sheet.
+* `/memory add <fact>` - Manually register a preference or project detail.
+* `/memory clear` - Delete memory for the current session.
+
+### Skills Management:
+* `/skills` - List all active skills loaded in `~/.openz/skills/`.
+* `/skills clear` - Delete all active skills.
+* `/skill view <name>` - View the detailed guidelines inside a specific skill.
+* `/skill add <name> <content>` - Manually register or edit a custom skill.
+* `/skill delete <name>` - Delete a specific skill.
