@@ -12,7 +12,7 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
 ## 🚀 Key Features
 
 * **Persistent Workspace Loops:** Session history, workspace file scopes, and local tool execution survive long-running turn completions.
-* **Memory & Skill Self-Improvement:** Inspired by `hermes-agent`, OpenZ implements a closed-loop learning system. An asynchronous background curator analyzes conversation turns to refine long-term memory (facts, preferences) and curate procedural skills (style rules, workarounds) stored in `~/.openz/skills/`. View or manage them using `/memory`, `/skills`, and `/skill` commands.
+* **Memory & Skill Self-Improvement:** Inspired by `hermes-agent`, OpenZ implements a closed-loop learning system. An asynchronous background curator refines long-term memory (facts, preferences) and curates procedural skills (style rules, workarounds) stored in `~/.openz/skills/`. Users can also hand the agent a GitHub repository link, and OpenZ will dynamically clone, install, and configure it on the host machine, saving it as an active skill for future turns. View or manage them using `/memory`, `/skills`, and `/skill` commands.
 * **Three Integrated Chat Channels:**
   * **Console CLI (`agent`):** Direct interactive chat in your terminal with slash commands.
   * **WebSocket Gateway (`gateway`):** Web server that feeds the visual WebUI workbench.

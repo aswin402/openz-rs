@@ -92,3 +92,17 @@ Users have direct control over the self-improvement databases through the CLI:
 * `/skill view <name>` - View the detailed guidelines inside a specific skill.
 * `/skill add <name> <content>` - Manually register or edit a custom skill.
 * `/skill delete <name>` - Delete a specific skill.
+
+---
+
+## 6. Dynamic Skill Installation & Setup
+
+OpenZ is capable of dynamically expanding its toolset by researching, installing, and configuring external GitHub repositories or projects directly on the host machine.
+
+### Mechanics:
+1. **Trigger:** The user provides a repository URL (e.g., `https://github.com/username/project`) and requests its installation.
+2. **Research & Extraction:** The agent uses `web_fetch` to read the repository's README, build instructions, and dependencies.
+3. **Execution:** The agent runs shell commands via `exec_command` to clone the code, install dependencies (using package managers like `npm`, `pip`, or `cargo`), and compile the project.
+4. **Integration:** Once verified, the agent writes a custom wrapper script and saves a matching Markdown skill file to `~/.openz/skills/` (e.g., `~/.openz/skills/my_new_tool.md`) containing usage instructions and absolute paths.
+5. **System Prompt Injection:** In subsequent turns, the new skill is automatically loaded into the system prompt, enabling OpenZ to invoke the newly installed tool dynamically.
+
