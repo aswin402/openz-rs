@@ -76,3 +76,11 @@ Configure your token in `.env` (or set `TELEGRAM_BOT_TOKEN="your-token"`) and ru
 * **Active Config:** `~/.openz/config.json`
 * **Saves Folder:** `~/.openz/sessions/`
 * **Local Workspace:** `~/.openz/workspace/`
+
+---
+
+## 📚 Architecture & Research
+
+* **System Architecture:** [architecture.md](docs/architecture.md)
+* **Self-Improvement Guide:** [self_improvement.md](docs/self_improvement.md)
+* **ZeroClaw Gap Analysis & Roadmap:** [zeroclaw_research.md](docs/zeroclaw_research.md)
