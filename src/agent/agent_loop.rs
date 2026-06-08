@@ -378,10 +378,17 @@ impl AgentLoop {
                     if !crate::providers::model_supports_vision(&self.config.agents.defaults.model) {
                         vision_instruction = " If a message contains a markdown image link (e.g. ![](file://...)) and you need to analyze or describe the image, you MUST delegate the visual analysis task to the specialized 'vision_agent' tool (or the 'delegate_task' tool) to see and report on the image contents.";
                     }
+                    let system_guidelines = "\n\nYou are OpenZ, a high-performance personal AI agent framework built in Rust. Your architecture is structured as follows:\n\
+                                             * Pluggable Gateway Channels: You can receive messages and reply over CLI terminal, WebSocket gateway (serving the WebUI workbench), Telegram bot polling, Discord bot polling, and WhatsApp Business API.\n\
+                                             * Local Tools & MCP: You have native tools for file reading/writing, shell command execution, web fetching, and Model Context Protocol (MCP) servers.\n\
+                                             * Specialized Subagents: You can spawn concurrent subagents (e.g. planner, researcher, debugger, DevOps, skill_improvement, openz_maintainer) to delegate tasks.\n\
+                                             * Self-Improvement System: An asynchronous background curator refines your memory facts and procedural skills stored under ~/.openz/skills/.";
+
                     system_prompt = format!(
-                        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.{}{}{}{}",
+                        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.{}{}{}{}{}",
                         self.config.agents.defaults.bot_name,
                         chrono::Utc::now().to_rfc3339(),
+                        system_guidelines,
                         summary_part,
                         memory_part,
                         vision_instruction,
