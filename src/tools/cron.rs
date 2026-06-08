@@ -1,5 +1,5 @@
 use crate::tools::Tool;
-use crate::cron::{load_jobs, save_jobs, parse_schedule, CronJob};
+use crate::cron::{load_jobs, save_jobs, CronJob};
 use anyhow::{Result, anyhow};
 use serde_json::Value;
 
@@ -44,8 +44,8 @@ impl Tool for ScheduleJobTool {
         let prompt = arguments.get("prompt").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'prompt' argument"))?;
 
-        if parse_schedule(schedule).is_none() {
-            return Err(anyhow!("Invalid schedule format: {}. Use format like '10s', '1m', '2h', '1d'", schedule));
+        if crate::cron::calculate_next_run(schedule, None).is_none() {
+            return Err(anyhow!("Invalid schedule format: {}. Use simple duration like '10s', '5m', '1h' OR standard Unix cron like '*/5 * * * *'", schedule));
         }
 
         let mut jobs = load_jobs()?;

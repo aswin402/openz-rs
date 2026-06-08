@@ -57,6 +57,33 @@ pub fn parse_schedule(s: &str) -> Option<chrono::Duration> {
     }
 }
 
+use std::str::FromStr;
+use chrono::Utc;
+
+pub fn calculate_next_run(s: &str, last_run: Option<chrono::DateTime<Utc>>) -> Option<chrono::DateTime<Utc>> {
+    let now = Utc::now();
+    let base_time = last_run.unwrap_or(now);
+
+    // 1. Try simple duration parsing
+    if let Some(duration) = parse_schedule(s) {
+        return Some(base_time + duration);
+    }
+
+    // 2. Try standard Unix cron parsing (5-field or 6-field)
+    let s_clean = s.trim();
+    let cron_str = if s_clean.split_whitespace().count() == 5 {
+        format!("0 {}", s_clean)
+    } else {
+        s_clean.to_string()
+    };
+
+    if let Ok(schedule) = cron::Schedule::from_str(&cron_str) {
+        return schedule.upcoming(Utc).next();
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,5 +96,19 @@ mod tests {
         assert_eq!(parse_schedule("1d"), Some(chrono::Duration::days(1)));
         assert_eq!(parse_schedule("invalid"), None);
         assert_eq!(parse_schedule(""), None);
+    }
+
+    #[test]
+    fn test_calculate_next_run() {
+        let now = Utc::now();
+        // Test duration
+        let next = calculate_next_run("5m", Some(now));
+        assert!(next.is_some());
+        assert_eq!(next.unwrap(), now + chrono::Duration::minutes(5));
+
+        // Test standard cron (every minute)
+        let next_cron = calculate_next_run("* * * * *", Some(now));
+        assert!(next_cron.is_some());
+        assert!(next_cron.unwrap() > now);
     }
 }

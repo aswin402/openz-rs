@@ -1,4 +1,4 @@
-use crate::cron::{load_jobs, save_jobs, parse_schedule, CronJob};
+use crate::cron::{load_jobs, save_jobs, calculate_next_run, CronJob};
 use crate::config::schema::Config;
 use crate::config::resolve_path;
 use chrono::Utc;
@@ -32,18 +32,14 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
             Some(dt_str) => match dt_str.parse::<chrono::DateTime<Utc>>() {
                 Ok(dt) => dt,
                 Err(_) => {
-                    // Reset invalid next_run
-                    let duration = parse_schedule(&job.schedule).unwrap_or(chrono::Duration::minutes(5));
-                    let next = now + duration;
+                    let next = calculate_next_run(&job.schedule, None).unwrap_or_else(|| now + chrono::Duration::minutes(5));
                     job.next_run = Some(next.to_rfc3339());
                     changed = true;
                     next
                 }
             },
             None => {
-                // Initialize next_run
-                let duration = parse_schedule(&job.schedule).unwrap_or(chrono::Duration::minutes(5));
-                let next = now + duration;
+                let next = calculate_next_run(&job.schedule, None).unwrap_or_else(|| now + chrono::Duration::minutes(5));
                 job.next_run = Some(next.to_rfc3339());
                 changed = true;
                 next
@@ -53,8 +49,8 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
         if now >= next_run {
             // Run the job!
             job.last_run = Some(now.to_rfc3339());
-            let duration = parse_schedule(&job.schedule).unwrap_or(chrono::Duration::minutes(5));
-            job.next_run = Some((now + duration).to_rfc3339());
+            let next = calculate_next_run(&job.schedule, Some(now)).unwrap_or_else(|| now + chrono::Duration::minutes(5));
+            job.next_run = Some(next.to_rfc3339());
             changed = true;
 
             let job_clone = job.clone();
