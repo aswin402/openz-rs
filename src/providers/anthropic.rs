@@ -89,10 +89,31 @@ impl LLMProvider for AnthropicProvider {
             } else if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
                 let mut blocks = Vec::new();
                 if !msg.content.is_empty() {
-                    blocks.push(serde_json::json!({
-                        "type": "text",
-                        "text": msg.content
-                    }));
+                    let parts = crate::providers::parse_multimodal_content(&msg.content);
+                    let supports_vision = crate::providers::model_supports_vision(&self.model);
+
+                    for part in parts {
+                        match part {
+                            crate::providers::ContentPart::Text(t) => {
+                                blocks.push(serde_json::json!({
+                                    "type": "text",
+                                    "text": t
+                                }));
+                            }
+                            crate::providers::ContentPart::Image { mime_type, base64_data } => {
+                                if supports_vision {
+                                    blocks.push(serde_json::json!({
+                                        "type": "image",
+                                        "source": {
+                                            "type": "base64",
+                                            "media_type": mime_type,
+                                            "data": base64_data
+                                        }
+                                    }));
+                                }
+                            }
+                        }
+                    }
                 }
                 for call in tool_calls {
                     if let Some(call_obj) = call.as_object() {
@@ -111,7 +132,52 @@ impl LLMProvider for AnthropicProvider {
                 }
                 serde_json::Value::Array(blocks)
             } else {
-                serde_json::Value::String(msg.content.clone())
+                let parts = crate::providers::parse_multimodal_content(&msg.content);
+                let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
+                let supports_vision = crate::providers::model_supports_vision(&self.model);
+
+                if !supports_vision || !has_images {
+                    serde_json::Value::String(msg.content.clone())
+                } else if parts.len() == 1 {
+                    match &parts[0] {
+                        crate::providers::ContentPart::Text(t) => serde_json::Value::String(t.clone()),
+                        crate::providers::ContentPart::Image { mime_type, base64_data } => {
+                            serde_json::json!([
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": mime_type,
+                                        "data": base64_data
+                                    }
+                                }
+                            ])
+                        }
+                    }
+                } else {
+                    let mut arr = Vec::new();
+                    for part in parts {
+                        match part {
+                            crate::providers::ContentPart::Text(t) => {
+                                arr.push(serde_json::json!({
+                                    "type": "text",
+                                    "text": t
+                                }));
+                            }
+                            crate::providers::ContentPart::Image { mime_type, base64_data } => {
+                                arr.push(serde_json::json!({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": mime_type,
+                                        "data": base64_data
+                                    }
+                                }));
+                            }
+                        }
+                    }
+                    serde_json::Value::Array(arr)
+                }
             };
 
             api_messages.push(AnthropicMessage {

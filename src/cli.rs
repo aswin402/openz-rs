@@ -9,9 +9,12 @@ use crate::tools::ToolRegistry;
 use crate::tools::filesystem::{ReadFileTool, WriteFileTool, ListDirTool};
 use crate::tools::shell::ExecCommandTool;
 use crate::tools::web::WebFetchTool;
+use crate::tools::subagent::{DelegateTaskTool, OptimizeSubagentTool, CreateSubagentTool, DeleteSubagentTool};
+use crate::tools::cron::{ScheduleJobTool, ListJobsTool, RemoveJobTool};
 use crate::session::SessionManager;
 use crate::agent::AgentLoop;
 use crate::channels::{CliChannel, WsGateway, TelegramChannel};
+use crate::cron::scheduler::start_scheduler;
 
 #[derive(Parser)]
 #[command(name = "openz", version = "0.1.0", about = "OpenZ - Rebranded Ultra-Lightweight Personal AI Agent")]
@@ -33,6 +36,9 @@ pub enum Command {
 
     /// Start the Telegram bot listener
     Telegram,
+
+    /// Manage, configure, and design custom subagents
+    Subagent,
 }
 
 pub async fn run_cli() -> Result<()> {
@@ -50,6 +56,10 @@ pub async fn run_cli() -> Result<()> {
         }
         Command::Telegram => {
             handle_telegram().await?;
+        }
+        Command::Subagent => {
+            let config = load_config()?;
+            crate::subagents::run_subagent_manager(config).await?;
         }
     }
     
@@ -147,7 +157,7 @@ async fn handle_onboard() -> Result<()> {
     Ok(())
 }
 
-fn build_agent_loop(config: Config) -> Result<AgentLoop> {
+pub fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     let defaults = &config.agents.defaults;
     let mut provider_name = defaults.provider.clone();
     
@@ -253,15 +263,32 @@ fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         Arc::new(OpenAIProvider::new(api_key, api_base, model))
     };
     
-    let mut registry = ToolRegistry::new();
-    registry.register(Box::new(ReadFileTool));
-    registry.register(Box::new(WriteFileTool));
-    registry.register(Box::new(ListDirTool));
-    registry.register(Box::new(ExecCommandTool));
-    registry.register(Box::new(WebFetchTool::new()));
-    
     let sessions_dir = resolve_path("~/.openz/sessions");
     let session_manager = SessionManager::new(sessions_dir);
+
+    let mut registry = ToolRegistry::new_with_context(config.clone(), provider.clone(), session_manager.clone());
+    registry.register(std::sync::Arc::new(ReadFileTool));
+    registry.register(std::sync::Arc::new(WriteFileTool));
+    registry.register(std::sync::Arc::new(ListDirTool));
+    registry.register(std::sync::Arc::new(ExecCommandTool));
+    registry.register(std::sync::Arc::new(WebFetchTool::new()));
+    registry.register(std::sync::Arc::new(DelegateTaskTool {
+        config: config.clone(),
+        parent_provider: provider.clone(),
+        session_manager: session_manager.clone(),
+    }));
+
+    registry.register(std::sync::Arc::new(OptimizeSubagentTool {
+        config: config.clone(),
+        parent_provider: provider.clone(),
+    }));
+
+    registry.register(std::sync::Arc::new(CreateSubagentTool));
+    registry.register(std::sync::Arc::new(DeleteSubagentTool));
+
+    registry.register(std::sync::Arc::new(ScheduleJobTool));
+    registry.register(std::sync::Arc::new(ListJobsTool));
+    registry.register(std::sync::Arc::new(RemoveJobTool));
     
     Ok(AgentLoop::new(config, provider, registry, session_manager))
 }
@@ -269,6 +296,7 @@ fn build_agent_loop(config: Config) -> Result<AgentLoop> {
 async fn handle_agent() -> Result<()> {
     let config = load_config()?;
     let defaults = config.agents.defaults.clone();
+    start_scheduler(config.clone());
     let agent_loop = build_agent_loop(config)?;
     let channel = CliChannel::new(agent_loop, defaults);
     channel.start().await?;
@@ -285,6 +313,7 @@ async fn handle_gateway() -> Result<()> {
         }
     });
     
+    start_scheduler(config.clone());
     let agent_loop = build_agent_loop(config)?;
     let gateway = WsGateway::new(ws_config, agent_loop);
     gateway.start().await?;
@@ -301,6 +330,7 @@ async fn handle_telegram() -> Result<()> {
         tg_config.bot_token
     };
     
+    start_scheduler(config.clone());
     let agent_loop = build_agent_loop(config)?;
     let channel = TelegramChannel::new(token, agent_loop);
     channel.start().await?;

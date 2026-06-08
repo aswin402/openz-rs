@@ -5,6 +5,8 @@ pub mod session;
 pub mod agent;
 pub mod channels;
 pub mod cli;
+pub mod cron;
+pub mod subagents;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

@@ -26,7 +26,7 @@ struct OpenAIRequest {
 #[derive(Serialize)]
 struct OpenAIMessage {
     role: String,
-    content: String,
+    content: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -75,23 +75,18 @@ impl OpenAIProvider {
             model,
         }
     }
-}
 
-#[async_trait::async_trait]
-impl LLMProvider for OpenAIProvider {
-    async fn chat(
-        &self,
+    fn serialize_messages(
+        model: &str,
         system_prompt: &str,
         messages: &[Message],
-        tools: &[serde_json::Value],
-        settings: &GenerationSettings,
-    ) -> Result<LLMResponse> {
+    ) -> Vec<OpenAIMessage> {
         let mut api_messages = Vec::new();
         
         if !system_prompt.is_empty() {
             api_messages.push(OpenAIMessage {
                 role: "system".to_string(),
-                content: system_prompt.to_string(),
+                content: serde_json::Value::String(system_prompt.to_string()),
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
@@ -111,14 +106,71 @@ impl LLMProvider for OpenAIProvider {
                 name = Some(n.to_string());
             }
 
+            let parts = crate::providers::parse_multimodal_content(&msg.content);
+            let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
+            let supports_vision = crate::providers::model_supports_vision(model);
+
+            let content_value = if !supports_vision || !has_images {
+                serde_json::Value::String(msg.content.clone())
+            } else if parts.len() == 1 {
+                match &parts[0] {
+                    crate::providers::ContentPart::Text(t) => serde_json::Value::String(t.clone()),
+                    crate::providers::ContentPart::Image { mime_type, base64_data } => {
+                        serde_json::json!([
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": format!("data:{};base64,{}", mime_type, base64_data)
+                                }
+                            }
+                        ])
+                    }
+                }
+            } else {
+                let mut arr = Vec::new();
+                for part in parts {
+                    match part {
+                        crate::providers::ContentPart::Text(t) => {
+                            arr.push(serde_json::json!({
+                                "type": "text",
+                                "text": t
+                            }));
+                        }
+                        crate::providers::ContentPart::Image { mime_type, base64_data } => {
+                            arr.push(serde_json::json!({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": format!("data:{};base64,{}", mime_type, base64_data)
+                                }
+                            }));
+                        }
+                    }
+                }
+                serde_json::Value::Array(arr)
+            };
+
             api_messages.push(OpenAIMessage {
                 role,
-                content: msg.content.clone(),
+                content: content_value,
                 name,
                 tool_calls: msg.extra.get("tool_calls").cloned().and_then(|v| v.as_array().cloned()),
                 tool_call_id,
             });
         }
+        api_messages
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMProvider for OpenAIProvider {
+    async fn chat(
+        &self,
+        system_prompt: &str,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+        settings: &GenerationSettings,
+    ) -> Result<LLMResponse> {
+        let api_messages = Self::serialize_messages(&self.model, system_prompt, messages);
 
         let body = OpenAIRequest {
             model: self.model.clone(),
@@ -172,5 +224,67 @@ impl LLMProvider for OpenAIProvider {
             finish_reason: choice.finish_reason.clone().unwrap_or_else(|| "stop".to_string()),
             reasoning_content: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_serialize_messages_vision_fallback() {
+        let system_prompt = "system instructions";
+        
+        let temp_dir = std::env::temp_dir();
+        let test_img_path = temp_dir.join("test_img.png");
+        std::fs::write(&test_img_path, vec![0; 100]).unwrap();
+        
+        let image_tag = format!("![](file://{})", test_img_path.to_string_lossy());
+        let msg_content = format!("{} check this image", image_tag);
+        
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: msg_content.clone(),
+            timestamp: None,
+            extra: serde_json::Map::new(),
+        }];
+
+        // Test non-vision model (deepseek-v4-flash-free)
+        let serialized_non_vision = OpenAIProvider::serialize_messages(
+            "deepseek-v4-flash-free",
+            system_prompt,
+            &messages,
+        );
+        
+        assert_eq!(serialized_non_vision.len(), 2);
+        assert_eq!(serialized_non_vision[0].role, "system");
+        assert_eq!(serialized_non_vision[1].role, "user");
+        
+        // It must be serialized as String, keeping the original content (including the tag)
+        let content_str = serialized_non_vision[1].content.as_str().unwrap();
+        assert_eq!(content_str, msg_content);
+
+        // Test vision model (gpt-4o)
+        let serialized_vision = OpenAIProvider::serialize_messages(
+            "gpt-4o",
+            system_prompt,
+            &messages,
+        );
+        
+        assert_eq!(serialized_vision.len(), 2);
+        assert_eq!(serialized_vision[1].role, "user");
+        
+        // It must be serialized as Array containing text and image_url parts
+        let content_array = serialized_vision[1].content.as_array().unwrap();
+        assert_eq!(content_array.len(), 2);
+        
+        assert_eq!(content_array[0]["type"], "image_url");
+        assert!(content_array[0]["image_url"]["url"].as_str().unwrap().starts_with("data:image/png;base64,"));
+        
+        assert_eq!(content_array[1]["type"], "text");
+        assert_eq!(content_array[1]["text"], " check this image");
+
+        // Cleanup
+        let _ = std::fs::remove_file(test_img_path);
     }
 }

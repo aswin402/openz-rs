@@ -1,4 +1,4 @@
-# OpenZ 🦀⚡
+# OpenZ 🦀⚡ `v0.0.1`
 
 OpenZ is a high-performance, asynchronous, ultra-lightweight personal AI agent framework built entirely in Rust. 
 

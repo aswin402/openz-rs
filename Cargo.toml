@@ -1,6 +1,6 @@
 [package]
 name = "openz"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
 [workspace]
@@ -24,3 +24,7 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.8", features = ["v4", "serde"] }
 async-trait = "0.1"
 dotenvy = "0.15"
+base64 = "0.22.1"
+arboard = "3.6.1"
+image = "0.25.10"
+crossterm = "0.29.0"

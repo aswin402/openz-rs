@@ -51,6 +51,7 @@ impl Session {
     }
 }
 
+#[derive(Clone)]
 pub struct SessionManager {
     dir: PathBuf,
 }

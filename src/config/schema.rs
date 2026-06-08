@@ -67,7 +67,7 @@ fn default_provider() -> String {
     "auto".to_string()
 }
 fn default_max_tokens() -> usize {
-    8192
+    1024
 }
 fn default_temperature() -> f32 {
     0.1

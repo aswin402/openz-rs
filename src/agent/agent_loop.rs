@@ -1,6 +1,7 @@
 use crate::config::schema::Config;
 use crate::providers::{LLMProvider, GenerationSettings};
 use crate::tools::ToolRegistry;
+use crate::tools::subagent::DelegateTaskTool;
 use crate::session::{Session, SessionManager, Message};
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
@@ -57,13 +58,66 @@ impl AgentLoop {
                 TurnState::Restore => {
                     session = self.session_manager.get_or_create(session_key);
                     session.add_message("user", user_content);
+
+                    let parts = crate::providers::parse_multimodal_content(user_content);
+                    let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
+                    let supports_vision = crate::providers::model_supports_vision(&self.config.agents.defaults.model);
+                    if has_images && !supports_vision {
+                        eprintln!("⚠️ Warning: The active model '{}' does not support images. Images will be ignored.", self.config.agents.defaults.model);
+                    }
+
                     state = TurnState::Compact;
                 }
                 TurnState::Compact => {
                     let max_msgs = self.config.agents.defaults.max_messages;
-                    if session.messages.len() > max_msgs {
-                        let len = session.messages.len();
-                        session.messages = session.messages[len - max_msgs..].to_vec();
+                    let len = session.messages.len();
+                    if len > max_msgs {
+                        let keep_msgs = max_msgs.saturating_sub(10).max(5);
+                        let k = len.saturating_sub(keep_msgs);
+                        if k > 0 && k < len {
+                            let messages_to_summarize = session.messages[0..k].to_vec();
+                            let existing_summary = session.metadata.get("summary")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                                
+                            let system_prompt_sum = "You are a helpful assistant. Generate a consolidated summary of the conversation history. Keep it concise, clear, and focused on key facts, decisions, and files created/modified.";
+                            let mut prompt_content = String::new();
+                            if !existing_summary.is_empty() {
+                                prompt_content.push_str(&format!("Previous summary:\n{}\n\n", existing_summary));
+                            }
+                            prompt_content.push_str("New conversation history to summarize:\n");
+                            for msg in &messages_to_summarize {
+                                prompt_content.push_str(&format!("[{}]: {}\n", msg.role, msg.content));
+                            }
+                            
+                            let settings = GenerationSettings {
+                                temperature: 0.1,
+                                max_tokens: 1024,
+                                reasoning_effort: None,
+                            };
+                            
+                            let summary_msgs = vec![Message {
+                                role: "user".to_string(),
+                                content: prompt_content,
+                                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                                extra: serde_json::Map::new(),
+                            }];
+                            
+                            println!("📝 Consolidating conversation context (summarizing older history)...");
+                            match self.provider.chat(&system_prompt_sum, &summary_msgs, &[], &settings).await {
+                                Ok(resp) => {
+                                    if let Some(new_summary) = resp.content {
+                                        session.metadata.insert("summary".to_string(), serde_json::Value::String(new_summary));
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("Warning: Failed to summarize conversation history: {}", e);
+                                }
+                            }
+                            session.messages = session.messages[k..].to_vec();
+                        } else {
+                            session.messages = session.messages[len - max_msgs..].to_vec();
+                        }
                     }
                     state = TurnState::Command;
                 }
@@ -73,7 +127,7 @@ impl AgentLoop {
                         if let Some(cmd) = parts.first() {
                             match *cmd {
                                 "/help" => {
-                                    final_content = "OpenZ Rebranded AI Agent Command Menu:\n/help - Show this menu\n/history - Show history\n/clear - Reset session history\n/status - Print active model and configuration info".to_string();
+                                    final_content = "OpenZ Rebranded AI Agent Command Menu:\n/help - Show this menu\n/history - Show history\n/clear - Reset session history\n/status - Print active model and configuration info\n/delegate <goal> - Directly delegate a task to a focused subagent".to_string();
                                     state = TurnState::Done;
                                     continue;
                                 }
@@ -104,6 +158,37 @@ impl AgentLoop {
                                     state = TurnState::Done;
                                     continue;
                                 }
+                                "/delegate" | "/subagent" => {
+                                    if parts.len() < 2 {
+                                        final_content = "Usage: /delegate <goal>".to_string();
+                                    } else {
+                                        let goal = parts[1..].join(" ");
+                                        let delegate_tool: std::sync::Arc<dyn crate::tools::Tool> = std::sync::Arc::new(DelegateTaskTool {
+                                            config: self.config.clone(),
+                                            parent_provider: self.provider.clone(),
+                                            session_manager: self.session_manager.clone(),
+                                        });
+
+                                        let args = serde_json::json!({
+                                            "goal": goal,
+                                        });
+
+                                        match delegate_tool.call(&args).await {
+                                            Ok(res_val) => {
+                                                if let Some(summary) = res_val.get("summary").and_then(|v| v.as_str()) {
+                                                    final_content = format!("=== Subagent Summary ===\n{}", summary);
+                                                } else {
+                                                    final_content = format!("Subagent completed: {}", res_val);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                final_content = format!("Error running subagent: {}", e);
+                                            }
+                                        }
+                                    }
+                                    state = TurnState::Done;
+                                    continue;
+                                }
                                 _ => {}
                             }
                         }
@@ -111,10 +196,23 @@ impl AgentLoop {
                     state = TurnState::Build;
                 }
                 TurnState::Build => {
+                    let mut summary_part = String::new();
+                    if let Some(summary) = session.metadata.get("summary").and_then(|v| v.as_str()) {
+                        if !summary.is_empty() {
+                            summary_part = format!("\n\nHere is a summary of the earlier part of the conversation:\n{}\n", summary);
+                        }
+                    }
+                    let mut vision_instruction = "";
+                    if !crate::providers::model_supports_vision(&self.config.agents.defaults.model) {
+                        vision_instruction = " If a message contains a markdown image link (e.g. ![](file://...)) and you need to analyze or describe the image, you MUST delegate the visual analysis task to the specialized 'vision_agent' tool (or the 'delegate_task' tool) to see and report on the image contents.";
+                    }
                     system_prompt = format!(
-                        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.",
+                        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.{}{}{}",
                         self.config.agents.defaults.bot_name,
-                        chrono::Utc::now().to_rfc3339()
+                        chrono::Utc::now().to_rfc3339(),
+                        summary_part,
+                        vision_instruction,
+                        ""
                     );
                     messages = session.messages.clone();
                     state = TurnState::Run;
@@ -221,6 +319,27 @@ impl AgentLoop {
                     state = TurnState::Done;
                 }
                 TurnState::Done => {}
+            }
+        }
+
+        let traces_dir = crate::config::resolve_path("~/.openz/traces");
+        if let Err(e) = std::fs::create_dir_all(&traces_dir) {
+            eprintln!("Warning: Failed to create traces directory: {}", e);
+        } else {
+            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+            let trace_file = traces_dir.join(format!("trace_{}_{}.json", session_key.replace(":", "_"), timestamp));
+            let trace_record = serde_json::json!({
+                "session_key": session_key,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "user_query": user_content,
+                "system_prompt": system_prompt,
+                "model": self.config.agents.defaults.model,
+                "messages": messages,
+                "tools_used": tools_used,
+                "final_response": final_content,
+            });
+            if let Ok(content) = serde_json::to_string_pretty(&trace_record) {
+                let _ = std::fs::write(trace_file, content);
             }
         }
 
