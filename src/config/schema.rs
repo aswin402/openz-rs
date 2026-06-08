@@ -116,6 +116,10 @@ pub struct WebSocketChannelConfig {
     pub port: u16,
     #[serde(default = "default_ws_host")]
     pub host: String,
+    #[serde(default)]
+    pub start_on_boot: bool,
+    #[serde(default)]
+    pub start_on_tui: bool,
 }
 
 fn default_ws_port() -> u16 {
@@ -133,12 +137,34 @@ pub struct TelegramChannelConfig {
     pub bot_token: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DiscordChannelConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub bot_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WhatsAppChannelConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub phone_number_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelsConfig {
     #[serde(default)]
     pub websocket: Option<WebSocketChannelConfig>,
     #[serde(default)]
     pub telegram: Option<TelegramChannelConfig>,
+    #[serde(default)]
+    pub discord: Option<DiscordChannelConfig>,
+    #[serde(default)]
+    pub whatsapp: Option<WhatsAppChannelConfig>,
     #[serde(flatten)]
     pub others: HashMap<String, serde_json::Value>,
 }
@@ -182,10 +208,21 @@ impl Default for ChannelsConfig {
                 enabled: true,
                 port: default_ws_port(),
                 host: default_ws_host(),
+                start_on_boot: false,
+                start_on_tui: false,
             }),
             telegram: Some(TelegramChannelConfig {
                 enabled: false,
                 bot_token: String::new(),
+            }),
+            discord: Some(DiscordChannelConfig {
+                enabled: false,
+                bot_token: String::new(),
+            }),
+            whatsapp: Some(WhatsAppChannelConfig {
+                enabled: false,
+                api_key: String::new(),
+                phone_number_id: String::new(),
             }),
             others: HashMap::new(),
         }

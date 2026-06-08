@@ -13,10 +13,12 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
 
 * **Persistent Workspace Loops:** Session history, workspace file scopes, and local tool execution survive long-running turn completions.
 * **Memory & Skill Self-Improvement:** Inspired by `hermes-agent`, OpenZ implements a closed-loop learning system. An asynchronous background curator refines long-term memory (facts, preferences) and curates procedural skills (style rules, workarounds) stored in `~/.openz/skills/`. Users can also hand the agent a GitHub repository link, and OpenZ will dynamically clone, install, and configure it on the host machine, saving it as an active skill for future turns. View or manage them using `/memory`, `/skills`, and `/skill` commands.
-* **Three Integrated Chat Channels:**
-  * **Console CLI (`agent`):** Direct interactive chat in your terminal with slash commands.
-  * **WebSocket Gateway (`gateway`):** Web server that feeds the visual WebUI workbench.
-  * **Telegram Polling (`telegram`):** Background bot long-polling with concurrent agent loops.
+* **Pluggable Channel Adapters:** Built around a unified `Channel` trait, enabling modular communication endpoints:
+  * **Console CLI (`agent`):** Direct interactive terminal chat with full slash commands support.
+  * **WebSocket Gateway (`gateway`):** Asynchronous Web/WebSocket server powering the visual WebUI workbench.
+  * **Telegram Polling (`telegram`):** Native bot listener with parallel loop handling.
+  * **Discord bot (`discord`):** Plug-and-play adapter stub for Discord communities.
+  * **WhatsApp API (`whatsapp`):** Webhook-friendly adapter stub for WhatsApp Business integration.
 * **Core Native Tools:** Built-in `read_file`, `write_file`, `list_dir`, `exec_command` (subprocess sandboxing), and `web_fetch` (web scraping & text stripping).
 * **Model Context Protocol (MCP):** Connects to external MCP servers over stdio, retrieves tools dynamically, and wraps them as native functions.
 * **Universal API Clients:** Abstractions supporting OpenAI-compatible endpoints (DeepSeek, Groq, Ollama, OpenRouter, Gemini) and Anthropic Claude. Added custom deployments support for Azure OpenAI.
@@ -43,12 +45,16 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
 cargo build --release
 ```
 
-### 2. Configure OpenZ (Onboard)
-To launch the setup wizard and configure your LLM provider, run:
+### 2. Configure OpenZ
+To configure your LLM providers, channels, and gateway auto-start options, run:
 ```bash
-./target/release/openz onboard
+./target/release/openz configure
 ```
-*Settings are saved to `~/.openz/config.json`.*
+* **Auto-Start Gateway Preference:** The configuration wizard allows setting the WebSocket gateway to start:
+  1. **When system powers on (Option 1):** Installs and enables a native `systemd` user service unit (`openz-gateway.service`).
+  2. **When OpenZ starts (Option 2):** Launches the WebSocket/WebUI server asynchronously in the background when starting the TUI terminal client (`openz agent`).
+  3. **Manual only (Option 3):** Start it manually via `./target/release/openz gateway`.
+* Settings are saved to `~/.openz/config.json`.
 
 ### 3. Run Agent Chat (Terminal)
 To start a direct chat session in your terminal:

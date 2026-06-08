@@ -10,15 +10,17 @@ This document describes the design, execution flow, and module architecture of t
 
 ```mermaid
 graph TD
-    CLI[CLI Main / Commands] --> |onboard / agent / gateway| CLI_RUN[cli.rs]
+    CLI[CLI Main / Commands] --> |configure / agent / gateway / telegram / discord / whatsapp| CLI_RUN[cli.rs]
     CLI_RUN --> |config_path| CONF[config/loader.rs]
-    CLI_RUN --> |start channel| CHANNELS[channels/ mod.rs]
+    CLI_RUN --> |start channel| TRAIT["Channel Trait (channels/mod.rs)"]
     
-    CHANNELS --> |CLI loop| CLI_CHAN[channels/cli.rs]
-    CHANNELS --> |Axum WS Server| WS_CHAN[channels/websocket.rs]
-    CHANNELS --> |HTTP Long Polling| TG_CHAN[channels/telegram.rs]
+    TRAIT --> |CliChannel| CLI_CHAN[channels/cli.rs]
+    TRAIT --> |WsGateway| WS_CHAN[channels/websocket.rs]
+    TRAIT --> |TelegramChannel| TG_CHAN[channels/telegram.rs]
+    TRAIT --> |DiscordChannel| DC_CHAN[channels/discord.rs]
+    TRAIT --> |WhatsAppChannel| WA_CHAN[channels/whatsapp.rs]
 
-    CLI_CHAN & WS_CHAN & TG_CHAN --> |execute prompt| LOOP[agent/agent_loop.rs]
+    CLI_CHAN & WS_CHAN & TG_CHAN & DC_CHAN & WA_CHAN --> |execute prompt| LOOP[agent/agent_loop.rs]
     
     LOOP --> |load/save history| SESS[session.rs]
     LOOP --> |chat request| PROV[providers/ mod.rs]
@@ -42,6 +44,6 @@ graph TD
 * **`tools/`**: Registry and implementations for native tools, subagent delegation, and MCP stdio wrapper tools.
 * **`cron/`**: Handles scheduling and execution of background cron tasks.
 * **`session.rs`**: Stores conversation message logs, dynamic summaries, and long-term memory prompts in JSON files under `~/.openz/sessions/`.
-* **`agent/agent_loop.rs`**: The core execution state machine (`TurnState`) that manages conversation restoration, context compaction (LLM short-term summarization and long-term memory updates), command extraction, context loading, LLM completions, tool call routing, session saving, and message responses. Spawns an asynchronous background self-improvement curator task that refines memory and curates procedural skills.
+* **`agent/agent_loop.rs`**: The core execution state machine (`TurnState`) that manages conversation restoration, context compaction (LLM summarization and long-term memory updates), command extraction, context loading, LLM completions, tool call routing, session saving, and message responses. Spawns an asynchronous background self-improvement curator task that refines memory and curates procedural skills.
 * **`agent/skills.rs`**: Manages loading, saving, deleting, and clearing procedural skills and style guidelines stored under `~/.openz/skills/` that are dynamically injected into the agent system prompt.
-* **`channels/`**: Concrete triggers that capture user queries and dispatch replies. Supports Terminal CLI, WebUI WebSocket Server, and Telegram Long-Polling.
+* **`channels/`**: Pluggable communication adapters conforming to a unified `Channel` trait. Standardizes message handling and execution. Currently supports Terminal CLI, WebSocket Gateway, Telegram Polling, and stubs for Discord and WhatsApp. Allows auto-starting gateways on system boot (via systemd user service) or terminal TUI client startup.

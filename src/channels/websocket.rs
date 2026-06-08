@@ -20,6 +20,13 @@ pub struct WsGateway {
     agent_loop: Arc<AgentLoop>,
 }
 
+#[allow(dead_code)]
+#[derive(Clone)]
+struct WsState {
+    config: WebSocketChannelConfig,
+    agent_loop: Arc<AgentLoop>,
+}
+
 impl WsGateway {
     pub fn new(config: WebSocketChannelConfig, agent_loop: AgentLoop) -> Self {
         WsGateway {
@@ -27,12 +34,22 @@ impl WsGateway {
             agent_loop: Arc::new(agent_loop),
         }
     }
+}
 
-    pub async fn start(self) -> anyhow::Result<()> {
+#[async_trait::async_trait]
+impl super::Channel for WsGateway {
+    fn name(&self) -> &'static str {
+        "websocket"
+    }
+
+    async fn start(&self) -> anyhow::Result<()> {
         let addr_str = format!("{}:{}", self.config.host, self.config.port);
         let addr: SocketAddr = addr_str.parse()?;
         
-        let state = Arc::new(self);
+        let state = WsState {
+            config: self.config.clone(),
+            agent_loop: self.agent_loop.clone(),
+        };
         
         let mut app = Router::new()
             .route("/ws", get(ws_handler))
@@ -62,12 +79,12 @@ impl WsGateway {
 
 async fn ws_handler(
     ws: WebSocketUpgrade,
-    State(gateway): State<Arc<WsGateway>>,
+    State(state): State<WsState>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket, gateway))
+    ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(socket: WebSocket, gateway: Arc<WsGateway>) {
+async fn handle_socket(socket: WebSocket, state: WsState) {
     let client_id = format!("client-{}", &uuid::Uuid::new_v4().to_string()[..8]);
     let default_chat_id = uuid::Uuid::new_v4().to_string();
 
@@ -123,7 +140,7 @@ async fn handle_socket(socket: WebSocket, gateway: Arc<WsGateway>) {
                     "message" => {
                         let content = envelope.get("content").and_then(|v| v.as_str()).unwrap_or("");
                         
-                        let agent = gateway.agent_loop.clone();
+                        let agent = state.agent_loop.clone();
                         let tx_clone = tx.clone();
                         let chat_id_clone = chat_id.clone();
                         let content_str = content.to_string();

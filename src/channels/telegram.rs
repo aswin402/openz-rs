@@ -35,8 +35,15 @@ impl TelegramChannel {
             client: Client::builder().use_rustls_tls().build().unwrap_or_default(),
         }
     }
+}
 
-    pub async fn start(&self) -> anyhow::Result<()> {
+#[async_trait::async_trait]
+impl super::Channel for TelegramChannel {
+    fn name(&self) -> &'static str {
+        "telegram"
+    }
+
+    async fn start(&self) -> anyhow::Result<()> {
         let mut offset = 0;
         println!("🤖 Telegram Channel bot polling started...");
 

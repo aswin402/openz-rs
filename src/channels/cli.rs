@@ -111,8 +111,15 @@ impl CliChannel {
             defaults,
         }
     }
+}
 
-    pub async fn start(&self) -> anyhow::Result<()> {
+#[async_trait::async_trait]
+impl super::Channel for CliChannel {
+    fn name(&self) -> &'static str {
+        "cli"
+    }
+
+    async fn start(&self) -> anyhow::Result<()> {
         let session_key = "cli:direct";
         
         println!("Welcome to {}! Type your message and press Enter (or type /restart to clear, /help for list of commands).", self.defaults.bot_name);
@@ -133,12 +140,12 @@ impl CliChannel {
             if trimmed.is_empty() {
                 continue;
             }
-
+ 
             if trimmed == "/exit" || trimmed == "exit" || trimmed == "quit" {
                 println!("Goodbye!");
                 break;
             }
-
+ 
             if trimmed == "/paste" || trimmed == "/clip" {
                 match handle_clipboard_paste() {
                     Ok(img_path) => {
@@ -164,7 +171,7 @@ impl CliChannel {
                 }
                 continue;
             }
-
+ 
             match self.agent_loop.run(trimmed, session_key).await {
                 Ok(res) => {
                     println!("\n{}\n", res.content);
