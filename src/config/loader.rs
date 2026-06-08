@@ -16,7 +16,11 @@ pub fn resolve_path(path_str: &str) -> PathBuf {
 }
 
 pub fn config_dir() -> PathBuf {
-    resolve_path("~/.openz")
+    if let Ok(override_dir) = std::env::var("OPENZ_CONFIG_DIR") {
+        PathBuf::from(override_dir)
+    } else {
+        resolve_path("~/.openz")
+    }
 }
 
 pub fn config_path() -> PathBuf {
@@ -26,14 +30,41 @@ pub fn config_path() -> PathBuf {
 pub fn load_config() -> Result<Config> {
     let path = config_path();
     if !path.exists() {
-        return Ok(Config::default());
+        let default_config = Config::default();
+        let _ = save_config(&default_config);
+        return Ok(default_config);
     }
 
     let content = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read config file at {:?}", path))?;
     
-    let config: Config = serde_json::from_str(&content)
+    let mut config: Config = serde_json::from_str(&content)
         .with_context(|| format!("Failed to parse config file at {:?}", path))?;
+
+    // Clean up any Node/JS based default MCP servers from existing config
+    let mut modified = false;
+    let remove_names = ["sequential-thinking", "fetch", "memory", "puppeteer"];
+    for name in &remove_names {
+        if let Some(mcp) = config.mcp_servers.get(*name) {
+            if mcp.command == "npx" {
+                config.mcp_servers.remove(*name);
+                modified = true;
+            }
+        }
+    }
+
+    // Auto-populate default Rust MCP servers if they are missing
+    let defaults = Config::default();
+    for (name, server_config) in defaults.mcp_servers {
+        if !config.mcp_servers.contains_key(&name) {
+            config.mcp_servers.insert(name, server_config);
+            modified = true;
+        }
+    }
+
+    if modified {
+        let _ = save_config(&config);
+    }
 
     Ok(config)
 }

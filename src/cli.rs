@@ -176,7 +176,7 @@ async fn handle_onboard() -> Result<()> {
     Ok(())
 }
 
-pub fn build_agent_loop(config: Config) -> Result<AgentLoop> {
+pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     let defaults = &config.agents.defaults;
     let mut provider_name = defaults.provider.clone();
     
@@ -309,6 +309,49 @@ pub fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(ListJobsTool));
     registry.register(std::sync::Arc::new(RemoveJobTool));
     registry.register(std::sync::Arc::new(SendRemoteInputTool));
+    registry.register(std::sync::Arc::new(crate::tools::mcp_manager::ManageMcpTool));
+    registry.register(std::sync::Arc::new(crate::tools::grep::GrepSearchTool));
+    registry.register(std::sync::Arc::new(crate::tools::git_manager::GitManagerTool));
+    registry.register(std::sync::Arc::new(crate::tools::outline::CodeOutlineTool));
+    registry.register(std::sync::Arc::new(crate::tools::db_inspector::DbInspectorTool));
+
+    // Register configured MCP tools
+    for (name, mcp_config) in &config.mcp_servers {
+        if mcp_config.enabled {
+            println!("🔌 Spawning MCP server '{}' ({} {:?})...", name, mcp_config.command, mcp_config.args);
+            match crate::tools::mcp::McpClient::spawn(&mcp_config.command, &mcp_config.args).await {
+                Ok(mcp_client) => {
+                    match mcp_client.list_tools().await {
+                        Ok(tools) => {
+                            for t in tools {
+                                if let (Some(t_name), Some(desc)) = (t.get("name").and_then(|v| v.as_str()), t.get("description").and_then(|v| v.as_str())) {
+                                    let params = t.get("inputSchema").cloned().unwrap_or(serde_json::json!({
+                                        "type": "object",
+                                        "properties": {}
+                                    }));
+                                    
+                                    println!("   ↳ Registering MCP tool: {}", t_name);
+                                    let wrapper = crate::tools::mcp::McpToolWrapper {
+                                        client: mcp_client.clone(),
+                                        name: t_name.to_string(),
+                                        description: desc.to_string(),
+                                        parameters: params,
+                                    };
+                                    registry.register(std::sync::Arc::new(wrapper));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("⚠️ Failed to list tools from MCP server '{}': {}", name, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("⚠️ Failed to spawn MCP server '{}': {}", name, e);
+                }
+            }
+        }
+    }
     
     Ok(AgentLoop::new(config, provider, registry, session_manager))
 }
@@ -323,7 +366,7 @@ async fn handle_agent() -> Result<()> {
         if ws_config.enabled && ws_config.start_on_tui {
             let bg_config = config.clone();
             tokio::spawn(async move {
-                if let Ok(agent_loop) = build_agent_loop(bg_config.clone()) {
+                if let Ok(agent_loop) = build_agent_loop(bg_config.clone()).await {
                     let gateway = WsGateway::new(bg_config.channels.websocket.clone().unwrap(), agent_loop);
                     println!("🚀 Spawning background gateway (startOnTui enabled)...");
                     if let Err(e) = gateway.start().await {
@@ -334,7 +377,7 @@ async fn handle_agent() -> Result<()> {
         }
     }
 
-    let agent_loop = build_agent_loop(config)?;
+    let agent_loop = build_agent_loop(config).await?;
     let channel = CliChannel::new(agent_loop, defaults);
     channel.start().await?;
     Ok(())
@@ -353,7 +396,7 @@ async fn handle_gateway() -> Result<()> {
     });
     
     start_scheduler(config.clone());
-    let agent_loop = build_agent_loop(config)?;
+    let agent_loop = build_agent_loop(config).await?;
     let gateway = WsGateway::new(ws_config, agent_loop);
     gateway.start().await?;
     Ok(())
@@ -370,7 +413,7 @@ async fn handle_telegram() -> Result<()> {
     };
     
     start_scheduler(config.clone());
-    let agent_loop = build_agent_loop(config)?;
+    let agent_loop = build_agent_loop(config).await?;
     let channel = TelegramChannel::new(token, agent_loop);
     channel.start().await?;
     
@@ -388,7 +431,7 @@ async fn handle_discord() -> Result<()> {
     };
     
     start_scheduler(config.clone());
-    let agent_loop = build_agent_loop(config)?;
+    let agent_loop = build_agent_loop(config).await?;
     let channel = crate::channels::DiscordChannel::new(token, agent_loop);
     channel.start().await?;
     
@@ -412,7 +455,7 @@ async fn handle_whatsapp() -> Result<()> {
     };
     
     start_scheduler(config.clone());
-    let agent_loop = build_agent_loop(config)?;
+    let agent_loop = build_agent_loop(config).await?;
     let channel = crate::channels::WhatsAppChannel::new(key, phone_id, agent_loop);
     channel.start().await?;
     

@@ -393,9 +393,9 @@ impl AgentLoop {
                     }
                     let system_guidelines = "\n\nYou are OpenZ, a high-performance personal AI agent framework built in Rust. Your architecture is structured as follows:\n\
                                              * Pluggable Gateway Channels: You can receive messages and reply over CLI terminal, WebSocket gateway (serving the WebUI workbench), Telegram bot polling, Discord bot polling, and WhatsApp Business API.\n\
-                                             * Local Tools & MCP: You have native tools for file reading/writing, shell command execution, web fetching, Model Context Protocol (MCP) servers, and remote control forwarding (via the 'send_remote_input' tool).\n\
+                                             * Local Tools & MCP: You have native tools for file reading/writing, codebase text search ('grep_search'), file code structure parsing ('code_outline'), git operations ('git_manager'), database inspection ('db_inspector'), shell command execution, web fetching, and remote control forwarding. You support the Model Context Protocol (MCP) powered by high-performance Rust binaries for sequential thinking and memory graph storage, managed via the native 'manage_mcp' tool.\n\
                                              * Remote Session Control: If the user asks you (e.g., via Telegram or Discord) to execute a command, answer an approval prompt, or run a query in their TUI/CLI session, invoke the 'send_remote_input' tool to forward the prompt directly to that session (e.g., 'cli:direct').\n\
-                                             * Specialized Subagents: You can spawn concurrent subagents (e.g. planner, researcher, debugger, DevOps, skill_improvement, openz_maintainer) to delegate tasks.\n\
+                                             * Specialized Subagents: You can spawn concurrent subagents (e.g. planner, researcher, debugger, DevOps, skill_improvement, openz_maintainer, mcps_manager) to delegate tasks.\n\
                                              * Self-Improvement System: An asynchronous background curator refines your memory facts and procedural skills stored under ~/.openz/skills/.";
 
                     let mut activity_part = String::new();
@@ -415,8 +415,14 @@ impl AgentLoop {
                         }
                     }
 
+                    let caveman_rules = if self.config.agents.defaults.caveman_mode {
+                        "\n\nRespond terse like smart caveman. All technical substance stay. Only fluff die.\nRules:\n- Drop: articles (a/an/the), filler (just/really/basically), pleasantries, hedging\n- Fragments OK. Short synonyms. Technical terms exact. Code unchanged.\n- Pattern: [thing] [action] [reason]. [next step].\n- Not: \"Sure! I'd be happy to help you with that.\"\n- Yes: \"Bug in auth middleware. Fix:\""
+                    } else {
+                        ""
+                    };
+
                     system_prompt = format!(
-                        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.{}{}{}{}{}{}",
+                        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.{}{}{}{}{}{}{}",
                         self.config.agents.defaults.bot_name,
                         chrono::Utc::now().to_rfc3339(),
                         system_guidelines,
@@ -424,7 +430,8 @@ impl AgentLoop {
                         summary_part,
                         memory_part,
                         vision_instruction,
-                        skills_part
+                        skills_part,
+                        caveman_rules
                     );
                     messages = session.messages.clone();
                     state = TurnState::Run;

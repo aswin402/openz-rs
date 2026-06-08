@@ -55,6 +55,8 @@ pub struct AgentDefaults {
     pub max_tool_iterations: usize,
     #[serde(default)]
     pub fallback_models: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub caveman_mode: bool,
 }
 
 fn default_workspace() -> String {
@@ -98,6 +100,7 @@ impl Default for AgentDefaults {
             max_messages: default_max_messages(),
             max_tool_iterations: default_max_tool_iterations(),
             fallback_models: Vec::new(),
+            caveman_mode: false,
         }
     }
 }
@@ -169,6 +172,16 @@ pub struct ChannelsConfig {
     pub others: HashMap<String, serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct McpServerConfig {
+    #[serde(default)]
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -177,6 +190,8 @@ pub struct Config {
     pub agents: AgentsConfig,
     #[serde(default)]
     pub channels: ChannelsConfig,
+    #[serde(default)]
+    pub mcp_servers: HashMap<String, McpServerConfig>,
 }
 
 impl Default for ProvidersConfig {
@@ -231,10 +246,25 @@ impl Default for ChannelsConfig {
 
 impl Default for Config {
     fn default() -> Self {
+        let mut mcp_servers = HashMap::new();
+
+        mcp_servers.insert("sequential-thinking".to_string(), McpServerConfig {
+            command: "/home/aswin/programming/vscode/myProjects/target/release/mcp-server-sequential-thinking".to_string(),
+            args: vec![],
+            enabled: true,
+        });
+
+        mcp_servers.insert("memory".to_string(), McpServerConfig {
+            command: "/home/aswin/programming/vscode/myProjects/target/release/openmemory_rs".to_string(),
+            args: vec![],
+            enabled: true,
+        });
+
         Config {
             providers: ProvidersConfig::default(),
             agents: AgentsConfig::default(),
             channels: ChannelsConfig::default(),
+            mcp_servers,
         }
     }
 }

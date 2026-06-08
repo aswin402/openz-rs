@@ -37,3 +37,8 @@ pub trait Tool: Send + Sync {
 * **`create_subagent`** (`src/tools/subagent.rs`): Dynamically creates and saves a new custom specialized subagent profile.
 * **`delete_subagent`** (`src/tools/subagent.rs`): Deletes a custom subagent profile (default subagents are protected and cannot be deleted).
 * **`send_remote_input`** (`src/tools/remote.rs`): Forwards a prompt or input instruction to another active session (like the TUI terminal prompt) to be executed immediately.
+* **`manage_mcp`** (`src/tools/mcp_manager.rs`): List, add, remove, enable, or disable Model Context Protocol (MCP) server definitions in user configurations.
+* **`grep_search`** (`src/tools/grep.rs`): Recursively grep for patterns or regex inside codebase files with optimized binary/ignore filters.
+* **`git_manager`** (`src/tools/git_manager.rs`): Safe shell interface for staging (`add`), viewing `status`/`diff`, `commit` creation, and viewing logs.
+* **`code_outline`** (`src/tools/outline.rs`): Scans structure (traits, functions, classes, structs) of Rust, Python, Go, and JS/TS files.
+* **`db_inspector`** (`src/tools/db_inspector.rs`): Inspects SQLite databases, reads schemas, and securely runs read-only SELECT queries.

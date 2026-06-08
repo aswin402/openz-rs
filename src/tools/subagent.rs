@@ -468,7 +468,7 @@ impl Tool for CreateSubagentTool {
         }
 
         // Do not allow overwriting default subagents
-        let defaults = ["planner", "researcher", "architect", "skill_creator", "reviewer", "code_auditor", "debugger", "test_engineer", "devops_agent", "refactor_agent", "memory_manager", "vision_agent", "documentation_agent", "self_improvement", "skill_improvement", "openz_maintainer"];
+        let defaults = ["planner", "researcher", "architect", "skill_creator", "reviewer", "code_auditor", "debugger", "test_engineer", "devops_agent", "refactor_agent", "memory_manager", "vision_agent", "documentation_agent", "self_improvement", "skill_improvement", "openz_maintainer", "mcps_manager"];
         if defaults.contains(&name.as_str()) {
             return Err(anyhow!("Cannot overwrite default subagent '{}'", name));
         }
@@ -528,7 +528,7 @@ impl Tool for DeleteSubagentTool {
         let name = arguments.get("name").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'name' argument"))?.trim().to_string();
 
-        let defaults = ["planner", "researcher", "architect", "skill_creator", "reviewer", "code_auditor", "debugger", "test_engineer", "devops_agent", "refactor_agent", "memory_manager", "vision_agent", "documentation_agent", "self_improvement", "skill_improvement", "openz_maintainer"];
+        let defaults = ["planner", "researcher", "architect", "skill_creator", "reviewer", "code_auditor", "debugger", "test_engineer", "devops_agent", "refactor_agent", "memory_manager", "vision_agent", "documentation_agent", "self_improvement", "skill_improvement", "openz_maintainer", "mcps_manager"];
         if defaults.contains(&name.as_str()) {
             return Err(anyhow!("Cannot delete default subagent '{}'", name));
         }

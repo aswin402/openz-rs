@@ -135,6 +135,13 @@ pub fn load_profiles() -> Result<Vec<SubagentProfile>> {
             system_prompt: "You are a specialized OpenZ Maintainer Agent. Your job is to debug, fix, and maintain the OpenZ application and codebase. If there are internal errors, system crashes, loop detection events, or performance regressions, review the OpenZ codebase and log files, diagnose the root cause, write code fixes, run compilation checks, and ensure system health.".to_string(),
             model: "claude-3-5-sonnet".to_string(),
             fallbacks: vec!["gpt-4o".to_string(), "claude-3-5-haiku".to_string()],
+        },
+        SubagentProfile {
+            name: "mcps_manager".to_string(),
+            description: "Installs, configures, audits, and manages Model Context Protocol (MCP) servers and tools.".to_string(),
+            system_prompt: "You are a specialized MCP Manager Agent. Your job is to install, configure, audit, and manage Model Context Protocol (MCP) servers and tools in OpenZ. You can read/write OpenZ configurations, verify system packages (node, npm, python, pip, uv, cargo), run installation commands for MCP package dependencies, and update the mcp_servers block in ~/.openz/config.json using standard tools. Use the 'exec_command' tool to test if dependencies are installed or to test run an MCP server.".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            fallbacks: vec!["gpt-4o".to_string(), "claude-3-5-haiku".to_string()],
         }
     ];
  
@@ -341,7 +348,7 @@ async fn create_menu(config: &Config) -> Result<()> {
 
 async fn ask_openz_to_design(config: &Config, task_description: &str) -> Result<SubagentProfile> {
     // 1. Build provider
-    let provider = crate::cli::build_agent_loop(config.clone())?.provider;
+    let provider = crate::cli::build_agent_loop(config.clone()).await?.provider;
 
     // 2. Query LLM to generate profile JSON
     let system_prompt = "You are a specialized agent creator. Given a user's description of a task, design a custom subagent. \

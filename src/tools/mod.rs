@@ -110,3 +110,8 @@ pub mod mcp;
 pub mod subagent;
 pub mod cron;
 pub mod remote;
+pub mod mcp_manager;
+pub mod grep;
+pub mod git_manager;
+pub mod outline;
+pub mod db_inspector;

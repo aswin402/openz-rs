@@ -79,7 +79,7 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
 
 async fn run_job(config: &Config, job: &CronJob) -> Result<()> {
     // 1. Build AgentLoop using the configuration
-    let agent_loop = crate::cli::build_agent_loop(config.clone())?;
+    let agent_loop = crate::cli::build_agent_loop(config.clone()).await?;
     
     // 2. Generate a unique session key
     let session_key = format!("cron:{}", job.id);

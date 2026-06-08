@@ -28,3 +28,19 @@ pub struct McpToolWrapper {
 ```
 
 Since `McpToolWrapper` implements the `Tool` trait, the agent can call external tools exactly like native rust functions.
+
+---
+
+## 3. Rust-Native Defaults
+
+By default, OpenZ is pre-configured to utilize high-performance, lightweight Rust-native MCP servers compiled directly in the workspace, bypassing Node.js/npx runtimes completely:
+*   **`sequential-thinking`**: `/home/aswin/programming/vscode/myProjects/target/release/mcp-server-sequential-thinking`
+*   **`memory`**: `/home/aswin/programming/vscode/myProjects/target/release/openmemory_rs`
+
+---
+
+## 4. MCP Management System
+
+OpenZ provides a dual-layer management system for MCP configurations:
+1.  **`manage_mcp` tool**: Allows the agent to list, add, remove, enable, or disable server definitions inside `~/.openz/config.json` dynamically.
+2.  **`mcps_manager` subagent**: A protected subagent designed to inspect runtimes (rust/node/python), resolve dependencies, and automatically install/setup new MCP servers on demand.
