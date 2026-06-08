@@ -1,4 +1,4 @@
-# OpenZ 🦀⚡ `v0.0.2`
+# OpenZ 🦀⚡ `v0.0.3`
 
 OpenZ is a high-performance, asynchronous, ultra-lightweight personal AI agent framework built entirely in Rust. 
 
@@ -21,8 +21,9 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
   * **WhatsApp API (`whatsapp`):** Webhook-friendly adapter stub for WhatsApp Business integration.
 * **Global Activity Tracking:** Shared execution state manager (`~/.openz/activity.json`). If you start a long-running task in the terminal TUI (`openz agent`) and ask the agent what it is doing via Telegram/Discord, it reads the active task logs of the CLI session and dynamically reports on the running command or current tool execution.
 * **Remote Session Control:** Cross-channel prompt forwarding. You can send commands, answers, or new prompts from other channels (like Telegram) to the active TUI session (`cli:direct`) using the `send_remote_input` tool. The TUI terminal prompt polls this queue in real-time, consumes the input, and executes it as if typed locally.
-* **Core Native Tools:** Built-in `read_file`, `write_file`, `list_dir`, `exec_command` (subprocess sandboxing), `web_fetch` (web scraping & text stripping), `grep_search` (fast codebase search), `git_manager` (git status/diff/add/commit/log), `code_outline` (regex outline scanner), and `db_inspector` (safe SQLite database explorer).
-* **Rust-Native MCP Servers:** Out-of-the-box support for high-performance Rust MCP binaries (`mcp-server-sequential-thinking` and `openmemory_rs`), automatically cleaning up old Node/JS configurations. Exposes a native `manage_mcp` tool to CRUD configurations.
+* **Core Native Tools:** Built-in `read_file`, `write_file`, `list_dir`, `exec_command` (subprocess sandboxing), `web_fetch` (upgraded DOM scraper), `grep_search` (codebase text search), `git_manager` (status/diff/commits), `code_outline` (structural outline), `db_inspector` (SQLite reader), `cargo_manager` (cargo builds/checks/tests), `clipboard` (system clipboard get/set), `open_path` (opening files/URLs in default apps), `file_watcher` (background auto-healing compiler watcher), `ast_grep` (structural code search using AST patterns), `gsd_browser` (real browser navigation/interaction automation), and `web_search` (privacy-first search query results).
+* **Rust-Native MCP Servers:** Out-of-the-box support for high-performance Rust MCP binaries (`mcp-server-sequential-thinking` and `openmemory_rs` for memories, and `office` via `opendocswork-mcp` for Word/Excel/PowerPoint processing). Exposes a native `manage_mcp` tool to CRUD configurations.
+* **Cron & Scheduler:** Upgraded scheduling loop supporting Unix cron syntax (`*/5 * * * *`) alongside simple durations.
 * **Native Prompt Compression:** Built-in support for Caveman prompt compression (toggleable via `cavemanMode` config), reducing token consumption by **~75%** while preserving technical substance.
 * **Universal API Clients:** Abstractions supporting OpenAI-compatible endpoints (DeepSeek, Groq, Ollama, OpenRouter, Gemini) and Anthropic Claude. Added custom deployments support for Azure OpenAI.
 * **Auto-Provider Resolution:** Detects the appropriate provider and endpoint automatically based on model name keywords or environment variables.

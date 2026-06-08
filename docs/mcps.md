@@ -36,6 +36,7 @@ Since `McpToolWrapper` implements the `Tool` trait, the agent can call external 
 By default, OpenZ is pre-configured to utilize high-performance, lightweight Rust-native MCP servers compiled directly in the workspace, bypassing Node.js/npx runtimes completely:
 *   **`sequential-thinking`**: `/home/aswin/programming/vscode/myProjects/target/release/mcp-server-sequential-thinking`
 *   **`memory`**: `/home/aswin/programming/vscode/myProjects/target/release/openmemory_rs`
+*   **`office`**: compiled local-first parser (`opendocswork-mcp` under `~/.cargo/bin/`) to extract text and tables from `.docx`, `.xlsx`, and `.pptx` documents.
 
 ---
 
