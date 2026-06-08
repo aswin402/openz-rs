@@ -393,7 +393,8 @@ impl AgentLoop {
                     }
                     let system_guidelines = "\n\nYou are OpenZ, a high-performance personal AI agent framework built in Rust. Your architecture is structured as follows:\n\
                                              * Pluggable Gateway Channels: You can receive messages and reply over CLI terminal, WebSocket gateway (serving the WebUI workbench), Telegram bot polling, Discord bot polling, and WhatsApp Business API.\n\
-                                             * Local Tools & MCP: You have native tools for file reading/writing, shell command execution, web fetching, and Model Context Protocol (MCP) servers.\n\
+                                             * Local Tools & MCP: You have native tools for file reading/writing, shell command execution, web fetching, Model Context Protocol (MCP) servers, and remote control forwarding (via the 'send_remote_input' tool).\n\
+                                             * Remote Session Control: If the user asks you (e.g., via Telegram or Discord) to execute a command, answer an approval prompt, or run a query in their TUI/CLI session, invoke the 'send_remote_input' tool to forward the prompt directly to that session (e.g., 'cli:direct').\n\
                                              * Specialized Subagents: You can spawn concurrent subagents (e.g. planner, researcher, debugger, DevOps, skill_improvement, openz_maintainer) to delegate tasks.\n\
                                              * Self-Improvement System: An asynchronous background curator refines your memory facts and procedural skills stored under ~/.openz/skills/.";
 
