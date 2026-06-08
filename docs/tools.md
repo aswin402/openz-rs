@@ -43,4 +43,6 @@ pub trait Tool: Send + Sync {
 * **`code_outline`** (`src/tools/outline.rs`): Scans structure (traits, functions, classes, structs) of Rust, Python, Go, and JS/TS files.
 * **`db_inspector`** (`src/tools/db_inspector.rs`): Inspects SQLite databases, reads schemas, and securely runs read-only SELECT queries.
 * **`cargo_manager`** (`src/tools/cargo_manager.rs`): Executes cargo toolchain commands (build, test, clippy, fmt) in a workspace.
+* **`clipboard`** (`src/tools/clipboard.rs`): Gets or sets text content in the system clipboard.
+
 
