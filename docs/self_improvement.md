@@ -106,3 +106,17 @@ OpenZ is capable of dynamically expanding its toolset by researching, installing
 4. **Integration:** Once verified, the agent writes a custom wrapper script and saves a matching Markdown skill file to `~/.openz/skills/` (e.g., `~/.openz/skills/my_new_tool.md`) containing usage instructions and absolute paths.
 5. **System Prompt Injection:** In subsequent turns, the new skill is automatically loaded into the system prompt, enabling OpenZ to invoke the newly installed tool dynamically.
 
+---
+
+## 7. The `self_improvement` Subagent
+
+To delegate manual or complex self-improvement tasks, OpenZ includes a built-in `self_improvement` subagent.
+
+### Capabilities:
+* **Task Delegation:** You can delegate complex self-improvement tasks (e.g., studying a transcript file, reviewing error logs, summarizing coding patterns, or curating a series of custom skills) to this subagent.
+* **Command Syntax:** Use the `/delegate` command to spawn the agent:
+  ```bash
+  /delegate self_improvement Review the recent cargo build errors and write a new compilation guide skill
+  ```
+
+

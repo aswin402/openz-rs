@@ -114,6 +114,13 @@ pub fn load_profiles() -> Result<Vec<SubagentProfile>> {
             system_prompt: "You are a specialized Documentation Agent. Maintain codebase clarity by writing docstrings, documenting module relations, updating README.md files, and writing onboarding guides.".to_string(),
             model: "gpt-4o-mini".to_string(),
             fallbacks: vec!["gpt-4o".to_string(), "claude-3-5-haiku".to_string()],
+        },
+        SubagentProfile {
+            name: "self_improvement".to_string(),
+            description: "Curates, updates, and refines agent memories and procedural skills.".to_string(),
+            system_prompt: "You are a specialized Self-Improvement Agent. Analyze user queries, feedback, style complaints, and task transcripts. Refine long-term memory facts, create or update procedural skills, write reusable style guidelines, and organize them under ~/.openz/skills/ so the agent learns and grows.".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            fallbacks: vec!["gpt-4o".to_string(), "claude-3-5-haiku".to_string()],
         }
     ];
  
