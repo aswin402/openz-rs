@@ -31,6 +31,16 @@ pub struct RunResult {
     pub tools_used: Vec<String>,
 }
 
+struct ActivityGuard<'a> {
+    session_key: &'a str,
+}
+
+impl<'a> Drop for ActivityGuard<'a> {
+    fn drop(&mut self) {
+        crate::agent::activity::update_activity(self.session_key, "Idle", None);
+    }
+}
+
 impl AgentLoop {
     pub fn new(
         config: Config,
@@ -47,6 +57,9 @@ impl AgentLoop {
     }
 
     pub async fn run(&self, user_content: &str, session_key: &str) -> Result<RunResult> {
+        crate::agent::activity::update_activity(session_key, "Processing user prompt", None);
+        let _guard = ActivityGuard { session_key };
+
         let mut state = TurnState::Restore;
         let mut session = Session::new(session_key);
         let mut messages = Vec::new();
@@ -384,11 +397,29 @@ impl AgentLoop {
                                              * Specialized Subagents: You can spawn concurrent subagents (e.g. planner, researcher, debugger, DevOps, skill_improvement, openz_maintainer) to delegate tasks.\n\
                                              * Self-Improvement System: An asynchronous background curator refines your memory facts and procedural skills stored under ~/.openz/skills/.";
 
+                    let mut activity_part = String::new();
+                    if let Some(activity) = crate::agent::activity::get_activity() {
+                        if activity.session_id != session_key {
+                            activity_part = format!(
+                                "\n\n[SYSTEM NOTICE] Status of the other active/last-run session on this computer:\n\
+                                 * Session ID: {}\n\
+                                 * Status: {}\n\
+                                 * Last/Current Tool: {}\n\
+                                 * Timestamp: {}\n",
+                                activity.session_id,
+                                activity.status,
+                                activity.current_tool.as_deref().unwrap_or("None"),
+                                activity.timestamp
+                            );
+                        }
+                    }
+
                     system_prompt = format!(
-                        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.{}{}{}{}{}",
+                        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.{}{}{}{}{}{}",
                         self.config.agents.defaults.bot_name,
                         chrono::Utc::now().to_rfc3339(),
                         system_guidelines,
+                        activity_part,
                         summary_part,
                         memory_part,
                         vision_instruction,
@@ -438,6 +469,7 @@ impl AgentLoop {
                             println!("🔧 Calling tool: {}({})", call.name, call.arguments);
                             tools_used.push(call.name.clone());
                             
+                            crate::agent::activity::update_activity(session_key, "Executing tool", Some(&call.name));
                             let result_val = match self.tools.get(&call.name) {
                                 Some(t) => match t.call(&call.arguments).await {
                                     Ok(res) => res,
@@ -445,6 +477,7 @@ impl AgentLoop {
                                 },
                                 None => serde_json::json!({ "error": format!("Tool '{}' not found", call.name) }),
                             };
+                            crate::agent::activity::update_activity(session_key, "Processing user prompt", None);
                             
                             tool_results.push((call.id.clone(), call.name.clone(), result_val));
                             

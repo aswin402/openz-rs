@@ -19,6 +19,7 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
   * **Telegram Polling (`telegram`):** Native bot listener with parallel loop handling.
   * **Discord bot (`discord`):** Plug-and-play adapter stub for Discord communities.
   * **WhatsApp API (`whatsapp`):** Webhook-friendly adapter stub for WhatsApp Business integration.
+* **Global Activity Tracking:** Shared execution state manager (`~/.openz/activity.json`). If you start a long-running task in the terminal TUI (`openz agent`) and ask the agent what it is doing via Telegram/Discord, it reads the active task logs of the CLI session and dynamically reports on the running command or current tool execution.
 * **Core Native Tools:** Built-in `read_file`, `write_file`, `list_dir`, `exec_command` (subprocess sandboxing), and `web_fetch` (web scraping & text stripping).
 * **Model Context Protocol (MCP):** Connects to external MCP servers over stdio, retrieves tools dynamically, and wraps them as native functions.
 * **Universal API Clients:** Abstractions supporting OpenAI-compatible endpoints (DeepSeek, Groq, Ollama, OpenRouter, Gemini) and Anthropic Claude. Added custom deployments support for Azure OpenAI.
