@@ -121,3 +121,4 @@ pub mod open;
 pub mod watcher;
 pub mod ast_grep;
 pub mod gsd_browser;
+pub mod web_search;

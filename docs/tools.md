@@ -48,6 +48,8 @@ pub trait Tool: Send + Sync {
 * **`file_watcher`** (`src/tools/watcher.rs`): Starts, stops, or queries a background filesystem watcher to run commands on file modifications.
 * **`ast_grep`** (`src/tools/ast_grep.rs`): Performs structural code searches across the codebase using AST patterns.
 * **`gsd_browser`** (`src/tools/gsd_browser.rs`): Controls a headless Chrome browser via GSD to interact with websites and perform browser automation.
+* **`web_search`** (`src/tools/web_search.rs`): Performs web search queries via DuckDuckGo HTML and returns clean lists of titles, URLs, and snippets.
+
 
 
 

@@ -260,6 +260,19 @@ impl Default for Config {
             enabled: true,
         });
 
+        let office_bin = if let Some(home) = dirs::home_dir() {
+            let p = home.join(".cargo").join("bin").join("opendocswork-mcp");
+            if p.exists() { p.to_string_lossy().to_string() } else { "opendocswork-mcp".to_string() }
+        } else {
+            "opendocswork-mcp".to_string()
+        };
+
+        mcp_servers.insert("office".to_string(), McpServerConfig {
+            command: office_bin,
+            args: vec!["--transport".to_string(), "stdio".to_string()],
+            enabled: true,
+        });
+
         Config {
             providers: ProvidersConfig::default(),
             agents: AgentsConfig::default(),

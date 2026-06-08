@@ -320,6 +320,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::watcher::FileWatcherTool));
     registry.register(std::sync::Arc::new(crate::tools::ast_grep::AstGrepTool));
     registry.register(std::sync::Arc::new(crate::tools::gsd_browser::GsdBrowserTool));
+    registry.register(std::sync::Arc::new(crate::tools::web_search::WebSearchTool::new()));
 
     // Register configured MCP tools
     for (name, mcp_config) in &config.mcp_servers {
