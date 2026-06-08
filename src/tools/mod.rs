@@ -115,3 +115,4 @@ pub mod grep;
 pub mod git_manager;
 pub mod outline;
 pub mod db_inspector;
+pub mod cargo_manager;
