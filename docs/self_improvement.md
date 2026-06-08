@@ -108,15 +108,29 @@ OpenZ is capable of dynamically expanding its toolset by researching, installing
 
 ---
 
-## 7. The `self_improvement` Subagent
+## 7. Self-Improvement & Maintenance Subagents
 
-To delegate manual or complex self-improvement tasks, OpenZ includes a built-in `self_improvement` subagent.
+To delegate manual or complex self-improvement and system health tasks, OpenZ includes three specialized, protected default subagents:
 
-### Capabilities:
-* **Task Delegation:** You can delegate complex self-improvement tasks (e.g., studying a transcript file, reviewing error logs, summarizing coding patterns, or curating a series of custom skills) to this subagent.
-* **Command Syntax:** Use the `/delegate` command to spawn the agent:
+### 1. `self_improvement`
+* **Purpose:** Analyzes queries, feedback, style complaints, and task transcripts to refine memory facts and curate new procedural skills under `~/.openz/skills/`.
+* **Delegation Command:**
   ```bash
-  /delegate self_improvement Review the recent cargo build errors and write a new compilation guide skill
+  /delegate self_improvement Review the recent conversation and extract a coding style guideline for Rust
+  ```
+
+### 2. `skill_improvement`
+* **Purpose:** Audits, optimizes, and refines existing skills in `~/.openz/skills/`. It reads active skill files, incorporates new workflows, fixes outdated build parameters, and merges overlapping skills.
+* **Delegation Command:**
+  ```bash
+  /delegate skill_improvement Audit the existing python_style skill and update it with the new venv rules we established
+  ```
+
+### 3. `openz_maintainer`
+* **Purpose:** Diagnoses internal errors, performance issues, configuration discrepancies, or loop detections inside OpenZ itself. It inspects log files, resolves codebase bugs, and ensures system health.
+* **Delegation Command:**
+  ```bash
+  /delegate openz_maintainer We encountered a connection timeout error in our Axum WebSocket channel. Please locate the cause and fix it in the src/ folder.
   ```
 
 

@@ -121,6 +121,20 @@ pub fn load_profiles() -> Result<Vec<SubagentProfile>> {
             system_prompt: "You are a specialized Self-Improvement Agent. Analyze user queries, feedback, style complaints, and task transcripts. Refine long-term memory facts, create or update procedural skills, write reusable style guidelines, and organize them under ~/.openz/skills/ so the agent learns and grows.".to_string(),
             model: "claude-3-5-sonnet".to_string(),
             fallbacks: vec!["gpt-4o".to_string(), "claude-3-5-haiku".to_string()],
+        },
+        SubagentProfile {
+            name: "skill_improvement".to_string(),
+            description: "Audits, optimizes, and refines active agent skills inside ~/.openz/skills/.".to_string(),
+            system_prompt: "You are a specialized Skill Improvement Agent. Your job is to audit, optimize, and refine active procedural skills inside ~/.openz/skills/. You have full access to read, list, add, and modify these markdown skill files using standard file tools. Read the existing files in ~/.openz/skills/, analyze compiler feedback, execution logs, or user styling preferences, and optimize, restructure, merge, or rewrite the skills to make the agent more accurate, efficient, and warning-free.".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            fallbacks: vec!["gpt-4o".to_string(), "claude-3-5-haiku".to_string()],
+        },
+        SubagentProfile {
+            name: "openz_maintainer".to_string(),
+            description: "Diagnoses internal errors, performance bugs, or loop detections inside OpenZ itself.".to_string(),
+            system_prompt: "You are a specialized OpenZ Maintainer Agent. Your job is to debug, fix, and maintain the OpenZ application and codebase. If there are internal errors, system crashes, loop detection events, or performance regressions, review the OpenZ codebase and log files, diagnose the root cause, write code fixes, run compilation checks, and ensure system health.".to_string(),
+            model: "claude-3-5-sonnet".to_string(),
+            fallbacks: vec!["gpt-4o".to_string(), "claude-3-5-haiku".to_string()],
         }
     ];
  
