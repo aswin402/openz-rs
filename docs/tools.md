@@ -46,6 +46,9 @@ pub trait Tool: Send + Sync {
 * **`clipboard`** (`src/tools/clipboard.rs`): Gets or sets text content in the system clipboard.
 * **`open_path`** (`src/tools/open.rs`): Opens a file, folder, or URL using the user's default system application.
 * **`file_watcher`** (`src/tools/watcher.rs`): Starts, stops, or queries a background filesystem watcher to run commands on file modifications.
+* **`ast_grep`** (`src/tools/ast_grep.rs`): Performs structural code searches across the codebase using AST patterns.
+* **`gsd_browser`** (`src/tools/gsd_browser.rs`): Controls a headless Chrome browser via GSD to interact with websites and perform browser automation.
+
 
 
 

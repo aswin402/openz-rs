@@ -119,3 +119,5 @@ pub mod cargo_manager;
 pub mod clipboard;
 pub mod open;
 pub mod watcher;
+pub mod ast_grep;
+pub mod gsd_browser;
