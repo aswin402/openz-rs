@@ -12,6 +12,7 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
 ## 🚀 Key Features
 
 * **Persistent Workspace Loops:** Session history, workspace file scopes, and local tool execution survive long-running turn completions.
+* **Long-Term Memory Consolidation:** Compresses historical facts, user developer preferences, and decisions into a persistent session memory list. Use `/memory` commands to inspect or manually update them.
 * **Three Integrated Chat Channels:**
   * **Console CLI (`agent`):** Direct interactive chat in your terminal with slash commands.
   * **WebSocket Gateway (`gateway`):** Web server that feeds the visual WebUI workbench.
@@ -54,7 +55,7 @@ To start a direct chat session in your terminal:
 ```bash
 ./target/release/openz agent
 ```
-*Use `/help`, `/history`, `/clear`, `/status` slash commands inside the prompt.*
+*Use `/help`, `/history`, `/clear`, `/status`, `/memory` slash commands inside the prompt.*
 
 ### 4. Start Gateway (WebUI)
 To start the WebSocket gateway server to connect to the browser WebUI:

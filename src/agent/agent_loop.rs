@@ -114,6 +114,41 @@ impl AgentLoop {
                                     eprintln!("Warning: Failed to summarize conversation history: {}", e);
                                 }
                             }
+
+                            // Consolidate long-term memory
+                            let existing_memory = session.metadata.get("memory")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+
+                            let system_prompt_mem = "You are a specialized Memory Manager. Your task is to update the long-term memory of key facts, user preferences, decisions, and guidelines based on new conversation history.\n\nIncorporate new facts into the existing memory, remove deprecated/contradicted information, and return a clean, consolidated Markdown list of memory facts. Keep it concise, organized, and focused on durable project context.";
+                            let mut mem_prompt_content = String::new();
+                            if !existing_memory.is_empty() {
+                                mem_prompt_content.push_str(&format!("Existing memory:\n{}\n\n", existing_memory));
+                            }
+                            mem_prompt_content.push_str("New conversation history to extract facts/decisions from:\n");
+                            for msg in &messages_to_summarize {
+                                mem_prompt_content.push_str(&format!("[{}]: {}\n", msg.role, msg.content));
+                            }
+
+                            let mem_msgs = vec![Message {
+                                role: "user".to_string(),
+                                content: mem_prompt_content,
+                                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                                extra: serde_json::Map::new(),
+                            }];
+
+                            println!("🧠 Consolidating long-term memory...");
+                            match self.provider.chat(&system_prompt_mem, &mem_msgs, &[], &settings).await {
+                                Ok(resp) => {
+                                    if let Some(new_memory) = resp.content {
+                                        session.metadata.insert("memory".to_string(), serde_json::Value::String(new_memory));
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("Warning: Failed to update long-term memory: {}", e);
+                                }
+                            }
+
                             session.messages = session.messages[k..].to_vec();
                         } else {
                             session.messages = session.messages[len - max_msgs..].to_vec();
@@ -127,7 +162,7 @@ impl AgentLoop {
                         if let Some(cmd) = parts.first() {
                             match *cmd {
                                 "/help" => {
-                                    final_content = "OpenZ Rebranded AI Agent Command Menu:\n/help - Show this menu\n/history - Show history\n/clear - Reset session history\n/status - Print active model and configuration info\n/delegate <goal> - Directly delegate a task to a focused subagent".to_string();
+                                    final_content = "OpenZ Rebranded AI Agent Command Menu:\n/help - Show this menu\n/history - Show history\n/clear - Reset session history\n/status - Print active model and configuration info\n/memory - Show or manage agent memory (/memory, /memory clear, /memory add <fact>)\n/delegate <goal> - Directly delegate a task to a focused subagent".to_string();
                                     state = TurnState::Done;
                                     continue;
                                 }
@@ -155,6 +190,45 @@ impl AgentLoop {
                                         self.config.agents.defaults.workspace,
                                         session.messages.len()
                                     );
+                                    state = TurnState::Done;
+                                    continue;
+                                }
+                                "/memory" => {
+                                    if parts.len() < 2 {
+                                        let memory = session.metadata.get("memory")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("No memory recorded yet.");
+                                        final_content = format!("=== Agent Long-Term Memory ===\n{}", memory);
+                                    } else {
+                                        match parts[1] {
+                                            "clear" => {
+                                                session.metadata.remove("memory");
+                                                self.session_manager.save(&session)?;
+                                                final_content = "Agent memory has been cleared.".to_string();
+                                            }
+                                            "add" | "set" => {
+                                                if parts.len() < 3 {
+                                                    final_content = "Usage: /memory add <fact>".to_string();
+                                                } else {
+                                                    let fact = parts[2..].join(" ");
+                                                    let mut existing = session.metadata.get("memory")
+                                                        .and_then(|v| v.as_str())
+                                                        .unwrap_or("")
+                                                        .to_string();
+                                                    if !existing.is_empty() {
+                                                        existing.push_str("\n");
+                                                    }
+                                                    existing.push_str(&format!("* {}", fact));
+                                                    session.metadata.insert("memory".to_string(), serde_json::Value::String(existing));
+                                                    self.session_manager.save(&session)?;
+                                                    final_content = format!("Added to memory: {}", fact);
+                                                }
+                                            }
+                                            _ => {
+                                                final_content = "Unknown memory command. Options: /memory, /memory clear, /memory add <fact>".to_string();
+                                            }
+                                        }
+                                    }
                                     state = TurnState::Done;
                                     continue;
                                 }
@@ -202,15 +276,22 @@ impl AgentLoop {
                             summary_part = format!("\n\nHere is a summary of the earlier part of the conversation:\n{}\n", summary);
                         }
                     }
+                    let mut memory_part = String::new();
+                    if let Some(memory) = session.metadata.get("memory").and_then(|v| v.as_str()) {
+                        if !memory.is_empty() {
+                            memory_part = format!("\n\nHere is the long-term memory of key facts, preferences, and decisions from this session:\n{}\n", memory);
+                        }
+                    }
                     let mut vision_instruction = "";
                     if !crate::providers::model_supports_vision(&self.config.agents.defaults.model) {
                         vision_instruction = " If a message contains a markdown image link (e.g. ![](file://...)) and you need to analyze or describe the image, you MUST delegate the visual analysis task to the specialized 'vision_agent' tool (or the 'delegate_task' tool) to see and report on the image contents.";
                     }
                     system_prompt = format!(
-                        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.{}{}{}",
+                        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.{}{}{}{}",
                         self.config.agents.defaults.bot_name,
                         chrono::Utc::now().to_rfc3339(),
                         summary_part,
+                        memory_part,
                         vision_instruction,
                         ""
                     );

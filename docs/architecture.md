@@ -41,6 +41,6 @@ graph TD
 * **`providers/`**: Implementations for LLM APIs (OpenAI-compatible and Anthropic).
 * **`tools/`**: Registry and implementations for native tools, subagent delegation, and MCP stdio wrapper tools.
 * **`cron/`**: Handles scheduling and execution of background cron tasks.
-* **`session.rs`**: Stores conversation message logs and dynamic summaries in JSON files under `~/.openz/sessions/`.
-* **`agent/agent_loop.rs`**: The core execution state machine (`TurnState`) that manages conversation restoration, context compaction (LLM summarization), command extraction, context loading, LLM completions, tool call routing, session saving, and message responses.
+* **`session.rs`**: Stores conversation message logs, dynamic summaries, and long-term memory prompts in JSON files under `~/.openz/sessions/`.
+* **`agent/agent_loop.rs`**: The core execution state machine (`TurnState`) that manages conversation restoration, context compaction (LLM short-term summarization and long-term memory updates), command extraction, context loading, LLM completions, tool call routing, session saving, and message responses.
 * **`channels/`**: Concrete triggers that capture user queries and dispatch replies. Supports Terminal CLI, WebUI WebSocket Server, and Telegram Long-Polling.
