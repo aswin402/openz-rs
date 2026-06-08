@@ -424,6 +424,74 @@ impl AgentLoop {
             }
         }
 
+        // Spawn background self-improvement curator
+        if !user_content.starts_with('/') {
+            let session_manager = self.session_manager.clone();
+            let session_key = session_key.to_string();
+            let provider = self.provider.clone();
+            let messages = messages.clone();
+
+            tokio::spawn(async move {
+                // 1. Get existing memory from current file
+                let existing_memory = if let Ok(s) = session_manager.load(&session_key) {
+                    s.metadata.get("memory")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                } else {
+                    String::new()
+                };
+
+                // 2. Setup prompts for self-improvement review
+                let system_prompt_review = "You are a specialized Self-Improvement Curator. Review the conversation history between the User and the AI Agent.\n\
+                    Your task is to extract:\n\
+                    1. Explicit corrections, preferences, or style guidelines the user stated (e.g. \"explain less\", \"stop doing X\", \"prefer Y format\").\n\
+                    2. Durable facts, constraints, or decisions about the project/task.\n\n\
+                    Incorporate these new facts/preferences into the existing memory list. Remove deprecated or contradicted information. \
+                    Format the output as a clean Markdown list of memory facts. If nothing new is worth saving, output exactly 'Nothing to save.'. Do not include any other text.";
+
+                let mut prompt_content = String::new();
+                if !existing_memory.is_empty() {
+                    prompt_content.push_str(&format!("Existing Memory:\n{}\n\n", existing_memory));
+                }
+                prompt_content.push_str("Conversation history to review:\n");
+                for msg in &messages {
+                    prompt_content.push_str(&format!("[{}]: {}\n", msg.role, msg.content));
+                }
+
+                let review_msgs = vec![crate::session::Message {
+                    role: "user".to_string(),
+                    content: prompt_content,
+                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                    extra: serde_json::Map::new(),
+                }];
+
+                let settings = crate::providers::GenerationSettings {
+                    temperature: 0.1,
+                    max_tokens: 1024,
+                    reasoning_effort: None,
+                };
+
+                // 3. Query the LLM
+                if let Ok(resp) = provider.chat(&system_prompt_review, &review_msgs, &[], &settings).await {
+                    if let Some(new_memory) = resp.content {
+                        let trimmed = new_memory.trim();
+                        if !trimmed.is_empty() && trimmed != "Nothing to save." {
+                            // 4. Reload latest session from disk to prevent overwriting new messages
+                            if let Ok(mut latest_session) = session_manager.load(&session_key) {
+                                latest_session.metadata.insert("memory".to_string(), serde_json::Value::String(trimmed.to_string()));
+                                if let Err(e) = session_manager.save(&latest_session) {
+                                    eprintln!("Warning: Failed to save self-improvement memory: {}", e);
+                                } else {
+                                    println!("\n💾 [Self-Improvement] Memory updated based on recent conversation.");
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
         Ok(RunResult {
             content: final_content,
             tools_used,
