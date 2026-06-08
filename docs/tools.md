@@ -36,3 +36,4 @@ pub trait Tool: Send + Sync {
 * **`optimize_subagent`** (`src/tools/subagent.rs`): Refines a subagent's system prompt using AI based on feedback logs or execution errors.
 * **`create_subagent`** (`src/tools/subagent.rs`): Dynamically creates and saves a new custom specialized subagent profile.
 * **`delete_subagent`** (`src/tools/subagent.rs`): Deletes a custom subagent profile (default subagents are protected and cannot be deleted).
+* **`send_remote_input`** (`src/tools/remote.rs`): Forwards a prompt or input instruction to another active session (like the TUI terminal prompt) to be executed immediately.

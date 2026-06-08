@@ -39,6 +39,12 @@ fn read_line_raw(prompt: &str) -> anyhow::Result<String> {
     stdout().flush()?;
 
     loop {
+        if let Some(inbox_msg) = crate::agent::activity::pop_inbox_message("cli:direct") {
+            disable_raw_mode()?;
+            println!("\r\n📥 [Remote Control] Received prompt: {}", inbox_msg.message);
+            return Ok(inbox_msg.message);
+        }
+
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key_event) = event::read()? {
                 if key_event.kind == KeyEventKind::Release {

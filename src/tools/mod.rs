@@ -109,3 +109,4 @@ pub mod web;
 pub mod mcp;
 pub mod subagent;
 pub mod cron;
+pub mod remote;

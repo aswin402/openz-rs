@@ -11,6 +11,7 @@ use crate::tools::shell::ExecCommandTool;
 use crate::tools::web::WebFetchTool;
 use crate::tools::subagent::{DelegateTaskTool, OptimizeSubagentTool, CreateSubagentTool, DeleteSubagentTool};
 use crate::tools::cron::{ScheduleJobTool, ListJobsTool, RemoveJobTool};
+use crate::tools::remote::SendRemoteInputTool;
 use crate::session::SessionManager;
 use crate::agent::AgentLoop;
 use crate::channels::{CliChannel, WsGateway, TelegramChannel, Channel};
@@ -307,6 +308,7 @@ pub fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(ScheduleJobTool));
     registry.register(std::sync::Arc::new(ListJobsTool));
     registry.register(std::sync::Arc::new(RemoveJobTool));
+    registry.register(std::sync::Arc::new(SendRemoteInputTool));
     
     Ok(AgentLoop::new(config, provider, registry, session_manager))
 }

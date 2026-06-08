@@ -34,3 +34,37 @@ pub fn get_activity() -> Option<AgentActivity> {
     let content = fs::read_to_string(path).ok()?;
     serde_json::from_str(&content).ok()
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct InboxMessage {
+    pub message: String,
+    pub sender: String,
+    pub timestamp: String,
+}
+
+pub fn send_inbox_message(session_id: &str, message: &str, sender: &str) -> anyhow::Result<()> {
+    let slug = session_id.replace(':', "_");
+    let path = resolve_path(&format!("~/.openz/inbox_{}.json", slug));
+    let msg = InboxMessage {
+        message: message.to_string(),
+        sender: sender.to_string(),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    };
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let content = serde_json::to_string_pretty(&msg)?;
+    fs::write(path, content)?;
+    Ok(())
+}
+
+pub fn pop_inbox_message(session_id: &str) -> Option<InboxMessage> {
+    let slug = session_id.replace(':', "_");
+    let path = resolve_path(&format!("~/.openz/inbox_{}.json", slug));
+    if !path.exists() {
+        return None;
+    }
+    let content = fs::read_to_string(&path).ok()?;
+    let _ = fs::remove_file(&path);
+    serde_json::from_str(&content).ok()
+}
