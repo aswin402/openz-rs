@@ -117,3 +117,4 @@ pub mod outline;
 pub mod db_inspector;
 pub mod cargo_manager;
 pub mod clipboard;
+pub mod open;

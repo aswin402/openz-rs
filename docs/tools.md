@@ -44,5 +44,7 @@ pub trait Tool: Send + Sync {
 * **`db_inspector`** (`src/tools/db_inspector.rs`): Inspects SQLite databases, reads schemas, and securely runs read-only SELECT queries.
 * **`cargo_manager`** (`src/tools/cargo_manager.rs`): Executes cargo toolchain commands (build, test, clippy, fmt) in a workspace.
 * **`clipboard`** (`src/tools/clipboard.rs`): Gets or sets text content in the system clipboard.
+* **`open_path`** (`src/tools/open.rs`): Opens a file, folder, or URL using the user's default system application.
+
 
 

@@ -2,6 +2,8 @@ use crate::tools::Tool;
 use anyhow::{Result, anyhow};
 use reqwest::Client;
 use regex::Regex;
+use scraper::Html;
+use scraper::node::Node;
 
 pub struct WebFetchTool {
     client: Client,
@@ -11,6 +13,39 @@ impl WebFetchTool {
     pub fn new() -> Self {
         WebFetchTool {
             client: Client::builder().use_rustls_tls().build().unwrap_or_default(),
+        }
+    }
+}
+
+fn walk_nodes(node: ego_tree::NodeRef<'_, Node>, text: &mut String) {
+    match node.value() {
+        Node::Text(t) => {
+            text.push_str(&t.text);
+        }
+        Node::Element(e) => {
+            let tag_name = e.name();
+            if tag_name == "script" || tag_name == "style" || tag_name == "head" {
+                return;
+            }
+
+            let is_block = matches!(
+                tag_name,
+                "p" | "div" | "br" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "tr" | "thead" | "tbody"
+            );
+            if is_block {
+                text.push('\n');
+            }
+            for child in node.children() {
+                walk_nodes(child, text);
+            }
+            if is_block {
+                text.push('\n');
+            }
+        }
+        _ => {
+            for child in node.children() {
+                walk_nodes(child, text);
+            }
         }
     }
 }
@@ -50,18 +85,13 @@ impl Tool for WebFetchTool {
 
         let html = res.text().await?;
 
-        let re_script = Regex::new(r"(?is)<script[^>]*>.*?</script>")?;
-        let re_style = Regex::new(r"(?is)<style[^>]*>.*?</style>")?;
-        let html_no_scripts = re_script.replace_all(&html, "");
-        let html_no_styles = re_style.replace_all(&html_no_scripts, "");
+        // Parse HTML DOM using scraper
+        let document = Html::parse_document(&html);
+        let mut raw_text = String::new();
+        walk_nodes(document.tree.root(), &mut raw_text);
 
-        let re_block = Regex::new(r"(?i)</?(p|div|br|h[1-6]|li|tr|thead|tbody)[^>]*>")?;
-        let html_blocks = re_block.replace_all(&html_no_styles, "\n");
-
-        let re_tags = Regex::new(r"<[^>]*>")?;
-        let text = re_tags.replace_all(&html_blocks, "");
-
-        let clean_text = text
+        // Replace html entities
+        let clean_text = raw_text
             .replace("&nbsp;", " ")
             .replace("&lt;", "<")
             .replace("&gt;", ">")
@@ -75,5 +105,37 @@ impl Tool for WebFetchTool {
         let final_text = re_newlines.replace_all(&clean_text_spaces, "\n");
 
         Ok(serde_json::Value::String(final_text.trim().to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_html_parsing() {
+        let html = r#"
+            <html>
+                <head>
+                    <title>Test Page</title>
+                    <style>body { color: red; }</style>
+                </head>
+                <body>
+                    <h1>Hello World</h1>
+                    <p>This is a <b>test</b> page.</p>
+                    <script>console.log("ignore me");</script>
+                </body>
+            </html>
+        "#;
+
+        let document = Html::parse_document(html);
+        let mut raw_text = String::new();
+        walk_nodes(document.tree.root(), &mut raw_text);
+
+        let clean = raw_text.trim();
+        assert!(clean.contains("Hello World"));
+        assert!(clean.contains("This is a test page."));
+        assert!(!clean.contains("body {"));
+        assert!(!clean.contains("console.log"));
     }
 }
