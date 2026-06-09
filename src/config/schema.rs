@@ -28,6 +28,20 @@ pub struct ProvidersConfig {
     pub groq: Option<ProviderConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ollama: Option<ProviderConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimax: Option<ProviderConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mistral: Option<ProviderConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "z.ai")]
+    pub z_ai: Option<ProviderConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nvidia: Option<ProviderConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "opencode_zen")]
+    pub opencode_zen: Option<ProviderConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cerebres: Option<ProviderConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "google_ai_studio")]
+    pub google_ai_studio: Option<ProviderConfig>,
     #[serde(flatten)]
     pub others: HashMap<String, ProviderConfig>,
 }
@@ -203,6 +217,13 @@ impl Default for ProvidersConfig {
             deepseek: None,
             groq: None,
             ollama: None,
+            minimax: None,
+            mistral: None,
+            z_ai: None,
+            nvidia: None,
+            opencode_zen: None,
+            cerebres: None,
+            google_ai_studio: None,
             others: HashMap::new(),
         }
     }

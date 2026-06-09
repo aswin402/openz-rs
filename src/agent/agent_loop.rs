@@ -709,7 +709,7 @@ impl AgentLoop {
                                     if let Err(e) = session_manager.save(&latest_session) {
                                         eprintln!("{}▲ [Self-Improvement] Failed to save self-improvement memory: {}{}", AURA_GOLD, e, COLOR_RESET);
                                     } else {
-                                        println!("\n{}◉ Memory updated [Self-Improvement]{}", EMERALD_GREEN, COLOR_RESET);
+                                        println!("\n{}◇ [Self-Improvement] Memory updated based on recent conversation.{}", AURA_BLUE, COLOR_RESET);
                                     }
                                 }
                             }
@@ -720,7 +720,7 @@ impl AgentLoop {
                                     if let Err(e) = crate::agent::skills::save_skill(&skill.name, &skill.content) {
                                         eprintln!("{}▲ [Self-Improvement] Failed to save self-improvement skill '{}': {}{}", AURA_GOLD, skill.name, e, COLOR_RESET);
                                     } else {
-                                        println!("{}◉ Skill '{}' updated/created [Self-Improvement]{}", EMERALD_GREEN, skill.name, COLOR_RESET);
+                                        println!("{}◇ [Self-Improvement] Skill '{}' updated/created based on recent conversation.{}", AURA_BLUE, skill.name, COLOR_RESET);
                                     }
                                 }
                             }

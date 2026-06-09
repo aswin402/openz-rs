@@ -159,7 +159,7 @@ impl Tool for DelegateProfileTool {
         let mut last_error = None;
         for (idx, model_name) in models_to_try.iter().enumerate() {
             if idx > 0 {
-                println!("{}[WARN] ⚠️ Primary model failed. Trying fallback model ({} of {}): {}{}", AURA_GOLD, idx, models_to_try.len() - 1, model_name, COLOR_RESET);
+                println!("{}▲ Primary model failed. Trying fallback model ({} of {}): {}{}", AURA_GOLD, idx, models_to_try.len() - 1, model_name, COLOR_RESET);
             }
 
             let provider = match build_provider_for_model(&self.config, model_name) {

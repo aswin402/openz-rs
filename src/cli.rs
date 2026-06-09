@@ -89,7 +89,7 @@ pub async fn run_cli() -> Result<()> {
 async fn handle_onboard() -> Result<()> {
     println!("=== Welcome to the OpenZ Setup Wizard ===");
     
-    let providers = vec!["anthropic", "openai", "openrouter", "deepseek", "groq", "ollama"];
+    let providers = vec!["anthropic", "openai", "openrouter", "deepseek", "groq", "ollama", "minimax"];
     let provider_name = Select::new("Choose an LLM provider:", providers).prompt()?;
     
     let mut api_key = None;
@@ -107,6 +107,7 @@ async fn handle_onboard() -> Result<()> {
         "deepseek" => "https://api.deepseek.com/v1",
         "groq" => "https://api.groq.com/openai/v1",
         "ollama" => "http://localhost:11434/v1",
+        "minimax" => "https://api.minimax.io/v1",
         _ => "",
     };
     
@@ -124,6 +125,7 @@ async fn handle_onboard() -> Result<()> {
         "deepseek" => "deepseek-chat",
         "groq" => "llama3-70b-8192",
         "ollama" => "llama3",
+        "minimax" => "MiniMax-M3",
         _ => "",
     };
     
@@ -156,6 +158,7 @@ async fn handle_onboard() -> Result<()> {
         "deepseek" => config.providers.deepseek = p_config,
         "groq" => config.providers.groq = p_config,
         "ollama" => config.providers.ollama = p_config,
+        "minimax" => config.providers.minimax = p_config,
         _ => {}
     }
     
@@ -263,6 +266,69 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
             let base = p.and_then(|x| x.api_base.clone())
                 .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
             (String::new(), base, defaults.model.clone())
+        }
+        "minimax" => {
+            let p = config.providers.minimax.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("MINIMAX_API_KEY").ok())
+                .unwrap_or_default();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.minimax.io/v1".to_string());
+            (key, base, defaults.model.clone())
+        }
+        "mistral" => {
+            let p = config.providers.mistral.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("MISTRAL_API_KEY").ok())
+                .unwrap_or_default();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.mistral.ai/v1".to_string());
+            (key, base, defaults.model.clone())
+        }
+        "z.ai" => {
+            let p = config.providers.z_ai.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("Z_AI_API_KEY").ok())
+                .unwrap_or_default();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.z.ai/api/paas/v4/".to_string());
+            (key, base, defaults.model.clone())
+        }
+        "nvidia" => {
+            let p = config.providers.nvidia.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("NVIDIA_API_KEY").ok())
+                .unwrap_or_default();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://integrate.api.nvidia.com/v1".to_string());
+            (key, base, defaults.model.clone())
+        }
+        "opencode_zen" | "opencode zen" => {
+            let p = config.providers.opencode_zen.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("OPENCODE_ZEN_API_KEY").ok())
+                .unwrap_or_default();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://opencode.ai/zen/v1".to_string());
+            (key, base, defaults.model.clone())
+        }
+        "cerebres" => {
+            let p = config.providers.cerebres.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("CEREBRES_API_KEY").ok())
+                .unwrap_or_default();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.cerebras.ai/v1".to_string());
+            (key, base, defaults.model.clone())
+        }
+        "google_ai_studio" | "google ai studio" => {
+            let p = config.providers.google_ai_studio.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("GOOGLE_AI_STUDIO_API_KEY").ok())
+                .unwrap_or_default();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta/openai/".to_string());
+            (key, base, defaults.model.clone())
         }
         _ => {
             return Err(anyhow!("Unsupported or unconfigured provider: {}", provider_name));
@@ -389,7 +455,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
 
 
 
-fn load_session_history() -> Result<Vec<HistoryItem>> {
+pub fn load_session_history() -> Result<Vec<HistoryItem>> {
     let sessions_dir = resolve_path("~/.openz/sessions");
     if !sessions_dir.exists() {
         return Ok(Vec::new());
@@ -430,7 +496,7 @@ fn load_session_history() -> Result<Vec<HistoryItem>> {
     Ok(items)
 }
 
-fn archive_current_session(session_manager: &SessionManager) -> Result<()> {
+pub fn archive_current_session(session_manager: &SessionManager) -> Result<()> {
     if let Ok(mut current_session) = session_manager.load("cli:direct") {
         if !current_session.messages.is_empty() {
             let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
@@ -685,7 +751,7 @@ async fn handle_configure() -> Result<()> {
 
 async fn handle_providers_config(config: &mut Config) -> Result<()> {
     println!("\n--- Configure Provider ---");
-    let providers = vec!["anthropic", "openai", "openrouter", "deepseek", "groq", "ollama"];
+    let providers = vec!["anthropic", "openai", "openrouter", "deepseek", "groq", "ollama", "minimax"];
     let provider_name = Select::new("Choose an LLM provider:", providers).prompt()?;
     
     let mut api_key = None;
@@ -703,6 +769,7 @@ async fn handle_providers_config(config: &mut Config) -> Result<()> {
         "deepseek" => "https://api.deepseek.com/v1",
         "groq" => "https://api.groq.com/openai/v1",
         "ollama" => "http://localhost:11434/v1",
+        "minimax" => "https://api.minimax.io/v1",
         _ => "",
     };
     
@@ -720,6 +787,7 @@ async fn handle_providers_config(config: &mut Config) -> Result<()> {
         "deepseek" => "deepseek-chat",
         "groq" => "llama3-70b-8192",
         "ollama" => "llama3",
+        "minimax" => "MiniMax-M3",
         _ => "",
     };
     
@@ -750,6 +818,7 @@ async fn handle_providers_config(config: &mut Config) -> Result<()> {
         "deepseek" => config.providers.deepseek = p_config,
         "groq" => config.providers.groq = p_config,
         "ollama" => config.providers.ollama = p_config,
+        "minimax" => config.providers.minimax = p_config,
         _ => {}
     }
     

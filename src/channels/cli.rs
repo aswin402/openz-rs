@@ -3,10 +3,6 @@ use crate::config::schema::AgentDefaults;
 use crate::agent::style::*;
 use std::io::{self, Write};
 
-pub struct CliChannel {
-    agent_loop: AgentLoop,
-    defaults: AgentDefaults,
-}
 
 fn handle_clipboard_paste(index: usize) -> anyhow::Result<std::path::PathBuf> {
     use arboard::Clipboard;
@@ -67,16 +63,42 @@ fn print_colored_markdown(content: &str) {
     }
 }
 
+const SLASH_COMMANDS: &[(&str, &str)] = &[
+    ("/clear", "Clear screen"),
+    ("/exit", "Exit OpenZ"),
+    ("/help", "List slash commands"),
+    ("/history", "Restore/switch sessions using selection menu"),
+    ("/mcps", "List configured MCP servers"),
+    ("/memory", "View metadata memory"),
+    ("/model", "Show or change active default model"),
+    ("/new", "Start a new session"),
+    ("/skill", "List active skills"),
+];
+
 fn render_box(
     model: &str,
     provider: &str,
     session_manager: &crate::session::SessionManager,
     session_key: &str,
-    input: &str,
+    typed_input: &str,
+    selected_index: Option<usize>,
+    autocomplete_visible: bool,
     width: usize,
+    lines_printed: &mut usize,
 ) -> anyhow::Result<()> {
     use crate::agent::style::*;
     use std::io::{stdout, Write};
+    
+    // First, clear the previous rendering below the input line
+    if *lines_printed > 1 {
+        for _ in 0..(*lines_printed - 1) {
+            print!("\r\n\x1b[2K");
+        }
+        // Move cursor back up to the input line
+        print!("\x1b[{}A\r", *lines_printed - 1);
+    }
+    // Clear the input line itself
+    print!("\r\x1b[2K");
     
     // 1. Calculate token usage
     let session = session_manager.get_or_create(session_key);
@@ -150,41 +172,123 @@ fn render_box(
         RED_ORANGE, limit_str
     );
 
-    let status_line = format!(
-        "{}{}{}[{}]{}{}",
-        LIGHT_WHITE, line_fill,
-        LIGHT_WHITE, status_content, LIGHT_WHITE,
-        COLOR_RESET
-    );
-    
+    // Filter autocomplete dropdown suggestions
+    let mut matches = Vec::new();
+    if typed_input.starts_with('/') && !typed_input.contains(' ') {
+        for &(cmd, desc) in SLASH_COMMANDS {
+            if cmd.starts_with(typed_input) {
+                matches.push((cmd, desc));
+            }
+        }
+    }
+
+    let status_line = if autocomplete_visible && !matches.is_empty() {
+        let line_fill: String = std::iter::repeat('─').take(width).collect();
+        format!("{}{}{}", LIGHT_WHITE, line_fill, COLOR_RESET)
+    } else {
+        format!(
+            "{}{}{}[{}]{}{}",
+            LIGHT_WHITE, line_fill,
+            LIGHT_WHITE, status_content, LIGHT_WHITE,
+            COLOR_RESET
+        )
+    };
+
+    let display_text = if let Some(idx) = selected_index {
+        if idx < matches.len() {
+            matches[idx].0
+        } else {
+            typed_input
+        }
+    } else {
+        typed_input
+    };
+
     // Print input line prefix and input
-    let input_width = string_display_width(input);
+    let input_width = string_display_width(display_text);
     let max_input_width = width.saturating_sub(3);
     
     let (display_input, display_width) = if input_width > max_input_width {
         let mut start_idx = 0;
         let mut current_width = input_width;
-        for (i, c) in input.char_indices() {
+        for (i, c) in display_text.char_indices() {
             if current_width <= max_input_width {
                 start_idx = i;
                 break;
             }
             current_width -= char_display_width(c);
         }
-        (&input[start_idx..], current_width)
+        (&display_text[start_idx..], current_width)
     } else {
-        (input, input_width)
+        (display_text, input_width)
     };
     
-    print!("\r\x1b[2K{}> {}{}", LIGHT_WHITE, COLOR_RESET, display_input);
-    
-    // Print status line below
+    print!("{}> {}{}", LIGHT_WHITE, COLOR_RESET, display_input);
+    let mut new_lines_printed = 1;
+
+    // Status line immediately below the input line
     print!("\r\n\x1b[2K{}", status_line);
-    
+    new_lines_printed += 1;
+
+    if autocomplete_visible && !matches.is_empty() {
+        let max_display = 5;
+        let mut start_idx = 0;
+        if let Some(idx) = selected_index {
+            if idx >= max_display {
+                start_idx = idx - max_display + 1;
+            }
+        }
+        let end_idx = (start_idx + max_display).min(matches.len());
+        
+        for i in start_idx..end_idx {
+            let (cmd, desc) = matches[i];
+            let is_selected = selected_index == Some(i);
+            
+            if is_selected {
+                print!("\r\n\x1b[2K> {}{:<30}{}{}{}", RED_ORANGE, cmd, AURA_SLATE, desc, COLOR_RESET);
+            } else {
+                print!("\r\n\x1b[2K  {:<32}{}{}{}", cmd, AURA_SLATE, desc, COLOR_RESET);
+            }
+            new_lines_printed += 1;
+        }
+        
+        let rem_below = matches.len() - end_idx;
+        let rem_above = start_idx;
+        if rem_below > 0 || rem_above > 0 {
+            let mut parts = Vec::new();
+            if rem_above > 0 {
+                parts.push(format!("↑ {} more", rem_above));
+            }
+            if rem_below > 0 {
+                parts.push(format!("↓ {} more", rem_below));
+            }
+            print!("\r\n\x1b[2K  {}{}{}", AURA_SLATE, parts.join(" / "), COLOR_RESET);
+            new_lines_printed += 1;
+        }
+
+        // Print spacing empty line
+        print!("\r\n\x1b[2K");
+        new_lines_printed += 1;
+
+        // Print help/navigation instructions at the bottom
+        print!("\r\n\x1b[2K  {}↑/↓ Navigate · enter Select · tab Complete{}", AURA_SLATE, COLOR_RESET);
+        
+        let cancel_text = format!("  {}esc to cancel{}", AURA_SLATE, COLOR_RESET);
+        let cancel_width = 15;
+        let model_display = format!("{}{}{}", AURA_SLATE, model, COLOR_RESET);
+        let model_width = model.chars().count();
+        let spacing = width.saturating_sub(cancel_width + model_width);
+        let spaces: String = std::iter::repeat(' ').take(spacing).collect();
+        
+        print!("\r\n\x1b[2K{}{}{}", cancel_text, spaces, model_display);
+        new_lines_printed += 2;
+    }
+
     // Move cursor back up to the input line and place it at the end of the text
     let cursor_col = 3 + display_width;
-    print!("\x1b[1A\x1b[{}G", cursor_col);
+    print!("\x1b[{}A\x1b[{}G", new_lines_printed - 1, cursor_col);
     
+    *lines_printed = new_lines_printed;
     stdout().flush()?;
     Ok(())
 }
@@ -200,12 +304,27 @@ fn read_line_raw(
     use std::io::stdout;
 
     enable_raw_mode()?;
-    let mut input = String::new();
+    let mut typed_input = String::new();
+    let mut selected_index: Option<usize> = None;
+    let mut history_index: Option<usize> = None;
+    let mut temp_typed_input = String::new();
     let mut pasted_images = Vec::new();
     let (width, _) = crossterm::terminal::size().unwrap_or((80, 24));
     let mut width_usize = width as usize;
+    let mut lines_printed = 1;
+    let mut autocomplete_visible = true;
 
-    render_box(model, provider, session_manager, session_key, &input, width_usize)?;
+    render_box(
+        model,
+        provider,
+        session_manager,
+        session_key,
+        &typed_input,
+        selected_index,
+        autocomplete_visible,
+        width_usize,
+        &mut lines_printed,
+    )?;
 
     loop {
         if let Some(inbox_msg) = crate::agent::activity::pop_inbox_message("cli:direct") {
@@ -225,6 +344,12 @@ fn read_line_raw(
 
                 // Ctrl+C or Ctrl+D to exit
                 if ctrl && (key_event.code == KeyCode::Char('c') || key_event.code == KeyCode::Char('d')) {
+                    if lines_printed > 1 {
+                        for _ in 0..(lines_printed - 1) {
+                            print!("\r\n\x1b[2K");
+                        }
+                        print!("\x1b[{}A\r", lines_printed - 1);
+                    }
                     disable_raw_mode()?;
                     println!("\r\nGoodbye!");
                     std::process::exit(0);
@@ -233,6 +358,18 @@ fn read_line_raw(
                 // Ctrl+V or Alt+V to paste image
                 let is_paste_image = (ctrl && key_event.code == KeyCode::Char('v')) || (alt && key_event.code == KeyCode::Char('v'));
                 if is_paste_image {
+                    if let Some(idx) = selected_index {
+                        let matches: Vec<(&str, &str)> = SLASH_COMMANDS.iter()
+                            .filter(|&&(cmd, _)| cmd.starts_with(&typed_input))
+                            .copied()
+                            .collect();
+                        if idx < matches.len() {
+                            typed_input = matches[idx].0.to_string();
+                        }
+                        selected_index = None;
+                    }
+                    history_index = None;
+                    
                     let next_index = pasted_images.len();
                     match handle_clipboard_paste(next_index) {
                         Ok(img_path) => {
@@ -242,19 +379,26 @@ fn read_line_raw(
                             } else {
                                 format!("[image{}]", next_index)
                             };
-                            let space = if input.is_empty() { "" } else { " " };
-                            input.push_str(&format!("{space}{placeholder}"));
+                            let space = if typed_input.is_empty() { "" } else { " " };
+                            typed_input.push_str(&format!("{space}{placeholder}"));
                             if let Ok((w, _)) = crossterm::terminal::size() {
                                 width_usize = w as usize;
                             }
-                            render_box(model, provider, session_manager, session_key, &input, width_usize)?;
+                            render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
                         }
                         Err(e) => {
+                            if lines_printed > 1 {
+                                for _ in 0..(lines_printed - 1) {
+                                    print!("\r\n\x1b[2K");
+                                }
+                                print!("\x1b[{}A\r", lines_printed - 1);
+                            }
                             print!("\r\n\x1b[2K{}✕ Error: No image found in clipboard: {}{}\r\n", ERROR_RED, e, COLOR_RESET);
+                            lines_printed = 1;
                             if let Ok((w, _)) = crossterm::terminal::size() {
                                 width_usize = w as usize;
                             }
-                            render_box(model, provider, session_manager, session_key, &input, width_usize)?;
+                            render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
                         }
                     }
                     continue;
@@ -265,19 +409,144 @@ fn read_line_raw(
                 }
 
                 match key_event.code {
-                    KeyCode::Char(c) => {
-                        input.push(c);
-                        render_box(model, provider, session_manager, session_key, &input, width_usize)?;
-                    }
-                    KeyCode::Backspace => {
-                        if !input.is_empty() {
-                            input.pop();
-                            render_box(model, provider, session_manager, session_key, &input, width_usize)?;
+                    KeyCode::Up => {
+                        autocomplete_visible = true;
+                        let mut autocomplete_active = false;
+                        if typed_input.starts_with('/') && !typed_input.contains(' ') {
+                            let matches: Vec<(&str, &str)> = SLASH_COMMANDS.iter()
+                                .filter(|&&(cmd, _)| cmd.starts_with(&typed_input))
+                                .copied()
+                                .collect();
+                            if !matches.is_empty() {
+                                autocomplete_active = true;
+                                selected_index = match selected_index {
+                                    None => Some(matches.len() - 1),
+                                    Some(idx) => Some((idx + matches.len() - 1) % matches.len()),
+                                };
+                                render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                            }
+                        }
+
+                        if !autocomplete_active {
+                            let session = session_manager.get_or_create(session_key);
+                            let history_prompts: Vec<String> = session.messages.iter()
+                                .filter(|m| m.role == "user")
+                                .map(|m| m.content.clone())
+                                .collect();
+                            if !history_prompts.is_empty() {
+                                if history_index.is_none() {
+                                    temp_typed_input = typed_input.clone();
+                                    history_index = Some(history_prompts.len() - 1);
+                                } else if let Some(idx) = history_index {
+                                    if idx > 0 {
+                                        history_index = Some(idx - 1);
+                                    }
+                                }
+                                if let Some(idx) = history_index {
+                                    typed_input = history_prompts[idx].clone();
+                                    selected_index = None;
+                                    render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                                }
+                            }
                         }
                     }
+                    KeyCode::Down => {
+                        autocomplete_visible = true;
+                        let mut autocomplete_active = false;
+                        if typed_input.starts_with('/') && !typed_input.contains(' ') {
+                            let matches: Vec<(&str, &str)> = SLASH_COMMANDS.iter()
+                                .filter(|&&(cmd, _)| cmd.starts_with(&typed_input))
+                                .copied()
+                                .collect();
+                            if !matches.is_empty() {
+                                autocomplete_active = true;
+                                selected_index = match selected_index {
+                                    None => Some(0),
+                                    Some(idx) => Some((idx + 1) % matches.len()),
+                                };
+                                render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                            }
+                        }
+
+                        if !autocomplete_active {
+                            let session = session_manager.get_or_create(session_key);
+                            let history_prompts: Vec<String> = session.messages.iter()
+                                .filter(|m| m.role == "user")
+                                .map(|m| m.content.clone())
+                                .collect();
+                            if !history_prompts.is_empty() {
+                                if let Some(idx) = history_index {
+                                    if idx < history_prompts.len() - 1 {
+                                        history_index = Some(idx + 1);
+                                        typed_input = history_prompts[idx + 1].clone();
+                                    } else {
+                                        history_index = None;
+                                        typed_input = temp_typed_input.clone();
+                                    }
+                                    selected_index = None;
+                                    render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                                }
+                            }
+                        }
+                    }
+                    KeyCode::Char(c) => {
+                        autocomplete_visible = true;
+                        selected_index = None;
+                        history_index = None;
+                        typed_input.push(c);
+                        render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                    }
+                    KeyCode::Backspace => {
+                        autocomplete_visible = true;
+                        selected_index = None;
+                        history_index = None;
+                        if !typed_input.is_empty() {
+                            typed_input.pop();
+                            render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                        }
+                    }
+                    KeyCode::Tab => {
+                        autocomplete_visible = true;
+                        if typed_input.starts_with('/') && !typed_input.contains(' ') {
+                            let matches: Vec<(&str, &str)> = SLASH_COMMANDS.iter()
+                                .filter(|&&(cmd, _)| cmd.starts_with(&typed_input))
+                                .copied()
+                                .collect();
+                            if !matches.is_empty() {
+                                if let Some(idx) = selected_index {
+                                    typed_input = matches[idx].0.to_string();
+                                } else {
+                                    typed_input = matches[0].0.to_string();
+                                }
+                                selected_index = None;
+                                history_index = None;
+                                render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                            }
+                        }
+                    }
+                    KeyCode::Esc => {
+                        autocomplete_visible = false;
+                        selected_index = None;
+                        render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                    }
                     KeyCode::Enter => {
+                        if let Some(idx) = selected_index {
+                            let matches: Vec<(&str, &str)> = SLASH_COMMANDS.iter()
+                                .filter(|&&(cmd, _)| cmd.starts_with(&typed_input))
+                                .copied()
+                                .collect();
+                            if idx < matches.len() {
+                                typed_input = matches[idx].0.to_string();
+                            }
+                        }
+                        if lines_printed > 1 {
+                            for _ in 0..(lines_printed - 1) {
+                                print!("\r\n\x1b[2K");
+                            }
+                            print!("\x1b[{}A\r", lines_printed - 1);
+                        }
                         disable_raw_mode()?;
-                        print!("\x1b[1B\r\n");
+                        print!("\r\n");
                         stdout().flush()?;
                         break;
                     }
@@ -287,7 +556,7 @@ fn read_line_raw(
         }
     }
 
-    let mut final_input = input.clone();
+    let mut final_input = typed_input;
     for (i, path) in pasted_images.iter().enumerate() {
         let placeholder = if i == 0 {
             "[image]".to_string()
@@ -301,11 +570,16 @@ fn read_line_raw(
     Ok(final_input)
 }
 
+pub struct CliChannel {
+    agent_loop: tokio::sync::Mutex<AgentLoop>,
+    defaults: tokio::sync::Mutex<AgentDefaults>,
+}
+
 impl CliChannel {
     pub fn new(agent_loop: AgentLoop, defaults: AgentDefaults) -> Self {
         CliChannel {
-            agent_loop,
-            defaults,
+            agent_loop: tokio::sync::Mutex::new(agent_loop),
+            defaults: tokio::sync::Mutex::new(defaults),
         }
     }
 }
@@ -330,7 +604,10 @@ impl super::Channel for CliChannel {
         println!("{}     ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝{}╚══════╝\r", white, RED_ORANGE);
         
         println!("{}openz v{}{}", COLOR_BOLD, env!("CARGO_PKG_VERSION"), COLOR_RESET);
-        println!("{}{}{}", slate, format!("{} | {}", self.defaults.provider, self.defaults.model), COLOR_RESET);
+        {
+            let defaults = self.defaults.lock().await;
+            println!("{}{}{}", slate, format!("{} | {}", defaults.provider, defaults.model), COLOR_RESET);
+        }
         
         if let Ok(current_dir) = std::env::current_dir() {
             let path_str = if let Some(home) = dirs::home_dir() {
@@ -350,10 +627,16 @@ impl super::Channel for CliChannel {
         println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
         
         loop {
+            let (model, provider, session_manager) = {
+                let defaults = self.defaults.lock().await;
+                let agent_loop = self.agent_loop.lock().await;
+                (defaults.model.clone(), defaults.provider.clone(), agent_loop.session_manager.clone())
+            };
+            
             let input = match read_line_raw(
-                &self.defaults.model,
-                &self.defaults.provider,
-                &self.agent_loop.session_manager,
+                &model,
+                &provider,
+                &session_manager,
                 session_key,
             ) {
                 Ok(inp) => inp,
@@ -373,17 +656,383 @@ impl super::Channel for CliChannel {
                 break;
             }
  
+            if trimmed == "/clear" {
+                print!("\x1B[2J\x1B[1;1H");
+                let _ = io::stdout().flush();
+                continue;
+            }
+
+            if trimmed == "/help" {
+                println!("{}Available commands:{}", COLOR_BOLD, COLOR_RESET);
+                for &(cmd, desc) in SLASH_COMMANDS {
+                    println!("  {}{:<12}{} - {}", RED_ORANGE, cmd, COLOR_RESET, desc);
+                }
+                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                continue;
+            }
+
+            if trimmed.starts_with("/model") {
+                let arg = trimmed["/model".len()..].trim();
+                if arg.is_empty() {
+                    struct ProviderModels {
+                        name: &'static str,
+                        display: &'static str,
+                        models: &'static [&'static str],
+                    }
+
+                    let provider_list = &[
+                        ProviderModels {
+                            name: "openai",
+                            display: "OpenAI (5)",
+                            models: &["gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "o3-mini"],
+                        },
+                        ProviderModels {
+                            name: "anthropic",
+                            display: "Anthropic (3)",
+                            models: &["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
+                        },
+                        ProviderModels {
+                            name: "openrouter",
+                            display: "OpenRouter (5)",
+                            models: &[
+                                "google/gemini-2.5-pro",
+                                "google/gemini-2.5-flash",
+                                "anthropic/claude-3.5-sonnet",
+                                "meta-llama/llama-3.3-70b-instruct",
+                                "deepseek/deepseek-r1",
+                            ],
+                        },
+                        ProviderModels {
+                            name: "deepseek",
+                            display: "DeepSeek (2)",
+                            models: &["deepseek-chat", "deepseek-reasoner"],
+                        },
+                        ProviderModels {
+                            name: "groq",
+                            display: "Groq (5)",
+                            models: &[
+                                "deepseek-r1-distill-llama-70b",
+                                "llama-3.3-70b-versatile",
+                                "llama-3.1-8b-instant",
+                                "mixtral-8x7b-32768",
+                                "gemma2-9b-it",
+                            ],
+                        },
+                        ProviderModels {
+                            name: "ollama",
+                            display: "Ollama (5)",
+                            models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"],
+                        },
+                        ProviderModels {
+                            name: "minimax",
+                            display: "minimax.io (6)",
+                            models: &[
+                                "MiniMax-M3",
+                                "MiniMax-M2.7",
+                                "MiniMax-M2.5",
+                                "MiniMax-M2.1",
+                                "MiniMax-M2",
+                                "MiniMax-M1",
+                            ],
+                        },
+                        ProviderModels {
+                            name: "mistral",
+                            display: "Mistral AI (5)",
+                            models: &[
+                                "mistral-large-latest",
+                                "pixtral-large-latest",
+                                "mistral-moderation-latest",
+                                "codestral-latest",
+                                "mistral-small-latest",
+                            ],
+                        },
+                        ProviderModels {
+                            name: "z.ai",
+                            display: "z.ai (Zhipu GLM) (5)",
+                            models: &[
+                                "glm-5.1",
+                                "glm-5",
+                                "glm-5v-turbo",
+                                "glm-4.7",
+                                "glm-4.7-flash",
+                            ],
+                        },
+                        ProviderModels {
+                            name: "nvidia",
+                            display: "NVIDIA NIM (5)",
+                            models: &[
+                                "meta/llama3-70b-instruct",
+                                "nvidia/llama-3.1-nemotron-70b-instruct",
+                                "meta/llama-3.1-70b-instruct",
+                                "mistralai/mixtral-8x22b-instruct-v0.1",
+                                "google/gemma-2-27b-it",
+                            ],
+                        },
+                        ProviderModels {
+                            name: "opencode_zen",
+                            display: "OpenCode Zen (4)",
+                            models: &[
+                                "gpt-5.5-pro",
+                                "gpt-5.5",
+                                "gpt-5.4-pro",
+                                "gpt-5.4",
+                            ],
+                        },
+                        ProviderModels {
+                            name: "cerebres",
+                            display: "Cerebras (3)",
+                            models: &[
+                                "llama-3.3-70b",
+                                "llama3.1-8b",
+                                "llama3.1-70b",
+                            ],
+                        },
+                        ProviderModels {
+                            name: "google_ai_studio",
+                            display: "Google AI Studio (Gemini) (4)",
+                            models: &[
+                                "gemini-2.5-pro",
+                                "gemini-2.5-flash",
+                                "gemini-2.0-flash",
+                                "gemini-1.5-pro",
+                            ],
+                        },
+                    ];
+
+                    let mut provider_options: Vec<String> = provider_list.iter().map(|p| p.display.to_string()).collect();
+                    provider_options.push("Exit".to_string());
+                    let (active_mdl, current_active_header) = {
+                        let defaults = self.defaults.lock().await;
+                        (
+                            defaults.model.clone(),
+                            format!("Current active model: {} | Provider: {}", defaults.model, defaults.provider)
+                        )
+                    };
+                    match crate::agent::style::select_menu_custom("Choose an LLM provider:", &provider_options, &active_mdl, Some(&current_active_header), true) {
+                        Ok(Some(selected_idx)) => {
+                            if selected_idx == provider_list.len() {
+                                println!("Model selection cancelled.");
+                                continue;
+                            }
+                            let prov_info = &provider_list[selected_idx];
+                            let mut model_options: Vec<String> = prov_info.models.iter().map(|&m| m.to_string()).collect();
+                            model_options.push("Exit".to_string());
+                            match crate::agent::style::select_menu_custom(&format!("Choose a model from {}:", prov_info.display), &model_options, &active_mdl, None, false) {
+                                Ok(Some(selected_model_idx)) => {
+                                    if selected_model_idx == prov_info.models.len() {
+                                        println!("Model selection cancelled.");
+                                        continue;
+                                    }
+                                    let prov = prov_info.name;
+                                    let mdl = prov_info.models[selected_model_idx];
+                                    
+                                    use crate::config::loader::{load_config, save_config};
+                                    match load_config() {
+                                        Ok(mut config) => {
+                                            config.agents.defaults.provider = prov.to_string();
+                                            config.agents.defaults.model = mdl.to_string();
+                                            if let Err(e) = save_config(&config) {
+                                                eprintln!("{}✕ Error: Failed to save config: {}{}", ERROR_RED, e, COLOR_RESET);
+                                            } else {
+                                                match crate::cli::build_agent_loop(config.clone()).await {
+                                                    Ok(new_loop) => {
+                                                        *self.agent_loop.lock().await = new_loop;
+                                                        *self.defaults.lock().await = config.agents.defaults;
+                                                        println!("{}✓ Model updated to {} (provider: {}){}", EMERALD_GREEN, mdl, prov, COLOR_RESET);
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("{}✕ Error: Failed to initialize new model: {}{}", ERROR_RED, e, COLOR_RESET);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!("{}✕ Error: Failed to load config: {}{}", ERROR_RED, e, COLOR_RESET);
+                                        }
+                                    }
+                                }
+                                Ok(None) => {
+                                    println!("Model selection cancelled.");
+                                }
+                                Err(e) => {
+                                    eprintln!("Error: {}", e);
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            println!("Provider selection cancelled.");
+                        }
+                        Err(e) => {
+                            eprintln!("Error: {}", e);
+                        }
+                    }
+                } else {
+                    let (prov, mdl) = if let Some(idx) = arg.find('/') {
+                        (&arg[..idx], &arg[idx + 1..])
+                    } else {
+                        ("auto", arg)
+                    };
+                    
+                    use crate::config::loader::{load_config, save_config};
+                    match load_config() {
+                        Ok(mut config) => {
+                            config.agents.defaults.provider = prov.to_string();
+                            config.agents.defaults.model = mdl.to_string();
+                            if let Err(e) = save_config(&config) {
+                                eprintln!("{}✕ Error: Failed to save config: {}{}", ERROR_RED, e, COLOR_RESET);
+                            } else {
+                                match crate::cli::build_agent_loop(config.clone()).await {
+                                    Ok(new_loop) => {
+                                        *self.agent_loop.lock().await = new_loop;
+                                        *self.defaults.lock().await = config.agents.defaults;
+                                        println!("{}✓ Model updated to {} (provider: {}){}", EMERALD_GREEN, mdl, prov, COLOR_RESET);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("{}✕ Error: Failed to initialize new model: {}{}", ERROR_RED, e, COLOR_RESET);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("{}✕ Error: Failed to load config: {}{}", ERROR_RED, e, COLOR_RESET);
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if trimmed == "/new" {
+                let session_manager = {
+                    let agent_loop = self.agent_loop.lock().await;
+                    agent_loop.session_manager.clone()
+                };
+                if let Ok(mut current_session) = session_manager.load(session_key) {
+                    if !current_session.messages.is_empty() {
+                        let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+                        let archive_key = format!("cli:history_{}", timestamp);
+                        current_session.key = archive_key;
+                        let _ = session_manager.save(&current_session);
+                        
+                        let empty_session = crate::session::Session::new(session_key);
+                        let _ = session_manager.save(&empty_session);
+                    }
+                }
+                println!("{}✓ Session reset. Starting a new session.{}", EMERALD_GREEN, COLOR_RESET);
+                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                continue;
+            }
+
+            if trimmed == "/skill" {
+                match crate::agent::skills::load_skills() {
+                    Ok(skills) => {
+                        if skills.is_empty() {
+                            println!("No active skills found in ~/.openz/skills");
+                        } else {
+                            println!("{}Active skills:{}", COLOR_BOLD, COLOR_RESET);
+                            for skill in skills {
+                                println!("  • {}", skill.name);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("{}✕ Error loading skills: {}{}", ERROR_RED, e, COLOR_RESET);
+                    }
+                }
+                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                continue;
+            }
+
+            if trimmed == "/mcps" {
+                let agent_loop = self.agent_loop.lock().await;
+                println!("{}Configured MCP Servers:{}", COLOR_BOLD, COLOR_RESET);
+                if agent_loop.config.mcp_servers.is_empty() {
+                    println!("  No MCP servers configured.");
+                } else {
+                    for (name, mcp_cfg) in &agent_loop.config.mcp_servers {
+                        let status = if mcp_cfg.enabled {
+                            format!("{}enabled{}", EMERALD_GREEN, COLOR_RESET)
+                        } else {
+                            format!("{}disabled{}", AURA_SLATE, COLOR_RESET)
+                        };
+                        println!("  • {} ({}) - {}", name, status, mcp_cfg.command);
+                    }
+                }
+                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                continue;
+            }
+
+            if trimmed == "/history" {
+                let session_manager = {
+                    let agent_loop = self.agent_loop.lock().await;
+                    agent_loop.session_manager.clone()
+                };
+                match crate::cli::load_session_history() {
+                    Ok(history) => {
+                        if history.is_empty() {
+                            println!("No session history found.");
+                        } else {
+                            match crate::agent::style::select_menu_with_history("Select a session to load:", &history) {
+                                Ok(selected) => {
+                                    if selected == 0 {
+                                        let _ = crate::cli::archive_current_session(&session_manager);
+                                        println!("{}✓ Started new session.{}", EMERALD_GREEN, COLOR_RESET);
+                                    } else {
+                                        let selected_item = &history[selected - 1];
+                                        let _ = crate::cli::archive_current_session(&session_manager);
+                                        if let Ok(mut session) = session_manager.load(&selected_item.key) {
+                                            session.key = session_key.to_string();
+                                            let _ = session_manager.save(&session);
+                                            println!("{}✓ Loaded session: {}{}", EMERALD_GREEN, selected_item.display_title, COLOR_RESET);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("{}✕ Error running selection menu: {}{}", ERROR_RED, e, COLOR_RESET);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("{}✕ Error loading session history: {}{}", ERROR_RED, e, COLOR_RESET);
+                    }
+                }
+                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                continue;
+            }
+
+            if trimmed == "/memory" {
+                let session_manager = {
+                    let agent_loop = self.agent_loop.lock().await;
+                    agent_loop.session_manager.clone()
+                };
+                if let Ok(session) = session_manager.load(session_key) {
+                    println!("{}Session Metadata & Memory:{}", COLOR_BOLD, COLOR_RESET);
+                    if session.metadata.is_empty() {
+                        println!("  No memory or metadata recorded for this session.");
+                    } else {
+                        for (k, v) in &session.metadata {
+                            println!("  • {}: {}", k, v);
+                        }
+                    }
+                } else {
+                    println!("No active session found.");
+                }
+                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                continue;
+            }
+ 
             if trimmed == "/paste" || trimmed == "/clip" {
                 match handle_clipboard_paste(0) {
                     Ok(img_path) => {
                         println!("{}✓ Image captured from clipboard and saved to: {}{}", EMERALD_GREEN, img_path.display(), COLOR_RESET);
                         print!("Enter query/instructions for this image: ");
-                        io::stdout().flush()?;
+                        let _ = io::stdout().flush();
                         let mut query = String::new();
-                        io::stdin().read_line(&mut query)?;
+                        let _ = io::stdin().read_line(&mut query);
                         let combined_query = format!("{} ![](file://{})", query.trim(), img_path.to_string_lossy());
                         
-                        match self.agent_loop.run(&combined_query, session_key).await {
+                        let agent_loop = self.agent_loop.lock().await;
+                        match agent_loop.run(&combined_query, session_key).await {
                             Ok(res) => {
                                 println!();
                                 print_colored_markdown(&res.content);
@@ -403,7 +1052,8 @@ impl super::Channel for CliChannel {
                 continue;
             }
  
-            match self.agent_loop.run(trimmed, session_key).await {
+            let runner = self.agent_loop.lock().await;
+            match runner.run(trimmed, session_key).await {
                 Ok(res) => {
                     println!();
                     print_colored_markdown(&res.content);
