@@ -129,8 +129,25 @@ impl super::Channel for CliChannel {
     async fn start(&self) -> anyhow::Result<()> {
         let session_key = "cli:direct";
         
-        println!("{}{}Welcome to {}! Type your message and press Enter (or type /restart to clear, /help for list of commands).{}", COLOR_BOLD, AURA_PURPLE, self.defaults.bot_name, COLOR_RESET);
-        println!("{}[INFO] ◇ Tip: Copy any image to your clipboard and press Ctrl+V (or Alt+V, or type /paste) to send it to the agent.{}", AURA_BLUE, COLOR_RESET);
+        let white = "\x1b[38;2;240;240;240m";
+        let orange = "\x1b[38;2;255;165;0m";
+        let slate = "\x1b[38;2;107;122;153m";
+        
+        println!("{}     ██████╗ ██████╗ ███████╗███╗   ██╗{}███████╗", white, orange);
+        println!("{}    ██╔═══██╗██╔══██╗██╔════╝████╗  ██║{}╚══███╔╝", white, orange);
+        println!("{}    ██║   ██║██████╔╝█████╗  ██╔██╗ ██║{}  ███╔╝", white, orange);
+        println!("{}    ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║{} ███╔╝", white, orange);
+        println!("{}    ╚██████╔╝██║     ███████╗██║ ╚████║{}███████╗", white, orange);
+        println!("{}     ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝{}╚══════╝\r", white, orange);
+        
+        println!("{}openz v{}{}", COLOR_BOLD, env!("CARGO_PKG_VERSION"), COLOR_RESET);
+        println!("{}Provider: {} | Model: {}{}", slate, self.defaults.provider, self.defaults.model, COLOR_RESET);
+        
+        if let Ok(current_dir) = std::env::current_dir() {
+            println!("{}Directory: {}{}", slate, current_dir.display(), COLOR_RESET);
+        }
+        
+        println!("{}────────────────────────────────────────────────────────────{}", slate, COLOR_RESET);
         
         let prompt = format!("{}{}{} {} > {}", COLOR_BOLD, AURA_PURPLE, self.defaults.bot_icon, self.defaults.bot_name, COLOR_RESET);
         
