@@ -87,7 +87,15 @@ impl AgentLoop {
                     let len = session.messages.len();
                     if len > max_msgs {
                         let keep_msgs = max_msgs.saturating_sub(10).max(5);
-                        let k = len.saturating_sub(keep_msgs);
+                        let mut k = len.saturating_sub(keep_msgs);
+                        
+                        // Find the nearest "user" message by scanning backwards.
+                        // This ensures the kept history slice always starts with a "user" message,
+                        // and prevents orphaned "tool" messages from causing API errors.
+                        while k > 0 && session.messages[k].role != "user" {
+                            k -= 1;
+                        }
+                        
                         if k > 0 && k < len {
                             let messages_to_summarize = session.messages[0..k].to_vec();
                             let existing_summary = session.metadata.get("summary")
@@ -165,7 +173,11 @@ impl AgentLoop {
 
                             session.messages = session.messages[k..].to_vec();
                         } else {
-                            session.messages = session.messages[len - max_msgs..].to_vec();
+                            let mut k = len - max_msgs;
+                            while k > 0 && session.messages[k].role != "user" {
+                                k -= 1;
+                            }
+                            session.messages = session.messages[k..].to_vec();
                         }
                     }
                     state = TurnState::Command;
