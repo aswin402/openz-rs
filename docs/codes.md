@@ -1,4 +1,4 @@
-# OpenZ Coding Guidelines & Standards 🦀⚡
+# OpenZ Coding Guidelines & Standards 🦊
 
 This document outlines the codebase standards, compiler constraints, and async patterns inside `openz`.
 

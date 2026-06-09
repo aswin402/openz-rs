@@ -1,4 +1,4 @@
-# OpenZ Architecture 🦀⚡
+# OpenZ Architecture 🦊
 
 This document describes the design, execution flow, and module architecture of the Rust rewrite of `openz`.
 
