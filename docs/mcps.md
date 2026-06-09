@@ -37,6 +37,7 @@ By default, OpenZ is pre-configured to utilize high-performance, lightweight Rus
 *   **`sequential-thinking`**: `/home/aswin/programming/vscode/myProjects/target/release/mcp-server-sequential-thinking`
 *   **`memory`**: `/home/aswin/programming/vscode/myProjects/target/release/openmemory_rs`
 *   **`office`**: compiled local-first parser (`opendocswork-mcp` under `~/.cargo/bin/`) to extract text and tables from `.docx`, `.xlsx`, and `.pptx` documents.
+*   **`headroom`**: context compression and directory scoping server (`headroom-mcp` under `~/.cargo/bin/`) to optimize context windows dynamically.
 
 ---
 

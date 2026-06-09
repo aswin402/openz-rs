@@ -273,6 +273,19 @@ impl Default for Config {
             enabled: true,
         });
 
+        let headroom_bin = if let Some(home) = dirs::home_dir() {
+            let p = home.join(".cargo").join("bin").join("headroom-mcp");
+            if p.exists() { p.to_string_lossy().to_string() } else { "headroom-mcp".to_string() }
+        } else {
+            "headroom-mcp".to_string()
+        };
+
+        mcp_servers.insert("headroom".to_string(), McpServerConfig {
+            command: headroom_bin,
+            args: vec![],
+            enabled: true,
+        });
+
         Config {
             providers: ProvidersConfig::default(),
             agents: AgentsConfig::default(),
