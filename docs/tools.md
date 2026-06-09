@@ -49,6 +49,7 @@ pub trait Tool: Send + Sync {
 * **`ast_grep`** (`src/tools/ast_grep.rs`): Performs structural code searches across the codebase using AST patterns.
 * **`gsd_browser`** (`src/tools/gsd_browser.rs`): Controls a headless Chrome browser via GSD to interact with websites and perform browser automation.
 * **`web_search`** (`src/tools/web_search.rs`): Performs web search queries via DuckDuckGo HTML and returns clean lists of titles, URLs, and snippets.
+* **`onpkg`** (`src/tools/onpkg.rs`): Use onpkg to list available templates, show details of a stack, scaffold a stack (website, app, backend, frontend from scratch), or run environment diagnostics.
 
 
 
