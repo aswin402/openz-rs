@@ -3,17 +3,6 @@ use std::io::Write;
 use std::time::Duration;
 use tokio::time::sleep;
 
-// Aura Dark Color Palette (24-bit Truecolor ANSI Escape Sequences)
-pub const COLOR_RESET: &str = "\x1b[0m";
-pub const COLOR_BOLD: &str = "\x1b[1m";
-
-pub const AURA_PURPLE: &str = "\x1b[38;2;199;146;234m"; // Accent color / Primary headers
-pub const AURA_BLUE: &str = "\x1b[38;2;130;170;255m";   // Information / Subagents / Tool exec
-pub const AURA_GREEN: &str = "\x1b[38;2;195;232;141m";  // Success / Completed states
-pub const AURA_GOLD: &str = "\x1b[38;2;255;203;107m";   // Warnings / Alerts
-pub const AURA_ROSE: &str = "\x1b[38;2;240;113;120m";   // Errors / Failures
-pub const AURA_SLATE: &str = "\x1b[38;2;107;122;153m";  // Subdued logs / Dim metadata
-
 /// Executes a future while displaying a smooth spinner animation in the terminal.
 /// Automatically clears the line when the future completes.
 pub async fn with_spinner<F, T>(msg: &str, future: F) -> T
