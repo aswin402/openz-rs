@@ -14,31 +14,27 @@ pub fn format_friendly_time(time: DateTime<Utc>) -> String {
     let local_time: DateTime<Local> = DateTime::from(time);
     
     if local_time >= now {
-        return "Just now".to_string();
+        return "0m".to_string();
     }
     
     let duration = now.signed_duration_since(local_time);
     let secs = duration.num_seconds();
     if secs < 60 {
-        return "Just now".to_string();
+        return "0m".to_string();
     }
     
     let mins = duration.num_minutes();
     if mins < 60 {
-        return format!("{}m ago", mins);
+        return format!("{}m", mins);
     }
     
     let hours = duration.num_hours();
     if hours < 24 {
-        return format!("{}h ago", hours);
+        return format!("{}h", hours);
     }
     
-    let yesterday = now.date_naive().pred_opt().unwrap_or(now.date_naive());
-    if local_time.date_naive() == yesterday {
-        return format!("Yesterday {}", local_time.format("%H:%M"));
-    }
-    
-    local_time.format("%Y-%m-%d %H:%M").to_string()
+    let days = duration.num_days();
+    format!("{}d", days)
 }
 
 pub fn select_menu_with_history(prompt: &str, history: &[HistoryItem]) -> Result<usize> {
@@ -50,13 +46,13 @@ pub fn select_menu_with_history(prompt: &str, history: &[HistoryItem]) -> Result
     enable_raw_mode()?;
     let mut selected = 0;
     let num_options = 1 + history.len();
-    let num_lines_to_clear = 4 + history.len() * 3;
+    let num_lines_to_clear = 4 + history.len();
 
     print!("{}\r\n", prompt);
     
     let draw_menu = |selected_idx: usize| {
         if selected_idx == 0 {
-            print!("▶ {}{}Start New{}\r\n", COLOR_BOLD, AURA_PURPLE, COLOR_RESET);
+            print!("▸ {}{}Start New{}\r\n", COLOR_BOLD, RED_ORANGE, COLOR_RESET);
         } else {
             print!("  Start New\r\n");
         }
@@ -69,14 +65,19 @@ pub fn select_menu_with_history(prompt: &str, history: &[HistoryItem]) -> Result
             let option_idx = i + 1;
             let friendly_time = format_friendly_time(item.updated_at);
             
-            if selected_idx == option_idx {
-                print!("▶ {}{}{}\r\n", COLOR_BOLD, item.display_title, COLOR_RESET);
-                print!("  \x1b[38;2;107;122;153m{}\x1b[0m\r\n", friendly_time);
+            let truncated_title = if item.display_title.len() > 40 {
+                format!("{}...", &item.display_title[..37])
             } else {
-                print!("  {}\r\n", item.display_title);
-                print!("  \x1b[38;2;107;122;153m{}\x1b[0m\r\n", friendly_time);
+                item.display_title.clone()
+            };
+            let pad_len = 45_usize.saturating_sub(truncated_title.chars().count());
+            let padding = " ".repeat(pad_len);
+            
+            if selected_idx == option_idx {
+                print!("▸ {}{}{}{}{}{}\r\n", COLOR_BOLD, RED_ORANGE, truncated_title, padding, friendly_time, COLOR_RESET);
+            } else {
+                print!("  {}{}{}\r\n", truncated_title, padding, friendly_time);
             }
-            print!("\r\n");
         }
         let _ = stdout().flush();
     };

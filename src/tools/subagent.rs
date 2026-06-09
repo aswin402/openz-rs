@@ -87,14 +87,10 @@ impl Tool for DelegateTaskTool {
             goal, context
         );
 
-        println!("{}[SUBAGENT] ◇ spawning subagent (session: {}) to work on: {}{}", AURA_BLUE, child_session_id, goal, COLOR_RESET);
-        let spinner_msg = format!(
-            "{}[SUBAGENT] ◇ running: subagent (session: {})...{}",
-            AURA_BLUE,
-            child_session_id,
-            COLOR_RESET
-        );
+        println!("{}◎ Subagent{}", AURA_PURPLE, COLOR_RESET);
+        let spinner_msg = format!("{}  Running...{}", AURA_SLATE, COLOR_RESET);
         let run_res = with_spinner(&spinner_msg, child_agent.run(&subagent_prompt, &child_session_id)).await?;
+        println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
 
         Ok(serde_json::json!({
             "status": "success",
@@ -188,26 +184,54 @@ impl Tool for DelegateProfileTool {
                 self.session_manager.clone(),
             );
 
-            println!("{}[SUBAGENT] ◇ spawning specialized subagent '{}' (session: {}, model: {}){}", AURA_BLUE, self.profile.name, child_session_id, model_name, COLOR_RESET);
-            let spinner_msg = format!(
-                "{}[SUBAGENT] ◇ running: specialized subagent '{}' (session: {})...{}",
-                AURA_BLUE,
-                self.profile.name,
-                child_session_id,
-                COLOR_RESET
-            );
-            match with_spinner(&spinner_msg, child_agent.run(&subagent_prompt, &child_session_id)).await {
-                Ok(run_res) => {
-                    return Ok(serde_json::json!({
-                        "status": "success",
-                        "session_id": child_session_id,
-                        "model_used": model_name,
-                        "summary": run_res.content
-                    }));
+            let formatted_name = format_subagent_name(&self.profile.name);
+            let is_vision = self.profile.name == "vision_agent";
+            let is_reviewer = self.profile.name == "reviewer";
+
+            if is_reviewer {
+                let spinner_msg = format!("{}◇ Reviewing...{}", AURA_PURPLE, COLOR_RESET);
+                match with_spinner(&spinner_msg, child_agent.run(&subagent_prompt, &child_session_id)).await {
+                    Ok(run_res) => {
+                        println!("{}✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
+                        return Ok(serde_json::json!({
+                            "status": "success",
+                            "session_id": child_session_id,
+                            "model_used": model_name,
+                            "summary": run_res.content
+                        }));
+                    }
+                    Err(e) => {
+                        println!("{}✕ Error: Model '{}' execution failed: {}{}", ERROR_RED, model_name, e, COLOR_RESET);
+                        last_error = Some(e);
+                    }
                 }
-                Err(e) => {
-                    println!("{}[ERROR] ◇ Model '{}' execution failed: {}{}", AURA_ROSE, model_name, e, COLOR_RESET);
-                    last_error = Some(e);
+            } else {
+                if is_vision {
+                    println!("{}◎ Vision Agent{}", AURA_PURPLE, COLOR_RESET);
+                } else {
+                    println!("{}◎ {}{}", AURA_PURPLE, formatted_name, COLOR_RESET);
+                }
+
+                let spinner_msg = if is_vision {
+                    format!("{}  Processing image...{}", AURA_SLATE, COLOR_RESET)
+                } else {
+                    format!("{}  Running...{}", AURA_SLATE, COLOR_RESET)
+                };
+
+                match with_spinner(&spinner_msg, child_agent.run(&subagent_prompt, &child_session_id)).await {
+                    Ok(run_res) => {
+                        println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
+                        return Ok(serde_json::json!({
+                            "status": "success",
+                            "session_id": child_session_id,
+                            "model_used": model_name,
+                            "summary": run_res.content
+                        }));
+                    }
+                    Err(e) => {
+                        println!("{}✕ Error: Model '{}' execution failed: {}{}", ERROR_RED, model_name, e, COLOR_RESET);
+                        last_error = Some(e);
+                    }
                 }
             }
         }
@@ -387,7 +411,7 @@ impl Tool for OptimizeSubagentTool {
         };
 
         let spinner_msg = format!(
-            "{}[INFO] ◇ [Prompt-Optimize] Asking OpenZ to optimize subagent prompt for '{}'...{}",
+            "{}▸ [Prompt-Optimize] Asking OpenZ to optimize subagent prompt for '{}'...{}",
             AURA_PURPLE,
             subagent_name,
             COLOR_RESET
@@ -404,7 +428,7 @@ impl Tool for OptimizeSubagentTool {
         profiles[pos].system_prompt = clean_prompt.clone();
         crate::subagents::save_profiles(&profiles)?;
 
-        println!("{}[INFO] ◇ [Prompt-Optimize] Optimized prompt for '{}' saved successfully.{}", AURA_GREEN, subagent_name, COLOR_RESET);
+        println!("{}✓ [Prompt-Optimize] Optimized prompt for '{}' saved successfully.{}", EMERALD_GREEN, subagent_name, COLOR_RESET);
 
         Ok(serde_json::json!({
             "status": "success",
@@ -510,7 +534,7 @@ impl Tool for CreateSubagentTool {
 
         crate::subagents::save_profiles(&profiles)?;
 
-        println!("{}[INFO] ◇ Custom subagent '{}' created and saved.{}", AURA_GREEN, name, COLOR_RESET);
+        println!("{}✓ Custom subagent '{}' created and saved.{}", EMERALD_GREEN, name, COLOR_RESET);
 
         Ok(serde_json::json!({
             "status": "success",
@@ -560,12 +584,36 @@ impl Tool for DeleteSubagentTool {
         profiles.remove(pos);
         crate::subagents::save_profiles(&profiles)?;
 
-        println!("{}[INFO] ◇ Custom subagent '{}' deleted.{}", AURA_GREEN, name, COLOR_RESET);
+        println!("{}✓ Custom subagent '{}' deleted.{}", EMERALD_GREEN, name, COLOR_RESET);
 
         Ok(serde_json::json!({
             "status": "success",
             "message": format!("Successfully deleted custom subagent '{}'", name)
         }))
+    }
+}
+
+fn format_subagent_name(name: &str) -> String {
+    match name {
+        "vision_agent" => "Vision Agent".to_string(),
+        "documentation_agent" => "Documentation Agent".to_string(),
+        "self_improvement" => "Self Improvement".to_string(),
+        "skill_improvement" => "Skill Improvement".to_string(),
+        "openz_maintainer" => "OpenZ Maintainer".to_string(),
+        "mcps_manager" => "MCPs Manager".to_string(),
+        "memory_manager" => "Memory Manager".to_string(),
+        "code_auditor" => "Code Auditor".to_string(),
+        "test_engineer" => "Test Engineer".to_string(),
+        "devops_agent" => "Devops Agent".to_string(),
+        "refactor_agent" => "Refactor Agent".to_string(),
+        "skill_creator" => "Skill Creator".to_string(),
+        _ => {
+            let mut chars = name.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+            }
+        }
     }
 }
 

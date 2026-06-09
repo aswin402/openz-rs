@@ -1,4 +1,8 @@
-# OpenZ 🦀⚡ `v0.0.4`
+# OpenZ 🦀⚡ `v0.0.5`
+
+<p align="center">
+  <img src="assets/logo.png" width="200" alt="OpenZ Logo">
+</p>
 
 OpenZ is a high-performance, asynchronous, ultra-lightweight personal AI agent framework built entirely in Rust. 
 
@@ -27,6 +31,8 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
 * **Native Prompt Compression:** Built-in support for Caveman prompt compression (toggleable via `cavemanMode` config), reducing token consumption by **~75%** while preserving technical substance.
 * **Universal API Clients:** Abstractions supporting OpenAI-compatible endpoints (DeepSeek, Groq, Ollama, OpenRouter, Gemini) and Anthropic Claude. Added custom deployments support for Azure OpenAI.
 * **Auto-Provider Resolution:** Detects the appropriate provider and endpoint automatically based on model name keywords or environment variables.
+* **Visual TUI Polish:** Custom error (`✕`), success (`✓`), warning (`▲`), tool (`▸`), and subagent (`◎`) logs with color-themed formatting, alongside auto-scrolling model name elision in the status bar to prevent character wrapping on narrow terminal screens.
+* **Clipboard Image Placeholders:** Paste images via `Ctrl+V` as clean inline `[image]` / `[image1]` placeholders which are automatically expanded to file URLs under the hood.
 
 ---
 

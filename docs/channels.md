@@ -67,3 +67,17 @@ Automatically generates, enables, and starts a user-level `systemd` service unit
 
 ### Option 2: Auto-Start on TUI Launch
 Launches the WebSocket gateway server on an asynchronous `tokio` background thread immediately when you start the terminal TUI (`openz agent`). This allows you to open a browser workbench without launching separate gateway processes.
+
+---
+
+## 5. Console CLI TUI Enhancements ⚡💻
+
+The console CLI features a robust raw input loop with high-fidelity visual logs and indicators:
+* **Clean Pasting Placeholders**: Pasting images (`Ctrl+V` or `Alt+V`) inserts neat inline placeholders like `[image]`, `[image1]`, `[image2]`, etc. These placeholders are resolved under the hood to their respective full markdown file syntax before sending the request to the agent, keeping the user input prompt clean and readable.
+* **Narrow Window Protection**: The bottom status bar automatically elides the model name based on your terminal's column width to prevent text wrapping from breaking vertical cursor alignments.
+* **Color-Themed Activity Indicators**:
+  * `✕ Error`: Red logs (`ERROR_RED`) for error prompts or execution failures.
+  * `✓ Success`: Emerald green logs (`EMERALD_GREEN`) for successful operations and completion checkmarks.
+  * `▲ Warning`: Yellow logs (`AURA_GOLD`) for unsupported images or alert warnings.
+  * `▸ Tool`: Violet logs (`AURA_PURPLE`) for tool executions (planning, writing, command execution).
+  * `◎ Subagent`: Violet logs (`AURA_PURPLE`) for specialized and general subagent spawns (e.g. `◎ Vision Agent`).
