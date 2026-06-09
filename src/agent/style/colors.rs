@@ -10,3 +10,4 @@ pub const AURA_SLATE: &str = "\x1b[38;2;107;122;153m";  // Subdued logs / Dim me
 
 pub const EMERALD_GREEN: &str = "\x1b[38;2;16;185;129m";
 pub const ERROR_RED: &str = "\x1b[38;2;239;68;68m";
+pub const RED_ORANGE: &str = "\x1b[38;2;255;69;0m";

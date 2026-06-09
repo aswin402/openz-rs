@@ -130,21 +130,31 @@ impl super::Channel for CliChannel {
         let session_key = "cli:direct";
         
         let white = "\x1b[38;2;240;240;240m";
-        let orange = "\x1b[38;2;255;165;0m";
         let slate = "\x1b[38;2;107;122;153m";
         
-        println!("{}     ██████╗ ██████╗ ███████╗███╗   ██╗{}███████╗", white, orange);
-        println!("{}    ██╔═══██╗██╔══██╗██╔════╝████╗  ██║{}╚══███╔╝", white, orange);
-        println!("{}    ██║   ██║██████╔╝█████╗  ██╔██╗ ██║{}  ███╔╝", white, orange);
-        println!("{}    ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║{} ███╔╝", white, orange);
-        println!("{}    ╚██████╔╝██║     ███████╗██║ ╚████║{}███████╗", white, orange);
-        println!("{}     ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝{}╚══════╝\r", white, orange);
+        println!("{}     ██████╗ ██████╗ ███████╗███╗   ██╗{}███████╗", white, RED_ORANGE);
+        println!("{}    ██╔═══██╗██╔══██╗██╔════╝████╗  ██║{}╚══███╔╝", white, RED_ORANGE);
+        println!("{}    ██║   ██║██████╔╝█████╗  ██╔██╗ ██║{}  ███╔╝", white, RED_ORANGE);
+        println!("{}    ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║{} ███╔╝", white, RED_ORANGE);
+        println!("{}    ╚██████╔╝██║     ███████╗██║ ╚████║{}███████╗", white, RED_ORANGE);
+        println!("{}     ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝{}╚══════╝\r", white, RED_ORANGE);
         
         println!("{}openz v{}{}", COLOR_BOLD, env!("CARGO_PKG_VERSION"), COLOR_RESET);
-        println!("{}Provider: {} | Model: {}{}", slate, self.defaults.provider, self.defaults.model, COLOR_RESET);
+        println!("{}{}{}", slate, format!("{} | {}", self.defaults.provider, self.defaults.model), COLOR_RESET);
         
         if let Ok(current_dir) = std::env::current_dir() {
-            println!("{}Directory: {}{}", slate, current_dir.display(), COLOR_RESET);
+            let path_str = if let Some(home) = dirs::home_dir() {
+                if current_dir == home {
+                    "~".to_string()
+                } else if let Ok(stripped) = current_dir.strip_prefix(&home) {
+                    format!("~/{}", stripped.display())
+                } else {
+                    current_dir.display().to_string()
+                }
+            } else {
+                current_dir.display().to_string()
+            };
+            println!("{}{}{}", slate, path_str, COLOR_RESET);
         }
         
         println!("{}────────────────────────────────────────────────────────────{}", slate, COLOR_RESET);
