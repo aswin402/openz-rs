@@ -3,6 +3,7 @@ use crate::providers::{LLMProvider, GenerationSettings};
 use crate::tools::ToolRegistry;
 use crate::tools::subagent::DelegateTaskTool;
 use crate::session::{Session, SessionManager, Message};
+use crate::agent::style::*;
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use serde::Deserialize;
@@ -77,7 +78,7 @@ impl AgentLoop {
                     let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
                     let supports_vision = crate::providers::model_supports_vision(&self.config.agents.defaults.model);
                     if has_images && !supports_vision {
-                        eprintln!("⚠️ Warning: The active model '{}' does not support images. Images will be ignored.", self.config.agents.defaults.model);
+                        eprintln!("{}[WARN] ⚠️ Warning: The active model '{}' does not support images. Images will be ignored.{}", AURA_GOLD, self.config.agents.defaults.model, COLOR_RESET);
                     }
 
                     state = TurnState::Compact;
@@ -125,15 +126,20 @@ impl AgentLoop {
                                 extra: serde_json::Map::new(),
                             }];
                             
-                            println!("📝 Consolidating conversation context (summarizing older history)...");
-                            match self.provider.chat(&system_prompt_sum, &summary_msgs, &[], &settings).await {
+                            let spinner_msg = format!(
+                                "{}◇ Consolidating conversation context...{}",
+                                AURA_SLATE,
+                                COLOR_RESET
+                            );
+                            let chat_fut = self.provider.chat(&system_prompt_sum, &summary_msgs, &[], &settings);
+                            match with_spinner(&spinner_msg, chat_fut).await {
                                 Ok(resp) => {
                                     if let Some(new_summary) = resp.content {
                                         session.metadata.insert("summary".to_string(), serde_json::Value::String(new_summary));
                                     }
                                 }
                                 Err(e) => {
-                                    eprintln!("Warning: Failed to summarize conversation history: {}", e);
+                                    eprintln!("{}[WARN] ⚠️ Failed to summarize conversation history: {}{}", AURA_GOLD, e, COLOR_RESET);
                                 }
                             }
 
@@ -159,15 +165,20 @@ impl AgentLoop {
                                 extra: serde_json::Map::new(),
                             }];
 
-                            println!("🧠 Consolidating long-term memory...");
-                            match self.provider.chat(&system_prompt_mem, &mem_msgs, &[], &settings).await {
+                            let spinner_msg = format!(
+                                "{}◇ Consolidating long-term memory...{}",
+                                AURA_SLATE,
+                                COLOR_RESET
+                            );
+                            let chat_fut = self.provider.chat(&system_prompt_mem, &mem_msgs, &[], &settings);
+                            match with_spinner(&spinner_msg, chat_fut).await {
                                 Ok(resp) => {
                                     if let Some(new_memory) = resp.content {
                                         session.metadata.insert("memory".to_string(), serde_json::Value::String(new_memory));
                                     }
                                 }
                                 Err(e) => {
-                                    eprintln!("Warning: Failed to update long-term memory: {}", e);
+                                    eprintln!("{}[WARN] ⚠️ Failed to update long-term memory: {}{}", AURA_GOLD, e, COLOR_RESET);
                                 }
                             }
 
@@ -464,9 +475,13 @@ impl AgentLoop {
                         
                         let tools_openai = self.tools.to_openai_format();
                         
-                        println!("{} {} is thinking...", self.config.agents.defaults.bot_icon, self.config.agents.defaults.bot_name);
-                        
-                        let resp = self.provider.chat(&system_prompt, &messages, &tools_openai, &settings).await?;
+                        let activity_msg = if iterations == 0 {
+                            format!("{}◇ Planning{}", AURA_PURPLE, COLOR_RESET)
+                        } else {
+                            format!("{}◇ Validating output{}", AURA_PURPLE, COLOR_RESET)
+                        };
+                        let chat_fut = self.provider.chat(&system_prompt, &messages, &tools_openai, &settings);
+                        let resp = with_spinner(&activity_msg, chat_fut).await?;
                         
                         if let Some(content) = resp.content {
                             final_content = content.clone();
@@ -486,15 +501,29 @@ impl AgentLoop {
                         let mut assistant_tool_calls_json = Vec::new();
                         
                         for call in resp.tool_calls {
-                            println!("🔧 Calling tool: {}({})", call.name, call.arguments);
                             tools_used.push(call.name.clone());
                             
                             crate::agent::activity::update_activity(session_key, "Executing tool", Some(&call.name));
+                            let tool_activity_msg = match call.name.as_str() {
+                                "write_file" | "write_to_file" | "replace_file_content" | "multi_replace_file_content" => {
+                                    format!("{}◇ Writing presentation{}", AURA_BLUE, COLOR_RESET)
+                                }
+                                "exec_command" | "run_command" | "cargo_manager" => {
+                                    format!("{}◇ Executing script{}", AURA_BLUE, COLOR_RESET)
+                                }
+                                _ => {
+                                    format!("{}◇ Validating output{}", AURA_PURPLE, COLOR_RESET)
+                                }
+                            };
+                            
                             let result_val = match self.tools.get(&call.name) {
-                                Some(t) => match t.call(&call.arguments).await {
-                                    Ok(res) => res,
-                                    Err(e) => serde_json::json!({ "error": e.to_string() }),
-                                },
+                                Some(t) => {
+                                    let fut = t.call(&call.arguments);
+                                    match with_spinner(&tool_activity_msg, fut).await {
+                                        Ok(res) => res,
+                                        Err(e) => serde_json::json!({ "error": e.to_string() }),
+                                    }
+                                }
                                 None => serde_json::json!({ "error": format!("Tool '{}' not found", call.name) }),
                             };
                             crate::agent::activity::update_activity(session_key, "Processing user prompt", None);
@@ -502,13 +531,13 @@ impl AgentLoop {
                             tool_results.push((call.id.clone(), call.name.clone(), result_val));
                             
                             assistant_tool_calls_json.push(serde_json::json!({
-                                "id": call.id,
-                                "type": "function",
-                                "function": {
-                                    "name": call.name,
-                                    "arguments": call.arguments.to_string()
-                                }
-                            }));
+                                 "id": call.id,
+                                 "type": "function",
+                                 "function": {
+                                     "name": call.name,
+                                     "arguments": call.arguments.to_string()
+                                 }
+                             }));
                         }
 
                         if let Some(last_msg) = messages.last_mut() {
@@ -557,7 +586,7 @@ impl AgentLoop {
 
         let traces_dir = crate::config::resolve_path("~/.openz/traces");
         if let Err(e) = std::fs::create_dir_all(&traces_dir) {
-            eprintln!("Warning: Failed to create traces directory: {}", e);
+            eprintln!("{}[WARN] ⚠️ Failed to create traces directory: {}{}", AURA_GOLD, e, COLOR_RESET);
         } else {
             let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
             let trace_file = traces_dir.join(format!("trace_{}_{}.json", session_key.replace(":", "_"), timestamp));
@@ -678,9 +707,9 @@ impl AgentLoop {
                                 if let Ok(mut latest_session) = session_manager.load(&session_key) {
                                     latest_session.metadata.insert("memory".to_string(), serde_json::Value::String(review.memory_content.trim().to_string()));
                                     if let Err(e) = session_manager.save(&latest_session) {
-                                        eprintln!("Warning: Failed to save self-improvement memory: {}", e);
+                                        eprintln!("{}[WARN] ◇ [Self-Improvement] Failed to save self-improvement memory: {}{}", AURA_GOLD, e, COLOR_RESET);
                                     } else {
-                                        println!("\n💾 [Self-Improvement] Memory updated based on recent conversation.");
+                                        println!("\n{}[INFO] ◇ [Self-Improvement] Memory updated based on recent conversation.{}", AURA_GREEN, COLOR_RESET);
                                     }
                                 }
                             }
@@ -689,9 +718,9 @@ impl AgentLoop {
                             for skill in review.skills_to_save {
                                 if !skill.name.is_empty() && !skill.content.is_empty() {
                                     if let Err(e) = crate::agent::skills::save_skill(&skill.name, &skill.content) {
-                                        eprintln!("Warning: Failed to save self-improvement skill '{}': {}", skill.name, e);
+                                        eprintln!("{}[WARN] ◇ [Self-Improvement] Failed to save self-improvement skill '{}': {}{}", AURA_GOLD, skill.name, e, COLOR_RESET);
                                     } else {
-                                        println!("💾 [Self-Improvement] Skill '{}' updated/created based on recent conversation.", skill.name);
+                                        println!("{}[INFO] ◇ [Self-Improvement] Skill '{}' updated/created based on recent conversation.{}", AURA_GREEN, skill.name, COLOR_RESET);
                                     }
                                 }
                             }

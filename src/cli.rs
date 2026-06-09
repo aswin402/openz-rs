@@ -14,6 +14,7 @@ use crate::tools::cron::{ScheduleJobTool, ListJobsTool, RemoveJobTool};
 use crate::tools::remote::SendRemoteInputTool;
 use crate::session::SessionManager;
 use crate::agent::AgentLoop;
+use crate::agent::style::*;
 use crate::channels::{CliChannel, WsGateway, TelegramChannel, Channel};
 use crate::cron::scheduler::start_scheduler;
 
@@ -324,13 +325,29 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::onpkg::OnpkgTool));
 
     // Register configured MCP tools
+    let mut total_tools = 0;
+    let mut has_any_mcp = false;
+    for (_, mcp_config) in &config.mcp_servers {
+        if mcp_config.enabled {
+            has_any_mcp = true;
+            break;
+        }
+    }
+
+    if has_any_mcp {
+        println!("Setting up MCP servers...");
+    }
+
+    let emerald_green = "\x1b[38;2;16;185;129m";
+    let error_red = "\x1b[38;2;239;68;68m";
+
     for (name, mcp_config) in &config.mcp_servers {
         if mcp_config.enabled {
-            println!("🔌 Spawning MCP server '{}' ({} {:?})...", name, mcp_config.command, mcp_config.args);
             match crate::tools::mcp::McpClient::spawn(&mcp_config.command, &mcp_config.args).await {
                 Ok(mcp_client) => {
                     match mcp_client.list_tools().await {
                         Ok(tools) => {
+                            let mut count = 0;
                             for t in tools {
                                 if let (Some(t_name), Some(desc)) = (t.get("name").and_then(|v| v.as_str()), t.get("description").and_then(|v| v.as_str())) {
                                     let params = t.get("inputSchema").cloned().unwrap_or(serde_json::json!({
@@ -338,7 +355,6 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
                                         "properties": {}
                                     }));
                                     
-                                    println!("   ↳ Registering MCP tool: {}", t_name);
                                     let wrapper = crate::tools::mcp::McpToolWrapper {
                                         client: mcp_client.clone(),
                                         name: t_name.to_string(),
@@ -346,22 +362,219 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
                                         parameters: params,
                                     };
                                     registry.register(std::sync::Arc::new(wrapper));
+                                    count += 1;
                                 }
                             }
+                            total_tools += count;
+                            println!("{}✓ {}{}", emerald_green, name, COLOR_RESET);
                         }
-                        Err(e) => {
-                            eprintln!("⚠️ Failed to list tools from MCP server '{}': {}", name, e);
+                        Err(_) => {
+                            println!("{}✗ {} not connected{}", error_red, name, COLOR_RESET);
                         }
                     }
                 }
-                Err(e) => {
-                    eprintln!("⚠️ Failed to spawn MCP server '{}': {}", name, e);
+                Err(_) => {
+                    println!("{}✗ {} not connected{}", error_red, name, COLOR_RESET);
+                }
+            }
+        }
+    }
+
+    if has_any_mcp {
+        println!("\n{} tools loaded\n", total_tools);
+    }
+    
+    Ok(AgentLoop::new(config, provider, registry, session_manager))
+}
+
+struct HistoryItem {
+    key: String,
+    display_title: String,
+    updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+fn load_session_history() -> Result<Vec<HistoryItem>> {
+    let sessions_dir = resolve_path("~/.openz/sessions");
+    if !sessions_dir.exists() {
+        return Ok(Vec::new());
+    }
+    
+    let mut items = Vec::new();
+    for entry in std::fs::read_dir(sessions_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("json") {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(session) = serde_json::from_str::<crate::session::Session>(&content) {
+                    if !session.messages.is_empty() {
+                        let preview = session.messages.iter()
+                            .find(|m| m.role == "user")
+                            .map(|m| {
+                                let mut text = m.content.clone();
+                                if text.len() > 50 {
+                                    text.truncate(47);
+                                    text.push_str("...");
+                                }
+                                text
+                            })
+                            .unwrap_or_else(|| "Empty session".to_string());
+                            
+                        items.push(HistoryItem {
+                            key: session.key.clone(),
+                            display_title: preview,
+                            updated_at: session.updated_at,
+                        });
+                    }
                 }
             }
         }
     }
     
-    Ok(AgentLoop::new(config, provider, registry, session_manager))
+    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(items)
+}
+
+fn archive_current_session(session_manager: &SessionManager) -> Result<()> {
+    if let Ok(mut current_session) = session_manager.load("cli:direct") {
+        if !current_session.messages.is_empty() {
+            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+            let archive_key = format!("cli:history_{}", timestamp);
+            current_session.key = archive_key;
+            session_manager.save(&current_session)?;
+            
+            let empty_session = crate::session::Session::new("cli:direct");
+            session_manager.save(&empty_session)?;
+        }
+    }
+    Ok(())
+}
+
+fn format_friendly_time(time: chrono::DateTime<chrono::Utc>) -> String {
+    let now = chrono::Local::now();
+    let local_time: chrono::DateTime<chrono::Local> = chrono::DateTime::from(time);
+    
+    if local_time >= now {
+        return "Just now".to_string();
+    }
+    
+    let duration = now.signed_duration_since(local_time);
+    let secs = duration.num_seconds();
+    if secs < 60 {
+        return "Just now".to_string();
+    }
+    
+    let mins = duration.num_minutes();
+    if mins < 60 {
+        return format!("{}m ago", mins);
+    }
+    
+    let hours = duration.num_hours();
+    if hours < 24 {
+        return format!("{}h ago", hours);
+    }
+    
+    let yesterday = now.date_naive().pred_opt().unwrap_or(now.date_naive());
+    if local_time.date_naive() == yesterday {
+        return format!("Yesterday {}", local_time.format("%H:%M"));
+    }
+    
+    local_time.format("%Y-%m-%d %H:%M").to_string()
+}
+
+fn select_menu_with_history(prompt: &str, history: &[HistoryItem]) -> Result<usize> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+    use std::io::stdout;
+    use std::io::Write;
+
+    enable_raw_mode()?;
+    let mut selected = 0;
+    let num_options = 1 + history.len();
+    let num_lines_to_clear = 4 + history.len() * 3;
+
+    print!("{}\r\n", prompt);
+    
+    let draw_menu = |selected_idx: usize| {
+        if selected_idx == 0 {
+            print!("▶ {}{}Start New{}\r\n", COLOR_BOLD, AURA_PURPLE, COLOR_RESET);
+        } else {
+            print!("  Start New\r\n");
+        }
+        
+        print!("\r\n");
+        print!("Recent\r\n");
+        print!("\r\n");
+        
+        for (i, item) in history.iter().enumerate() {
+            let option_idx = i + 1;
+            let friendly_time = format_friendly_time(item.updated_at);
+            
+            if selected_idx == option_idx {
+                print!("▶ {}{}{}\r\n", COLOR_BOLD, item.display_title, COLOR_RESET);
+                print!("  \x1b[38;2;107;122;153m{}\x1b[0m\r\n", friendly_time);
+            } else {
+                print!("  {}\r\n", item.display_title);
+                print!("  \x1b[38;2;107;122;153m{}\x1b[0m\r\n", friendly_time);
+            }
+            print!("\r\n");
+        }
+        let _ = stdout().flush();
+    };
+
+    draw_menu(selected);
+    
+    loop {
+        if event::poll(std::time::Duration::from_millis(50))? {
+            if let Event::Key(key_event) = event::read()? {
+                if key_event.kind == KeyEventKind::Release {
+                    continue;
+                }
+                
+                let mut changed = false;
+                match key_event.code {
+                    KeyCode::Up => {
+                        if selected > 0 {
+                            selected -= 1;
+                        } else {
+                            selected = num_options - 1;
+                        }
+                        changed = true;
+                    }
+                    KeyCode::Down => {
+                        if selected < num_options - 1 {
+                            selected += 1;
+                        } else {
+                            selected = 0;
+                        }
+                        changed = true;
+                    }
+                    KeyCode::Enter => {
+                        for _ in 0..num_lines_to_clear {
+                            print!("\r\x1b[1A\x1b[2K");
+                        }
+                        print!("\r\x1b[1A\x1b[2K");
+                        print!("\r");
+                        stdout().flush()?;
+                        disable_raw_mode()?;
+                        return Ok(selected);
+                    }
+                    KeyCode::Char('c') if key_event.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                        disable_raw_mode()?;
+                        println!("Goodbye!");
+                        std::process::exit(0);
+                    }
+                    _ => {}
+                }
+                
+                if changed {
+                    for _ in 0..num_lines_to_clear {
+                        print!("\r\x1b[1A\x1b[2K");
+                    }
+                    draw_menu(selected);
+                }
+            }
+        }
+    }
 }
 
 async fn handle_agent() -> Result<()> {
@@ -382,6 +595,25 @@ async fn handle_agent() -> Result<()> {
                     }
                 }
             });
+        }
+    }
+
+    let sessions_dir = resolve_path("~/.openz/sessions");
+    let session_manager = SessionManager::new(sessions_dir);
+
+    let history = load_session_history()?;
+    if history.is_empty() {
+        archive_current_session(&session_manager)?;
+    } else {
+        let selected = select_menu_with_history("Welcome to OpenZ! Select an option:", &history)?;
+        if selected == 0 {
+            archive_current_session(&session_manager)?;
+        } else {
+            let selected_item = &history[selected - 1];
+            archive_current_session(&session_manager)?;
+            let mut session = session_manager.load(&selected_item.key)?;
+            session.key = "cli:direct".to_string();
+            session_manager.save(&session)?;
         }
     }
 

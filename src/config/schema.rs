@@ -78,7 +78,7 @@ fn default_bot_name() -> String {
     "openz".to_string()
 }
 fn default_bot_icon() -> String {
-    "⚡".to_string()
+    "◇".to_string()
 }
 fn default_max_messages() -> usize {
     120

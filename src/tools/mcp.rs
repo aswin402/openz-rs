@@ -24,7 +24,7 @@ impl McpClient {
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::null())
             .spawn()?;
 
         let stdin_writer = child.stdin.take().ok_or_else(|| anyhow!("Failed to open stdin"))?;

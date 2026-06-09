@@ -1,5 +1,6 @@
 use crate::agent::AgentLoop;
 use crate::config::schema::AgentDefaults;
+use crate::agent::style::*;
 use std::io::{self, Write};
 
 pub struct CliChannel {
@@ -41,7 +42,7 @@ fn read_line_raw(prompt: &str) -> anyhow::Result<String> {
     loop {
         if let Some(inbox_msg) = crate::agent::activity::pop_inbox_message("cli:direct") {
             disable_raw_mode()?;
-            println!("\r\n📥 [Remote Control] Received prompt: {}", inbox_msg.message);
+            println!("\r\n{}[INFO] 🔌 [Remote Control] Received prompt: {}{}", AURA_BLUE, inbox_msg.message, COLOR_RESET);
             return Ok(inbox_msg.message);
         }
 
@@ -66,7 +67,7 @@ fn read_line_raw(prompt: &str) -> anyhow::Result<String> {
                 if is_paste_image {
                     match handle_clipboard_paste() {
                         Ok(img_path) => {
-                            print!("\r\n📋 Image pasted from clipboard: {}\r\n", img_path.display());
+                            print!("\r\n{}[INFO] ◇ Image pasted from clipboard: {}{}\r\n", AURA_GREEN, img_path.display(), COLOR_RESET);
                             // Append markdown link to input
                             input.push_str(&format!(" ![](file://{})", img_path.to_string_lossy()));
                             print!("{}", prompt);
@@ -74,7 +75,7 @@ fn read_line_raw(prompt: &str) -> anyhow::Result<String> {
                             stdout().flush()?;
                         }
                         Err(e) => {
-                            print!("\r\n❌ No image found in clipboard: {}\r\n", e);
+                            print!("\r\n{}[ERROR] ◇ No image found in clipboard: {}{}\r\n", AURA_ROSE, e, COLOR_RESET);
                             print!("{}", prompt);
                             print!("{}", input);
                             stdout().flush()?;
@@ -128,10 +129,10 @@ impl super::Channel for CliChannel {
     async fn start(&self) -> anyhow::Result<()> {
         let session_key = "cli:direct";
         
-        println!("Welcome to {}! Type your message and press Enter (or type /restart to clear, /help for list of commands).", self.defaults.bot_name);
-        println!("💡 Tip: Copy any image to your clipboard and press Ctrl+V (or Alt+V, or type /paste) to send it to the agent.");
+        println!("{}{}Welcome to {}! Type your message and press Enter (or type /restart to clear, /help for list of commands).{}", COLOR_BOLD, AURA_PURPLE, self.defaults.bot_name, COLOR_RESET);
+        println!("{}[INFO] ◇ Tip: Copy any image to your clipboard and press Ctrl+V (or Alt+V, or type /paste) to send it to the agent.{}", AURA_BLUE, COLOR_RESET);
         
-        let prompt = format!("{} {} > ", self.defaults.bot_icon, self.defaults.bot_name);
+        let prompt = format!("{}{}{} {} > {}", COLOR_BOLD, AURA_PURPLE, self.defaults.bot_icon, self.defaults.bot_name, COLOR_RESET);
         
         loop {
             let input = match read_line_raw(&prompt) {
@@ -155,7 +156,7 @@ impl super::Channel for CliChannel {
             if trimmed == "/paste" || trimmed == "/clip" {
                 match handle_clipboard_paste() {
                     Ok(img_path) => {
-                        println!("📋 Image captured from clipboard and saved to: {}", img_path.display());
+                        println!("{}[INFO] ◇ Image captured from clipboard and saved to: {}{}", AURA_GREEN, img_path.display(), COLOR_RESET);
                         print!("Enter query/instructions for this image: ");
                         io::stdout().flush()?;
                         let mut query = String::new();
@@ -172,7 +173,7 @@ impl super::Channel for CliChannel {
                         }
                     }
                     Err(e) => {
-                        eprintln!("❌ Failed to retrieve image from clipboard: {}", e);
+                        eprintln!("{}[ERROR] ◇ Failed to retrieve image from clipboard: {}{}", AURA_ROSE, e, COLOR_RESET);
                     }
                 }
                 continue;

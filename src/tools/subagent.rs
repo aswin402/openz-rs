@@ -3,6 +3,7 @@ use crate::tools::ToolRegistry;
 use crate::tools::filesystem::{ReadFileTool, WriteFileTool, ListDirTool};
 use crate::tools::shell::ExecCommandTool;
 use crate::tools::web::WebFetchTool;
+use crate::agent::style::*;
 use crate::agent::AgentLoop;
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
@@ -86,8 +87,14 @@ impl Tool for DelegateTaskTool {
             goal, context
         );
 
-        println!("🤖 Spawning subagent (session: {}) to work on: {}", child_session_id, goal);
-        let run_res = child_agent.run(&subagent_prompt, &child_session_id).await?;
+        println!("{}[SUBAGENT] ◇ spawning subagent (session: {}) to work on: {}{}", AURA_BLUE, child_session_id, goal, COLOR_RESET);
+        let spinner_msg = format!(
+            "{}[SUBAGENT] ◇ running: subagent (session: {})...{}",
+            AURA_BLUE,
+            child_session_id,
+            COLOR_RESET
+        );
+        let run_res = with_spinner(&spinner_msg, child_agent.run(&subagent_prompt, &child_session_id)).await?;
 
         Ok(serde_json::json!({
             "status": "success",
@@ -156,7 +163,7 @@ impl Tool for DelegateProfileTool {
         let mut last_error = None;
         for (idx, model_name) in models_to_try.iter().enumerate() {
             if idx > 0 {
-                println!("⚠️ Primary model failed. Trying fallback model ({} of {}): {}", idx, models_to_try.len() - 1, model_name);
+                println!("{}[WARN] ⚠️ Primary model failed. Trying fallback model ({} of {}): {}{}", AURA_GOLD, idx, models_to_try.len() - 1, model_name, COLOR_RESET);
             }
 
             let provider = match build_provider_for_model(&self.config, model_name) {
@@ -181,8 +188,15 @@ impl Tool for DelegateProfileTool {
                 self.session_manager.clone(),
             );
 
-            println!("🤖 Spawning specialized subagent '{}' (session: {}, model: {})", self.profile.name, child_session_id, model_name);
-            match child_agent.run(&subagent_prompt, &child_session_id).await {
+            println!("{}[SUBAGENT] ◇ spawning specialized subagent '{}' (session: {}, model: {}){}", AURA_BLUE, self.profile.name, child_session_id, model_name, COLOR_RESET);
+            let spinner_msg = format!(
+                "{}[SUBAGENT] ◇ running: specialized subagent '{}' (session: {})...{}",
+                AURA_BLUE,
+                self.profile.name,
+                child_session_id,
+                COLOR_RESET
+            );
+            match with_spinner(&spinner_msg, child_agent.run(&subagent_prompt, &child_session_id)).await {
                 Ok(run_res) => {
                     return Ok(serde_json::json!({
                         "status": "success",
@@ -192,7 +206,7 @@ impl Tool for DelegateProfileTool {
                     }));
                 }
                 Err(e) => {
-                    println!("❌ Model '{}' execution failed: {}", model_name, e);
+                    println!("{}[ERROR] ◇ Model '{}' execution failed: {}{}", AURA_ROSE, model_name, e, COLOR_RESET);
                     last_error = Some(e);
                 }
             }
@@ -346,8 +360,7 @@ impl Tool for OptimizeSubagentTool {
 
         let profile = &profiles[pos];
 
-        println!("🧠 Asking OpenZ to optimize subagent prompt for '{}'...", subagent_name);
-        
+
         let system_prompt_sum = "You are an expert prompt engineer. Optimize system prompts for specialized subagents. \
             Analyze the failed case feedback, and rewrite the subagent's system prompt to address the issue. \
             Ensure the prompt remains clear, structured, and focused. Return only the optimized system prompt, with no conversational text or markdown blocks.";
@@ -373,7 +386,14 @@ impl Tool for OptimizeSubagentTool {
             reasoning_effort: None,
         };
 
-        let resp = self.parent_provider.chat(system_prompt_sum, &messages, &[], &settings).await?;
+        let spinner_msg = format!(
+            "{}[INFO] ◇ [Prompt-Optimize] Asking OpenZ to optimize subagent prompt for '{}'...{}",
+            AURA_PURPLE,
+            subagent_name,
+            COLOR_RESET
+        );
+        let chat_fut = self.parent_provider.chat(system_prompt_sum, &messages, &[], &settings);
+        let resp = with_spinner(&spinner_msg, chat_fut).await?;
         let content = resp.content.ok_or_else(|| anyhow!("Failed to generate optimized prompt from AI"))?;
 
         let clean_prompt = content.trim().to_string();
@@ -384,7 +404,7 @@ impl Tool for OptimizeSubagentTool {
         profiles[pos].system_prompt = clean_prompt.clone();
         crate::subagents::save_profiles(&profiles)?;
 
-        println!("📝 Optimized prompt for '{}' saved successfully.", subagent_name);
+        println!("{}[INFO] ◇ [Prompt-Optimize] Optimized prompt for '{}' saved successfully.{}", AURA_GREEN, subagent_name, COLOR_RESET);
 
         Ok(serde_json::json!({
             "status": "success",
@@ -490,7 +510,7 @@ impl Tool for CreateSubagentTool {
 
         crate::subagents::save_profiles(&profiles)?;
 
-        println!("✅ Custom subagent '{}' created and saved.", name);
+        println!("{}[INFO] ◇ Custom subagent '{}' created and saved.{}", AURA_GREEN, name, COLOR_RESET);
 
         Ok(serde_json::json!({
             "status": "success",
@@ -540,7 +560,7 @@ impl Tool for DeleteSubagentTool {
         profiles.remove(pos);
         crate::subagents::save_profiles(&profiles)?;
 
-        println!("✅ Custom subagent '{}' deleted.", name);
+        println!("{}[INFO] ◇ Custom subagent '{}' deleted.{}", AURA_GREEN, name, COLOR_RESET);
 
         Ok(serde_json::json!({
             "status": "success",

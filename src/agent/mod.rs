@@ -1,6 +1,7 @@
 pub mod agent_loop;
 pub mod skills;
 pub mod activity;
+pub mod style;
 
 pub use self::agent_loop::{AgentLoop, TurnState, RunResult};
 pub use self::skills::Skill;
