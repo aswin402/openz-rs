@@ -706,133 +706,195 @@ fn disable_systemd_service() -> Result<()> {
     Ok(())
 }
 
+fn update_provider_key(config: &mut Config, provider_name: &str, api_key: String) {
+    let mut p_config = match provider_name {
+        "anthropic" => config.providers.anthropic.clone(),
+        "openai" => config.providers.openai.clone(),
+        "openrouter" => config.providers.openrouter.clone(),
+        "deepseek" => config.providers.deepseek.clone(),
+        "groq" => config.providers.groq.clone(),
+        "ollama" => config.providers.ollama.clone(),
+        "minimax" => config.providers.minimax.clone(),
+        "mistral" => config.providers.mistral.clone(),
+        "z.ai" => config.providers.z_ai.clone(),
+        "nvidia" => config.providers.nvidia.clone(),
+        "opencode_zen" => config.providers.opencode_zen.clone(),
+        "cerebres" => config.providers.cerebres.clone(),
+        "google_ai_studio" => config.providers.google_ai_studio.clone(),
+        _ => return,
+    }.unwrap_or_else(|| ProviderConfig {
+        api_key: None,
+        api_base: None,
+        api_type: None,
+        extra: std::collections::HashMap::new(),
+    });
+    p_config.api_key = Some(api_key);
+    
+    if p_config.api_base.is_none() {
+        let default_base = match provider_name {
+            "anthropic" => "https://api.anthropic.com",
+            "openai" => "https://api.openai.com/v1",
+            "openrouter" => "https://openrouter.ai/api/v1",
+            "deepseek" => "https://api.deepseek.com/v1",
+            "groq" => "https://api.groq.com/openai/v1",
+            "ollama" => "http://localhost:11434/v1",
+            "minimax" => "https://api.minimax.io/v1",
+            "mistral" => "https://api.mistral.ai/v1",
+            "z.ai" => "https://api.z.ai/api/paas/v4/",
+            "nvidia" => "https://integrate.api.nvidia.com/v1",
+            "opencode_zen" => "https://opencode.ai/zen/v1",
+            "cerebres" => "https://api.cerebras.ai/v1",
+            "google_ai_studio" => "https://generativelanguage.googleapis.com/v1beta/openai/",
+            _ => "",
+        };
+        p_config.api_base = Some(default_base.to_string());
+    }
+
+    match provider_name {
+        "anthropic" => config.providers.anthropic = Some(p_config),
+        "openai" => config.providers.openai = Some(p_config),
+        "openrouter" => config.providers.openrouter = Some(p_config),
+        "deepseek" => config.providers.deepseek = Some(p_config),
+        "groq" => config.providers.groq = Some(p_config),
+        "ollama" => config.providers.ollama = Some(p_config),
+        "minimax" => config.providers.minimax = Some(p_config),
+        "mistral" => config.providers.mistral = Some(p_config),
+        "z.ai" => config.providers.z_ai = Some(p_config),
+        "nvidia" => config.providers.nvidia = Some(p_config),
+        "opencode_zen" => config.providers.opencode_zen = Some(p_config),
+        "cerebres" => config.providers.cerebres = Some(p_config),
+        "google_ai_studio" => config.providers.google_ai_studio = Some(p_config),
+        _ => {}
+    }
+}
+
 async fn handle_configure() -> Result<()> {
+    let active_mdl = {
+        let config = load_config()?;
+        config.agents.defaults.model.clone()
+    };
+
     loop {
-        println!("\n=== OpenZ Configuration Menu ===");
-        let options = vec![
-            "1. Providers (API keys, models)",
-            "2. Gateway/WebSocket (Host, port, auto-start)",
-            "3. Telegram (Bot token)",
-            "4. Discord (Bot token)",
-            "5. WhatsApp (API key, Phone ID)",
-            "6. Exit & Save"
+        let configure_options = vec![
+            "Providers".to_string(),
+            "Telegram".to_string(),
+            "Gateway".to_string(),
+            "Exit".to_string(),
         ];
-        let choice = Select::new("Select category to configure:", options).prompt()?;
+
+        let choice_idx = match select_menu_custom(
+            "Choose configure category:",
+            &configure_options,
+            &active_mdl,
+            Some("OpenZ Configuration"),
+            true,
+        ) {
+            Ok(Some(idx)) => idx,
+            _ => break, // Exit on Esc
+        };
 
         let mut config = load_config()?;
 
-        match choice {
-            c if c.starts_with("1.") => {
-                handle_providers_config(&mut config).await?;
+        match choice_idx {
+            0 => {
+                handle_providers_submenu(&mut config, &active_mdl).await?;
             }
-            c if c.starts_with("2.") => {
-                handle_gateway_config(&mut config).await?;
+            1 => {
+                handle_telegram_submenu(&mut config).await?;
             }
-            c if c.starts_with("3.") => {
-                handle_telegram_config(&mut config).await?;
-            }
-            c if c.starts_with("4.") => {
-                handle_discord_config(&mut config).await?;
-            }
-            c if c.starts_with("5.") => {
-                handle_whatsapp_config(&mut config).await?;
+            2 => {
+                handle_gateway_submenu(&mut config, &active_mdl).await?;
             }
             _ => {
-                save_config(&config)?;
-                println!("✅ Configuration saved successfully!");
                 break;
             }
         }
         
         save_config(&config)?;
     }
+    
+    println!("{}✓ Configuration saved successfully!{}", EMERALD_GREEN, COLOR_RESET);
     Ok(())
 }
 
-async fn handle_providers_config(config: &mut Config) -> Result<()> {
-    println!("\n--- Configure Provider ---");
-    let providers = vec!["anthropic", "openai", "openrouter", "deepseek", "groq", "ollama", "minimax"];
-    let provider_name = Select::new("Choose an LLM provider:", providers).prompt()?;
-    
-    let mut api_key = None;
-    if provider_name != "ollama" {
-        let key = Password::new(&format!("Enter API Key for {}:", provider_name)).prompt()?;
+async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Result<()> {
+    struct ProviderInfo {
+        name: &'static str,
+        display: &'static str,
+    }
+    let provider_list = vec![
+        ProviderInfo { name: "anthropic", display: "Anthropic (Claude)" },
+        ProviderInfo { name: "openai", display: "OpenAI" },
+        ProviderInfo { name: "openrouter", display: "OpenRouter" },
+        ProviderInfo { name: "deepseek", display: "DeepSeek" },
+        ProviderInfo { name: "groq", display: "Groq" },
+        ProviderInfo { name: "ollama", display: "Ollama" },
+        ProviderInfo { name: "minimax", display: "MiniMax" },
+        ProviderInfo { name: "mistral", display: "Mistral AI" },
+        ProviderInfo { name: "z.ai", display: "z.ai (Zhipu GLM)" },
+        ProviderInfo { name: "nvidia", display: "NVIDIA NIM" },
+        ProviderInfo { name: "opencode_zen", display: "OpenCode Zen" },
+        ProviderInfo { name: "cerebres", display: "Cerebras" },
+        ProviderInfo { name: "google_ai_studio", display: "Google AI Studio (Gemini)" },
+    ];
+
+    let mut prov_options: Vec<String> = provider_list.iter().map(|p| p.display.to_string()).collect();
+    prov_options.push("Back".to_string());
+
+    loop {
+        let choice_idx = match select_menu_custom(
+            "Select provider to configure:",
+            &prov_options,
+            active_mdl,
+            Some("Providers Configuration"),
+            true,
+        ) {
+            Ok(Some(idx)) => idx,
+            _ => break, // Go back on Esc
+        };
+
+        if choice_idx == provider_list.len() {
+            break; // Back option
+        }
+
+        let prov_info = &provider_list[choice_idx];
+        
+        let key = Password::new(&format!("Enter API Key for {}:", prov_info.display)).prompt()?;
         if !key.trim().is_empty() {
-            api_key = Some(key.trim().to_string());
+            update_provider_key(config, prov_info.name, key.trim().to_string());
+            save_config(config)?;
+            println!("{}✓ API Key updated for {}!{}", EMERALD_GREEN, prov_info.display, COLOR_RESET);
+        } else {
+            println!("{}⚠️ API Key unchanged.{}", AURA_GOLD, COLOR_RESET);
         }
     }
-    
-    let default_base = match provider_name {
-        "anthropic" => "https://api.anthropic.com",
-        "openai" => "https://api.openai.com/v1",
-        "openrouter" => "https://openrouter.ai/api/v1",
-        "deepseek" => "https://api.deepseek.com/v1",
-        "groq" => "https://api.groq.com/openai/v1",
-        "ollama" => "http://localhost:11434/v1",
-        "minimax" => "https://api.minimax.io/v1",
-        _ => "",
-    };
-    
-    let api_base_input = Text::new(&format!("Enter API Base URL [default: {}]:", default_base)).prompt()?;
-    let api_base = if api_base_input.trim().is_empty() {
-        Some(default_base.to_string())
-    } else {
-        Some(api_base_input.trim().to_string())
-    };
-    
-    let default_model = match provider_name {
-        "anthropic" => "claude-3-5-sonnet-20241022",
-        "openai" => "gpt-4o",
-        "openrouter" => "google/gemini-2.5-pro",
-        "deepseek" => "deepseek-chat",
-        "groq" => "llama3-70b-8192",
-        "ollama" => "llama3",
-        "minimax" => "MiniMax-M3",
-        _ => "",
-    };
-    
-    let model_input = Text::new(&format!("Enter LLM Model Name [default: {}]:", default_model)).prompt()?;
-    let model = if model_input.trim().is_empty() {
-        default_model.to_string()
-    } else {
-        model_input.trim().to_string()
-    };
-    
-    let bot_name = Text::new("Enter Bot Name [default: openz]:").prompt()?;
-    let bot_name = if bot_name.trim().is_empty() { "openz".to_string() } else { bot_name.trim().to_string() };
-    
-    let bot_icon = Text::new("Enter Bot Icon (Emoji/text) [default: ⚡]:").prompt()?;
-    let bot_icon = if bot_icon.trim().is_empty() { "⚡".to_string() } else { bot_icon.trim().to_string() };
-
-    let p_config = Some(ProviderConfig {
-        api_key,
-        api_base,
-        api_type: None,
-        extra: std::collections::HashMap::new(),
-    });
-    
-    match provider_name {
-        "anthropic" => config.providers.anthropic = p_config,
-        "openai" => config.providers.openai = p_config,
-        "openrouter" => config.providers.openrouter = p_config,
-        "deepseek" => config.providers.deepseek = p_config,
-        "groq" => config.providers.groq = p_config,
-        "ollama" => config.providers.ollama = p_config,
-        "minimax" => config.providers.minimax = p_config,
-        _ => {}
-    }
-    
-    config.agents.defaults.provider = provider_name.to_string();
-    config.agents.defaults.model = model;
-    config.agents.defaults.bot_name = bot_name;
-    config.agents.defaults.bot_icon = bot_icon;
-    
-    println!("✅ Provider configured.");
     Ok(())
 }
 
-async fn handle_gateway_config(config: &mut Config) -> Result<()> {
-    println!("\n--- Configure Gateway/WebSocket ---");
+async fn handle_telegram_submenu(config: &mut Config) -> Result<()> {
+    println!("\n{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    println!("{}--- Telegram Bot Setup Guide ---{}", COLOR_BOLD, COLOR_RESET);
+    println!("  1. Open Telegram and search for {}@BotFather{}.", HEADING_BLUE, COLOR_RESET);
+    println!("  2. Start a chat and send the command {}/newbot{}.", EMERALD_GREEN, COLOR_RESET);
+    println!("  3. Choose a name and a username for your bot.");
+    println!("  4. Copy the HTTP API token provided by BotFather.\n");
+
+    let token = Password::new("Paste Telegram Bot Token: ").prompt()?;
+    if !token.trim().is_empty() {
+        let mut tg = config.channels.telegram.clone().unwrap_or_default();
+        tg.enabled = true;
+        tg.bot_token = token.trim().to_string();
+        config.channels.telegram = Some(tg);
+        save_config(config)?;
+        println!("{}✓ Telegram bot configured successfully!{}", EMERALD_GREEN, COLOR_RESET);
+    } else {
+        println!("{}⚠️ Token unchanged.{}", AURA_GOLD, COLOR_RESET);
+    }
+    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    Ok(())
+}
+
+async fn handle_gateway_submenu(config: &mut Config, active_mdl: &str) -> Result<()> {
     let mut ws = config.channels.websocket.clone().unwrap_or_else(|| {
         WebSocketChannelConfig {
             enabled: true,
@@ -843,114 +905,48 @@ async fn handle_gateway_config(config: &mut Config) -> Result<()> {
         }
     });
 
-    let enabled_options = vec!["Yes", "No"];
-    let enabled_choice = Select::new("Enable Gateway/WebSocket channel?", enabled_options)
-        .with_starting_cursor(if ws.enabled { 0 } else { 1 })
-        .prompt()?;
-    ws.enabled = enabled_choice == "Yes";
+    let gateway_options = vec![
+        "Start gateway when computer turns on".to_string(),
+        "Start gateway when user starts openz in terminal".to_string(),
+        "Back".to_string(),
+    ];
 
-    let host_input = Text::new(&format!("Enter Host [default: {}]:", ws.host)).prompt()?;
-    if !host_input.trim().is_empty() {
-        ws.host = host_input.trim().to_string();
-    }
+    loop {
+        let choice_idx = match select_menu_custom(
+            "Select gateway preference:",
+            &gateway_options,
+            active_mdl,
+            Some("Gateway Configuration"),
+            true,
+        ) {
+            Ok(Some(idx)) => idx,
+            _ => break, // Go back on Esc
+        };
 
-    let port_input = Text::new(&format!("Enter Port [default: {}]:", ws.port)).prompt()?;
-    if !port_input.trim().is_empty() {
-        if let Ok(p) = port_input.trim().parse::<u16>() {
-            ws.port = p;
+        if choice_idx == 2 {
+            break; // Back option
         }
+
+        match choice_idx {
+            0 => {
+                ws.enabled = true;
+                ws.start_on_boot = true;
+                ws.start_on_tui = false;
+                setup_systemd_service()?;
+                println!("{}✓ Configured gateway to start on boot.{}", EMERALD_GREEN, COLOR_RESET);
+            }
+            1 => {
+                ws.enabled = true;
+                ws.start_on_boot = false;
+                ws.start_on_tui = true;
+                disable_systemd_service()?;
+                println!("{}✓ Configured gateway to start when TUI starts.{}", EMERALD_GREEN, COLOR_RESET);
+            }
+            _ => {}
+        }
+
+        config.channels.websocket = Some(ws.clone());
+        save_config(config)?;
     }
-
-    let auto_start_options = vec!(
-        "1. Start gateway when system power on (systemd service)",
-        "2. Start gateway when openz TUI starts",
-        "3. Manual start only"
-    );
-    let default_cursor = if ws.start_on_boot { 0 } else if ws.start_on_tui { 1 } else { 2 };
-    let auto_start_choice = Select::new("Select gateway auto-start preference:", auto_start_options)
-        .with_starting_cursor(default_cursor)
-        .prompt()?;
-
-    if auto_start_choice.starts_with("1.") {
-        ws.start_on_boot = true;
-        ws.start_on_tui = false;
-        setup_systemd_service()?;
-    } else if auto_start_choice.starts_with("2.") {
-        ws.start_on_boot = false;
-        ws.start_on_tui = true;
-        disable_systemd_service()?;
-    } else {
-        ws.start_on_boot = false;
-        ws.start_on_tui = false;
-        disable_systemd_service()?;
-    }
-
-    config.channels.websocket = Some(ws);
-    println!("✅ Gateway configured.");
-    Ok(())
-}
-
-async fn handle_telegram_config(config: &mut Config) -> Result<()> {
-    println!("\n--- Configure Telegram Bot ---");
-    let mut tg = config.channels.telegram.clone().unwrap_or_default();
-
-    let enabled_options = vec!["Yes", "No"];
-    let enabled_choice = Select::new("Enable Telegram channel?", enabled_options)
-        .with_starting_cursor(if tg.enabled { 0 } else { 1 })
-        .prompt()?;
-    tg.enabled = enabled_choice == "Yes";
-
-    let token_input = Password::new(&format!("Enter Telegram Bot Token [current: {}]:", if tg.bot_token.is_empty() { "None" } else { "********" })).prompt()?;
-    if !token_input.trim().is_empty() {
-        tg.bot_token = token_input.trim().to_string();
-    }
-
-    config.channels.telegram = Some(tg);
-    println!("✅ Telegram bot configured.");
-    Ok(())
-}
-
-async fn handle_discord_config(config: &mut Config) -> Result<()> {
-    println!("\n--- Configure Discord Bot ---");
-    let mut dc = config.channels.discord.clone().unwrap_or_default();
-
-    let enabled_options = vec!["Yes", "No"];
-    let enabled_choice = Select::new("Enable Discord channel?", enabled_options)
-        .with_starting_cursor(if dc.enabled { 0 } else { 1 })
-        .prompt()?;
-    dc.enabled = enabled_choice == "Yes";
-
-    let token_input = Password::new(&format!("Enter Discord Bot Token [current: {}]:", if dc.bot_token.is_empty() { "None" } else { "********" })).prompt()?;
-    if !token_input.trim().is_empty() {
-        dc.bot_token = token_input.trim().to_string();
-    }
-
-    config.channels.discord = Some(dc);
-    println!("✅ Discord bot configured.");
-    Ok(())
-}
-
-async fn handle_whatsapp_config(config: &mut Config) -> Result<()> {
-    println!("\n--- Configure WhatsApp Business API ---");
-    let mut wa = config.channels.whatsapp.clone().unwrap_or_default();
-
-    let enabled_options = vec!["Yes", "No"];
-    let enabled_choice = Select::new("Enable WhatsApp channel?", enabled_options)
-        .with_starting_cursor(if wa.enabled { 0 } else { 1 })
-        .prompt()?;
-    wa.enabled = enabled_choice == "Yes";
-
-    let key_input = Password::new(&format!("Enter WhatsApp API Key [current: {}]:", if wa.api_key.is_empty() { "None" } else { "********" })).prompt()?;
-    if !key_input.trim().is_empty() {
-        wa.api_key = key_input.trim().to_string();
-    }
-
-    let phone_input = Text::new(&format!("Enter WhatsApp Phone Number ID [current: {}]:", wa.phone_number_id)).prompt()?;
-    if !phone_input.trim().is_empty() {
-        wa.phone_number_id = phone_input.trim().to_string();
-    }
-
-    config.channels.whatsapp = Some(wa);
-    println!("✅ WhatsApp channel configured.");
     Ok(())
 }
