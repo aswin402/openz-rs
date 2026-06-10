@@ -6,7 +6,7 @@ use crate::config::resolve_path;
 use crate::config::schema::Config;
 use crate::providers::GenerationSettings;
 use crate::session::Message;
-use inquire::{Text, Select, Confirm};
+use inquire::{Text, Confirm};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SubagentProfile {
@@ -183,18 +183,33 @@ pub fn save_profiles(profiles: &[SubagentProfile]) -> Result<()> {
 
 pub async fn run_subagent_manager(config: Config) -> Result<()> {
     let _ = load_profiles()?;
-    println!("\n=== OpenZ Subagent Manager ===");
+    let active_mdl = config.agents.defaults.model.clone();
+    
     loop {
-        let choices = vec!["List / Manage Subagents", "Create New Subagent", "Exit"];
-        let choice = Select::new("Choose an option:", choices).prompt()?;
+        let choices = vec![
+            "List / Manage Subagents".to_string(),
+            "Create New Subagent".to_string(),
+            "Exit".to_string(),
+        ];
+        
+        let choice_idx = match crate::agent::style::select_menu_custom(
+            "Choose an option:",
+            &choices,
+            &active_mdl,
+            Some("OpenZ Subagent Manager"),
+            true,
+        ) {
+            Ok(Some(idx)) => idx,
+            _ => break, // Exit on Esc
+        };
 
-        match choice {
-            "List / Manage Subagents" => {
+        match choice_idx {
+            0 => {
                 if let Err(e) = manage_menu(&config).await {
                     eprintln!("Error managing subagents: {}", e);
                 }
             }
-            "Create New Subagent" => {
+            1 => {
                 if let Err(e) = create_menu(&config).await {
                     eprintln!("Error creating subagent: {}", e);
                 }
@@ -208,70 +223,106 @@ pub async fn run_subagent_manager(config: Config) -> Result<()> {
     Ok(())
 }
 
-async fn manage_menu(_config: &Config) -> Result<()> {
+async fn manage_menu(config: &Config) -> Result<()> {
     let mut profiles = load_profiles()?;
     if profiles.is_empty() {
         println!("No subagents currently configured.");
         return Ok(());
     }
 
-    let subagent_names: Vec<String> = profiles.iter().map(|p| p.name.clone()).collect();
-    let name_choice = Select::new("Select a subagent to manage:", subagent_names).prompt()?;
+    let active_mdl = config.agents.defaults.model.clone();
+    let mut subagent_names: Vec<String> = profiles.iter().map(|p| p.name.clone()).collect();
+    subagent_names.push("Back".to_string());
 
-    if let Some(pos) = profiles.iter().position(|p| p.name == name_choice) {
-        loop {
-            let profile = &profiles[pos];
-            println!("\n--- Subagent Details: {} ---", profile.name);
-            println!("Description: {}", profile.description);
-            println!("Primary Model: {}", profile.model);
-            println!("Fallback Models: {:?}", profile.fallbacks);
-            println!("System Prompt:\n{}", profile.system_prompt);
-            println!("------------------------------------");
+    loop {
+        let name_choice_idx = match crate::agent::style::select_menu_custom(
+            "Select a subagent to manage:",
+            &subagent_names,
+            &active_mdl,
+            Some("List Subagents"),
+            true,
+        ) {
+            Ok(Some(idx)) => idx,
+            _ => break, // Go back on Esc
+        };
 
-            let options = vec!["Modify Subagent", "Delete Subagent", "Back"];
-            let action = Select::new("Select action:", options).prompt()?;
+        if name_choice_idx == profiles.len() {
+            break; // Back option
+        }
 
-            match action {
-                "Modify Subagent" => {
-                    let mut modified = profile.clone();
-                    modified.description = Text::new("Edit Description:")
-                        .with_initial_value(&profile.description)
-                        .prompt()?;
-                    modified.system_prompt = Text::new("Edit System Prompt:")
-                        .with_initial_value(&profile.system_prompt)
-                        .prompt()?;
-                    modified.model = Text::new("Edit Primary Model:")
-                        .with_initial_value(&profile.model)
-                        .prompt()?;
-                    
-                    let mut fallbacks = Vec::new();
-                    for idx in 1..=3 {
-                        let default_val = profile.fallbacks.get(idx - 1).cloned().unwrap_or_default();
-                        let fallback = Text::new(&format!("Edit Fallback Model {} (Leave empty to skip):", idx))
-                            .with_initial_value(&default_val)
+        let name_choice = &subagent_names[name_choice_idx];
+
+        if let Some(pos) = profiles.iter().position(|p| p.name == *name_choice) {
+            loop {
+                let profile = &profiles[pos];
+                println!("\n--- Subagent Details: {} ---", profile.name);
+                println!("Description: {}", profile.description);
+                println!("Primary Model: {}", profile.model);
+                println!("Fallback Models: {:?}", profile.fallbacks);
+                println!("System Prompt:\n{}", profile.system_prompt);
+                println!("------------------------------------");
+
+                let options = vec![
+                    "Modify Subagent".to_string(),
+                    "Delete Subagent".to_string(),
+                    "Back".to_string(),
+                ];
+                
+                let action_idx = match crate::agent::style::select_menu_custom(
+                    "Select action:",
+                    &options,
+                    &active_mdl,
+                    Some(&format!("Manage: {}", profile.name)),
+                    true,
+                ) {
+                    Ok(Some(idx)) => idx,
+                    _ => break, // Go back on Esc
+                };
+
+                match action_idx {
+                    0 => {
+                        let mut modified = profile.clone();
+                        modified.description = Text::new("Edit Description:")
+                            .with_initial_value(&profile.description)
                             .prompt()?;
-                        if !fallback.trim().is_empty() {
-                            fallbacks.push(fallback.trim().to_string());
+                        modified.system_prompt = Text::new("Edit System Prompt:")
+                            .with_initial_value(&profile.system_prompt)
+                            .prompt()?;
+                        modified.model = Text::new("Edit Primary Model:")
+                            .with_initial_value(&profile.model)
+                            .prompt()?;
+                        
+                        let mut fallbacks = Vec::new();
+                        for idx in 1..=3 {
+                            let default_val = profile.fallbacks.get(idx - 1).cloned().unwrap_or_default();
+                            let fallback = Text::new(&format!("Edit Fallback Model {} (Leave empty to skip):", idx))
+                                .with_initial_value(&default_val)
+                                .prompt()?;
+                            if !fallback.trim().is_empty() {
+                                fallbacks.push(fallback.trim().to_string());
+                            }
+                        }
+                        modified.fallbacks = fallbacks;
+
+                        profiles[pos] = modified;
+                        save_profiles(&profiles)?;
+                        println!("✅ Subagent modified successfully.");
+                    }
+                    1 => {
+                        let confirm = Confirm::new(&format!("Are you sure you want to delete {}?", profile.name))
+                            .with_default(false)
+                            .prompt()?;
+                        if confirm {
+                            profiles.remove(pos);
+                            save_profiles(&profiles)?;
+                            println!("✅ Subagent deleted successfully.");
+                            subagent_names = profiles.iter().map(|p| p.name.clone()).collect();
+                            subagent_names.push("Back".to_string());
+                            break;
                         }
                     }
-                    modified.fallbacks = fallbacks;
-
-                    profiles[pos] = modified;
-                    save_profiles(&profiles)?;
-                    println!("✅ Subagent modified successfully.");
+                    _ => break,
                 }
-                "Delete Subagent" => {
-                    let confirm = Confirm::new(&format!("Are you sure you want to delete {}?", profile.name))
-                        .with_default(false)
-                        .prompt()?;
-                    if confirm {
-                        profiles.remove(pos);
-                        save_profiles(&profiles)?;
-                        println!("✅ Subagent deleted successfully.");
-                        break;
-                    }
-                }
-                _ => break,
             }
         }
     }
@@ -280,67 +331,90 @@ async fn manage_menu(_config: &Config) -> Result<()> {
 }
 
 async fn create_menu(config: &Config) -> Result<()> {
-    let creation_types = vec!["Create Manually", "Create with AI (Ask OpenZ)", "Back"];
-    let choice = Select::new("How would you like to create the subagent?", creation_types).prompt()?;
+    let creation_types = vec![
+        "Create Manually".to_string(),
+        "Create with AI (Ask OpenZ)".to_string(),
+        "Back".to_string(),
+    ];
+    let active_mdl = config.agents.defaults.model.clone();
 
-    match choice {
-        "Create Manually" => {
-            let name = Text::new("Enter Subagent Name (snake_case):").prompt()?;
-            if name.trim().is_empty() {
-                return Err(anyhow!("Name cannot be empty."));
-            }
+    loop {
+        let choice_idx = match crate::agent::style::select_menu_custom(
+            "How would you like to create the subagent?",
+            &creation_types,
+            &active_mdl,
+            Some("Create Subagent"),
+            true,
+        ) {
+            Ok(Some(idx)) => idx,
+            _ => break, // Go back on Esc
+        };
 
-            let description = Text::new("Enter Description:").prompt()?;
-            let system_prompt = Text::new("Enter System Prompt:").prompt()?;
-            let model = Text::new("Enter Primary Model Name (e.g. gpt-4o-mini):").prompt()?;
-            
-            let mut fallbacks = Vec::new();
-            for idx in 1..=3 {
-                let fallback = Text::new(&format!("Enter Fallback Model {} (Leave empty to skip):", idx)).prompt()?;
-                if !fallback.trim().is_empty() {
-                    fallbacks.push(fallback.trim().to_string());
+        if choice_idx == 2 {
+            break; // Back option
+        }
+
+        match choice_idx {
+            0 => {
+                let name = Text::new("Enter Subagent Name (snake_case):").prompt()?;
+                if name.trim().is_empty() {
+                    return Err(anyhow!("Name cannot be empty."));
                 }
-            }
 
-            let new_profile = SubagentProfile {
-                name: name.trim().to_string(),
-                description,
-                system_prompt,
-                model,
-                fallbacks,
-            };
+                let description = Text::new("Enter Description:").prompt()?;
+                let system_prompt = Text::new("Enter System Prompt:").prompt()?;
+                let model = Text::new("Enter Primary Model Name (e.g. gpt-4o-mini):").prompt()?;
+                
+                let mut fallbacks = Vec::new();
+                for idx in 1..=3 {
+                    let fallback = Text::new(&format!("Enter Fallback Model {} (Leave empty to skip):", idx)).prompt()?;
+                    if !fallback.trim().is_empty() {
+                        fallbacks.push(fallback.trim().to_string());
+                    }
+                }
 
-            let mut profiles = load_profiles()?;
-            profiles.push(new_profile);
-            save_profiles(&profiles)?;
-            println!("✅ Subagent manual creation complete.");
-        }
-        "Create with AI (Ask OpenZ)" => {
-            let task_description = Text::new("Describe the specific task or role you want this subagent to perform:").prompt()?;
-            if task_description.trim().is_empty() {
-                return Err(anyhow!("Description cannot be empty."));
-            }
+                let new_profile = SubagentProfile {
+                    name: name.trim().to_string(),
+                    description,
+                    system_prompt,
+                    model,
+                    fallbacks,
+                };
 
-            println!("🧠 Asking OpenZ to design this subagent for you...");
-            let ai_designed = ask_openz_to_design(config, &task_description).await?;
-
-            println!("\n--- AI Designed Subagent Proposed ---");
-            println!("Name: {}", ai_designed.name);
-            println!("Description: {}", ai_designed.description);
-            println!("Primary Model: {}", ai_designed.model);
-            println!("Fallback Models: {:?}", ai_designed.fallbacks);
-            println!("System Prompt:\n{}", ai_designed.system_prompt);
-            println!("------------------------------------");
-
-            let save_choice = Confirm::new("Save this AI-designed subagent?").with_default(true).prompt()?;
-            if save_choice {
                 let mut profiles = load_profiles()?;
-                profiles.push(ai_designed);
+                profiles.push(new_profile);
                 save_profiles(&profiles)?;
-                println!("✅ AI-designed subagent saved successfully.");
+                println!("✅ Subagent manual creation complete.");
+                break;
             }
+            1 => {
+                let task_description = Text::new("Describe the specific task or role you want this subagent to perform:").prompt()?;
+                if task_description.trim().is_empty() {
+                    return Err(anyhow!("Description cannot be empty."));
+                }
+
+                println!("🧠 Asking OpenZ to design this subagent for you...");
+                let ai_designed = ask_openz_to_design(config, &task_description).await?;
+
+                println!("\n--- AI Designed Subagent Proposed ---");
+                println!("Name: {}", ai_designed.name);
+                println!("Description: {}", ai_designed.description);
+                println!("Primary Model: {}", ai_designed.model);
+                println!("Fallback Models: {:?}", ai_designed.fallbacks);
+                println!("System Prompt:\n{}", ai_designed.system_prompt);
+                println!("------------------------------------");
+
+                let save_choice = Confirm::new("Save this AI-designed subagent?").with_default(true).prompt()?;
+                if save_choice {
+                    let mut profiles = load_profiles()?;
+                    profiles.push(ai_designed);
+                    save_profiles(&profiles)?;
+                    println!("✅ AI-designed subagent saved successfully.");
+                }
+                break;
+            }
+            _ => {}
         }
-        _ => {}
     }
 
     Ok(())
