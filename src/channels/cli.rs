@@ -613,6 +613,8 @@ fn read_line_raw(
                             }
                             print!("\x1b[{}A\r", lines_printed - 1);
                         }
+                        print!("\r\x1b[2K");
+                        print!("{}{}> {}{}", COLOR_BOLD, AURA_SLATE, typed_input, COLOR_RESET);
                         disable_raw_mode()?;
                         print!("\r\n");
                         stdout().flush()?;
