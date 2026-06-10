@@ -1,5 +1,5 @@
 use crate::config::loader::{load_config, save_config, resolve_path};
-use crate::config::schema::{Config, ProviderConfig, WebSocketChannelConfig};
+use crate::config::schema::{Config, ProviderConfig};
 use clap::{Parser, Subcommand};
 use inquire::{Text, Select, Password, Confirm, PasswordDisplayMode};
 use anyhow::{Result, anyhow};
@@ -521,21 +521,7 @@ async fn handle_agent() -> Result<()> {
     let defaults = config.agents.defaults.clone();
     start_scheduler(config.clone());
     
-    // Check if background gateway needs to start when TUI starts
-    if let Some(ref ws_config) = config.channels.websocket {
-        if ws_config.enabled && ws_config.start_on_tui {
-            let bg_config = config.clone();
-            tokio::spawn(async move {
-                if let Ok(agent_loop) = build_agent_loop(bg_config.clone()).await {
-                    let gateway = WsGateway::new(bg_config.channels.websocket.clone().unwrap(), agent_loop);
-                    println!("🚀 Spawning background gateway (startOnTui enabled)...");
-                    if let Err(e) = gateway.start().await {
-                        eprintln!("⚠️ Background gateway error: {}", e);
-                    }
-                }
-            });
-        }
-    }
+
 
     let sessions_dir = resolve_path("~/.openz/sessions");
     let session_manager = SessionManager::new(sessions_dir);
@@ -641,74 +627,6 @@ async fn handle_whatsapp() -> Result<()> {
     Ok(())
 }
 
-fn setup_systemd_service() -> Result<()> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;
-    let service_dir = home.join(".config/systemd/user");
-    std::fs::create_dir_all(&service_dir)?;
-    
-    let service_path = service_dir.join("openz-gateway.service");
-    let current_exe = std::env::current_exe()?;
-    let exe_path = current_exe.to_string_lossy();
-    
-    let service_content = format!(
-        "[Unit]\n\
-         Description=OpenZ Gateway Service\n\
-         After=network.target\n\n\
-         [Service]\n\
-         Type=simple\n\
-         ExecStart={} gateway\n\
-         Restart=always\n\
-         RestartSec=5\n\n\
-         [Install]\n\
-         WantedBy=default.target\n",
-        exe_path
-    );
-    
-    std::fs::write(&service_path, service_content)?;
-    println!("📄 Written systemd user service unit to: {:?}", service_path);
-    
-    // Enable and start the service
-    println!("⚙️ Reloading systemd user daemon and enabling/starting openz-gateway.service...");
-    let _ = std::process::Command::new("systemctl")
-        .args(&["--user", "daemon-reload"])
-        .status();
-    let _ = std::process::Command::new("systemctl")
-        .args(&["--user", "enable", "openz-gateway.service"])
-        .status();
-    let status = std::process::Command::new("systemctl")
-        .args(&["--user", "restart", "openz-gateway.service"])
-        .status();
-        
-    if status.map(|s| s.success()).unwrap_or(false) {
-        println!("✅ openz-gateway.service successfully started and enabled!");
-    } else {
-        println!("⚠️ Failed to restart openz-gateway.service via systemctl. Make sure systemd user services are supported on your system.");
-    }
-    
-    Ok(())
-}
-
-fn disable_systemd_service() -> Result<()> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;
-    let service_path = home.join(".config/systemd/user/openz-gateway.service");
-    
-    if service_path.exists() {
-        println!("⚙️ Stopping and disabling openz-gateway.service...");
-        let _ = std::process::Command::new("systemctl")
-            .args(&["--user", "stop", "openz-gateway.service"])
-            .status();
-        let _ = std::process::Command::new("systemctl")
-            .args(&["--user", "disable", "openz-gateway.service"])
-            .status();
-        let _ = std::fs::remove_file(&service_path);
-        let _ = std::process::Command::new("systemctl")
-            .args(&["--user", "daemon-reload"])
-            .status();
-        println!("✅ systemd user service removed.");
-    }
-    Ok(())
-}
-
 fn update_provider_key(config: &mut Config, provider_name: &str, api_key: String) {
     let mut p_config = match provider_name {
         "anthropic" => config.providers.anthropic.clone(),
@@ -779,13 +697,7 @@ fn is_telegram_configured(config: &Config) -> bool {
     }
 }
 
-fn is_gateway_configured(config: &Config) -> bool {
-    if let Some(ref ws) = config.channels.websocket {
-        ws.enabled && (ws.start_on_boot || ws.start_on_tui)
-    } else {
-        false
-    }
-}
+
 
 async fn handle_configure() -> Result<()> {
     let active_mdl = {
@@ -804,12 +716,6 @@ async fn handle_configure() -> Result<()> {
             configure_options.push("Telegram (configured)".to_string());
         } else {
             configure_options.push("Telegram".to_string());
-        }
-
-        if is_gateway_configured(&config) {
-            configure_options.push("Gateway (configured)".to_string());
-        } else {
-            configure_options.push("Gateway".to_string());
         }
 
         configure_options.push("Exit".to_string());
@@ -839,17 +745,6 @@ async fn handle_configure() -> Result<()> {
                     }
                 }
                 handle_telegram_submenu(&mut config).await?;
-            }
-            2 => {
-                if is_gateway_configured(&config) {
-                    let reconfigure = Confirm::new("Gateway is already configured. Reconfigure?")
-                        .with_default(false)
-                        .prompt()?;
-                    if !reconfigure {
-                        continue;
-                    }
-                }
-                handle_gateway_submenu(&mut config, &active_mdl).await?;
             }
             _ => {
                 break;
@@ -962,59 +857,4 @@ async fn handle_telegram_submenu(config: &mut Config) -> Result<()> {
     Ok(())
 }
 
-async fn handle_gateway_submenu(config: &mut Config, active_mdl: &str) -> Result<()> {
-    let mut ws = config.channels.websocket.clone().unwrap_or_else(|| {
-        WebSocketChannelConfig {
-            enabled: true,
-            port: 8765,
-            host: "127.0.0.1".to_string(),
-            start_on_boot: false,
-            start_on_tui: false,
-        }
-    });
 
-    let gateway_options = vec![
-        "Start gateway when computer turns on".to_string(),
-        "Start gateway when user starts openz in terminal".to_string(),
-        "Back".to_string(),
-    ];
-
-    loop {
-        let choice_idx = match select_menu_custom(
-            "Select gateway preference:",
-            &gateway_options,
-            active_mdl,
-            Some("Gateway Configuration"),
-            true,
-        ) {
-            Ok(Some(idx)) => idx,
-            _ => break, // Go back on Esc
-        };
-
-        if choice_idx == 2 {
-            break; // Back option
-        }
-
-        match choice_idx {
-            0 => {
-                ws.enabled = true;
-                ws.start_on_boot = true;
-                ws.start_on_tui = false;
-                setup_systemd_service()?;
-                println!("{}✓ Configured gateway to start on boot.{}", EMERALD_GREEN, COLOR_RESET);
-            }
-            1 => {
-                ws.enabled = true;
-                ws.start_on_boot = false;
-                ws.start_on_tui = true;
-                disable_systemd_service()?;
-                println!("{}✓ Configured gateway to start when TUI starts.{}", EMERALD_GREEN, COLOR_RESET);
-            }
-            _ => {}
-        }
-
-        config.channels.websocket = Some(ws.clone());
-        save_config(config)?;
-    }
-    Ok(())
-}
