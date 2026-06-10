@@ -815,6 +815,7 @@ impl super::Channel for CliChannel {
 
                     if filtered_providers.is_empty() {
                         println!("{}⚠️ No LLM providers configured! Please run 'openz configure' first.{}", crate::agent::style::colors::AURA_GOLD, crate::agent::style::colors::COLOR_RESET);
+                        println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
                         continue;
                     }
 
@@ -827,10 +828,11 @@ impl super::Channel for CliChannel {
                             format!("Current active model: {} | Provider: {}", defaults.model, defaults.provider)
                         )
                     };
-                    match crate::agent::style::select_menu_custom("Choose an LLM provider:", &provider_options, &active_mdl, Some(&current_active_header), true) {
+                    match crate::agent::style::select_menu_custom("Choose an LLM provider:", &provider_options, &active_mdl, Some(&current_active_header), false) {
                         Ok(Some(selected_idx)) => {
                             if selected_idx == filtered_providers.len() {
                                 println!("Model selection cancelled.");
+                                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
                                 continue;
                             }
                             let prov_info = filtered_providers[selected_idx];
@@ -840,6 +842,7 @@ impl super::Channel for CliChannel {
                                 Ok(Some(selected_model_idx)) => {
                                     if selected_model_idx == prov_info.models.len() {
                                         println!("Model selection cancelled.");
+                                        println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
                                         continue;
                                     }
                                     let prov = prov_info.name;
@@ -917,6 +920,7 @@ impl super::Channel for CliChannel {
                         }
                     }
                 }
+                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
                 continue;
             }
 
