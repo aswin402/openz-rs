@@ -657,8 +657,12 @@ impl super::Channel for CliChannel {
             }
  
             if trimmed == "/clear" {
-                print!("\x1B[2J\x1B[1;1H");
-                let _ = io::stdout().flush();
+                use crossterm::ExecutableCommand;
+                let mut stdout = io::stdout();
+                let _ = stdout.execute(crossterm::terminal::Clear(crossterm::terminal::ClearType::All));
+                let _ = stdout.execute(crossterm::terminal::Clear(crossterm::terminal::ClearType::Purge));
+                let _ = stdout.execute(crossterm::cursor::MoveTo(0, 0));
+                let _ = stdout.flush();
                 continue;
             }
 
