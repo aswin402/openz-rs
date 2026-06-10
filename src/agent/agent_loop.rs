@@ -491,13 +491,13 @@ impl AgentLoop {
                             if has_reasoning {
                                 if let Some(ref reasoning) = resp.reasoning_content {
                                     for line in reasoning.trim().lines() {
-                                        println!("{}{}{}", AURA_SLATE, line, COLOR_RESET);
+                                        println!("{}{}{}", AURA_SLATE, line.trim(), COLOR_RESET);
                                     }
                                 }
                             } else if has_content && has_tool_calls {
                                 if let Some(ref content) = resp.content {
                                     for line in content.trim().lines() {
-                                        println!("{}{}{}", AURA_SLATE, line, COLOR_RESET);
+                                        println!("{}{}{}", AURA_SLATE, line.trim(), COLOR_RESET);
                                     }
                                 }
                             }
