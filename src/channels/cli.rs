@@ -674,6 +674,15 @@ impl super::Channel for CliChannel {
             if trimmed.starts_with("/model") {
                 let arg = trimmed["/model".len()..].trim();
                 if arg.is_empty() {
+                    use crate::config::loader::load_config;
+                    let config = match load_config() {
+                        Ok(c) => c,
+                        Err(e) => {
+                            eprintln!("{}✕ Error: Failed to load config: {}{}", ERROR_RED, e, COLOR_RESET);
+                            continue;
+                        }
+                    };
+
                     struct ProviderModels {
                         name: &'static str,
                         display: &'static str,
@@ -799,7 +808,17 @@ impl super::Channel for CliChannel {
                         },
                     ];
 
-                    let mut provider_options: Vec<String> = provider_list.iter().map(|p| p.display.to_string()).collect();
+                    let filtered_providers: Vec<&ProviderModels> = provider_list
+                        .iter()
+                        .filter(|p| config.is_provider_configured(p.name))
+                        .collect();
+
+                    if filtered_providers.is_empty() {
+                        println!("{}⚠️ No LLM providers configured! Please run 'openz configure' first.{}", crate::agent::style::colors::AURA_GOLD, crate::agent::style::colors::COLOR_RESET);
+                        continue;
+                    }
+
+                    let mut provider_options: Vec<String> = filtered_providers.iter().map(|p| p.display.to_string()).collect();
                     provider_options.push("Exit".to_string());
                     let (active_mdl, current_active_header) = {
                         let defaults = self.defaults.lock().await;
@@ -810,11 +829,11 @@ impl super::Channel for CliChannel {
                     };
                     match crate::agent::style::select_menu_custom("Choose an LLM provider:", &provider_options, &active_mdl, Some(&current_active_header), true) {
                         Ok(Some(selected_idx)) => {
-                            if selected_idx == provider_list.len() {
+                            if selected_idx == filtered_providers.len() {
                                 println!("Model selection cancelled.");
                                 continue;
                             }
-                            let prov_info = &provider_list[selected_idx];
+                            let prov_info = filtered_providers[selected_idx];
                             let mut model_options: Vec<String> = prov_info.models.iter().map(|&m| m.to_string()).collect();
                             model_options.push("Exit".to_string());
                             match crate::agent::style::select_menu_custom(&format!("Choose a model from {}:", prov_info.display), &model_options, &active_mdl, None, false) {

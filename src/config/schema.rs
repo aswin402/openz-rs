@@ -315,3 +315,32 @@ impl Default for Config {
         }
     }
 }
+
+impl Config {
+    pub fn is_provider_configured(&self, provider_name: &str) -> bool {
+        let p_opt = match provider_name {
+            "anthropic" => &self.providers.anthropic,
+            "openai" => &self.providers.openai,
+            "openrouter" => &self.providers.openrouter,
+            "deepseek" => &self.providers.deepseek,
+            "groq" => &self.providers.groq,
+            "ollama" => &self.providers.ollama,
+            "minimax" => &self.providers.minimax,
+            "mistral" => &self.providers.mistral,
+            "z.ai" => &self.providers.z_ai,
+            "nvidia" => &self.providers.nvidia,
+            "opencode_zen" => &self.providers.opencode_zen,
+            "cerebres" => &self.providers.cerebres,
+            "google_ai_studio" => &self.providers.google_ai_studio,
+            _ => return false,
+        };
+        if provider_name == "ollama" {
+            p_opt.is_some()
+        } else if let Some(p) = p_opt {
+            p.api_key.as_ref().map(|k| !k.trim().is_empty()).unwrap_or(false)
+        } else {
+            false
+        }
+    }
+}
+

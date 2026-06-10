@@ -288,7 +288,7 @@ async fn manage_menu(config: &Config) -> Result<()> {
                         modified.system_prompt = Text::new("Edit System Prompt:")
                             .with_initial_value(&profile.system_prompt)
                             .prompt()?;
-                        if let Some(selected_model) = prompt_choose_model("Edit Primary Model:", &profile.model)? {
+                        if let Some(selected_model) = prompt_choose_model("Edit Primary Model:", &profile.model, config)? {
                             modified.model = selected_model;
                         }
 
@@ -296,7 +296,7 @@ async fn manage_menu(config: &Config) -> Result<()> {
                         for idx in 1..=3 {
                             let default_val = profile.fallbacks.get(idx - 1).cloned().unwrap_or_default();
                             let label = format!("Edit Fallback Model {} (Exit/Esc to skip):", idx);
-                            if let Some(fallback) = prompt_choose_model(&label, &default_val)? {
+                            if let Some(fallback) = prompt_choose_model(&label, &default_val, config)? {
                                 fallbacks.push(fallback);
                             }
                         }
@@ -361,7 +361,7 @@ async fn create_menu(config: &Config) -> Result<()> {
 
                 let description = Text::new("Enter Description:").prompt()?;
                 let system_prompt = Text::new("Enter System Prompt:").prompt()?;
-                let model = match prompt_choose_model("Choose Primary Model:", "gpt-4o-mini")? {
+                let model = match prompt_choose_model("Choose Primary Model:", "gpt-4o-mini", config)? {
                     Some(m) => m,
                     None => {
                         println!("Creation cancelled.");
@@ -372,7 +372,7 @@ async fn create_menu(config: &Config) -> Result<()> {
                 let mut fallbacks = Vec::new();
                 for idx in 1..=3 {
                     let label = format!("Choose Fallback Model {} (Exit/Esc to skip):", idx);
-                    if let Some(fallback) = prompt_choose_model(&label, "")? {
+                    if let Some(fallback) = prompt_choose_model(&label, "", config)? {
                         fallbacks.push(fallback);
                     }
                 }
@@ -472,7 +472,8 @@ async fn ask_openz_to_design(config: &Config, task_description: &str) -> Result<
     Ok(ai_profile)
 }
 
-fn prompt_choose_model(prompt_label: &str, current_model: &str) -> Result<Option<String>> {
+
+fn prompt_choose_model(prompt_label: &str, current_model: &str, config: &Config) -> Result<Option<String>> {
     #[allow(dead_code)]
     struct ProviderModels {
         name: &'static str,
@@ -480,7 +481,7 @@ fn prompt_choose_model(prompt_label: &str, current_model: &str) -> Result<Option
         models: &'static [&'static str],
     }
 
-    let provider_list = &[
+    let all_providers = &[
         ProviderModels {
             name: "openai",
             display: "OpenAI (5)",
@@ -599,6 +600,18 @@ fn prompt_choose_model(prompt_label: &str, current_model: &str) -> Result<Option
         },
     ];
 
+    let mut provider_list = Vec::new();
+    for p in all_providers {
+        if config.is_provider_configured(p.name) {
+            provider_list.push(p);
+        }
+    }
+
+    if provider_list.is_empty() {
+        println!("{}⚠️ No LLM providers configured! Please run 'openz configure' first.{}", crate::agent::style::colors::AURA_GOLD, crate::agent::style::colors::COLOR_RESET);
+        return Ok(None);
+    }
+
     let mut provider_options: Vec<String> = provider_list.iter().map(|p| p.display.to_string()).collect();
     provider_options.push("Exit".to_string());
 
@@ -607,7 +620,7 @@ fn prompt_choose_model(prompt_label: &str, current_model: &str) -> Result<Option
             if prov_idx == provider_list.len() {
                 return Ok(None);
             }
-            let prov_info = &provider_list[prov_idx];
+            let prov_info = provider_list[prov_idx];
             let mut model_options: Vec<String> = prov_info.models.iter().map(|&m| m.to_string()).collect();
             model_options.push("Exit".to_string());
             

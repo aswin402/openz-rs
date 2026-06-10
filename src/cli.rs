@@ -863,29 +863,6 @@ async fn handle_configure() -> Result<()> {
     Ok(())
 }
 
-fn is_provider_configured(config: &Config, provider_name: &str) -> bool {
-    let p_opt = match provider_name {
-        "anthropic" => &config.providers.anthropic,
-        "openai" => &config.providers.openai,
-        "openrouter" => &config.providers.openrouter,
-        "deepseek" => &config.providers.deepseek,
-        "groq" => &config.providers.groq,
-        "ollama" => &config.providers.ollama,
-        "minimax" => &config.providers.minimax,
-        "mistral" => &config.providers.mistral,
-        "z.ai" => &config.providers.z_ai,
-        "nvidia" => &config.providers.nvidia,
-        "opencode_zen" => &config.providers.opencode_zen,
-        "cerebres" => &config.providers.cerebres,
-        "google_ai_studio" => &config.providers.google_ai_studio,
-        _ => return false,
-    };
-    if let Some(p) = p_opt {
-        p.api_key.as_ref().map(|k| !k.trim().is_empty()).unwrap_or(false)
-    } else {
-        false
-    }
-}
 
 async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Result<()> {
     struct ProviderInfo {
@@ -910,7 +887,7 @@ async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Resu
 
     loop {
         let mut prov_options: Vec<String> = provider_list.iter().map(|p| {
-            if is_provider_configured(config, p.name) {
+            if config.is_provider_configured(p.name) {
                 format!("{} (configured)", p.display)
             } else {
                 p.display.to_string()
@@ -935,7 +912,7 @@ async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Resu
 
         let prov_info = &provider_list[choice_idx];
         
-        if is_provider_configured(config, prov_info.name) {
+        if config.is_provider_configured(prov_info.name) {
             let reconfigure = Confirm::new(&format!("{} is already configured. Reconfigure?", prov_info.display))
                 .with_default(false)
                 .prompt()?;
