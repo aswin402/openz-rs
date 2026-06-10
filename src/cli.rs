@@ -1,7 +1,7 @@
 use crate::config::loader::{load_config, save_config, resolve_path};
 use crate::config::schema::{Config, ProviderConfig, WebSocketChannelConfig};
 use clap::{Parser, Subcommand};
-use inquire::{Text, Select, Password};
+use inquire::{Text, Select, Password, Confirm, PasswordDisplayMode};
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use crate::providers::{openai::OpenAIProvider, anthropic::AnthropicProvider, LLMProvider};
@@ -94,7 +94,10 @@ async fn handle_onboard() -> Result<()> {
     
     let mut api_key = None;
     if provider_name != "ollama" {
-        let key = Password::new(&format!("Enter API Key for {}:", provider_name)).prompt()?;
+        let key = Password::new(&format!("Enter API Key for {}:", provider_name))
+            .without_confirmation()
+            .with_display_mode(PasswordDisplayMode::Masked)
+            .prompt()?;
         if !key.trim().is_empty() {
             api_key = Some(key.trim().to_string());
         }
@@ -817,6 +820,30 @@ async fn handle_configure() -> Result<()> {
     Ok(())
 }
 
+fn is_provider_configured(config: &Config, provider_name: &str) -> bool {
+    let p_opt = match provider_name {
+        "anthropic" => &config.providers.anthropic,
+        "openai" => &config.providers.openai,
+        "openrouter" => &config.providers.openrouter,
+        "deepseek" => &config.providers.deepseek,
+        "groq" => &config.providers.groq,
+        "ollama" => &config.providers.ollama,
+        "minimax" => &config.providers.minimax,
+        "mistral" => &config.providers.mistral,
+        "z.ai" => &config.providers.z_ai,
+        "nvidia" => &config.providers.nvidia,
+        "opencode_zen" => &config.providers.opencode_zen,
+        "cerebres" => &config.providers.cerebres,
+        "google_ai_studio" => &config.providers.google_ai_studio,
+        _ => return false,
+    };
+    if let Some(p) = p_opt {
+        p.api_key.as_ref().map(|k| !k.trim().is_empty()).unwrap_or(false)
+    } else {
+        false
+    }
+}
+
 async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Result<()> {
     struct ProviderInfo {
         name: &'static str,
@@ -838,10 +865,16 @@ async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Resu
         ProviderInfo { name: "google_ai_studio", display: "Google AI Studio (Gemini)" },
     ];
 
-    let mut prov_options: Vec<String> = provider_list.iter().map(|p| p.display.to_string()).collect();
-    prov_options.push("Back".to_string());
-
     loop {
+        let mut prov_options: Vec<String> = provider_list.iter().map(|p| {
+            if is_provider_configured(config, p.name) {
+                format!("{} (configured)", p.display)
+            } else {
+                p.display.to_string()
+            }
+        }).collect();
+        prov_options.push("Back".to_string());
+
         let choice_idx = match select_menu_custom(
             "Select provider to configure:",
             &prov_options,
@@ -859,7 +892,19 @@ async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Resu
 
         let prov_info = &provider_list[choice_idx];
         
-        let key = Password::new(&format!("Enter API Key for {}:", prov_info.display)).prompt()?;
+        if is_provider_configured(config, prov_info.name) {
+            let reconfigure = Confirm::new(&format!("{} is already configured. Reconfigure?", prov_info.display))
+                .with_default(false)
+                .prompt()?;
+            if !reconfigure {
+                continue;
+            }
+        }
+
+        let key = Password::new(&format!("Enter API Key for {}:", prov_info.display))
+            .without_confirmation()
+            .with_display_mode(PasswordDisplayMode::Masked)
+            .prompt()?;
         if !key.trim().is_empty() {
             update_provider_key(config, prov_info.name, key.trim().to_string());
             save_config(config)?;
@@ -879,7 +924,10 @@ async fn handle_telegram_submenu(config: &mut Config) -> Result<()> {
     println!("  3. Choose a name and a username for your bot.");
     println!("  4. Copy the HTTP API token provided by BotFather.\n");
 
-    let token = Password::new("Paste Telegram Bot Token: ").prompt()?;
+    let token = Password::new("Paste Telegram Bot Token: ")
+        .without_confirmation()
+        .with_display_mode(PasswordDisplayMode::Masked)
+        .prompt()?;
     if !token.trim().is_empty() {
         let mut tg = config.channels.telegram.clone().unwrap_or_default();
         tg.enabled = true;
