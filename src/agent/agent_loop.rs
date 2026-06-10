@@ -7,6 +7,7 @@ use crate::agent::style::*;
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use serde::Deserialize;
+use std::io::Write;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnState {
@@ -487,21 +488,22 @@ impl AgentLoop {
                         let has_tool_calls = !resp.tool_calls.is_empty();
                         
                         if has_reasoning || (has_content && has_tool_calls) {
-                            println!("{}{}▶ Thought for {:.1}s{}", COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET);
+                            print!("{}{}▶ Thought for {:.1}s{}\r\n", COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET);
                             if has_reasoning {
                                 if let Some(ref reasoning) = resp.reasoning_content {
                                     for line in reasoning.trim().lines() {
-                                        println!("{}{}{}", AURA_SLATE, line.trim(), COLOR_RESET);
+                                        print!("{}{}{}\r\n", AURA_SLATE, line.trim(), COLOR_RESET);
                                     }
                                 }
                             } else if has_content && has_tool_calls {
                                 if let Some(ref content) = resp.content {
                                     for line in content.trim().lines() {
-                                        println!("{}{}{}", AURA_SLATE, line.trim(), COLOR_RESET);
+                                        print!("{}{}{}\r\n", AURA_SLATE, line.trim(), COLOR_RESET);
                                     }
                                 }
                             }
-                            println!();
+                            print!("\r\n");
+                            let _ = std::io::stdout().flush();
                         }
                         
                         if let Some(content) = resp.content {
@@ -533,19 +535,22 @@ impl AgentLoop {
                                     let fut = t.call(&call.arguments);
                                     match with_spinner(&tool_spinner_msg, fut).await {
                                         Ok(res) => {
-                                            println!("{}✓{} {}", EMERALD_GREEN, COLOR_RESET, formatted_args);
+                                            print!("{}✓{} {}\r\n", EMERALD_GREEN, COLOR_RESET, formatted_args);
+                                            let _ = std::io::stdout().flush();
                                             res
                                         }
                                         Err(e) => {
                                             let error_str = e.to_string();
-                                            println!("{}✕ {} - Failed: {}{}", ERROR_RED, formatted_args, error_str, COLOR_RESET);
+                                            print!("{}✕ {} - Failed: {}{}\r\n", ERROR_RED, formatted_args, error_str, COLOR_RESET);
+                                            let _ = std::io::stdout().flush();
                                             serde_json::json!({ "error": error_str })
                                         }
                                     }
                                 }
                                 None => {
                                     let error_str = format!("Tool '{}' not found", call.name);
-                                    println!("{}✕ {} - Failed: {}{}", ERROR_RED, formatted_args, error_str, COLOR_RESET);
+                                    print!("{}✕ {} - Failed: {}{}\r\n", ERROR_RED, formatted_args, error_str, COLOR_RESET);
+                                    let _ = std::io::stdout().flush();
                                     serde_json::json!({ "error": error_str })
                                 }
                             };
