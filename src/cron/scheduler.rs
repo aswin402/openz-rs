@@ -8,10 +8,10 @@ use anyhow::Result;
 
 pub fn start_scheduler(config: Config) {
     tokio::spawn(async move {
-        println!("⏰ Cron scheduler background service started...");
+        crate::channels::cli::send_notification("⏰ Cron scheduler background service started...");
         loop {
             if let Err(e) = tick_scheduler(&config).await {
-                eprintln!("Error in cron scheduler tick: {}", e);
+                crate::channels::cli::send_notification(&format!("Error in cron scheduler tick: {}", e));
             }
             sleep(Duration::from_secs(10)).await;
         }
@@ -57,10 +57,10 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
             let config_clone = config.clone();
 
             tokio::spawn(async move {
-                println!("⏰ Executing Cron Job: {} (schedule: {})", job_clone.id, job_clone.schedule);
+                crate::channels::cli::send_notification(&format!("⏰ Executing Cron Job: {} (schedule: {})", job_clone.id, job_clone.schedule));
                 match run_job(&config_clone, &job_clone).await {
-                    Ok(_) => println!("⏰ Cron Job {} completed successfully.", job_clone.id),
-                    Err(e) => eprintln!("Error running Cron Job {}: {}", job_clone.id, e),
+                    Ok(_) => crate::channels::cli::send_notification(&format!("⏰ Cron Job {} completed successfully.", job_clone.id)),
+                    Err(e) => crate::channels::cli::send_notification(&format!("Error running Cron Job {}: {}", job_clone.id, e)),
                 }
             });
         }
@@ -102,7 +102,7 @@ async fn run_job(config: &Config, job: &CronJob) -> Result<()> {
         job.id, job.schedule, Utc::now().to_rfc3339(), job.prompt, res.content
     );
     std::fs::write(&log_file, log_content)?;
-    println!("⏰ Log saved to {:?}", log_file);
+    crate::channels::cli::send_notification(&format!("⏰ Log saved to {:?}", log_file));
 
     Ok(())
 }

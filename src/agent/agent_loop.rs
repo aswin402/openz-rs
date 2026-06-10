@@ -707,9 +707,9 @@ impl AgentLoop {
                                 if let Ok(mut latest_session) = session_manager.load(&session_key) {
                                     latest_session.metadata.insert("memory".to_string(), serde_json::Value::String(review.memory_content.trim().to_string()));
                                     if let Err(e) = session_manager.save(&latest_session) {
-                                        eprintln!("{}▲ [Self-Improvement] Failed to save self-improvement memory: {}{}", AURA_GOLD, e, COLOR_RESET);
+                                        crate::channels::cli::send_notification(&format!("{}▲ [Self-Improvement] Failed to save self-improvement memory: {}{}", AURA_GOLD, e, COLOR_RESET));
                                     } else {
-                                        println!("\n{}◇ [Self-Improvement] Memory updated based on recent conversation.{}", AURA_BLUE, COLOR_RESET);
+                                        crate::channels::cli::send_notification(&format!("{}◇ [Self-Improvement] Memory updated based on recent conversation.{}", AURA_BLUE, COLOR_RESET));
                                     }
                                 }
                             }
@@ -718,9 +718,9 @@ impl AgentLoop {
                             for skill in review.skills_to_save {
                                 if !skill.name.is_empty() && !skill.content.is_empty() {
                                     if let Err(e) = crate::agent::skills::save_skill(&skill.name, &skill.content) {
-                                        eprintln!("{}▲ [Self-Improvement] Failed to save self-improvement skill '{}': {}{}", AURA_GOLD, skill.name, e, COLOR_RESET);
+                                        crate::channels::cli::send_notification(&format!("{}▲ [Self-Improvement] Failed to save self-improvement skill '{}': {}{}", AURA_GOLD, skill.name, e, COLOR_RESET));
                                     } else {
-                                        println!("{}◇ [Self-Improvement] Skill '{}' updated/created based on recent conversation.{}", AURA_BLUE, skill.name, COLOR_RESET);
+                                        crate::channels::cli::send_notification(&format!("{}◇ [Self-Improvement] Skill '{}' updated/created based on recent conversation.{}", AURA_BLUE, skill.name, COLOR_RESET));
                                     }
                                 }
                             }

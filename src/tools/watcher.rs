@@ -121,14 +121,14 @@ impl Tool for FileWatcherTool {
                     loop {
                         tokio::select! {
                             _ = shutdown_rx.recv() => {
-                                println!("Watcher task shutdown signal received.");
+                                crate::channels::cli::send_notification("Watcher task shutdown signal received.");
                                 break;
                             }
                             Some(_) = event_rx.recv() => {
                                 let now = Instant::now();
                                 if now.duration_since(last_trigger) > debounce_duration {
                                     last_trigger = now;
-                                    println!("File watcher triggered: running '{}' in {:?}", cmd_clone, path_clone);
+                                    crate::channels::cli::send_notification(&format!("File watcher triggered: running '{}' in {:?}", cmd_clone, path_clone));
                                     
                                     // Run command
                                     let cmd_parts: Vec<&str> = cmd_clone.split_whitespace().collect();
@@ -146,18 +146,18 @@ impl Tool for FileWatcherTool {
                                                     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                                                     let error_msg = if stderr.trim().is_empty() { stdout } else { stderr };
                                                     
-                                                    println!("File watcher command failed! Sending to OpenZ session...");
+                                                    crate::channels::cli::send_notification("File watcher command failed! Sending to OpenZ session...");
                                                     let notification = format!(
                                                         "⚠️ [File Watcher] Command '{}' failed after file modification in {:?}:\n\n```\n{}\n```\n\nPlease fix the errors above.",
                                                         cmd_clone, path_clone, error_msg
                                                     );
                                                     let _ = crate::agent::activity::send_inbox_message("cli:direct", &notification, "file_watcher");
                                                 } else {
-                                                    println!("File watcher command succeeded.");
+                                                    crate::channels::cli::send_notification("File watcher command succeeded.");
                                                 }
                                             }
                                             Err(e) => {
-                                                eprintln!("Failed to execute watch trigger command: {}", e);
+                                                crate::channels::cli::send_notification(&format!("Failed to execute watch trigger command: {}", e));
                                             }
                                         }
                                     }

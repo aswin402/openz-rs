@@ -2,6 +2,33 @@ use crate::agent::AgentLoop;
 use crate::config::schema::AgentDefaults;
 use crate::agent::style::*;
 use std::io::{self, Write};
+use std::sync::{OnceLock, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static PENDING_NOTIFICATIONS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+static IS_RAW_INPUT_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+fn get_pending_notifications() -> &'static Mutex<Vec<String>> {
+    PENDING_NOTIFICATIONS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+pub fn send_notification(msg: &str) {
+    if IS_RAW_INPUT_ACTIVE.load(Ordering::SeqCst) {
+        if let Ok(mut pending) = get_pending_notifications().lock() {
+            pending.push(msg.to_string());
+        }
+    } else {
+        println!("{}", msg);
+    }
+}
+
+struct RawInputGuard;
+
+impl Drop for RawInputGuard {
+    fn drop(&mut self) {
+        IS_RAW_INPUT_ACTIVE.store(false, Ordering::SeqCst);
+    }
+}
 
 
 fn handle_clipboard_paste(index: usize) -> anyhow::Result<std::path::PathBuf> {
@@ -304,6 +331,9 @@ fn read_line_raw(
     use std::io::stdout;
 
     enable_raw_mode()?;
+    IS_RAW_INPUT_ACTIVE.store(true, Ordering::SeqCst);
+    let _guard = RawInputGuard;
+
     let mut typed_input = String::new();
     let mut selected_index: Option<usize> = None;
     let mut history_index: Option<usize> = None;
@@ -327,6 +357,44 @@ fn read_line_raw(
     )?;
 
     loop {
+        // Process any pending notifications first
+        let mut notifications = Vec::new();
+        if let Ok(mut pending) = get_pending_notifications().lock() {
+            if !pending.is_empty() {
+                notifications = std::mem::take(&mut *pending);
+            }
+        }
+
+        if !notifications.is_empty() {
+            if lines_printed > 1 {
+                for _ in 0..(lines_printed - 1) {
+                    print!("\r\n\x1b[2K");
+                }
+                print!("\x1b[{}A\r", lines_printed - 1);
+            }
+            print!("\r\x1b[2K");
+            let _ = std::io::stdout().flush();
+
+            for notif in notifications {
+                let formatted_notif = notif.replace("\n", "\r\n");
+                print!("{}\r\n", formatted_notif);
+            }
+            let _ = std::io::stdout().flush();
+
+            lines_printed = 1;
+            render_box(
+                model,
+                provider,
+                session_manager,
+                session_key,
+                &typed_input,
+                selected_index,
+                autocomplete_visible,
+                width_usize,
+                &mut lines_printed,
+            )?;
+        }
+
         if let Some(inbox_msg) = crate::agent::activity::pop_inbox_message("cli:direct") {
             disable_raw_mode()?;
             println!("\r\n{}🔌 [Remote Control] Received prompt: {}{}", AURA_BLUE, inbox_msg.message, COLOR_RESET);
