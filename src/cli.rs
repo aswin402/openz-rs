@@ -760,11 +760,41 @@ async fn handle_configure() -> Result<()> {
         let mut configure_options = vec![
             "Providers".to_string(),
         ];
+
+        if let Some(ref ws) = config.channels.websocket {
+            if ws.enabled {
+                configure_options.push("Gateway (WebSocket) (enabled)".to_string());
+            } else {
+                configure_options.push("Gateway (WebSocket)".to_string());
+            }
+        } else {
+            configure_options.push("Gateway (WebSocket)".to_string());
+        }
         
         if is_telegram_configured(&config) {
             configure_options.push("Telegram (configured)".to_string());
         } else {
             configure_options.push("Telegram".to_string());
+        }
+
+        if let Some(ref dc) = config.channels.discord {
+            if dc.enabled && !dc.bot_token.trim().is_empty() {
+                configure_options.push("Discord (configured)".to_string());
+            } else {
+                configure_options.push("Discord".to_string());
+            }
+        } else {
+            configure_options.push("Discord".to_string());
+        }
+
+        if let Some(ref wa) = config.channels.whatsapp {
+            if wa.enabled && !wa.api_key.trim().is_empty() {
+                configure_options.push("WhatsApp (configured)".to_string());
+            } else {
+                configure_options.push("WhatsApp".to_string());
+            }
+        } else {
+            configure_options.push("WhatsApp".to_string());
         }
 
         configure_options.push("Exit".to_string());
@@ -785,6 +815,9 @@ async fn handle_configure() -> Result<()> {
                 handle_providers_submenu(&mut config, &active_mdl).await?;
             }
             1 => {
+                handle_gateway_submenu(&mut config).await?;
+            }
+            2 => {
                 if is_telegram_configured(&config) {
                     let reconfigure = Confirm::new("Telegram is already configured. Reconfigure?")
                         .with_default(false)
@@ -794,6 +827,12 @@ async fn handle_configure() -> Result<()> {
                     }
                 }
                 handle_telegram_submenu(&mut config).await?;
+            }
+            3 => {
+                handle_discord_submenu(&mut config).await?;
+            }
+            4 => {
+                handle_whatsapp_submenu(&mut config).await?;
             }
             _ => {
                 break;
@@ -902,6 +941,198 @@ async fn handle_telegram_submenu(config: &mut Config) -> Result<()> {
     } else {
         println!("{}⚠️ Token unchanged.{}", AURA_GOLD, COLOR_RESET);
     }
+    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    Ok(())
+}
+
+fn setup_systemd_service() -> Result<()> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not locate home directory"))?;
+    let service_dir = home.join(".config").join("systemd").join("user");
+    std::fs::create_dir_all(&service_dir)?;
+    
+    let exe_path = std::env::current_exe().unwrap_or_else(|_| home.join(".cargo").join("bin").join("openz"));
+    
+    let service_content = format!(
+r#"[Unit]
+Description=OpenZ WebSocket Gateway Daemon
+After=network.target
+
+[Service]
+ExecStart={} gateway
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+"#,
+        exe_path.to_string_lossy()
+    );
+    
+    let service_file = service_dir.join("openz-gateway.service");
+    std::fs::write(&service_file, service_content)?;
+    
+    let _ = std::process::Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .output();
+        
+    let _ = std::process::Command::new("systemctl")
+        .args(["--user", "enable", "openz-gateway.service"])
+        .output();
+        
+    let _ = std::process::Command::new("systemctl")
+        .args(["--user", "restart", "openz-gateway.service"])
+        .output();
+        
+    Ok(())
+}
+
+fn disable_systemd_service() -> Result<()> {
+    let _ = std::process::Command::new("systemctl")
+        .args(["--user", "disable", "openz-gateway.service"])
+        .output();
+    let _ = std::process::Command::new("systemctl")
+        .args(["--user", "stop", "openz-gateway.service"])
+        .output();
+    Ok(())
+}
+
+async fn handle_gateway_submenu(config: &mut Config) -> Result<()> {
+    println!("\n{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    println!("{}--- Gateway (WebSocket) Configuration ---{}", COLOR_BOLD, COLOR_RESET);
+    
+    let mut ws = config.channels.websocket.clone().unwrap_or_else(|| {
+        crate::config::schema::WebSocketChannelConfig {
+            enabled: true,
+            port: 8765,
+            host: "127.0.0.1".to_string(),
+            start_on_boot: false,
+            start_on_tui: false,
+        }
+    });
+
+    let enabled = Confirm::new("Enable WebSocket gateway?")
+        .with_default(ws.enabled)
+        .prompt()?;
+    ws.enabled = enabled;
+
+    if enabled {
+        let port_input = Text::new(&format!("WebSocket Port [default: {}]:", ws.port)).prompt()?;
+        if !port_input.trim().is_empty() {
+            if let Ok(p) = port_input.trim().parse::<u16>() {
+                ws.port = p;
+            }
+        }
+
+        let host_input = Text::new(&format!("WebSocket Host [default: {}]:", ws.host)).prompt()?;
+        if !host_input.trim().is_empty() {
+            ws.host = host_input.trim().to_string();
+        }
+
+        let auto_start_options = vec![
+            "None (Manual launch only)".to_string(),
+            "Auto-start on TUI launch (TUI background thread)".to_string(),
+            "System Boot Daemon (Installs systemd user service)".to_string(),
+        ];
+
+        let auto_choice = select_menu_custom(
+            "Choose Gateway Auto-Start Preference:",
+            &auto_start_options,
+            "None (Manual launch only)",
+            None,
+            false,
+        )?;
+
+        match auto_choice {
+            Some(2) => {
+                ws.start_on_boot = true;
+                ws.start_on_tui = false;
+                println!("Installing and enabling systemd user service...");
+                if let Err(e) = setup_systemd_service() {
+                    eprintln!("{}✕ Failed to setup systemd service: {}{}", ERROR_RED, e, COLOR_RESET);
+                } else {
+                    println!("{}✓ systemd service openz-gateway.service installed and enabled successfully!{}", EMERALD_GREEN, COLOR_RESET);
+                }
+            }
+            Some(1) => {
+                ws.start_on_boot = false;
+                ws.start_on_tui = true;
+                let _ = disable_systemd_service();
+                println!("Gateway configured to auto-start when terminal client launches.");
+            }
+            _ => {
+                ws.start_on_boot = false;
+                ws.start_on_tui = false;
+                let _ = disable_systemd_service();
+                println!("Gateway auto-start disabled (manual launch only).");
+            }
+        }
+    } else {
+        let _ = disable_systemd_service();
+    }
+
+    config.channels.websocket = Some(ws);
+    save_config(config)?;
+    println!("{}✓ Gateway configured successfully!{}", EMERALD_GREEN, COLOR_RESET);
+    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    Ok(())
+}
+
+async fn handle_discord_submenu(config: &mut Config) -> Result<()> {
+    println!("\n{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    println!("{}--- Discord Bot Configuration ---{}", COLOR_BOLD, COLOR_RESET);
+    
+    let mut dc = config.channels.discord.clone().unwrap_or_default();
+    
+    let enabled = Confirm::new("Enable Discord Bot channel?")
+        .with_default(dc.enabled)
+        .prompt()?;
+    dc.enabled = enabled;
+
+    if enabled {
+        let token = Password::new("Paste Discord Bot Token: ")
+            .without_confirmation()
+            .with_display_mode(PasswordDisplayMode::Masked)
+            .prompt()?;
+        if !token.trim().is_empty() {
+            dc.bot_token = token.trim().to_string();
+        }
+    }
+
+    config.channels.discord = Some(dc);
+    save_config(config)?;
+    println!("{}✓ Discord channel configured successfully!{}", EMERALD_GREEN, COLOR_RESET);
+    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    Ok(())
+}
+
+async fn handle_whatsapp_submenu(config: &mut Config) -> Result<()> {
+    println!("\n{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    println!("{}--- WhatsApp Channel Configuration ---{}", COLOR_BOLD, COLOR_RESET);
+    
+    let mut wa = config.channels.whatsapp.clone().unwrap_or_default();
+    
+    let enabled = Confirm::new("Enable WhatsApp channel?")
+        .with_default(wa.enabled)
+        .prompt()?;
+    wa.enabled = enabled;
+
+    if enabled {
+        let key = Password::new("Paste WhatsApp API Key: ")
+            .without_confirmation()
+            .with_display_mode(PasswordDisplayMode::Masked)
+            .prompt()?;
+        if !key.trim().is_empty() {
+            wa.api_key = key.trim().to_string();
+        }
+
+        let phone_id = Text::new("Enter WhatsApp Phone Number ID: ").prompt()?;
+        if !phone_id.trim().is_empty() {
+            wa.phone_number_id = phone_id.trim().to_string();
+        }
+    }
+
+    config.channels.whatsapp = Some(wa);
+    save_config(config)?;
+    println!("{}✓ WhatsApp channel configured successfully!{}", EMERALD_GREEN, COLOR_RESET);
     println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
     Ok(())
 }
