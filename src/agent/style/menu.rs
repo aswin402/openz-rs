@@ -166,8 +166,8 @@ pub fn select_menu_custom(
     if show_divider {
         prompt_line_idx += 1;
     }
-    if header.is_some() {
-        prompt_line_idx += 1;
+    if let Some(h) = header {
+        prompt_line_idx += h.lines().count();
     }
 
     let mut draw_menu = |selected_idx: usize, first_draw: bool| -> Result<()> {
@@ -199,12 +199,14 @@ pub fn select_menu_custom(
 
         // 2. Print header if present
         if let Some(h) = header {
-            if count > 0 {
-                print!("\r\n\x1b[2K{}", h);
-            } else {
-                print!("{}", h);
+            for (idx, line) in h.lines().enumerate() {
+                if count > 0 || idx > 0 {
+                    print!("\r\n\x1b[2K{}", line);
+                } else {
+                    print!("{}", line);
+                }
+                count += 1;
             }
-            count += 1;
         }
 
         // 3. Print prompt

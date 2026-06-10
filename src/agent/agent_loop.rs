@@ -479,7 +479,57 @@ impl AgentLoop {
                         let activity_msg = format!("{}▶ Thinking{}", RED_ORANGE, COLOR_RESET);
                         let start_time = std::time::Instant::now();
                         let chat_fut = self.provider.chat(&system_prompt, &messages, &tools_openai, &settings);
-                        let resp = with_spinner(&activity_msg, chat_fut).await?;
+                        let mut resp = with_spinner(&activity_msg, chat_fut).await?;
+                        
+                        // Handle potential response truncation (finish_reason = "length") by auto-continuing
+                        if resp.finish_reason == "length" {
+                            let mut accumulated_content = resp.content.clone();
+                            let mut finish_reason = resp.finish_reason.clone();
+                            let mut continue_attempts = 0;
+                            
+                            while finish_reason == "length" && continue_attempts < 3 {
+                                continue_attempts += 1;
+                                
+                                let mut temp_messages = messages.clone();
+                                if let Some(ref current_acc) = accumulated_content {
+                                    temp_messages.push(Message {
+                                        role: "assistant".to_string(),
+                                        content: current_acc.clone(),
+                                        timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                                        extra: serde_json::Map::new(),
+                                    });
+                                }
+                                
+                                temp_messages.push(Message {
+                                    role: "user".to_string(),
+                                    content: "Continue generating the rest of your previous message exactly from where you left off. Do not repeat the beginning.".to_string(),
+                                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                                    extra: serde_json::Map::new(),
+                                });
+                                
+                                let cont_activity_msg = format!("{}▶ Continuing response... (attempt {}){}", RED_ORANGE, continue_attempts, COLOR_RESET);
+                                let cont_chat_fut = self.provider.chat(&system_prompt, &temp_messages, &tools_openai, &settings);
+                                if let Ok(cont_resp) = with_spinner(&cont_activity_msg, cont_chat_fut).await {
+                                    finish_reason = cont_resp.finish_reason.clone();
+                                    if let Some(ref cont_content) = cont_resp.content {
+                                        if let Some(ref mut acc) = accumulated_content {
+                                            acc.push_str(cont_content);
+                                        } else {
+                                            accumulated_content = Some(cont_content.clone());
+                                        }
+                                    }
+                                    if !cont_resp.tool_calls.is_empty() {
+                                        resp.tool_calls.extend(cont_resp.tool_calls);
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            
+                            resp.content = accumulated_content;
+                            resp.finish_reason = finish_reason;
+                        }
+                        
                         let duration = start_time.elapsed();
                         
                         let duration_secs = duration.as_secs_f32();
@@ -530,28 +580,46 @@ impl AgentLoop {
                             let formatted_args = format_tool_args(&call.name, &call.arguments);
                             let tool_spinner_msg = format!("{}▸{} Running {}...", AURA_GOLD, COLOR_RESET, formatted_args);
                             
-                            let result_val = match self.tools.get(&call.name) {
-                                Some(t) => {
-                                    let fut = t.call(&call.arguments);
-                                    match with_spinner(&tool_spinner_msg, fut).await {
-                                        Ok(res) => {
-                                            print!("{}✓{} {}\r\n", EMERALD_GREEN, COLOR_RESET, formatted_args);
-                                            let _ = std::io::stdout().flush();
-                                            res
-                                        }
-                                        Err(e) => {
-                                            let error_str = e.to_string();
-                                            print!("{}✕ {} - Failed: {}{}\r\n", ERROR_RED, formatted_args, error_str, COLOR_RESET);
-                                            let _ = std::io::stdout().flush();
-                                            serde_json::json!({ "error": error_str })
+                            let mut approved = true;
+                            if crate::agent::security::SecurityGuard::is_sensitive(&call.name, &call.arguments) {
+                                // Clear the running tool spinner first so the prompt is clean
+                                print!("\r\x1b[2K");
+                                let _ = std::io::stdout().flush();
+                                
+                                match crate::agent::security::ask_approval(session_key, &call.name, &call.arguments).await {
+                                    Ok(app) => approved = app,
+                                    Err(_) => approved = false,
+                                }
+                            }
+
+                            let result_val = if !approved {
+                                print!("{}✕{} {} - Denied by user\r\n", ERROR_RED, COLOR_RESET, formatted_args);
+                                let _ = std::io::stdout().flush();
+                                serde_json::json!({ "error": "Execution denied by user." })
+                            } else {
+                                match self.tools.get(&call.name) {
+                                    Some(t) => {
+                                        let fut = t.call(&call.arguments);
+                                        match with_spinner(&tool_spinner_msg, fut).await {
+                                            Ok(res) => {
+                                                print!("{}✓{} {}\r\n", EMERALD_GREEN, COLOR_RESET, formatted_args);
+                                                let _ = std::io::stdout().flush();
+                                                res
+                                            }
+                                            Err(e) => {
+                                                let error_str = e.to_string();
+                                                print!("{}✕ {} - Failed: {}{}\r\n", ERROR_RED, formatted_args, error_str, COLOR_RESET);
+                                                let _ = std::io::stdout().flush();
+                                                serde_json::json!({ "error": error_str })
+                                            }
                                         }
                                     }
-                                }
-                                None => {
-                                    let error_str = format!("Tool '{}' not found", call.name);
-                                    print!("{}✕ {} - Failed: {}{}\r\n", ERROR_RED, formatted_args, error_str, COLOR_RESET);
-                                    let _ = std::io::stdout().flush();
-                                    serde_json::json!({ "error": error_str })
+                                    None => {
+                                        let error_str = format!("Tool '{}' not found", call.name);
+                                        print!("{}✕ {} - Failed: {}{}\r\n", ERROR_RED, formatted_args, error_str, COLOR_RESET);
+                                        let _ = std::io::stdout().flush();
+                                        serde_json::json!({ "error": error_str })
+                                    }
                                 }
                             };
                             crate::agent::activity::update_activity(session_key, "Processing user prompt", None);

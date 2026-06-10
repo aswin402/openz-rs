@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.6`
+# OpenZ 🦊 `v0.0.7`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -15,6 +15,8 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
 
 ## 🚀 Key Features
 
+* **Security Guard Interceptor:** Safeguards host environment by intercepting destructive commands (`rm`, `dd`, etc.), privilege escalation (`sudo`), process controls (`kill`), system actions (`reboot`), network transfers (`curl`, `wget`, `scp`), and out-of-workspace writes. Features a clean, minimal themed TUI select menu with session-level whitelisting trust and Telegram inline query callback buttons.
+* **Auto-Continuation (Truncation Prevention):** Detects when model responses are cut off due to hitting output token limits (using `finish_reason: "length"`) and automatically prompts the model to continue, stitching the segments together seamlessly.
 * **Persistent Workspace Loops:** Session history, workspace file scopes, and local tool execution survive long-running turn completions.
 * **Memory & Skill Self-Improvement:** Inspired by `hermes-agent`, OpenZ implements a closed-loop learning system. An asynchronous background curator refines long-term memory (facts, preferences) and curates procedural skills (style rules, workarounds) stored in `~/.openz/skills/`. Users can also hand the agent a GitHub repository link, and OpenZ will dynamically clone, install, and configure it on the host machine, saving it as an active skill for future turns. View or manage them using `/memory`, `/skills`, and `/skill` commands.
 * **Pluggable Channel Adapters:** Built around a unified `Channel` trait, enabling modular communication endpoints:
@@ -99,6 +101,7 @@ Configure your token in `.env` (or set `TELEGRAM_BOT_TOKEN="your-token"`) and ru
 ## 📚 Architecture & Research
 
 * **System Architecture:** [architecture.md](docs/architecture.md)
+* **Security Guard & Permissions:** [security.md](docs/security.md)
 * **Pluggable Channels & Configuration:** [channels.md](docs/channels.md)
 * **Self-Improvement Guide:** [self_improvement.md](docs/self_improvement.md)
 * **ZeroClaw Gap Analysis & Roadmap:** [zeroclaw_research.md](docs/zeroclaw_research.md)

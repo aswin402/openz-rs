@@ -65,6 +65,7 @@ impl McpClient {
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
+                .kill_on_drop(true)
                 .spawn()?;
 
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -413,6 +414,7 @@ pub async fn run_mcp_bridge(port: u16, command: &str, args: &[String]) -> Result
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        .kill_on_drop(true)
         .spawn()?;
 
     let stdin = child.stdin.take().ok_or_else(|| anyhow!("Failed to open child stdin"))?;
