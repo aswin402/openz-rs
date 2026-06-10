@@ -771,6 +771,22 @@ fn update_provider_key(config: &mut Config, provider_name: &str, api_key: String
     }
 }
 
+fn is_telegram_configured(config: &Config) -> bool {
+    if let Some(ref tg) = config.channels.telegram {
+        tg.enabled && !tg.bot_token.trim().is_empty()
+    } else {
+        false
+    }
+}
+
+fn is_gateway_configured(config: &Config) -> bool {
+    if let Some(ref ws) = config.channels.websocket {
+        ws.enabled && (ws.start_on_boot || ws.start_on_tui)
+    } else {
+        false
+    }
+}
+
 async fn handle_configure() -> Result<()> {
     let active_mdl = {
         let config = load_config()?;
@@ -778,12 +794,25 @@ async fn handle_configure() -> Result<()> {
     };
 
     loop {
-        let configure_options = vec![
+        let mut config = load_config()?;
+        
+        let mut configure_options = vec![
             "Providers".to_string(),
-            "Telegram".to_string(),
-            "Gateway".to_string(),
-            "Exit".to_string(),
         ];
+        
+        if is_telegram_configured(&config) {
+            configure_options.push("Telegram (configured)".to_string());
+        } else {
+            configure_options.push("Telegram".to_string());
+        }
+
+        if is_gateway_configured(&config) {
+            configure_options.push("Gateway (configured)".to_string());
+        } else {
+            configure_options.push("Gateway".to_string());
+        }
+
+        configure_options.push("Exit".to_string());
 
         let choice_idx = match select_menu_custom(
             "Choose configure category:",
@@ -796,16 +825,30 @@ async fn handle_configure() -> Result<()> {
             _ => break, // Exit on Esc
         };
 
-        let mut config = load_config()?;
-
         match choice_idx {
             0 => {
                 handle_providers_submenu(&mut config, &active_mdl).await?;
             }
             1 => {
+                if is_telegram_configured(&config) {
+                    let reconfigure = Confirm::new("Telegram is already configured. Reconfigure?")
+                        .with_default(false)
+                        .prompt()?;
+                    if !reconfigure {
+                        continue;
+                    }
+                }
                 handle_telegram_submenu(&mut config).await?;
             }
             2 => {
+                if is_gateway_configured(&config) {
+                    let reconfigure = Confirm::new("Gateway is already configured. Reconfigure?")
+                        .with_default(false)
+                        .prompt()?;
+                    if !reconfigure {
+                        continue;
+                    }
+                }
                 handle_gateway_submenu(&mut config, &active_mdl).await?;
             }
             _ => {
