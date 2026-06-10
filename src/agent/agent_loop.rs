@@ -128,7 +128,7 @@ impl AgentLoop {
                             
                             let spinner_msg = format!(
                                 "{}▸ Consolidating conversation context...{}",
-                                AURA_PURPLE,
+                                RED_ORANGE,
                                 COLOR_RESET
                             );
                             let chat_fut = self.provider.chat(&system_prompt_sum, &summary_msgs, &[], &settings);
@@ -167,7 +167,7 @@ impl AgentLoop {
 
                             let spinner_msg = format!(
                                 "{}▸ Consolidating long-term memory...{}",
-                                AURA_PURPLE,
+                                RED_ORANGE,
                                 COLOR_RESET
                             );
                             let chat_fut = self.provider.chat(&system_prompt_mem, &mem_msgs, &[], &settings);
@@ -475,7 +475,7 @@ impl AgentLoop {
                         
                         let tools_openai = self.tools.to_openai_format();
                         
-                        let activity_msg = format!("{}▶ Thinking{}", AURA_PURPLE, COLOR_RESET);
+                        let activity_msg = format!("{}▶ Thinking{}", RED_ORANGE, COLOR_RESET);
                         let start_time = std::time::Instant::now();
                         let chat_fut = self.provider.chat(&system_prompt, &messages, &tools_openai, &settings);
                         let resp = with_spinner(&activity_msg, chat_fut).await?;
@@ -487,7 +487,7 @@ impl AgentLoop {
                         let has_tool_calls = !resp.tool_calls.is_empty();
                         
                         if has_reasoning || (has_content && has_tool_calls) {
-                            println!("{}{}▶ Thought for {:.1}s{}", COLOR_BOLD, AURA_PURPLE, duration_secs, COLOR_RESET);
+                            println!("{}{}▶ Thought for {:.1}s{}", COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET);
                             if has_reasoning {
                                 if let Some(ref reasoning) = resp.reasoning_content {
                                     for line in reasoning.trim().lines() {
