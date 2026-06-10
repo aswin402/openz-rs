@@ -81,3 +81,22 @@ The console CLI features a robust raw input loop with high-fidelity visual logs 
   * `▲ Warning`: Yellow logs (`AURA_GOLD`) for unsupported images or alert warnings.
   * `▸ Tool`: Violet logs (`AURA_PURPLE`) for tool executions (planning, writing, command execution).
   * `◎ Subagent`: Violet logs (`AURA_PURPLE`) for specialized and general subagent spawns (e.g. `◎ Vision Agent`).
+
+---
+
+## 6. Configuration Schema Details (`config.json`)
+
+The active configuration file is located at `~/.openz/config.json`. Below are the key configuration fields under `"agents" -> "defaults"`:
+
+* **`workspace`**: Path to local workspace directory for file and command executions.
+* **`model`**: Name of the active default LLM model.
+* **`provider`**: API provider (e.g. `openai`, `anthropic`, `openrouter`, `deepseek`, `groq`, `ollama`).
+* **`maxTokens`**: Maximum output tokens for LLM generation.
+* **`temperature`**: Generation temperature (typically `0.1` to `1.0`).
+* **`botName`**: Display name of the bot.
+* **`botIcon`**: Icon emoji/symbol for the bot.
+* **`maxMessages`**: Context window conversation length history limit.
+* **`maxToolIterations`**: Maximum nested tool execution iterations per prompt.
+* **`cavemanMode`**: Toggle built-in prompt compression.
+* **`contextLimit`** *(Optional)*: Explicitly overrides the default hardcoded context limit (in tokens) shown in the terminal status bar (e.g., set to `128000` or `1000000`). If omitted, default limits are dynamically resolved based on the active model name.
+

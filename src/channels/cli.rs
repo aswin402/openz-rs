@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static PENDING_NOTIFICATIONS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 static IS_RAW_INPUT_ACTIVE: AtomicBool = AtomicBool::new(false);
+static CUSTOM_CONTEXT_LIMIT: Mutex<Option<usize>> = Mutex::new(None);
 
 fn get_pending_notifications() -> &'static Mutex<Vec<String>> {
     PENDING_NOTIFICATIONS.get_or_init(|| Mutex::new(Vec::new()))
@@ -132,16 +133,38 @@ fn render_box(
     let approx_tokens = total_chars / 4;
     
     let model_lower = model.to_lowercase();
-    let limit_tokens = if model_lower.contains("claude-3-5") {
-        200_000
-    } else if model_lower.contains("gpt-4") {
-        128_000
+    let custom_limit = if let Ok(guard) = CUSTOM_CONTEXT_LIMIT.lock() {
+        *guard
+    } else {
+        None
+    };
+
+    let limit_tokens = if let Some(limit) = custom_limit {
+        limit
+    } else if model_lower.contains("gemini-1.5-pro") || model_lower.contains("gemini-2.5-pro") {
+        2_097_152
     } else if model_lower.contains("gemini") {
         1_048_576
+    } else if model_lower.contains("claude-3-5") || model_lower.contains("claude-3") {
+        200_000
+    } else if model_lower.contains("o1-") || model_lower.contains("o3-mini") {
+        200_000
+    } else if model_lower.contains("gpt-4") || model_lower.contains("gpt-4o") {
+        128_000
+    } else if model_lower.contains("deepseek-v4") {
+        1_000_000
+    } else if model_lower.contains("deepseek-v3") || model_lower.contains("deepseek-r1") || model_lower.contains("deepseek-chat") || model_lower.contains("deepseek-reasoner") {
+        128_000
+    } else if model_lower.contains("deepseek") {
+        128_000
+    } else if model_lower.contains("llama-3.1") || model_lower.contains("llama-3.2") || model_lower.contains("llama-3.3") || model_lower.contains("llama3.1") || model_lower.contains("llama3.2") || model_lower.contains("llama3.3") {
+        128_000
+    } else if model_lower.contains("llama-3") || model_lower.contains("llama3") {
+        8_192
+    } else if model_lower.contains("qwen") {
+        128_000
     } else if model_lower.contains("minimax") {
         204_800
-    } else if model_lower.contains("deepseek") {
-        64_000
     } else {
         128_000
     };
@@ -757,6 +780,9 @@ pub struct CliChannel {
 
 impl CliChannel {
     pub fn new(agent_loop: AgentLoop, defaults: AgentDefaults) -> Self {
+        if let Ok(mut guard) = CUSTOM_CONTEXT_LIMIT.lock() {
+            *guard = defaults.context_limit;
+        }
         CliChannel {
             agent_loop: tokio::sync::Mutex::new(agent_loop),
             defaults: tokio::sync::Mutex::new(defaults),
@@ -1043,7 +1069,11 @@ impl super::Channel for CliChannel {
                                                 match crate::cli::build_agent_loop(config.clone()).await {
                                                     Ok(new_loop) => {
                                                         *self.agent_loop.lock().await = new_loop;
-                                                        *self.defaults.lock().await = config.agents.defaults;
+                                                        let new_defaults = config.agents.defaults.clone();
+                                                        if let Ok(mut guard) = CUSTOM_CONTEXT_LIMIT.lock() {
+                                                            *guard = new_defaults.context_limit;
+                                                        }
+                                                        *self.defaults.lock().await = new_defaults;
                                                         println!("{}✓ Model updated to {} (provider: {}){}", EMERALD_GREEN, mdl, prov, COLOR_RESET);
                                                     }
                                                     Err(e) => {
@@ -1090,7 +1120,11 @@ impl super::Channel for CliChannel {
                                 match crate::cli::build_agent_loop(config.clone()).await {
                                     Ok(new_loop) => {
                                         *self.agent_loop.lock().await = new_loop;
-                                        *self.defaults.lock().await = config.agents.defaults;
+                                        let new_defaults = config.agents.defaults.clone();
+                                        if let Ok(mut guard) = CUSTOM_CONTEXT_LIMIT.lock() {
+                                            *guard = new_defaults.context_limit;
+                                        }
+                                        *self.defaults.lock().await = new_defaults;
                                         println!("{}✓ Model updated to {} (provider: {}){}", EMERALD_GREEN, mdl, prov, COLOR_RESET);
                                     }
                                     Err(e) => {

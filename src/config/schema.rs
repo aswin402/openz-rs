@@ -71,6 +71,8 @@ pub struct AgentDefaults {
     pub fallback_models: Vec<serde_json::Value>,
     #[serde(default = "default_caveman_mode")]
     pub caveman_mode: bool,
+    #[serde(default)]
+    pub context_limit: Option<usize>,
 }
 
 fn default_caveman_mode() -> bool {
@@ -119,6 +121,7 @@ impl Default for AgentDefaults {
             max_tool_iterations: default_max_tool_iterations(),
             fallback_models: Vec::new(),
             caveman_mode: true,
+            context_limit: None,
         }
     }
 }
