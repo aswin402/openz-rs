@@ -558,11 +558,15 @@ impl AgentLoop {
                         
                         if let Some(content) = resp.content {
                             final_content = content.clone();
+                            let mut extra = serde_json::Map::new();
+                            if let Some(ref reasoning) = resp.reasoning_content {
+                                extra.insert("reasoning_content".to_string(), serde_json::Value::String(reasoning.clone()));
+                            }
                             messages.push(Message {
                                 role: "assistant".to_string(),
                                 content,
                                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                                extra: serde_json::Map::new(),
+                                extra,
                             });
                         }
 
@@ -639,10 +643,28 @@ impl AgentLoop {
                         if let Some(last_msg) = messages.last_mut() {
                             if last_msg.role == "assistant" {
                                 last_msg.extra.insert("tool_calls".to_string(), serde_json::Value::Array(assistant_tool_calls_json));
+                                if let Some(ref reasoning) = resp.reasoning_content {
+                                    last_msg.extra.insert("reasoning_content".to_string(), serde_json::Value::String(reasoning.clone()));
+                                }
+                            } else {
+                                let mut extra = serde_json::Map::new();
+                                extra.insert("tool_calls".to_string(), serde_json::Value::Array(assistant_tool_calls_json));
+                                if let Some(ref reasoning) = resp.reasoning_content {
+                                    extra.insert("reasoning_content".to_string(), serde_json::Value::String(reasoning.clone()));
+                                }
+                                messages.push(Message {
+                                    role: "assistant".to_string(),
+                                    content: String::new(),
+                                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                                    extra,
+                                });
                             }
                         } else {
                             let mut extra = serde_json::Map::new();
                             extra.insert("tool_calls".to_string(), serde_json::Value::Array(assistant_tool_calls_json));
+                            if let Some(ref reasoning) = resp.reasoning_content {
+                                extra.insert("reasoning_content".to_string(), serde_json::Value::String(reasoning.clone()));
+                            }
                             messages.push(Message {
                                 role: "assistant".to_string(),
                                 content: String::new(),
@@ -880,8 +902,18 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 String::new()
             }
         } else if name == "run_command" || name == "exec_command" {
-            if let Some(cmd) = map.get("CommandLine").or(map.get("Command")).and_then(|v| v.as_str()) {
-                cmd.to_string()
+            if let Some(cmd) = map.get("CommandLine")
+                .or(map.get("Command"))
+                .or(map.get("command"))
+                .or(map.get("command_line"))
+                .and_then(|v| v.as_str())
+            {
+                let first_line = cmd.lines().next().unwrap_or("").trim();
+                if first_line.len() > 60 {
+                    format!("{}...", &first_line[..57])
+                } else {
+                    first_line.to_string()
+                }
             } else {
                 String::new()
             }

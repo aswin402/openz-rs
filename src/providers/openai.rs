@@ -33,6 +33,8 @@ struct OpenAIMessage {
     tool_calls: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -50,6 +52,8 @@ struct Choice {
 struct ResponseMessage {
     content: Option<String>,
     tool_calls: Option<Vec<OpenAIToolCall>>,
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -90,16 +94,22 @@ impl OpenAIProvider {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning_content: None,
             });
         }
 
         for msg in messages {
             let mut tool_call_id = None;
             let mut name = None;
+            let mut reasoning_content = None;
             let role = msg.role.clone();
             
             if role == "tool" {
                 tool_call_id = msg.extra.get("tool_call_id").and_then(|v| v.as_str().map(|s| s.to_string()));
+            }
+
+            if role == "assistant" {
+                reasoning_content = msg.extra.get("reasoning_content").and_then(|v| v.as_str().map(|s| s.to_string()));
             }
 
             if let Some(n) = msg.extra.get("name").and_then(|v| v.as_str()) {
@@ -155,6 +165,7 @@ impl OpenAIProvider {
                 name,
                 tool_calls: msg.extra.get("tool_calls").cloned().and_then(|v| v.as_array().cloned()),
                 tool_call_id,
+                reasoning_content,
             });
         }
         api_messages
@@ -222,7 +233,7 @@ impl LLMProvider for OpenAIProvider {
             content: choice.message.content.clone(),
             tool_calls,
             finish_reason: choice.finish_reason.clone().unwrap_or_else(|| "stop".to_string()),
-            reasoning_content: None,
+            reasoning_content: choice.message.reasoning_content.clone(),
         })
     }
 }
