@@ -247,7 +247,7 @@ fn render_box(
             if is_selected {
                 print!("\r\n\x1b[2K> {}{:<30}{}{}{}", RED_ORANGE, cmd, AURA_SLATE, desc, COLOR_RESET);
             } else {
-                print!("\r\n\x1b[2K  {:<32}{}{}{}", cmd, AURA_SLATE, desc, COLOR_RESET);
+                print!("\r\n\x1b[2K  {:<30}{}{}{}", cmd, AURA_SLATE, desc, COLOR_RESET);
             }
             new_lines_printed += 1;
         }
