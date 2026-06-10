@@ -43,7 +43,7 @@ pub fn load_config() -> Result<Config> {
 
     // Clean up any Node/JS based default MCP servers from existing config
     let mut modified = false;
-    let remove_names = ["sequential-thinking", "fetch", "memory", "puppeteer"];
+    let remove_names = ["sequential-thinking", "fetch", "memory", "puppeteer", "context7"];
     for name in &remove_names {
         if let Some(mcp) = config.mcp_servers.get(*name) {
             if mcp.command == "npx" {
@@ -58,6 +58,14 @@ pub fn load_config() -> Result<Config> {
     for (name, server_config) in defaults.mcp_servers {
         if !config.mcp_servers.contains_key(&name) {
             config.mcp_servers.insert(name, server_config);
+            modified = true;
+        }
+    }
+
+    // Upgrade existing memory server config to use gRPC if args are empty
+    if let Some(mcp) = config.mcp_servers.get_mut("memory") {
+        if mcp.command.contains("openmemory_rs") && mcp.args.is_empty() {
+            mcp.args = vec!["--grpc".to_string(), "50051".to_string()];
             modified = true;
         }
     }

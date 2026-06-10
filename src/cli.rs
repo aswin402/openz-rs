@@ -50,6 +50,17 @@ pub enum Command {
 
     /// Manage, configure, and design custom subagents
     Subagent,
+
+    /// Run a gRPC-to-Stdio MCP server bridge
+    McpBridge {
+        /// TCP port to host the gRPC MCP server on
+        #[arg(long)]
+        port: u16,
+        
+        /// Command and arguments of the stdio MCP server to bridge
+        #[arg(last = true)]
+        command_args: Vec<String>,
+    },
 }
 
 pub async fn run_cli() -> Result<()> {
@@ -80,6 +91,14 @@ pub async fn run_cli() -> Result<()> {
         Command::Subagent => {
             let config = load_config()?;
             crate::subagents::run_subagent_manager(config).await?;
+        }
+        Command::McpBridge { port, command_args } => {
+            if command_args.is_empty() {
+                return Err(anyhow!("No target command specified. Usage: openz mcp-bridge --port <port> -- <command> [args...]"));
+            }
+            let command = &command_args[0];
+            let args = &command_args[1..];
+            crate::tools::mcp::run_mcp_bridge(port, command, args).await?;
         }
     }
     
@@ -414,6 +433,9 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         if mcp_config.enabled {
             match crate::tools::mcp::McpClient::spawn(&mcp_config.command, &mcp_config.args).await {
                 Ok(mcp_client) => {
+                    if name == "memory" {
+                        crate::tools::mcp::set_memory_mcp_client(mcp_client.clone());
+                    }
                     match mcp_client.list_tools().await {
                         Ok(tools) => {
                             let mut count = 0;

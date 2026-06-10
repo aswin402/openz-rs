@@ -69,8 +69,12 @@ pub struct AgentDefaults {
     pub max_tool_iterations: usize,
     #[serde(default)]
     pub fallback_models: Vec<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default = "default_caveman_mode")]
     pub caveman_mode: bool,
+}
+
+fn default_caveman_mode() -> bool {
+    true
 }
 
 fn default_workspace() -> String {
@@ -114,7 +118,7 @@ impl Default for AgentDefaults {
             max_messages: default_max_messages(),
             max_tool_iterations: default_max_tool_iterations(),
             fallback_models: Vec::new(),
-            caveman_mode: false,
+            caveman_mode: true,
         }
     }
 }
@@ -277,7 +281,7 @@ impl Default for Config {
 
         mcp_servers.insert("memory".to_string(), McpServerConfig {
             command: "/home/aswin/programming/vscode/myProjects/target/release/openmemory_rs".to_string(),
-            args: vec![],
+            args: vec!["--grpc".to_string(), "50051".to_string()],
             enabled: true,
         });
 
@@ -303,6 +307,71 @@ impl Default for Config {
 
         mcp_servers.insert("headroom".to_string(), McpServerConfig {
             command: headroom_bin,
+            args: vec![],
+            enabled: true,
+        });
+
+        let docs_mcp_bin = if let Some(home) = dirs::home_dir() {
+            let p = home.join(".cargo").join("bin").join("openz-docs-mcp");
+            if p.exists() { p.to_string_lossy().to_string() } else { "openz-docs-mcp".to_string() }
+        } else {
+            "openz-docs-mcp".to_string()
+        };
+
+        mcp_servers.insert("docs".to_string(), McpServerConfig {
+            command: docs_mcp_bin,
+            args: vec![],
+            enabled: true,
+        });
+
+        let github_mcp_bin = if let Some(home) = dirs::home_dir() {
+            let p = home.join(".cargo").join("bin").join("openz-github-mcp");
+            if p.exists() { p.to_string_lossy().to_string() } else { "openz-github-mcp".to_string() }
+        } else {
+            "openz-github-mcp".to_string()
+        };
+
+        mcp_servers.insert("github".to_string(), McpServerConfig {
+            command: github_mcp_bin,
+            args: vec![],
+            enabled: true,
+        });
+
+        let db_mcp_bin = if let Some(home) = dirs::home_dir() {
+            let p = home.join(".cargo").join("bin").join("database-mcp");
+            if p.exists() { p.to_string_lossy().to_string() } else { "database-mcp".to_string() }
+        } else {
+            "database-mcp".to_string()
+        };
+
+        mcp_servers.insert("database".to_string(), McpServerConfig {
+            command: db_mcp_bin,
+            args: vec!["stdio".to_string()],
+            enabled: true,
+        });
+
+        let chromewright_bin = if let Some(home) = dirs::home_dir() {
+            let p = home.join(".cargo").join("bin").join("chromewright");
+            if p.exists() { p.to_string_lossy().to_string() } else { "chromewright".to_string() }
+        } else {
+            "chromewright".to_string()
+        };
+
+        mcp_servers.insert("browser".to_string(), McpServerConfig {
+            command: chromewright_bin,
+            args: vec!["--headless".to_string()],
+            enabled: true,
+        });
+
+        let sediment_bin = if let Some(home) = dirs::home_dir() {
+            let p = home.join(".cargo").join("bin").join("sediment");
+            if p.exists() { p.to_string_lossy().to_string() } else { "sediment".to_string() }
+        } else {
+            "sediment".to_string()
+        };
+
+        mcp_servers.insert("sediment".to_string(), McpServerConfig {
+            command: sediment_bin,
             args: vec![],
             enabled: true,
         });

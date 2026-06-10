@@ -61,9 +61,6 @@ fn char_display_width(c: char) -> usize {
     }
 }
 
-fn string_display_width(s: &str) -> usize {
-    s.chars().map(char_display_width).sum()
-}
 
 fn print_colored_markdown(content: &str) {
     use crate::agent::style::*;
@@ -108,6 +105,8 @@ fn render_box(
     session_manager: &crate::session::SessionManager,
     session_key: &str,
     typed_input: &str,
+    cursor_idx: usize,
+    viewport_start: &mut usize,
     selected_index: Option<usize>,
     autocomplete_visible: bool,
     width: usize,
@@ -216,7 +215,7 @@ fn render_box(
         format!(
             "{}{}{}[{}]{}{}",
             LIGHT_WHITE, line_fill,
-            LIGHT_WHITE, status_content, LIGHT_WHITE,
+            RED_ORANGE, status_content, LIGHT_WHITE,
             COLOR_RESET
         )
     };
@@ -231,25 +230,67 @@ fn render_box(
         typed_input
     };
 
-    // Print input line prefix and input
-    let input_width = string_display_width(display_text);
+    // Print input line prefix and input using cursor-aware viewport
+    let display_chars: Vec<char> = display_text.chars().collect();
+    let char_count = display_chars.len();
     let max_input_width = width.saturating_sub(3);
-    
-    let (display_input, display_width) = if input_width > max_input_width {
-        let mut start_idx = 0;
-        let mut current_width = input_width;
-        for (i, c) in display_text.char_indices() {
-            if current_width <= max_input_width {
-                start_idx = i;
-                break;
-            }
-            current_width -= char_display_width(c);
-        }
-        (&display_text[start_idx..], current_width)
+
+    let active_cursor_idx = if selected_index.is_some() {
+        char_count
     } else {
-        (display_text, input_width)
+        cursor_idx.min(char_count)
     };
-    
+
+    let mut v_start = *viewport_start;
+    v_start = v_start.min(char_count);
+
+    if active_cursor_idx < v_start {
+        v_start = active_cursor_idx;
+    }
+
+    let mut cursor_offset_width = 0;
+    for i in v_start..active_cursor_idx {
+        cursor_offset_width += char_display_width(display_chars[i]);
+    }
+
+    while cursor_offset_width > max_input_width && v_start < active_cursor_idx {
+        cursor_offset_width -= char_display_width(display_chars[v_start]);
+        v_start += 1;
+    }
+
+    let mut total_width_from_v_start = cursor_offset_width;
+    for i in active_cursor_idx..char_count {
+        total_width_from_v_start += char_display_width(display_chars[i]);
+    }
+    while v_start > 0 {
+        let prev_width = char_display_width(display_chars[v_start - 1]);
+        if total_width_from_v_start + prev_width <= max_input_width {
+            v_start -= 1;
+            total_width_from_v_start += prev_width;
+        } else {
+            break;
+        }
+    }
+
+    *viewport_start = v_start;
+
+    let mut display_input = String::new();
+    let mut display_width = 0;
+    let mut cursor_col_offset = 0;
+
+    for (idx, &c) in display_chars.iter().enumerate().skip(v_start) {
+        let w = char_display_width(c);
+        if display_width + w <= max_input_width {
+            display_input.push(c);
+            display_width += w;
+            if idx < active_cursor_idx {
+                cursor_col_offset += w;
+            }
+        } else {
+            break;
+        }
+    }
+
     print!("{}> {}{}", LIGHT_WHITE, COLOR_RESET, display_input);
     let mut new_lines_printed = 1;
 
@@ -311,8 +352,8 @@ fn render_box(
         new_lines_printed += 2;
     }
 
-    // Move cursor back up to the input line and place it at the end of the text
-    let cursor_col = 3 + display_width;
+    // Move cursor back up to the input line and place it at the active cursor position
+    let cursor_col = 3 + cursor_col_offset;
     print!("\x1b[{}A\x1b[{}G", new_lines_printed - 1, cursor_col);
     
     *lines_printed = new_lines_printed;
@@ -334,7 +375,9 @@ fn read_line_raw(
     IS_RAW_INPUT_ACTIVE.store(true, Ordering::SeqCst);
     let _guard = RawInputGuard;
 
-    let mut typed_input = String::new();
+    let mut typed_input = Vec::<char>::new();
+    let mut cursor_idx = 0;
+    let mut viewport_start = 0;
     let mut selected_index: Option<usize> = None;
     let mut history_index: Option<usize> = None;
     let mut temp_typed_input = String::new();
@@ -344,12 +387,15 @@ fn read_line_raw(
     let mut lines_printed = 1;
     let mut autocomplete_visible = true;
 
+    let typed_input_str: String = typed_input.iter().collect();
     render_box(
         model,
         provider,
         session_manager,
         session_key,
-        &typed_input,
+        &typed_input_str,
+        cursor_idx,
+        &mut viewport_start,
         selected_index,
         autocomplete_visible,
         width_usize,
@@ -382,12 +428,15 @@ fn read_line_raw(
             let _ = std::io::stdout().flush();
 
             lines_printed = 1;
+            let typed_input_str: String = typed_input.iter().collect();
             render_box(
                 model,
                 provider,
                 session_manager,
                 session_key,
-                &typed_input,
+                &typed_input_str,
+                cursor_idx,
+                &mut viewport_start,
                 selected_index,
                 autocomplete_visible,
                 width_usize,
@@ -427,12 +476,14 @@ fn read_line_raw(
                 let is_paste_image = (ctrl && key_event.code == KeyCode::Char('v')) || (alt && key_event.code == KeyCode::Char('v'));
                 if is_paste_image {
                     if let Some(idx) = selected_index {
+                        let typed_input_str: String = typed_input.iter().collect();
                         let matches: Vec<(&str, &str)> = SLASH_COMMANDS.iter()
-                            .filter(|&&(cmd, _)| cmd.starts_with(&typed_input))
+                            .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
                             .copied()
                             .collect();
                         if idx < matches.len() {
-                            typed_input = matches[idx].0.to_string();
+                            typed_input = matches[idx].0.chars().collect();
+                            cursor_idx = typed_input.len();
                         }
                         selected_index = None;
                     }
@@ -448,11 +499,16 @@ fn read_line_raw(
                                 format!("[image{}]", next_index)
                             };
                             let space = if typed_input.is_empty() { "" } else { " " };
-                            typed_input.push_str(&format!("{space}{placeholder}"));
+                            let to_add = format!("{space}{placeholder}");
+                            for c in to_add.chars() {
+                                typed_input.insert(cursor_idx, c);
+                                cursor_idx += 1;
+                            }
                             if let Ok((w, _)) = crossterm::terminal::size() {
                                 width_usize = w as usize;
                             }
-                            render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                            let typed_input_str: String = typed_input.iter().collect();
+                            render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
                         }
                         Err(e) => {
                             if lines_printed > 1 {
@@ -466,7 +522,8 @@ fn read_line_raw(
                             if let Ok((w, _)) = crossterm::terminal::size() {
                                 width_usize = w as usize;
                             }
-                            render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                            let typed_input_str: String = typed_input.iter().collect();
+                            render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
                         }
                     }
                     continue;
@@ -480,9 +537,10 @@ fn read_line_raw(
                     KeyCode::Up => {
                         autocomplete_visible = true;
                         let mut autocomplete_active = false;
-                        if typed_input.starts_with('/') && !typed_input.contains(' ') {
+                        let typed_input_str: String = typed_input.iter().collect();
+                        if typed_input_str.starts_with('/') && !typed_input_str.contains(' ') {
                             let matches: Vec<(&str, &str)> = SLASH_COMMANDS.iter()
-                                .filter(|&&(cmd, _)| cmd.starts_with(&typed_input))
+                                .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
                                 .copied()
                                 .collect();
                             if !matches.is_empty() {
@@ -491,7 +549,7 @@ fn read_line_raw(
                                     None => Some(matches.len() - 1),
                                     Some(idx) => Some((idx + matches.len() - 1) % matches.len()),
                                 };
-                                render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                                render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
                             }
                         }
 
@@ -503,7 +561,7 @@ fn read_line_raw(
                                 .collect();
                             if !history_prompts.is_empty() {
                                 if history_index.is_none() {
-                                    temp_typed_input = typed_input.clone();
+                                    temp_typed_input = typed_input.iter().collect::<String>();
                                     history_index = Some(history_prompts.len() - 1);
                                 } else if let Some(idx) = history_index {
                                     if idx > 0 {
@@ -511,9 +569,11 @@ fn read_line_raw(
                                     }
                                 }
                                 if let Some(idx) = history_index {
-                                    typed_input = history_prompts[idx].clone();
+                                    typed_input = history_prompts[idx].chars().collect();
+                                    cursor_idx = typed_input.len();
                                     selected_index = None;
-                                    render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                                    let typed_input_str: String = typed_input.iter().collect();
+                                    render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
                                 }
                             }
                         }
@@ -521,9 +581,10 @@ fn read_line_raw(
                     KeyCode::Down => {
                         autocomplete_visible = true;
                         let mut autocomplete_active = false;
-                        if typed_input.starts_with('/') && !typed_input.contains(' ') {
+                        let typed_input_str: String = typed_input.iter().collect();
+                        if typed_input_str.starts_with('/') && !typed_input_str.contains(' ') {
                             let matches: Vec<(&str, &str)> = SLASH_COMMANDS.iter()
-                                .filter(|&&(cmd, _)| cmd.starts_with(&typed_input))
+                                .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
                                 .copied()
                                 .collect();
                             if !matches.is_empty() {
@@ -532,7 +593,7 @@ fn read_line_raw(
                                     None => Some(0),
                                     Some(idx) => Some((idx + 1) % matches.len()),
                                 };
-                                render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                                render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
                             }
                         }
 
@@ -546,67 +607,115 @@ fn read_line_raw(
                                 if let Some(idx) = history_index {
                                     if idx < history_prompts.len() - 1 {
                                         history_index = Some(idx + 1);
-                                        typed_input = history_prompts[idx + 1].clone();
+                                        typed_input = history_prompts[idx + 1].chars().collect();
+                                        cursor_idx = typed_input.len();
                                     } else {
                                         history_index = None;
-                                        typed_input = temp_typed_input.clone();
+                                        typed_input = temp_typed_input.chars().collect();
+                                        cursor_idx = typed_input.len();
                                     }
                                     selected_index = None;
-                                    render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                                    let typed_input_str: String = typed_input.iter().collect();
+                                    render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
                                 }
                             }
+                        }
+                    }
+                    KeyCode::Left => {
+                        if cursor_idx > 0 {
+                            cursor_idx -= 1;
+                            let typed_input_str: String = typed_input.iter().collect();
+                            render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                        }
+                    }
+                    KeyCode::Right => {
+                        if cursor_idx < typed_input.len() {
+                            cursor_idx += 1;
+                            let typed_input_str: String = typed_input.iter().collect();
+                            render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                        }
+                    }
+                    KeyCode::Home => {
+                        cursor_idx = 0;
+                        let typed_input_str: String = typed_input.iter().collect();
+                        render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                    }
+                    KeyCode::End => {
+                        cursor_idx = typed_input.len();
+                        let typed_input_str: String = typed_input.iter().collect();
+                        render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                    }
+                    KeyCode::Delete => {
+                        if cursor_idx < typed_input.len() {
+                            typed_input.remove(cursor_idx);
+                            selected_index = None;
+                            history_index = None;
+                            let typed_input_str: String = typed_input.iter().collect();
+                            render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
                         }
                     }
                     KeyCode::Char(c) => {
                         autocomplete_visible = true;
                         selected_index = None;
                         history_index = None;
-                        typed_input.push(c);
-                        render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                        typed_input.insert(cursor_idx, c);
+                        cursor_idx += 1;
+                        let typed_input_str: String = typed_input.iter().collect();
+                        render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
                     }
                     KeyCode::Backspace => {
                         autocomplete_visible = true;
                         selected_index = None;
                         history_index = None;
-                        if !typed_input.is_empty() {
-                            typed_input.pop();
-                            render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                        if cursor_idx > 0 {
+                            typed_input.remove(cursor_idx - 1);
+                            cursor_idx -= 1;
+                            let typed_input_str: String = typed_input.iter().collect();
+                            render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
                         }
                     }
                     KeyCode::Tab => {
                         autocomplete_visible = true;
-                        if typed_input.starts_with('/') && !typed_input.contains(' ') {
+                        let typed_input_str: String = typed_input.iter().collect();
+                        if typed_input_str.starts_with('/') && !typed_input_str.contains(' ') {
                             let matches: Vec<(&str, &str)> = SLASH_COMMANDS.iter()
-                                .filter(|&&(cmd, _)| cmd.starts_with(&typed_input))
+                                .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
                                 .copied()
                                 .collect();
                             if !matches.is_empty() {
-                                if let Some(idx) = selected_index {
-                                    typed_input = matches[idx].0.to_string();
+                                let completed = if let Some(idx) = selected_index {
+                                    matches[idx].0.to_string()
                                 } else {
-                                    typed_input = matches[0].0.to_string();
-                                }
+                                    matches[0].0.to_string()
+                                };
+                                typed_input = completed.chars().collect();
+                                cursor_idx = typed_input.len();
                                 selected_index = None;
                                 history_index = None;
-                                render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                                let typed_input_str: String = typed_input.iter().collect();
+                                render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
                             }
                         }
                     }
                     KeyCode::Esc => {
                         autocomplete_visible = false;
                         selected_index = None;
-                        render_box(model, provider, session_manager, session_key, &typed_input, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                        let typed_input_str: String = typed_input.iter().collect();
+                        render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
                     }
                     KeyCode::Enter => {
+                        let typed_input_str: String = typed_input.iter().collect();
+                        let mut final_cmd = typed_input_str.clone();
                         if let Some(idx) = selected_index {
                             let matches: Vec<(&str, &str)> = SLASH_COMMANDS.iter()
-                                .filter(|&&(cmd, _)| cmd.starts_with(&typed_input))
+                                .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
                                 .copied()
                                 .collect();
                             if idx < matches.len() {
-                                typed_input = matches[idx].0.to_string();
+                                final_cmd = matches[idx].0.to_string();
                             }
                         }
+                        typed_input = final_cmd.chars().collect();
                         if lines_printed > 1 {
                             for _ in 0..(lines_printed - 1) {
                                 print!("\r\n\x1b[2K");
@@ -614,7 +723,8 @@ fn read_line_raw(
                             print!("\x1b[{}A\r", lines_printed - 1);
                         }
                         print!("\r\x1b[2K");
-                        print!("{}{}> {}{}", COLOR_BOLD, AURA_SLATE, typed_input, COLOR_RESET);
+                        let final_cmd_str: String = typed_input.iter().collect();
+                        print!("{}{}> {}{}", COLOR_BOLD, AURA_SLATE, final_cmd_str, COLOR_RESET);
                         disable_raw_mode()?;
                         print!("\r\n");
                         stdout().flush()?;
@@ -626,7 +736,7 @@ fn read_line_raw(
         }
     }
 
-    let mut final_input = typed_input;
+    let mut final_input = typed_input.iter().collect::<String>();
     for (i, path) in pasted_images.iter().enumerate() {
         let placeholder = if i == 0 {
             "[image]".to_string()

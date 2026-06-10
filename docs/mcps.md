@@ -46,3 +46,17 @@ By default, OpenZ is pre-configured to utilize high-performance, lightweight Rus
 OpenZ provides a dual-layer management system for MCP configurations:
 1.  **`manage_mcp` tool**: Allows the agent to list, add, remove, enable, or disable server definitions inside `~/.openz/config.json` dynamically.
 2.  **`mcps_manager` subagent**: A protected subagent designed to inspect runtimes (rust/node/python), resolve dependencies, and automatically install/setup new MCP servers on demand.
+
+---
+
+## 5. Unified gRPC/Tonic Transport & Bridge
+
+To solve stdio pollution (where random logging/stderr/stdout outputs from third-party libraries break the JSON-RPC parser), OpenZ unifies all workspace MCP server communication over **gRPC using Tonic**:
+
+### In-Process gRPC Bridge
+For servers that natively only support stdio transport (e.g. `database-mcp`, `chromewright`, `opendocswork-mcp`), OpenZ runs an automatic in-process bridge:
+1. **Dynamic Port Allocation**: Automatically allocates an ephemeral TCP port on localhost.
+2. **Subprocess Management**: Spawns the stdio target server process with private pipes.
+3. **Robust Noise Filtering**: Reads lines from the subprocess's stdout and filters out any non-JSON logs (logging pollution) before sending correct responses back over the gRPC Tonic channel.
+4. **Timeouts & Safety**: Includes connection timeouts and EOF checks to prevent busy loops and indefinite connection hangs.
+

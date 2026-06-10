@@ -87,9 +87,41 @@ impl Tool for DelegateTaskTool {
             goal, context
         );
 
+        let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+        let mut has_memory_mcp = false;
+        if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
+            match client.call_tool("create_database_branch", &serde_json::json!({ "branchId": branch_id })).await {
+                Ok(_) => {
+                    println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
+                    has_memory_mcp = true;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to create database branch: {:?}", e);
+                }
+            }
+        }
+
         println!("{}◎ Subagent{}", AURA_PURPLE, COLOR_RESET);
         let spinner_msg = format!("{}  Running...{}", AURA_SLATE, COLOR_RESET);
-        let run_res = with_spinner(&spinner_msg, child_agent.run(&subagent_prompt, &child_session_id)).await?;
+        let run_res = with_spinner(&spinner_msg, child_agent.run(&subagent_prompt, &child_session_id)).await;
+
+        if has_memory_mcp {
+            if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
+                if run_res.is_ok() {
+                    match client.call_tool("commit_database_branch", &serde_json::json!({})).await {
+                        Ok(_) => println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
+                        Err(e) => tracing::warn!("Failed to commit database branch: {:?}", e),
+                    }
+                } else {
+                    match client.call_tool("rollback_database_branch", &serde_json::json!({})).await {
+                        Ok(_) => println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
+                        Err(e) => tracing::warn!("Failed to rollback database branch: {:?}", e),
+                    }
+                }
+            }
+        }
+
+        let run_res = run_res?;
         println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
 
         Ok(serde_json::json!({
@@ -190,8 +222,30 @@ impl Tool for DelegateProfileTool {
 
             if is_reviewer {
                 let spinner_msg = format!("{}◇ Reviewing...{}", AURA_PURPLE, COLOR_RESET);
+                let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+                let mut has_memory_mcp = false;
+                if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
+                    match client.call_tool("create_database_branch", &serde_json::json!({ "branchId": branch_id })).await {
+                        Ok(_) => {
+                            println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
+                            has_memory_mcp = true;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to create database branch: {:?}", e);
+                        }
+                    }
+                }
+
                 match with_spinner(&spinner_msg, child_agent.run(&subagent_prompt, &child_session_id)).await {
                     Ok(run_res) => {
+                        if has_memory_mcp {
+                            if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
+                                match client.call_tool("commit_database_branch", &serde_json::json!({})).await {
+                                    Ok(_) => println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
+                                    Err(e) => tracing::warn!("Failed to commit database branch: {:?}", e),
+                                }
+                            }
+                        }
                         println!("{}✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
                         return Ok(serde_json::json!({
                             "status": "success",
@@ -201,6 +255,14 @@ impl Tool for DelegateProfileTool {
                         }));
                     }
                     Err(e) => {
+                        if has_memory_mcp {
+                            if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
+                                match client.call_tool("rollback_database_branch", &serde_json::json!({})).await {
+                                    Ok(_) => println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
+                                    Err(e) => tracing::warn!("Failed to rollback database branch: {:?}", e),
+                                }
+                            }
+                        }
                         println!("{}✕ Error: Model '{}' execution failed: {}{}", ERROR_RED, model_name, e, COLOR_RESET);
                         last_error = Some(e);
                     }
@@ -218,8 +280,30 @@ impl Tool for DelegateProfileTool {
                     format!("{}  Running...{}", AURA_SLATE, COLOR_RESET)
                 };
 
+                let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+                let mut has_memory_mcp = false;
+                if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
+                    match client.call_tool("create_database_branch", &serde_json::json!({ "branchId": branch_id })).await {
+                        Ok(_) => {
+                            println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
+                            has_memory_mcp = true;
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to create database branch: {:?}", e);
+                        }
+                    }
+                }
+
                 match with_spinner(&spinner_msg, child_agent.run(&subagent_prompt, &child_session_id)).await {
                     Ok(run_res) => {
+                        if has_memory_mcp {
+                            if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
+                                match client.call_tool("commit_database_branch", &serde_json::json!({})).await {
+                                    Ok(_) => println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
+                                    Err(e) => tracing::warn!("Failed to commit database branch: {:?}", e),
+                                }
+                            }
+                        }
                         println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
                         return Ok(serde_json::json!({
                             "status": "success",
@@ -229,6 +313,14 @@ impl Tool for DelegateProfileTool {
                         }));
                     }
                     Err(e) => {
+                        if has_memory_mcp {
+                            if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
+                                match client.call_tool("rollback_database_branch", &serde_json::json!({})).await {
+                                    Ok(_) => println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
+                                    Err(e) => tracing::warn!("Failed to rollback database branch: {:?}", e),
+                                }
+                            }
+                        }
                         println!("{}✕ Error: Model '{}' execution failed: {}{}", ERROR_RED, model_name, e, COLOR_RESET);
                         last_error = Some(e);
                     }

@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.5`
+# OpenZ 🦊 `v0.0.6`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -26,6 +26,7 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
 * **Global Activity Tracking:** Shared execution state manager (`~/.openz/activity.json`). If you start a long-running task in the terminal TUI (`openz agent`) and ask the agent what it is doing via Telegram/Discord, it reads the active task logs of the CLI session and dynamically reports on the running command or current tool execution.
 * **Remote Session Control:** Cross-channel prompt forwarding. You can send commands, answers, or new prompts from other channels (like Telegram) to the active TUI session (`cli:direct`) using the `send_remote_input` tool. The TUI terminal prompt polls this queue in real-time, consumes the input, and executes it as if typed locally.
 * **Core Native Tools:** Built-in `read_file`, `write_file`, `list_dir`, `exec_command` (subprocess sandboxing), `web_fetch` (upgraded DOM scraper), `grep_search` (codebase text search), `git_manager` (status/diff/commits), `code_outline` (structural outline), `db_inspector` (SQLite reader), `cargo_manager` (cargo builds/checks/tests), `clipboard` (system clipboard get/set), `open_path` (opening files/URLs in default apps), `file_watcher` (background auto-healing compiler watcher), `ast_grep` (structural code search using AST patterns), `gsd_browser` (real browser navigation/interaction automation), `web_search` (privacy-first search query results), and `onpkg` (onpkg package and template manager tool).
+* **Unified gRPC/Tonic Transport:** Connects all workspace MCP servers over gRPC Tonic transport. Includes a **local in-process gRPC bridge** that dynamically wraps standard stdio MCP servers on host TCP ports, filtering out logging noise/stdio pollution to guarantee clean, structured communication.
 * **Rust-Native MCP Servers:** Out-of-the-box support for high-performance Rust MCP binaries (`mcp-server-sequential-thinking` and `openmemory_rs` for memories, `office` via `opendocswork-mcp` for Word/Excel/PowerPoint processing, and `headroom` via `headroom-mcp` for context compression/scoping). Exposes a native `manage_mcp` tool to CRUD configurations.
 * **Cron & Scheduler:** Upgraded scheduling loop supporting Unix cron syntax (`*/5 * * * *`) alongside simple durations.
 * **Native Prompt Compression:** Built-in support for Caveman prompt compression (toggleable via `cavemanMode` config), reducing token consumption by **~75%** while preserving technical substance.
