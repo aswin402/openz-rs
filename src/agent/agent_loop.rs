@@ -475,13 +475,34 @@ impl AgentLoop {
                         
                         let tools_openai = self.tools.to_openai_format();
                         
-                        let activity_msg = if iterations == 0 {
-                            format!("{}▸ Planning{}", AURA_PURPLE, COLOR_RESET)
-                        } else {
-                            format!("{}▸ Validating output{}", AURA_PURPLE, COLOR_RESET)
-                        };
+                        let activity_msg = format!("{}▶ Thinking{}", AURA_PURPLE, COLOR_RESET);
+                        let start_time = std::time::Instant::now();
                         let chat_fut = self.provider.chat(&system_prompt, &messages, &tools_openai, &settings);
                         let resp = with_spinner(&activity_msg, chat_fut).await?;
+                        let duration = start_time.elapsed();
+                        
+                        let duration_secs = duration.as_secs_f32();
+                        let has_reasoning = resp.reasoning_content.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+                        let has_content = resp.content.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+                        let has_tool_calls = !resp.tool_calls.is_empty();
+                        
+                        if has_reasoning || (has_content && has_tool_calls) {
+                            println!("{}{}▶ Thought for {:.1}s{}", COLOR_BOLD, AURA_PURPLE, duration_secs, COLOR_RESET);
+                            if has_reasoning {
+                                if let Some(ref reasoning) = resp.reasoning_content {
+                                    for line in reasoning.trim().lines() {
+                                        println!("{}{}{}", AURA_SLATE, line, COLOR_RESET);
+                                    }
+                                }
+                            } else if has_content && has_tool_calls {
+                                if let Some(ref content) = resp.content {
+                                    for line in content.trim().lines() {
+                                        println!("{}{}{}", AURA_SLATE, line, COLOR_RESET);
+                                    }
+                                }
+                            }
+                            println!();
+                        }
                         
                         if let Some(content) = resp.content {
                             final_content = content.clone();
@@ -504,27 +525,29 @@ impl AgentLoop {
                             tools_used.push(call.name.clone());
                             
                             crate::agent::activity::update_activity(session_key, "Executing tool", Some(&call.name));
-                            let tool_activity_msg = match call.name.as_str() {
-                                "write_file" | "write_to_file" | "replace_file_content" | "multi_replace_file_content" => {
-                                    format!("{}▸ Writing presentation{}", AURA_PURPLE, COLOR_RESET)
-                                }
-                                "exec_command" | "run_command" | "cargo_manager" => {
-                                    format!("{}▸ Executing script{}", AURA_PURPLE, COLOR_RESET)
-                                }
-                                _ => {
-                                    format!("{}▸ Validating output{}", AURA_PURPLE, COLOR_RESET)
-                                }
-                            };
+                            let formatted_args = format_tool_args(&call.name, &call.arguments);
+                            let tool_spinner_msg = format!("{}●{} Running {}...", AURA_BLUE, COLOR_RESET, formatted_args);
                             
                             let result_val = match self.tools.get(&call.name) {
                                 Some(t) => {
                                     let fut = t.call(&call.arguments);
-                                    match with_spinner(&tool_activity_msg, fut).await {
-                                        Ok(res) => res,
-                                        Err(e) => serde_json::json!({ "error": e.to_string() }),
+                                    match with_spinner(&tool_spinner_msg, fut).await {
+                                        Ok(res) => {
+                                            println!("{}●{} {} {}(ctrl+o to expand){}", AURA_GREEN, COLOR_RESET, formatted_args, AURA_SLATE, COLOR_RESET);
+                                            res
+                                        }
+                                        Err(e) => {
+                                            let error_str = e.to_string();
+                                            println!("{}●{} {} {}(ctrl+o to expand){} - {}Failed: {}{}", AURA_ROSE, COLOR_RESET, formatted_args, AURA_SLATE, COLOR_RESET, ERROR_RED, error_str, COLOR_RESET);
+                                            serde_json::json!({ "error": error_str })
+                                        }
                                     }
                                 }
-                                None => serde_json::json!({ "error": format!("Tool '{}' not found", call.name) }),
+                                None => {
+                                    let error_str = format!("Tool '{}' not found", call.name);
+                                    println!("{}●{} {} {}(ctrl+o to expand){} - {}Failed: {}{}", AURA_ROSE, COLOR_RESET, formatted_args, AURA_SLATE, COLOR_RESET, ERROR_RED, error_str, COLOR_RESET);
+                                    serde_json::json!({ "error": error_str })
+                                }
                             };
                             crate::agent::activity::update_activity(session_key, "Processing user prompt", None);
                             
@@ -736,3 +759,114 @@ impl AgentLoop {
         })
     }
 }
+
+fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
+    let friendly_name = match name {
+        "grep_search" => "Search",
+        "read_file" | "view_file" => "Read",
+        "write_file" | "write_to_file" | "replace_file_content" | "multi_replace_file_content" => "Edit",
+        "run_command" | "exec_command" => "Bash",
+        "list_dir" => "ListDir",
+        "code_outline" => "Outline",
+        "ast_grep" => "AstGrep",
+        "git_manager" => "Git",
+        "cargo_manager" => "Cargo",
+        "web_search" => "WebSearch",
+        "gsd_browser" => "Browser",
+        "clipboard" => "Clipboard",
+        "open_path" | "open" => "Open",
+        other => other,
+    };
+
+    let details = if let serde_json::Value::Object(map) = args {
+        if name == "grep_search" {
+            if let Some(q) = map.get("Query").and_then(|v| v.as_str()) {
+                q.to_string()
+            } else {
+                String::new()
+            }
+        } else if name == "read_file" || name == "view_file" {
+            if let Some(path) = map.get("Path").or(map.get("AbsolutePath")).and_then(|v| v.as_str()) {
+                if let Some(filename) = std::path::Path::new(path).file_name() {
+                    filename.to_string_lossy().to_string()
+                } else {
+                    path.to_string()
+                }
+            } else {
+                String::new()
+            }
+        } else if name == "write_file" || name == "write_to_file" || name == "replace_file_content" || name == "multi_replace_file_content" {
+            if let Some(path) = map.get("TargetFile").or(map.get("Path")).and_then(|v| v.as_str()) {
+                if let Some(filename) = std::path::Path::new(path).file_name() {
+                    filename.to_string_lossy().to_string()
+                } else {
+                    path.to_string()
+                }
+            } else {
+                String::new()
+            }
+        } else if name == "run_command" || name == "exec_command" {
+            if let Some(cmd) = map.get("CommandLine").or(map.get("Command")).and_then(|v| v.as_str()) {
+                cmd.to_string()
+            } else {
+                String::new()
+            }
+        } else if name == "list_dir" {
+            if let Some(path) = map.get("DirectoryPath").or(map.get("Path")).and_then(|v| v.as_str()) {
+                if let Some(filename) = std::path::Path::new(path).file_name() {
+                    filename.to_string_lossy().to_string()
+                } else {
+                    path.to_string()
+                }
+            } else {
+                String::new()
+            }
+        } else if name == "git_manager" {
+            if let Some(action) = map.get("Action").and_then(|v| v.as_str()) {
+                action.to_string()
+            } else {
+                String::new()
+            }
+        } else if name == "cargo_manager" {
+            if let Some(command) = map.get("Command").and_then(|v| v.as_str()) {
+                command.to_string()
+            } else {
+                String::new()
+            }
+        } else if name == "web_search" {
+            if let Some(q) = map.get("Query").and_then(|v| v.as_str()) {
+                q.to_string()
+            } else {
+                String::new()
+            }
+        } else {
+            let mut parts = Vec::new();
+            for (k, v) in map {
+                if k == "session_key" || k == "session_id" {
+                    continue;
+                }
+                let val_str = match v {
+                    serde_json::Value::String(s) => {
+                        if s.len() > 30 {
+                            format!("\"{}...\"", &s[..27])
+                        } else {
+                            format!("\"{}\"", s)
+                        }
+                    }
+                    other => other.to_string(),
+                };
+                parts.push(format!("{}: {}", k, val_str));
+            }
+            parts.join(", ")
+        }
+    } else {
+        args.to_string()
+    };
+
+    if details.is_empty() {
+        format!("{}{}{}", COLOR_BOLD, friendly_name, COLOR_RESET)
+    } else {
+        format!("{}{}{}({})", COLOR_BOLD, friendly_name, COLOR_RESET, details)
+    }
+}
+
