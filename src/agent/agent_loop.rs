@@ -526,26 +526,26 @@ impl AgentLoop {
                             
                             crate::agent::activity::update_activity(session_key, "Executing tool", Some(&call.name));
                             let formatted_args = format_tool_args(&call.name, &call.arguments);
-                            let tool_spinner_msg = format!("{}●{} Running {}...", AURA_BLUE, COLOR_RESET, formatted_args);
+                            let tool_spinner_msg = format!("{}▸{} Running {}...", AURA_GOLD, COLOR_RESET, formatted_args);
                             
                             let result_val = match self.tools.get(&call.name) {
                                 Some(t) => {
                                     let fut = t.call(&call.arguments);
                                     match with_spinner(&tool_spinner_msg, fut).await {
                                         Ok(res) => {
-                                            println!("{}●{} {} {}(ctrl+o to expand){}", AURA_GREEN, COLOR_RESET, formatted_args, AURA_SLATE, COLOR_RESET);
+                                            println!("{}✓{} {}", EMERALD_GREEN, COLOR_RESET, formatted_args);
                                             res
                                         }
                                         Err(e) => {
                                             let error_str = e.to_string();
-                                            println!("{}●{} {} {}(ctrl+o to expand){} - {}Failed: {}{}", AURA_ROSE, COLOR_RESET, formatted_args, AURA_SLATE, COLOR_RESET, ERROR_RED, error_str, COLOR_RESET);
+                                            println!("{}✕{} {} - Failed: {}", ERROR_RED, COLOR_RESET, formatted_args, error_str);
                                             serde_json::json!({ "error": error_str })
                                         }
                                     }
                                 }
                                 None => {
                                     let error_str = format!("Tool '{}' not found", call.name);
-                                    println!("{}●{} {} {}(ctrl+o to expand){} - {}Failed: {}{}", AURA_ROSE, COLOR_RESET, formatted_args, AURA_SLATE, COLOR_RESET, ERROR_RED, error_str, COLOR_RESET);
+                                    println!("{}✕{} {} - Failed: {}", ERROR_RED, COLOR_RESET, formatted_args, error_str);
                                     serde_json::json!({ "error": error_str })
                                 }
                             };
@@ -775,6 +775,7 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
         "gsd_browser" => "Browser",
         "clipboard" => "Clipboard",
         "open_path" | "open" => "Open",
+        "web_fetch" | "read_url_content" | "read_url" => "Fetch",
         other => other,
     };
 
@@ -836,6 +837,12 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
         } else if name == "web_search" {
             if let Some(q) = map.get("Query").and_then(|v| v.as_str()) {
                 q.to_string()
+            } else {
+                String::new()
+            }
+        } else if name == "web_fetch" || name == "read_url_content" || name == "read_url" {
+            if let Some(url) = map.get("Url").or(map.get("url")).and_then(|v| v.as_str()) {
+                url.to_string()
             } else {
                 String::new()
             }
