@@ -538,14 +538,14 @@ impl AgentLoop {
                                         }
                                         Err(e) => {
                                             let error_str = e.to_string();
-                                            println!("{}✕{} {} - Failed: {}", ERROR_RED, COLOR_RESET, formatted_args, error_str);
+                                            println!("{}✕ {} - Failed: {}{}", ERROR_RED, formatted_args, error_str, COLOR_RESET);
                                             serde_json::json!({ "error": error_str })
                                         }
                                     }
                                 }
                                 None => {
                                     let error_str = format!("Tool '{}' not found", call.name);
-                                    println!("{}✕{} {} - Failed: {}", ERROR_RED, COLOR_RESET, formatted_args, error_str);
+                                    println!("{}✕ {} - Failed: {}{}", ERROR_RED, formatted_args, error_str, COLOR_RESET);
                                     serde_json::json!({ "error": error_str })
                                 }
                             };
