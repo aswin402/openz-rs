@@ -64,6 +64,33 @@ pub enum Command {
 }
 
 pub async fn run_cli() -> Result<()> {
+    // Intercept version flags for custom themed print
+    for arg in std::env::args() {
+        if arg == "--version" || arg == "-V" {
+            let logo = format!(
+                r#"
+{}  ___  ____  _____ _   _ _____ 
+ / _ \|  _ \| ____| \ | |___  /
+| | | | |_) |  _| |  \| |  / /  
+| |_| |  __/| |___| |\  | / /__ 
+ \___/|_|   |_____|_| \_/_____|{}
+
+{}OpenZ AI Agent Framework - v{}{}
+{}Rebranded Ultra-Lightweight Personal AI Agent in Rust{}
+"#,
+                crate::agent::style::colors::AURA_PURPLE,
+                crate::agent::style::colors::COLOR_RESET,
+                crate::agent::style::colors::COLOR_BOLD,
+                env!("CARGO_PKG_VERSION"),
+                crate::agent::style::colors::COLOR_RESET,
+                crate::agent::style::colors::AURA_SLATE,
+                crate::agent::style::colors::COLOR_RESET
+            );
+            print!("{}", logo);
+            std::process::exit(0);
+        }
+    }
+
     let args = CliArgs::parse();
     
     match args.command {
