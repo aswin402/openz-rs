@@ -288,18 +288,16 @@ async fn manage_menu(config: &Config) -> Result<()> {
                         modified.system_prompt = Text::new("Edit System Prompt:")
                             .with_initial_value(&profile.system_prompt)
                             .prompt()?;
-                        modified.model = Text::new("Edit Primary Model:")
-                            .with_initial_value(&profile.model)
-                            .prompt()?;
-                        
+                        if let Some(selected_model) = prompt_choose_model("Edit Primary Model:", &profile.model)? {
+                            modified.model = selected_model;
+                        }
+
                         let mut fallbacks = Vec::new();
                         for idx in 1..=3 {
                             let default_val = profile.fallbacks.get(idx - 1).cloned().unwrap_or_default();
-                            let fallback = Text::new(&format!("Edit Fallback Model {} (Leave empty to skip):", idx))
-                                .with_initial_value(&default_val)
-                                .prompt()?;
-                            if !fallback.trim().is_empty() {
-                                fallbacks.push(fallback.trim().to_string());
+                            let label = format!("Edit Fallback Model {} (Exit/Esc to skip):", idx);
+                            if let Some(fallback) = prompt_choose_model(&label, &default_val)? {
+                                fallbacks.push(fallback);
                             }
                         }
                         modified.fallbacks = fallbacks;
@@ -363,13 +361,19 @@ async fn create_menu(config: &Config) -> Result<()> {
 
                 let description = Text::new("Enter Description:").prompt()?;
                 let system_prompt = Text::new("Enter System Prompt:").prompt()?;
-                let model = Text::new("Enter Primary Model Name (e.g. gpt-4o-mini):").prompt()?;
+                let model = match prompt_choose_model("Choose Primary Model:", "gpt-4o-mini")? {
+                    Some(m) => m,
+                    None => {
+                        println!("Creation cancelled.");
+                        continue;
+                    }
+                };
                 
                 let mut fallbacks = Vec::new();
                 for idx in 1..=3 {
-                    let fallback = Text::new(&format!("Enter Fallback Model {} (Leave empty to skip):", idx)).prompt()?;
-                    if !fallback.trim().is_empty() {
-                        fallbacks.push(fallback.trim().to_string());
+                    let label = format!("Choose Fallback Model {} (Exit/Esc to skip):", idx);
+                    if let Some(fallback) = prompt_choose_model(&label, "")? {
+                        fallbacks.push(fallback);
                     }
                 }
 
@@ -466,4 +470,163 @@ async fn ask_openz_to_design(config: &Config, task_description: &str) -> Result<
         .with_context(|| format!("Failed to parse AI response as SubagentProfile. Response was: {}", content))?;
 
     Ok(ai_profile)
+}
+
+fn prompt_choose_model(prompt_label: &str, current_model: &str) -> Result<Option<String>> {
+    #[allow(dead_code)]
+    struct ProviderModels {
+        name: &'static str,
+        display: &'static str,
+        models: &'static [&'static str],
+    }
+
+    let provider_list = &[
+        ProviderModels {
+            name: "openai",
+            display: "OpenAI (5)",
+            models: &["gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "o3-mini"],
+        },
+        ProviderModels {
+            name: "anthropic",
+            display: "Anthropic (3)",
+            models: &["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
+        },
+        ProviderModels {
+            name: "openrouter",
+            display: "OpenRouter (5)",
+            models: &[
+                "google/gemini-2.5-pro",
+                "google/gemini-2.5-flash",
+                "anthropic/claude-3.5-sonnet",
+                "meta-llama/llama-3.3-70b-instruct",
+                "deepseek/deepseek-r1",
+            ],
+        },
+        ProviderModels {
+            name: "deepseek",
+            display: "DeepSeek (2)",
+            models: &["deepseek-chat", "deepseek-reasoner"],
+        },
+        ProviderModels {
+            name: "groq",
+            display: "Groq (5)",
+            models: &[
+                "deepseek-r1-distill-llama-70b",
+                "llama-3.3-70b-versatile",
+                "llama-3.1-8b-instant",
+                "mixtral-8x7b-32768",
+                "gemma2-9b-it",
+            ],
+        },
+        ProviderModels {
+            name: "ollama",
+            display: "Ollama (5)",
+            models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"],
+        },
+        ProviderModels {
+            name: "minimax",
+            display: "minimax.io (6)",
+            models: &[
+                "MiniMax-M3",
+                "MiniMax-M2.7",
+                "MiniMax-M2.5",
+                "MiniMax-M2.1",
+                "MiniMax-M2",
+                "MiniMax-M1",
+            ],
+        },
+        ProviderModels {
+            name: "mistral",
+            display: "Mistral AI (5)",
+            models: &[
+                "mistral-large-latest",
+                "pixtral-large-latest",
+                "mistral-moderation-latest",
+                "codestral-latest",
+                "mistral-small-latest",
+            ],
+        },
+        ProviderModels {
+            name: "z.ai",
+            display: "z.ai (Zhipu GLM) (5)",
+            models: &[
+                "glm-5.1",
+                "glm-5",
+                "glm-5v-turbo",
+                "glm-4.7",
+                "glm-4.7-flash",
+            ],
+        },
+        ProviderModels {
+            name: "nvidia",
+            display: "NVIDIA NIM (5)",
+            models: &[
+                "meta/llama3-70b-instruct",
+                "nvidia/llama-3.1-nemotron-70b-instruct",
+                "meta/llama-3.1-70b-instruct",
+                "mistralai/mixtral-8x22b-instruct-v0.1",
+                "google/gemma-2-27b-it",
+            ],
+        },
+        ProviderModels {
+            name: "opencode_zen",
+            display: "OpenCode Zen (4)",
+            models: &[
+                "gpt-5.5-pro",
+                "gpt-5.5",
+                "gpt-5.4-pro",
+                "gpt-5.4",
+            ],
+        },
+        ProviderModels {
+            name: "cerebres",
+            display: "Cerebras (3)",
+            models: &[
+                "llama-3.3-70b",
+                "llama3.1-8b",
+                "llama3.1-70b",
+            ],
+        },
+        ProviderModels {
+            name: "google_ai_studio",
+            display: "Google AI Studio (Gemini) (4)",
+            models: &[
+                "gemini-2.5-pro",
+                "gemini-2.5-flash",
+                "gemini-2.0-flash",
+                "gemini-1.5-pro",
+            ],
+        },
+    ];
+
+    let mut provider_options: Vec<String> = provider_list.iter().map(|p| p.display.to_string()).collect();
+    provider_options.push("Exit".to_string());
+
+    match crate::agent::style::select_menu_custom(prompt_label, &provider_options, current_model, Some("Select Provider"), true)? {
+        Some(prov_idx) => {
+            if prov_idx == provider_list.len() {
+                return Ok(None);
+            }
+            let prov_info = &provider_list[prov_idx];
+            let mut model_options: Vec<String> = prov_info.models.iter().map(|&m| m.to_string()).collect();
+            model_options.push("Exit".to_string());
+            
+            match crate::agent::style::select_menu_custom(
+                &format!("Choose a model from {}:", prov_info.display),
+                &model_options,
+                current_model,
+                None,
+                false,
+            )? {
+                Some(model_idx) => {
+                    if model_idx == prov_info.models.len() {
+                        return Ok(None);
+                    }
+                    Ok(Some(prov_info.models[model_idx].to_string()))
+                }
+                None => Ok(None),
+            }
+        }
+        None => Ok(None),
+    }
 }
