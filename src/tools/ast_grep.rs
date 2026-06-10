@@ -54,7 +54,13 @@ impl Tool for AstGrepTool {
         cmd.arg("--lang").arg(lang);
         cmd.arg("--json");
 
-        if let Some(path_str) = arguments.get("path").and_then(|v| v.as_str()) {
+        if let Some(path_str) = arguments.get("path")
+            .or(arguments.get("TargetFile"))
+            .or(arguments.get("filepath"))
+            .or(arguments.get("file"))
+            .or(arguments.get("Path"))
+            .and_then(|v| v.as_str())
+        {
             let resolved = crate::config::resolve_path(path_str);
             cmd.arg(resolved);
         }

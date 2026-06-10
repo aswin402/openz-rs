@@ -28,7 +28,12 @@ impl Tool for ReadFileTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let path_str = arguments.get("path").and_then(|v| v.as_str())
+        let path_str = arguments.get("path")
+            .or(arguments.get("TargetFile"))
+            .or(arguments.get("filepath"))
+            .or(arguments.get("file"))
+            .or(arguments.get("Path"))
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
         let path = resolve_path(path_str);
         
@@ -79,9 +84,18 @@ impl Tool for WriteFileTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let path_str = arguments.get("path").and_then(|v| v.as_str())
+        let path_str = arguments.get("path")
+            .or(arguments.get("TargetFile"))
+            .or(arguments.get("filepath"))
+            .or(arguments.get("file"))
+            .or(arguments.get("Path"))
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
-        let content = arguments.get("content").and_then(|v| v.as_str())
+        let content = arguments.get("content")
+            .or(arguments.get("code"))
+            .or(arguments.get("text"))
+            .or(arguments.get("content_str"))
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'content' argument"))?;
         
         let path = resolve_path(path_str);
@@ -119,7 +133,12 @@ impl Tool for ListDirTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let path_str = arguments.get("path").and_then(|v| v.as_str())
+        let path_str = arguments.get("path")
+            .or(arguments.get("TargetFile"))
+            .or(arguments.get("filepath"))
+            .or(arguments.get("file"))
+            .or(arguments.get("Path"))
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
         let path = resolve_path(path_str);
         

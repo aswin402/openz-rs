@@ -55,7 +55,12 @@ impl Tool for FileWatcherTool {
 
         match action {
             "start" => {
-                let path_str = arguments.get("path").and_then(|v| v.as_str())
+                let path_str = arguments.get("path")
+                    .or(arguments.get("TargetFile"))
+                    .or(arguments.get("filepath"))
+                    .or(arguments.get("file"))
+                    .or(arguments.get("Path"))
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'path' parameter for 'start' action"))?;
                 let command = arguments.get("command").and_then(|v| v.as_str())
                     .unwrap_or("cargo check")
