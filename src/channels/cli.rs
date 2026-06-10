@@ -1080,15 +1080,58 @@ impl super::Channel for CliChannel {
             }
  
             let runner = self.agent_loop.lock().await;
-            match runner.run(trimmed, session_key).await {
-                Ok(res) => {
+            
+            use crossterm::terminal::{enable_raw_mode, disable_raw_mode};
+            let _ = enable_raw_mode();
+            
+            let run_fut = runner.run(trimmed, session_key);
+            let esc_fut = async {
+                use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+                loop {
+                    let has_event = tokio::task::spawn_blocking(|| {
+                        event::poll(std::time::Duration::from_millis(50))
+                    }).await.unwrap_or(Ok(false)).unwrap_or(false);
+
+                    if has_event {
+                        let is_esc = tokio::task::spawn_blocking(|| {
+                            if let Ok(Event::Key(key_event)) = event::read() {
+                                key_event.kind != KeyEventKind::Release && key_event.code == KeyCode::Esc
+                            } else {
+                                false
+                            }
+                        }).await.unwrap_or(false);
+
+                        if is_esc {
+                            return;
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            };
+            
+            tokio::pin!(run_fut);
+            tokio::pin!(esc_fut);
+            
+            let run_res = tokio::select! {
+                res = &mut run_fut => Some(res),
+                _ = &mut esc_fut => None,
+            };
+            
+            let _ = disable_raw_mode();
+            
+            match run_res {
+                Some(Ok(res)) => {
                     println!();
                     print_colored_markdown(&res.content);
                     println!();
                     println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
                 }
-                Err(e) => {
+                Some(Err(e)) => {
                     eprintln!("{}✕ Error: {}{}", ERROR_RED, e, COLOR_RESET);
+                    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                }
+                None => {
+                    println!("\r\n{}✕ Conversation interrupted by user.{}", ERROR_RED, COLOR_RESET);
                     println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
                 }
             }
