@@ -288,7 +288,7 @@ async fn manage_menu(config: &Config) -> Result<()> {
                         modified.system_prompt = Text::new("Edit System Prompt:")
                             .with_initial_value(&profile.system_prompt)
                             .prompt()?;
-                        if let Some(selected_model) = prompt_choose_model("Edit Primary Model:", &profile.model, config)? {
+                        if let Some(selected_model) = prompt_choose_model("Edit Primary Model:", &profile.model, config).await? {
                             modified.model = selected_model;
                         }
 
@@ -296,7 +296,7 @@ async fn manage_menu(config: &Config) -> Result<()> {
                         for idx in 1..=3 {
                             let default_val = profile.fallbacks.get(idx - 1).cloned().unwrap_or_default();
                             let label = format!("Edit Fallback Model {} (Exit/Esc to skip):", idx);
-                            if let Some(fallback) = prompt_choose_model(&label, &default_val, config)? {
+                            if let Some(fallback) = prompt_choose_model(&label, &default_val, config).await? {
                                 fallbacks.push(fallback);
                             }
                         }
@@ -361,7 +361,7 @@ async fn create_menu(config: &Config) -> Result<()> {
 
                 let description = Text::new("Enter Description:").prompt()?;
                 let system_prompt = Text::new("Enter System Prompt:").prompt()?;
-                let model = match prompt_choose_model("Choose Primary Model:", "gpt-4o-mini", config)? {
+                let model = match prompt_choose_model("Choose Primary Model:", "gpt-4o-mini", config).await? {
                     Some(m) => m,
                     None => {
                         println!("Creation cancelled.");
@@ -372,7 +372,7 @@ async fn create_menu(config: &Config) -> Result<()> {
                 let mut fallbacks = Vec::new();
                 for idx in 1..=3 {
                     let label = format!("Choose Fallback Model {} (Exit/Esc to skip):", idx);
-                    if let Some(fallback) = prompt_choose_model(&label, "", config)? {
+                    if let Some(fallback) = prompt_choose_model(&label, "", config).await? {
                         fallbacks.push(fallback);
                     }
                 }
@@ -473,7 +473,7 @@ async fn ask_openz_to_design(config: &Config, task_description: &str) -> Result<
 }
 
 
-fn prompt_choose_model(prompt_label: &str, current_model: &str, config: &Config) -> Result<Option<String>> {
+async fn prompt_choose_model(prompt_label: &str, current_model: &str, config: &Config) -> Result<Option<String>> {
     #[allow(dead_code)]
     struct ProviderModels {
         name: &'static str,
@@ -621,7 +621,11 @@ fn prompt_choose_model(prompt_label: &str, current_model: &str, config: &Config)
                 return Ok(None);
             }
             let prov_info = provider_list[prov_idx];
-            let mut model_options: Vec<String> = prov_info.models.iter().map(|&m| m.to_string()).collect();
+            
+            let mut model_options = match crate::channels::fetch_provider_models(prov_info.name, config).await {
+                Some(models) => models,
+                None => prov_info.models.iter().map(|&m| m.to_string()).collect(),
+            };
             model_options.push("Exit".to_string());
             
             match crate::agent::style::select_menu_custom(
@@ -632,10 +636,10 @@ fn prompt_choose_model(prompt_label: &str, current_model: &str, config: &Config)
                 false,
             )? {
                 Some(model_idx) => {
-                    if model_idx == prov_info.models.len() {
+                    if model_idx == model_options.len() - 1 {
                         return Ok(None);
                     }
-                    Ok(Some(prov_info.models[model_idx].to_string()))
+                    Ok(Some(model_options[model_idx].clone()))
                 }
                 None => Ok(None),
             }

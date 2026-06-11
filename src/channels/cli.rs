@@ -1046,17 +1046,34 @@ impl super::Channel for CliChannel {
                                 continue;
                             }
                             let prov_info = filtered_providers[selected_idx];
-                            let mut model_options: Vec<String> = prov_info.models.iter().map(|&m| m.to_string()).collect();
+                            
+                            use std::io::Write;
+                            print!("{}◇ Fetching models for {}...{}", AURA_SLATE, prov_info.display, COLOR_RESET);
+                            let _ = std::io::stdout().flush();
+                            
+                            let mut model_options = match crate::channels::fetch_provider_models(prov_info.name, &config).await {
+                                Some(models) => {
+                                    print!("\r\x1b[2K");
+                                    let _ = std::io::stdout().flush();
+                                    models
+                                }
+                                None => {
+                                    print!("\r\x1b[2K");
+                                    let _ = std::io::stdout().flush();
+                                    prov_info.models.iter().map(|&m| m.to_string()).collect()
+                                }
+                            };
                             model_options.push("Exit".to_string());
+                            
                             match crate::agent::style::select_menu_custom(&format!("Choose a model from {}:", prov_info.display), &model_options, &active_mdl, None, false) {
                                 Ok(Some(selected_model_idx)) => {
-                                    if selected_model_idx == prov_info.models.len() {
+                                    if selected_model_idx == model_options.len() - 1 {
                                         println!("Model selection cancelled.");
                                         println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
                                         continue;
                                     }
                                     let prov = prov_info.name;
-                                    let mdl = prov_info.models[selected_model_idx];
+                                    let mdl = &model_options[selected_model_idx];
                                     
                                     use crate::config::loader::{load_config, save_config};
                                     match load_config() {

@@ -111,3 +111,13 @@ To keep users updated on agent availability across external platforms (Telegram,
 * **Clean Shutdown Integration**: The TUI raw input processor catches `Ctrl+C`/`Ctrl+D` interrupts, disables raw terminal mode, and signals a clean exit to the agent runner rather than terminating the process abruptly. This guarantees that background connections are notified of deactivation before the process shuts down.
 * **Diagnostics**: If an offline notification fails to deliver, the error details and API response status are logged to stderr to help with troubleshooting channel configurations.
 
+---
+
+## 8. Dynamic Model Discovery 🔍🤖
+
+To ensure users always have access to the latest models from their configured providers without needing to wait for hardcoded framework updates, OpenZ supports dynamic model discovery:
+
+* **API-Driven Listing**: When selecting a provider via the `/model` command in the CLI TUI, or when choosing models for subagents, OpenZ queries the provider's active REST endpoint (`GET /v1/models` or native equivalents) dynamically using the configured API credentials.
+* **OpenAI-Compatible & Native Endpoints**: The discovery engine supports standard OpenAI format outputs (`data: [{"id": ...}]`) used by OpenAI, OpenRouter, DeepSeek, Groq, Ollama, Mistral, Nvidia, and Cerebras, alongside custom formats like Anthropic's Models API and Google Gemini's native pagination structure.
+* **Graceful Fallbacks**: If a provider is not yet configured, is offline, or doesn't support the models list endpoint, the selection menus gracefully fall back to a curated list of popular hardcoded models.
+

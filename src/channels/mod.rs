@@ -193,6 +193,168 @@ pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
     }
 }
 
+pub async fn fetch_provider_models(provider_name: &str, config: &crate::config::schema::Config) -> Option<Vec<String>> {
+    let client = reqwest::Client::builder()
+        .use_rustls_tls()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
+    
+    let (api_key, api_base) = match provider_name {
+        "anthropic" => {
+            let p = config.providers.anthropic.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.anthropic.com".to_string());
+            (key, base)
+        }
+        "openai" => {
+            let p = config.providers.openai.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("OPENAI_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+            (key, base)
+        }
+        "openrouter" => {
+            let p = config.providers.openrouter.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
+            (key, base)
+        }
+        "deepseek" => {
+            let p = config.providers.deepseek.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.deepseek.com/v1".to_string());
+            (key, base)
+        }
+        "groq" => {
+            let p = config.providers.groq.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("GROQ_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.groq.com/openai/v1".to_string());
+            (key, base)
+        }
+        "ollama" => {
+            let p = config.providers.ollama.as_ref();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
+            (String::new(), base)
+        }
+        "minimax" => {
+            let p = config.providers.minimax.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("MINIMAX_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.minimax.io/v1".to_string());
+            (key, base)
+        }
+        "mistral" => {
+            let p = config.providers.mistral.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("MISTRAL_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.mistral.ai/v1".to_string());
+            (key, base)
+        }
+        "z.ai" => {
+            let p = config.providers.z_ai.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("Z_AI_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.z.ai/api/paas/v4/".to_string());
+            (key, base)
+        }
+        "nvidia" => {
+            let p = config.providers.nvidia.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("NVIDIA_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://integrate.api.nvidia.com/v1".to_string());
+            (key, base)
+        }
+        "opencode_zen" => {
+            let p = config.providers.opencode_zen.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("OPENCODE_ZEN_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://opencode.ai/zen/v1".to_string());
+            (key, base)
+        }
+        "cerebres" => {
+            let p = config.providers.cerebres.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("CEREBRES_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.cerebras.ai/v1".to_string());
+            (key, base)
+        }
+        "google_ai_studio" => {
+            let p = config.providers.google_ai_studio.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("GOOGLE_AI_STUDIO_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta/openai/".to_string());
+            (key, base)
+        }
+        _ => return None,
+    };
+
+    if provider_name != "ollama" && api_key.is_empty() {
+        return None;
+    }
+
+    let url = if api_base.ends_with('/') {
+        format!("{}models", api_base)
+    } else {
+        format!("{}/models", api_base)
+    };
+
+    let mut req = client.get(&url);
+    if provider_name == "anthropic" {
+        req = req.header("x-api-key", &api_key)
+                 .header("anthropic-version", "2023-06-01");
+    } else if !api_key.is_empty() {
+        req = req.bearer_auth(&api_key);
+    }
+
+    let resp = req.send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+
+    let json: serde_json::Value = resp.json().await.ok()?;
+    let mut models = Vec::new();
+
+    if let Some(data_arr) = json.get("data").and_then(|d| d.as_array()) {
+        for m in data_arr {
+            if let Some(id) = m.get("id").and_then(|id| id.as_str()) {
+                models.push(id.to_string());
+            }
+        }
+    } else if let Some(models_arr) = json.get("models").and_then(|m| m.as_array()) {
+        for m in models_arr {
+            if let Some(name) = m.get("name").and_then(|n| n.as_str()) {
+                let name_cleaned = name.strip_prefix("models/").unwrap_or(name);
+                models.push(name_cleaned.to_string());
+            }
+        }
+    }
+
+    if models.is_empty() {
+        None
+    } else {
+        models.sort();
+        Some(models)
+    }
+}
+
 pub mod websocket;
 pub mod cli;
 pub mod telegram;
