@@ -38,22 +38,51 @@ impl ToolRegistry {
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
-        // 1. Check static tools
+        // 1. If name is "delegate_task", override and inject parent tools dynamically
+        if name == "delegate_task" {
+            let (config, provider, session_manager) = self.context.as_ref()?;
+            let mut parent_tools = Vec::new();
+            for tool in self.static_tools.values() {
+                if tool.name() != "delegate_task" {
+                    parent_tools.push(tool.clone());
+                }
+            }
+            return Some(Arc::new(crate::tools::subagent::DelegateTaskTool {
+                config: config.clone(),
+                parent_provider: provider.clone(),
+                session_manager: session_manager.clone(),
+                parent_tools,
+            }));
+        }
+
+        // 2. Check static tools
         if let Some(tool) = self.static_tools.get(name) {
             return Some(tool.clone());
         }
 
-        // 2. If not found, check if it matches a custom subagent profile dynamically
+        // 3. If not found, check if it matches a custom subagent profile dynamically
         let (config, provider, session_manager) = self.context.as_ref()?;
         let profiles = crate::subagents::load_profiles().ok()?;
         let profile = profiles.into_iter().find(|p| p.name == name)?;
+
+        let mut parent_tools = Vec::new();
+        for tool in self.static_tools.values() {
+            if tool.name() != "delegate_task" {
+                parent_tools.push(tool.clone());
+            }
+        }
 
         Some(Arc::new(crate::tools::subagent::DelegateProfileTool {
             config: config.clone(),
             parent_provider: provider.clone(),
             session_manager: session_manager.clone(),
             profile,
+            parent_tools,
         }))
+    }
+
+    pub fn get_static_tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.static_tools.values().cloned().collect()
     }
 
     pub fn to_openai_format(&self) -> Vec<serde_json::Value> {

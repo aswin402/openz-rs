@@ -1,8 +1,5 @@
 use crate::tools::Tool;
 use crate::tools::ToolRegistry;
-use crate::tools::filesystem::{ReadFileTool, WriteFileTool, ListDirTool};
-use crate::tools::shell::ExecCommandTool;
-use crate::tools::web::WebFetchTool;
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
 use crate::config::schema::Config;
@@ -19,6 +16,7 @@ pub struct DelegateTaskTool {
     pub config: Config,
     pub parent_provider: Arc<dyn LLMProvider>,
     pub session_manager: SessionManager,
+    pub parent_tools: Vec<Arc<dyn Tool>>,
 }
 
 #[async_trait::async_trait]
@@ -64,12 +62,20 @@ impl Tool for DelegateTaskTool {
             self.parent_provider.clone()
         };
 
-        let mut child_registry = ToolRegistry::new();
-        child_registry.register(std::sync::Arc::new(ReadFileTool));
-        child_registry.register(std::sync::Arc::new(WriteFileTool));
-        child_registry.register(std::sync::Arc::new(ListDirTool));
-        child_registry.register(std::sync::Arc::new(ExecCommandTool));
-        child_registry.register(std::sync::Arc::new(WebFetchTool::new()));
+        let mut child_registry = ToolRegistry::new_with_context(
+            self.config.clone(),
+            provider.clone(),
+            self.session_manager.clone(),
+        );
+        for tool in &self.parent_tools {
+            child_registry.register(tool.clone());
+        }
+        child_registry.register(std::sync::Arc::new(DelegateTaskTool {
+            config: self.config.clone(),
+            parent_provider: provider.clone(),
+            session_manager: self.session_manager.clone(),
+            parent_tools: self.parent_tools.clone(),
+        }));
 
         let child_session_id = format!("subagent:{}", &uuid::Uuid::new_v4().to_string()[..8]);
         let child_agent = AgentLoop::new(
@@ -92,7 +98,7 @@ impl Tool for DelegateTaskTool {
         if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
             match client.call_tool("create_database_branch", &serde_json::json!({ "branchId": branch_id })).await {
                 Ok(_) => {
-                    println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
+                    crate::tui_println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
                     has_memory_mcp = true;
                 }
                 Err(e) => {
@@ -101,7 +107,7 @@ impl Tool for DelegateTaskTool {
             }
         }
 
-        println!("{}◎ Subagent{}", AURA_PURPLE, COLOR_RESET);
+        crate::tui_println!("{}◎ Subagent{}", AURA_PURPLE, COLOR_RESET);
         let spinner_msg = format!("{}  Running...{}", AURA_SLATE, COLOR_RESET);
         let run_res = with_spinner(&spinner_msg, child_agent.run(&subagent_prompt, &child_session_id)).await;
 
@@ -109,12 +115,12 @@ impl Tool for DelegateTaskTool {
             if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
                 if run_res.is_ok() {
                     match client.call_tool("commit_database_branch", &serde_json::json!({})).await {
-                        Ok(_) => println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
+                        Ok(_) => crate::tui_println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
                         Err(e) => tracing::warn!("Failed to commit database branch: {:?}", e),
                     }
                 } else {
                     match client.call_tool("rollback_database_branch", &serde_json::json!({})).await {
-                        Ok(_) => println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
+                        Ok(_) => crate::tui_println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
                         Err(e) => tracing::warn!("Failed to rollback database branch: {:?}", e),
                     }
                 }
@@ -122,7 +128,7 @@ impl Tool for DelegateTaskTool {
         }
 
         let run_res = run_res?;
-        println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
+        crate::tui_println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
 
         Ok(serde_json::json!({
             "status": "success",
@@ -137,6 +143,7 @@ pub struct DelegateProfileTool {
     pub parent_provider: Arc<dyn LLMProvider>,
     pub session_manager: SessionManager,
     pub profile: SubagentProfile,
+    pub parent_tools: Vec<Arc<dyn Tool>>,
 }
 
 #[async_trait::async_trait]
@@ -178,6 +185,11 @@ impl Tool for DelegateProfileTool {
             }
         }
 
+        let default_model = self.config.agents.defaults.model.clone();
+        if !models_to_try.contains(&default_model) {
+            models_to_try.push(default_model);
+        }
+
         let child_session_id = format!("subagent:{}:{}", self.profile.name, &uuid::Uuid::new_v4().to_string()[..8]);
         let subagent_prompt = format!(
             "You are a specialized subagent operating under the following profile guidelines:\n\n\
@@ -191,7 +203,7 @@ impl Tool for DelegateProfileTool {
         let mut last_error = None;
         for (idx, model_name) in models_to_try.iter().enumerate() {
             if idx > 0 {
-                println!("{}▲ Primary model failed. Trying fallback model ({} of {}): {}{}", AURA_GOLD, idx, models_to_try.len() - 1, model_name, COLOR_RESET);
+                crate::tui_println!("{}▲ Primary model failed. Trying fallback model ({} of {}): {}{}", AURA_GOLD, idx, models_to_try.len() - 1, model_name, COLOR_RESET);
             }
 
             let provider = match build_provider_for_model(&self.config, model_name) {
@@ -202,12 +214,20 @@ impl Tool for DelegateProfileTool {
                 }
             };
 
-            let mut child_registry = ToolRegistry::new();
-            child_registry.register(std::sync::Arc::new(ReadFileTool));
-            child_registry.register(std::sync::Arc::new(WriteFileTool));
-            child_registry.register(std::sync::Arc::new(ListDirTool));
-            child_registry.register(std::sync::Arc::new(ExecCommandTool));
-            child_registry.register(std::sync::Arc::new(WebFetchTool::new()));
+            let mut child_registry = ToolRegistry::new_with_context(
+                self.config.clone(),
+                provider.clone(),
+                self.session_manager.clone(),
+            );
+            for tool in &self.parent_tools {
+                child_registry.register(tool.clone());
+            }
+            child_registry.register(std::sync::Arc::new(DelegateTaskTool {
+                config: self.config.clone(),
+                parent_provider: provider.clone(),
+                session_manager: self.session_manager.clone(),
+                parent_tools: self.parent_tools.clone(),
+            }));
 
             let child_agent = AgentLoop::new(
                 self.config.clone(),
@@ -227,7 +247,7 @@ impl Tool for DelegateProfileTool {
                 if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
                     match client.call_tool("create_database_branch", &serde_json::json!({ "branchId": branch_id })).await {
                         Ok(_) => {
-                            println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
+                            crate::tui_println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
                             has_memory_mcp = true;
                         }
                         Err(e) => {
@@ -241,12 +261,12 @@ impl Tool for DelegateProfileTool {
                         if has_memory_mcp {
                             if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
                                 match client.call_tool("commit_database_branch", &serde_json::json!({})).await {
-                                    Ok(_) => println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
+                                    Ok(_) => crate::tui_println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
                                     Err(e) => tracing::warn!("Failed to commit database branch: {:?}", e),
                                 }
                             }
                         }
-                        println!("{}✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
+                        crate::tui_println!("{}✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
                         return Ok(serde_json::json!({
                             "status": "success",
                             "session_id": child_session_id,
@@ -258,20 +278,20 @@ impl Tool for DelegateProfileTool {
                         if has_memory_mcp {
                             if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
                                 match client.call_tool("rollback_database_branch", &serde_json::json!({})).await {
-                                    Ok(_) => println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
+                                    Ok(_) => crate::tui_println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
                                     Err(e) => tracing::warn!("Failed to rollback database branch: {:?}", e),
                                 }
                             }
                         }
-                        println!("{}✕ Error: Model '{}' execution failed: {}{}", ERROR_RED, model_name, e, COLOR_RESET);
+                        crate::tui_println!("{}✕ Error: Model '{}' execution failed: {}{}", ERROR_RED, model_name, e, COLOR_RESET);
                         last_error = Some(e);
                     }
                 }
             } else {
                 if is_vision {
-                    println!("{}◎ Vision Agent{}", AURA_PURPLE, COLOR_RESET);
+                    crate::tui_println!("{}◎ Vision Agent{}", AURA_PURPLE, COLOR_RESET);
                 } else {
-                    println!("{}◎ {}{}", AURA_PURPLE, formatted_name, COLOR_RESET);
+                    crate::tui_println!("{}◎ {}{}", AURA_PURPLE, formatted_name, COLOR_RESET);
                 }
 
                 let spinner_msg = if is_vision {
@@ -285,7 +305,7 @@ impl Tool for DelegateProfileTool {
                 if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
                     match client.call_tool("create_database_branch", &serde_json::json!({ "branchId": branch_id })).await {
                         Ok(_) => {
-                            println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
+                            crate::tui_println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
                             has_memory_mcp = true;
                         }
                         Err(e) => {
@@ -299,12 +319,12 @@ impl Tool for DelegateProfileTool {
                         if has_memory_mcp {
                             if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
                                 match client.call_tool("commit_database_branch", &serde_json::json!({})).await {
-                                    Ok(_) => println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
+                                    Ok(_) => crate::tui_println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
                                     Err(e) => tracing::warn!("Failed to commit database branch: {:?}", e),
                                 }
                             }
                         }
-                        println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
+                        crate::tui_println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
                         return Ok(serde_json::json!({
                             "status": "success",
                             "session_id": child_session_id,
@@ -316,12 +336,12 @@ impl Tool for DelegateProfileTool {
                         if has_memory_mcp {
                             if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
                                 match client.call_tool("rollback_database_branch", &serde_json::json!({})).await {
-                                    Ok(_) => println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
+                                    Ok(_) => crate::tui_println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
                                     Err(e) => tracing::warn!("Failed to rollback database branch: {:?}", e),
                                 }
                             }
                         }
-                        println!("{}✕ Error: Model '{}' execution failed: {}{}", ERROR_RED, model_name, e, COLOR_RESET);
+                        crate::tui_println!("{}✕ Error: Model '{}' execution failed: {}{}", ERROR_RED, model_name, e, COLOR_RESET);
                         last_error = Some(e);
                     }
                 }
@@ -520,7 +540,7 @@ impl Tool for OptimizeSubagentTool {
         profiles[pos].system_prompt = clean_prompt.clone();
         crate::subagents::save_profiles(&profiles)?;
 
-        println!("{}✓ [Prompt-Optimize] Optimized prompt for '{}' saved successfully.{}", EMERALD_GREEN, subagent_name, COLOR_RESET);
+        crate::tui_println!("{}✓ [Prompt-Optimize] Optimized prompt for '{}' saved successfully.{}", EMERALD_GREEN, subagent_name, COLOR_RESET);
 
         Ok(serde_json::json!({
             "status": "success",
@@ -530,7 +550,9 @@ impl Tool for OptimizeSubagentTool {
     }
 }
 
-pub struct CreateSubagentTool;
+pub struct CreateSubagentTool {
+    pub config: Config,
+}
 
 #[async_trait::async_trait]
 impl Tool for CreateSubagentTool {
@@ -581,7 +603,8 @@ impl Tool for CreateSubagentTool {
             .ok_or_else(|| anyhow!("Missing 'description' argument"))?.trim().to_string();
         let system_prompt = arguments.get("system_prompt").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'system_prompt' argument"))?.trim().to_string();
-        let model = arguments.get("model").and_then(|v| v.as_str()).unwrap_or("gpt-4o-mini").trim().to_string();
+        let default_model = self.config.agents.defaults.model.clone();
+        let model = arguments.get("model").and_then(|v| v.as_str()).unwrap_or(&default_model).trim().to_string();
 
         let mut fallbacks = Vec::new();
         if let Some(arr) = arguments.get("fallbacks").and_then(|v| v.as_array()) {
@@ -626,7 +649,7 @@ impl Tool for CreateSubagentTool {
 
         crate::subagents::save_profiles(&profiles)?;
 
-        println!("{}✓ Custom subagent '{}' created and saved.{}", EMERALD_GREEN, name, COLOR_RESET);
+        crate::tui_println!("{}✓ Custom subagent '{}' created and saved.{}", EMERALD_GREEN, name, COLOR_RESET);
 
         Ok(serde_json::json!({
             "status": "success",
@@ -676,7 +699,7 @@ impl Tool for DeleteSubagentTool {
         profiles.remove(pos);
         crate::subagents::save_profiles(&profiles)?;
 
-        println!("{}✓ Custom subagent '{}' deleted.{}", EMERALD_GREEN, name, COLOR_RESET);
+        crate::tui_println!("{}✓ Custom subagent '{}' deleted.{}", EMERALD_GREEN, name, COLOR_RESET);
 
         Ok(serde_json::json!({
             "status": "success",

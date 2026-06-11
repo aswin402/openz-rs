@@ -133,4 +133,15 @@ To delegate manual or complex self-improvement and system health tasks, OpenZ in
   /delegate openz_maintainer We encountered a connection timeout error in our Axum WebSocket channel. Please locate the cause and fix it in the src/ folder.
   ```
 
+---
+
+## 8. Subagent Execution & Enhancements
+
+To make subagents more reliable, flexible, and fully aligned with the parent orchestrator, the following enhancements have been integrated:
+
+* **Dynamic Tool Inheritance**: Subagents dynamically inherit all standard and active MCP tools from the parent orchestrator. This allows subagents (like `researcher` or `reviewer`) to perform code search (`grep_search`, `ast_grep`), web search (`web_search`), and execute commands or builds/tests (`cargo_manager`).
+* **Orchestrator Model Defaults**: Newly created subagents automatically default their primary model to the user's active primary orchestrator model (`config.agents.defaults.model`).
+* **Last-Resort Model Fallback**: If a subagent's execution profile fails on all of its configured models and fallbacks, the active orchestrator model is appended as the absolute last fallback model before an execution error is returned.
+* **TUI Raw-Mode Alignment**: Console logging inside subagents, progress spinners, and security prompts uses a raw-mode safe logger (`tui_println!`) to ensure output alignment is not disrupted (i.e. preventing diagonal alignment) while listening for ESC or input.
+
 

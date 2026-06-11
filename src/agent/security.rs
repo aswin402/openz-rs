@@ -114,9 +114,11 @@ impl SecurityGuard {
 pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value) -> Result<bool> {
     let description = SecurityGuard::format_description(tool_name, arguments);
 
-    if session_key.starts_with("telegram:") {
+    let actual_session = crate::agent::style::spinner::get_current_session_key().unwrap_or_else(|| session_key.to_string());
+
+    if actual_session.starts_with("telegram:") {
         // Telegram approval flow
-        let chat_id_str = &session_key["telegram:".len()..];
+        let chat_id_str = &actual_session["telegram:".len()..];
         let chat_id: i64 = chat_id_str.parse()?;
         
         let (token, client) = match crate::channels::telegram::get_telegram_bot_info() {
@@ -133,14 +135,20 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
         crate::channels::telegram::register_approval(&req_id, tx);
         
         let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+        let escape_html = |s: &str| -> String {
+            s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        };
+        let safe_tool_name = escape_html(tool_name);
+        let safe_description = escape_html(&description);
+
         let text = format!(
-            "⚠️ *SECURITY ALERT*\nOpenZ is requesting to execute a sensitive tool `{}`:\n```\n{}\n```\nDo you approve this action?",
-            tool_name, description
+            "⚠️ <b>SECURITY ALERT</b>\nOpenZ is requesting to execute a sensitive tool <code>{}</code>:\n<pre>{}</pre>\nDo you approve this action?",
+            safe_tool_name, safe_description
         );
         let payload = serde_json::json!({
             "chat_id": chat_id,
             "text": text,
-            "parse_mode": "Markdown",
+            "parse_mode": "HTML",
             "reply_markup": {
                 "inline_keyboard": [[
                     { "text": "Approve ✅", "callback_data": format!("approve:{}", req_id) },
@@ -149,10 +157,24 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
             }
         });
         
-        if let Err(e) = client.post(&send_url).json(&payload).send().await {
-            tracing::error!("Failed to send Telegram approval request: {:?}", e);
-            crate::channels::telegram::unregister_approval(&req_id);
-            return Ok(false);
+        match client.post(&send_url).json(&payload).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                if !status.is_success() {
+                    if let Ok(body) = resp.text().await {
+                        tracing::error!("Failed to send Telegram approval request: status {}, response: {}", status, body);
+                    } else {
+                        tracing::error!("Failed to send Telegram approval request: status {}", status);
+                    }
+                    crate::channels::telegram::unregister_approval(&req_id);
+                    return Ok(false);
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to send Telegram approval request: {:?}", e);
+                crate::channels::telegram::unregister_approval(&req_id);
+                return Ok(false);
+            }
         }
         
         // Wait for response from user
@@ -160,8 +182,8 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
             Ok(approved) => Ok(approved),
             Err(_) => Ok(false),
         }
-    } else {
-        let trust_key = format!("{}:{}", session_key, tool_name);
+    } else if actual_session == "cli:direct" {
+        let trust_key = format!("{}:{}", actual_session, tool_name);
         let map = TRUSTED_SESSION_TOOLS.get_or_init(|| Mutex::new(HashSet::new()));
         if let Ok(guard) = map.lock() {
             if guard.contains(&trust_key) {
@@ -198,11 +220,14 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
                 if let Ok(mut guard) = map.lock() {
                     guard.insert(trust_key);
                 }
-                println!("{}◇ [Security] Trusted '{}' for session {}.{}", crate::agent::style::colors::AURA_BLUE, tool_name, session_key, crate::agent::style::colors::COLOR_RESET);
+                crate::tui_println!("{}◇ [Security] Trusted '{}' for session {}.{}", crate::agent::style::colors::AURA_BLUE, tool_name, actual_session, crate::agent::style::colors::COLOR_RESET);
                 Ok(true)
             }
             _ => Ok(false), // Deny or Cancel
         }
+    } else {
+        tracing::warn!("Auto-rejecting sensitive action for background session: {}", actual_session);
+        Ok(false)
     }
 }
 

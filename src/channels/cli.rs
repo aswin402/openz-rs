@@ -19,7 +19,7 @@ pub fn send_notification(msg: &str) {
             pending.push(msg.to_string());
         }
     } else {
-        println!("{}", msg);
+        crate::tui_println!("{}", msg);
     }
 }
 
@@ -395,6 +395,7 @@ fn read_line_raw(
     use std::io::stdout;
 
     enable_raw_mode()?;
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste);
     IS_RAW_INPUT_ACTIVE.store(true, Ordering::SeqCst);
     let _guard = RawInputGuard;
 
@@ -468,19 +469,52 @@ fn read_line_raw(
         }
 
         if let Some(inbox_msg) = crate::agent::activity::pop_inbox_message("cli:direct") {
+            let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
             disable_raw_mode()?;
             println!("\r\n{}🔌 [Remote Control] Received prompt: {}{}", AURA_BLUE, inbox_msg.message, COLOR_RESET);
             return Ok((inbox_msg.message, Some(inbox_msg.sender)));
         }
 
         if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key_event) = event::read()? {
+            let ev = event::read()?;
+            
+            // Handle bracketed paste event
+            if let Event::Paste(text) = &ev {
+                let cleaned_text = text.replace('\r', "").replace('\n', " ");
+                for c in cleaned_text.chars() {
+                    typed_input.insert(cursor_idx, c);
+                    cursor_idx += 1;
+                }
+                history_index = None;
+                selected_index = None;
+                if let Ok((w, _)) = crossterm::terminal::size() {
+                    width_usize = w as usize;
+                }
+                let typed_input_str: String = typed_input.iter().collect();
+                render_box(
+                    model,
+                    provider,
+                    session_manager,
+                    session_key,
+                    &typed_input_str,
+                    cursor_idx,
+                    &mut viewport_start,
+                    selected_index,
+                    autocomplete_visible,
+                    width_usize,
+                    &mut lines_printed,
+                )?;
+                continue;
+            }
+
+            if let Event::Key(key_event) = ev {
                 if key_event.kind == KeyEventKind::Release {
                     continue;
                 }
 
                 let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
                 let alt = key_event.modifiers.contains(KeyModifiers::ALT);
+                let shift = key_event.modifiers.contains(KeyModifiers::SHIFT);
 
                 // Ctrl+C or Ctrl+D to exit
                 if ctrl && (key_event.code == KeyCode::Char('c') || key_event.code == KeyCode::Char('d')) {
@@ -490,13 +524,15 @@ fn read_line_raw(
                         }
                         print!("\x1b[{}A\r", lines_printed - 1);
                     }
+                    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
                     disable_raw_mode()?;
                     println!();
                     return Ok(("/exit".to_string(), None));
                 }
 
-                // Ctrl+V or Alt+V to paste image
-                let is_paste_image = (ctrl && key_event.code == KeyCode::Char('v')) || (alt && key_event.code == KeyCode::Char('v'));
+                // Ctrl+V or Alt+V to paste image (ONLY if shift is not pressed)
+                let is_paste_image = (ctrl && !shift && (key_event.code == KeyCode::Char('v') || key_event.code == KeyCode::Char('V')))
+                    || (alt && !shift && (key_event.code == KeyCode::Char('v') || key_event.code == KeyCode::Char('V')));
                 if is_paste_image {
                     if let Some(idx) = selected_index {
                         let typed_input_str: String = typed_input.iter().collect();
@@ -748,6 +784,7 @@ fn read_line_raw(
                         print!("\r\x1b[2K");
                         let final_cmd_str: String = typed_input.iter().collect();
                         print!("{}{}> {}{}", COLOR_BOLD, AURA_SLATE, final_cmd_str, COLOR_RESET);
+                        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
                         disable_raw_mode()?;
                         print!("\r\n");
                         stdout().flush()?;
@@ -1315,7 +1352,11 @@ impl super::Channel for CliChannel {
             use crossterm::terminal::{enable_raw_mode, disable_raw_mode};
             let _ = enable_raw_mode();
             
-            let run_fut = runner.run(trimmed, session_key);
+            let run_fut: std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<crate::agent::RunResult>> + Send>> = if let Some(ref sender) = remote_sender {
+                Box::pin(crate::agent::style::spinner::CURRENT_SESSION_KEY.scope(sender.clone(), runner.run(trimmed, session_key)))
+            } else {
+                Box::pin(runner.run(trimmed, session_key))
+            };
             let esc_fut = async {
                 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
                 loop {
@@ -1348,6 +1389,7 @@ impl super::Channel for CliChannel {
                 _ = &mut esc_fut => None,
             };
             
+            let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
             let _ = disable_raw_mode();
             
             if let Some(ref sender) = remote_sender {

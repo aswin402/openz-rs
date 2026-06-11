@@ -19,6 +19,7 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
 * **Auto-Continuation (Truncation Prevention):** Detects when model responses are cut off due to hitting output token limits (using `finish_reason: "length"`) and automatically prompts the model to continue, stitching the segments together seamlessly.
 * **Persistent Workspace Loops:** Session history, workspace file scopes, and local tool execution survive long-running turn completions.
 * **Memory & Skill Self-Improvement:** Inspired by `hermes-agent`, OpenZ implements a closed-loop learning system. An asynchronous background curator refines long-term memory (facts, preferences) and curates procedural skills (style rules, workarounds) stored in `~/.openz/skills/`. Users can also hand the agent a GitHub repository link, and OpenZ will dynamically clone, install, and configure it on the host machine, saving it as an active skill for future turns. View or manage them using `/memory`, `/skills`, and `/skill` commands.
+* **Dynamic Subagents & Tool Inheritance:** Subagents dynamically inherit all active standard and MCP tools from the parent orchestrator (enabling `researcher` or `reviewer` to use grep_search, ast_grep, cargo_manager, and web_search). Newly created subagents default their primary execution model to the active orchestrator model, and the active model is appended as a last-resort fallback for all subagent profiles.
 * **Pluggable Channel Adapters:** Built around a unified `Channel` trait, enabling modular communication endpoints:
   * **Console CLI (`agent`):** Direct interactive terminal chat with full slash commands support.
   * **WebSocket Gateway (`gateway`):** Asynchronous Web/WebSocket server powering the visual WebUI workbench.
@@ -34,8 +35,9 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
 * **Native Prompt Compression:** Built-in support for Caveman prompt compression (toggleable via `cavemanMode` config), reducing token consumption by **~75%** while preserving technical substance.
 * **Universal API Clients:** Abstractions supporting OpenAI-compatible endpoints (DeepSeek, Groq, Ollama, OpenRouter, Gemini) and Anthropic Claude. Added custom deployments support for Azure OpenAI.
 * **Auto-Provider Resolution:** Detects the appropriate provider and endpoint automatically based on model name keywords or environment variables.
-* **Visual TUI Polish:** Custom error (`✕`), success (`✓`), warning (`▲`), tool (`▸`), and subagent (`◎`) logs with color-themed formatting, alongside auto-scrolling model name elision in the status bar to prevent character wrapping on narrow terminal screens.
+* **Visual TUI Polish:** Custom error (`✕`), success (`✓`), warning (`▲`), tool (`▸`), and subagent (`◎`) logs with color-themed formatting, alongside auto-scrolling model name elision in the status bar. Fully raw-mode console log safe (utilizes customized line ending translation to prevent diagonal alignment issues).
 * **Clipboard Image Placeholders:** Paste images via `Ctrl+V` as clean inline `[image]` / `[image1]` placeholders which are automatically expanded to file URLs under the hood.
+
 
 ---
 

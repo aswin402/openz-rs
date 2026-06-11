@@ -59,6 +59,23 @@ impl AgentLoop {
     }
 
     pub async fn run(&self, user_content: &str, session_key: &str) -> Result<RunResult> {
+        let parent_key = crate::agent::style::spinner::get_current_session_key();
+        let target_key = match parent_key {
+            Some(ref pk) if !pk.starts_with("subagent:") => pk.clone(),
+            _ => session_key.to_string(),
+        };
+
+        let is_cli = target_key == "cli:direct";
+        let silent = !is_cli;
+
+        crate::agent::style::spinner::IS_SILENT.scope(silent, async move {
+            crate::agent::style::spinner::CURRENT_SESSION_KEY.scope(target_key, async move {
+                self.run_inner(user_content, session_key).await
+            }).await
+        }).await
+    }
+
+    async fn run_inner(&self, user_content: &str, session_key: &str) -> Result<RunResult> {
         crate::agent::activity::update_activity(session_key, "Processing user prompt", None);
         let _guard = ActivityGuard { session_key };
 
@@ -78,7 +95,7 @@ impl AgentLoop {
                     let parts = crate::providers::parse_multimodal_content(user_content);
                     let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
                     let supports_vision = crate::providers::model_supports_vision(&self.config.agents.defaults.model);
-                    let silent = std::env::var("OPENZ_SILENT").is_ok();
+                    let silent = crate::agent::style::spinner::is_silent();
                     if has_images && !supports_vision {
                         if !silent {
                             eprintln!("{}▲ Image unsupported: The active model '{}' does not support images. Images will be ignored.{}", AURA_GOLD, self.config.agents.defaults.model, COLOR_RESET);
@@ -182,7 +199,7 @@ impl AgentLoop {
                                     }
                                 }
                                 Err(e) => {
-                                    let silent = std::env::var("OPENZ_SILENT").is_ok();
+                                    let silent = crate::agent::style::spinner::is_silent();
                                     if !silent {
                                         eprintln!("{}▲ Failed to update long-term memory: {}{}", AURA_GOLD, e, COLOR_RESET);
                                     }
@@ -363,10 +380,15 @@ impl AgentLoop {
                                         final_content = "Usage: /delegate <goal>".to_string();
                                     } else {
                                         let goal = parts[1..].join(" ");
+                                        let parent_tools = self.tools.get_static_tools()
+                                            .into_iter()
+                                            .filter(|t| t.name() != "delegate_task")
+                                            .collect();
                                         let delegate_tool: std::sync::Arc<dyn crate::tools::Tool> = std::sync::Arc::new(DelegateTaskTool {
                                             config: self.config.clone(),
                                             parent_provider: self.provider.clone(),
                                             session_manager: self.session_manager.clone(),
+                                            parent_tools,
                                         });
 
                                         let args = serde_json::json!({
@@ -556,7 +578,7 @@ impl AgentLoop {
                                 }
                             }
                             
-                            let silent = std::env::var("OPENZ_SILENT").is_ok();
+                            let silent = crate::agent::style::spinner::is_silent();
                             if !silent {
                                 print!("{}{}▶ Thought for {:.1}s{}\r\n", COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET);
                                 if has_reasoning {
@@ -608,7 +630,7 @@ impl AgentLoop {
                             let tool_msg = format!("▸ Running *{}*...", formatted_args);
                             send_progress_update(session_key, &tool_msg).await;
                             
-                            let silent = std::env::var("OPENZ_SILENT").is_ok();
+                            let silent = crate::agent::style::spinner::is_silent();
                             let mut approved = true;
                             if crate::agent::security::SecurityGuard::is_sensitive(&call.name, &call.arguments) {
                                 // Clear the running tool spinner first so the prompt is clean
@@ -1026,8 +1048,9 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
 }
 
 async fn send_progress_update(session_key: &str, text: &str) {
-    if session_key.starts_with("telegram:") {
-        if let Some(chat_id_str) = session_key.strip_prefix("telegram:") {
+    let actual_session = crate::agent::style::spinner::get_current_session_key().unwrap_or_else(|| session_key.to_string());
+    if actual_session.starts_with("telegram:") {
+        if let Some(chat_id_str) = actual_session.strip_prefix("telegram:") {
             if let Ok(chat_id) = chat_id_str.parse::<i64>() {
                 if let Some((bot_token, client)) = crate::channels::telegram::get_telegram_bot_info() {
                     let send_url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
@@ -1040,8 +1063,8 @@ async fn send_progress_update(session_key: &str, text: &str) {
                 }
             }
         }
-    } else if session_key.starts_with("discord:") {
-        if let Some(channel_id) = session_key.strip_prefix("discord:") {
+    } else if actual_session.starts_with("discord:") {
+        if let Some(channel_id) = actual_session.strip_prefix("discord:") {
             if let Some((bot_token, client)) = crate::channels::discord::get_discord_bot_info() {
                 let send_url = format!("https://discord.com/api/v10/channels/{}/messages", channel_id);
                 let payload = serde_json::json!({
@@ -1054,8 +1077,8 @@ async fn send_progress_update(session_key: &str, text: &str) {
                     .await;
             }
         }
-    } else if session_key.starts_with("whatsapp:") {
-        if let Some(phone_number) = session_key.strip_prefix("whatsapp:") {
+    } else if actual_session.starts_with("whatsapp:") {
+        if let Some(phone_number) = actual_session.strip_prefix("whatsapp:") {
             if let Some((api_key, phone_number_id, client)) = crate::channels::whatsapp::get_whatsapp_bot_info() {
                 let send_url = format!("https://graph.facebook.com/v18.0/{}/messages", phone_number_id);
                 let payload = serde_json::json!({

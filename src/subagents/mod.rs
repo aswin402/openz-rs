@@ -371,7 +371,7 @@ async fn create_menu(config: &Config) -> Result<()> {
 
                 let description = Text::new("Enter Description:").prompt()?;
                 let system_prompt = Text::new("Enter System Prompt:").prompt()?;
-                let model = match prompt_choose_model("Choose Primary Model:", "gpt-4o-mini", config).await? {
+                let model = match prompt_choose_model("Choose Primary Model:", &config.agents.defaults.model, config).await? {
                     Some(m) => m,
                     None => {
                         println!("Creation cancelled.");
@@ -408,7 +408,8 @@ async fn create_menu(config: &Config) -> Result<()> {
                 }
 
                 println!("🧠 Asking OpenZ to design this subagent for you...");
-                let ai_designed = ask_openz_to_design(config, &task_description).await?;
+                let mut ai_designed = ask_openz_to_design(config, &task_description).await?;
+                ai_designed.model = config.agents.defaults.model.clone();
 
                 println!("\n--- AI Designed Subagent Proposed ---");
                 println!("Name: {}", ai_designed.name);

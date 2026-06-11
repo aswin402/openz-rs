@@ -3,13 +3,31 @@ use std::io::Write;
 use std::time::Duration;
 use tokio::time::sleep;
 
+tokio::task_local! {
+    pub static IS_SILENT: bool;
+}
+
+tokio::task_local! {
+    pub static CURRENT_SESSION_KEY: String;
+}
+
+pub fn is_silent() -> bool {
+    IS_SILENT.try_with(|s| *s).unwrap_or_else(|_| {
+        std::env::var("OPENZ_SILENT").is_ok()
+    })
+}
+
+pub fn get_current_session_key() -> Option<String> {
+    CURRENT_SESSION_KEY.try_with(|s| s.clone()).ok()
+}
+
 /// Executes a future while displaying a smooth spinner animation in the terminal.
 /// Automatically clears the line when the future completes.
 pub async fn with_spinner<F, T>(msg: &str, future: F) -> T
 where
     F: Future<Output = T>,
 {
-    if std::env::var("OPENZ_SILENT").is_ok() {
+    if is_silent() {
         return future.await;
     }
     let msg = msg.to_string();

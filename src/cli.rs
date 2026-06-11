@@ -411,6 +411,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         config: config.clone(),
         parent_provider: provider.clone(),
         session_manager: session_manager.clone(),
+        parent_tools: Vec::new(),
     }));
 
     registry.register(std::sync::Arc::new(OptimizeSubagentTool {
@@ -418,7 +419,9 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         parent_provider: provider.clone(),
     }));
 
-    registry.register(std::sync::Arc::new(CreateSubagentTool));
+    registry.register(std::sync::Arc::new(CreateSubagentTool {
+        config: config.clone(),
+    }));
     registry.register(std::sync::Arc::new(DeleteSubagentTool));
 
     registry.register(std::sync::Arc::new(ScheduleJobTool));
