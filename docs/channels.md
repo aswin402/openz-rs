@@ -100,3 +100,14 @@ The active configuration file is located at `~/.openz/config.json`. Below are th
 * **`cavemanMode`**: Toggle built-in prompt compression.
 * **`contextLimit`** *(Optional)*: Explicitly overrides the default hardcoded context limit (in tokens) shown in the terminal status bar (e.g., set to `128000` or `1000000`). If omitted, default limits are dynamically resolved based on the active model name.
 
+---
+
+## 7. Lifecycle Messages & Offline Notifications 🔔💤
+
+To keep users updated on agent availability across external platforms (Telegram, Discord, WhatsApp), OpenZ manages active/offline notifications:
+
+* **Active (Startup) Messages**: When a channel listener starts, it sends a randomized greeting message selected from `ACTIVE_MESSAGES` (without any visual indicator prefix like `🟢 Active` to keep it clean and minimal).
+* **Offline (Shutdown) Messages**: When the TUI exits cleanly (via `/exit` command or keyboard interrupts like `Ctrl+C` or `Ctrl+D`), it invokes `shutdown_gateways` to notify all active channels with a random deactivation message from `OFFLINE_MESSAGES`.
+* **Clean Shutdown Integration**: The TUI raw input processor catches `Ctrl+C`/`Ctrl+D` interrupts, disables raw terminal mode, and signals a clean exit to the agent runner rather than terminating the process abruptly. This guarantees that background connections are notified of deactivation before the process shuts down.
+* **Diagnostics**: If an offline notification fails to deliver, the error details and API response status are logged to stderr to help with troubleshooting channel configurations.
+

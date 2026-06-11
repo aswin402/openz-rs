@@ -55,21 +55,30 @@ impl super::Channel for WsGateway {
             .route("/ws", get(ws_handler))
             .with_state(state);
 
+        let silent = std::env::var("OPENZ_SILENT").is_ok();
         let dist_path = Path::new("./nanobot/nanobot/web/dist");
         if dist_path.exists() {
-            println!("🌐 Serving WebUI static files from {:?}", dist_path);
+            if !silent {
+                println!("🌐 Serving WebUI static files from {:?}", dist_path);
+            }
             app = app.fallback_service(ServeDir::new(dist_path));
         } else {
             let alt_path = Path::new("./web/dist");
             if alt_path.exists() {
-                println!("🌐 Serving WebUI static files from {:?}", alt_path);
+                if !silent {
+                    println!("🌐 Serving WebUI static files from {:?}", alt_path);
+                }
                 app = app.fallback_service(ServeDir::new(alt_path));
             } else {
-                println!("⚠️ WebUI static directory not found. Serving WebSocket API only at ws://{}/ws", addr_str);
+                if !silent {
+                    println!("⚠️ WebUI static directory not found. Serving WebSocket API only at ws://{}/ws", addr_str);
+                }
             }
         }
 
-        println!("⚡ OpenZ Gateway running on http://{}", addr);
+        if !silent {
+            println!("⚡ OpenZ Gateway running on http://{}", addr);
+        }
         let listener = TcpListener::bind(addr).await?;
         axum::serve(listener, app).await?;
         

@@ -389,7 +389,7 @@ fn read_line_raw(
     provider: &str,
     session_manager: &crate::session::SessionManager,
     session_key: &str,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<(String, Option<String>)> {
     use crossterm::event::{self, Event, KeyCode, KeyModifiers, KeyEventKind};
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     use std::io::stdout;
@@ -470,7 +470,7 @@ fn read_line_raw(
         if let Some(inbox_msg) = crate::agent::activity::pop_inbox_message("cli:direct") {
             disable_raw_mode()?;
             println!("\r\n{}🔌 [Remote Control] Received prompt: {}{}", AURA_BLUE, inbox_msg.message, COLOR_RESET);
-            return Ok(inbox_msg.message);
+            return Ok((inbox_msg.message, Some(inbox_msg.sender)));
         }
 
         if event::poll(std::time::Duration::from_millis(100))? {
@@ -491,8 +491,8 @@ fn read_line_raw(
                         print!("\x1b[{}A\r", lines_printed - 1);
                     }
                     disable_raw_mode()?;
-                    println!("\r\nGoodbye!");
-                    std::process::exit(0);
+                    println!();
+                    return Ok(("/exit".to_string(), None));
                 }
 
                 // Ctrl+V or Alt+V to paste image
@@ -770,7 +770,7 @@ fn read_line_raw(
         final_input = final_input.replace(&placeholder, &replacement);
     }
 
-    Ok(final_input)
+    Ok((final_input, None))
 }
 
 pub struct CliChannel {
@@ -839,7 +839,7 @@ impl super::Channel for CliChannel {
                 (defaults.model.clone(), defaults.provider.clone(), agent_loop.session_manager.clone())
             };
             
-            let input = match read_line_raw(
+            let (input, remote_sender) = match read_line_raw(
                 &model,
                 &provider,
                 &session_manager,
@@ -1333,12 +1333,39 @@ impl super::Channel for CliChannel {
             
             let _ = disable_raw_mode();
             
+            if let Some(ref sender) = remote_sender {
+                if sender.starts_with("telegram:") {
+                    if let Some(chat_id_str) = sender.strip_prefix("telegram:") {
+                        if let Ok(chat_id) = chat_id_str.parse::<i64>() {
+                            crate::channels::telegram::stop_typing_indicator(chat_id);
+                        }
+                    }
+                }
+            }
+            
             match run_res {
                 Some(Ok(res)) => {
                     println!();
                     print_colored_markdown(&res.content);
                     println!();
                     println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                    
+                    if let Some(ref sender) = remote_sender {
+                        if sender.starts_with("telegram:") {
+                            if let Some(chat_id_str) = sender.strip_prefix("telegram:") {
+                                if let Ok(chat_id) = chat_id_str.parse::<i64>() {
+                                    if let Some((bot_token, client)) = crate::channels::telegram::get_telegram_bot_info() {
+                                        let send_url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
+                                        let payload = serde_json::json!({
+                                            "chat_id": chat_id,
+                                            "text": format!("🔌 [Remote Control Output]\n{}", res.content)
+                                        });
+                                        let _ = client.post(&send_url).json(&payload).send().await;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 Some(Err(e)) => {
                     eprintln!("{}✕ Error: {}{}", ERROR_RED, e, COLOR_RESET);

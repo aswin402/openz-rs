@@ -9,6 +9,9 @@ pub async fn with_spinner<F, T>(msg: &str, future: F) -> T
 where
     F: Future<Output = T>,
 {
+    if std::env::var("OPENZ_SILENT").is_ok() {
+        return future.await;
+    }
     let msg = msg.to_string();
     let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
     

@@ -78,8 +78,11 @@ impl AgentLoop {
                     let parts = crate::providers::parse_multimodal_content(user_content);
                     let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
                     let supports_vision = crate::providers::model_supports_vision(&self.config.agents.defaults.model);
+                    let silent = std::env::var("OPENZ_SILENT").is_ok();
                     if has_images && !supports_vision {
-                        eprintln!("{}▲ Image unsupported: The active model '{}' does not support images. Images will be ignored.{}", AURA_GOLD, self.config.agents.defaults.model, COLOR_RESET);
+                        if !silent {
+                            eprintln!("{}▲ Image unsupported: The active model '{}' does not support images. Images will be ignored.{}", AURA_GOLD, self.config.agents.defaults.model, COLOR_RESET);
+                        }
                     }
 
                     state = TurnState::Compact;
@@ -179,7 +182,10 @@ impl AgentLoop {
                                     }
                                 }
                                 Err(e) => {
-                                    eprintln!("{}▲ Failed to update long-term memory: {}{}", AURA_GOLD, e, COLOR_RESET);
+                                    let silent = std::env::var("OPENZ_SILENT").is_ok();
+                                    if !silent {
+                                        eprintln!("{}▲ Failed to update long-term memory: {}{}", AURA_GOLD, e, COLOR_RESET);
+                                    }
                                 }
                             }
 
@@ -538,22 +544,37 @@ impl AgentLoop {
                         let has_tool_calls = !resp.tool_calls.is_empty();
                         
                         if has_reasoning || (has_content && has_tool_calls) {
-                            print!("{}{}▶ Thought for {:.1}s{}\r\n", COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET);
                             if has_reasoning {
                                 if let Some(ref reasoning) = resp.reasoning_content {
-                                    for line in reasoning.trim().lines() {
-                                        print!("{}{}{}\r\n", AURA_SLATE, line.trim(), COLOR_RESET);
-                                    }
+                                    let reasoning_msg = format!("▶ *Thought*\n\n> {}", reasoning.trim().replace("\n", "\n> "));
+                                    send_progress_update(session_key, &reasoning_msg).await;
                                 }
                             } else if has_content && has_tool_calls {
                                 if let Some(ref content) = resp.content {
-                                    for line in content.trim().lines() {
-                                        print!("{}{}{}\r\n", AURA_SLATE, line.trim(), COLOR_RESET);
-                                    }
+                                    let thought_msg = format!("▶ *Thought*\n\n> {}", content.trim().replace("\n", "\n> "));
+                                    send_progress_update(session_key, &thought_msg).await;
                                 }
                             }
-                            print!("\r\n");
-                            let _ = std::io::stdout().flush();
+                            
+                            let silent = std::env::var("OPENZ_SILENT").is_ok();
+                            if !silent {
+                                print!("{}{}▶ Thought for {:.1}s{}\r\n", COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET);
+                                if has_reasoning {
+                                    if let Some(ref reasoning) = resp.reasoning_content {
+                                        for line in reasoning.trim().lines() {
+                                            print!("{}{}{}\r\n", AURA_SLATE, line.trim(), COLOR_RESET);
+                                        }
+                                    }
+                                } else if has_content && has_tool_calls {
+                                    if let Some(ref content) = resp.content {
+                                        for line in content.trim().lines() {
+                                            print!("{}{}{}\r\n", AURA_SLATE, line.trim(), COLOR_RESET);
+                                        }
+                                    }
+                                }
+                                print!("\r\n");
+                                let _ = std::io::stdout().flush();
+                            }
                         }
                         
                         if let Some(content) = resp.content {
@@ -584,11 +605,17 @@ impl AgentLoop {
                             let formatted_args = format_tool_args(&call.name, &call.arguments);
                             let tool_spinner_msg = format!("{}▸{} Running {}...", AURA_GOLD, COLOR_RESET, formatted_args);
                             
+                            let tool_msg = format!("▸ Running *{}*...", formatted_args);
+                            send_progress_update(session_key, &tool_msg).await;
+                            
+                            let silent = std::env::var("OPENZ_SILENT").is_ok();
                             let mut approved = true;
                             if crate::agent::security::SecurityGuard::is_sensitive(&call.name, &call.arguments) {
                                 // Clear the running tool spinner first so the prompt is clean
-                                print!("\r\x1b[2K");
-                                let _ = std::io::stdout().flush();
+                                if !silent {
+                                    print!("\r\x1b[2K");
+                                    let _ = std::io::stdout().flush();
+                                }
                                 
                                 match crate::agent::security::ask_approval(session_key, &call.name, &call.arguments).await {
                                     Ok(app) => approved = app,
@@ -597,8 +624,12 @@ impl AgentLoop {
                             }
 
                             let result_val = if !approved {
-                                print!("{}✕{} {} - Denied by user\r\n", ERROR_RED, COLOR_RESET, formatted_args);
-                                let _ = std::io::stdout().flush();
+                                let deny_msg = format!("✕ *{}* - Denied by user", formatted_args);
+                                send_progress_update(session_key, &deny_msg).await;
+                                if !silent {
+                                    print!("{}✕{} {} - Denied by user\r\n", ERROR_RED, COLOR_RESET, formatted_args);
+                                    let _ = std::io::stdout().flush();
+                                }
                                 serde_json::json!({ "error": "Execution denied by user." })
                             } else {
                                 match self.tools.get(&call.name) {
@@ -606,22 +637,34 @@ impl AgentLoop {
                                         let fut = t.call(&call.arguments);
                                         match with_spinner(&tool_spinner_msg, fut).await {
                                             Ok(res) => {
-                                                print!("{}✓{} {}\r\n", EMERALD_GREEN, COLOR_RESET, formatted_args);
-                                                let _ = std::io::stdout().flush();
+                                                let success_msg = format!("✓ *{}*", formatted_args);
+                                                send_progress_update(session_key, &success_msg).await;
+                                                if !silent {
+                                                    print!("{}✓{} {}\r\n", EMERALD_GREEN, COLOR_RESET, formatted_args);
+                                                    let _ = std::io::stdout().flush();
+                                                }
                                                 res
                                             }
                                             Err(e) => {
                                                 let error_str = e.to_string();
-                                                print!("{}✕ {} - Failed: {}{}\r\n", ERROR_RED, formatted_args, error_str, COLOR_RESET);
-                                                let _ = std::io::stdout().flush();
+                                                let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, error_str);
+                                                send_progress_update(session_key, &fail_msg).await;
+                                                if !silent {
+                                                    print!("{}✕ {} - Failed: {}{}\r\n", ERROR_RED, formatted_args, error_str, COLOR_RESET);
+                                                    let _ = std::io::stdout().flush();
+                                                }
                                                 serde_json::json!({ "error": error_str })
                                             }
                                         }
                                     }
                                     None => {
                                         let error_str = format!("Tool '{}' not found", call.name);
-                                        print!("{}✕ {} - Failed: {}{}\r\n", ERROR_RED, formatted_args, error_str, COLOR_RESET);
-                                        let _ = std::io::stdout().flush();
+                                        let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, error_str);
+                                        send_progress_update(session_key, &fail_msg).await;
+                                        if !silent {
+                                            print!("{}✕ {} - Failed: {}{}\r\n", ERROR_RED, formatted_args, error_str, COLOR_RESET);
+                                            let _ = std::io::stdout().flush();
+                                        }
                                         serde_json::json!({ "error": error_str })
                                     }
                                 }
@@ -981,4 +1024,57 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
         format!("{}{}{}({})", COLOR_BOLD, friendly_name, COLOR_RESET, details)
     }
 }
+
+async fn send_progress_update(session_key: &str, text: &str) {
+    if session_key.starts_with("telegram:") {
+        if let Some(chat_id_str) = session_key.strip_prefix("telegram:") {
+            if let Ok(chat_id) = chat_id_str.parse::<i64>() {
+                if let Some((bot_token, client)) = crate::channels::telegram::get_telegram_bot_info() {
+                    let send_url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
+                    let payload = serde_json::json!({
+                        "chat_id": chat_id,
+                        "text": text,
+                        "parse_mode": "Markdown"
+                    });
+                    let _ = client.post(&send_url).json(&payload).send().await;
+                }
+            }
+        }
+    } else if session_key.starts_with("discord:") {
+        if let Some(channel_id) = session_key.strip_prefix("discord:") {
+            if let Some((bot_token, client)) = crate::channels::discord::get_discord_bot_info() {
+                let send_url = format!("https://discord.com/api/v10/channels/{}/messages", channel_id);
+                let payload = serde_json::json!({
+                    "content": text
+                });
+                let _ = client.post(&send_url)
+                    .header("Authorization", format!("Bot {}", bot_token))
+                    .json(&payload)
+                    .send()
+                    .await;
+            }
+        }
+    } else if session_key.starts_with("whatsapp:") {
+        if let Some(phone_number) = session_key.strip_prefix("whatsapp:") {
+            if let Some((api_key, phone_number_id, client)) = crate::channels::whatsapp::get_whatsapp_bot_info() {
+                let send_url = format!("https://graph.facebook.com/v18.0/{}/messages", phone_number_id);
+                let payload = serde_json::json!({
+                    "messaging_product": "whatsapp",
+                    "recipient_type": "individual",
+                    "to": phone_number,
+                    "type": "text",
+                    "text": {
+                        "body": text
+                    }
+                });
+                let _ = client.post(&send_url)
+                    .bearer_auth(&api_key)
+                    .json(&payload)
+                    .send()
+                    .await;
+            }
+        }
+    }
+}
+
 

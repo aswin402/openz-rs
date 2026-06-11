@@ -330,11 +330,22 @@ impl Tool for McpToolWrapper {
 
 // -------------------- gRPC MCP BRIDGE IMPLEMENTATION --------------------
 
+static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(50060);
+
 fn find_free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .and_then(|l| l.local_addr())
-        .map(|addr| addr.port())
-        .unwrap_or(50060)
+    let start_port = NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if start_port > 65000 {
+        NEXT_PORT.store(50060, std::sync::atomic::Ordering::Relaxed);
+    }
+    
+    let mut port = start_port;
+    for _ in 0..100 {
+        if std::net::TcpListener::bind(format!("127.0.0.1:{}", port)).is_ok() {
+            return port;
+        }
+        port = NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    port
 }
 
 pub struct McpBridgeService {

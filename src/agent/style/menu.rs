@@ -120,9 +120,14 @@ pub fn select_menu_with_history(prompt: &str, history: &[HistoryItem]) -> Result
                         return Ok(selected);
                     }
                     KeyCode::Char('c') if key_event.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                        for _ in 0..num_lines_to_clear {
+                            print!("\r\x1b[1A\x1b[2K");
+                        }
+                        print!("\r\x1b[1A\x1b[2K");
+                        print!("\r");
+                        let _ = stdout().flush();
                         disable_raw_mode()?;
-                        println!("Goodbye!");
-                        std::process::exit(0);
+                        return Err(anyhow::anyhow!("Ctrl-C"));
                     }
                     _ => {}
                 }
@@ -192,7 +197,7 @@ pub fn select_menu_custom(
 
         // 1. Print divider line first at the top if enabled
         if show_divider {
-            let divider: String = std::iter::repeat('─').take(width_usize).collect();
+            let divider = "────────────────────────────────────────────────────────────";
             print!("{}{}{}", LIGHT_WHITE, divider, COLOR_RESET);
             count += 1;
         }
@@ -348,9 +353,25 @@ pub fn select_menu_custom(
                     }
                     KeyCode::Char('c') if key_event.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
                         let _ = stdout.execute(crossterm::cursor::Show);
+                        // Move cursor to the top of the menu (the divider line)
+                        let move_up_to_top = prompt_line_idx - 1;
+                        if move_up_to_top > 0 {
+                            print!("\x1b[{}A\r", move_up_to_top);
+                        } else {
+                            print!("\r");
+                        }
+
+                        // Clear all lines of the menu
+                        if lines_printed > 1 {
+                            for _ in 0..(lines_printed - 1) {
+                                print!("\r\n\x1b[2K");
+                            }
+                            print!("\x1b[{}A\r", lines_printed - 1);
+                        }
+                        print!("\r\x1b[2K");
                         disable_raw_mode()?;
-                        println!("Goodbye!");
-                        std::process::exit(0);
+                        let _ = stdout.flush();
+                        return Err(anyhow::anyhow!("Ctrl-C"));
                     }
                     _ => {}
                 }

@@ -15,7 +15,7 @@ use crate::tools::remote::SendRemoteInputTool;
 use crate::session::SessionManager;
 use crate::agent::AgentLoop;
 use crate::agent::style::*;
-use crate::channels::{CliChannel, WsGateway, TelegramChannel, Channel};
+use crate::channels::{CliChannel, WsGateway, TelegramChannel, DiscordChannel, WhatsAppChannel, Channel};
 use crate::cron::scheduler::start_scheduler;
 
 #[derive(Parser)]
@@ -449,7 +449,9 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         }
     }
 
-    if has_any_mcp {
+    let silent = std::env::var("OPENZ_SILENT").is_ok();
+
+    if has_any_mcp && !silent {
         println!("Setting up MCP servers...");
     }
 
@@ -484,21 +486,27 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
                                 }
                             }
                             total_tools += count;
-                            println!("{}✓ {}{}", emerald_green, name, COLOR_RESET);
+                            if !silent {
+                                println!("{}✓ {}{}", emerald_green, name, COLOR_RESET);
+                            }
                         }
                         Err(_) => {
-                            println!("{}✗ {} not connected{}", error_red, name, COLOR_RESET);
+                            if !silent {
+                                println!("{}✗ {} not connected{}", error_red, name, COLOR_RESET);
+                            }
                         }
                     }
                 }
                 Err(_) => {
-                    println!("{}✗ {} not connected{}", error_red, name, COLOR_RESET);
+                    if !silent {
+                        println!("{}✗ {} not connected{}", error_red, name, COLOR_RESET);
+                    }
                 }
             }
         }
     }
 
-    if has_any_mcp {
+    if has_any_mcp && !silent {
         println!("\n{} tools loaded\n", total_tools);
     }
     
@@ -569,8 +577,6 @@ async fn handle_agent() -> Result<()> {
     let config = load_config()?;
     let defaults = config.agents.defaults.clone();
     start_scheduler(config.clone());
-    
-
 
     let sessions_dir = resolve_path("~/.openz/sessions");
     let session_manager = SessionManager::new(sessions_dir);
@@ -591,9 +597,108 @@ async fn handle_agent() -> Result<()> {
         }
     }
 
-    let agent_loop = build_agent_loop(config).await?;
+    let agent_loop = build_agent_loop(config.clone()).await?;
+
+    // Now, set the silent environment variable so any background channels are silent
+    std::env::set_var("OPENZ_SILENT", "true");
+
+    // Auto-start WebSocket gateway in the background if enabled and configured to start on TUI
+    if let Some(ws_config) = &config.channels.websocket {
+        if ws_config.enabled && ws_config.start_on_tui {
+            let config_clone = config.clone();
+            let ws_config_clone = ws_config.clone();
+            tokio::spawn(async move {
+                match build_agent_loop(config_clone).await {
+                    Ok(agent_loop) => {
+                        let gateway = WsGateway::new(ws_config_clone, agent_loop);
+                        let _ = gateway.start().await;
+                    }
+                    _ => {}
+                }
+            });
+        }
+    }
+
+    // Auto-start Telegram channel in the background if enabled
+    if let Some(tg_config) = &config.channels.telegram {
+        if tg_config.enabled {
+            let token = if tg_config.bot_token.is_empty() {
+                std::env::var("TELEGRAM_BOT_TOKEN").ok()
+            } else {
+                Some(tg_config.bot_token.clone())
+            };
+            if let Some(token) = token {
+                let config_clone = config.clone();
+                tokio::spawn(async move {
+                    match build_agent_loop(config_clone).await {
+                        Ok(agent_loop) => {
+                            let channel = TelegramChannel::new(token, agent_loop);
+                            let _ = channel.start().await;
+                        }
+                        _ => {}
+                    }
+                });
+            }
+        }
+    }
+
+    // Auto-start Discord channel in the background if enabled
+    if let Some(dc_config) = &config.channels.discord {
+        if dc_config.enabled {
+            let token = if dc_config.bot_token.is_empty() {
+                std::env::var("DISCORD_BOT_TOKEN").ok()
+            } else {
+                Some(dc_config.bot_token.clone())
+            };
+            if let Some(token) = token {
+                let config_clone = config.clone();
+                tokio::spawn(async move {
+                    match build_agent_loop(config_clone).await {
+                        Ok(agent_loop) => {
+                            let channel = DiscordChannel::new(token, agent_loop);
+                            let _ = channel.start().await;
+                        }
+                        _ => {}
+                    }
+                });
+            }
+        }
+    }
+
+    // Auto-start WhatsApp channel in the background if enabled
+    if let Some(wa_config) = &config.channels.whatsapp {
+        if wa_config.enabled {
+            let config_clone = config.clone();
+            let wa_config_clone = wa_config.clone();
+            tokio::spawn(async move {
+                match build_agent_loop(config_clone).await {
+                    Ok(agent_loop) => {
+                        let channel = WhatsAppChannel::new(
+                            wa_config_clone.api_key,
+                            wa_config_clone.phone_number_id,
+                            agent_loop,
+                        );
+                        let _ = channel.start().await;
+                    }
+                    _ => {}
+                }
+            });
+        }
+    }
+
     let channel = CliChannel::new(agent_loop, defaults);
-    channel.start().await?;
+    tokio::select! {
+        res = channel.start() => {
+            if let Err(e) = res {
+                eprintln!("TUI error: {}", e);
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            println!("\r\nExiting OpenZ...");
+        }
+    }
+    
+    crate::channels::shutdown_gateways(&config).await;
     Ok(())
 }
 
@@ -627,10 +732,21 @@ async fn handle_telegram() -> Result<()> {
     };
     
     start_scheduler(config.clone());
-    let agent_loop = build_agent_loop(config).await?;
+    let agent_loop = build_agent_loop(config.clone()).await?;
     let channel = TelegramChannel::new(token, agent_loop);
-    channel.start().await?;
     
+    tokio::select! {
+        res = channel.start() => {
+            if let Err(e) = res {
+                eprintln!("Telegram error: {}", e);
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            println!("\r\nExiting Telegram channel...");
+        }
+    }
+    
+    crate::channels::shutdown_gateways(&config).await;
     Ok(())
 }
 
@@ -645,10 +761,21 @@ async fn handle_discord() -> Result<()> {
     };
     
     start_scheduler(config.clone());
-    let agent_loop = build_agent_loop(config).await?;
+    let agent_loop = build_agent_loop(config.clone()).await?;
     let channel = crate::channels::DiscordChannel::new(token, agent_loop);
-    channel.start().await?;
     
+    tokio::select! {
+        res = channel.start() => {
+            if let Err(e) = res {
+                eprintln!("Discord error: {}", e);
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            println!("\r\nExiting Discord channel...");
+        }
+    }
+    
+    crate::channels::shutdown_gateways(&config).await;
     Ok(())
 }
 
@@ -669,10 +796,21 @@ async fn handle_whatsapp() -> Result<()> {
     };
     
     start_scheduler(config.clone());
-    let agent_loop = build_agent_loop(config).await?;
+    let agent_loop = build_agent_loop(config.clone()).await?;
     let channel = crate::channels::WhatsAppChannel::new(key, phone_id, agent_loop);
-    channel.start().await?;
     
+    tokio::select! {
+        res = channel.start() => {
+            if let Err(e) = res {
+                eprintln!("WhatsApp error: {}", e);
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            println!("\r\nExiting WhatsApp channel...");
+        }
+    }
+    
+    crate::channels::shutdown_gateways(&config).await;
     Ok(())
 }
 
