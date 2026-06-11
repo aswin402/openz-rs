@@ -67,7 +67,7 @@ pub struct AgentDefaults {
     pub max_messages: usize,
     #[serde(default = "default_max_tool_iterations")]
     pub max_tool_iterations: usize,
-    #[serde(default)]
+    #[serde(default = "default_fallback_models")]
     pub fallback_models: Vec<serde_json::Value>,
     #[serde(default = "default_caveman_mode")]
     pub caveman_mode: bool,
@@ -107,6 +107,14 @@ fn default_max_tool_iterations() -> usize {
     200
 }
 
+fn default_fallback_models() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!("gpt-4o"),
+        serde_json::json!("claude-3-5-haiku"),
+        serde_json::json!("openrouter/auto"),
+    ]
+}
+
 impl Default for AgentDefaults {
     fn default() -> Self {
         AgentDefaults {
@@ -119,7 +127,7 @@ impl Default for AgentDefaults {
             bot_icon: default_bot_icon(),
             max_messages: default_max_messages(),
             max_tool_iterations: default_max_tool_iterations(),
-            fallback_models: Vec::new(),
+            fallback_models: default_fallback_models(),
             caveman_mode: true,
             context_limit: None,
         }
