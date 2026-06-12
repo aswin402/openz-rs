@@ -21,7 +21,8 @@
       "wasmtime-wasi",
       "fastembed",
       "diffy",
-      "html2md"
+      "html2md",
+      "tokio-tungstenite"
     ],
     "core": [
       "anyhow",

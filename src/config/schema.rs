@@ -160,6 +160,12 @@ fn default_ws_port() -> u16 {
 fn default_ws_host() -> String {
     "127.0.0.1".to_string()
 }
+fn default_wa_webhook_port() -> u16 {
+    8090
+}
+fn default_wa_verify_token() -> String {
+    "openz".to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TelegramChannelConfig {
@@ -185,6 +191,10 @@ pub struct WhatsAppChannelConfig {
     pub api_key: String,
     #[serde(default)]
     pub phone_number_id: String,
+    #[serde(default = "default_wa_webhook_port")]
+    pub webhook_port: u16,
+    #[serde(default = "default_wa_verify_token")]
+    pub verify_token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -274,6 +284,8 @@ impl Default for ChannelsConfig {
                 enabled: false,
                 api_key: String::new(),
                 phone_number_id: String::new(),
+                webhook_port: default_wa_webhook_port(),
+                verify_token: default_wa_verify_token(),
             }),
             others: HashMap::new(),
         }

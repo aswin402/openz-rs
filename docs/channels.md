@@ -28,8 +28,8 @@ pub trait Channel: Send + Sync {
 * **`cli`** ([src/channels/cli.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli.rs)): Interactive TUI terminal prompt support with clipboard image pasting (`Ctrl+V`) and agent slash commands.
 * **`websocket`** ([src/channels/websocket.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket.rs)): Axum-based WebSocket gateway that serves WebUI static bundles and accepts real-time message events.
 * **`telegram`** ([src/channels/telegram.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram.rs)): Standard long-polling bot polling messenger messages.
-* **`discord`** ([src/channels/discord.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/discord.rs)): Pluggable adapter stub to run a Discord bot channel.
-* **`whatsapp`** ([src/channels/whatsapp.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/whatsapp.rs)): Pluggable webhook adapter stub to connect to WhatsApp Business API.
+* **`discord`** ([src/channels/discord.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/discord.rs)): Active bot gateway client using WebSocket (`tokio-tungstenite`) to connect and listen for message events, execute them, and reply.
+* **`whatsapp`** ([src/channels/whatsapp.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/whatsapp.rs)): Active Axum-based HTTP webhook receiver server that handles Meta webhook verification GET challenge and parses POST message streams.
 
 ---
 

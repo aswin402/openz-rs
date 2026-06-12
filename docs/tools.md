@@ -50,6 +50,8 @@ pub trait Tool: Send + Sync {
 * **`gsd_browser`** (`src/tools/gsd_browser.rs`): Controls a headless Chrome browser via GSD to interact with websites and perform browser automation.
 * **`web_search`** (`src/tools/web_search.rs`): Performs web search queries via DuckDuckGo HTML and returns clean lists of titles, URLs, and snippets.
 * **`onpkg`** (`src/tools/onpkg.rs`): Use onpkg to list available templates, show details of a stack, scaffold a stack (website, app, backend, frontend from scratch), or run environment diagnostics.
+* **`crawl_website`** (`src/tools/crawl.rs`): Performs asynchronous website crawls using the high-performance `spider-rs` engine, retrieving structured page info (URL, status, title, snippet).
+* **`obscura_browser`** (`src/tools/obscura.rs`): Interacts with `obscura` (or standard Chrome/Chromium) over the WebSocket Chrome DevTools Protocol (CDP) to navigate, render JS-heavy pages as Markdown, or evaluate custom JavaScript.
 
 
 

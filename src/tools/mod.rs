@@ -157,3 +157,7 @@ pub mod wasm_sandbox;
 pub mod semantic_search;
 pub mod rust_docs;
 pub mod image_generator;
+pub mod system_info;
+pub mod network;
+pub mod crawl;
+pub mod obscura;

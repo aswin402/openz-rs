@@ -6,7 +6,10 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use crate::providers::{openai::OpenAIProvider, anthropic::AnthropicProvider, LLMProvider};
 use crate::tools::ToolRegistry;
-use crate::tools::filesystem::{ReadFileTool, WriteFileTool, ListDirTool, PatchFileTool, FindFilesTool};
+use crate::tools::filesystem::{ReadFileTool, WriteFileTool, ListDirTool, PatchFileTool, FindFilesTool, ReplaceLinesTool};
+use crate::tools::db_inspector::{DbInspectorTool, DbWriteTool};
+use crate::tools::system_info::SystemInfoTool;
+use crate::tools::network::CheckPortTool;
 use crate::tools::doc_reader::DocReaderTool;
 use crate::tools::wasm_sandbox::WasmSandboxTool;
 use crate::tools::semantic_search::SemanticSearchTool;
@@ -65,6 +68,36 @@ pub enum Command {
         #[arg(last = true)]
         command_args: Vec<String>,
     },
+
+    /// Stateful Event Workflow (SOP) Engine commands
+    Sop {
+        #[command(subcommand)]
+        action: SopAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SopAction {
+    /// List all standard operating procedures (SOPs)
+    List,
+
+    /// List all SOP execution instances
+    Instances,
+
+    /// Trigger a standard operating procedure (SOP)
+    Trigger {
+        /// The ID of the SOP template
+        sop_id: String,
+
+        /// Optional JSON payload string or file path containing payload
+        payload: Option<String>,
+    },
+
+    /// Resume a failed SOP instance
+    Resume {
+        /// The unique ID of the SOP instance
+        instance_id: String,
+    },
 }
 
 pub async fn run_cli() -> Result<()> {
@@ -73,22 +106,17 @@ pub async fn run_cli() -> Result<()> {
         if arg == "--version" || arg == "-V" {
             let logo = format!(
                 r#"
-{}  ___  ____  _____ _   _ _____ 
- / _ \|  _ \| ____| \ | |___  /
-| | | | |_) |  _| |  \| |  / /  
-| |_| |  __/| |___| |\  | / /__ 
- \___/|_|   |_____|_| \_/_____|{}
-
-{}OpenZ AI Agent Framework - v{}{}
-{}Rebranded Ultra-Lightweight Personal AI Agent in Rust{}
+{white} ▄████▄   ██████  ████████ ███    ██ {orange}████████
+{white}██    ██  ██   ██ ██       ████   ██ {orange}    ██  
+{white}██    ██  ██████  ██████   ██ ██  ██ {orange}   ██   
+{white}██    ██  ██      ██       ██  ██ ██ {orange}  ██    
+{white} ▀████▀   ██      ████████ ██   ████ {orange}████████
+{orange}openz v{version}{reset}
 "#,
-                crate::agent::style::colors::AURA_PURPLE,
-                crate::agent::style::colors::COLOR_RESET,
-                crate::agent::style::colors::COLOR_BOLD,
-                env!("CARGO_PKG_VERSION"),
-                crate::agent::style::colors::COLOR_RESET,
-                crate::agent::style::colors::AURA_SLATE,
-                crate::agent::style::colors::COLOR_RESET
+                white = crate::agent::style::colors::LIGHT_WHITE,
+                orange = crate::agent::style::colors::RED_ORANGE,
+                reset = crate::agent::style::colors::COLOR_RESET,
+                version = env!("CARGO_PKG_VERSION")
             );
             print!("{}", logo);
             std::process::exit(0);
@@ -131,6 +159,9 @@ pub async fn run_cli() -> Result<()> {
             let args = &command_args[1..];
             let (_tx, rx) = tokio::sync::oneshot::channel();
             crate::tools::mcp::run_mcp_bridge(port, command, args, rx).await?;
+        }
+        Command::Sop { action } => {
+            handle_sop(action).await?;
         }
     }
     
@@ -415,6 +446,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(RustDocsTool::new()));
     registry.register(std::sync::Arc::new(WriteFileTool));
     registry.register(std::sync::Arc::new(PatchFileTool));
+    registry.register(std::sync::Arc::new(ReplaceLinesTool));
     registry.register(std::sync::Arc::new(ListDirTool));
     registry.register(std::sync::Arc::new(ExecCommandTool));
     registry.register(std::sync::Arc::new(WebFetchTool::new()));
@@ -443,7 +475,10 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::grep::GrepSearchTool));
     registry.register(std::sync::Arc::new(crate::tools::git_manager::GitManagerTool));
     registry.register(std::sync::Arc::new(crate::tools::outline::CodeOutlineTool));
-    registry.register(std::sync::Arc::new(crate::tools::db_inspector::DbInspectorTool));
+    registry.register(std::sync::Arc::new(DbInspectorTool));
+    registry.register(std::sync::Arc::new(DbWriteTool));
+    registry.register(std::sync::Arc::new(SystemInfoTool));
+    registry.register(std::sync::Arc::new(CheckPortTool));
     registry.register(std::sync::Arc::new(crate::tools::cargo_manager::CargoManagerTool));
     registry.register(std::sync::Arc::new(crate::tools::clipboard::ClipboardTool));
     registry.register(std::sync::Arc::new(crate::tools::open::OpenTool));
@@ -453,6 +488,8 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::web_search::WebSearchTool::new()));
     registry.register(std::sync::Arc::new(crate::tools::onpkg::OnpkgTool));
     registry.register(std::sync::Arc::new(crate::tools::image_generator::GenerateImageTool));
+    registry.register(std::sync::Arc::new(crate::tools::crawl::CrawlSiteTool::new()));
+    registry.register(std::sync::Arc::new(crate::tools::obscura::ObscuraBrowserTool::new()));
 
     // Register configured MCP tools
     let mut total_tools = 0;
@@ -1281,12 +1318,118 @@ async fn handle_whatsapp_submenu(config: &mut Config) -> Result<()> {
         if !phone_id.trim().is_empty() {
             wa.phone_number_id = phone_id.trim().to_string();
         }
+
+        let port_str = Text::new("Enter WhatsApp Webhook Port: ")
+            .with_default(&wa.webhook_port.to_string())
+            .prompt()?;
+        if let Ok(p) = port_str.trim().parse::<u16>() {
+            wa.webhook_port = p;
+        }
+
+        let token = Text::new("Enter WhatsApp Webhook Verification Token: ")
+            .with_default(&wa.verify_token)
+            .prompt()?;
+        if !token.trim().is_empty() {
+            wa.verify_token = token.trim().to_string();
+        }
     }
 
     config.channels.whatsapp = Some(wa);
     save_config(config)?;
     println!("{}✓ WhatsApp channel configured successfully!{}", EMERALD_GREEN, COLOR_RESET);
     println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    Ok(())
+}
+
+async fn handle_sop(action: SopAction) -> Result<()> {
+    match action {
+        SopAction::List => {
+            let defs = crate::sop::load_definitions()?;
+            println!("\n{}📋 Available Standard Operating Procedures (SOPs):{}\n", COLOR_BOLD, COLOR_RESET);
+            if defs.is_empty() {
+                println!("No SOP definitions found.");
+            } else {
+                for def in defs {
+                    println!("{}• ID:{} {}", AURA_PURPLE, COLOR_RESET, def.id);
+                    println!("  {}Name:{} {}", COLOR_BOLD, COLOR_RESET, def.name);
+                    println!("  {}Description:{} {}", COLOR_BOLD, COLOR_RESET, def.description);
+                    println!("  {}Steps:{}", COLOR_BOLD, COLOR_RESET);
+                    for (i, step) in def.steps.iter().enumerate() {
+                        println!("    {}. {}: {}", i + 1, step.name, step.description);
+                    }
+                    println!();
+                }
+            }
+        }
+        SopAction::Instances => {
+            let instances = crate::sop::list_instances()?;
+            println!("\n{}📋 SOP Execution Instances:{}\n", COLOR_BOLD, COLOR_RESET);
+            if instances.is_empty() {
+                println!("No SOP instances executed yet.");
+            } else {
+                for inst in instances {
+                    let status_color = match inst.status {
+                        crate::sop::SopStatus::Completed => EMERALD_GREEN,
+                        crate::sop::SopStatus::Failed => ERROR_RED,
+                        crate::sop::SopStatus::Running => LIGHT_WHITE,
+                        _ => COLOR_RESET,
+                    };
+                    println!("{}• Instance ID:{} {}", AURA_PURPLE, COLOR_RESET, inst.id);
+                    println!("  {}SOP ID:{} {}", COLOR_BOLD, COLOR_RESET, inst.sop_id);
+                    println!("  {}Status:{} {:?}{}", COLOR_BOLD, status_color, inst.status, COLOR_RESET);
+                    println!("  {}Current Step:{} {}/{}", COLOR_BOLD, COLOR_RESET, inst.current_step_index, inst.steps.len());
+                    println!("  {}Started At:{} {}", COLOR_BOLD, COLOR_RESET, inst.started_at);
+                    if let Some(ref completed) = inst.completed_at {
+                        println!("  {}Completed At:{} {}", COLOR_BOLD, COLOR_RESET, completed);
+                    }
+                    println!();
+                }
+            }
+        }
+        SopAction::Trigger { sop_id, payload } => {
+            let config = load_config()?;
+            let payload_value = if let Some(p) = payload {
+                let p_trimmed = p.trim();
+                if p_trimmed.starts_with('{') || p_trimmed.starts_with('[') {
+                    serde_json::from_str(p_trimmed)?
+                } else {
+                    // Try parsing as file path
+                    let path = std::path::Path::new(p_trimmed);
+                    if path.exists() {
+                        let content = std::fs::read_to_string(path)?;
+                        serde_json::from_str(&content)?
+                    } else {
+                        anyhow::bail!("Payload must be a valid JSON string or path to a JSON file");
+                    }
+                }
+            } else {
+                serde_json::json!({})
+            };
+
+            println!("Triggering SOP '{}'...", sop_id);
+            match crate::sop::engine::trigger_sop(config, sop_id.clone(), payload_value).await {
+                Ok(instance_id) => {
+                    println!("{}✓ SOP successfully triggered!{}", EMERALD_GREEN, COLOR_RESET);
+                    println!("Instance ID: {}", instance_id);
+                }
+                Err(e) => {
+                    eprintln!("{}❌ Failed to trigger SOP: {}{}", ERROR_RED, e, COLOR_RESET);
+                }
+            }
+        }
+        SopAction::Resume { instance_id } => {
+            let config = load_config()?;
+            println!("Resuming SOP instance '{}'...", instance_id);
+            match crate::sop::engine::resume_sop(config, instance_id.clone()).await {
+                Ok(_) => {
+                    println!("{}✓ SOP instance resume initiated successfully!{}", EMERALD_GREEN, COLOR_RESET);
+                }
+                Err(e) => {
+                    eprintln!("{}❌ Failed to resume SOP: {}{}", ERROR_RED, e, COLOR_RESET);
+                }
+            }
+        }
+    }
     Ok(())
 }
 

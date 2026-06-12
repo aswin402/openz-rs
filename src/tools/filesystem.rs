@@ -217,6 +217,87 @@ impl Tool for PatchFileTool {
     }
 }
 
+pub struct ReplaceLinesTool;
+
+#[async_trait::async_trait]
+impl Tool for ReplaceLinesTool {
+    fn name(&self) -> &str {
+        "replace_lines"
+    }
+
+    fn description(&self) -> &str {
+        "Replace a specific range of lines (1-indexed, inclusive) in a file with new content."
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Absolute or relative path to the file to edit" },
+                "start_line": { "type": "integer", "description": "Start line number (1-indexed, inclusive)" },
+                "end_line": { "type": "integer", "description": "End line number (1-indexed, inclusive)" },
+                "replacement": { "type": "string", "description": "The new replacement text content" }
+            },
+            "required": ["path", "start_line", "end_line", "replacement"]
+        })
+    }
+
+    async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
+        let path_str = arguments.get("path")
+            .or(arguments.get("TargetFile"))
+            .or(arguments.get("filepath"))
+            .or(arguments.get("file"))
+            .or(arguments.get("Path"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
+        
+        let start_line = arguments.get("start_line").and_then(|v| v.as_u64()).map(|v| v as usize)
+            .ok_or_else(|| anyhow!("Missing 'start_line' argument"))?;
+        let end_line = arguments.get("end_line").and_then(|v| v.as_u64()).map(|v| v as usize)
+            .ok_or_else(|| anyhow!("Missing 'end_line' argument"))?;
+        let replacement = arguments.get("replacement").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'replacement' argument"))?;
+
+        if start_line == 0 || end_line == 0 || start_line > end_line {
+            return Err(anyhow!("Invalid line range: {} to {}", start_line, end_line));
+        }
+
+        let path = resolve_path(path_str);
+        
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read file at {:?}", path))?;
+        
+        let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        
+        if start_line > lines.len() + 1 {
+            return Err(anyhow!("start_line {} is beyond file line count {}", start_line, lines.len()));
+        }
+
+        let start_idx = start_line - 1;
+        let end_idx = (end_line).min(lines.len());
+
+        let mut new_lines = Vec::new();
+        new_lines.extend(lines[..start_idx].iter().cloned());
+        for repl_line in replacement.lines() {
+            new_lines.push(repl_line.to_string());
+        }
+        if end_idx < lines.len() {
+            new_lines.extend(lines[end_idx..].iter().cloned());
+        }
+
+        let new_content = new_lines.join("\n");
+        fs::write(&path, &new_content)
+            .with_context(|| format!("Failed to write to file at {:?}", path))?;
+
+        Ok(serde_json::json!({
+            "status": "success",
+            "path": path.to_string_lossy(),
+            "lines_modified": end_idx - start_idx,
+            "new_line_count": new_lines.len()
+        }))
+    }
+}
+
 pub struct FindFilesTool;
 
 impl FindFilesTool {
@@ -364,7 +445,32 @@ mod tests {
         let results = res["results"].as_array().unwrap();
         assert!(results.len() >= 1);
         
-        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_replace_lines() -> Result<()> {
+        let temp_dir = std::env::temp_dir().join(format!("openz_replace_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir)?;
+        
+        let file_path = temp_dir.join("test.txt");
+        std::fs::write(&file_path, "line 1\nline 2\nline 3")?;
+
+        let tool = ReplaceLinesTool;
+        let args = serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "start_line": 2,
+            "end_line": 2,
+            "replacement": "replaced line 2"
+        });
+
+        let res = tool.call(&args).await?;
+        assert_eq!(res["status"], "success");
+        
+        let updated = std::fs::read_to_string(&file_path)?;
+        assert_eq!(updated, "line 1\nreplaced line 2\nline 3");
+
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }

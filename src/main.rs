@@ -6,6 +6,7 @@ pub mod agent;
 pub mod channels;
 pub mod cli;
 pub mod cron;
+pub mod sop;
 pub mod subagents;
 
 #[tokio::main]

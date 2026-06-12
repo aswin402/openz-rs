@@ -1,10 +1,11 @@
 use crate::agent::AgentLoop;
 use crate::config::schema::WebSocketChannelConfig;
 use axum::{
-    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State},
+    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State, Path as AxumPath},
     response::IntoResponse,
     routing::get,
-    Router,
+    Router, Json,
+    http::StatusCode,
 };
 use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
@@ -50,9 +51,10 @@ impl super::Channel for WsGateway {
             config: self.config.clone(),
             agent_loop: self.agent_loop.clone(),
         };
-        
         let mut app = Router::new()
             .route("/ws", get(ws_handler))
+            .route("/webhook/sop/trigger/:sop_id", axum::routing::post(trigger_sop_handler))
+            .route("/webhook/sop/instances/:instance_id/resume", axum::routing::post(resume_sop_handler))
             .with_state(state);
 
         let silent = std::env::var("OPENZ_SILENT").is_ok();
@@ -191,5 +193,49 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                 }
             }
         }
+    }
+}
+
+async fn trigger_sop_handler(
+    State(state): State<WsState>,
+    AxumPath(sop_id): AxumPath<String>,
+    Json(payload): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let config = state.agent_loop.config.clone();
+    match crate::sop::engine::trigger_sop(config, sop_id, payload).await {
+        Ok(instance_id) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "triggered",
+                "instance_id": instance_id
+            })),
+        ).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": e.to_string()
+            })),
+        ).into_response(),
+    }
+}
+
+async fn resume_sop_handler(
+    State(state): State<WsState>,
+    AxumPath(instance_id): AxumPath<String>,
+) -> impl IntoResponse {
+    let config = state.agent_loop.config.clone();
+    match crate::sop::engine::resume_sop(config, instance_id).await {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "resumed"
+            })),
+        ).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": e.to_string()
+            })),
+        ).into_response(),
     }
 }

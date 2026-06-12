@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.9`
+# OpenZ 🦊 `v0.0.10`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -24,11 +24,12 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
   * **Console CLI (`agent`):** Direct interactive terminal chat with full slash commands support.
   * **WebSocket Gateway (`gateway`):** Asynchronous Web/WebSocket server powering the visual WebUI workbench.
   * **Telegram Polling (`telegram`):** Native bot listener with parallel loop handling.
-  * **Discord bot (`discord`):** Plug-and-play adapter stub for Discord communities.
-  * **WhatsApp API (`whatsapp`):** Webhook-friendly adapter stub for WhatsApp Business integration.
+  * **Discord Gateway (`discord`):** Active bot gateway client listening for events via real-time WebSocket connection.
+  * **WhatsApp API (`whatsapp`):** Active Axum webhook receiver server verifying and processing incoming messages.
+* **Stateful SOP Workflow Engine:** Resilient, multi-step automated standard operating procedures (SOPs) engine triggered by webhooks or CLI commands. It persists the current state to disk, maps inputs/outputs in a global context (e.g. `{{steps.StepName.output}}`), and supports resuming paused or failed runs.
 * **Global Activity Tracking:** Shared execution state manager (`~/.openz/activity.json`). If you start a long-running task in the terminal TUI (`openz agent`) and ask the agent what it is doing via Telegram/Discord, it reads the active task logs of the CLI session and dynamically reports on the running command or current tool execution.
 * **Remote Session Control:** Cross-channel prompt forwarding. You can send commands, answers, or new prompts from other channels (like Telegram) to the active TUI session (`cli:direct`) using the `send_remote_input` tool. The TUI terminal prompt polls this queue in real-time, consumes the input, and executes it as if typed locally.
-* **Core Native Tools:** Built-in `read_file`, `write_file`, `list_dir`, `exec_command` (subprocess sandboxing), `web_fetch` (upgraded DOM scraper), `grep_search` (codebase text search), `git_manager` (status/diff/commits), `code_outline` (structural outline), `db_inspector` (SQLite reader), `cargo_manager` (cargo builds/checks/tests), `clipboard` (system clipboard get/set), `open_path` (opening files/URLs in default apps), `file_watcher` (background auto-healing compiler watcher), `ast_grep` (structural code search using AST patterns), `gsd_browser` (real browser navigation/interaction automation), `web_search` (privacy-first search query results), and `onpkg` (onpkg package and template manager tool).
+* **Core Native Tools:** Built-in `read_file`, `write_file`, `list_dir`, `exec_command` (subprocess sandboxing), `web_fetch` (upgraded DOM scraper), `grep_search` (codebase text search), `git_manager` (status/diff/commits), `code_outline` (structural outline), `db_inspector` (SQLite reader), `cargo_manager` (cargo builds/checks/tests), `clipboard` (system clipboard get/set), `open_path` (opening files/URLs in default apps), `file_watcher` (background auto-healing compiler watcher), `ast_grep` (structural code search using AST patterns), `gsd_browser` (real browser navigation/interaction automation), `web_search` (privacy-first search query results), `onpkg` (onpkg package and template manager tool), `crawl_website` (multi-threaded website crawler using spider-rs), and `obscura_browser` (lightweight JS-rendering headless browser via pure-Rust CDP).
 * **Unified gRPC/Tonic Transport:** Connects all workspace MCP servers over gRPC Tonic transport. Includes a **local in-process gRPC bridge** that dynamically wraps standard stdio MCP servers on host TCP ports, filtering out logging noise/stdio pollution to guarantee clean, structured communication.
 * **Rust-Native MCP Servers:** Out-of-the-box support for high-performance Rust MCP binaries (`mcp-server-sequential-thinking` and `openmemory_rs` for memories, `office` via `opendocswork-mcp` for Word/Excel/PowerPoint processing, and `headroom` via `headroom-mcp` for context compression/scoping). Exposes a native `manage_mcp` tool to CRUD configurations.
 * **Cron & Scheduler:** Upgraded scheduling loop supporting Unix cron syntax (`*/5 * * * *`) alongside simple durations.

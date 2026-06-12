@@ -55,36 +55,456 @@ fn handle_clipboard_paste(index: usize) -> anyhow::Result<std::path::PathBuf> {
 
 fn char_display_width(c: char) -> usize {
     let cp = c as u32;
-    if (cp >= 0x1F000 && cp <= 0x1FBF9) || c == '⬢' || c == '🗑' || c == '📊' {
+    if (cp >= 0x1F000 && cp <= 0x1FBF9) || c == '⬢' || c == '🗑' || c == '📊' || c == '✅' || c == '❌' {
         2
     } else {
         1
     }
 }
 
+fn str_display_width(s: &str) -> usize {
+    s.chars().map(char_display_width).sum()
+}
 
-fn print_colored_markdown(content: &str) {
+fn is_table_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.contains('|') && !is_divider_row(line)
+}
+
+fn is_divider_row(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || !trimmed.contains('|') {
+        return false;
+    }
+    trimmed.chars().all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace())
+}
+
+fn split_row(line: &str) -> Vec<String> {
+    let mut trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    if trimmed.starts_with('|') {
+        trimmed = trimmed[1..].trim();
+    }
+    if trimmed.ends_with('|') {
+        trimmed = trimmed[..trimmed.len() - 1].trim();
+    }
+    let mut cells = Vec::new();
+    let mut current = String::new();
+    let mut chars = trimmed.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(&'|') = chars.peek() {
+                current.push('|');
+                chars.next();
+            } else {
+                current.push('\\');
+            }
+        } else if c == '|' {
+            cells.push(current.trim().to_string());
+            current.clear();
+        } else {
+            current.push(c);
+        }
+    }
+    cells.push(current.trim().to_string());
+    cells
+}
+
+fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![text.to_string()];
+    }
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
+        let mut current_line = String::new();
+        let mut current_width = 0;
+        
+        for word in paragraph.split_whitespace() {
+            let word_width = str_display_width(word);
+            
+            if current_line.is_empty() {
+                if word_width <= max_width {
+                    current_line.push_str(word);
+                    current_width = word_width;
+                } else {
+                    let mut w_chars = word.chars().peekable();
+                    while w_chars.peek().is_some() {
+                        let mut chunk = String::new();
+                        let mut chunk_w = 0;
+                        while let Some(&c) = w_chars.peek() {
+                            let cw = char_display_width(c);
+                            if chunk_w + cw > max_width && chunk_w > 0 {
+                                break;
+                            }
+                            chunk.push(c);
+                            chunk_w += cw;
+                            w_chars.next();
+                        }
+                        lines.push(chunk);
+                    }
+                }
+            } else {
+                let space_width = 1;
+                if current_width + space_width + word_width <= max_width {
+                    current_line.push(' ');
+                    current_line.push_str(word);
+                    current_width += space_width + word_width;
+                } else {
+                    lines.push(current_line);
+                    current_line = String::new();
+                    current_width = 0;
+                    
+                    if word_width <= max_width {
+                        current_line.push_str(word);
+                        current_width = word_width;
+                    } else {
+                        let mut w_chars = word.chars().peekable();
+                        while w_chars.peek().is_some() {
+                            let mut chunk = String::new();
+                            let mut chunk_w = 0;
+                            while let Some(&c) = w_chars.peek() {
+                                let cw = char_display_width(c);
+                                if chunk_w + cw > max_width && chunk_w > 0 {
+                                    break;
+                                }
+                                chunk.push(c);
+                                chunk_w += cw;
+                                w_chars.next();
+                            }
+                            if w_chars.peek().is_some() {
+                                lines.push(chunk);
+                            } else {
+                                current_line = chunk;
+                                current_width = chunk_w;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+        if lines.is_empty() && paragraph.is_empty() {
+            lines.push(String::new());
+        }
+    }
+    
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+fn format_cell_text(text: &str) -> String {
     use crate::agent::style::*;
     let light_blue = "\x1b[38;2;135;206;250m";
+    let mut formatted = text.to_string();
     
-    for line in content.lines() {
-        if line.trim_start().starts_with("#") {
-            println!("{}{}{}", HEADING_BLUE, line, COLOR_RESET);
-        } else {
-            let mut formatted = line.to_string();
+    formatted = formatted
+        .replace("✔", &format!("{}{}{}", EMERALD_GREEN, "✔", COLOR_RESET))
+        .replace("✅", &format!("{}{}{}", EMERALD_GREEN, "✅", COLOR_RESET))
+        .replace("✓", &format!("{}{}{}", EMERALD_GREEN, "✓", COLOR_RESET))
+        .replace("✖", &format!("{}{}{}", ERROR_RED, "✖", COLOR_RESET))
+        .replace("❌", &format!("{}{}{}", ERROR_RED, "❌", COLOR_RESET))
+        .replace("✗", &format!("{}{}{}", ERROR_RED, "✗", COLOR_RESET));
+        
+    if let Ok(re_bold) = regex::Regex::new(r"\*\*(.*?)\*\*") {
+        formatted = re_bold.replace_all(&formatted, &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET)).to_string();
+    }
+    if let Ok(re_code) = regex::Regex::new(r"`(.*?)`") {
+        formatted = re_code.replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
+    }
+    if let Ok(re_italic) = regex::Regex::new(r"\*(.*?)\*") {
+        formatted = re_italic.replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
+    }
+    
+    formatted
+}
+
+fn print_normal_line(line: &str) {
+    use crate::agent::style::*;
+    let trimmed = line.trim();
+    if trimmed.chars().all(|c| c == '-') && trimmed.len() >= 3 && !trimmed.is_empty() {
+        println!("{}──────{}", LIGHT_WHITE, COLOR_RESET);
+        return;
+    }
+
+    let light_blue = "\x1b[38;2;135;206;250m";
+    if line.trim_start().starts_with("#") {
+        println!("{}{}{}", HEADING_BLUE, line, COLOR_RESET);
+    } else {
+        let mut formatted = line.to_string();
+        
+        formatted = formatted
+            .replace("✔", &format!("{}{}{}", EMERALD_GREEN, "✔", COLOR_RESET))
+            .replace("✅", &format!("{}{}{}", EMERALD_GREEN, "✅", COLOR_RESET))
+            .replace("✓", &format!("{}{}{}", EMERALD_GREEN, "✓", COLOR_RESET))
+            .replace("✖", &format!("{}{}{}", ERROR_RED, "✖", COLOR_RESET))
+            .replace("❌", &format!("{}{}{}", ERROR_RED, "❌", COLOR_RESET))
+            .replace("✗", &format!("{}{}{}", ERROR_RED, "✗", COLOR_RESET));
             
-            if let Ok(re_bold) = regex::Regex::new(r"\*\*(.*?)\*\*") {
-                formatted = re_bold.replace_all(&formatted, &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET)).to_string();
-            }
-            if let Ok(re_code) = regex::Regex::new(r"`(.*?)`") {
-                formatted = re_code.replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
-            }
-            if let Ok(re_italic) = regex::Regex::new(r"\*(.*?)\*") {
-                formatted = re_italic.replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
-            }
-            
-            println!("{}", formatted);
+        if let Ok(re_bold) = regex::Regex::new(r"\*\*(.*?)\*\*") {
+            formatted = re_bold.replace_all(&formatted, &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET)).to_string();
         }
+        if let Ok(re_code) = regex::Regex::new(r"`(.*?)`") {
+            formatted = re_code.replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
+        }
+        if let Ok(re_italic) = regex::Regex::new(r"\*(.*?)\*") {
+            formatted = re_italic.replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
+        }
+        
+        println!("{}", formatted);
+    }
+}
+
+fn clean_cell_text(text: &str) -> String {
+    let mut cleaned = text.trim();
+    while cleaned.starts_with('|') {
+        cleaned = cleaned[1..].trim();
+    }
+    while cleaned.ends_with('|') {
+        cleaned = cleaned[..cleaned.len() - 1].trim();
+    }
+    if cleaned.starts_with("**") && cleaned.ends_with("**") && cleaned.len() > 4 {
+        cleaned = cleaned[2..cleaned.len() - 2].trim();
+    }
+    if cleaned.starts_with('*') && cleaned.ends_with('*') && cleaned.len() > 2 {
+        cleaned = cleaned[1..cleaned.len() - 1].trim();
+    }
+    cleaned.to_string()
+}
+
+fn render_table(table_lines: &[&str]) {
+    use crate::agent::style::*;
+    
+    if table_lines.len() < 2 {
+        for line in table_lines {
+            print_normal_line(line);
+        }
+        return;
+    }
+    
+    let headers: Vec<String> = split_row(table_lines[0])
+        .into_iter()
+        .map(|h| clean_cell_text(&h))
+        .collect();
+    let num_cols = headers.len();
+    if num_cols == 0 {
+        for line in table_lines {
+            print_normal_line(line);
+        }
+        return;
+    }
+    
+    let mut data_rows = Vec::new();
+    for &line in &table_lines[2..] {
+        let mut cells = split_row(line);
+        while cells.len() < num_cols {
+            cells.push(String::new());
+        }
+        cells.truncate(num_cols);
+        data_rows.push(cells);
+    }
+    
+    let term_width = if let Ok((w, _)) = crossterm::terminal::size() {
+        w as usize
+    } else {
+        80
+    };
+    
+    let separator_overhead = 3 * (num_cols - 1);
+    let available_width = term_width.saturating_sub(separator_overhead).saturating_sub(2);
+    
+    let mut max_content_widths = vec![0; num_cols];
+    for col in 0..num_cols {
+        let mut max_w = str_display_width(&headers[col]);
+        for row in &data_rows {
+            max_w = max_w.max(str_display_width(&row[col]));
+        }
+        max_content_widths[col] = max_w.max(3);
+    }
+    
+    let total_content_width: usize = max_content_widths.iter().sum();
+    let mut col_widths = max_content_widths.clone();
+    
+    if total_content_width > available_width {
+        let mut remaining_width = available_width;
+        let mut large_cols = Vec::new();
+        
+        for col in 0..num_cols {
+            if max_content_widths[col] <= 15 {
+                col_widths[col] = max_content_widths[col];
+                remaining_width = remaining_width.saturating_sub(col_widths[col]);
+            } else {
+                large_cols.push(col);
+            }
+        }
+        
+        if !large_cols.is_empty() {
+            let equal_share = remaining_width / large_cols.len();
+            let mut extra = remaining_width % large_cols.len();
+            for &col in &large_cols {
+                let share = equal_share + if extra > 0 { extra -= 1; 1 } else { 0 };
+                col_widths[col] = share.max(10);
+            }
+        }
+    }
+    
+    let mut divider = String::new();
+    for col in 0..num_cols {
+        if col == 0 {
+            divider.push_str(&"─".repeat(col_widths[0] + 1));
+        } else if col == num_cols - 1 {
+            divider.push_str(&"─".repeat(col_widths[col] + 1));
+        } else {
+            divider.push_str(&"─".repeat(col_widths[col] + 2));
+        }
+        if col < num_cols - 1 {
+            divider.push('┼');
+        }
+    }
+    
+    let separator = format!(" {}│{} ", LIGHT_WHITE, COLOR_RESET);
+    let divider_colored = format!("{}{}{}", LIGHT_WHITE, divider, COLOR_RESET);
+    
+    let mut header_cell_lines = Vec::new();
+    let mut max_header_lines = 1;
+    for col in 0..num_cols {
+        let lines = wrap_text(&headers[col], col_widths[col]);
+        max_header_lines = max_header_lines.max(lines.len());
+        header_cell_lines.push(lines);
+    }
+    
+    for line_idx in 0..max_header_lines {
+        let mut header_line_parts = Vec::new();
+        for col in 0..num_cols {
+            let text = header_cell_lines[col].get(line_idx).cloned().unwrap_or_default();
+            let visible_w = str_display_width(&text);
+            let padding_len = col_widths[col].saturating_sub(visible_w);
+            let formatted = format_cell_text(&text);
+            let colored = format!("{}{}{}{}{}", HEADING_BLUE, COLOR_BOLD, formatted, COLOR_RESET, " ".repeat(padding_len));
+            header_line_parts.push(colored);
+        }
+        println!("{}", header_line_parts.join(&separator));
+    }
+    
+    println!("{}", divider_colored);
+    
+    for row in data_rows {
+        let mut cell_lines = Vec::new();
+        let mut max_lines = 1;
+        for col in 0..num_cols {
+            let lines = wrap_text(&row[col], col_widths[col]);
+            max_lines = max_lines.max(lines.len());
+            cell_lines.push(lines);
+        }
+        
+        for line_idx in 0..max_lines {
+            let mut row_line_parts = Vec::new();
+            for col in 0..num_cols {
+                let text = cell_lines[col].get(line_idx).cloned().unwrap_or_default();
+                let visible_w = str_display_width(&text);
+                let padding_len = col_widths[col].saturating_sub(visible_w);
+                let formatted = format_cell_text(&text);
+                let padded = format!("{}{}", formatted, " ".repeat(padding_len));
+                row_line_parts.push(padded);
+            }
+            println!("{}", row_line_parts.join(&separator));
+        }
+    }
+}
+
+fn print_colored_markdown(content: &str) {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+    let mut in_code_block = false;
+    
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim_start();
+        
+        if trimmed.starts_with("```") {
+            in_code_block = !in_code_block;
+            print_normal_line(line);
+            i += 1;
+            continue;
+        }
+        
+        if !in_code_block && i + 1 < lines.len() && is_table_row(lines[i]) && is_divider_row(lines[i + 1]) {
+            let mut table_lines = Vec::new();
+            table_lines.push(lines[i]);
+            i += 1;
+            table_lines.push(lines[i]);
+            i += 1;
+            while i < lines.len() && is_table_row(lines[i]) {
+                table_lines.push(lines[i]);
+                i += 1;
+            }
+            render_table(&table_lines);
+        } else {
+            print_normal_line(line);
+            i += 1;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_table_row() {
+        assert!(is_table_row("| A | B |"));
+        assert!(!is_table_row("Not a table row"));
+        assert!(!is_table_row("|"));
+    }
+
+    #[test]
+    fn test_is_divider_row() {
+        assert!(is_divider_row("|---|---|"));
+        assert!(is_divider_row("|:---|---:|"));
+        assert!(!is_divider_row("| A | B |"));
+    }
+
+    #[test]
+    fn test_split_row() {
+        let cells = split_row("| A | B |");
+        assert_eq!(cells, vec!["A", "B"]);
+        
+        let cells_escaped = split_row("| A\\|B | C |");
+        assert_eq!(cells_escaped, vec!["A|B", "C"]);
+
+        let cells_no_outer = split_row("A | B");
+        assert_eq!(cells_no_outer, vec!["A", "B"]);
+    }
+
+    #[test]
+    fn test_wrap_text() {
+        let lines = wrap_text("hello world", 7);
+        assert_eq!(lines, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn test_horizontal_rule_detection() {
+        let line1 = "---";
+        let line2 = "----";
+        let line3 = "  ---  ";
+        let line4 = "--";
+        let line5 = "-a-";
+        
+        let is_hr = |l: &str| {
+            let trimmed = l.trim();
+            trimmed.chars().all(|c| c == '-') && trimmed.len() >= 3 && !trimmed.is_empty()
+        };
+        
+        assert!(is_hr(line1));
+        assert!(is_hr(line2));
+        assert!(is_hr(line3));
+        assert!(!is_hr(line4));
+        assert!(!is_hr(line5));
     }
 }
 
