@@ -354,29 +354,75 @@ impl Tool for DelegateProfileTool {
 
 pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn LLMProvider>> {
     let defaults = &config.agents.defaults;
-    let provider_name;
+    let mut provider_name = defaults.provider.clone();
 
     let model_lower = model.to_lowercase();
-    if model_lower.starts_with("anthropic/") || model_lower.contains("claude") {
-        provider_name = "anthropic".to_string();
-    } else if model_lower.starts_with("openai/") || model_lower.contains("gpt") {
-        provider_name = "openai".to_string();
-    } else if model_lower.starts_with("deepseek/") || model_lower.contains("deepseek") {
-        provider_name = "deepseek".to_string();
-    } else if model_lower.starts_with("groq/") {
-        provider_name = "groq".to_string();
-    } else if model_lower.starts_with("openrouter/") {
-        provider_name = "openrouter".to_string();
-    } else if model_lower.starts_with("ollama/") || model_lower.contains("ollama") {
-        provider_name = "ollama".to_string();
-    } else {
-        // Fallback checks
-        if config.providers.anthropic.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("ANTHROPIC_API_KEY").is_ok() {
-            provider_name = "anthropic".to_string();
-        } else if config.providers.openai.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENAI_API_KEY").is_ok() {
-            provider_name = "openai".to_string();
+    if provider_name == "auto" {
+        let has_key = |prov: &str| -> bool {
+            match prov {
+                "anthropic" => config.providers.anthropic.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("ANTHROPIC_API_KEY").is_ok(),
+                "openai" => config.providers.openai.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENAI_API_KEY").is_ok(),
+                "deepseek" => config.providers.deepseek.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("DEEPSEEK_API_KEY").is_ok(),
+                "groq" => config.providers.groq.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("GROQ_API_KEY").is_ok(),
+                "openrouter" => config.providers.openrouter.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENROUTER_API_KEY").is_ok(),
+                "opencode_zen" => config.providers.opencode_zen.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENCODE_ZEN_API_KEY").is_ok(),
+                _ => false,
+            }
+        };
+
+        if model_lower.starts_with("anthropic/") || model_lower.contains("claude") {
+            if has_key("anthropic") {
+                provider_name = "anthropic".to_string();
+            } else if has_key("opencode_zen") {
+                provider_name = "opencode_zen".to_string();
+            } else if has_key("openrouter") {
+                provider_name = "openrouter".to_string();
+            } else {
+                provider_name = "anthropic".to_string();
+            }
+        } else if model_lower.starts_with("openai/") || model_lower.contains("gpt") {
+            if has_key("openai") {
+                provider_name = "openai".to_string();
+            } else if has_key("opencode_zen") {
+                provider_name = "opencode_zen".to_string();
+            } else if has_key("openrouter") {
+                provider_name = "openrouter".to_string();
+            } else {
+                provider_name = "openai".to_string();
+            }
+        } else if model_lower.starts_with("deepseek/") || model_lower.contains("deepseek") {
+            if has_key("deepseek") {
+                provider_name = "deepseek".to_string();
+            } else if has_key("opencode_zen") {
+                provider_name = "opencode_zen".to_string();
+            } else if has_key("openrouter") {
+                provider_name = "openrouter".to_string();
+            } else {
+                provider_name = "deepseek".to_string();
+            }
+        } else if model_lower.starts_with("groq/") {
+            provider_name = "groq".to_string();
+        } else if model_lower.starts_with("openrouter/") {
+            provider_name = "openrouter".to_string();
+        } else if model_lower.starts_with("ollama/") || model_lower.contains("ollama") {
+            provider_name = "ollama".to_string();
         } else {
-            provider_name = defaults.provider.clone();
+            // Fallback checks
+            if has_key("anthropic") {
+                provider_name = "anthropic".to_string();
+            } else if has_key("openai") {
+                provider_name = "openai".to_string();
+            } else if has_key("deepseek") {
+                provider_name = "deepseek".to_string();
+            } else if has_key("openrouter") {
+                provider_name = "openrouter".to_string();
+            } else if has_key("groq") {
+                provider_name = "groq".to_string();
+            } else if has_key("opencode_zen") {
+                provider_name = "opencode_zen".to_string();
+            } else {
+                provider_name = "openai".to_string();
+            }
         }
     }
 
@@ -431,6 +477,69 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
             let base = p.and_then(|x| x.api_base.clone())
                 .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
             (String::new(), base)
+        }
+        "minimax" => {
+            let p = config.providers.minimax.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("MINIMAX_API_KEY").ok())
+                .unwrap_or_default();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.minimax.io/v1".to_string());
+            (key, base)
+        }
+        "mistral" => {
+            let p = config.providers.mistral.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("MISTRAL_API_KEY").ok())
+                .unwrap_or_default();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.mistral.ai/v1".to_string());
+            (key, base)
+        }
+        "z.ai" => {
+            let p = config.providers.z_ai.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("Z_AI_API_KEY").ok())
+                .unwrap_or_default();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.z.ai/api/paas/v4/".to_string());
+            (key, base)
+        }
+        "nvidia" => {
+            let p = config.providers.nvidia.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("NVIDIA_API_KEY").ok())
+                .unwrap_or_default();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://integrate.api.nvidia.com/v1".to_string());
+            (key, base)
+        }
+        "opencode_zen" | "opencode zen" => {
+            let p = config.providers.opencode_zen.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("OPENCODE_ZEN_API_KEY").ok())
+                .unwrap_or_default();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://opencode.ai/zen/v1".to_string());
+            (key, base)
+        }
+        "cerebres" => {
+            let p = config.providers.cerebres.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("CEREBRES_API_KEY").ok())
+                .unwrap_or_default();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.cerebras.ai/v1".to_string());
+            (key, base)
+        }
+        "google_ai_studio" | "google ai studio" => {
+            let p = config.providers.google_ai_studio.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("GOOGLE_AI_STUDIO_API_KEY").ok())
+                .unwrap_or_default();
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta/openai/".to_string());
+            (key, base)
         }
         _ => {
             return Err(anyhow!("Unsupported provider: {}", provider_name));
