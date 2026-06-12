@@ -390,6 +390,12 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
     } else if model_lower.starts_with("google-ai-studio/") {
         provider_name = "google_ai_studio".to_string();
         clean_model = &model["google-ai-studio/".len()..];
+    } else if model_lower.starts_with("google/") {
+        provider_name = "google_ai_studio".to_string();
+        clean_model = &model["google/".len()..];
+    } else if model_lower.starts_with("models/") {
+        provider_name = "google_ai_studio".to_string();
+        clean_model = &model["models/".len()..];
     } else if model_lower.starts_with("opencode_zen/") {
         provider_name = "opencode_zen".to_string();
         clean_model = &model["opencode_zen/".len()..];
