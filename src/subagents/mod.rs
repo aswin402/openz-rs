@@ -651,16 +651,34 @@ async fn prompt_choose_model(prompt_label: &str, current_model: &str, config: &C
                     if model_idx == model_options.len() - 1 {
                         return Ok(None);
                     }
-                    if model_idx == model_options.len() - 2 {
+                    let mut final_model = if model_idx == model_options.len() - 2 {
                         let custom_model = inquire::Text::new("Enter custom model name:")
                             .with_initial_value(current_model)
                             .prompt()?;
                         if custom_model.trim().is_empty() {
                             return Ok(None);
                         }
-                        return Ok(Some(custom_model.trim().to_string()));
+                        custom_model.trim().to_string()
+                    } else {
+                        model_options[model_idx].clone()
+                    };
+
+                    let prefix = format!("{}/", prov_info.name);
+                    let prefix_alt = if prov_info.name == "google_ai_studio" {
+                        "google-ai-studio/".to_string()
+                    } else if prov_info.name == "z.ai" {
+                        "z_ai/".to_string()
+                    } else if prov_info.name == "opencode_zen" {
+                        "opencode-zen/".to_string()
+                    } else {
+                        "".to_string()
+                    };
+
+                    if !final_model.starts_with(&prefix) && (prefix_alt.is_empty() || !final_model.starts_with(&prefix_alt)) {
+                        final_model = format!("{}{}", prefix, final_model);
                     }
-                    Ok(Some(model_options[model_idx].clone()))
+
+                    Ok(Some(final_model))
                 }
                 None => Ok(None),
             }
