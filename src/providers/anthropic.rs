@@ -14,7 +14,7 @@ pub struct AnthropicProvider {
 #[derive(Serialize)]
 struct AnthropicRequest {
     model: String,
-    system: String,
+    system: serde_json::Value,
     messages: Vec<AnthropicMessage>,
     max_tokens: usize,
     temperature: f32,
@@ -203,9 +203,17 @@ impl LLMProvider for AnthropicProvider {
             }
         }
 
+        let system_val = serde_json::json!([
+            {
+                "type": "text",
+                "text": system_prompt,
+                "cache_control": { "type": "ephemeral" }
+            }
+        ]);
+
         let body = AnthropicRequest {
             model: self.model.clone(),
-            system: system_prompt.to_string(),
+            system: system_val,
             messages: api_messages,
             max_tokens: settings.max_tokens,
             temperature: settings.temperature,
@@ -215,6 +223,7 @@ impl LLMProvider for AnthropicProvider {
         let res = self.client.post(&format!("{}/v1/messages", self.api_base))
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
+            .header("anthropic-beta", "prompt-caching-2024-07-31")
             .json(&body)
             .send()
             .await?;

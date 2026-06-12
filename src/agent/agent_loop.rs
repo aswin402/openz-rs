@@ -741,10 +741,37 @@ impl AgentLoop {
                         for (id, name, result) in tool_results {
                             let mut extra = serde_json::Map::new();
                             extra.insert("tool_call_id".to_string(), serde_json::Value::String(id));
-                            extra.insert("name".to_string(), serde_json::Value::String(name));
+                            extra.insert("name".to_string(), serde_json::Value::String(name.clone()));
+                            
+                            let content_str = result.to_string();
+                            let content = if content_str.len() > 4000 {
+                                let outputs_dir = crate::config::resolve_path("~/.openz/tool_outputs");
+                                let _ = std::fs::create_dir_all(&outputs_dir);
+                                let file_name = format!("output_{}_{}.json", name, uuid::Uuid::new_v4().to_string());
+                                let file_path = outputs_dir.join(file_name);
+                                let _ = std::fs::write(&file_path, &content_str);
+                                
+                                let char_count = content_str.chars().count();
+                                if char_count > 3000 {
+                                    let head: String = content_str.chars().take(1500).collect();
+                                    let tail: String = content_str.chars().skip(char_count - 1500).collect();
+                                    format!(
+                                        "{}\n\n... [TRUNCATED {} CHARACTERS. Full output saved for reference at file://{}] ...\n\n{}",
+                                        head,
+                                        char_count - 3000,
+                                        file_path.to_string_lossy(),
+                                        tail
+                                    )
+                                } else {
+                                    content_str
+                                }
+                            } else {
+                                content_str
+                            };
+
                             messages.push(Message {
                                 role: "tool".to_string(),
-                                content: result.to_string(),
+                                content,
                                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
                                 extra,
                             });
