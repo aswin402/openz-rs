@@ -637,6 +637,7 @@ async fn prompt_choose_model(prompt_label: &str, current_model: &str, config: &C
                 Some(models) => models,
                 None => prov_info.models.iter().map(|&m| m.to_string()).collect(),
             };
+            model_options.push("Type manually (Custom Model)".to_string());
             model_options.push("Exit".to_string());
             
             match crate::agent::style::select_menu_custom(
@@ -649,6 +650,15 @@ async fn prompt_choose_model(prompt_label: &str, current_model: &str, config: &C
                 Some(model_idx) => {
                     if model_idx == model_options.len() - 1 {
                         return Ok(None);
+                    }
+                    if model_idx == model_options.len() - 2 {
+                        let custom_model = inquire::Text::new("Enter custom model name:")
+                            .with_initial_value(current_model)
+                            .prompt()?;
+                        if custom_model.trim().is_empty() {
+                            return Ok(None);
+                        }
+                        return Ok(Some(custom_model.trim().to_string()));
                     }
                     Ok(Some(model_options[model_idx].clone()))
                 }
