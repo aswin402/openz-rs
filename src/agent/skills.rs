@@ -53,6 +53,39 @@ pub fn load_skills() -> Result<Vec<Skill>> {
     Ok(skills_map.into_values().collect())
 }
 
+pub fn load_relevant_skills(user_content: &str, session_messages: &[crate::session::Message]) -> Result<Vec<Skill>> {
+    let all_skills = load_skills()?;
+    if all_skills.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Combine recent user prompt + last 3 messages into search context
+    let mut search_context = user_content.to_lowercase();
+    for msg in session_messages.iter().rev().take(3) {
+        search_context.push_str(" ");
+        search_context.push_str(&msg.content.to_lowercase());
+    }
+
+    let mut relevant = Vec::new();
+    for skill in all_skills {
+        // Simple and robust keyword match:
+        // 1. Check if the skill name has any word matching in the query context
+        let name_words: Vec<&str> = skill.name.split('_').collect();
+        let name_match = name_words.iter().any(|word| {
+            word.len() > 2 && search_context.contains(word)
+        });
+
+        // 2. Or if the query context contains the skill name directly
+        let name_exact_match = search_context.contains(&skill.name.to_lowercase());
+
+        if name_match || name_exact_match {
+            relevant.push(skill);
+        }
+    }
+
+    Ok(relevant)
+}
+
 pub fn save_skill(name: &str, content: &str) -> Result<()> {
     let local_dir = std::path::Path::new("skills");
     let dir = if local_dir.exists() && local_dir.is_dir() {
@@ -67,6 +100,13 @@ pub fn save_skill(name: &str, content: &str) -> Result<()> {
         .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
 
     let path = dir.join(format!("{}.md", safe_name));
+    
+    // Create backup if file already exists to prevent data corruption by LLM
+    if path.exists() {
+        let backup_path = dir.join(format!("{}.md.bak", safe_name));
+        let _ = fs::copy(&path, &backup_path);
+    }
+
     fs::write(path, content)?;
     Ok(())
 }

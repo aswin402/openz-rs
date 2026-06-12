@@ -431,7 +431,7 @@ impl AgentLoop {
                         }
                     }
                     let mut skills_part = String::new();
-                    if let Ok(skills) = crate::agent::skills::load_skills() {
+                    if let Ok(skills) = crate::agent::skills::load_relevant_skills(user_content, &session.messages) {
                         if !skills.is_empty() {
                             skills_part = "\n\nHere are the active guidelines and procedural skills you should follow:\n".to_string();
                             for skill in skills {
