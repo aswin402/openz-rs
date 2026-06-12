@@ -6,7 +6,11 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use crate::providers::{openai::OpenAIProvider, anthropic::AnthropicProvider, LLMProvider};
 use crate::tools::ToolRegistry;
-use crate::tools::filesystem::{ReadFileTool, WriteFileTool, ListDirTool};
+use crate::tools::filesystem::{ReadFileTool, WriteFileTool, ListDirTool, PatchFileTool, FindFilesTool};
+use crate::tools::doc_reader::DocReaderTool;
+use crate::tools::wasm_sandbox::WasmSandboxTool;
+use crate::tools::semantic_search::SemanticSearchTool;
+use crate::tools::rust_docs::RustDocsTool;
 use crate::tools::shell::ExecCommandTool;
 use crate::tools::web::WebFetchTool;
 use crate::tools::subagent::{DelegateTaskTool, OptimizeSubagentTool, CreateSubagentTool, DeleteSubagentTool};
@@ -125,7 +129,8 @@ pub async fn run_cli() -> Result<()> {
             }
             let command = &command_args[0];
             let args = &command_args[1..];
-            crate::tools::mcp::run_mcp_bridge(port, command, args).await?;
+            let (_tx, rx) = tokio::sync::oneshot::channel();
+            crate::tools::mcp::run_mcp_bridge(port, command, args, rx).await?;
         }
     }
     
@@ -403,7 +408,13 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
 
     let mut registry = ToolRegistry::new_with_context(config.clone(), provider.clone(), session_manager.clone());
     registry.register(std::sync::Arc::new(ReadFileTool));
+    registry.register(std::sync::Arc::new(FindFilesTool));
+    registry.register(std::sync::Arc::new(DocReaderTool));
+    registry.register(std::sync::Arc::new(WasmSandboxTool));
+    registry.register(std::sync::Arc::new(SemanticSearchTool));
+    registry.register(std::sync::Arc::new(RustDocsTool::new()));
     registry.register(std::sync::Arc::new(WriteFileTool));
+    registry.register(std::sync::Arc::new(PatchFileTool));
     registry.register(std::sync::Arc::new(ListDirTool));
     registry.register(std::sync::Arc::new(ExecCommandTool));
     registry.register(std::sync::Arc::new(WebFetchTool::new()));

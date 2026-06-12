@@ -152,3 +152,7 @@ pub mod ast_grep;
 pub mod gsd_browser;
 pub mod web_search;
 pub mod onpkg;
+pub mod doc_reader;
+pub mod wasm_sandbox;
+pub mod semantic_search;
+pub mod rust_docs;

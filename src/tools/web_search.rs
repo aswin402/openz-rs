@@ -43,6 +43,39 @@ impl Tool for WebSearchTool {
         let query = arguments.get("query").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
 
+        // 0. Try Websurfx Local/Private Search Engine API (if WEBSURFX_URL is set)
+        if let Ok(websurfx_url) = std::env::var("WEBSURFX_URL") {
+            if !websurfx_url.trim().is_empty() {
+                let base = websurfx_url.trim().trim_end_matches('/');
+                let encoded_query = percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC).to_string();
+                let url = format!("{}/?q={}&json=true", base, encoded_query);
+                
+                let res = self.client.get(&url)
+                    .send()
+                    .await?;
+
+                if res.status().is_success() {
+                    let resp_json: Value = res.json().await?;
+                    if let Some(results) = resp_json.get("results").and_then(|r| r.as_array()) {
+                        let mut search_results = Vec::new();
+                        for r in results {
+                            let title = r.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                            let url = r.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                            let snippet = r.get("content").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                            search_results.push(json!({
+                                "title": title,
+                                "url": url,
+                                "snippet": snippet
+                            }));
+                        }
+                        if !search_results.is_empty() {
+                            return Ok(Value::Array(search_results));
+                        }
+                    }
+                }
+            }
+        }
+
         // 1. Try Tavily Search API
         if let Ok(tavily_key) = std::env::var("TAVILY_API_KEY") {
             if !tavily_key.trim().is_empty() {

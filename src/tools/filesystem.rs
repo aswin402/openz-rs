@@ -160,3 +160,213 @@ impl Tool for ListDirTool {
         Ok(serde_json::Value::Array(entries))
     }
 }
+
+pub struct PatchFileTool;
+
+#[async_trait::async_trait]
+impl Tool for PatchFileTool {
+    fn name(&self) -> &str {
+        "patch_file"
+    }
+
+    fn description(&self) -> &str {
+        "Apply a unified diff patch to a file. This is highly efficient for applying specific modifications to a file without rewriting it entirely."
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Absolute or relative path to the file to modify" },
+                "patch": { "type": "string", "description": "Unified diff patch content to apply (standard diff format)" }
+            },
+            "required": ["path", "patch"]
+        })
+    }
+
+    async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
+        let path_str = arguments.get("path")
+            .or(arguments.get("TargetFile"))
+            .or(arguments.get("filepath"))
+            .or(arguments.get("file"))
+            .or(arguments.get("Path"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
+        
+        let patch_str = arguments.get("patch")
+            .or(arguments.get("content"))
+            .or(arguments.get("diff"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'patch' argument"))?;
+
+        let path = resolve_path(path_str);
+        
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read file at {:?}", path))?;
+
+        let parsed_patch = diffy::Patch::from_str(patch_str)
+            .map_err(|e| anyhow!("Failed to parse patch: {}", e))?;
+
+        let patched_content = diffy::apply(&content, &parsed_patch)
+            .map_err(|e| anyhow!("Failed to apply patch: {}", e))?;
+
+        fs::write(&path, &patched_content)
+            .with_context(|| format!("Failed to write patched content to file at {:?}", path))?;
+
+        Ok(serde_json::json!({ "status": "success", "path": path.to_string_lossy() }))
+    }
+}
+
+pub struct FindFilesTool;
+
+impl FindFilesTool {
+    async fn run_fd(&self, dir: &std::path::Path, pattern: &str) -> Result<Vec<String>> {
+        let mut cmd = tokio::process::Command::new("fd");
+        cmd.arg("-g"); // Treat pattern as a glob
+        cmd.arg("-L"); // Follow symlinks
+        cmd.arg("--hidden"); // Include hidden files
+        cmd.arg("--exclude").arg("target");
+        cmd.arg("--exclude").arg("node_modules");
+        cmd.arg("--exclude").arg(".git");
+        cmd.arg(pattern);
+        cmd.arg(dir);
+
+        let output = cmd.output().await?;
+        if !output.status.success() && output.status.code() != Some(1) {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("fd failed: {}", stderr));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let results = stdout
+            .lines()
+            .map(|s| s.to_string())
+            .collect::<Vec<String>>();
+
+        Ok(results)
+    }
+
+    fn walk_and_find(dir: &std::path::Path, re: &regex::Regex, results: &mut Vec<String>) -> Result<()> {
+        if results.len() >= 1000 {
+            return Ok(());
+        }
+
+        if let Some(name) = dir.file_name().and_then(|s| s.to_str()) {
+            if name == "target" || name == "node_modules" || name == ".git" {
+                return Ok(());
+            }
+        }
+
+        if dir.is_file() {
+            if let Some(name) = dir.file_name().and_then(|s| s.to_str()) {
+                if re.is_match(name) {
+                    results.push(dir.to_string_lossy().to_string());
+                }
+            }
+            return Ok(());
+        }
+
+        if dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    Self::walk_and_find(&entry.path(), re, results)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn glob_to_regex(&self, pattern: &str) -> Result<regex::Regex> {
+        let mut regex_str = String::from("^");
+        for c in pattern.chars() {
+            match c {
+                '*' => regex_str.push_str(".*"),
+                '?' => regex_str.push_str("."),
+                '.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|' | '\\' => {
+                    regex_str.push('\\');
+                    regex_str.push(c);
+                }
+                _ => regex_str.push(c),
+            }
+        }
+        regex_str.push('$');
+        regex::Regex::new(&regex_str).map_err(|e| anyhow!("Invalid pattern: {}", e))
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for FindFilesTool {
+    fn name(&self) -> &str {
+        "find_files"
+    }
+
+    fn description(&self) -> &str {
+        "Search for files inside a directory hierarchy matching a specific filename pattern/glob."
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pattern": { "type": "string", "description": "The search pattern (e.g. '*.rs', 'Cargo.toml', 'index.*')" },
+                "dir": { "type": "string", "description": "The root directory to search in (defaults to '.')" }
+            },
+            "required": ["pattern"]
+        })
+    }
+
+    async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
+        let pattern = arguments.get("pattern").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'pattern' argument"))?;
+        
+        let search_dir_str = arguments.get("dir").and_then(|v| v.as_str()).unwrap_or(".");
+        let search_dir = resolve_path(search_dir_str);
+
+        if !search_dir.exists() {
+            return Err(anyhow!("Directory '{}' does not exist", search_dir_str));
+        }
+
+        // Try using fd first since it is installed and extremely fast
+        if let Ok(results) = self.run_fd(&search_dir, pattern).await {
+            return Ok(serde_json::json!({ "status": "success", "results": results }));
+        }
+
+        // Fallback to manual recursive search if fd fails or is not found
+        let re = self.glob_to_regex(pattern)?;
+        let mut results = Vec::new();
+        Self::walk_and_find(&search_dir, &re, &mut results)?;
+
+        Ok(serde_json::json!({ "status": "success", "results": results }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_find_files() -> Result<()> {
+        let temp_dir = std::env::temp_dir().join(format!("openz_find_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir)?;
+        
+        let file_path = temp_dir.join("match_this.txt");
+        std::fs::write(&file_path, "Hello world!")?;
+
+        let tool = FindFilesTool;
+        let args = serde_json::json!({
+            "pattern": "*match*",
+            "dir": temp_dir.to_str().unwrap()
+        });
+
+        let res = tool.call(&args).await?;
+        assert_eq!(res["status"], "success");
+        let results = res["results"].as_array().unwrap();
+        assert!(results.len() >= 1);
+        
+        // Clean up
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+}
+

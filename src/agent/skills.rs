@@ -13,57 +13,99 @@ pub fn get_skills_dir() -> PathBuf {
 }
 
 pub fn load_skills() -> Result<Vec<Skill>> {
-    let dir = get_skills_dir();
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
+    let mut skills_map = std::collections::HashMap::new();
 
-    let mut skills = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
-            let name = path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_string();
-            let content = fs::read_to_string(&path)?;
-            skills.push(Skill { name, content });
+    // 1. Load from global directory
+    let global_dir = get_skills_dir();
+    if global_dir.exists() {
+        for entry in fs::read_dir(global_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+                let name = path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                let content = fs::read_to_string(&path)?;
+                skills_map.insert(name.clone(), Skill { name, content });
+            }
         }
     }
-    Ok(skills)
+
+    // 2. Load from local workspace directory (./skills)
+    let local_dir = std::path::Path::new("skills");
+    if local_dir.exists() && local_dir.is_dir() {
+        for entry in fs::read_dir(local_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+                let name = path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                let content = fs::read_to_string(&path)?;
+                // Local skills override/shadow global skills of the same name
+                skills_map.insert(name.clone(), Skill { name, content });
+            }
+        }
+    }
+
+    Ok(skills_map.into_values().collect())
 }
 
 pub fn save_skill(name: &str, content: &str) -> Result<()> {
-    let dir = get_skills_dir();
+    let local_dir = std::path::Path::new("skills");
+    let dir = if local_dir.exists() && local_dir.is_dir() {
+        local_dir.to_path_buf()
+    } else {
+        get_skills_dir()
+    };
     fs::create_dir_all(&dir)?;
-    
+
     // Normalize skill name to snake_case / lowercase with underscores/hyphens
     let safe_name = name.to_lowercase()
         .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
-    
+
     let path = dir.join(format!("{}.md", safe_name));
     fs::write(path, content)?;
     Ok(())
 }
 
 pub fn delete_skill(name: &str) -> Result<()> {
-    let dir = get_skills_dir();
     let safe_name = name.to_lowercase()
         .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
-    let path = dir.join(format!("{}.md", safe_name));
-    if path.exists() {
-        fs::remove_file(path)?;
+    let filename = format!("{}.md", safe_name);
+
+    // Delete from global if exists
+    let global_path = get_skills_dir().join(&filename);
+    if global_path.exists() {
+        fs::remove_file(global_path)?;
     }
+
+    // Delete from local if exists
+    let local_path = std::path::Path::new("skills").join(&filename);
+    if local_path.exists() {
+        fs::remove_file(local_path)?;
+    }
+
     Ok(())
 }
 
 pub fn clear_skills() -> Result<()> {
-    let dir = get_skills_dir();
-    if dir.exists() {
-        fs::remove_dir_all(&dir)?;
-        fs::create_dir_all(&dir)?;
+    // Clear global directory
+    let global_dir = get_skills_dir();
+    if global_dir.exists() {
+        fs::remove_dir_all(&global_dir)?;
+        fs::create_dir_all(&global_dir)?;
     }
+
+    // Clear local directory
+    let local_dir = std::path::Path::new("skills");
+    if local_dir.exists() && local_dir.is_dir() {
+        fs::remove_dir_all(local_dir)?;
+        fs::create_dir_all(local_dir)?;
+    }
+
     Ok(())
 }
 

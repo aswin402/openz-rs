@@ -9,7 +9,20 @@
     "entrypoint": "src/main.rs"
   },
   "packages": {
-    "added_by_agent": [],
+    "added_by_agent": [
+      "imageproc",
+      "tiny-skia",
+      "plotters",
+      "simple-mermaid",
+      "calamine",
+      "pdf-extract",
+      "docx-rs",
+      "wasmtime",
+      "wasmtime-wasi",
+      "fastembed",
+      "diffy",
+      "html2md"
+    ],
     "core": [
       "anyhow",
       "clap"

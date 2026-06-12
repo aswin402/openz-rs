@@ -103,6 +103,68 @@ impl GrepSearchTool {
 
         Ok(())
     }
+
+    async fn run_ripgrep(
+        &self,
+        dir: &Path,
+        query: &str,
+        is_regex: bool,
+        limit: usize,
+    ) -> Result<Value> {
+        let mut cmd = tokio::process::Command::new("rg");
+        cmd.arg("--json");
+        
+        cmd.arg("--glob").arg("!target");
+        cmd.arg("--glob").arg("!node_modules");
+        cmd.arg("--glob").arg("!build");
+        cmd.arg("--glob").arg("!dist");
+        cmd.arg("--glob").arg("!.git");
+        
+        if !is_regex {
+            cmd.arg("-F");
+        }
+
+        cmd.arg("--");
+        cmd.arg(query);
+        cmd.arg(dir);
+
+        let output = cmd.output().await?;
+        if !output.status.success() && output.status.code() != Some(1) {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("ripgrep failed: {}", stderr));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut results = Vec::new();
+
+        for line in stdout.lines() {
+            if let Ok(val) = serde_json::from_str::<Value>(line) {
+                if val.get("type").and_then(|t| t.as_str()) == Some("match") {
+                    if let Some(data) = val.get("data") {
+                        let file = data.get("path").and_then(|p| p.get("text")).and_then(|t| t.as_str()).unwrap_or_default().to_string();
+                        let line_num = data.get("line_number").and_then(|l| l.as_u64()).unwrap_or(0);
+                        let content = data.get("lines").and_then(|l| l.get("text")).and_then(|t| t.as_str()).unwrap_or_default().trim_end_matches('\n').trim().to_string();
+                        
+                        results.push(json!({
+                            "file": file,
+                            "line": line_num,
+                            "content": content
+                        }));
+
+                        if results.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(json!({
+            "status": "success",
+            "results": results,
+            "capped": results.len() >= limit
+        }))
+    }
 }
 
 #[async_trait::async_trait]
@@ -149,9 +211,15 @@ impl Tool for GrepSearchTool {
             return Err(anyhow!("Directory '{}' does not exist", search_dir_str));
         }
 
-        let mut results = Vec::new();
         let limit = 50;
 
+        // Try using Ripgrep first since it is installed and extremely fast
+        if let Ok(output) = self.run_ripgrep(&search_dir, query, is_regex, limit).await {
+            return Ok(output);
+        }
+
+        // Fallback to manual recursive search if Ripgrep fails
+        let mut results = Vec::new();
         Self::walk_and_search(&search_dir, query, is_regex, &mut results, limit)?;
 
         Ok(json!({

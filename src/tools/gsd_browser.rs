@@ -12,7 +12,7 @@ impl Tool for GsdBrowserTool {
     }
 
     fn description(&self) -> &str {
-        "Control a real Chrome browser instance to navigate pages, interact with elements using reference IDs, and take page structure snapshots."
+        "Control a real Chrome browser instance to navigate pages, interact with elements using reference IDs, evaluate JS, take screenshots, or save PDFs."
     }
 
     fn parameters(&self) -> Value {
@@ -21,8 +21,19 @@ impl Tool for GsdBrowserTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["navigate", "snapshot", "click", "fill"],
-                    "description": "The browser action: 'navigate' to URL, 'snapshot' for structures, 'click' element, 'fill' text input."
+                    "enum": [
+                        "navigate",
+                        "snapshot",
+                        "click",
+                        "hover",
+                        "fill",
+                        "screenshot",
+                        "eval",
+                        "accessibility_tree",
+                        "page_source",
+                        "save_pdf"
+                    ],
+                    "description": "The browser action: 'navigate' to a URL, 'snapshot' to get interactive elements, 'click' or 'hover' on an element ref, 'fill' text input ref, 'screenshot' to capture image, 'eval' to run custom JavaScript, 'accessibility_tree' for roles/a11y tree, 'page_source' for HTML, 'save_pdf' to save as PDF."
                 },
                 "url": {
                     "type": "string",
@@ -30,11 +41,19 @@ impl Tool for GsdBrowserTool {
                 },
                 "ref_id": {
                     "type": "string",
-                    "description": "Element reference ID from snapshot, e.g. '@v1:e5' (required for 'click' and 'fill')."
+                    "description": "Element reference ID from snapshot, e.g. '@v1:e5' (required for 'click', 'hover', and 'fill')."
                 },
                 "text": {
                     "type": "string",
                     "description": "Text to type into input element (required for 'fill')."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Output file path (required for 'screenshot' and 'save_pdf')."
+                },
+                "script": {
+                    "type": "string",
+                    "description": "JavaScript expression to evaluate (required for 'eval')."
                 }
             },
             "required": ["action"]
@@ -67,12 +86,40 @@ impl Tool for GsdBrowserTool {
                     .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for click action"))?;
                 cmd.arg("click-ref").arg(ref_id);
             }
+            "hover" => {
+                let ref_id = arguments.get("ref_id").and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for hover action"))?;
+                cmd.arg("hover-ref").arg(ref_id);
+            }
             "fill" => {
                 let ref_id = arguments.get("ref_id").and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for fill action"))?;
                 let text = arguments.get("text").and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'text' parameter for fill action"))?;
                 cmd.arg("fill-ref").arg(ref_id).arg(text);
+            }
+            "screenshot" => {
+                let path = arguments.get("path").and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing 'path' parameter for screenshot action"))?;
+                let resolved = crate::config::resolve_path(path);
+                cmd.arg("screenshot").arg("--output").arg(resolved);
+            }
+            "eval" => {
+                let script = arguments.get("script").and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing 'script' parameter for eval action"))?;
+                cmd.arg("eval").arg(script);
+            }
+            "accessibility_tree" => {
+                cmd.arg("accessibility-tree");
+            }
+            "page_source" => {
+                cmd.arg("page-source");
+            }
+            "save_pdf" => {
+                let path = arguments.get("path").and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing 'path' parameter for save_pdf action"))?;
+                let resolved = crate::config::resolve_path(path);
+                cmd.arg("save-pdf").arg("--output").arg(resolved);
             }
             _ => return Err(anyhow!("Unsupported browser action: {}", action)),
         }

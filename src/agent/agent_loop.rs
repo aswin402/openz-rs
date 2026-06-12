@@ -831,8 +831,12 @@ impl AgentLoop {
                 let system_prompt_review = "You are a specialized Self-Improvement Curator. Your job is to review the conversation between the User and the AI Agent and consolidate two types of learnings:\n\n\
                     1. MEMORY: Facts about the user (e.g. persona, desires, expectations) or the project (e.g. settings, environment details).\n\
                     2. SKILLS: Task-specific procedural guidelines, coding styles, workarounds, or workflows (e.g. 'do not explain code', 'always use async-trait', 'cargo build guidelines').\n\n\
-                    You MUST return your response as a raw JSON object with the following structure. Do not output anything else besides the raw JSON (do not wrap it in explanation text). \
-                    If no memory or skill updates are needed, return the keys with empty or unchanged values.\n\n\
+                    CRITICAL: Pay special attention to tool execution outcomes. If a tool call (such as a compiler build, script execution, or API request) failed with an error, look at how the agent resolved it (or what workaround succeeded). Extract this learning and write it into a reusable 'skill' file so the agent will avoid making the same mistake again.\n\n\
+                    Guidelines for Skills:\n\
+                    - Structure each skill as a clean, professional Markdown document containing: a title (# Skill: ...), a description of when to use it, the specific rules/guidelines, and examples of problems and their corresponding workarounds/solutions.\n\
+                    - If a skill already exists in the 'Existing Skills' list, you MUST merge the new rules/workarounds into the existing skill content rather than replacing it entirely. Do not lose existing guidelines.\n\
+                    - Keep skill names lowercase with underscores (e.g., 'cargo_build_fix', 'react_routing_pattern').\n\n\
+                    You MUST return your response as a raw JSON object with the following structure. Do not output anything else besides the raw JSON (do not wrap it in explanation text).\n\n\
                     JSON Format:\n\
                     {\n\
                       \"memory_updated\": true/false,\n\
@@ -854,7 +858,46 @@ impl AgentLoop {
                 }
                 prompt_content.push_str("Recent conversation history to review:\n");
                 for msg in &messages {
-                    prompt_content.push_str(&format!("[{}]: {}\n", msg.role, msg.content));
+                    match msg.role.as_str() {
+                        "user" => {
+                            prompt_content.push_str(&format!("[user]: {}\n", msg.content));
+                        }
+                        "assistant" => {
+                            prompt_content.push_str("[assistant]:\n");
+                            if let Some(reasoning) = msg.extra.get("reasoning_content").and_then(|v| v.as_str()) {
+                                if !reasoning.is_empty() {
+                                    prompt_content.push_str(&format!("  Thinking:\n{}\n", reasoning));
+                                }
+                            }
+                            if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
+                                if !tool_calls.is_empty() {
+                                    prompt_content.push_str("  Tool Calls:\n");
+                                    for tc in tool_calls {
+                                        if let (Some(name), Some(args)) = (tc.get("name").and_then(|v| v.as_str()), tc.get("arguments")) {
+                                            prompt_content.push_str(&format!("    - Call tool '{}' with arguments: {}\n", name, args));
+                                        }
+                                    }
+                                }
+                            }
+                            if !msg.content.is_empty() {
+                                prompt_content.push_str(&format!("  Response: {}\n", msg.content));
+                            }
+                        }
+                        "tool" => {
+                            let tool_name = msg.extra.get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            let content_truncated = if msg.content.len() > 2000 {
+                                format!("{}... [TRUNCATED {} bytes]", &msg.content[..2000], msg.content.len() - 2000)
+                            } else {
+                                msg.content.clone()
+                            };
+                            prompt_content.push_str(&format!("[tool output for '{}']:\n{}\n", tool_name, content_truncated));
+                        }
+                        role => {
+                            prompt_content.push_str(&format!("[{}]: {}\n", role, msg.content));
+                        }
+                    }
                 }
 
                 let review_msgs = vec![crate::session::Message {

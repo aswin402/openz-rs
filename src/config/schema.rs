@@ -309,6 +309,32 @@ impl Default for Config {
             enabled: true,
         });
 
+        let spreadsheet_bin = if let Some(home) = dirs::home_dir() {
+            let p = home.join(".cargo").join("bin").join("spreadsheet-mcp");
+            if p.exists() { p.to_string_lossy().to_string() } else { "spreadsheet-mcp".to_string() }
+        } else {
+            "spreadsheet-mcp".to_string()
+        };
+
+        mcp_servers.insert("spreadsheet".to_string(), McpServerConfig {
+            command: spreadsheet_bin,
+            args: vec![],
+            enabled: true,
+        });
+
+        let just_bin = if let Some(home) = dirs::home_dir() {
+            let p = home.join(".cargo").join("bin").join("just-mcp");
+            if p.exists() { p.to_string_lossy().to_string() } else { "just-mcp".to_string() }
+        } else {
+            "just-mcp".to_string()
+        };
+
+        mcp_servers.insert("just".to_string(), McpServerConfig {
+            command: just_bin,
+            args: vec!["--stdio".to_string()],
+            enabled: true,
+        });
+
         let headroom_bin = if let Some(home) = dirs::home_dir() {
             let p = home.join(".cargo").join("bin").join("headroom-mcp");
             if p.exists() { p.to_string_lossy().to_string() } else { "headroom-mcp".to_string() }
