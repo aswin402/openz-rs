@@ -751,20 +751,12 @@ impl AgentLoop {
                                 let file_path = outputs_dir.join(file_name);
                                 let _ = std::fs::write(&file_path, &content_str);
                                 
-                                let char_count = content_str.chars().count();
-                                if char_count > 3000 {
-                                    let head: String = content_str.chars().take(1500).collect();
-                                    let tail: String = content_str.chars().skip(char_count - 1500).collect();
-                                    format!(
-                                        "{}\n\n... [TRUNCATED {} CHARACTERS. Full output saved for reference at file://{}] ...\n\n{}",
-                                        head,
-                                        char_count - 3000,
-                                        file_path.to_string_lossy(),
-                                        tail
-                                    )
-                                } else {
-                                    content_str
-                                }
+                                let compressed = crate::agent::context_compactor::compress_tool_output(&name, &content_str);
+                                format!(
+                                    "{}\n\n... [TRUNCATED - Full output saved for reference at file://{}] ...",
+                                    compressed,
+                                    file_path.to_string_lossy()
+                                )
                             } else {
                                 content_str
                             };

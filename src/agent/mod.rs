@@ -3,6 +3,7 @@ pub mod skills;
 pub mod activity;
 pub mod style;
 pub mod security;
+pub mod context_compactor;
 
 pub use self::agent_loop::{AgentLoop, TurnState, RunResult};
 pub use self::skills::Skill;
