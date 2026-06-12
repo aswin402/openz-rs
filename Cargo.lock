@@ -3567,6 +3567,7 @@ dependencies = [
 name = "openz"
 version = "0.0.9"
 dependencies = [
+ "ab_glyph",
  "anyhow",
  "arboard",
  "async-trait",

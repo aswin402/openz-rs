@@ -156,3 +156,4 @@ pub mod doc_reader;
 pub mod wasm_sandbox;
 pub mod semantic_search;
 pub mod rust_docs;
+pub mod image_generator;

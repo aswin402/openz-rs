@@ -452,6 +452,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::gsd_browser::GsdBrowserTool));
     registry.register(std::sync::Arc::new(crate::tools::web_search::WebSearchTool::new()));
     registry.register(std::sync::Arc::new(crate::tools::onpkg::OnpkgTool));
+    registry.register(std::sync::Arc::new(crate::tools::image_generator::GenerateImageTool));
 
     // Register configured MCP tools
     let mut total_tools = 0;

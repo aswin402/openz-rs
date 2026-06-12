@@ -48,6 +48,7 @@ fastembed = { version = "5.16.0", default-features = false, features = ["hf-hub-
 wasmtime-wasi = "45.0.1"
 diffy = "0.5.0"
 html2md = "0.2.15"
+ab_glyph = "0.2"
 
 [build-dependencies]
 tonic-build = "0.11"
