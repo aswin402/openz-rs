@@ -53,6 +53,96 @@ pub fn load_skills() -> Result<Vec<Skill>> {
     Ok(skills_map.into_values().collect())
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SkillStats {
+    pub use_count: u32,
+    pub last_used: String,
+}
+
+fn load_stats() -> std::collections::HashMap<String, SkillStats> {
+    let path = get_skills_dir().join("stats.json");
+    if path.exists() {
+        if let Ok(content) = fs::read_to_string(path) {
+            if let Ok(stats) = serde_json::from_str(&content) {
+                return stats;
+            }
+        }
+    }
+    std::collections::HashMap::new()
+}
+
+fn save_stats(stats: &std::collections::HashMap<String, SkillStats>) {
+    let path = get_skills_dir().join("stats.json");
+    if let Ok(content) = serde_json::to_string_pretty(stats) {
+        let _ = fs::write(path, content);
+    }
+}
+
+pub fn archive_stale_skills() -> Result<()> {
+    let skills_dir = get_skills_dir();
+    if !skills_dir.exists() {
+        return Ok(());
+    }
+
+    let archive_dir = skills_dir.join("archive");
+    let stats = load_stats();
+    let now = chrono::Utc::now();
+    let stale_duration = chrono::Duration::days(30);
+
+    for entry in fs::read_dir(&skills_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+            let name = path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if name.is_empty() {
+                continue;
+            }
+
+            let mut is_stale = false;
+            if let Some(stat) = stats.get(name) {
+                if let Ok(last_used_date) = chrono::DateTime::parse_from_rfc3339(&stat.last_used) {
+                    let last_used_utc = last_used_date.with_timezone(&chrono::Utc);
+                    if now.signed_duration_since(last_used_utc) > stale_duration {
+                        is_stale = true;
+                    }
+                }
+            } else {
+                // If it's not in stats, check the file modification date
+                if let Ok(metadata) = path.metadata() {
+                    if let Ok(modified) = metadata.modified() {
+                        let modified_utc: chrono::DateTime<chrono::Utc> = modified.into();
+                        if now.signed_duration_since(modified_utc) > stale_duration {
+                            is_stale = true;
+                        }
+                    }
+                }
+            }
+
+            if is_stale {
+                fs::create_dir_all(&archive_dir)?;
+                let dest_path = archive_dir.join(format!("{}.md", name));
+                let _ = fs::rename(&path, &dest_path);
+                let bak_path = skills_dir.join(format!("{}.md.bak", name));
+                if bak_path.exists() {
+                    let _ = fs::rename(&bak_path, archive_dir.join(format!("{}.md.bak", name)));
+                }
+                
+                // Print TUI notification using helper if possible, or just standard log
+                let aura_blue = "\x1b[38;2;96;165;250m";
+                let color_reset = "\x1b[0m";
+                crate::channels::cli::send_notification(&format!(
+                    "{}◇ [Self-Improvement] Skill '{}' archived due to 30 days of inactivity.{}",
+                    aura_blue, name, color_reset
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn load_relevant_skills(user_content: &str, session_messages: &[crate::session::Message]) -> Result<Vec<Skill>> {
     let all_skills = load_skills()?;
     if all_skills.is_empty() {
@@ -81,6 +171,21 @@ pub fn load_relevant_skills(user_content: &str, session_messages: &[crate::sessi
         if name_match || name_exact_match {
             relevant.push(skill);
         }
+    }
+
+    // Track usage metrics for successfully loaded relevant skills
+    if !relevant.is_empty() {
+        let mut stats = load_stats();
+        let now = chrono::Utc::now().to_rfc3339();
+        for skill in &relevant {
+            let entry = stats.entry(skill.name.clone()).or_insert(SkillStats {
+                use_count: 0,
+                last_used: now.clone(),
+            });
+            entry.use_count += 1;
+            entry.last_used = now.clone();
+        }
+        save_stats(&stats);
     }
 
     Ok(relevant)

@@ -796,6 +796,9 @@ impl AgentLoop {
             let messages = messages.clone();
 
             tokio::spawn(async move {
+                // Run background skill archiving check
+                let _ = crate::agent::skills::archive_stale_skills();
+
                 #[derive(Deserialize)]
                 struct ReviewSkill {
                     name: String,
@@ -850,6 +853,16 @@ impl AgentLoop {
                     }";
 
                 let mut prompt_content = String::new();
+                
+                // Autonomous Skill Creation Notice if task was complex (>= 5 tool calls)
+                let tool_count = messages.iter().filter(|m| m.role == "tool").count();
+                if tool_count >= 5 {
+                    prompt_content.push_str(&format!(
+                        "[SYSTEM NOTICE: The recent task was complex and involved {} tool executions. Review the successful trajectory and extract a reusable skill so the agent can perform this category of work efficiently next time.]\n\n",
+                        tool_count
+                    ));
+                }
+
                 if !existing_memory.is_empty() {
                     prompt_content.push_str(&format!("Existing Memory:\n{}\n\n", existing_memory));
                 }
