@@ -268,15 +268,51 @@ async fn handle_onboard() -> Result<()> {
 pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     let defaults = &config.agents.defaults;
     let mut provider_name = defaults.provider.clone();
-    
     if provider_name == "auto" {
         let model_lower = defaults.model.to_lowercase();
+        
+        let has_key = |prov: &str| -> bool {
+            match prov {
+                "anthropic" => config.providers.anthropic.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("ANTHROPIC_API_KEY").is_ok(),
+                "openai" => config.providers.openai.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENAI_API_KEY").is_ok(),
+                "deepseek" => config.providers.deepseek.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("DEEPSEEK_API_KEY").is_ok(),
+                "groq" => config.providers.groq.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("GROQ_API_KEY").is_ok(),
+                "openrouter" => config.providers.openrouter.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENROUTER_API_KEY").is_ok(),
+                "opencode_zen" => config.providers.opencode_zen.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENCODE_ZEN_API_KEY").is_ok(),
+                _ => false,
+            }
+        };
+
         if model_lower.starts_with("anthropic/") || model_lower.contains("claude") {
-            provider_name = "anthropic".to_string();
+            if has_key("anthropic") {
+                provider_name = "anthropic".to_string();
+            } else if has_key("opencode_zen") {
+                provider_name = "opencode_zen".to_string();
+            } else if has_key("openrouter") {
+                provider_name = "openrouter".to_string();
+            } else {
+                provider_name = "anthropic".to_string();
+            }
         } else if model_lower.starts_with("openai/") || model_lower.contains("gpt") {
-            provider_name = "openai".to_string();
+            if has_key("openai") {
+                provider_name = "openai".to_string();
+            } else if has_key("opencode_zen") {
+                provider_name = "opencode_zen".to_string();
+            } else if has_key("openrouter") {
+                provider_name = "openrouter".to_string();
+            } else {
+                provider_name = "openai".to_string();
+            }
         } else if model_lower.starts_with("deepseek/") || model_lower.contains("deepseek") {
-            provider_name = "deepseek".to_string();
+            if has_key("deepseek") {
+                provider_name = "deepseek".to_string();
+            } else if has_key("opencode_zen") {
+                provider_name = "opencode_zen".to_string();
+            } else if has_key("openrouter") {
+                provider_name = "openrouter".to_string();
+            } else {
+                provider_name = "deepseek".to_string();
+            }
         } else if model_lower.starts_with("groq/") {
             provider_name = "groq".to_string();
         } else if model_lower.starts_with("openrouter/") {
