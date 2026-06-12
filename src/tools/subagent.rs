@@ -57,7 +57,13 @@ impl Tool for DelegateTaskTool {
         let model_override = arguments.get("model").and_then(|v| v.as_str());
 
         let provider = if let Some(m) = model_override {
-            build_provider_for_model(&self.config, m)?
+            match build_provider_for_model(&self.config, m) {
+                Ok(p) => p,
+                Err(e) => {
+                    crate::tui_println!("{}⚠️ Failed to configure subagent model '{}' ({}). Falling back to parent model.{}", AURA_GOLD, m, e, COLOR_RESET);
+                    self.parent_provider.clone()
+                }
+            }
         } else {
             self.parent_provider.clone()
         };
@@ -355,9 +361,64 @@ impl Tool for DelegateProfileTool {
 pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn LLMProvider>> {
     let defaults = &config.agents.defaults;
     let mut provider_name = defaults.provider.clone();
+    let mut clean_model = model;
 
     let model_lower = model.to_lowercase();
-    if provider_name == "auto" {
+
+    // 1. Check for explicit provider prefixes
+    if model_lower.starts_with("openrouter/") {
+        provider_name = "openrouter".to_string();
+        clean_model = &model["openrouter/".len()..];
+    } else if model_lower.starts_with("ollama/") {
+        provider_name = "ollama".to_string();
+        clean_model = &model["ollama/".len()..];
+    } else if model_lower.starts_with("anthropic/") {
+        provider_name = "anthropic".to_string();
+        clean_model = &model["anthropic/".len()..];
+    } else if model_lower.starts_with("openai/") {
+        provider_name = "openai".to_string();
+        clean_model = &model["openai/".len()..];
+    } else if model_lower.starts_with("deepseek/") {
+        provider_name = "deepseek".to_string();
+        clean_model = &model["deepseek/".len()..];
+    } else if model_lower.starts_with("groq/") {
+        provider_name = "groq".to_string();
+        clean_model = &model["groq/".len()..];
+    } else if model_lower.starts_with("google_ai_studio/") {
+        provider_name = "google_ai_studio".to_string();
+        clean_model = &model["google_ai_studio/".len()..];
+    } else if model_lower.starts_with("google-ai-studio/") {
+        provider_name = "google_ai_studio".to_string();
+        clean_model = &model["google-ai-studio/".len()..];
+    } else if model_lower.starts_with("opencode_zen/") {
+        provider_name = "opencode_zen".to_string();
+        clean_model = &model["opencode_zen/".len()..];
+    } else if model_lower.starts_with("opencode-zen/") {
+        provider_name = "opencode_zen".to_string();
+        clean_model = &model["opencode-zen/".len()..];
+    } else if model_lower.starts_with("z.ai/") {
+        provider_name = "z.ai".to_string();
+        clean_model = &model["z.ai/".len()..];
+    } else if model_lower.starts_with("z_ai/") {
+        provider_name = "z.ai".to_string();
+        clean_model = &model["z_ai/".len()..];
+    } else if model_lower.starts_with("nvidia/") {
+        provider_name = "nvidia".to_string();
+        clean_model = &model["nvidia/".len()..];
+    } else if model_lower.starts_with("minimax/") {
+        provider_name = "minimax".to_string();
+        clean_model = &model["minimax/".len()..];
+    } else if model_lower.starts_with("mistral/") {
+        provider_name = "mistral".to_string();
+        clean_model = &model["mistral/".len()..];
+    } else if model_lower.starts_with("cerebres/") {
+        provider_name = "cerebres".to_string();
+        clean_model = &model["cerebres/".len()..];
+    } else if model_lower.starts_with("cerebras/") {
+        provider_name = "cerebres".to_string();
+        clean_model = &model["cerebras/".len()..];
+    } else if provider_name == "auto" {
+        // 2. Resolve based on model name keywords
         let has_key = |prov: &str| -> bool {
             match prov {
                 "anthropic" => config.providers.anthropic.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("ANTHROPIC_API_KEY").is_ok(),
@@ -366,11 +427,17 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
                 "groq" => config.providers.groq.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("GROQ_API_KEY").is_ok(),
                 "openrouter" => config.providers.openrouter.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENROUTER_API_KEY").is_ok(),
                 "opencode_zen" => config.providers.opencode_zen.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENCODE_ZEN_API_KEY").is_ok(),
+                "google_ai_studio" => config.providers.google_ai_studio.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("GOOGLE_AI_STUDIO_API_KEY").is_ok(),
+                "z.ai" => config.providers.z_ai.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("Z_AI_API_KEY").is_ok(),
+                "nvidia" => config.providers.nvidia.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("NVIDIA_API_KEY").is_ok(),
+                "minimax" => config.providers.minimax.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("MINIMAX_API_KEY").is_ok(),
+                "mistral" => config.providers.mistral.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("MISTRAL_API_KEY").is_ok(),
+                "cerebres" => config.providers.cerebres.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("CEREBRES_API_KEY").is_ok(),
                 _ => false,
             }
         };
 
-        if model_lower.starts_with("anthropic/") || model_lower.contains("claude") {
+        if model_lower.contains("claude") {
             if has_key("anthropic") {
                 provider_name = "anthropic".to_string();
             } else if has_key("opencode_zen") {
@@ -380,7 +447,7 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
             } else {
                 provider_name = "anthropic".to_string();
             }
-        } else if model_lower.starts_with("openai/") || model_lower.contains("gpt") {
+        } else if model_lower.contains("gpt") {
             if has_key("openai") {
                 provider_name = "openai".to_string();
             } else if has_key("opencode_zen") {
@@ -390,7 +457,7 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
             } else {
                 provider_name = "openai".to_string();
             }
-        } else if model_lower.starts_with("deepseek/") || model_lower.contains("deepseek") {
+        } else if model_lower.contains("deepseek") {
             if has_key("deepseek") {
                 provider_name = "deepseek".to_string();
             } else if has_key("opencode_zen") {
@@ -400,15 +467,44 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
             } else {
                 provider_name = "deepseek".to_string();
             }
-        } else if model_lower.starts_with("groq/") {
-            provider_name = "groq".to_string();
-        } else if model_lower.starts_with("openrouter/") {
-            provider_name = "openrouter".to_string();
-        } else if model_lower.starts_with("ollama/") || model_lower.contains("ollama") {
+        } else if model_lower.contains("gemini") {
+            if has_key("google_ai_studio") {
+                provider_name = "google_ai_studio".to_string();
+            } else if has_key("opencode_zen") {
+                provider_name = "opencode_zen".to_string();
+            } else if has_key("openrouter") {
+                provider_name = "openrouter".to_string();
+            } else {
+                provider_name = "google_ai_studio".to_string();
+            }
+        } else if model_lower.contains("gemma") {
+            if has_key("google_ai_studio") {
+                provider_name = "google_ai_studio".to_string();
+            } else if has_key("openrouter") {
+                provider_name = "openrouter".to_string();
+            } else if has_key("opencode_zen") {
+                provider_name = "opencode_zen".to_string();
+            } else {
+                provider_name = "google_ai_studio".to_string();
+            }
+        } else if model_lower.contains("mistral") || model_lower.contains("codestral") {
+            if has_key("mistral") {
+                provider_name = "mistral".to_string();
+            } else if has_key("openrouter") {
+                provider_name = "openrouter".to_string();
+            } else if has_key("opencode_zen") {
+                provider_name = "opencode_zen".to_string();
+            } else {
+                provider_name = "mistral".to_string();
+            }
+        } else if model_lower.contains("ollama") {
             provider_name = "ollama".to_string();
         } else {
-            // Fallback checks
-            if has_key("anthropic") {
+            if has_key("opencode_zen") {
+                provider_name = "opencode_zen".to_string();
+            } else if has_key("google_ai_studio") {
+                provider_name = "google_ai_studio".to_string();
+            } else if has_key("anthropic") {
                 provider_name = "anthropic".to_string();
             } else if has_key("openai") {
                 provider_name = "openai".to_string();
@@ -418,8 +514,12 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
                 provider_name = "openrouter".to_string();
             } else if has_key("groq") {
                 provider_name = "groq".to_string();
-            } else if has_key("opencode_zen") {
-                provider_name = "opencode_zen".to_string();
+            } else if has_key("mistral") {
+                provider_name = "mistral".to_string();
+            } else if has_key("nvidia") {
+                provider_name = "nvidia".to_string();
+            } else if has_key("z.ai") {
+                provider_name = "z.ai".to_string();
             } else {
                 provider_name = "openai".to_string();
             }
@@ -546,11 +646,9 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
         }
     };
 
-    let clean_model = if model.starts_with("openrouter/") {
-        &model["openrouter/".len()..]
-    } else {
-        model
-    };
+    if provider_name != "ollama" && api_key.is_empty() {
+        return Err(anyhow!("No API key configured for provider: {}", provider_name));
+    }
 
     let provider: Arc<dyn LLMProvider> = if provider_name == "anthropic" {
         Arc::new(AnthropicProvider::new(api_key, api_base, clean_model.to_string()))
