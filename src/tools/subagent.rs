@@ -390,12 +390,6 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
     } else if model_lower.starts_with("google-ai-studio/") {
         provider_name = "google_ai_studio".to_string();
         clean_model = &model["google-ai-studio/".len()..];
-    } else if model_lower.starts_with("google/") {
-        provider_name = "google_ai_studio".to_string();
-        clean_model = &model["google/".len()..];
-    } else if model_lower.starts_with("models/") {
-        provider_name = "google_ai_studio".to_string();
-        clean_model = &model["models/".len()..];
     } else if model_lower.starts_with("opencode_zen/") {
         provider_name = "opencode_zen".to_string();
         clean_model = &model["opencode_zen/".len()..];
@@ -656,10 +650,19 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
         return Err(anyhow!("No API key configured for provider: {}", provider_name));
     }
 
+    let mut clean_model_str = clean_model.to_string();
+    if provider_name == "google_ai_studio" || provider_name == "google ai studio" {
+        if clean_model_str.starts_with("google/") {
+            clean_model_str = clean_model_str["google/".len()..].to_string();
+        } else if clean_model_str.starts_with("models/") {
+            clean_model_str = clean_model_str["models/".len()..].to_string();
+        }
+    }
+
     let provider: Arc<dyn LLMProvider> = if provider_name == "anthropic" {
-        Arc::new(AnthropicProvider::new(api_key, api_base, clean_model.to_string()))
+        Arc::new(AnthropicProvider::new(api_key, api_base, clean_model_str))
     } else {
-        Arc::new(OpenAIProvider::new(api_key, api_base, clean_model.to_string()))
+        Arc::new(OpenAIProvider::new(api_key, api_base, clean_model_str))
     };
 
     Ok(provider)
