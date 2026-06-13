@@ -3,6 +3,7 @@ pub mod engine;
 use serde::{Serialize, Deserialize};
 use std::fs;
 use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
 use anyhow::{Result, Context};
 use crate::config::resolve_path;
 
@@ -103,7 +104,68 @@ pub fn get_definition(sop_id: &str) -> Result<Option<SopDefinition>> {
     Ok(defs.into_iter().find(|d| d.id == sop_id))
 }
 
+pub fn validate_sop_definition(def: &SopDefinition) -> Result<()> {
+    // 1. Check for duplicate step names
+    let mut names = HashSet::new();
+    for step in &def.steps {
+        if !names.insert(&step.name) {
+            anyhow::bail!("Duplicate step name: '{}' in SOP '{}'", step.name, def.id);
+        }
+    }
+
+    // 2. Check for dependencies on non-existent steps
+    for step in &def.steps {
+        for dep in &step.depends_on {
+            if !names.contains(dep) {
+                anyhow::bail!(
+                    "Step '{}' in SOP '{}' depends on non-existent step '{}'",
+                    step.name,
+                    def.id,
+                    dep
+                );
+            }
+        }
+    }
+
+    // 3. Cycle detection (DFS)
+    let step_indices: HashMap<&str, usize> = def.steps.iter().enumerate().map(|(i, s)| (s.name.as_str(), i)).collect();
+    let n = def.steps.len();
+    let mut state = vec![0u8; n]; // 0 = unvisited, 1 = visiting, 2 = visited
+
+    fn dfs(
+        u: usize,
+        def: &SopDefinition,
+        step_indices: &HashMap<&str, usize>,
+        state: &mut Vec<u8>,
+    ) -> Result<()> {
+        state[u] = 1;
+
+        let step = &def.steps[u];
+        for dep_name in &step.depends_on {
+            if let Some(&v) = step_indices.get(dep_name.as_str()) {
+                if state[v] == 1 {
+                    anyhow::bail!("Circular dependency detected involving step '{}' and step '{}'", step.name, dep_name);
+                } else if state[v] == 0 {
+                    dfs(v, def, step_indices, state)?;
+                }
+            }
+        }
+
+        state[u] = 2;
+        Ok(())
+    }
+
+    for i in 0..n {
+        if state[i] == 0 {
+            dfs(i, def, &step_indices, &mut state)?;
+        }
+    }
+
+    Ok(())
+}
+
 pub fn save_definition(def: &SopDefinition) -> Result<()> {
+    validate_sop_definition(def)?;
     let mut defs = load_definitions().unwrap_or_default();
     defs.retain(|d| d.id != def.id);
     defs.push(def.clone());
@@ -380,5 +442,105 @@ mod tests {
         let step_missing: SopStep = serde_json::from_str(json_str_missing).unwrap();
         assert!(step_missing.depends_on.is_empty());
         assert_eq!(step_missing.agent, None);
+    }
+
+    #[test]
+    fn test_validate_sop_definition_valid() {
+        let def = SopDefinition {
+            id: "valid-sop".to_string(),
+            name: "Valid SOP".to_string(),
+            description: "A valid SOP".to_string(),
+            steps: vec![
+                SopStep {
+                    name: "A".to_string(),
+                    description: "Step A".to_string(),
+                    prompt_template: "Run A".to_string(),
+                    depends_on: vec![],
+                    agent: None,
+                },
+                SopStep {
+                    name: "B".to_string(),
+                    description: "Step B".to_string(),
+                    prompt_template: "Run B".to_string(),
+                    depends_on: vec!["A".to_string()],
+                    agent: None,
+                },
+            ],
+        };
+        assert!(validate_sop_definition(&def).is_ok());
+    }
+
+    #[test]
+    fn test_validate_sop_definition_cycle() {
+        let def = SopDefinition {
+            id: "cycle-sop".to_string(),
+            name: "Cycle SOP".to_string(),
+            description: "A circular SOP".to_string(),
+            steps: vec![
+                SopStep {
+                    name: "A".to_string(),
+                    description: "Step A".to_string(),
+                    prompt_template: "Run A".to_string(),
+                    depends_on: vec!["B".to_string()],
+                    agent: None,
+                },
+                SopStep {
+                    name: "B".to_string(),
+                    description: "Step B".to_string(),
+                    prompt_template: "Run B".to_string(),
+                    depends_on: vec!["A".to_string()],
+                    agent: None,
+                },
+            ],
+        };
+        let err = validate_sop_definition(&def).unwrap_err().to_string();
+        assert!(err.contains("Circular dependency"));
+    }
+
+    #[test]
+    fn test_validate_sop_definition_missing_dep() {
+        let def = SopDefinition {
+            id: "missing-dep-sop".to_string(),
+            name: "Missing Dep SOP".to_string(),
+            description: "A missing dep SOP".to_string(),
+            steps: vec![
+                SopStep {
+                    name: "A".to_string(),
+                    description: "Step A".to_string(),
+                    prompt_template: "Run A".to_string(),
+                    depends_on: vec!["C".to_string()],
+                    agent: None,
+                },
+            ],
+        };
+        let err = validate_sop_definition(&def).unwrap_err().to_string();
+        assert!(err.contains("depends on non-existent step"));
+    }
+
+    #[test]
+    fn test_validate_sop_definition_duplicate_name() {
+        let def = SopDefinition {
+            id: "dup-sop".to_string(),
+            name: "Dup SOP".to_string(),
+            description: "A duplicate step name SOP".to_string(),
+            steps: vec![
+                SopStep {
+                    name: "A".to_string(),
+                    description: "Step A1".to_string(),
+                    prompt_template: "Run A1".to_string(),
+                    depends_on: vec![],
+                    agent: None,
+                },
+                SopStep {
+                    name: "A".to_string(),
+                    description: "Step A2".to_string(),
+                    prompt_template: "Run A2".to_string(),
+                    depends_on: vec![],
+                    agent: None,
+                },
+            ],
+        };
+        let err = validate_sop_definition(&def).unwrap_err().to_string();
+        assert!(err.contains("Duplicate step name"));
     }
 }

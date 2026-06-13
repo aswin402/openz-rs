@@ -1492,7 +1492,12 @@ async fn handle_sop(action: SopAction) -> Result<()> {
                     println!("  {}Description:{} {}", COLOR_BOLD, COLOR_RESET, def.description);
                     println!("  {}Steps:{}", COLOR_BOLD, COLOR_RESET);
                     for (i, step) in def.steps.iter().enumerate() {
-                        println!("    {}. {}: {}", i + 1, step.name, step.description);
+                        let deps_str = if step.depends_on.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" [Depends on: {}]", step.depends_on.join(", "))
+                        };
+                        println!("    {}. {}{}: {}", i + 1, step.name, deps_str, step.description);
                     }
                     println!();
                 }
