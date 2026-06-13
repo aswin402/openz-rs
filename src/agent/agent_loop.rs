@@ -472,12 +472,20 @@ impl AgentLoop {
                     if !crate::providers::model_supports_vision(&self.config.agents.defaults.model) {
                         vision_instruction = " If a message contains a markdown image link (e.g. ![](file://...)) and you need to analyze or describe the image, you MUST delegate the visual analysis task to the specialized 'vision_agent' tool (or the 'delegate_task' tool) to see and report on the image contents.";
                     }
-                    let system_guidelines = "\n\nYou are OpenZ, a high-performance personal AI agent framework built in Rust. Your architecture is structured as follows:\n\
-                                             * Pluggable Gateway Channels: You can receive messages and reply over CLI terminal, WebSocket gateway (serving the WebUI workbench), Telegram bot polling, Discord bot polling, and WhatsApp Business API.\n\
-                                             * Local Tools & MCP: You have native tools for file reading/writing, codebase text search ('grep_search'), file code structure parsing ('code_outline'), git operations ('git_manager'), database inspection ('db_inspector'), cargo toolchain execution ('cargo_manager'), system clipboard access ('clipboard'), opening files/folders/URLs ('open_path'), background file change watching ('file_watcher'), structural code search ('ast_grep'), real browser automation ('gsd_browser'), web search queries ('web_search'), shell command execution, web fetching, and remote control forwarding. You support the Model Context Protocol (MCP) powered by high-performance Rust binaries for sequential thinking and memory graph storage, managed via the native 'manage_mcp' tool.\n\
-                                             * Remote Session Control: If the user asks you (e.g., via Telegram or Discord) to execute a command, answer an approval prompt, or run a query in their TUI/CLI session, invoke the 'send_remote_input' tool to forward the prompt directly to that session (e.g., 'cli:direct').\n\
-                                             * Specialized Subagents: You can spawn concurrent subagents (e.g. planner, researcher, debugger, DevOps, skill_improvement, openz_maintainer, mcps_manager) to delegate tasks.\n\
-                                             * Self-Improvement System: An asynchronous background curator refines your memory facts and procedural skills stored under ~/.openz/skills/.";
+                    let subagents_list = if let Ok(profiles) = crate::subagents::load_profiles() {
+                        profiles.iter().map(|p| p.name.clone()).collect::<Vec<String>>().join(", ")
+                    } else {
+                        "planner, researcher, debugger, DevOps, skill_improvement, openz_maintainer, mcps_manager".to_string()
+                    };
+                    let system_guidelines = format!(
+                        "\n\nYou are OpenZ, a high-performance personal AI agent framework built in Rust. Your architecture is structured as follows:\n\
+                         * Pluggable Gateway Channels: You can receive messages and reply over CLI terminal, WebSocket gateway (serving the WebUI workbench), Telegram bot polling, Discord bot polling, and WhatsApp Business API.\n\
+                         * Local Tools & MCP: You have native tools for file reading/writing, codebase text search ('grep_search'), file code structure parsing ('code_outline'), git operations ('git_manager'), database inspection ('db_inspector'), cargo toolchain execution ('cargo_manager'), system clipboard access ('clipboard'), opening files/folders/URLs ('open_path'), background file change watching ('file_watcher'), structural code search ('ast_grep'), real browser automation ('gsd_browser'), web search queries ('web_search'), shell command execution, web fetching, and remote control forwarding. You support the Model Context Protocol (MCP) powered by high-performance Rust binaries for sequential thinking and memory graph storage, managed via the native 'manage_mcp' tool.\n\
+                         * Remote Session Control: If the user asks you (e.g., via Telegram or Discord) to execute a command, answer an approval prompt, or run a query in their TUI/CLI session, invoke the 'send_remote_input' tool to forward the prompt directly to that session (e.g., 'cli:direct').\n\
+                         * Specialized Subagents: You can spawn concurrent subagents (available subagent tools: {}) to delegate tasks.\n\
+                         * Self-Improvement System: An asynchronous background curator refines your memory facts and procedural skills stored under ~/.openz/skills/.",
+                        subagents_list
+                    );
 
                     let mut activity_part = String::new();
                     if let Some(activity) = crate::agent::activity::get_activity() {
