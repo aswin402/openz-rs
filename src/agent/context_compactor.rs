@@ -51,15 +51,66 @@ pub fn compress_logs(raw_logs: &str) -> String {
     let re_ansi = Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").unwrap();
     let clean_logs = re_ansi.replace_all(raw_logs, "");
 
-    if clean_logs.len() > 2000 {
-        let first_part: String = clean_logs.chars().take(1000).collect();
-        let last_part: String = clean_logs.chars().skip(clean_logs.chars().count().saturating_sub(1000)).collect();
+    let mut filtered_lines = Vec::new();
+    let mut warning_count = 0;
+    let mut error_count = 0;
+    let mut is_backtrace = false;
+
+    let re_backtrace_line = Regex::new(r"^\s*at\s+|^^\s*\d+:\s+").unwrap();
+    let re_rust_backtrace = Regex::new(r"stack backtrace:|backtrace::").unwrap();
+    let re_cargo_warning = Regex::new(r"(?i)warning:").unwrap();
+    let re_cargo_error = Regex::new(r"(?i)error\[E\d+\]:|error:").unwrap();
+
+    for line in clean_logs.lines() {
+        let trimmed = line.trim();
+        
+        if re_rust_backtrace.is_match(trimmed) {
+            is_backtrace = true;
+            filtered_lines.push("[Backtrace detected - stripping stack frames for token reduction]".to_string());
+            continue;
+        }
+        if is_backtrace {
+            if trimmed.is_empty() {
+                is_backtrace = false;
+            } else if re_backtrace_line.is_match(trimmed) || trimmed.starts_with("frame #") || trimmed.starts_with("at ") {
+                continue;
+            }
+        }
+
+        if re_cargo_warning.is_match(trimmed) {
+            warning_count += 1;
+            if warning_count > 10 {
+                continue;
+            }
+        }
+        
+        if re_cargo_error.is_match(trimmed) {
+            error_count += 1;
+            if error_count > 5 {
+                continue;
+            }
+        }
+
+        filtered_lines.push(line.to_string());
+    }
+
+    let mut filtered_logs = filtered_lines.join("\n");
+    if warning_count > 10 {
+        filtered_logs.push_str(&format!("\n... [Skipped {} additional cargo warnings to save tokens] ...", warning_count - 10));
+    }
+    if error_count > 5 {
+        filtered_logs.push_str(&format!("\n... [Skipped {} additional cargo errors to save tokens] ...", error_count - 5));
+    }
+
+    if filtered_logs.len() > 2000 {
+        let first_part: String = filtered_logs.chars().take(1000).collect();
+        let last_part: String = filtered_logs.chars().skip(filtered_logs.chars().count().saturating_sub(1000)).collect();
         format!(
             "{}\n\n... [TRUNCATED LOGS] ...\n\n{}",
             first_part, last_part
         )
     } else {
-        clean_logs.into_owned()
+        filtered_logs
     }
 }
 

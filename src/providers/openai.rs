@@ -80,7 +80,7 @@ impl OpenAIProvider {
         }
     }
 
-    fn serialize_messages(
+    async fn serialize_messages(
         model: &str,
         system_prompt: &str,
         messages: &[Message],
@@ -116,7 +116,7 @@ impl OpenAIProvider {
                 name = Some(n.to_string());
             }
 
-            let parts = crate::providers::parse_multimodal_content(&msg.content);
+            let parts = crate::providers::parse_multimodal_content(&msg.content).await;
             let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
             let supports_vision = crate::providers::model_supports_vision(model);
 
@@ -181,7 +181,7 @@ impl LLMProvider for OpenAIProvider {
         tools: &[serde_json::Value],
         settings: &GenerationSettings,
     ) -> Result<LLMResponse> {
-        let api_messages = Self::serialize_messages(&self.model, system_prompt, messages);
+        let api_messages = Self::serialize_messages(&self.model, system_prompt, messages).await;
 
         let body = OpenAIRequest {
             model: self.model.clone(),
@@ -195,7 +195,8 @@ impl LLMProvider for OpenAIProvider {
         let url = if is_azure {
             self.api_base.clone()
         } else {
-            format!("{}/chat/completions", self.api_base)
+            let base = self.api_base.trim_end_matches('/');
+            format!("{}/chat/completions", base)
         };
 
         let mut req = self.client.post(&url);
@@ -210,8 +211,9 @@ impl LLMProvider for OpenAIProvider {
             .await?;
 
         if !res.status().is_success() {
-            let error_text = res.text().await?;
-            return Err(anyhow!("OpenAI API error: {}", error_text));
+            let status = res.status();
+            let error_text = res.text().await.unwrap_or_default();
+            return Err(anyhow!("OpenAI API error (Status {}): {}", status, error_text));
         }
 
         let response: OpenAIResponse = res.json().await?;
@@ -242,8 +244,8 @@ impl LLMProvider for OpenAIProvider {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_serialize_messages_vision_fallback() {
+    #[tokio::test]
+    async fn test_serialize_messages_vision_fallback() {
         let system_prompt = "system instructions";
         
         let temp_dir = std::env::temp_dir();
@@ -265,7 +267,7 @@ mod tests {
             "deepseek-v4-flash-free",
             system_prompt,
             &messages,
-        );
+        ).await;
         
         assert_eq!(serialized_non_vision.len(), 2);
         assert_eq!(serialized_non_vision[0].role, "system");
@@ -280,7 +282,7 @@ mod tests {
             "gpt-4o",
             system_prompt,
             &messages,
-        );
+        ).await;
         
         assert_eq!(serialized_vision.len(), 2);
         assert_eq!(serialized_vision[1].role, "user");

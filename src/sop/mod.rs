@@ -11,6 +11,10 @@ pub struct SopStep {
     pub name: String,
     pub description: String,
     pub prompt_template: String,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,16 +158,22 @@ fn get_default_sop_definitions() -> Vec<SopDefinition> {
                     name: "Analyze Diff".to_string(),
                     description: "Analyzes the PR diff for bugs and style issues".to_string(),
                     prompt_template: "We received a webhook for a new pull request. Here is the payload: {{payload}}.\n\nExtract the code diff or description from the payload. Analyze the changes for logic bugs, security issues, or missing test cases.".to_string(),
+                    depends_on: vec![],
+                    agent: Some("reviewer".to_string()),
                 },
                 SopStep {
                     name: "Generate Recommendations".to_string(),
                     description: "Generates actionable code suggestions to resolve issues".to_string(),
                     prompt_template: "Based on the code analysis: {{steps.Analyze Diff.output}}, generate concrete, actionable code refactoring suggestions or fixes. Output them clearly in Markdown formatting.".to_string(),
+                    depends_on: vec!["Analyze Diff".to_string()],
+                    agent: Some("reviewer".to_string()),
                 },
                 SopStep {
                     name: "Draft Comment".to_string(),
                     description: "Prepares GitHub/GitLab comment text representing the full review".to_string(),
                     prompt_template: "Draft a polite and constructive comment summarizing our findings from the analysis: {{steps.Analyze Diff.output}} and recommendations: {{steps.Generate Recommendations.output}}.".to_string(),
+                    depends_on: vec!["Generate Recommendations".to_string()],
+                    agent: Some("reviewer".to_string()),
                 },
             ],
         },
@@ -176,16 +186,22 @@ fn get_default_sop_definitions() -> Vec<SopDefinition> {
                     name: "Triage Alert".to_string(),
                     description: "Classifies alert severity and extracts failure signature".to_string(),
                     prompt_template: "An error alert was triggered. Alert payload: {{payload}}.\n\nTriage the alert. Extract the error message, severity level, source file, and line number if present. Summarize the failure signature.".to_string(),
+                    depends_on: vec![],
+                    agent: Some("debugger".to_string()),
                 },
                 SopStep {
                     name: "Investigate Root Cause".to_string(),
                     description: "Suggests query commands or checks to run".to_string(),
                     prompt_template: "Based on failure signature: {{steps.Triage Alert.output}}, propose the root cause of this incident and describe what files, ports, or databases we should inspect to fix it.".to_string(),
+                    depends_on: vec!["Triage Alert".to_string()],
+                    agent: Some("debugger".to_string()),
                 },
                 SopStep {
                     name: "Formulate Mitigation".to_string(),
                     description: "Creates a step-by-step resolution plan".to_string(),
                     prompt_template: "Write a step-by-step resolution plan to address root cause: {{steps.Investigate Root Cause.output}}. Include verification commands to check if the fix was successful.".to_string(),
+                    depends_on: vec!["Investigate Root Cause".to_string()],
+                    agent: Some("debugger".to_string()),
                 },
             ],
         },
@@ -251,8 +267,37 @@ mod tests {
         assert_eq!(substituted, "Hello {{payload.missing_key}}!");
     }
 
+    struct TestLock;
+
+    impl TestLock {
+        fn acquire() -> Self {
+            let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
+            loop {
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&lock_path)
+                {
+                    Ok(_) => break,
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                }
+            }
+            TestLock
+        }
+    }
+
+    impl Drop for TestLock {
+        fn drop(&mut self) {
+            let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
+            let _ = std::fs::remove_file(lock_path);
+        }
+    }
+
     #[tokio::test]
     async fn test_sop_lifecycle() {
+        let _lock = TestLock::acquire();
         let temp_dir = std::env::temp_dir().join(format!("openz_sop_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -306,5 +351,34 @@ mod tests {
         // Clean up temp dir
         std::fs::remove_dir_all(&temp_dir).unwrap();
         std::env::remove_var("OPENZ_CONFIG_DIR");
+    }
+
+    #[test]
+    fn test_sop_step_serialization() {
+        let json_str = r#"
+        {
+            "name": "Step A",
+            "description": "First step",
+            "prompt_template": "Run A",
+            "depends_on": ["Step B", "Step C"],
+            "agent": "researcher"
+        }
+        "#;
+        let step: SopStep = serde_json::from_str(json_str).unwrap();
+        assert_eq!(step.name, "Step A");
+        assert_eq!(step.depends_on, vec!["Step B".to_string(), "Step C".to_string()]);
+        assert_eq!(step.agent, Some("researcher".to_string()));
+
+        // Test default value when field is missing
+        let json_str_missing = r#"
+        {
+            "name": "Step A",
+            "description": "First step",
+            "prompt_template": "Run A"
+        }
+        "#;
+        let step_missing: SopStep = serde_json::from_str(json_str_missing).unwrap();
+        assert!(step_missing.depends_on.is_empty());
+        assert_eq!(step_missing.agent, None);
     }
 }

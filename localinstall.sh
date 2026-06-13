@@ -4,6 +4,22 @@ set -e
 echo "🦊 OpenZ Installer: Global Setup"
 echo "────────────────────────────────"
 
+# Back up global openz data if present (skipping heavy cache/log directories)
+if [ -d "$HOME/.openz" ]; then
+    echo "💾 Backing up existing global OpenZ data (excluding heavy worktrees and logs)..."
+    rm -rf "$HOME/.openz.bak"
+    mkdir -p "$HOME/.openz.bak"
+    for item in "$HOME"/.openz/*; do
+        if [ -e "$item" ]; then
+            name=$(basename "$item")
+            if [ "$name" != "worktrees" ] && [ "$name" != "tool_outputs" ] && [ "$name" != "traces" ] && [ "$name" != "cron_logs" ]; then
+                cp -r "$item" "$HOME/.openz.bak/" 2>/dev/null || true
+            fi
+        fi
+    done
+    echo "✅ Backup created at ~/.openz.bak"
+fi
+
 # 1. Compile and install globally via Cargo
 echo "📦 Compiling and installing openz globally via Cargo..."
 cargo install --path .

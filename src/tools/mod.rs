@@ -43,11 +43,28 @@ impl ToolRegistry {
             let (config, provider, session_manager) = self.context.as_ref()?;
             let mut parent_tools = Vec::new();
             for tool in self.static_tools.values() {
-                if tool.name() != "delegate_task" {
+                if tool.name() != "delegate_task" && tool.name() != "parallel_research" {
                     parent_tools.push(tool.clone());
                 }
             }
             return Some(Arc::new(crate::tools::subagent::DelegateTaskTool {
+                config: config.clone(),
+                parent_provider: provider.clone(),
+                session_manager: session_manager.clone(),
+                parent_tools,
+            }));
+        }
+
+        // 1b. If name is "parallel_research", override and inject parent tools dynamically
+        if name == "parallel_research" {
+            let (config, provider, session_manager) = self.context.as_ref()?;
+            let mut parent_tools = Vec::new();
+            for tool in self.static_tools.values() {
+                if tool.name() != "delegate_task" && tool.name() != "parallel_research" {
+                    parent_tools.push(tool.clone());
+                }
+            }
+            return Some(Arc::new(crate::tools::subagent::ParallelResearchTool {
                 config: config.clone(),
                 parent_provider: provider.clone(),
                 session_manager: session_manager.clone(),
@@ -67,7 +84,7 @@ impl ToolRegistry {
 
         let mut parent_tools = Vec::new();
         for tool in self.static_tools.values() {
-            if tool.name() != "delegate_task" {
+            if tool.name() != "delegate_task" && tool.name() != "parallel_research" {
                 parent_tools.push(tool.clone());
             }
         }
@@ -128,6 +145,11 @@ impl ToolRegistry {
             }
         }
 
+        if tools_list.len() > 128 {
+            tracing::warn!("Too many tools registered ({}); truncating to 128 to satisfy API limits.", tools_list.len());
+            tools_list.truncate(128);
+        }
+
         tools_list
     }
 }
@@ -154,6 +176,7 @@ pub mod web_search;
 pub mod onpkg;
 pub mod doc_reader;
 pub mod wasm_sandbox;
+pub mod js_format;
 pub mod semantic_search;
 pub mod rust_docs;
 pub mod image_generator;
@@ -161,3 +184,7 @@ pub mod system_info;
 pub mod network;
 pub mod crawl;
 pub mod obscura;
+pub mod shared_memory;
+pub mod firefox;
+pub mod notes;
+pub mod social_search;

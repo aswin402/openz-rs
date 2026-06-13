@@ -46,7 +46,14 @@ pub fn select_menu_with_history(prompt: &str, history: &[HistoryItem]) -> Result
     enable_raw_mode()?;
     let mut selected = 0;
     let num_options = 1 + history.len();
-    let num_lines_to_clear = 4 + history.len();
+    
+    let max_history_display = 10;
+    let has_scrolling = history.len() > max_history_display;
+    let num_lines_to_clear = if has_scrolling {
+        5 + max_history_display
+    } else {
+        4 + history.len()
+    };
 
     print!("{}\r\n", prompt);
     
@@ -61,7 +68,17 @@ pub fn select_menu_with_history(prompt: &str, history: &[HistoryItem]) -> Result
         print!("Recent\r\n");
         print!("\r\n");
         
-        for (i, item) in history.iter().enumerate() {
+        let mut start_idx = 0;
+        if selected_idx > 0 {
+            let history_sel = selected_idx - 1;
+            if history_sel >= max_history_display {
+                start_idx = history_sel - max_history_display + 1;
+            }
+        }
+        let end_idx = (start_idx + max_history_display).min(history.len());
+
+        for i in start_idx..end_idx {
+            let item = &history[i];
             let option_idx = i + 1;
             let friendly_time = format_friendly_time(item.updated_at);
             
@@ -77,6 +94,23 @@ pub fn select_menu_with_history(prompt: &str, history: &[HistoryItem]) -> Result
                 print!("▸ {}{}{}{}{}{}\r\n", COLOR_BOLD, RED_ORANGE, truncated_title, padding, friendly_time, COLOR_RESET);
             } else {
                 print!("  {}{}{}\r\n", truncated_title, padding, friendly_time);
+            }
+        }
+
+        if has_scrolling {
+            let rem_above = start_idx;
+            let rem_below = history.len() - end_idx;
+            let mut parts = Vec::new();
+            if rem_above > 0 {
+                parts.push(format!("↑ {} more", rem_above));
+            }
+            if rem_below > 0 {
+                parts.push(format!("↓ {} more", rem_below));
+            }
+            if !parts.is_empty() {
+                print!("  {}{}{}\r\n", AURA_SLATE, parts.join(" / "), COLOR_RESET);
+            } else {
+                print!("\r\n");
             }
         }
         let _ = stdout().flush();

@@ -49,6 +49,7 @@ impl Tool for AstGrepTool {
             std::path::PathBuf::from("ast-grep")
         };
         let mut cmd = Command::new(bin_path);
+        crate::config::loader::set_command_cwd(&mut cmd);
         cmd.arg("run");
         cmd.arg("--pattern").arg(pattern);
         cmd.arg("--lang").arg(lang);

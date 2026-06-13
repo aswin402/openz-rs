@@ -15,6 +15,7 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use serde_json::Value;
 use tower_http::services::ServeDir;
+use tower_http::cors::{CorsLayer, Any};
 
 pub struct WsGateway {
     config: WebSocketChannelConfig,
@@ -51,10 +52,17 @@ impl super::Channel for WsGateway {
             config: self.config.clone(),
             agent_loop: self.agent_loop.clone(),
         };
+        let cors = CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any);
+
         let mut app = Router::new()
             .route("/ws", get(ws_handler))
+            .route("/v1/chat/completions", axum::routing::post(openai_chat_completions))
             .route("/webhook/sop/trigger/:sop_id", axum::routing::post(trigger_sop_handler))
             .route("/webhook/sop/instances/:instance_id/resume", axum::routing::post(resume_sop_handler))
+            .layer(cors)
             .with_state(state);
 
         let silent = std::env::var("OPENZ_SILENT").is_ok();
@@ -237,5 +245,223 @@ async fn resume_sop_handler(
                 "error": e.to_string()
             })),
         ).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct OpenAiChatCompletionRequest {
+    model: String,
+    messages: Vec<OpenAiMessage>,
+    #[allow(dead_code)]
+    stream: Option<bool>,
+    user: Option<String>,
+}
+
+#[derive(serde::Deserialize, Clone)]
+struct OpenAiMessage {
+    role: String,
+    content: serde_json::Value,
+}
+
+fn normalize_model_name(model: &str) -> String {
+    let lower = model.to_lowercase();
+    if lower.contains('/') {
+        model.to_string()
+    } else if lower.starts_with("gpt-") || lower.starts_with("o1") || lower.starts_with("o3-") {
+        format!("openai/{}", model)
+    } else if lower.starts_with("claude-") {
+        format!("anthropic/{}", model)
+    } else if lower.starts_with("deepseek-") {
+        format!("deepseek/{}", model)
+    } else {
+        model.to_string()
+    }
+}
+
+fn determine_routed_model(
+    config: &crate::config::schema::Config,
+    request_model: &str,
+    prompt: &str,
+) -> String {
+    let prompt_lower = prompt.to_lowercase();
+    let is_complex = prompt_lower.contains("fix")
+        || prompt_lower.contains("bug")
+        || prompt_lower.contains("error")
+        || prompt_lower.contains("implement")
+        || prompt_lower.contains("refactor")
+        || prompt_lower.contains("design")
+        || prompt_lower.contains("build")
+        || prompt_lower.contains("create")
+        || prompt_lower.contains("write")
+        || prompt_lower.contains("code")
+        || prompt_lower.contains("architect")
+        || prompt_lower.contains("schema")
+        || prompt_lower.contains("test")
+        || prompt.len() > 300;
+
+    if is_complex {
+        if request_model.contains('/') || request_model.starts_with("gpt-") || request_model.starts_with("claude-") {
+            request_model.to_string()
+        } else {
+            config.agents.defaults.model.clone()
+        }
+    } else {
+        let has_key = |prov: &str| -> bool {
+            match prov {
+                "deepseek" => config.providers.deepseek.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("DEEPSEEK_API_KEY").is_ok(),
+                "groq" => config.providers.groq.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("GROQ_API_KEY").is_ok(),
+                "openrouter" => config.providers.openrouter.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENROUTER_API_KEY").is_ok(),
+                "openai" => config.providers.openai.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENAI_API_KEY").is_ok(),
+                _ => false,
+            }
+        };
+
+        if has_key("deepseek") {
+            "deepseek/deepseek-chat".to_string()
+        } else if has_key("groq") {
+            "groq/llama-3.3-70b-specdec".to_string()
+        } else if has_key("openai") {
+            "openai/gpt-4o-mini".to_string()
+        } else if has_key("openrouter") {
+            "openrouter/google/gemini-2.5-flash-lite".to_string()
+        } else {
+            request_model.to_string()
+        }
+    }
+}
+
+async fn openai_chat_completions(
+    State(state): State<WsState>,
+    Json(payload): Json<OpenAiChatCompletionRequest>,
+) -> impl IntoResponse {
+    let last_user_content = payload.messages.iter()
+        .filter(|m| m.role == "user")
+        .last()
+        .map(|m| {
+            if let Some(s) = m.content.as_str() {
+                s.to_string()
+            } else if let Some(arr) = m.content.as_array() {
+                let mut text = String::new();
+                for item in arr {
+                    if let Some(txt) = item.get("text").and_then(|v| v.as_str()) {
+                        text.push_str(txt);
+                    }
+                }
+                text
+            } else {
+                m.content.to_string()
+            }
+        })
+        .unwrap_or_default();
+
+    let mut config = state.agent_loop.config.clone();
+    let req_model = normalize_model_name(&payload.model);
+    let routed_model = determine_routed_model(&config, &req_model, &last_user_content);
+    
+    config.agents.defaults.model = routed_model.clone();
+
+    let agent_loop = match crate::cli::build_agent_loop(config).await {
+        Ok(al) => al,
+        Err(e) => {
+            let err_json = serde_json::json!({
+                "error": {
+                    "message": format!("Failed to build agent loop: {}", e),
+                    "type": "api_error",
+                    "param": null,
+                    "code": null
+                }
+            });
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(err_json)).into_response();
+        }
+    };
+
+    let session_key = payload.user.unwrap_or_else(|| "openai_proxy_default".to_string());
+
+    match agent_loop.run(&last_user_content, &session_key).await {
+        Ok(res) => {
+            let created = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            let response = serde_json::json!({
+                "id": format!("chatcmpl-{}", &uuid::Uuid::new_v4().to_string()[..8]),
+                "object": "chat.completion",
+                "created": created,
+                "model": routed_model,
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": res.content,
+                    },
+                    "finish_reason": "stop"
+                }],
+                "choices_count": 1,
+                "usage": {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0
+                }
+            });
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => {
+            let err_json = serde_json::json!({
+                "error": {
+                    "message": e.to_string(),
+                    "type": "api_error",
+                    "param": null,
+                    "code": null
+                }
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(err_json)).into_response()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_model_name() {
+        assert_eq!(normalize_model_name("gpt-4o"), "openai/gpt-4o");
+        assert_eq!(normalize_model_name("claude-3-5-sonnet"), "anthropic/claude-3-5-sonnet");
+        assert_eq!(normalize_model_name("deepseek-chat"), "deepseek/deepseek-chat");
+        assert_eq!(normalize_model_name("custom/my-model"), "custom/my-model");
+    }
+
+    #[test]
+    fn test_determine_routed_model_complex() {
+        let mut config = crate::config::schema::Config::default();
+        config.agents.defaults.model = "anthropic/claude-3-5-sonnet".to_string();
+
+        // Complex prompts should use requested or default premium
+        let model = determine_routed_model(&config, "gpt-4o", "Please fix this error in my rust code");
+        assert_eq!(model, "gpt-4o");
+
+        let model_fallback = determine_routed_model(&config, "some-random-model", "Please design a new database schema for a blog");
+        assert_eq!(model_fallback, "anthropic/claude-3-5-sonnet");
+    }
+
+    #[test]
+    fn test_determine_routed_model_simple_fallback() {
+        let mut config = crate::config::schema::Config::default();
+        config.agents.defaults.model = "anthropic/claude-3-5-sonnet".to_string();
+
+        // Simple prompt, no cheap keys -> fallback to requested
+        let model = determine_routed_model(&config, "gpt-4o", "Hello!");
+        assert_eq!(model, "gpt-4o");
+
+        // Simple prompt, deepseek key set -> should route to deepseek-chat
+        config.providers.deepseek = Some(crate::config::schema::ProviderConfig {
+            api_key: Some("test-key".to_string()),
+            api_base: None,
+            api_type: None,
+            extra: std::collections::HashMap::new(),
+        });
+        let model_routed = determine_routed_model(&config, "gpt-4o", "Hi there");
+        assert_eq!(model_routed, "deepseek/deepseek-chat");
     }
 }

@@ -12,17 +12,21 @@ use crate::tools::system_info::SystemInfoTool;
 use crate::tools::network::CheckPortTool;
 use crate::tools::doc_reader::DocReaderTool;
 use crate::tools::wasm_sandbox::WasmSandboxTool;
+use crate::tools::js_format::JsFormatTool;
 use crate::tools::semantic_search::SemanticSearchTool;
+use crate::tools::shared_memory::{StoreMemoryTool, RecallMemoryTool, ClearMemoryTool};
+use crate::tools::notes::IndexNotesTool;
+use crate::tools::social_search::SocialSearchTool;
 use crate::tools::rust_docs::RustDocsTool;
 use crate::tools::shell::ExecCommandTool;
 use crate::tools::web::WebFetchTool;
-use crate::tools::subagent::{DelegateTaskTool, OptimizeSubagentTool, CreateSubagentTool, DeleteSubagentTool};
+use crate::tools::subagent::{DelegateTaskTool, OptimizeSubagentTool, CreateSubagentTool, DeleteSubagentTool, ParallelResearchTool};
 use crate::tools::cron::{ScheduleJobTool, ListJobsTool, RemoveJobTool};
 use crate::tools::remote::SendRemoteInputTool;
 use crate::session::SessionManager;
 use crate::agent::AgentLoop;
 use crate::agent::style::*;
-use crate::channels::{CliChannel, WsGateway, TelegramChannel, DiscordChannel, WhatsAppChannel, Channel};
+use crate::channels::{CliChannel, WsGateway, TelegramChannel, DiscordChannel, WhatsAppChannel, EmailChannel, Channel};
 use crate::cron::scheduler::start_scheduler;
 
 #[derive(Parser)]
@@ -124,6 +128,9 @@ pub async fn run_cli() -> Result<()> {
     }
 
     let args = CliArgs::parse();
+
+    // Startup garbage collection of stale git worktrees and temporary resources
+    crate::tools::subagent::cleanup_stale_resources();
     
     match args.command {
         Command::Onboard => {
@@ -227,7 +234,7 @@ async fn handle_onboard() -> Result<()> {
     let bot_icon = Text::new("Enter Bot Icon (Emoji/text) [default: ⚡]:").prompt()?;
     let bot_icon = if bot_icon.trim().is_empty() { "⚡".to_string() } else { bot_icon.trim().to_string() };
 
-    let mut config = Config::default();
+    let mut config = load_config().unwrap_or_else(|_| Config::default());
     
     let p_config = Some(ProviderConfig {
         api_key,
@@ -437,6 +444,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
             let p = config.providers.cerebres.as_ref();
             let key = p.and_then(|x| x.api_key.clone())
                 .or_else(|| std::env::var("CEREBRES_API_KEY").ok())
+                .or_else(|| std::env::var("CEBRAS_API_KEY").ok())
                 .unwrap_or_default();
             let base = p.and_then(|x| x.api_base.clone())
                 .unwrap_or_else(|| "https://api.cerebras.ai/v1".to_string());
@@ -456,18 +464,82 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         }
     };
 
-    if provider_name != "ollama" && api_key.is_empty() {
-        return Err(anyhow!(
-            "No API key found for provider '{}'. Please run setup wizard first via 'openz onboard' or set the appropriate environment variable (e.g. {}_API_KEY).",
-            provider_name,
-            provider_name.to_uppercase()
-        ));
+    let mut final_provider_name = provider_name.clone();
+    let mut final_api_key = api_key;
+    let mut final_api_base = api_base;
+    let mut final_model = model.clone();
+
+    if final_provider_name != "ollama" && final_api_key.is_empty() {
+        let has_openrouter = config.providers.openrouter.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENROUTER_API_KEY").is_ok();
+        let has_opencode_zen = config.providers.opencode_zen.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENCODE_ZEN_API_KEY").is_ok();
+
+        if has_openrouter {
+            let p = config.providers.openrouter.as_ref();
+            final_api_key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+                .unwrap_or_default();
+            final_api_base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
+            final_provider_name = "openrouter".to_string();
+            final_model = if model.contains('/') {
+                model.clone()
+            } else {
+                format!("{}/{}", provider_name, model)
+            };
+        } else if has_opencode_zen {
+            let p = config.providers.opencode_zen.as_ref();
+            final_api_key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("OPENCODE_ZEN_API_KEY").ok())
+                .unwrap_or_default();
+            final_api_base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://opencode.ai/zen/v1".to_string());
+            final_provider_name = "opencode_zen".to_string();
+            final_model = if model.contains('/') {
+                model.clone()
+            } else {
+                format!("{}/{}", provider_name, model)
+            };
+        } else {
+            return Err(anyhow!(
+                "No API key found for provider '{}'. Please run setup wizard first via 'openz onboard' or set the appropriate environment variable (e.g. {}_API_KEY).",
+                provider_name,
+                provider_name.to_uppercase()
+            ));
+        }
     }
-    
-    let provider: Arc<dyn LLMProvider> = if provider_name == "anthropic" {
-        Arc::new(AnthropicProvider::new(api_key, api_base, model))
+
+    let mut clean_model = final_model.clone();
+    let model_lower = clean_model.to_lowercase();
+    let prefixes = [
+        "openrouter/", "ollama/", "anthropic/", "openai/", "deepseek/", "groq/",
+        "google_ai_studio/", "google-ai-studio/", "opencode_zen/", "opencode-zen/",
+        "z.ai/", "z_ai/", "nvidia/", "minimax/", "mistral/", "cerebres/", "cerebras/"
+    ];
+    for prefix in &prefixes {
+        if model_lower.starts_with(prefix) {
+            clean_model = clean_model[prefix.len()..].to_string();
+            break;
+        }
+    }
+    if final_provider_name == "nvidia" {
+        if clean_model.ends_with(":free") {
+            clean_model = clean_model[..clean_model.len() - 5].to_string();
+        }
+        if !clean_model.contains('/') {
+            clean_model = format!("nvidia/{}", clean_model);
+        }
+    } else if final_provider_name == "google_ai_studio" {
+        if clean_model.starts_with("google/") {
+            clean_model = clean_model["google/".len()..].to_string();
+        } else if clean_model.starts_with("models/") {
+            clean_model = clean_model["models/".len()..].to_string();
+        }
+    }
+
+    let provider: Arc<dyn LLMProvider> = if final_provider_name == "anthropic" {
+        Arc::new(AnthropicProvider::new(final_api_key, final_api_base, clean_model))
     } else {
-        Arc::new(OpenAIProvider::new(api_key, api_base, model))
+        Arc::new(OpenAIProvider::new(final_api_key, final_api_base, clean_model))
     };
     
     let sessions_dir = resolve_path("~/.openz/sessions");
@@ -478,7 +550,11 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(FindFilesTool));
     registry.register(std::sync::Arc::new(DocReaderTool));
     registry.register(std::sync::Arc::new(WasmSandboxTool));
+    registry.register(std::sync::Arc::new(JsFormatTool));
     registry.register(std::sync::Arc::new(SemanticSearchTool));
+    registry.register(std::sync::Arc::new(StoreMemoryTool));
+    registry.register(std::sync::Arc::new(RecallMemoryTool));
+    registry.register(std::sync::Arc::new(ClearMemoryTool));
     registry.register(std::sync::Arc::new(RustDocsTool::new()));
     registry.register(std::sync::Arc::new(WriteFileTool));
     registry.register(std::sync::Arc::new(PatchFileTool));
@@ -487,6 +563,12 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(ExecCommandTool));
     registry.register(std::sync::Arc::new(WebFetchTool::new()));
     registry.register(std::sync::Arc::new(DelegateTaskTool {
+        config: config.clone(),
+        parent_provider: provider.clone(),
+        session_manager: session_manager.clone(),
+        parent_tools: Vec::new(),
+    }));
+    registry.register(std::sync::Arc::new(ParallelResearchTool {
         config: config.clone(),
         parent_provider: provider.clone(),
         session_manager: session_manager.clone(),
@@ -526,6 +608,9 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::image_generator::GenerateImageTool));
     registry.register(std::sync::Arc::new(crate::tools::crawl::CrawlSiteTool::new()));
     registry.register(std::sync::Arc::new(crate::tools::obscura::ObscuraBrowserTool::new()));
+    registry.register(std::sync::Arc::new(crate::tools::firefox::FirefoxBrowserTool::new()));
+    registry.register(std::sync::Arc::new(IndexNotesTool));
+    registry.register(std::sync::Arc::new(SocialSearchTool::new()));
 
     // Register configured MCP tools
     let mut total_tools = 0;
@@ -766,6 +851,22 @@ async fn handle_agent() -> Result<()> {
                             wa_config_clone.phone_number_id,
                             agent_loop,
                         );
+                        let _ = channel.start().await;
+                    }
+                    _ => {}
+                }
+            });
+        }
+    }
+
+    // Auto-start Email channel in the background if enabled
+    if let Some(email_config) = &config.channels.email {
+        if email_config.enabled {
+            let config_clone = config.clone();
+            tokio::spawn(async move {
+                match build_agent_loop(config_clone).await {
+                    Ok(agent_loop) => {
+                        let channel = EmailChannel::new(agent_loop);
                         let _ = channel.start().await;
                     }
                     _ => {}

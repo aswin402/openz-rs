@@ -38,12 +38,14 @@ impl Tool for DbInspectorTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let db_path = arguments.get("db_path").and_then(|v| v.as_str())
+        let db_path_raw = arguments.get("db_path").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'db_path' parameter"))?;
+        let db_path = crate::config::loader::resolve_path(db_path_raw);
         let action = arguments.get("action").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
 
         let mut cmd = Command::new("sqlite3");
+        crate::config::loader::set_command_cwd(&mut cmd);
         cmd.arg(db_path);
 
         match action {
@@ -106,12 +108,14 @@ impl Tool for DbWriteTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let db_path = arguments.get("db_path").and_then(|v| v.as_str())
+        let db_path_raw = arguments.get("db_path").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'db_path' parameter"))?;
+        let db_path = crate::config::loader::resolve_path(db_path_raw);
         let sql = arguments.get("sql").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'sql' parameter"))?;
 
         let mut cmd = Command::new("sqlite3");
+        crate::config::loader::set_command_cwd(&mut cmd);
         cmd.arg(db_path);
         cmd.arg(sql);
 

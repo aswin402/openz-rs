@@ -68,7 +68,7 @@ impl Tool for WasmSandboxTool {
     }
 }
 
-fn execute_wasm(wasm_path: &Path, args: Vec<String>) -> Result<Value> {
+pub fn execute_wasm(wasm_path: &Path, args: Vec<String>) -> Result<Value> {
     // 1. Setup engine and compile module
     let engine = Engine::default();
     let module = Module::from_file(&engine, wasm_path)?;

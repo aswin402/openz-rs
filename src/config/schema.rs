@@ -55,23 +55,23 @@ pub struct AgentDefaults {
     pub model: String,
     #[serde(default = "default_provider")]
     pub provider: String,
-    #[serde(default = "default_max_tokens")]
+    #[serde(default = "default_max_tokens", alias = "max_tokens")]
     pub max_tokens: usize,
     #[serde(default = "default_temperature")]
     pub temperature: f32,
-    #[serde(default = "default_bot_name")]
+    #[serde(default = "default_bot_name", alias = "bot_name")]
     pub bot_name: String,
-    #[serde(default = "default_bot_icon")]
+    #[serde(default = "default_bot_icon", alias = "bot_icon")]
     pub bot_icon: String,
-    #[serde(default = "default_max_messages")]
+    #[serde(default = "default_max_messages", alias = "max_messages")]
     pub max_messages: usize,
-    #[serde(default = "default_max_tool_iterations")]
+    #[serde(default = "default_max_tool_iterations", alias = "max_tool_iterations")]
     pub max_tool_iterations: usize,
-    #[serde(default = "default_fallback_models")]
+    #[serde(default = "default_fallback_models", alias = "fallback_models")]
     pub fallback_models: Vec<serde_json::Value>,
-    #[serde(default = "default_caveman_mode")]
+    #[serde(default = "default_caveman_mode", alias = "caveman_mode")]
     pub caveman_mode: bool,
-    #[serde(default)]
+    #[serde(default, alias = "context_limit")]
     pub context_limit: Option<usize>,
 }
 
@@ -197,6 +197,36 @@ pub struct WhatsAppChannelConfig {
     pub verify_token: String,
 }
 
+fn default_imap_port() -> u16 {
+    993
+}
+fn default_smtp_port() -> u16 {
+    465
+}
+fn default_poll_interval() -> u64 {
+    60
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EmailChannelConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub imap_server: String,
+    #[serde(default = "default_imap_port")]
+    pub imap_port: u16,
+    #[serde(default)]
+    pub smtp_server: String,
+    #[serde(default = "default_smtp_port")]
+    pub smtp_port: u16,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default = "default_poll_interval")]
+    pub poll_interval_secs: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelsConfig {
     #[serde(default)]
@@ -207,6 +237,8 @@ pub struct ChannelsConfig {
     pub discord: Option<DiscordChannelConfig>,
     #[serde(default)]
     pub whatsapp: Option<WhatsAppChannelConfig>,
+    #[serde(default)]
+    pub email: Option<EmailChannelConfig>,
     #[serde(flatten)]
     pub others: HashMap<String, serde_json::Value>,
 }
@@ -231,6 +263,8 @@ pub struct Config {
     pub channels: ChannelsConfig,
     #[serde(default)]
     pub mcp_servers: HashMap<String, McpServerConfig>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Default for ProvidersConfig {
@@ -286,6 +320,16 @@ impl Default for ChannelsConfig {
                 phone_number_id: String::new(),
                 webhook_port: default_wa_webhook_port(),
                 verify_token: default_wa_verify_token(),
+            }),
+            email: Some(EmailChannelConfig {
+                enabled: false,
+                imap_server: String::new(),
+                imap_port: default_imap_port(),
+                smtp_server: String::new(),
+                smtp_port: default_smtp_port(),
+                username: String::new(),
+                password: String::new(),
+                poll_interval_secs: default_poll_interval(),
             }),
             others: HashMap::new(),
         }
@@ -430,6 +474,7 @@ impl Default for Config {
             agents: AgentsConfig::default(),
             channels: ChannelsConfig::default(),
             mcp_servers,
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -459,6 +504,139 @@ impl Config {
         } else {
             false
         }
+    }
+
+    pub fn is_provider_available(&self, provider_name: &str) -> bool {
+        if self.is_provider_configured(provider_name) {
+            return true;
+        }
+        if provider_name == "cerebres" {
+            return std::env::var("CEREBRES_API_KEY").is_ok() || std::env::var("CEBRAS_API_KEY").is_ok();
+        }
+        let env_var = match provider_name {
+            "anthropic" => "ANTHROPIC_API_KEY",
+            "openai" => "OPENAI_API_KEY",
+            "openrouter" => "OPENROUTER_API_KEY",
+            "deepseek" => "DEEPSEEK_API_KEY",
+            "groq" => "GROQ_API_KEY",
+            "minimax" => "MINIMAX_API_KEY",
+            "mistral" => "MISTRAL_API_KEY",
+            "z.ai" => "Z_AI_API_KEY",
+            "nvidia" => "NVIDIA_API_KEY",
+            "opencode_zen" => "OPENCODE_ZEN_API_KEY",
+            "google_ai_studio" => "GOOGLE_AI_STUDIO_API_KEY",
+            _ => "",
+        };
+        if !env_var.is_empty() && std::env::var(env_var).is_ok() {
+            return true;
+        }
+        false
+    }
+
+    pub fn get_dynamic_fallbacks(&self, subagent_name: &str) -> Vec<String> {
+        let is_vision = subagent_name == "vision_agent";
+        let mut fallbacks = Vec::new();
+
+        let providers_in_order = &[
+            "google_ai_studio",
+            "anthropic",
+            "openai",
+            "deepseek",
+            "groq",
+            "nvidia",
+            "openrouter",
+            "opencode_zen",
+            "z.ai",
+            "mistral",
+            "cerebres",
+            "minimax",
+            "ollama",
+        ];
+
+        for &prov in providers_in_order {
+            if self.is_provider_available(prov) {
+                let model_name = match prov {
+                    "google_ai_studio" => {
+                        "google_ai_studio/gemini-2.5-flash".to_string()
+                    }
+                    "anthropic" => {
+                        "anthropic/claude-3-5-sonnet".to_string()
+                    }
+                    "openai" => {
+                        "openai/gpt-4o-mini".to_string()
+                    }
+                    "deepseek" => {
+                        if is_vision {
+                            continue;
+                        } else {
+                            "deepseek/deepseek-chat".to_string()
+                        }
+                    }
+                    "groq" => {
+                        if is_vision {
+                            continue;
+                        } else {
+                            "groq/llama-3.3-70b-versatile".to_string()
+                        }
+                    }
+                    "nvidia" => {
+                        if is_vision {
+                            "nvidia/meta/llama-3.2-90b-vision-instruct".to_string()
+                        } else {
+                            "nvidia/meta/llama-3.3-70b-instruct".to_string()
+                        }
+                    }
+                    "openrouter" => {
+                        if is_vision {
+                            "openrouter/google/gemini-2.0-flash-exp:free".to_string()
+                        } else {
+                            "openrouter/auto".to_string()
+                        }
+                    }
+                    "opencode_zen" => {
+                        "opencode_zen/gpt-5.5".to_string()
+                    }
+                    "z.ai" => {
+                        "z.ai/glm-4.7-flash".to_string()
+                    }
+                    "mistral" => {
+                        if is_vision {
+                            "mistral/pixtral-large-latest".to_string()
+                        } else {
+                            "mistral/mistral-large-latest".to_string()
+                        }
+                    }
+                    "cerebres" => {
+                        if is_vision {
+                            continue;
+                        } else {
+                            "cerebras/llama-3.3-70b".to_string()
+                        }
+                    }
+                    "minimax" => {
+                        if is_vision {
+                            continue;
+                        } else {
+                            "minimax/MiniMax-M3".to_string()
+                        }
+                    }
+                    "ollama" => {
+                        if is_vision {
+                            "ollama/llava".to_string()
+                        } else {
+                            "ollama/llama3".to_string()
+                        }
+                    }
+                    _ => continue,
+                };
+                
+                if !fallbacks.contains(&model_name) {
+                    fallbacks.push(model_name);
+                }
+            }
+        }
+
+        fallbacks
     }
 }
 

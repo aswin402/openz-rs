@@ -1777,36 +1777,39 @@ impl super::Channel for CliChannel {
             } else {
                 Box::pin(runner.run(trimmed, session_key))
             };
-            let esc_fut = async {
+            let shutdown_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let flag_clone = shutdown_flag.clone();
+
+            let esc_fut = tokio::task::spawn_blocking(move || {
                 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-                loop {
-                    let has_event = tokio::task::spawn_blocking(|| {
-                        event::poll(std::time::Duration::from_millis(50))
-                    }).await.unwrap_or(Ok(false)).unwrap_or(false);
-
-                    if has_event {
-                        let is_esc = tokio::task::spawn_blocking(|| {
-                            if let Ok(Event::Key(key_event)) = event::read() {
-                                key_event.kind != KeyEventKind::Release && key_event.code == KeyCode::Esc
-                            } else {
-                                false
+                while !flag_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Ok(true) = event::poll(std::time::Duration::from_millis(50)) {
+                        if let Ok(Event::Key(key_event)) = event::read() {
+                            if key_event.kind != KeyEventKind::Release && key_event.code == KeyCode::Esc {
+                                return true;
                             }
-                        }).await.unwrap_or(false);
-
-                        if is_esc {
-                            return;
                         }
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    std::thread::sleep(std::time::Duration::from_millis(10));
                 }
-            };
+                false
+            });
             
             tokio::pin!(run_fut);
             tokio::pin!(esc_fut);
             
             let run_res = tokio::select! {
-                res = &mut run_fut => Some(res),
-                _ = &mut esc_fut => None,
+                res = &mut run_fut => {
+                    shutdown_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    Some(res)
+                }
+                esc_res = &mut esc_fut => {
+                    if let Ok(true) = esc_res {
+                        None
+                    } else {
+                        None
+                    }
+                }
             };
             
             let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);

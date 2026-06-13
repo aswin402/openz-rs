@@ -12,6 +12,10 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use serde_json::Value;
 
+tokio::task_local! {
+    pub static DELEGATION_DEPTH: usize;
+}
+
 pub struct DelegateTaskTool {
     pub config: Config,
     pub parent_provider: Arc<dyn LLMProvider>,
@@ -51,6 +55,12 @@ impl Tool for DelegateTaskTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
+        let current_depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
+        if current_depth >= 3 {
+            crate::tui_println!("{}⚠️ Delegation depth limit reached ({}). Aborting nested delegate_task.{}", AURA_GOLD, current_depth, COLOR_RESET);
+            return Err(anyhow!("Delegation limit reached. Max nesting depth is 3."));
+        }
+
         let goal = arguments.get("goal").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'goal' argument"))?;
         let context = arguments.get("context").and_then(|v| v.as_str()).unwrap_or("");
@@ -113,9 +123,33 @@ impl Tool for DelegateTaskTool {
             }
         }
 
+        let parent_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let workspace_dir = match create_isolated_workspace(&parent_dir) {
+            Ok(dir) => {
+                crate::tui_println!("{}  ✓ Isolated workspace worktree created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
+                dir
+            }
+            Err(e) => {
+                crate::tui_println!("{}⚠️ Failed to create isolated workspace ({:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
+                parent_dir.clone()
+            }
+        };
+
+        let _worktree_guard = WorktreeGuard::new(parent_dir.clone(), workspace_dir.clone());
+
         crate::tui_println!("{}◎ Subagent{}", AURA_PURPLE, COLOR_RESET);
         let spinner_msg = format!("{}  Running...{}", AURA_SLATE, COLOR_RESET);
-        let run_res = with_spinner(&spinner_msg, child_agent.run(&subagent_prompt, &child_session_id)).await;
+
+        let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
+            DELEGATION_DEPTH.scope(current_depth + 1, async {
+                child_agent.run(&subagent_prompt, &child_session_id).await
+            }).await
+        });
+        let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
+        let run_res = match with_spinner(&spinner_msg, run_res_timeout).await {
+            Ok(res) => res,
+            Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
+        };
 
         if has_memory_mcp {
             if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
@@ -133,15 +167,67 @@ impl Tool for DelegateTaskTool {
             }
         }
 
-        let run_res = run_res?;
-        crate::tui_println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
+        if run_res.is_ok() && workspace_dir != parent_dir {
+            if let Err(e) = sync_changes_back(&workspace_dir, &parent_dir) {
+                crate::tui_println!("{}⚠️ Failed to sync changes back to active workspace: {}{}", AURA_GOLD, e, COLOR_RESET);
+            } else {
+                crate::tui_println!("{}  ✓ Synchronized changes back to active workspace{}", EMERALD_GREEN, COLOR_RESET);
+            }
+        }
 
-        Ok(serde_json::json!({
-            "status": "success",
-            "session_id": child_session_id,
-            "summary": run_res.content
-        }))
+        match run_res {
+            Ok(run_res) => {
+                crate::tui_println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
+                
+                // Run evolution review
+                let _ = run_evolution_review(&self.parent_provider, "subagent", goal, context, &run_res.content).await;
+
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "session_id": child_session_id,
+                    "summary": run_res.content
+                }))
+            }
+            Err(e) => {
+                crate::tui_println!("{}  ✕ Subagent execution failed: {}{}", ERROR_RED, e, COLOR_RESET);
+                Ok(serde_json::json!({
+                    "status": "error",
+                    "error": format!("Subagent execution failed: {:?}", e)
+                }))
+            }
+        }
     }
+}
+
+fn ensure_markdown_images(text: &str) -> String {
+    let re = match regex::Regex::new(r"(?i)(file://[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif)|https?://[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif)|/[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif))") {
+        Ok(r) => r,
+        Err(_) => return text.to_string(),
+    };
+    
+    let mut result = text.to_string();
+    let mut matches: Vec<_> = re.find_iter(text).collect();
+    matches.reverse();
+    
+    for mat in matches {
+        let start = mat.start();
+        let end = mat.end();
+        let matched_str = mat.as_str();
+        
+        let mut already_formatted = false;
+        if start > 0 {
+            let before = &text[..start];
+            if before.ends_with('(') || before.ends_with("](") {
+                already_formatted = true;
+            }
+        }
+        
+        if !already_formatted {
+            let replacement = format!("![]({})", matched_str);
+            result.replace_range(start..end, &replacement);
+        }
+    }
+    result
 }
 
 pub struct DelegateProfileTool {
@@ -180,14 +266,38 @@ impl Tool for DelegateProfileTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
+        let current_depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
+        if current_depth >= 3 {
+            crate::tui_println!("{}⚠️ Delegation depth limit reached ({}). Aborting nested subagent '{}'.{}", AURA_GOLD, current_depth, self.profile.name, COLOR_RESET);
+            return Err(anyhow!("Delegation limit reached. Max nesting depth is 3."));
+        }
+
         let goal = arguments.get("goal").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'goal' argument"))?;
         let context = arguments.get("context").and_then(|v| v.as_str()).unwrap_or("");
 
-        let mut models_to_try = vec![self.profile.model.clone()];
-        for fallback in &self.profile.fallbacks {
-            if !fallback.trim().is_empty() {
-                models_to_try.push(fallback.trim().to_string());
+        let clean_goal = ensure_markdown_images(goal);
+        let clean_context = ensure_markdown_images(context);
+
+        let mut models_to_try = Vec::new();
+        if let Some(m) = &self.profile.model {
+            models_to_try.push(m.clone());
+        } else {
+            models_to_try.push(self.config.agents.defaults.model.clone());
+        }
+
+        if let Some(fallbacks) = &self.profile.fallbacks {
+            for fallback in fallbacks {
+                if !fallback.trim().is_empty() {
+                    models_to_try.push(fallback.trim().to_string());
+                }
+            }
+        } else {
+            let dynamic_fallbacks = self.config.get_dynamic_fallbacks(&self.profile.name);
+            for fallback in dynamic_fallbacks {
+                if !models_to_try.contains(&fallback) {
+                    models_to_try.push(fallback);
+                }
             }
         }
 
@@ -203,11 +313,33 @@ impl Tool for DelegateProfileTool {
             TASK:\n{}\n\n\
             CONTEXT:\n{}\n\n\
             When finished, provide a clear, concise summary of what you did and found.",
-            self.profile.system_prompt, goal, context
+            self.profile.system_prompt, clean_goal, clean_context
         );
 
+        let is_vision_profile = self.profile.name == "vision_agent";
         let mut last_error = None;
+
+        let parent_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let workspace_dir = match create_isolated_workspace(&parent_dir) {
+            Ok(dir) => {
+                crate::tui_println!("{}  ✓ Isolated workspace worktree created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
+                dir
+            }
+            Err(e) => {
+                crate::tui_println!("{}⚠️ Failed to create isolated workspace ({:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
+                parent_dir.clone()
+            }
+        };
+
+        let _worktree_guard = WorktreeGuard::new(parent_dir.clone(), workspace_dir.clone());
+
         for (idx, model_name) in models_to_try.iter().enumerate() {
+            // For vision_agent, skip models that don't support vision to avoid wasting fallbacks
+            if is_vision_profile && !crate::providers::model_supports_vision(model_name) {
+                crate::tui_println!("{}▲ Skipping non-vision model '{}' for vision task{}", AURA_GOLD, model_name, COLOR_RESET);
+                continue;
+            }
+
             if idx > 0 {
                 crate::tui_println!("{}▲ Primary model failed. Trying fallback model ({} of {}): {}{}", AURA_GOLD, idx, models_to_try.len() - 1, model_name, COLOR_RESET);
             }
@@ -262,7 +394,19 @@ impl Tool for DelegateProfileTool {
                     }
                 }
 
-                match with_spinner(&spinner_msg, child_agent.run(&subagent_prompt, &child_session_id)).await {
+                let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
+                    DELEGATION_DEPTH.scope(current_depth + 1, async {
+                        child_agent.run(&subagent_prompt, &child_session_id).await
+                    }).await
+                });
+
+                let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
+                let run_res = match with_spinner(&spinner_msg, run_res_timeout).await {
+                    Ok(res) => res,
+                    Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
+                };
+
+                match run_res {
                     Ok(run_res) => {
                         if has_memory_mcp {
                             if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
@@ -273,6 +417,14 @@ impl Tool for DelegateProfileTool {
                             }
                         }
                         crate::tui_println!("{}✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
+                        
+                        if workspace_dir != parent_dir {
+                            let _ = sync_changes_back(&workspace_dir, &parent_dir);
+                        }
+
+                        // Run evolution review
+                        let _ = run_evolution_review(&self.parent_provider, &self.profile.name, &clean_goal, &clean_context, &run_res.content).await;
+
                         return Ok(serde_json::json!({
                             "status": "success",
                             "session_id": child_session_id,
@@ -320,7 +472,19 @@ impl Tool for DelegateProfileTool {
                     }
                 }
 
-                match with_spinner(&spinner_msg, child_agent.run(&subagent_prompt, &child_session_id)).await {
+                let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
+                    DELEGATION_DEPTH.scope(current_depth + 1, async {
+                        child_agent.run(&subagent_prompt, &child_session_id).await
+                    }).await
+                });
+
+                let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
+                let run_res = match with_spinner(&spinner_msg, run_res_timeout).await {
+                    Ok(res) => res,
+                    Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
+                };
+
+                match run_res {
                     Ok(run_res) => {
                         if has_memory_mcp {
                             if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
@@ -331,6 +495,14 @@ impl Tool for DelegateProfileTool {
                             }
                         }
                         crate::tui_println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
+                        
+                        if workspace_dir != parent_dir {
+                            let _ = sync_changes_back(&workspace_dir, &parent_dir);
+                        }
+
+                        // Run evolution review
+                        let _ = run_evolution_review(&self.parent_provider, &self.profile.name, &clean_goal, &clean_context, &run_res.content).await;
+
                         return Ok(serde_json::json!({
                             "status": "success",
                             "session_id": child_session_id,
@@ -354,7 +526,13 @@ impl Tool for DelegateProfileTool {
             }
         }
 
-        Err(anyhow!("All configured models/fallbacks failed for subagent '{}'. Last error: {:?}", self.profile.name, last_error))
+
+
+        let err_msg = format!("All configured models/fallbacks failed for subagent '{}'. Last error: {:?}", self.profile.name, last_error);
+        Ok(serde_json::json!({
+            "status": "error",
+            "error": err_msg
+        }))
     }
 }
 
@@ -432,7 +610,7 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
                 "nvidia" => config.providers.nvidia.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("NVIDIA_API_KEY").is_ok(),
                 "minimax" => config.providers.minimax.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("MINIMAX_API_KEY").is_ok(),
                 "mistral" => config.providers.mistral.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("MISTRAL_API_KEY").is_ok(),
-                "cerebres" => config.providers.cerebres.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("CEREBRES_API_KEY").is_ok(),
+                "cerebres" => config.providers.cerebres.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("CEREBRES_API_KEY").is_ok() || std::env::var("CEBRAS_API_KEY").is_ok(),
                 _ => false,
             }
         };
@@ -627,6 +805,7 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
             let p = config.providers.cerebres.as_ref();
             let key = p.and_then(|x| x.api_key.clone())
                 .or_else(|| std::env::var("CEREBRES_API_KEY").ok())
+                .or_else(|| std::env::var("CEBRAS_API_KEY").ok())
                 .unwrap_or_default();
             let base = p.and_then(|x| x.api_base.clone())
                 .unwrap_or_else(|| "https://api.cerebras.ai/v1".to_string());
@@ -646,12 +825,55 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
         }
     };
 
-    if provider_name != "ollama" && api_key.is_empty() {
-        return Err(anyhow!("No API key configured for provider: {}", provider_name));
+    let mut final_provider_name = provider_name.clone();
+    let mut final_api_key = api_key;
+    let mut final_api_base = api_base;
+    let mut final_model = clean_model.to_string();
+
+    if final_provider_name != "ollama" && final_api_key.is_empty() {
+        let has_openrouter = config.providers.openrouter.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENROUTER_API_KEY").is_ok();
+        let has_opencode_zen = config.providers.opencode_zen.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENCODE_ZEN_API_KEY").is_ok();
+
+        if has_openrouter {
+            let p = config.providers.openrouter.as_ref();
+            final_api_key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+                .unwrap_or_default();
+            final_api_base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
+            final_provider_name = "openrouter".to_string();
+            final_model = if clean_model.contains('/') {
+                clean_model.to_string()
+            } else {
+                format!("{}/{}", provider_name, clean_model)
+            };
+        } else if has_opencode_zen {
+            let p = config.providers.opencode_zen.as_ref();
+            final_api_key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("OPENCODE_ZEN_API_KEY").ok())
+                .unwrap_or_default();
+            final_api_base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://opencode.ai/zen/v1".to_string());
+            final_provider_name = "opencode_zen".to_string();
+            final_model = if clean_model.contains('/') {
+                clean_model.to_string()
+            } else {
+                format!("{}/{}", provider_name, clean_model)
+            };
+        } else {
+            return Err(anyhow!("No API key configured for provider: {}", provider_name));
+        }
     }
 
-    let mut clean_model_str = clean_model.to_string();
-    if provider_name == "google_ai_studio" || provider_name == "google ai studio" {
+    let mut clean_model_str = final_model;
+    if final_provider_name == "nvidia" {
+        if clean_model_str.ends_with(":free") {
+            clean_model_str = clean_model_str[..clean_model_str.len() - 5].to_string();
+        }
+        if !clean_model_str.contains('/') {
+            clean_model_str = format!("nvidia/{}", clean_model_str);
+        }
+    } else if final_provider_name == "google_ai_studio" || final_provider_name == "google ai studio" {
         if clean_model_str.starts_with("google/") {
             clean_model_str = clean_model_str["google/".len()..].to_string();
         } else if clean_model_str.starts_with("models/") {
@@ -659,10 +881,10 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
         }
     }
 
-    let provider: Arc<dyn LLMProvider> = if provider_name == "anthropic" {
-        Arc::new(AnthropicProvider::new(api_key, api_base, clean_model_str))
+    let provider: Arc<dyn LLMProvider> = if final_provider_name == "anthropic" {
+        Arc::new(AnthropicProvider::new(final_api_key, final_api_base, clean_model_str))
     } else {
-        Arc::new(OpenAIProvider::new(api_key, api_base, clean_model_str))
+        Arc::new(OpenAIProvider::new(final_api_key, final_api_base, clean_model_str))
     };
 
     Ok(provider)
@@ -819,8 +1041,7 @@ impl Tool for CreateSubagentTool {
             .ok_or_else(|| anyhow!("Missing 'description' argument"))?.trim().to_string();
         let system_prompt = arguments.get("system_prompt").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'system_prompt' argument"))?.trim().to_string();
-        let default_model = self.config.agents.defaults.model.clone();
-        let model = arguments.get("model").and_then(|v| v.as_str()).unwrap_or(&default_model).trim().to_string();
+        let model = arguments.get("model").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
 
         let mut fallbacks = Vec::new();
         if let Some(arr) = arguments.get("fallbacks").and_then(|v| v.as_array()) {
@@ -833,9 +1054,11 @@ impl Tool for CreateSubagentTool {
                 }
             }
         }
-        if fallbacks.is_empty() {
-            fallbacks = vec!["gpt-4o".to_string(), "claude-3-5-haiku".to_string()];
-        }
+        let fallbacks_opt = if fallbacks.is_empty() {
+            None
+        } else {
+            Some(fallbacks)
+        };
 
         // Validate name format: starts with a letter, lowercase alphanumeric and underscore only
         if name.is_empty() || !name.chars().next().unwrap().is_ascii_alphabetic() || name.chars().any(|c| !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '_') {
@@ -854,7 +1077,8 @@ impl Tool for CreateSubagentTool {
             description,
             system_prompt,
             model,
-            fallbacks,
+            fallbacks: fallbacks_opt,
+            extra: serde_json::Map::new(),
         };
 
         if let Some(pos) = profiles.iter().position(|p| p.name == name) {
@@ -947,4 +1171,697 @@ fn format_subagent_name(name: &str) -> String {
         }
     }
 }
+
+pub struct ParallelResearchTool {
+    pub config: Config,
+    pub parent_provider: Arc<dyn LLMProvider>,
+    pub session_manager: SessionManager,
+    pub parent_tools: Vec<Arc<dyn Tool>>,
+}
+
+const READ_ONLY_TOOLS: &[&str] = &[
+    "read_file",
+    "find_files",
+    "doc_reader",
+    "semantic_search",
+    "rust_docs",
+    "list_dir",
+    "web_fetch",
+    "grep_search",
+    "code_outline",
+    "web_search",
+    "db_inspector",
+    "system_info",
+    "check_port",
+    "ast_grep",
+    "crawl",
+    "obscura",
+    "recall_memory",
+];
+
+#[async_trait::async_trait]
+impl Tool for ParallelResearchTool {
+    fn name(&self) -> &str {
+        "parallel_research"
+    }
+
+    fn description(&self) -> &str {
+        "Run multiple independent research or analysis tasks concurrently in parallel using focused read-only subagents, and return their combined summaries. Use this when you have independent files/topics/searches to analyze simultaneously."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "goal": {
+                                "type": "string",
+                                "description": "The specific research task/question for the subagent to answer. Be precise."
+                            },
+                            "context": {
+                                "type": "string",
+                                "description": "Any additional context needed specifically for this task."
+                            },
+                            "model": {
+                                "type": "string",
+                                "description": "Optional model override name (e.g., 'gpt-4o-mini', 'claude-3-5-haiku') for the subagent."
+                            }
+                        },
+                        "required": ["goal"]
+                    },
+                    "description": "List of independent research/analysis tasks to execute concurrently."
+                }
+            },
+            "required": ["tasks"]
+        })
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let tasks_val = arguments.get("tasks").and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow!("Missing or invalid 'tasks' argument"))?;
+
+        if tasks_val.is_empty() {
+            return Err(anyhow!("The 'tasks' array cannot be empty"));
+        }
+
+        crate::tui_println!("{}◎ Parallel Research: Spawning {} subagents concurrently...{}", AURA_PURPLE, tasks_val.len(), COLOR_RESET);
+
+        let mut join_handles = Vec::new();
+
+        for task_val in tasks_val {
+            let goal = match task_val.get("goal").and_then(|v| v.as_str()) {
+                Some(g) => g.to_string(),
+                None => continue,
+            };
+            let context = task_val.get("context").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let model_override = task_val.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+            let config = self.config.clone();
+            let parent_provider = self.parent_provider.clone();
+            let session_manager = self.session_manager.clone();
+
+            let mut read_only_parent_tools = Vec::new();
+            for tool in &self.parent_tools {
+                if READ_ONLY_TOOLS.contains(&tool.name()) {
+                    read_only_parent_tools.push(tool.clone());
+                }
+            }
+
+            let handle = tokio::spawn(crate::agent::style::spinner::IS_SILENT.scope(true, async move {
+                let provider = if let Some(ref m) = model_override {
+                    match build_provider_for_model(&config, m) {
+                        Ok(p) => p,
+                        Err(_) => parent_provider.clone()
+                    }
+                } else {
+                    parent_provider.clone()
+                };
+
+                let mut child_registry = ToolRegistry::new_with_context(
+                    config.clone(),
+                    provider.clone(),
+                    session_manager.clone(),
+                );
+                for tool in read_only_parent_tools {
+                    child_registry.register(tool);
+                }
+
+                let child_session_id = format!("subagent:parallel:{}", &uuid::Uuid::new_v4().to_string()[..8]);
+                let child_agent = AgentLoop::new(
+                    config,
+                    provider,
+                    child_registry,
+                    session_manager,
+                );
+
+                let subagent_prompt = format!(
+                    "You are a focused research subagent. Complete the following task using the read-only tools available.\n\n\
+                    TASK:\n{}\n\n\
+                    CONTEXT:\n{}\n\n\
+                    When finished, provide a clear, concise summary of what you did and found.",
+                    goal, context
+                );
+
+                let run_res = child_agent.run(&subagent_prompt, &child_session_id).await;
+                (goal, run_res)
+            }));
+            join_handles.push(handle);
+        }
+
+        let join_results = futures_util::future::join_all(join_handles).await;
+        let mut results = Vec::new();
+
+        for res in join_results {
+            match res {
+                Ok((goal, Ok(run_res))) => {
+                    results.push(serde_json::json!({
+                        "task": goal,
+                        "status": "success",
+                        "summary": run_res.content
+                    }));
+                }
+                Ok((goal, Err(e))) => {
+                    results.push(serde_json::json!({
+                        "task": goal,
+                        "status": "error",
+                        "error": format!("{:?}", e)
+                    }));
+                }
+                Err(e) => {
+                    results.push(serde_json::json!({
+                        "status": "error",
+                        "error": format!("Task join failed: {:?}", e)
+                    }));
+                }
+            }
+        }
+
+        Ok(serde_json::json!({
+            "status": "success",
+            "results": results
+        }))
+    }
+}
+
+pub struct WorktreeGuard {
+    pub parent_dir: std::path::PathBuf,
+    pub worktree_dir: std::path::PathBuf,
+    pub active: bool,
+}
+
+impl WorktreeGuard {
+    pub fn new(parent_dir: std::path::PathBuf, worktree_dir: std::path::PathBuf) -> Self {
+        Self {
+            parent_dir,
+            worktree_dir,
+            active: true,
+        }
+    }
+
+    pub fn deactivate(&mut self) {
+        self.active = false;
+    }
+}
+
+impl Drop for WorktreeGuard {
+    fn drop(&mut self) {
+        if self.active && self.worktree_dir != self.parent_dir {
+            cleanup_isolated_workspace(&self.parent_dir, &self.worktree_dir);
+        }
+    }
+}
+
+fn dir_size(path: &std::path::Path) -> u64 {
+    if !path.exists() {
+        return 0;
+    }
+    if path.is_file() {
+        return path.metadata().map(|m| m.len()).unwrap_or(0);
+    }
+    let mut size = 0;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            size += dir_size(&entry.path());
+        }
+    }
+    size
+}
+
+fn enforce_disk_quota() {
+    let worktrees_dir = crate::config::resolve_path("~/.openz/worktrees");
+    if !worktrees_dir.exists() || !worktrees_dir.is_dir() {
+        return;
+    }
+
+    let quota: u64 = 5 * 1024 * 1024 * 1024; // 5 GB
+    let mut total_size = dir_size(&worktrees_dir);
+    if total_size <= quota {
+        return;
+    }
+
+    let mut worktrees = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&worktrees_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name.starts_with("openz_worktree_") {
+                    if let Ok(metadata) = std::fs::metadata(&path) {
+                        if let Ok(modified) = metadata.modified() {
+                            worktrees.push((path, modified));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    worktrees.sort_by(|a, b| a.1.cmp(&b.1));
+
+    for (path, _) in worktrees {
+        if total_size <= quota {
+            break;
+        }
+        let size = dir_size(&path);
+        if std::fs::remove_dir_all(&path).is_ok() {
+            total_size = total_size.saturating_sub(size);
+        }
+    }
+}
+
+pub fn cleanup_stale_resources() {
+    // 1. Run git worktree prune in current directory if it's a git repo
+    let parent_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let git_check = std::process::Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(&parent_dir)
+        .output();
+    if let Ok(out) = git_check {
+        if out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "true" {
+            let _ = std::process::Command::new("git")
+                .args(["worktree", "prune"])
+                .current_dir(&parent_dir)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+
+    let ttl_seconds = 3600; // 1 hour TTL for active worktrees
+
+    // 2. Clean dedicated directory (~/.openz/worktrees)
+    let worktrees_dir = crate::config::resolve_path("~/.openz/worktrees");
+    if worktrees_dir.exists() && worktrees_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&worktrees_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if name.starts_with("openz_worktree_") {
+                        if is_older_than(&path, ttl_seconds) {
+                            let _ = std::fs::remove_dir_all(&path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Clean legacy /tmp/openz_worktree_* directories
+    let tmp_dir = std::env::temp_dir();
+    if let Ok(entries) = std::fs::read_dir(&tmp_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name.starts_with("openz_worktree_") {
+                    if is_older_than(&path, ttl_seconds) {
+                        let _ = std::fs::remove_dir_all(&path);
+                    }
+                }
+            }
+        }
+    }
+
+    let seven_days_in_seconds = 7 * 24 * 3600;
+
+    // 4. Clean tool_outputs (~/.openz/tool_outputs)
+    let tool_outputs_dir = crate::config::resolve_path("~/.openz/tool_outputs");
+    if tool_outputs_dir.exists() && tool_outputs_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&tool_outputs_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if is_older_than(&path, seven_days_in_seconds) {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. Clean traces (~/.openz/traces)
+    let traces_dir = crate::config::resolve_path("~/.openz/traces");
+    if traces_dir.exists() && traces_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&traces_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if is_older_than(&path, seven_days_in_seconds) {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            }
+        }
+    }
+
+    // 6. Clean cron_logs (~/.openz/cron_logs)
+    let cron_logs_dir = crate::config::resolve_path("~/.openz/cron_logs");
+    if cron_logs_dir.exists() && cron_logs_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&cron_logs_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if is_older_than(&path, seven_days_in_seconds) {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn is_older_than(path: &std::path::Path, seconds: u64) -> bool {
+    if let Ok(metadata) = std::fs::metadata(path) {
+        if let Ok(modified) = metadata.modified() {
+            if let Ok(elapsed) = modified.elapsed() {
+                return elapsed.as_secs() > seconds;
+            }
+        }
+    }
+    false
+}
+
+fn create_isolated_workspace(parent_dir: &std::path::Path) -> Result<std::path::PathBuf> {
+    enforce_disk_quota();
+
+    let worktrees_dir = crate::config::resolve_path("~/.openz/worktrees");
+    if !worktrees_dir.exists() {
+        let _ = std::fs::create_dir_all(&worktrees_dir);
+    }
+    let temp_dir = worktrees_dir.join(format!("openz_worktree_{}", &uuid::Uuid::new_v4().to_string()[..8]));
+
+    // 1. Check if parent_dir is a git repository
+    let git_check = std::process::Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(parent_dir)
+        .output();
+
+    let is_git = match git_check {
+        Ok(out) => out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "true",
+        Err(_) => false,
+    };
+
+    if is_git {
+        // 2. Create git worktree
+        let worktree_add = std::process::Command::new("git")
+            .args(["worktree", "add", "--detach", temp_dir.to_str().unwrap()])
+            .current_dir(parent_dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+
+        match worktree_add {
+            Ok(status) if status.success() => {
+                // 3. Sync uncommitted changes (modified, added, deleted, untracked files)
+                if let Ok(status_out) = std::process::Command::new("git")
+                    .args(["status", "--porcelain"])
+                    .current_dir(parent_dir)
+                    .output()
+                {
+                    let stdout = String::from_utf8_lossy(&status_out.stdout);
+                    for line in stdout.lines() {
+                        if line.len() < 4 {
+                            continue;
+                        }
+                        let status_code = &line[..2];
+                        let file_path_str = &line[3..];
+                        
+                        let file_path = if status_code.starts_with('R') {
+                            if let Some(pos) = file_path_str.find(" -> ") {
+                                &file_path_str[pos + 4..]
+                            } else {
+                                file_path_str
+                            }
+                        } else {
+                            file_path_str
+                        };
+
+                        let src = parent_dir.join(file_path);
+                        let dst = temp_dir.join(file_path);
+
+                        if status_code.contains('D') {
+                            let _ = std::fs::remove_file(&dst);
+                        } else {
+                            if src.exists() {
+                                if let Some(parent) = dst.parent() {
+                                    let _ = std::fs::create_dir_all(parent);
+                                }
+                                let _ = std::fs::copy(&src, &dst);
+                            }
+                        }
+                    }
+                }
+                return Ok(temp_dir);
+            }
+            _ => {
+                // If git worktree add fails, fallback to recursive copy
+            }
+        }
+    }
+
+    // Fallback: Copy workspace files recursively (skipping heavy dirs)
+    std::fs::create_dir_all(&temp_dir)?;
+    copy_dir_recursive_filtered(parent_dir, &temp_dir)?;
+    Ok(temp_dir)
+}
+
+fn copy_dir_recursive_filtered(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
+    if !src.exists() {
+        return Ok(());
+    }
+
+    if src.is_dir() {
+        let name = src.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name == "target" || name == "node_modules" || name == ".git" || name == ".fastembed_cache" || name == ".sediment" || name == "logs" {
+            return Ok(());
+        }
+
+        std::fs::create_dir_all(dst)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            let entry_path = entry.path();
+            let entry_name = entry_path.file_name().unwrap();
+            copy_dir_recursive_filtered(&entry_path, &dst.join(entry_name))?;
+        }
+    } else {
+        std::fs::copy(src, dst)?;
+    }
+    Ok(())
+}
+
+fn cleanup_isolated_workspace(parent_dir: &std::path::Path, worktree_dir: &std::path::Path) {
+    let git_check = std::process::Command::new("git")
+        .args(["worktree", "list"])
+        .current_dir(parent_dir)
+        .output();
+
+    let is_worktree = match git_check {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            stdout.contains(worktree_dir.to_str().unwrap_or("____invalid____"))
+        }
+        Err(_) => false,
+    };
+
+    if is_worktree {
+        let _ = std::process::Command::new("git")
+            .args(["worktree", "remove", "--force", worktree_dir.to_str().unwrap()])
+            .current_dir(parent_dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        
+        let _ = std::process::Command::new("git")
+            .args(["worktree", "prune"])
+            .current_dir(parent_dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    } else {
+        let _ = std::fs::remove_dir_all(worktree_dir);
+    }
+}
+
+fn sync_changes_back(src_dir: &std::path::Path, dst_dir: &std::path::Path) -> Result<()> {
+    let git_check = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(src_dir)
+        .output();
+
+    if let Ok(status_out) = git_check {
+        let stdout = String::from_utf8_lossy(&status_out.stdout);
+        for line in stdout.lines() {
+            if line.len() < 4 {
+                continue;
+            }
+            let status_code = &line[..2];
+            let file_path_str = &line[3..];
+            
+            let file_path = if status_code.starts_with('R') {
+                if let Some(pos) = file_path_str.find(" -> ") {
+                    &file_path_str[pos + 4..]
+                } else {
+                    file_path_str
+                }
+            } else {
+                file_path_str
+            };
+
+            let src = src_dir.join(file_path);
+            let dst = dst_dir.join(file_path);
+
+            if status_code.contains('D') {
+                let _ = std::fs::remove_file(&dst);
+            } else {
+                if src.exists() {
+                    if let Some(parent) = dst.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::copy(&src, &dst);
+                }
+            }
+        }
+    } else {
+        copy_dir_recursive_filtered(src_dir, dst_dir)?;
+    }
+    Ok(())
+}
+
+async fn run_evolution_review(
+    provider: &std::sync::Arc<dyn LLMProvider>,
+    profile_name: &str,
+    goal: &str,
+    context: &str,
+    summary: &str,
+) -> Result<()> {
+    let system_prompt = "You are a specialized Subagent Reviewer. Your task is to evaluate if a subagent successfully completed its task, and if so, extract any procedural skills or guidelines discovered during execution.\n\n\
+        Review the subagent's goal, the context, and the summary of what it did and found.\n\n\
+        Perform two tasks:\n\
+        1. SUCCESS EVALUATION: Decide if the subagent succeeded in accomplishing the goal (true or false).\n\
+        2. SKILL EXTRACTION: If the subagent succeeded, extract any reusable procedural guidelines, rules, tool usage lessons, or coding patterns it discovered. Avoid general descriptions; make them actionable instructions for future runs. Format the extracted guidelines in Markdown with a clear title (# Skill: ...), a description of when to use it, specific guidelines, and examples.\n\n\
+        Provide your response as a raw JSON object with the following structure:\n\n\
+        JSON Format:\n\
+        {\n\
+          \"success\": true,\n\
+          \"skill_name\": \"cargo_check_workaround\",\n\
+          \"skill_content\": \"# Skill: Cargo Check Workaround\\n\\nWhen cargo check fails with X, do Y...\"\n\
+        }\n\n\
+        Do not output any introductory or conversational text, only the raw JSON.";
+
+    let user_prompt = format!(
+        "Subagent Profile: {}\n\
+         Goal: {}\n\
+         Context: {}\n\
+         Subagent Summary of Work:\n{}\n\n\
+         Please review the above execution, evaluate success, and extract any reusable skills.",
+         profile_name, goal, context, summary
+    );
+
+    let messages = vec![crate::session::Message {
+        role: "user".to_string(),
+        content: user_prompt,
+        timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        extra: serde_json::Map::new(),
+    }];
+
+    let settings = crate::providers::GenerationSettings {
+        temperature: 0.1,
+        max_tokens: 1536,
+        reasoning_effort: None,
+    };
+
+    let spinner_msg = format!("{}◇ [Evolution] Evaluating subagent success & extracting skills...{}", AURA_PURPLE, COLOR_RESET);
+    let resp = with_spinner(&spinner_msg, provider.chat(system_prompt, &messages, &[], &settings)).await?;
+    let content = resp.content.ok_or_else(|| anyhow!("No content returned from AI"))?;
+
+    // Parse JSON
+    let mut clean_json = content.trim();
+    if clean_json.starts_with("```json") {
+        clean_json = clean_json.strip_prefix("```json").unwrap();
+    } else if clean_json.starts_with("```") {
+        clean_json = clean_json.strip_prefix("```").unwrap();
+    }
+    if clean_json.ends_with("```") {
+        clean_json = clean_suffix_ticks(clean_json);
+    }
+    let clean_json = clean_json.trim();
+
+    #[derive(serde::Deserialize)]
+    struct ReviewRes {
+        success: bool,
+        skill_name: String,
+        skill_content: String,
+    }
+
+    if let Ok(review) = serde_json::from_str::<ReviewRes>(clean_json) {
+        if review.success {
+            let s_name = review.skill_name.trim().to_lowercase().replace(' ', "_");
+            let s_content = review.skill_content.trim();
+            if !s_name.is_empty() && !s_content.is_empty() {
+                crate::agent::skills::save_subagent_skill(profile_name, &s_name, s_content)?;
+                crate::tui_println!(
+                    "{}✓ [Evolution] Extracted and saved skill '{}' for subagent '{}'{}",
+                    EMERALD_GREEN, s_name, profile_name, COLOR_RESET
+                );
+            }
+        } else {
+            crate::tui_println!(
+                "{}▲ [Evolution] Subagent task evaluation: Unsuccessful. No skill files updated.{}",
+                AURA_GOLD, COLOR_RESET
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn clean_suffix_ticks(s: &str) -> &str {
+    if s.ends_with("```") {
+        &s[..s.len() - 3]
+    } else {
+        s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::schema::Config;
+    use crate::session::SessionManager;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_delegation_depth_limit() {
+        let tool = DelegateTaskTool {
+            config: Config::default(),
+            parent_provider: Arc::new(crate::providers::openai::OpenAIProvider::new(
+                "mock_key".to_string(),
+                "mock_base".to_string(),
+                "gpt-4o-mini".to_string(),
+            )),
+            session_manager: SessionManager::new(std::env::temp_dir()),
+            parent_tools: Vec::new(),
+        };
+
+        // If DELEGATION_DEPTH is 3, calling the tool should return an error immediately
+        let res = DELEGATION_DEPTH.scope(3, async {
+            tool.call(&serde_json::json!({
+                "goal": "Test nested delegation safety"
+            })).await
+        }).await;
+
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("Delegation limit reached"));
+    }
+}
+
 

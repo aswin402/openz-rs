@@ -92,7 +92,7 @@ impl AgentLoop {
                     session = self.session_manager.get_or_create(session_key);
                     session.add_message("user", user_content);
 
-                    let parts = crate::providers::parse_multimodal_content(user_content);
+                    let parts = crate::providers::parse_multimodal_content(user_content).await;
                     let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
                     let supports_vision = crate::providers::model_supports_vision(&self.config.agents.defaults.model);
                     let silent = crate::agent::style::spinner::is_silent();
@@ -223,7 +223,7 @@ impl AgentLoop {
                         if let Some(cmd) = parts.first() {
                             match *cmd {
                                 "/help" => {
-                                    final_content = "OpenZ Rebranded AI Agent Command Menu:\n/help - Show this menu\n/history - Show history\n/clear - Reset session history\n/status - Print active model and configuration info\n/memory - Show or manage agent memory (/memory, /memory clear, /memory add <fact>)\n/skills - List active skills (/skills, /skills clear)\n/skill - Manage skills (/skill view <name>, /skill add <name> <content>, /skill delete <name>)\n/delegate <goal> - Directly delegate a task to a focused subagent".to_string();
+                                    final_content = "OpenZ Rebranded AI Agent Command Menu:\n/help - Show this menu\n/history - Show history\n/clear - Reset session history\n/status - Print active model and configuration info\n/memory - Show or manage agent memory (/memory, /memory clear, /memory add <fact>)\n/skills - List active skills (/skills, /skills clear)\n/skill - Manage skills (/skill view <name>, /skill add <name> <content>, /skill delete <name>)\n/audit - Cryptographically verify session message chain integrity\n/delegate <goal> - Directly delegate a task to a focused subagent".to_string();
                                     state = TurnState::Done;
                                     continue;
                                 }
@@ -251,6 +251,29 @@ impl AgentLoop {
                                         self.config.agents.defaults.workspace,
                                         session.messages.len()
                                     );
+                                    state = TurnState::Done;
+                                    continue;
+                                }
+                                "/audit" => {
+                                    match session.verify_hash_chain() {
+                                        Ok(_) => {
+                                            let mut output = format!("✅ MERKLE AUDIT PASS: Chain integrity verified successfully.\n\n");
+                                            output.push_str("Index | Role | Timestamp | Merkle Block Hash\n");
+                                            output.push_str("------|------|-----------|-------------------\n");
+                                            for (i, msg) in session.messages.iter().enumerate() {
+                                                let hash = msg.get_hash().unwrap_or("None");
+                                                let ts = msg.timestamp.as_deref().unwrap_or("N/A");
+                                                output.push_str(&format!(
+                                                    "{:5} | {:4} | {} | {}\n",
+                                                    i, msg.role, ts, hash
+                                                ));
+                                            }
+                                            final_content = output;
+                                        }
+                                        Err(e) => {
+                                            final_content = format!("❌ MERKLE AUDIT FAIL: Chain integrity compromised!\nError: {}", e);
+                                        }
+                                    }
                                     state = TurnState::Done;
                                     continue;
                                 }
@@ -382,7 +405,7 @@ impl AgentLoop {
                                         let goal = parts[1..].join(" ");
                                         let parent_tools = self.tools.get_static_tools()
                                             .into_iter()
-                                            .filter(|t| t.name() != "delegate_task")
+                                            .filter(|t| t.name() != "delegate_task" && t.name() != "parallel_research")
                                             .collect();
                                         let delegate_tool: std::sync::Arc<dyn crate::tools::Tool> = std::sync::Arc::new(DelegateTaskTool {
                                             config: self.config.clone(),
@@ -430,8 +453,14 @@ impl AgentLoop {
                             memory_part = format!("\n\nHere is the long-term memory of key facts, preferences, and decisions from this session:\n{}\n", memory);
                         }
                     }
+                    let mut profile_name = None;
+                    let parts: Vec<&str> = session_key.split(':').collect();
+                    if parts.len() >= 2 && parts[0] == "subagent" {
+                        profile_name = Some(parts[1]);
+                    }
+
                     let mut skills_part = String::new();
-                    if let Ok(skills) = crate::agent::skills::load_relevant_skills(user_content, &session.messages) {
+                    if let Ok(skills) = crate::agent::skills::load_relevant_skills_with_profile(user_content, &session.messages, profile_name) {
                         if !skills.is_empty() {
                             skills_part = "\n\nHere are the active guidelines and procedural skills you should follow:\n".to_string();
                             for skill in skills {
@@ -777,6 +806,9 @@ impl AgentLoop {
                 }
                 TurnState::Save => {
                     self.session_manager.save(&session)?;
+                    if let Err(e) = crate::tools::onpkg::sync_onpkg_manifest() {
+                        tracing::warn!("Failed to synchronize onpkg manifest: {}", e);
+                    }
                     state = TurnState::Respond;
                 }
                 TurnState::Respond => {
@@ -817,6 +849,9 @@ impl AgentLoop {
             tokio::spawn(async move {
                 // Run background skill archiving check
                 let _ = crate::agent::skills::archive_stale_skills();
+
+                // Run shared memory consolidation
+                let _ = crate::tools::shared_memory::consolidate_shared_memory(&provider).await;
 
                 #[derive(Deserialize)]
                 struct ReviewSkill {

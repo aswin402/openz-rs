@@ -3,16 +3,46 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
 
+tokio::task_local! {
+    pub static ACTIVE_WORKSPACE: PathBuf;
+}
+
 pub fn resolve_path(path_str: &str) -> PathBuf {
-    if path_str.starts_with("~/") || path_str == "~" {
+    let base = ACTIVE_WORKSPACE.try_with(|w| w.clone()).ok();
+    
+    let path = if path_str.starts_with("~/") || path_str == "~" {
         if let Some(home) = dirs::home_dir() {
             if path_str == "~" {
-                return home;
+                home
+            } else {
+                home.join(&path_str[2..])
             }
-            return home.join(&path_str[2..]);
+        } else {
+            PathBuf::from(path_str)
         }
+    } else {
+        PathBuf::from(path_str)
+    };
+
+    if path.is_absolute() {
+        path
+    } else if let Some(b) = base {
+        b.join(path)
+    } else {
+        path
     }
-    PathBuf::from(path_str)
+}
+
+pub fn set_command_cwd(cmd: &mut std::process::Command) {
+    if let Some(dir) = ACTIVE_WORKSPACE.try_with(|w| w.clone()).ok() {
+        cmd.current_dir(dir);
+    }
+}
+
+pub fn set_tokio_command_cwd(cmd: &mut tokio::process::Command) {
+    if let Some(dir) = ACTIVE_WORKSPACE.try_with(|w| w.clone()).ok() {
+        cmd.current_dir(dir);
+    }
 }
 
 pub fn config_dir() -> PathBuf {
@@ -38,8 +68,20 @@ pub fn load_config() -> Result<Config> {
     let content = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read config file at {:?}", path))?;
     
-    let mut config: Config = serde_json::from_str(&content)
-        .with_context(|| format!("Failed to parse config file at {:?}", path))?;
+    let mut config: Config = match serde_json::from_str(&content) {
+        Ok(c) => c,
+        Err(e) => {
+            let backup_path = path.with_extension(format!("corrupt.{}", chrono::Utc::now().timestamp()));
+            let _ = fs::copy(&path, &backup_path);
+            eprintln!(
+                "⚠️ Warning: Failed to parse config.json ({:?}). A backup was created at {:?}. Reverting to defaults.",
+                e, backup_path
+            );
+            let default_config = Config::default();
+            let _ = save_config(&default_config);
+            default_config
+        }
+    };
 
     // Clean up any Node/JS based default MCP servers from existing config
     let mut modified = false;

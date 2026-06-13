@@ -40,7 +40,10 @@ impl Tool for CargoManagerTool {
         let mut cmd = Command::new("cargo");
 
         if let Some(cwd_str) = arguments.get("cwd").and_then(|v| v.as_str()) {
-            cmd.current_dir(cwd_str);
+            let path = crate::config::loader::resolve_path(cwd_str);
+            cmd.current_dir(path);
+        } else {
+            crate::config::loader::set_command_cwd(&mut cmd);
         }
 
         match action {

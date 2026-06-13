@@ -18,83 +18,143 @@ pub async fn run_sop_instance(config: Config, instance_id: String) -> Result<()>
     let def = get_definition(&inst.sop_id)?
         .ok_or_else(|| anyhow::anyhow!("SOP definition '{}' not found", inst.sop_id))?;
 
-    while inst.current_step_index < def.steps.len() {
-        let idx = inst.current_step_index;
-        let def_step = &def.steps[idx];
+    let mut any_failed = false;
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<(usize, Result<crate::agent::RunResult, String>)>(100);
+    let mut active_tasks = 0;
 
-        // 1. Mark step as running
-        {
-            let step = &mut inst.steps[idx];
-            step.status = "Running".to_string();
-            step.started_at = Some(Utc::now().to_rfc3339());
+    loop {
+        // 1. Identify ready steps to spawn
+        let mut steps_to_spawn = Vec::new();
+        if !any_failed {
+            for (idx, def_step) in def.steps.iter().enumerate() {
+                let current_status = &inst.steps[idx].status;
+                if current_status == "Pending" {
+                    // Check dependencies
+                    let mut deps_satisfied = true;
+                    for dep_name in &def_step.depends_on {
+                        if let Some(dep_idx) = def.steps.iter().position(|s| &s.name == dep_name) {
+                            if inst.steps[dep_idx].status != "Completed" {
+                                deps_satisfied = false;
+                                break;
+                            }
+                        } else {
+                            eprintln!("⚠️ SOP Step '{}' depends on non-existent step '{}'", def_step.name, dep_name);
+                        }
+                    }
+                    if deps_satisfied {
+                        steps_to_spawn.push((idx, def_step.clone()));
+                    }
+                }
+            }
         }
-        save_instance(&inst)?;
 
-        // 2. Prepare prompt template
-        let prompt = substitute_template(&def_step.prompt_template, &inst.context);
-
-        crate::channels::cli::send_notification(&format!(
-            "📋 [SOP: {}] Executing Step {}/{} - '{}'...",
-            inst.id, idx + 1, def.steps.len(), def_step.name
-        ));
-
-        // 3. Build Agent and run the step
-        let agent_loop = crate::cli::build_agent_loop(config.clone()).await?;
-        let session_key = format!("sop:{}:{}", inst.id, idx);
-        
-        let run_result = agent_loop.run(&prompt, &session_key).await;
-
-        // 4. Update state based on execution result
-        match run_result {
-            Ok(res) => {
-                let now_str = Utc::now().to_rfc3339();
+        // 2. Spawn ready steps
+        for (idx, def_step) in steps_to_spawn {
+            // Mark step as running
+            {
                 let step = &mut inst.steps[idx];
-                step.status = "Completed".to_string();
-                step.completed_at = Some(now_str.clone());
-                step.output = Some(res.content.clone());
+                step.status = "Running".to_string();
+                step.started_at = Some(Utc::now().to_rfc3339());
+            }
+            save_instance(&inst)?;
 
-                // Update context
-                let steps_obj = inst.context.get_mut("steps")
-                    .and_then(|s| s.as_object_mut())
-                    .expect("Context steps should be an object");
-                steps_obj.insert(
-                    def_step.name.clone(),
-                    serde_json::json!({ "output": res.content }),
-                );
+            crate::channels::cli::send_notification(&format!(
+                "📋 [SOP: {}] Spawning Step {}/{} - '{}' in parallel...",
+                inst.id, idx + 1, def.steps.len(), def_step.name
+            ));
 
-                inst.current_step_index += 1;
+            let tx = tx.clone();
+            let config_clone = config.clone();
+            let prompt = substitute_template(&def_step.prompt_template, &inst.context);
+            let session_key = format!("sop:{}:{}", inst.id, idx);
+
+            active_tasks += 1;
+
+            let def_step_clone = def_step.clone();
+            tokio::spawn(async move {
+                let run_result = match prepare_agent_and_prompt(&config_clone, &def_step_clone, &prompt).await {
+                    Ok((agent_loop, final_prompt)) => agent_loop.run(&final_prompt, &session_key).await,
+                    Err(e) => Err(e),
+                };
+                let mapped_result = match run_result {
+                    Ok(res) => Ok(res),
+                    Err(e) => Err(e.to_string()),
+                };
+                let _ = tx.send((idx, mapped_result)).await;
+            });
+        }
+
+        // 3. Wait for one task to finish if active
+        if active_tasks > 0 {
+            if let Some((idx, res)) = rx.recv().await {
+                active_tasks -= 1;
+                let def_step = &def.steps[idx];
+                let now_str = Utc::now().to_rfc3339();
+
+                match res {
+                    Ok(run_res) => {
+                        let step = &mut inst.steps[idx];
+                        step.status = "Completed".to_string();
+                        step.completed_at = Some(now_str.clone());
+                        step.output = Some(run_res.content.clone());
+
+                        // Update context
+                        let steps_obj = inst.context.get_mut("steps")
+                            .and_then(|s| s.as_object_mut())
+                            .expect("Context steps should be an object");
+                        steps_obj.insert(
+                            def_step.name.clone(),
+                            serde_json::json!({ "output": run_res.content }),
+                        );
+
+                        crate::channels::cli::send_notification(&format!(
+                            "✅ [SOP: {}] Step '{}' completed!",
+                            inst.id, def_step.name
+                        ));
+                    }
+                    Err(e) => {
+                        let step = &mut inst.steps[idx];
+                        step.status = "Failed".to_string();
+                        step.completed_at = Some(now_str.clone());
+                        step.error = Some(e.clone());
+
+                        any_failed = true;
+
+                        crate::channels::cli::send_notification(&format!(
+                            "❌ [SOP: {}] Step '{}' failed: {}",
+                            inst.id, def_step.name, e
+                        ));
+                    }
+                }
                 save_instance(&inst)?;
             }
-            Err(e) => {
-                let now_str = Utc::now().to_rfc3339();
-                let step = &mut inst.steps[idx];
-                step.status = "Failed".to_string();
-                step.completed_at = Some(now_str.clone());
-                step.error = Some(e.to_string());
-
-                inst.status = SopStatus::Failed;
-                save_instance(&inst)?;
-
-                crate::channels::cli::send_notification(&format!(
-                    "❌ [SOP: {}] Step '{}' failed: {}",
-                    inst.id, def_step.name, e
-                ));
-                return Err(e);
-            }
+        } else {
+            break;
         }
     }
 
-    // Mark SOP instance completed
-    inst.status = SopStatus::Completed;
-    inst.completed_at = Some(Utc::now().to_rfc3339());
-    save_instance(&inst)?;
+    // Mark SOP instance completed/failed
+    let all_completed = inst.steps.iter().all(|s| s.status == "Completed");
+    if all_completed {
+        inst.status = SopStatus::Completed;
+        inst.completed_at = Some(Utc::now().to_rfc3339());
+        save_instance(&inst)?;
 
-    crate::channels::cli::send_notification(&format!(
-        "✅ [SOP: {}] SOP completed successfully!",
-        inst.id
-    ));
+        crate::channels::cli::send_notification(&format!(
+            "✅ [SOP: {}] SOP completed successfully!",
+            inst.id
+        ));
+        Ok(())
+    } else {
+        inst.status = SopStatus::Failed;
+        save_instance(&inst)?;
 
-    Ok(())
+        crate::channels::cli::send_notification(&format!(
+            "❌ [SOP: {}] SOP failed to complete all steps.",
+            inst.id
+        ));
+        anyhow::bail!("SOP instance failed to complete all steps")
+    }
 }
 
 pub async fn trigger_sop(
@@ -151,9 +211,11 @@ pub async fn resume_sop(config: Config, instance_id: String) -> Result<()> {
     }
 
     inst.status = SopStatus::Running;
-    if let Some(step) = inst.steps.get_mut(inst.current_step_index) {
-        step.status = "Pending".to_string();
-        step.error = None;
+    for step in &mut inst.steps {
+        if step.status == "Failed" {
+            step.status = "Pending".to_string();
+            step.error = None;
+        }
     }
     save_instance(&inst)?;
 
@@ -164,4 +226,34 @@ pub async fn resume_sop(config: Config, instance_id: String) -> Result<()> {
     });
 
     Ok(())
+}
+
+async fn prepare_agent_and_prompt(
+    config: &Config,
+    def_step: &crate::sop::SopStep,
+    prompt: &str,
+) -> Result<(crate::agent::AgentLoop, String)> {
+    if let Some(ref agent_name) = def_step.agent {
+        if let Ok(profiles) = crate::subagents::load_profiles() {
+            if let Some(profile) = profiles.into_iter().find(|p| &p.name == agent_name) {
+                let mut config_override = config.clone();
+                if let Some(ref m) = profile.model {
+                    config_override.agents.defaults.model = m.clone();
+                }
+                
+                let agent_loop = crate::cli::build_agent_loop(config_override).await?;
+                let subagent_prompt = format!(
+                    "You are a specialized subagent operating under the following profile guidelines:\n\n\
+                    {}\n\n\
+                    TASK:\n{}\n\n\
+                    When finished, provide a clear, concise summary of what you did and found.",
+                    profile.system_prompt, prompt
+                );
+                return Ok((agent_loop, subagent_prompt));
+            }
+        }
+    }
+    
+    let agent_loop = crate::cli::build_agent_loop(config.clone()).await?;
+    Ok((agent_loop, prompt.to_string()))
 }

@@ -89,7 +89,7 @@ impl LLMProvider for AnthropicProvider {
             } else if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
                 let mut blocks = Vec::new();
                 if !msg.content.is_empty() {
-                    let parts = crate::providers::parse_multimodal_content(&msg.content);
+                    let parts = crate::providers::parse_multimodal_content(&msg.content).await;
                     let supports_vision = crate::providers::model_supports_vision(&self.model);
 
                     for part in parts {
@@ -132,7 +132,7 @@ impl LLMProvider for AnthropicProvider {
                 }
                 serde_json::Value::Array(blocks)
             } else {
-                let parts = crate::providers::parse_multimodal_content(&msg.content);
+                let parts = crate::providers::parse_multimodal_content(&msg.content).await;
                 let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
                 let supports_vision = crate::providers::model_supports_vision(&self.model);
 

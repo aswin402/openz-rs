@@ -147,8 +147,37 @@ impl Tool for ManageMcpTool {
 mod tests {
     use super::*;
 
+    struct TestLock;
+
+    impl TestLock {
+        fn acquire() -> Self {
+            let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
+            loop {
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&lock_path)
+                {
+                    Ok(_) => break,
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                }
+            }
+            TestLock
+        }
+    }
+
+    impl Drop for TestLock {
+        fn drop(&mut self) {
+            let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
+            let _ = std::fs::remove_file(lock_path);
+        }
+    }
+
     #[tokio::test]
     async fn test_manage_mcp_actions() -> Result<()> {
+        let _lock = TestLock::acquire();
         let temp_dir = std::env::temp_dir().join(format!("openz_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir)?;
         std::env::set_var("OPENZ_CONFIG_DIR", temp_dir.to_str().unwrap());

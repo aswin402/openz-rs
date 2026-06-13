@@ -290,7 +290,8 @@ pub async fn fetch_provider_models(provider_name: &str, config: &crate::config::
         "cerebres" => {
             let p = config.providers.cerebres.as_ref();
             let key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("CEREBRES_API_KEY").ok())?;
+                .or_else(|| std::env::var("CEREBRES_API_KEY").ok())
+                .or_else(|| std::env::var("CEBRAS_API_KEY").ok())?;
             let base = p.and_then(|x| x.api_base.clone())
                 .unwrap_or_else(|| "https://api.cerebras.ai/v1".to_string());
             (key, base)
@@ -360,9 +361,11 @@ pub mod cli;
 pub mod telegram;
 pub mod discord;
 pub mod whatsapp;
+pub mod email;
 
 pub use websocket::WsGateway;
 pub use cli::CliChannel;
 pub use telegram::TelegramChannel;
 pub use discord::DiscordChannel;
 pub use whatsapp::WhatsAppChannel;
+pub use email::EmailChannel;

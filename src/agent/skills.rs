@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
+use rusqlite::{Connection, params};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Skill {
@@ -12,13 +13,36 @@ pub fn get_skills_dir() -> PathBuf {
     crate::config::resolve_path("~/.openz/skills")
 }
 
-pub fn load_skills() -> Result<Vec<Skill>> {
-    let mut skills_map = std::collections::HashMap::new();
+pub fn get_db_path() -> PathBuf {
+    crate::config::resolve_path("~/.openz/memory.db")
+}
 
-    // 1. Load from global directory
+pub fn get_connection() -> Result<Connection> {
+    let path = get_db_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let conn = Connection::open(path)?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS skills (
+            name TEXT NOT NULL,
+            content TEXT NOT NULL,
+            profile TEXT,
+            use_count INTEGER DEFAULT 0,
+            last_used TEXT,
+            created_at TEXT,
+            PRIMARY KEY (name, profile)
+        )",
+        [],
+    )?;
+    let _ = migrate_old_skills_to_db(&conn);
+    Ok(conn)
+}
+
+fn migrate_old_skills_to_db(conn: &Connection) -> Result<()> {
     let global_dir = get_skills_dir();
-    if global_dir.exists() {
-        for entry in fs::read_dir(global_dir)? {
+    if global_dir.exists() && global_dir.is_dir() {
+        for entry in fs::read_dir(&global_dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
@@ -26,13 +50,48 @@ pub fn load_skills() -> Result<Vec<Skill>> {
                     .and_then(|s| s.to_str())
                     .unwrap_or("")
                     .to_string();
-                let content = fs::read_to_string(&path)?;
-                skills_map.insert(name.clone(), Skill { name, content });
+                if name.is_empty() || name == "INDEX" || name.ends_with(".bak") {
+                    continue;
+                }
+                if let Ok(content) = fs::read_to_string(&path) {
+                    let now = chrono::Utc::now().to_rfc3339();
+                    let _ = conn.execute(
+                        "INSERT OR IGNORE INTO skills (name, content, profile, created_at, last_used)
+                         VALUES (?1, ?2, NULL, ?3, ?3)",
+                        params![name, content, now],
+                    );
+                }
             }
         }
     }
+    Ok(())
+}
 
-    // 2. Load from local workspace directory (./skills)
+pub fn load_skills() -> Result<Vec<Skill>> {
+    load_skills_with_profile(None)
+}
+
+pub fn load_skills_with_profile(profile_name: Option<&str>) -> Result<Vec<Skill>> {
+    let mut skills_map = std::collections::HashMap::new();
+
+    // 1. Load from SQLite database (global and profile-specific)
+    if let Ok(conn) = get_connection() {
+        let mut stmt = conn.prepare("SELECT name, content FROM skills WHERE profile IS NULL OR profile = ?")?;
+        let profile_str = profile_name.unwrap_or("");
+        let rows = stmt.query_map(params![profile_str], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+            ))
+        })?;
+
+        for r in rows.flatten() {
+            let (name, content) = r;
+            skills_map.insert(name.clone(), Skill { name, content });
+        }
+    }
+
+    // 2. Load from local workspace directory (./skills) to support workspace overrides
     let local_dir = std::path::Path::new("skills");
     if local_dir.exists() && local_dir.is_dir() {
         for entry in fs::read_dir(local_dir)? {
@@ -44,7 +103,6 @@ pub fn load_skills() -> Result<Vec<Skill>> {
                     .unwrap_or("")
                     .to_string();
                 let content = fs::read_to_string(&path)?;
-                // Local skills override/shadow global skills of the same name
                 skills_map.insert(name.clone(), Skill { name, content });
             }
         }
@@ -53,103 +111,66 @@ pub fn load_skills() -> Result<Vec<Skill>> {
     Ok(skills_map.into_values().collect())
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SkillStats {
-    pub use_count: u32,
-    pub last_used: String,
-}
-
-fn load_stats() -> std::collections::HashMap<String, SkillStats> {
-    let path = get_skills_dir().join("stats.json");
-    if path.exists() {
-        if let Ok(content) = fs::read_to_string(path) {
-            if let Ok(stats) = serde_json::from_str(&content) {
-                return stats;
-            }
-        }
-    }
-    std::collections::HashMap::new()
-}
-
-fn save_stats(stats: &std::collections::HashMap<String, SkillStats>) {
-    let path = get_skills_dir().join("stats.json");
-    if let Ok(content) = serde_json::to_string_pretty(stats) {
-        let _ = fs::write(path, content);
-    }
-}
-
 pub fn archive_stale_skills() -> Result<()> {
-    let skills_dir = get_skills_dir();
-    if !skills_dir.exists() {
-        return Ok(());
-    }
+    if let Ok(conn) = get_connection() {
+        let now = chrono::Utc::now();
+        let stale_duration = chrono::Duration::days(30);
 
-    let archive_dir = skills_dir.join("archive");
-    let stats = load_stats();
-    let now = chrono::Utc::now();
-    let stale_duration = chrono::Duration::days(30);
+        let mut stmt = conn.prepare("SELECT name, profile, last_used, content FROM skills")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
 
-    for entry in fs::read_dir(&skills_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
-            let name = path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-            if name.is_empty() {
-                continue;
-            }
-
-            let mut is_stale = false;
-            if let Some(stat) = stats.get(name) {
-                if let Ok(last_used_date) = chrono::DateTime::parse_from_rfc3339(&stat.last_used) {
+        let mut to_delete = Vec::new();
+        for r in rows.flatten() {
+            let (name, profile, last_used_opt, content) = r;
+            if let Some(last_used_str) = last_used_opt {
+                if let Ok(last_used_date) = chrono::DateTime::parse_from_rfc3339(&last_used_str) {
                     let last_used_utc = last_used_date.with_timezone(&chrono::Utc);
                     if now.signed_duration_since(last_used_utc) > stale_duration {
-                        is_stale = true;
-                    }
-                }
-            } else {
-                // If it's not in stats, check the file modification date
-                if let Ok(metadata) = path.metadata() {
-                    if let Ok(modified) = metadata.modified() {
-                        let modified_utc: chrono::DateTime<chrono::Utc> = modified.into();
-                        if now.signed_duration_since(modified_utc) > stale_duration {
-                            is_stale = true;
-                        }
-                    }
-                }
-            }
+                        let archive_dir = get_skills_dir().join("archive");
+                        fs::create_dir_all(&archive_dir)?;
+                        let dest_path = archive_dir.join(format!("{}.md", name));
+                        let _ = fs::write(dest_path, content);
 
-            if is_stale {
-                fs::create_dir_all(&archive_dir)?;
-                let dest_path = archive_dir.join(format!("{}.md", name));
-                let _ = fs::rename(&path, &dest_path);
-                let bak_path = skills_dir.join(format!("{}.md.bak", name));
-                if bak_path.exists() {
-                    let _ = fs::rename(&bak_path, archive_dir.join(format!("{}.md.bak", name)));
+                        to_delete.push((name, profile));
+                    }
                 }
-                
-                // Print TUI notification using helper if possible, or just standard log
-                let aura_blue = "\x1b[38;2;96;165;250m";
-                let color_reset = "\x1b[0m";
-                crate::channels::cli::send_notification(&format!(
-                    "{}◇ [Self-Improvement] Skill '{}' archived due to 30 days of inactivity.{}",
-                    aura_blue, name, color_reset
-                ));
             }
         }
-    }
 
+        for (name, profile) in to_delete {
+            let _ = conn.execute(
+                "DELETE FROM skills WHERE name = ?1 AND profile IS ?2",
+                params![name, profile],
+            );
+            
+            let aura_blue = "\x1b[38;2;96;165;250m";
+            let color_reset = "\x1b[0m";
+            crate::channels::cli::send_notification(&format!(
+                "{}◇ [Self-Improvement] Skill '{}' archived to filesystem due to 30 days of database inactivity.{}",
+                aura_blue, name, color_reset
+            ));
+        }
+    }
     Ok(())
 }
 
 pub fn load_relevant_skills(user_content: &str, session_messages: &[crate::session::Message]) -> Result<Vec<Skill>> {
-    let all_skills = load_skills()?;
+    load_relevant_skills_with_profile(user_content, session_messages, None)
+}
+
+pub fn load_relevant_skills_with_profile(user_content: &str, session_messages: &[crate::session::Message], profile_name: Option<&str>) -> Result<Vec<Skill>> {
+    let all_skills = load_skills_with_profile(profile_name)?;
     if all_skills.is_empty() {
         return Ok(Vec::new());
     }
 
-    // Combine recent user prompt + last 3 messages into search context
     let mut search_context = user_content.to_lowercase();
     for msg in session_messages.iter().rev().take(3) {
         search_context.push_str(" ");
@@ -158,14 +179,11 @@ pub fn load_relevant_skills(user_content: &str, session_messages: &[crate::sessi
 
     let mut relevant = Vec::new();
     for skill in all_skills {
-        // Simple and robust keyword match:
-        // 1. Check if the skill name has any word matching in the query context
         let name_words: Vec<&str> = skill.name.split('_').collect();
         let name_match = name_words.iter().any(|word| {
             word.len() > 2 && search_context.contains(word)
         });
 
-        // 2. Or if the query context contains the skill name directly
         let name_exact_match = search_context.contains(&skill.name.to_lowercase());
 
         if name_match || name_exact_match {
@@ -173,84 +191,82 @@ pub fn load_relevant_skills(user_content: &str, session_messages: &[crate::sessi
         }
     }
 
-    // Track usage metrics for successfully loaded relevant skills
     if !relevant.is_empty() {
-        let mut stats = load_stats();
-        let now = chrono::Utc::now().to_rfc3339();
-        for skill in &relevant {
-            let entry = stats.entry(skill.name.clone()).or_insert(SkillStats {
-                use_count: 0,
-                last_used: now.clone(),
-            });
-            entry.use_count += 1;
-            entry.last_used = now.clone();
+        if let Ok(conn) = get_connection() {
+            let now = chrono::Utc::now().to_rfc3339();
+            for skill in &relevant {
+                let _ = conn.execute(
+                    "UPDATE skills SET use_count = use_count + 1, last_used = ?1 WHERE name = ?2",
+                    params![now, skill.name],
+                );
+            }
         }
-        save_stats(&stats);
     }
 
     Ok(relevant)
 }
 
 pub fn save_skill(name: &str, content: &str) -> Result<()> {
-    let local_dir = std::path::Path::new("skills");
-    let dir = if local_dir.exists() && local_dir.is_dir() {
-        local_dir.to_path_buf()
-    } else {
-        get_skills_dir()
-    };
-    fs::create_dir_all(&dir)?;
-
-    // Normalize skill name to snake_case / lowercase with underscores/hyphens
     let safe_name = name.to_lowercase()
         .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
 
-    let path = dir.join(format!("{}.md", safe_name));
-    
-    // Create backup if file already exists to prevent data corruption by LLM
-    if path.exists() {
-        let backup_path = dir.join(format!("{}.md.bak", safe_name));
-        let _ = fs::copy(&path, &backup_path);
+    let conn = get_connection()?;
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO skills (name, content, profile, created_at, last_used)
+         VALUES (?1, ?2, NULL, ?3, ?3)
+         ON CONFLICT(name, profile) DO UPDATE SET content = ?2, last_used = ?3",
+        params![safe_name, content, now],
+    )?;
+
+    let local_dir = std::path::Path::new("skills");
+    if local_dir.exists() && local_dir.is_dir() {
+        let path = local_dir.join(format!("{}.md", safe_name));
+        fs::write(path, content)?;
     }
 
-    fs::write(path, content)?;
     Ok(())
 }
 
 pub fn delete_skill(name: &str) -> Result<()> {
     let safe_name = name.to_lowercase()
         .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
-    let filename = format!("{}.md", safe_name);
 
-    // Delete from global if exists
-    let global_path = get_skills_dir().join(&filename);
-    if global_path.exists() {
-        fs::remove_file(global_path)?;
-    }
+    let conn = get_connection()?;
+    conn.execute("DELETE FROM skills WHERE name = ?1", params![safe_name])?;
 
-    // Delete from local if exists
-    let local_path = std::path::Path::new("skills").join(&filename);
+    let local_path = std::path::Path::new("skills").join(format!("{}.md", safe_name));
     if local_path.exists() {
         fs::remove_file(local_path)?;
     }
-
     Ok(())
 }
 
 pub fn clear_skills() -> Result<()> {
-    // Clear global directory
-    let global_dir = get_skills_dir();
-    if global_dir.exists() {
-        fs::remove_dir_all(&global_dir)?;
-        fs::create_dir_all(&global_dir)?;
-    }
+    let conn = get_connection()?;
+    conn.execute("DELETE FROM skills", [])?;
 
-    // Clear local directory
     let local_dir = std::path::Path::new("skills");
     if local_dir.exists() && local_dir.is_dir() {
         fs::remove_dir_all(local_dir)?;
         fs::create_dir_all(local_dir)?;
     }
 
+    Ok(())
+}
+
+pub fn save_subagent_skill(profile: &str, name: &str, content: &str) -> Result<()> {
+    let safe_name = name.to_lowercase()
+        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
+
+    let conn = get_connection()?;
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO skills (name, content, profile, created_at, last_used)
+         VALUES (?1, ?2, ?3, ?4, ?4)
+         ON CONFLICT(name, profile) DO UPDATE SET content = ?2, last_used = ?4",
+        params![safe_name, content, profile, now],
+    )?;
     Ok(())
 }
 
@@ -279,4 +295,3 @@ mod tests {
         assert!(found_after.is_none());
     }
 }
-
