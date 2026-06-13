@@ -583,6 +583,12 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         session_manager: session_manager.clone(),
         parent_tools: Vec::new(),
     }));
+    registry.register(std::sync::Arc::new(crate::tools::subagent::EvaluatorOptimizerLoopTool {
+        config: config.clone(),
+        parent_provider: provider.clone(),
+        session_manager: session_manager.clone(),
+        parent_tools: Vec::new(),
+    }));
 
     registry.register(std::sync::Arc::new(OptimizeSubagentTool {
         config: config.clone(),

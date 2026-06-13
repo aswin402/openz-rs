@@ -72,6 +72,23 @@ impl ToolRegistry {
             }));
         }
 
+        // 1c. If name is "evaluator_optimizer_loop", override and inject parent tools dynamically
+        if name == "evaluator_optimizer_loop" {
+            let (config, provider, session_manager) = self.context.as_ref()?;
+            let mut parent_tools = Vec::new();
+            for tool in self.static_tools.values() {
+                if tool.name() != "delegate_task" && tool.name() != "parallel_research" && tool.name() != "evaluator_optimizer_loop" {
+                    parent_tools.push(tool.clone());
+                }
+            }
+            return Some(Arc::new(crate::tools::subagent::EvaluatorOptimizerLoopTool {
+                config: config.clone(),
+                parent_provider: provider.clone(),
+                session_manager: session_manager.clone(),
+                parent_tools,
+            }));
+        }
+
         // 2. Check static tools
         if let Some(tool) = self.static_tools.get(name) {
             return Some(tool.clone());
