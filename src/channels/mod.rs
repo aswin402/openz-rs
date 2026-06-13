@@ -369,3 +369,172 @@ pub use telegram::TelegramChannel;
 pub use discord::DiscordChannel;
 pub use whatsapp::WhatsAppChannel;
 pub use email::EmailChannel;
+
+use std::sync::OnceLock;
+use std::sync::Mutex;
+use std::collections::HashMap;
+use tokio::sync::mpsc;
+use axum::extract::ws::Message;
+
+pub type WsSendersMap = HashMap<String, mpsc::Sender<Message>>;
+
+pub fn get_active_ws_senders() -> &'static Mutex<WsSendersMap> {
+    static SENDERS: OnceLock<Mutex<WsSendersMap>> = OnceLock::new();
+    SENDERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn send_notification(msg: &str) {
+    // 1. Immediately output/queue to CLI (synchronously so it prints immediately in terminal)
+    crate::channels::cli::queue_notification(msg);
+
+    // 2. Broadcast to other active channels in the background
+    let msg_str = msg.to_string();
+    tokio::spawn(async move {
+        // Broadcast to WebSocket WebUI clients
+        let ws_senders = if let Ok(senders) = get_active_ws_senders().lock() {
+            senders.values().cloned().collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+
+        let evt = serde_json::json!({
+            "event": "notification",
+            "message": msg_str
+        });
+        if let Ok(evt_str) = serde_json::to_string(&evt) {
+            for tx in ws_senders {
+                let _ = tx.send(Message::Text(evt_str.clone())).await;
+            }
+        }
+
+        // Load config to check if external channels (Telegram, Discord, WhatsApp) are enabled
+        if let Ok(config) = crate::config::loader::load_config() {
+            let sessions_dir = crate::config::loader::resolve_path("~/.openz/sessions");
+            let client = reqwest::Client::builder().use_rustls_tls().build().unwrap_or_default();
+
+            // i. Telegram
+            if let Some(tg_config) = &config.channels.telegram {
+                if tg_config.enabled {
+                    let token = if tg_config.bot_token.is_empty() {
+                        std::env::var("TELEGRAM_BOT_TOKEN").ok()
+                    } else {
+                        Some(tg_config.bot_token.clone())
+                    };
+                    if let Some(token) = token {
+                        let chats = get_active_session_targets(&sessions_dir, "telegram_");
+                        for chat_str in chats {
+                            if let Ok(chat_id) = chat_str.parse::<i64>() {
+                                let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                                let payload = serde_json::json!({
+                                    "chat_id": chat_id,
+                                    "text": msg_str,
+                                    "parse_mode": "Markdown"
+                                });
+                                let _ = client.post(&send_url).json(&payload).send().await;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ii. Discord
+            if let Some(dc_config) = &config.channels.discord {
+                if dc_config.enabled {
+                    let token = if dc_config.bot_token.is_empty() {
+                        std::env::var("DISCORD_BOT_TOKEN").ok()
+                    } else {
+                        Some(dc_config.bot_token.clone())
+                    };
+                    if let Some(token) = token {
+                        let channels = get_active_session_targets(&sessions_dir, "discord_");
+                        for channel_id in channels {
+                            let send_url = format!("https://discord.com/api/v10/channels/{}/messages", channel_id);
+                            let payload = serde_json::json!({
+                                "content": msg_str
+                            });
+                            let _ = client.post(&send_url)
+                                .header("Authorization", format!("Bot {}", token))
+                                .json(&payload)
+                                .send()
+                                .await;
+                        }
+                    }
+                }
+            }
+
+            // iii. WhatsApp
+            if let Some(wa_config) = &config.channels.whatsapp {
+                if wa_config.enabled {
+                    let targets = get_active_session_targets(&sessions_dir, "whatsapp_");
+                    for phone_number in targets {
+                        let send_url = format!("https://graph.facebook.com/v18.0/{}/messages", wa_config.phone_number_id);
+                        let payload = serde_json::json!({
+                            "messaging_product": "whatsapp",
+                            "recipient_type": "individual",
+                            "to": phone_number,
+                            "type": "text",
+                            "text": {
+                                "body": msg_str
+                            }
+                        });
+                        let _ = client.post(&send_url)
+                            .bearer_auth(&wa_config.api_key)
+                            .json(&payload)
+                            .send()
+                            .await;
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_ws_sender_registration_and_cleanup() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<axum::extract::ws::Message>(10);
+        let client_id = "test-client-123".to_string();
+
+        // 1. Register sender
+        {
+            let mut senders = get_active_ws_senders().lock().unwrap();
+            senders.insert(client_id.clone(), tx);
+        }
+
+        // Verify it is registered
+        {
+            let senders = get_active_ws_senders().lock().unwrap();
+            assert!(senders.contains_key(&client_id));
+            assert_eq!(senders.len(), 1);
+        }
+
+        // 2. Send notification via broker
+        send_notification("Test broadcast message");
+
+        // Receive the message from the receiver to check if it got routed
+        let received = rx.recv().await;
+        assert!(received.is_some());
+        if let Some(axum::extract::ws::Message::Text(txt)) = received {
+            assert!(txt.contains("notification"));
+            assert!(txt.contains("Test broadcast message"));
+        } else {
+            panic!("Expected Text message");
+        }
+
+        // 3. Clean up sender
+        {
+            let mut senders = get_active_ws_senders().lock().unwrap();
+            senders.remove(&client_id);
+        }
+
+        // Verify it is removed
+        {
+            let senders = get_active_ws_senders().lock().unwrap();
+            assert!(!senders.contains_key(&client_id));
+            assert_eq!(senders.len(), 0);
+        }
+    }
+}

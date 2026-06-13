@@ -119,6 +119,11 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
         }
     });
 
+    // Register sender for the global notification broker
+    if let Ok(mut senders) = crate::channels::get_active_ws_senders().lock() {
+        senders.insert(client_id.clone(), tx.clone());
+    }
+
     // Send ready event
     let ready_evt = serde_json::json!({
         "event": "ready",
@@ -201,6 +206,11 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                 }
             }
         }
+    }
+
+    // Clean up sender on disconnect
+    if let Ok(mut senders) = crate::channels::get_active_ws_senders().lock() {
+        senders.remove(&client_id);
     }
 }
 

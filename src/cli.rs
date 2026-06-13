@@ -102,6 +102,15 @@ pub enum SopAction {
         /// The unique ID of the SOP instance
         instance_id: String,
     },
+
+    /// Simulate a standard operating procedure (SOP) execution (dry-run)
+    Simulate {
+        /// The ID of the SOP template
+        sop_id: String,
+
+        /// Optional JSON payload string or file path containing payload
+        payload: Option<String>,
+    },
 }
 
 pub async fn run_cli() -> Result<()> {
@@ -597,7 +606,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(DbWriteTool));
     registry.register(std::sync::Arc::new(SystemInfoTool));
     registry.register(std::sync::Arc::new(CheckPortTool));
-    registry.register(std::sync::Arc::new(crate::tools::cargo_manager::CargoManagerTool));
+    registry.register(std::sync::Arc::new(crate::tools::cargo_manager::CargoManagerTool::new(provider.clone())));
     registry.register(std::sync::Arc::new(crate::tools::clipboard::ClipboardTool));
     registry.register(std::sync::Arc::new(crate::tools::open::OpenTool));
     registry.register(std::sync::Arc::new(crate::tools::watcher::FileWatcherTool));
@@ -1568,6 +1577,36 @@ async fn handle_sop(action: SopAction) -> Result<()> {
                 }
                 Err(e) => {
                     eprintln!("{}❌ Failed to resume SOP: {}{}", ERROR_RED, e, COLOR_RESET);
+                }
+            }
+        }
+        SopAction::Simulate { sop_id, payload } => {
+            let config = load_config()?;
+            let payload_value = if let Some(p) = payload {
+                let p_trimmed = p.trim();
+                if p_trimmed.starts_with('{') || p_trimmed.starts_with('[') {
+                    serde_json::from_str(p_trimmed)?
+                } else {
+                    let path = std::path::Path::new(p_trimmed);
+                    if path.exists() {
+                        let content = std::fs::read_to_string(path)?;
+                        serde_json::from_str(&content)?
+                    } else {
+                        anyhow::bail!("Payload must be a valid JSON string or path to a JSON file");
+                    }
+                }
+            } else {
+                serde_json::json!({})
+            };
+
+            println!("Simulating SOP '{}'...", sop_id);
+            match crate::sop::engine::trigger_sop_simulation(config, sop_id.clone(), payload_value).await {
+                Ok(instance_id) => {
+                    println!("{}✓ SOP simulation finished successfully!{}", EMERALD_GREEN, COLOR_RESET);
+                    println!("Simulated Instance ID: {}", instance_id);
+                }
+                Err(e) => {
+                    eprintln!("{}❌ Failed to simulate SOP: {}{}", ERROR_RED, e, COLOR_RESET);
                 }
             }
         }

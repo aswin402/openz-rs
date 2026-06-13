@@ -7,6 +7,10 @@ use anyhow::Result;
 use chrono::Utc;
 
 pub async fn run_sop_instance(config: Config, instance_id: String) -> Result<()> {
+    run_sop_instance_inner(config, instance_id, false).await
+}
+
+pub async fn run_sop_instance_inner(config: Config, instance_id: String, simulate: bool) -> Result<()> {
     let mut inst = load_instance(&instance_id)?;
     if inst.status == SopStatus::Completed {
         return Ok(());
@@ -68,13 +72,29 @@ pub async fn run_sop_instance(config: Config, instance_id: String) -> Result<()>
             let prompt = substitute_template(&def_step.prompt_template, &inst.context);
             let session_key = format!("sop:{}:{}", inst.id, idx);
 
+            if simulate {
+                crate::channels::cli::send_notification(&format!(
+                    "🔍 [SOP: {}] Simulated Prompt for '{}':\n---\n{}\n---",
+                    inst.id, def_step.name, prompt
+                ));
+            }
+
             active_tasks += 1;
 
             let def_step_clone = def_step.clone();
             tokio::spawn(async move {
-                let run_result = match prepare_agent_and_prompt(&config_clone, &def_step_clone, &prompt).await {
-                    Ok((agent_loop, final_prompt)) => agent_loop.run(&final_prompt, &session_key).await,
-                    Err(e) => Err(e),
+                let run_result = if simulate {
+                    // MOCK RUN: Simulate small delay (50ms)
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    Ok(crate::agent::RunResult {
+                        content: format!("[Simulated Output for Step: {}]", def_step_clone.name),
+                        tools_used: Vec::new(),
+                    })
+                } else {
+                    match prepare_agent_and_prompt(&config_clone, &def_step_clone, &prompt).await {
+                        Ok((agent_loop, final_prompt)) => agent_loop.run(&final_prompt, &session_key).await,
+                        Err(e) => Err(e),
+                    }
                 };
                 let mapped_result = match run_result {
                     Ok(res) => Ok(res),
@@ -200,6 +220,54 @@ pub async fn trigger_sop(
     tokio::spawn(async move {
         let _ = run_sop_instance(config_clone, inst_id_clone).await;
     });
+
+    Ok(instance_id)
+}
+
+pub async fn trigger_sop_simulation(
+    config: Config,
+    sop_id: String,
+    initial_payload: serde_json::Value,
+) -> Result<String> {
+    let def = get_definition(&sop_id)?
+        .ok_or_else(|| anyhow::anyhow!("SOP definition '{}' not found", sop_id))?;
+
+    let instance_id = format!("sim-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+
+    let steps = def.steps.iter().map(|step| StepExecutionState {
+        name: step.name.clone(),
+        status: "Pending".to_string(),
+        started_at: None,
+        completed_at: None,
+        output: None,
+        error: None,
+    }).collect();
+
+    let now = Utc::now().to_rfc3339();
+    let inst = SopInstance {
+        id: instance_id.clone(),
+        sop_id: def.id,
+        name: format!("{}-{}", def.name, instance_id),
+        status: SopStatus::Pending,
+        current_step_index: 0,
+        steps,
+        context: serde_json::json!({
+            "payload": initial_payload,
+            "steps": {}
+        }),
+        started_at: now,
+        completed_at: None,
+    };
+
+    save_instance(&inst)?;
+
+    crate::channels::cli::send_notification(&format!(
+        "🔬 Starting dry-run simulation for SOP '{}' (Instance ID: {})...",
+        sop_id, instance_id
+    ));
+
+    // Run synchronously so the user gets simulation log immediately on console
+    run_sop_instance_inner(config, instance_id.clone(), true).await?;
 
     Ok(instance_id)
 }

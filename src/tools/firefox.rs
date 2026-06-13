@@ -95,8 +95,8 @@ impl Tool for FirefoxBrowserTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["navigate", "click", "fill", "screenshot", "eval", "render"],
-                    "description": "The browser action: 'navigate' to a URL, 'click' on a CSS selector, 'fill' text into an input selector, 'screenshot' to capture image, 'eval' to run custom JavaScript, 'render' to get page Markdown."
+                    "enum": ["navigate", "click", "fill", "screenshot", "eval", "render", "close"],
+                    "description": "The browser action: 'navigate' to a URL, 'click' on a CSS selector, 'fill' text into an input selector, 'screenshot' to capture image, 'eval' to run custom JavaScript, 'render' to get page Markdown, or 'close' to close the browser session."
                 },
                 "url": {
                     "type": "string",
@@ -126,6 +126,14 @@ impl Tool for FirefoxBrowserTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let action = arguments.get("action").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
+
+        if action == "close" {
+            reset_driver().await;
+            return Ok(json!({
+                "status": "success",
+                "message": "Successfully closed the Firefox browser instance"
+            }));
+        }
 
         let driver = match get_or_create_driver().await {
             Ok(d) => d,

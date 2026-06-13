@@ -48,6 +48,10 @@ impl Tool for DelegateTaskTool {
                 "model": {
                     "type": "string",
                     "description": "Optional model override name (e.g., 'gpt-4o-mini', 'claude-3-5-haiku') for the subagent."
+                },
+                "json_schema": {
+                    "type": "object",
+                    "description": "Optional: A JSON Schema definition that the subagent's final output summary MUST strictly conform to."
                 }
             },
             "required": ["goal"]
@@ -65,6 +69,7 @@ impl Tool for DelegateTaskTool {
             .ok_or_else(|| anyhow!("Missing 'goal' argument"))?;
         let context = arguments.get("context").and_then(|v| v.as_str()).unwrap_or("");
         let model_override = arguments.get("model").and_then(|v| v.as_str());
+        let json_schema = arguments.get("json_schema").cloned();
 
         let provider = if let Some(m) = model_override {
             match build_provider_for_model(&self.config, m) {
@@ -101,13 +106,20 @@ impl Tool for DelegateTaskTool {
             self.session_manager.clone(),
         );
 
-        let subagent_prompt = format!(
+        let mut subagent_prompt = format!(
             "You are a focused subagent. Complete the following task using the tools available.\n\n\
             TASK:\n{}\n\n\
             CONTEXT:\n{}\n\n\
             When finished, provide a clear, concise summary of what you did and found.",
             goal, context
         );
+
+        if let Some(ref schema) = json_schema {
+            subagent_prompt.push_str(&format!(
+                "\n\nCRITICAL REQUIREMENT: Your final response MUST be a raw JSON object strictly conforming to this JSON Schema:\n{}\nDo not wrap it in markdown code blocks, do not add any conversational text. Return only the raw valid JSON.",
+                serde_json::to_string_pretty(schema).unwrap_or_default()
+            ));
+        }
 
         let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
         let mut has_memory_mcp = false;
@@ -140,16 +152,109 @@ impl Tool for DelegateTaskTool {
         crate::tui_println!("{}◎ Subagent{}", AURA_PURPLE, COLOR_RESET);
         let spinner_msg = format!("{}  Running...{}", AURA_SLATE, COLOR_RESET);
 
-        let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
-            DELEGATION_DEPTH.scope(current_depth + 1, async {
-                child_agent.run(&subagent_prompt, &child_session_id).await
-            }).await
-        });
-        let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
-        let run_res = match with_spinner(&spinner_msg, run_res_timeout).await {
-            Ok(res) => res,
-            Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
+        let mut run_res = {
+            let p_ref = &subagent_prompt;
+            let c_ref = &child_session_id;
+            let child_agent_ref = &child_agent;
+            let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
+                DELEGATION_DEPTH.scope(current_depth + 1, async {
+                    child_agent_ref.run(p_ref, c_ref).await
+                }).await
+            });
+            let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
+            match with_spinner(&spinner_msg, run_res_timeout).await {
+                Ok(res) => res,
+                Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
+            }
         };
+
+        if let Some(ref schema) = json_schema {
+            let mut attempts = 0;
+            loop {
+                if let Ok(ref mut res) = run_res {
+                    let text_output = res.content.trim();
+                    let clean_json_str = if text_output.starts_with("```json") {
+                        text_output.strip_prefix("```json").unwrap().strip_suffix("```").unwrap_or(text_output).trim()
+                    } else if text_output.starts_with("```") {
+                        text_output.strip_prefix("```").unwrap().strip_suffix("```").unwrap_or(text_output).trim()
+                    } else {
+                        text_output
+                    };
+
+                    let parsed_val: Result<Value, _> = serde_json::from_str(clean_json_str);
+                    match parsed_val {
+                        Ok(val) => {
+                            match validate_schema(&val, schema) {
+                                Ok(_) => {
+                                    res.content = clean_json_str.to_string();
+                                    break;
+                                }
+                                Err(e) => {
+                                    if attempts >= 2 {
+                                        run_res = Err(anyhow!("Subagent output failed schema validation: {}", e));
+                                        break;
+                                    }
+                                    attempts += 1;
+                                    crate::tui_println!(
+                                        "{}▲ [Reflection] Subagent JSON schema validation failed: {}. Retrying attempt {} of 2...{}",
+                                        AURA_GOLD, e, attempts, COLOR_RESET
+                                    );
+                                    let retry_prompt = format!(
+                                        "Your previous response did not conform to the JSON Schema. Validation Error: {}\n\n\
+                                        Please correct your response. Return ONLY the raw valid JSON matching the schema.",
+                                        e
+                                    );
+                                    let p_ref = &retry_prompt;
+                                    let c_ref = &child_session_id;
+                                    let child_agent_ref = &child_agent;
+                                    let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
+                                        DELEGATION_DEPTH.scope(current_depth + 1, async {
+                                            child_agent_ref.run(p_ref, c_ref).await
+                                        }).await
+                                    });
+                                    let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
+                                    run_res = match with_spinner(&spinner_msg, run_res_timeout).await {
+                                        Ok(r) => r,
+                                        Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
+                                    };
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            if attempts >= 2 {
+                                run_res = Err(anyhow!("Subagent output failed to parse as JSON: {}. Parse Error: {}", e, text_output));
+                                break;
+                            }
+                            attempts += 1;
+                            crate::tui_println!(
+                                "{}▲ [Reflection] Subagent output is not valid JSON: {}. Retrying attempt {} of 2...{}",
+                                AURA_GOLD, e, attempts, COLOR_RESET
+                            );
+                            let retry_prompt = format!(
+                                "Your previous response was not valid JSON. Parse Error: {}\n\n\
+                                Please correct your response. Return ONLY the raw valid JSON matching the schema.",
+                                e
+                            );
+                            let p_ref = &retry_prompt;
+                            let c_ref = &child_session_id;
+                            let child_agent_ref = &child_agent;
+                            let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
+                                DELEGATION_DEPTH.scope(current_depth + 1, async {
+                                    child_agent_ref.run(p_ref, c_ref).await
+                                }).await
+                            });
+                            let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
+                            run_res = match with_spinner(&spinner_msg, run_res_timeout).await {
+                                Ok(r) => r,
+                                Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
+                            };
+                        }
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
 
         if has_memory_mcp {
             if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
@@ -176,16 +281,16 @@ impl Tool for DelegateTaskTool {
         }
 
         match run_res {
-            Ok(run_res) => {
+            Ok(res) => {
                 crate::tui_println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
                 
                 // Run evolution review
-                let _ = run_evolution_review(&self.parent_provider, "subagent", goal, context, &run_res.content).await;
+                let _ = run_evolution_review(&self.parent_provider, "subagent", goal, context, &res.content).await;
 
                 Ok(serde_json::json!({
                     "status": "success",
                     "session_id": child_session_id,
-                    "summary": run_res.content
+                    "summary": res.content
                 }))
             }
             Err(e) => {
@@ -259,6 +364,10 @@ impl Tool for DelegateProfileTool {
                 "context": {
                     "type": "string",
                     "description": "Additional context or background details required for the task."
+                },
+                "json_schema": {
+                    "type": "object",
+                    "description": "Optional: A JSON Schema definition that this subagent's final output summary MUST strictly conform to."
                 }
             },
             "required": ["goal"]
@@ -275,6 +384,7 @@ impl Tool for DelegateProfileTool {
         let goal = arguments.get("goal").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'goal' argument"))?;
         let context = arguments.get("context").and_then(|v| v.as_str()).unwrap_or("");
+        let json_schema = arguments.get("json_schema").cloned();
 
         let clean_goal = ensure_markdown_images(goal);
         let clean_context = ensure_markdown_images(context);
@@ -316,7 +426,10 @@ impl Tool for DelegateProfileTool {
             self.profile.system_prompt, clean_goal, clean_context
         );
 
-        let is_vision_profile = self.profile.name == "vision_agent";
+        let is_reviewer = self.profile.name == "reviewer";
+        let is_vision = self.profile.name == "vision_agent";
+        let is_vision_profile = is_vision;
+        let formatted_name = format_subagent_name(&self.profile.name);
         let mut last_error = None;
 
         let parent_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -352,20 +465,40 @@ impl Tool for DelegateProfileTool {
                 }
             };
 
+            let filtered_parent_tools = filter_tools_for_subagent(&self.profile.name, &self.parent_tools);
+
             let mut child_registry = ToolRegistry::new_with_context(
                 self.config.clone(),
                 provider.clone(),
                 self.session_manager.clone(),
             );
-            for tool in &self.parent_tools {
+            for tool in &filtered_parent_tools {
                 child_registry.register(tool.clone());
             }
-            child_registry.register(std::sync::Arc::new(DelegateTaskTool {
-                config: self.config.clone(),
-                parent_provider: provider.clone(),
-                session_manager: self.session_manager.clone(),
-                parent_tools: self.parent_tools.clone(),
-            }));
+
+            // Only register delegate_task if allowed for this profile
+            let allowed_delegate = match self.profile.name.as_str() {
+                "planner" | "sop_designer" | "openz_coordinator" => true,
+                "vision_agent" | "documentation_agent" | "self_improvement" | "skill_improvement" |
+                "openz_maintainer" | "mcps_manager" | "git_ops_agent" | "ast_searcher" |
+                "database_specialist" | "browser_operator" | "dependency_manager" |
+                "frontend_architect" | "docs_lookup_agent" | "document_compiler" |
+                "presentation_designer" | "code_synthesizer" | "summarizer_agent" |
+                "media_designer" | "api_integrator" | "performance_tuner" |
+                "communication_manager" | "reviewer" | "code_auditor" |
+                "debugger" | "test_engineer" | "devops_agent" | "refactor_agent" |
+                "memory_manager" | "automation_agent" | "coding_agent" => false,
+                _ => true, // Custom subagents allow delegate_task by default
+            };
+
+            if allowed_delegate {
+                child_registry.register(std::sync::Arc::new(DelegateTaskTool {
+                    config: self.config.clone(),
+                    parent_provider: provider.clone(),
+                    session_manager: self.session_manager.clone(),
+                    parent_tools: self.parent_tools.clone(),
+                }));
+            }
 
             let child_agent = AgentLoop::new(
                 self.config.clone(),
@@ -374,154 +507,186 @@ impl Tool for DelegateProfileTool {
                 self.session_manager.clone(),
             );
 
-            let formatted_name = format_subagent_name(&self.profile.name);
-            let is_vision = self.profile.name == "vision_agent";
-            let is_reviewer = self.profile.name == "reviewer";
-
             if is_reviewer {
-                let spinner_msg = format!("{}◇ Reviewing...{}", AURA_PURPLE, COLOR_RESET);
-                let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
-                let mut has_memory_mcp = false;
-                if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
-                    match client.call_tool("create_database_branch", &serde_json::json!({ "branchId": branch_id })).await {
-                        Ok(_) => {
-                            crate::tui_println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
-                            has_memory_mcp = true;
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to create database branch: {:?}", e);
-                        }
-                    }
-                }
-
-                let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
-                    DELEGATION_DEPTH.scope(current_depth + 1, async {
-                        child_agent.run(&subagent_prompt, &child_session_id).await
-                    }).await
-                });
-
-                let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
-                let run_res = match with_spinner(&spinner_msg, run_res_timeout).await {
-                    Ok(res) => res,
-                    Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
-                };
-
-                match run_res {
-                    Ok(run_res) => {
-                        if has_memory_mcp {
-                            if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
-                                match client.call_tool("commit_database_branch", &serde_json::json!({})).await {
-                                    Ok(_) => crate::tui_println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
-                                    Err(e) => tracing::warn!("Failed to commit database branch: {:?}", e),
-                                }
-                            }
-                        }
-                        crate::tui_println!("{}✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
-                        
-                        if workspace_dir != parent_dir {
-                            let _ = sync_changes_back(&workspace_dir, &parent_dir);
-                        }
-
-                        // Run evolution review
-                        let _ = run_evolution_review(&self.parent_provider, &self.profile.name, &clean_goal, &clean_context, &run_res.content).await;
-
-                        return Ok(serde_json::json!({
-                            "status": "success",
-                            "session_id": child_session_id,
-                            "model_used": model_name,
-                            "summary": run_res.content
-                        }));
-                    }
-                    Err(e) => {
-                        if has_memory_mcp {
-                            if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
-                                match client.call_tool("rollback_database_branch", &serde_json::json!({})).await {
-                                    Ok(_) => crate::tui_println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
-                                    Err(e) => tracing::warn!("Failed to rollback database branch: {:?}", e),
-                                }
-                            }
-                        }
-                        crate::tui_println!("{}✕ Error: Model '{}' execution failed: {}{}", ERROR_RED, model_name, e, COLOR_RESET);
-                        last_error = Some(e);
-                    }
-                }
+                crate::tui_println!("{}◇ Reviewing...{}", AURA_PURPLE, COLOR_RESET);
+            } else if is_vision {
+                crate::tui_println!("{}◎ Vision Agent{}", AURA_PURPLE, COLOR_RESET);
             } else {
-                if is_vision {
-                    crate::tui_println!("{}◎ Vision Agent{}", AURA_PURPLE, COLOR_RESET);
-                } else {
-                    crate::tui_println!("{}◎ {}{}", AURA_PURPLE, formatted_name, COLOR_RESET);
-                }
+                crate::tui_println!("{}◎ {}{}", AURA_PURPLE, formatted_name, COLOR_RESET);
+            }
 
-                let spinner_msg = if is_vision {
-                    format!("{}  Processing image...{}", AURA_SLATE, COLOR_RESET)
-                } else {
-                    format!("{}  Running...{}", AURA_SLATE, COLOR_RESET)
-                };
+            let spinner_msg = if is_reviewer {
+                format!("{}  Reviewing...{}", AURA_SLATE, COLOR_RESET)
+            } else if is_vision {
+                format!("{}  Processing image...{}", AURA_SLATE, COLOR_RESET)
+            } else {
+                format!("{}  Running...{}", AURA_SLATE, COLOR_RESET)
+            };
 
-                let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
-                let mut has_memory_mcp = false;
-                if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
-                    match client.call_tool("create_database_branch", &serde_json::json!({ "branchId": branch_id })).await {
-                        Ok(_) => {
-                            crate::tui_println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
-                            has_memory_mcp = true;
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to create database branch: {:?}", e);
-                        }
-                    }
-                }
-
-                let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
-                    DELEGATION_DEPTH.scope(current_depth + 1, async {
-                        child_agent.run(&subagent_prompt, &child_session_id).await
-                    }).await
-                });
-
-                let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
-                let run_res = match with_spinner(&spinner_msg, run_res_timeout).await {
-                    Ok(res) => res,
-                    Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
-                };
-
-                match run_res {
-                    Ok(run_res) => {
-                        if has_memory_mcp {
-                            if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
-                                match client.call_tool("commit_database_branch", &serde_json::json!({})).await {
-                                    Ok(_) => crate::tui_println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
-                                    Err(e) => tracing::warn!("Failed to commit database branch: {:?}", e),
-                                }
-                            }
-                        }
-                        crate::tui_println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
-                        
-                        if workspace_dir != parent_dir {
-                            let _ = sync_changes_back(&workspace_dir, &parent_dir);
-                        }
-
-                        // Run evolution review
-                        let _ = run_evolution_review(&self.parent_provider, &self.profile.name, &clean_goal, &clean_context, &run_res.content).await;
-
-                        return Ok(serde_json::json!({
-                            "status": "success",
-                            "session_id": child_session_id,
-                            "model_used": model_name,
-                            "summary": run_res.content
-                        }));
+            let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+            let mut has_memory_mcp = false;
+            if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
+                match client.call_tool("create_database_branch", &serde_json::json!({ "branchId": branch_id })).await {
+                    Ok(_) => {
+                        crate::tui_println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
+                        has_memory_mcp = true;
                     }
                     Err(e) => {
-                        if has_memory_mcp {
-                            if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
-                                match client.call_tool("rollback_database_branch", &serde_json::json!({})).await {
-                                    Ok(_) => crate::tui_println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
-                                    Err(e) => tracing::warn!("Failed to rollback database branch: {:?}", e),
+                        tracing::warn!("Failed to create database branch: {:?}", e);
+                    }
+                }
+            }
+
+            let mut final_prompt = subagent_prompt.clone();
+            if let Some(ref schema) = json_schema {
+                final_prompt.push_str(&format!(
+                    "\n\nCRITICAL REQUIREMENT: Your final response MUST be a raw JSON object strictly conforming to this JSON Schema:\n{}\nDo not wrap it in markdown code blocks, do not add any conversational text. Return only the raw valid JSON.",
+                    serde_json::to_string_pretty(schema).unwrap_or_default()
+                ));
+            }
+
+            let mut run_res = {
+                let p_ref = &final_prompt;
+                let c_ref = &child_session_id;
+                let child_agent_ref = &child_agent;
+                let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
+                    DELEGATION_DEPTH.scope(current_depth + 1, async {
+                        child_agent_ref.run(p_ref, c_ref).await
+                    }).await
+                });
+                let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
+                match with_spinner(&spinner_msg, run_res_timeout).await {
+                    Ok(res) => res,
+                    Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
+                }
+            };
+
+            // Enforce schema validation on child agent success
+            if let Some(ref schema) = json_schema {
+                let mut attempts = 0;
+                loop {
+                    if let Ok(ref mut res) = run_res {
+                        let text_output = res.content.trim();
+                        let clean_json_str = if text_output.starts_with("```json") {
+                            text_output.strip_prefix("```json").unwrap().strip_suffix("```").unwrap_or(text_output).trim()
+                        } else if text_output.starts_with("```") {
+                            text_output.strip_prefix("```").unwrap().strip_suffix("```").unwrap_or(text_output).trim()
+                        } else {
+                            text_output
+                        };
+
+                        let parsed_val: Result<Value, _> = serde_json::from_str(clean_json_str);
+                        match parsed_val {
+                            Ok(val) => {
+                                match validate_schema(&val, schema) {
+                                    Ok(_) => {
+                                        res.content = clean_json_str.to_string();
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        if attempts >= 2 {
+                                            run_res = Err(anyhow!("Subagent output failed schema validation: {}", e));
+                                            break;
+                                        }
+                                        attempts += 1;
+                                        crate::tui_println!(
+                                            "{}▲ [Reflection] Subagent JSON schema validation failed: {}. Retrying attempt {} of 2...{}",
+                                            AURA_GOLD, e, attempts, COLOR_RESET
+                                        );
+                                        let retry_prompt = format!(
+                                            "Your previous response did not conform to the JSON Schema. Validation Error: {}\n\n\
+                                            Please correct your response. Return ONLY the raw valid JSON matching the schema.",
+                                            e
+                                        );
+                                        let p_ref = &retry_prompt;
+                                        let c_ref = &child_session_id;
+                                        let child_agent_ref = &child_agent;
+                                        let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
+                                            DELEGATION_DEPTH.scope(current_depth + 1, async {
+                                                child_agent_ref.run(p_ref, c_ref).await
+                                            }).await
+                                        });
+                                        let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
+                                        run_res = match with_spinner(&spinner_msg, run_res_timeout).await {
+                                            Ok(r) => r,
+                                            Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
+                                        };
+                                    }
                                 }
                             }
+                            Err(e) => {
+                                if attempts >= 2 {
+                                    run_res = Err(anyhow!("Subagent output failed to parse as JSON: {}. Parse Error: {}", e, text_output));
+                                    break;
+                                }
+                                attempts += 1;
+                                crate::tui_println!(
+                                    "{}▲ [Reflection] Subagent output is not valid JSON: {}. Retrying attempt {} of 2...{}",
+                                    AURA_GOLD, e, attempts, COLOR_RESET
+                                );
+                                let retry_prompt = format!(
+                                    "Your previous response was not valid JSON. Parse Error: {}\n\n\
+                                    Please correct your response. Return ONLY the raw valid JSON matching the schema.",
+                                    e
+                                );
+                                let p_ref = &retry_prompt;
+                                let c_ref = &child_session_id;
+                                let child_agent_ref = &child_agent;
+                                let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
+                                    DELEGATION_DEPTH.scope(current_depth + 1, async {
+                                        child_agent_ref.run(p_ref, c_ref).await
+                                    }).await
+                                });
+                                let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
+                                run_res = match with_spinner(&spinner_msg, run_res_timeout).await {
+                                    Ok(r) => r,
+                                    Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
+                                };
+                            }
                         }
-                        crate::tui_println!("{}✕ Error: Model '{}' execution failed: {}{}", ERROR_RED, model_name, e, COLOR_RESET);
-                        last_error = Some(e);
+                    } else {
+                        break;
                     }
+                }
+            }
+
+            match run_res {
+                Ok(run_res) => {
+                    if has_memory_mcp {
+                        if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
+                            match client.call_tool("commit_database_branch", &serde_json::json!({})).await {
+                                Ok(_) => crate::tui_println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
+                                Err(e) => tracing::warn!("Failed to commit database branch: {:?}", e),
+                            }
+                        }
+                    }
+                    crate::tui_println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
+                    
+                    if workspace_dir != parent_dir {
+                        let _ = sync_changes_back(&workspace_dir, &parent_dir);
+                    }
+
+                    // Run evolution review
+                    let _ = run_evolution_review(&self.parent_provider, &self.profile.name, &clean_goal, &clean_context, &run_res.content).await;
+
+                    return Ok(serde_json::json!({
+                        "status": "success",
+                        "session_id": child_session_id,
+                        "model_used": model_name,
+                        "summary": run_res.content
+                    }));
+                }
+                Err(e) => {
+                    if has_memory_mcp {
+                        if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
+                            match client.call_tool("rollback_database_branch", &serde_json::json!({})).await {
+                                Ok(_) => crate::tui_println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
+                                Err(e) => tracing::warn!("Failed to rollback database branch: {:?}", e),
+                            }
+                        }
+                    }
+                    crate::tui_println!("{}✕ Error: Model '{}' execution failed: {}{}", ERROR_RED, model_name, e, COLOR_RESET);
+                    last_error = Some(e);
                 }
             }
         }
@@ -1066,7 +1231,18 @@ impl Tool for CreateSubagentTool {
         }
 
         // Do not allow overwriting default subagents
-        let defaults = ["planner", "researcher", "architect", "skill_creator", "reviewer", "code_auditor", "debugger", "test_engineer", "devops_agent", "refactor_agent", "memory_manager", "vision_agent", "documentation_agent", "self_improvement", "skill_improvement", "openz_maintainer", "mcps_manager"];
+        let defaults = [
+            "planner", "researcher", "architect", "skill_creator", "reviewer",
+            "code_auditor", "debugger", "test_engineer", "devops_agent",
+            "refactor_agent", "memory_manager", "vision_agent", "documentation_agent",
+            "self_improvement", "skill_improvement", "openz_maintainer", "mcps_manager",
+            "git_ops_agent", "ast_searcher", "database_specialist", "browser_operator",
+            "dependency_manager", "frontend_architect", "docs_lookup_agent",
+            "document_compiler", "presentation_designer", "code_synthesizer",
+            "summarizer_agent", "media_designer", "openz_coordinator",
+            "sop_designer", "api_integrator", "performance_tuner", "communication_manager",
+            "automation_agent", "coding_agent"
+        ];
         if defaults.contains(&name.as_str()) {
             return Err(anyhow!("Cannot overwrite default subagent '{}'", name));
         }
@@ -1127,7 +1303,18 @@ impl Tool for DeleteSubagentTool {
         let name = arguments.get("name").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'name' argument"))?.trim().to_string();
 
-        let defaults = ["planner", "researcher", "architect", "skill_creator", "reviewer", "code_auditor", "debugger", "test_engineer", "devops_agent", "refactor_agent", "memory_manager", "vision_agent", "documentation_agent", "self_improvement", "skill_improvement", "openz_maintainer", "mcps_manager"];
+        let defaults = [
+            "planner", "researcher", "architect", "skill_creator", "reviewer",
+            "code_auditor", "debugger", "test_engineer", "devops_agent",
+            "refactor_agent", "memory_manager", "vision_agent", "documentation_agent",
+            "self_improvement", "skill_improvement", "openz_maintainer", "mcps_manager",
+            "git_ops_agent", "ast_searcher", "database_specialist", "browser_operator",
+            "dependency_manager", "frontend_architect", "docs_lookup_agent",
+            "document_compiler", "presentation_designer", "code_synthesizer",
+            "summarizer_agent", "media_designer", "openz_coordinator",
+            "sop_designer", "api_integrator", "performance_tuner", "communication_manager",
+            "automation_agent", "coding_agent"
+        ];
         if defaults.contains(&name.as_str()) {
             return Err(anyhow!("Cannot delete default subagent '{}'", name));
         }
@@ -1162,6 +1349,25 @@ fn format_subagent_name(name: &str) -> String {
         "devops_agent" => "Devops Agent".to_string(),
         "refactor_agent" => "Refactor Agent".to_string(),
         "skill_creator" => "Skill Creator".to_string(),
+        "git_ops_agent" => "Git Operations Agent".to_string(),
+        "ast_searcher" => "AST Searcher".to_string(),
+        "database_specialist" => "Database Specialist".to_string(),
+        "browser_operator" => "Browser Operator".to_string(),
+        "dependency_manager" => "Dependency Manager".to_string(),
+        "frontend_architect" => "Frontend Architect".to_string(),
+        "docs_lookup_agent" => "Docs Lookup Agent".to_string(),
+        "document_compiler" => "Document Compiler".to_string(),
+        "presentation_designer" => "Presentation Designer".to_string(),
+        "code_synthesizer" => "Code Synthesizer".to_string(),
+        "summarizer_agent" => "Summarizer Agent".to_string(),
+        "media_designer" => "Media Designer".to_string(),
+        "openz_coordinator" => "OpenZ Coordinator".to_string(),
+        "sop_designer" => "SOP Designer".to_string(),
+        "api_integrator" => "API Integrator".to_string(),
+        "performance_tuner" => "Performance Tuner".to_string(),
+        "communication_manager" => "Communication Manager".to_string(),
+        "automation_agent" => "Automation Agent".to_string(),
+        "coding_agent" => "Coding Agent".to_string(),
         _ => {
             let mut chars = name.chars();
             match chars.next() {
@@ -1824,11 +2030,228 @@ async fn run_evolution_review(
     Ok(())
 }
 
+fn validate_schema(value: &serde_json::Value, schema: &serde_json::Value) -> Result<(), String> {
+    if let Some(schema_obj) = schema.as_object() {
+        if let Some(enum_vals) = schema_obj.get("enum").and_then(|e| e.as_array()) {
+            if !enum_vals.contains(value) {
+                return Err(format!("Value {:?} is not one of the allowed enum values: {:?}", value, enum_vals));
+            }
+        }
+
+        if let Some(any_of) = schema_obj.get("anyOf").and_then(|a| a.as_array()) {
+            let mut matched = false;
+            let mut errs = Vec::new();
+            for sub_schema in any_of {
+                match validate_schema(value, sub_schema) {
+                    Ok(_) => {
+                        matched = true;
+                        break;
+                    }
+                    Err(e) => {
+                        errs.push(e);
+                    }
+                }
+            }
+            if !matched {
+                return Err(format!("Value does not match anyOf schemas: {:?}", errs));
+            }
+        }
+
+        if let Some(types) = schema_obj.get("type") {
+            match types {
+                serde_json::Value::String(t) => {
+                    match t.as_str() {
+                        "object" => {
+                            if !value.is_object() {
+                                return Err(format!("Expected object, found {:?}", value));
+                            }
+                            let val_obj = value.as_object().unwrap();
+                            if let Some(properties) = schema_obj.get("properties").and_then(|p| p.as_object()) {
+                                for (prop_name, prop_schema) in properties {
+                                    if let Some(prop_val) = val_obj.get(prop_name) {
+                                        validate_schema(prop_val, prop_schema)
+                                            .map_err(|e| format!("Property '{}': {}", prop_name, e))?;
+                                    }
+                                }
+                            }
+                            if let Some(required) = schema_obj.get("required").and_then(|r| r.as_array()) {
+                                for req in required {
+                                    if let Some(req_str) = req.as_str() {
+                                        if !val_obj.contains_key(req_str) {
+                                            return Err(format!("Missing required property '{}'", req_str));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "array" => {
+                            if !value.is_array() {
+                                return Err(format!("Expected array, found {:?}", value));
+                            }
+                            let val_arr = value.as_array().unwrap();
+                            if let Some(items) = schema_obj.get("items") {
+                                for (idx, item_val) in val_arr.iter().enumerate() {
+                                    validate_schema(item_val, items)
+                                        .map_err(|e| format!("Item at index {}: {}", idx, e))?;
+                                }
+                            }
+                        }
+                        "string" => {
+                            if !value.is_string() {
+                                return Err(format!("Expected string, found {:?}", value));
+                            }
+                        }
+                        "number" => {
+                            if !value.is_number() {
+                                return Err(format!("Expected number, found {:?}", value));
+                            }
+                        }
+                        "integer" => {
+                            if !value.is_number() || (value.is_f64() && value.as_f64().unwrap().fract() != 0.0) {
+                                return Err(format!("Expected integer, found {:?}", value));
+                            }
+                        }
+                        "boolean" => {
+                            if !value.is_boolean() {
+                                return Err(format!("Expected boolean, found {:?}", value));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                serde_json::Value::Array(arr) => {
+                    let mut matched = false;
+                    let mut errs = Vec::new();
+                    for t_val in arr {
+                        if let Some(t_str) = t_val.as_str() {
+                            let mut dummy_schema = schema_obj.clone();
+                            dummy_schema.insert("type".to_string(), serde_json::Value::String(t_str.to_string()));
+                            match validate_schema(value, &serde_json::Value::Object(dummy_schema)) {
+                                Ok(_) => {
+                                    matched = true;
+                                    break;
+                                }
+                                Err(e) => {
+                                    errs.push(e);
+                                }
+                            }
+                        }
+                    }
+                    if !matched {
+                        return Err(format!("Value does not match any of the allowed types: {:?}", errs));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
 fn clean_suffix_ticks(s: &str) -> &str {
     if s.ends_with("```") {
         &s[..s.len() - 3]
     } else {
         s
+    }
+}
+
+fn filter_tools_for_subagent(subagent_name: &str, all_tools: &[Arc<dyn Tool>]) -> Vec<Arc<dyn Tool>> {
+    let allowed_names: Option<&[&str]> = match subagent_name {
+        "planner" => Some(&[
+            "read_file", "list_dir", "find_files", "code_outline", 
+            "parallel_research"
+        ]),
+        "researcher" => Some(&[
+            "read_file", "list_dir", "find_files", "web_fetch", 
+            "web_search", "doc_reader", "semantic_search", "crawl", 
+            "obscura"
+        ]),
+        "architect" => Some(&[
+            "read_file", "write_file", "list_dir", "find_files", 
+            "code_outline", "ast_grep", "db_inspector"
+        ]),
+        "git_ops_agent" => Some(&[
+            "read_file", "list_dir", "git_manager"
+        ]),
+        "ast_searcher" => Some(&[
+            "read_file", "list_dir", "find_files", "ast_grep", 
+            "code_outline", "grep_search"
+        ]),
+        "database_specialist" => Some(&[
+            "read_file", "list_dir", "db_inspector"
+        ]),
+        "browser_operator" => Some(&[
+            "read_file", "list_dir", "web_fetch", "crawl", "obscura"
+        ]),
+        "dependency_manager" => Some(&[
+            "read_file", "write_file", "list_dir", "cargo_manager", "onpkg"
+        ]),
+        "frontend_architect" => Some(&[
+            "read_file", "write_file", "list_dir", "generate_image"
+        ]),
+        "docs_lookup_agent" => Some(&[
+            "read_file", "list_dir", "web_fetch", "web_search", "rust_docs"
+        ]),
+        "media_designer" => Some(&[
+            "read_file", "write_file", "list_dir", "generate_image"
+        ]),
+        "sop_designer" => Some(&[
+            "read_file", "write_file", "list_dir"
+        ]),
+        "api_integrator" => Some(&[
+            "read_file", "write_file", "list_dir", "web_fetch", "web_search", "exec_command"
+        ]),
+        "performance_tuner" => Some(&[
+            "read_file", "list_dir", "system_info", "exec_command"
+        ]),
+        "communication_manager" => Some(&[
+            "read_file", "list_dir", "check_port"
+        ]),
+        "automation_agent" => Some(&[
+            "read_file", "write_file", "list_dir", "find_files", "gsd_browser", "obscura",
+            "crawl", "web_fetch", "schedule_job", "list_jobs", "remove_job", "exec_command", "manage_mcp"
+        ]),
+        "coding_agent" => Some(&[
+            "read_file", "write_file", "list_dir", "find_files", "code_outline", "ast_grep",
+            "grep_search", "exec_command", "cargo_manager"
+        ]),
+        "reviewer" | "code_auditor" => Some(&[
+            "read_file", "list_dir", "code_outline", "ast_grep", "grep_search"
+        ]),
+        "debugger" => Some(&[
+            "read_file", "write_file", "list_dir", "code_outline", "grep_search", 
+            "exec_command", "cargo_manager"
+        ]),
+        "test_engineer" => Some(&[
+            "read_file", "write_file", "list_dir", "exec_command", "cargo_manager"
+        ]),
+        "devops_agent" => Some(&[
+            "read_file", "write_file", "list_dir", "exec_command"
+        ]),
+        "refactor_agent" => Some(&[
+            "read_file", "write_file", "list_dir", "code_outline", "ast_grep", "grep_search"
+        ]),
+        "memory_manager" | "self_improvement" | "skill_improvement" => Some(&[
+            "read_file", "write_file", "list_dir", "find_files"
+        ]),
+        "openz_maintainer" => Some(&[
+            "read_file", "write_file", "list_dir", "exec_command", "cargo_manager"
+        ]),
+        "mcps_manager" => Some(&[
+            "read_file", "write_file", "list_dir", "manage_mcp", "exec_command"
+        ]),
+        // Coordinator and custom profiles inherit all tools
+        _ => None,
+    };
+
+    if let Some(allowed) = allowed_names {
+        all_tools.iter()
+            .filter(|t| allowed.contains(&t.name()))
+            .cloned()
+            .collect()
+    } else {
+        all_tools.to_vec()
     }
 }
 
@@ -1861,6 +2284,60 @@ mod tests {
 
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("Delegation limit reached"));
+    }
+
+    #[test]
+    fn test_validate_schema_success() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "age": { "type": "integer" },
+                "tags": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["active", "inactive"]
+                }
+            },
+            "required": ["name", "age"]
+        });
+
+        let value = serde_json::json!({
+            "name": "Aswin",
+            "age": 25,
+            "tags": ["rust", "ai"],
+            "status": "active"
+        });
+
+        assert!(validate_schema(&value, &schema).is_ok());
+    }
+
+    #[test]
+    fn test_validate_schema_failure() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "age": { "type": "integer" }
+            },
+            "required": ["name", "age"]
+        });
+
+        // Missing required field
+        let val_missing = serde_json::json!({
+            "name": "Aswin"
+        });
+        assert!(validate_schema(&val_missing, &schema).is_err());
+
+        // Incorrect type
+        let val_bad_type = serde_json::json!({
+            "name": "Aswin",
+            "age": "twenty-five"
+        });
+        assert!(validate_schema(&val_bad_type, &schema).is_err());
     }
 }
 

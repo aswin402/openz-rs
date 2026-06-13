@@ -1,9 +1,10 @@
 use crate::tools::Tool;
-use crate::tools::shared_memory::{get_db_mutex, get_db_path, get_current_workspace, get_embedding, MemoryEntry};
+use crate::tools::shared_memory::{get_db_mutex, get_sqlite_connection, get_current_workspace, get_embedding, CognitiveMemoryEntry};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
+use rusqlite::params;
 
 pub struct IndexNotesTool;
 
@@ -64,7 +65,7 @@ impl Tool for IndexNotesTool {
     }
 
     fn description(&self) -> &str {
-        "Scan local notes (e.g. Obsidian or local markdown files) and index their sections into semantic memory for search."
+        "Scan local notes (e.g. Obsidian or local markdown files) and index their sections into cognitive semantic memory for search."
     }
 
     fn parameters(&self) -> Value {
@@ -105,13 +106,17 @@ impl Tool for IndexNotesTool {
                         let workspace = get_current_workspace();
                         let timestamp = chrono::Utc::now().to_rfc3339();
                         
-                        entries_to_add.push(MemoryEntry {
+                        entries_to_add.push(CognitiveMemoryEntry {
                             id,
                             text: formatted_text,
                             embedding,
-                            timestamp,
+                            timestamp: timestamp.clone(),
                             workspace,
                             tags: vec!["notes".to_string(), "second-brain".to_string()],
+                            importance: 0.5,
+                            last_accessed: timestamp,
+                            access_count: 1,
+                            decay_rate: 0.05,
                         });
                         count += 1;
                     }
@@ -120,28 +125,23 @@ impl Tool for IndexNotesTool {
         }
 
         if !entries_to_add.is_empty() {
-            let db_path = get_db_path();
             let _lock = get_db_mutex().lock().await;
+            let conn = get_sqlite_connection()?;
 
-            let mut entries: Vec<MemoryEntry> = if db_path.exists() {
-                let data = fs::read_to_string(&db_path)?;
-                serde_json::from_str(&data).unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-
-            entries.extend(entries_to_add);
-
-            if let Some(parent) = db_path.parent() {
-                fs::create_dir_all(parent)?;
+            for entry in entries_to_add {
+                let embedding_json = serde_json::to_string(&entry.embedding)?;
+                let tags_json = serde_json::to_string(&entry.tags)?;
+                conn.execute(
+                    "INSERT OR REPLACE INTO cognitive_memory (id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![entry.id, entry.text, embedding_json, entry.timestamp, entry.workspace, tags_json, entry.importance, entry.last_accessed, entry.access_count, entry.decay_rate],
+                )?;
             }
-            let serialized = serde_json::to_string_pretty(&entries)?;
-            fs::write(db_path, serialized)?;
         }
 
         Ok(json!({
             "status": "success",
-            "message": format!("Successfully indexed {} notes sections into semantic memory.", count)
+            "message": format!("Successfully indexed {} notes sections into cognitive semantic memory.", count)
         }))
     }
 }

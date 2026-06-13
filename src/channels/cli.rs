@@ -13,7 +13,7 @@ fn get_pending_notifications() -> &'static Mutex<Vec<String>> {
     PENDING_NOTIFICATIONS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-pub fn send_notification(msg: &str) {
+pub fn queue_notification(msg: &str) {
     if IS_RAW_INPUT_ACTIVE.load(Ordering::SeqCst) {
         if let Ok(mut pending) = get_pending_notifications().lock() {
             pending.push(msg.to_string());
@@ -21,6 +21,10 @@ pub fn send_notification(msg: &str) {
     } else {
         crate::tui_println!("{}", msg);
     }
+}
+
+pub fn send_notification(msg: &str) {
+    crate::channels::send_notification(msg);
 }
 
 struct RawInputGuard;

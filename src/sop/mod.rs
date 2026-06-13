@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::collections::{HashMap, HashSet};
 use anyhow::{Result, Context};
-use crate::config::resolve_path;
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SopStep {
@@ -59,7 +59,7 @@ pub struct SopInstance {
 }
 
 pub fn sop_dir() -> PathBuf {
-    resolve_path("~/.openz/sop")
+    crate::config::loader::config_dir().join("sop")
 }
 
 pub fn sop_definitions_path() -> PathBuf {
@@ -81,9 +81,24 @@ pub fn initialize_sop_system() -> Result<()> {
     }
 
     let defs_path = sop_definitions_path();
-    if !defs_path.exists() {
-        let defaults = get_default_sop_definitions();
-        let content = serde_json::to_string_pretty(&defaults)?;
+    let mut current_defs = if defs_path.exists() {
+        let content = fs::read_to_string(&defs_path)?;
+        serde_json::from_str::<Vec<SopDefinition>>(&content).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let defaults = get_default_sop_definitions();
+    let mut updated = false;
+    for def in defaults {
+        if !current_defs.iter().any(|d| d.id == def.id) {
+            current_defs.push(def);
+            updated = true;
+        }
+    }
+
+    if updated || !defs_path.exists() {
+        let content = serde_json::to_string_pretty(&current_defs)?;
         fs::write(&defs_path, content)?;
     }
 
@@ -264,6 +279,41 @@ fn get_default_sop_definitions() -> Vec<SopDefinition> {
                     prompt_template: "Write a step-by-step resolution plan to address root cause: {{steps.Investigate Root Cause.output}}. Include verification commands to check if the fix was successful.".to_string(),
                     depends_on: vec!["Investigate Root Cause".to_string()],
                     agent: Some("debugger".to_string()),
+                },
+            ],
+        },
+        SopDefinition {
+            id: "feature-release".to_string(),
+            name: "Feature Release & Security Audit SOP".to_string(),
+            description: "Orchestrates schema design, security auditing, baseline implementation, and final compilation validation".to_string(),
+            steps: vec![
+                SopStep {
+                    name: "Audit Schema".to_string(),
+                    description: "Designs or reviews database schemas and directory structure".to_string(),
+                    prompt_template: "Review the following proposed feature request: {{payload.feature_request}}. Design the database schema and layout files.".to_string(),
+                    depends_on: vec![],
+                    agent: Some("architect".to_string()),
+                },
+                SopStep {
+                    name: "Security Verification".to_string(),
+                    description: "Scans proposed schema and designs for vulnerabilities".to_string(),
+                    prompt_template: "Based on the proposed schema: {{steps.Audit Schema.output}}, identify potential security concerns or validation gaps. Propose mitigation practices.".to_string(),
+                    depends_on: vec!["Audit Schema".to_string()],
+                    agent: Some("code_auditor".to_string()),
+                },
+                SopStep {
+                    name: "Compile Implementation".to_string(),
+                    description: "Drafts baseline implementation code".to_string(),
+                    prompt_template: "Based on audited designs: {{steps.Security Verification.output}}, write code files conforming to specifications.".to_string(),
+                    depends_on: vec!["Security Verification".to_string()],
+                    agent: Some("code_synthesizer".to_string()),
+                },
+                SopStep {
+                    name: "Verify Build".to_string(),
+                    description: "Runs compilation checks and verifies output is correct".to_string(),
+                    prompt_template: "Compile the implemented code from {{steps.Compile Implementation.output}} and execute checks to verify no type or import errors exist.".to_string(),
+                    depends_on: vec!["Compile Implementation".to_string()],
+                    agent: Some("openz_coordinator".to_string()),
                 },
             ],
         },
@@ -542,5 +592,40 @@ mod tests {
         };
         let err = validate_sop_definition(&def).unwrap_err().to_string();
         assert!(err.contains("Duplicate step name"));
+    }
+
+    #[tokio::test]
+    async fn test_trigger_sop_simulation() {
+        let _lock = TestLock::acquire();
+        let temp_dir = std::env::temp_dir().join(format!("openz_sop_sim_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        std::env::set_var("OPENZ_CONFIG_DIR", temp_dir.to_str().unwrap());
+        initialize_sop_system().unwrap();
+
+        let config = crate::config::schema::Config::default();
+        let payload = serde_json::json!({
+            "feature_request": "Implement SOP simulator"
+        });
+
+        // Trigger simulation for feature-release SOP
+        let result = engine::trigger_sop_simulation(config, "feature-release".to_string(), payload).await;
+        assert!(result.is_ok());
+        
+        let sim_id = result.unwrap();
+        assert!(sim_id.starts_with("sim-"));
+
+        // Load the simulated instance to verify it completed
+        let inst = load_instance(&sim_id).unwrap();
+        assert_eq!(inst.status, SopStatus::Completed);
+        assert_eq!(inst.steps.len(), 4);
+        for step in inst.steps {
+            assert_eq!(step.status, "Completed");
+            let output = step.output.unwrap();
+            assert!(output.contains("[Simulated Output for Step:"));
+        }
+
+        std::fs::remove_dir_all(&temp_dir).unwrap();
+        std::env::remove_var("OPENZ_CONFIG_DIR");
     }
 }

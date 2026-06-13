@@ -702,8 +702,7 @@ impl AgentLoop {
                                                 let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, error_str);
                                                 send_progress_update(session_key, &fail_msg).await;
                                                 if !silent {
-                                                    print!("{}✕ {} - Failed: {}{}\r\n", ERROR_RED, formatted_args, error_str, COLOR_RESET);
-                                                    let _ = std::io::stdout().flush();
+                                                    crate::tui_println!("{}✕ {} - Failed: {}{}", AURA_PURPLE, formatted_args, error_str, COLOR_RESET);
                                                 }
                                                 serde_json::json!({ "error": error_str })
                                             }
@@ -714,8 +713,7 @@ impl AgentLoop {
                                         let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, error_str);
                                         send_progress_update(session_key, &fail_msg).await;
                                         if !silent {
-                                            print!("{}✕ {} - Failed: {}{}\r\n", ERROR_RED, formatted_args, error_str, COLOR_RESET);
-                                            let _ = std::io::stdout().flush();
+                                            crate::tui_println!("{}✕ {} - Failed: {}{}", AURA_PURPLE, formatted_args, error_str, COLOR_RESET);
                                         }
                                         serde_json::json!({ "error": error_str })
                                     }
