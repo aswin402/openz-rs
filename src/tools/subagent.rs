@@ -2208,6 +2208,18 @@ fn filter_tools_for_subagent(subagent_name: &str, all_tools: &[Arc<dyn Tool>]) -
         "communication_manager" => Some(&[
             "read_file", "list_dir", "check_port"
         ]),
+        "document_compiler" => Some(&[
+            "read_file", "write_file", "list_dir", "find_files", "doc_reader", "exec_command"
+        ]),
+        "presentation_designer" => Some(&[
+            "read_file", "write_file", "list_dir", "find_files", "exec_command", "generate_image"
+        ]),
+        "code_synthesizer" => Some(&[
+            "read_file", "write_file", "list_dir", "find_files", "onpkg", "code_outline", "cargo_manager"
+        ]),
+        "summarizer_agent" => Some(&[
+            "read_file", "write_file", "list_dir", "grep_search"
+        ]),
         "automation_agent" => Some(&[
             "read_file", "write_file", "list_dir", "find_files", "gsd_browser", "obscura",
             "crawl", "web_fetch", "schedule_job", "list_jobs", "remove_job", "exec_command", "manage_mcp"
@@ -2338,6 +2350,68 @@ mod tests {
             "age": "twenty-five"
         });
         assert!(validate_schema(&val_bad_type, &schema).is_err());
+    }
+
+    struct MockTool {
+        name: String,
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for MockTool {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn description(&self) -> &str {
+            "mock"
+        }
+        fn parameters(&self) -> Value {
+            serde_json::json!({})
+        }
+        async fn call(&self, _args: &Value) -> Result<Value> {
+            Ok(serde_json::json!({}))
+        }
+    }
+
+    #[test]
+    fn test_filter_tools_for_new_default_subagents() {
+        let tools: Vec<Arc<dyn Tool>> = vec![
+            Arc::new(MockTool { name: "read_file".to_string() }),
+            Arc::new(MockTool { name: "write_file".to_string() }),
+            Arc::new(MockTool { name: "list_dir".to_string() }),
+            Arc::new(MockTool { name: "find_files".to_string() }),
+            Arc::new(MockTool { name: "doc_reader".to_string() }),
+            Arc::new(MockTool { name: "exec_command".to_string() }),
+            Arc::new(MockTool { name: "generate_image".to_string() }),
+            Arc::new(MockTool { name: "onpkg".to_string() }),
+            Arc::new(MockTool { name: "code_outline".to_string() }),
+            Arc::new(MockTool { name: "cargo_manager".to_string() }),
+            Arc::new(MockTool { name: "grep_search".to_string() }),
+            Arc::new(MockTool { name: "some_other_tool".to_string() }),
+        ];
+
+        // Test document_compiler
+        let filtered = filter_tools_for_subagent("document_compiler", &tools);
+        assert_eq!(filtered.len(), 6);
+        assert!(filtered.iter().any(|t| t.name() == "doc_reader"));
+        assert!(!filtered.iter().any(|t| t.name() == "onpkg"));
+
+        // Test presentation_designer
+        let filtered = filter_tools_for_subagent("presentation_designer", &tools);
+        assert_eq!(filtered.len(), 6);
+        assert!(filtered.iter().any(|t| t.name() == "generate_image"));
+        assert!(!filtered.iter().any(|t| t.name() == "doc_reader"));
+
+        // Test code_synthesizer
+        let filtered = filter_tools_for_subagent("code_synthesizer", &tools);
+        assert_eq!(filtered.len(), 7);
+        assert!(filtered.iter().any(|t| t.name() == "onpkg"));
+        assert!(!filtered.iter().any(|t| t.name() == "generate_image"));
+
+        // Test summarizer_agent
+        let filtered = filter_tools_for_subagent("summarizer_agent", &tools);
+        assert_eq!(filtered.len(), 4);
+        assert!(filtered.iter().any(|t| t.name() == "grep_search"));
+        assert!(!filtered.iter().any(|t| t.name() == "onpkg"));
     }
 }
 
