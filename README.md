@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.10`
+# OpenZ 🦊 `v0.0.11`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -15,18 +15,27 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
 
 ## 🚀 Key Features
 
-* **Security Guard Interceptor:** Safeguards host environment by intercepting destructive commands (`rm`, `dd`, etc.), privilege escalation (`sudo`), process controls (`kill`), system actions (`reboot`), network transfers (`curl`, `wget`, `scp`), and out-of-workspace writes. Features a clean, minimal themed TUI select menu with session-level whitelisting trust and Telegram inline query callback buttons.
+* **Security Guard Interceptor & Configurable Modes:** Safeguards host environment by intercepting destructive commands (`rm`, `dd`, etc.), privilege escalation (`sudo`), process controls (`kill`), system actions (`reboot`), network transfers (`curl`, `wget`, `scp`), and out-of-workspace writes. Supports three runtime `security_mode` configurations:
+  * `strict`: Prompts for all destructive commands, process termination, network fetches, and out-of-workspace writes.
+  * `normal` (default): Whitelists safe developer commands (like `cargo clean`, `npm run clean`, local process kills, and simple curls) while guarding against privilege escalations, system calls, and dangerous pipeline scripts (e.g. `curl | bash`).
+  * `loose`: Allows all command and write executions within the workspace whitelisted paths, only checking `sudo` and system commands.
+  Features a platform-agnostic directory jailing resolver, TUI select menus, and Telegram inline callback approval buttons.
+* **Cryptographic Merkle Hash-Chain Audit Ledger:** Every message, state transition, and tool call is hashed and linked via SHA-256 to form an immutable, tamper-evident ledger. The hash chain integrity is verified automatically on session startup, and the `/audit` slash command outputs a formatted ledger.
+* **SQLite-Backed Memory & Skill Layer:** Migrated long-term skills and facts storage from slow Markdown/JSON flat files into a dedicated SQLite database (`~/.openz/memory.db`) with auto-migration on startup.
+* **Safe WebAssembly (WASM) Sandbox Interception:** Automatically intercepts shell commands running `.wasm` files and redirects execution to an in-process, sandboxed WebAssembly runtime (`wasmtime`).
+* **Oxc-based Fast JS/TS Tooling:** High-performance native AST-based code outlining and formatting using the `oxc` compiler parser and generator, removing external Node.js dependencies.
 * **Auto-Continuation (Truncation Prevention):** Detects when model responses are cut off due to hitting output token limits (using `finish_reason: "length"`) and automatically prompts the model to continue, stitching the segments together seamlessly.
 * **Persistent Workspace Loops:** Session history, workspace file scopes, and local tool execution survive long-running turn completions.
 * **Memory & Skill Self-Improvement:** Inspired by `hermes-agent`, OpenZ implements a closed-loop learning system. An asynchronous background curator refines long-term memory (facts, preferences) and curates procedural skills (style rules, workarounds) stored in `~/.openz/skills/`. Users can also hand the agent a GitHub repository link, and OpenZ will dynamically clone, install, and configure it on the host machine, saving it as an active skill for future turns. View or manage them using `/memory`, `/skills`, and `/skill` commands.
 * **Dynamic Subagents & Tool Inheritance:** Subagents dynamically inherit all active standard and MCP tools from the parent orchestrator (enabling `researcher` or `reviewer` to use grep_search, ast_grep, cargo_manager, and web_search). Newly created subagents default their primary execution model to the active orchestrator model, and the active model is appended as a last-resort fallback for all subagent profiles.
 * **Pluggable Channel Adapters:** Built around a unified `Channel` trait, enabling modular communication endpoints:
   * **Console CLI (`agent`):** Direct interactive terminal chat with full slash commands support.
-  * **WebSocket Gateway (`gateway`):** Asynchronous Web/WebSocket server powering the visual WebUI workbench.
+  * **WebSocket Gateway (`gateway`):** Asynchronous Web/WebSocket server powering the visual WebUI workbench. Offers an **OpenAI-compatible local completions endpoint (`/v1/chat/completions`)** with cost-optimized dynamic routing for IDE extensions.
+  * **Email Client (`email`):** 100% pure Rust IMAP polling and SMTP dispatch client (replacing legacy Python daemon wrapper) parsing nested multipart MIME envelopes with `mailparse` and sending replies concurrently with `lettre`.
   * **Telegram Polling (`telegram`):** Native bot listener with parallel loop handling.
   * **Discord Gateway (`discord`):** Active bot gateway client listening for events via real-time WebSocket connection.
   * **WhatsApp API (`whatsapp`):** Active Axum webhook receiver server verifying and processing incoming messages.
-* **Stateful SOP Workflow Engine:** Resilient, multi-step automated standard operating procedures (SOPs) engine triggered by webhooks or CLI commands. It persists the current state to disk, maps inputs/outputs in a global context (e.g. `{{steps.StepName.output}}`), and supports resuming paused or failed runs.
+* **Stateful SOP Workflow Engine:** Resilient, multi-step Directed Acyclic Graph (DAG) templates executing independent steps in parallel via Tokio. It persists the current state to disk, maps inputs/outputs in a global context (e.g. `{{steps.StepName.output}}`), validates dependency chains for cycles, and supports resuming paused or failed runs.
 * **Global Activity Tracking:** Shared execution state manager (`~/.openz/activity.json`). If you start a long-running task in the terminal TUI (`openz agent`) and ask the agent what it is doing via Telegram/Discord, it reads the active task logs of the CLI session and dynamically reports on the running command or current tool execution.
 * **Remote Session Control:** Cross-channel prompt forwarding. You can send commands, answers, or new prompts from other channels (like Telegram) to the active TUI session (`cli:direct`) using the `send_remote_input` tool. The TUI terminal prompt polls this queue in real-time, consumes the input, and executes it as if typed locally.
 * **Core Native Tools:** Built-in `read_file`, `write_file`, `list_dir`, `exec_command` (subprocess sandboxing), `web_fetch` (upgraded DOM scraper), `grep_search` (codebase text search), `git_manager` (status/diff/commits), `code_outline` (structural outline), `db_inspector` (SQLite reader), `cargo_manager` (cargo builds/checks/tests), `clipboard` (system clipboard get/set), `open_path` (opening files/URLs in default apps), `file_watcher` (background auto-healing compiler watcher), `ast_grep` (structural code search using AST patterns), `gsd_browser` (real browser navigation/interaction automation), `web_search` (privacy-first search query results), `onpkg` (onpkg package and template manager tool), `crawl_website` (multi-threaded website crawler using spider-rs), and `obscura_browser` (lightweight JS-rendering headless browser via pure-Rust CDP).

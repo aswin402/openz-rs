@@ -72,3 +72,37 @@ If OpenZ is running as a background channel (e.g. over Telegram), the approval r
    > `[ Approve ✅ ]`   `[ Deny ❌ ]`
 2. The agent loop suspends execution asynchronously using a `tokio::sync::oneshot` channel waiting thread.
 3. When the user clicks an inline button, the Telegram polling listener parses the `callback_query` update, resolves the oneshot channel, answers the query to stop client loading, and updates the inline markup to display a disabled **`Approved ✅`** or **`Denied ❌`** state.
+
+---
+
+## 📂 Platform-Agnostic Directory Jailing
+
+To prevent the agent from writing files to sensitive host directories or leaking information outside the expected scope, OpenZ enforces filesystem sandbox containment.
+
+* **Whitelisted Paths**:
+  * The active workspace directory (configured dynamically).
+  * The agent config directory `~/.openz/`.
+  * The standard OS temporary files directory (e.g., `/tmp` or `C:\Users\...\AppData\Local\Temp`).
+* **Path Traversal Shield**: Paths are fully canonicalized recursively using Rust's `canonicalize` helper (resolving symlinks and parent directories `../`), shielding against tricks trying to escape the jail.
+* **Coverage**: Applies automatically to native tools executing writes (`write_file`, `patch_file`, `replace_lines`). Any out-of-workspace writes to other paths are blocked and prompt for manual security authorization.
+
+---
+
+## 🎚️ Configurable Security Modes
+
+OpenZ features three configurable security levels defined in the user's `config.json` under `agents.defaults.security_mode` to balance automation and caution:
+
+| Mode | Behavior | Intercepted Actions |
+|---|---|---|
+| **`strict`** | Maximum safety. Checks every potentially risky action. | Blocks all destructive shell tools (`rm`, `rmdir`, `clean` builds), process controls (`kill`, `pkill`), and any network file fetches (`curl`, `wget`, `rsync`). |
+| **`normal`** (Default) | Balanced convenience. Allows minor clean operations, kills, and basic web fetches. | Intercepts dangerous piped curl-to-shell executions (e.g., `curl ... \| bash`), system commands (`sudo`, `reboot`), raw disk manipulations (`dd`, `format`), and out-of-workspace writes. |
+| **`loose`** | Maximum automation. Only intercepts severe control calls. | Trust-by-default. Only blocks root privilege escalation (`sudo`/`su`) and host power status (`reboot`/`shutdown`). |
+
+---
+
+## 🔗 Cryptographic Merkle Hash-Chain Verification
+
+To guarantee audit trail integrity, OpenZ structures conversation logs in a sequential cryptographic Merkle Hash-Chain ledger:
+* **Hash Logic**: Each interaction (message) contains a SHA-256 hash computed from its role, content string, timestamp, and the hash of the preceding message in the sequence.
+* **Integrity Validation**: When restoring a session from `~/.openz/sessions/<id>.json`, the session deserializer verifies the entire chain. If any message content, author role, or timestamp has been altered, the integrity check fails, stopping the agent startup.
+
