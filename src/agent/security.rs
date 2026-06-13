@@ -33,6 +33,61 @@ impl SecurityGuard {
         }
     }
 
+    fn is_safe_path(path_str: &str) -> bool {
+        let path = std::path::Path::new(path_str);
+        
+        let abs_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            let workspace = crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone())
+                .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+            workspace.join(path)
+        };
+
+        // Standardize path traversal by checking parent existence recursively
+        let mut check_path = abs_path.clone();
+        loop {
+            if let Ok(canon) = check_path.canonicalize() {
+                check_path = canon;
+                break;
+            }
+            if let Some(parent) = check_path.parent() {
+                check_path = parent.to_path_buf();
+            } else {
+                break;
+            }
+        }
+
+        // 1. Check workspace whitelist
+        let workspace = crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone())
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+        if let Ok(w_canon) = workspace.canonicalize() {
+            if check_path.starts_with(&w_canon) {
+                return true;
+            }
+        }
+
+        // 2. Check ~/.openz whitelist
+        if let Some(home) = dirs::home_dir() {
+            let openz_dir = home.join(".openz");
+            if let Ok(o_canon) = openz_dir.canonicalize() {
+                if check_path.starts_with(&o_canon) {
+                    return true;
+                }
+            }
+        }
+
+        // 3. Check temp directory whitelist
+        let temp = std::env::temp_dir();
+        if let Ok(t_canon) = temp.canonicalize() {
+            if check_path.starts_with(&t_canon) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Check if a tool call is sensitive and needs user approval.
     pub fn is_sensitive(tool_name: &str, arguments: &Value) -> bool {
         if tool_name == "exec_command" {
@@ -81,15 +136,16 @@ impl SecurityGuard {
 
                 return has_destructive || has_privilege || has_process || has_system || has_network;
             }
-        } else if tool_name == "write_file" {
-            if let Some(path_str) = arguments.get("path").and_then(|v| v.as_str()) {
-                // If writing outside workspace or active home folder
-                let path = std::path::Path::new(path_str);
-                if path.is_absolute() {
-                    let path_lossy = path.to_string_lossy();
-                    if !path_lossy.contains("/workspace") && !path_lossy.contains("/home/") {
-                        return true;
-                    }
+        } else if tool_name == "write_file" || tool_name == "patch_file" || tool_name == "replace_lines" {
+            let path_opt = arguments.get("path")
+                .or(arguments.get("TargetFile"))
+                .or(arguments.get("filepath"))
+                .or(arguments.get("file"))
+                .or(arguments.get("Path"))
+                .and_then(|v| v.as_str());
+            if let Some(path_str) = path_opt {
+                if !Self::is_safe_path(path_str) {
+                    return true;
                 }
             }
         }
@@ -102,9 +158,21 @@ impl SecurityGuard {
             if let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) {
                 return format!("$ {}", cmd);
             }
-        } else if tool_name == "write_file" {
-            let path = arguments.get("path").and_then(|v| v.as_str()).unwrap_or("unknown");
-            return format!("Write File -> {}", path);
+        } else if tool_name == "write_file" || tool_name == "patch_file" || tool_name == "replace_lines" {
+            let path_opt = arguments.get("path")
+                .or(arguments.get("TargetFile"))
+                .or(arguments.get("filepath"))
+                .or(arguments.get("file"))
+                .or(arguments.get("Path"))
+                .and_then(|v| v.as_str());
+            let path = path_opt.unwrap_or("unknown");
+            let action_label = match tool_name {
+                "write_file" => "Write File",
+                "patch_file" => "Patch File",
+                "replace_lines" => "Replace Lines",
+                _ => "Modify File",
+            };
+            return format!("{} -> {}", action_label, path);
         }
         format!("{}({})", tool_name, arguments)
     }
@@ -282,12 +350,22 @@ mod tests {
 
     #[test]
     fn test_is_sensitive_write_file() {
-        // Safe paths
-        assert!(!SecurityGuard::is_sensitive("write_file", &json!({"path": "/workspace/src/main.rs"})));
-        assert!(!SecurityGuard::is_sensitive("write_file", &json!({"path": "/home/user/project/Cargo.toml"})));
+        // Safe paths (relative to active workspace or temp dir)
+        assert!(!SecurityGuard::is_sensitive("write_file", &json!({"path": "src/main.rs"})));
+        assert!(!SecurityGuard::is_sensitive("write_file", &json!({"path": "Cargo.toml"})));
+        
+        let temp_file = std::env::temp_dir().join("safe_test_file.txt");
+        assert!(!SecurityGuard::is_sensitive("write_file", &json!({"path": temp_file.to_str().unwrap()})));
 
-        // Unsafe paths
-        assert!(SecurityGuard::is_sensitive("write_file", &json!({"path": "/etc/hosts"})));
-        assert!(SecurityGuard::is_sensitive("write_file", &json!({"path": "/usr/local/bin/malicious"})));
+        // Unsafe paths (outside whitelisted folders)
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert!(SecurityGuard::is_sensitive("write_file", &json!({"path": "/etc/hosts"})));
+            assert!(SecurityGuard::is_sensitive("write_file", &json!({"path": "/usr/local/bin/malicious"})));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            assert!(SecurityGuard::is_sensitive("write_file", &json!({"path": "C:\\Windows\\System32\\drivers\\etc\\hosts"})));
+        }
     }
 }
