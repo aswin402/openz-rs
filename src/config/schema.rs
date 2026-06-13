@@ -73,6 +73,12 @@ pub struct AgentDefaults {
     pub caveman_mode: bool,
     #[serde(default, alias = "context_limit")]
     pub context_limit: Option<usize>,
+    #[serde(default = "default_security_mode", alias = "security_mode")]
+    pub security_mode: String,
+}
+
+fn default_security_mode() -> String {
+    "normal".to_string()
 }
 
 fn default_caveman_mode() -> bool {
@@ -130,6 +136,7 @@ impl Default for AgentDefaults {
             fallback_models: default_fallback_models(),
             caveman_mode: true,
             context_limit: None,
+            security_mode: default_security_mode(),
         }
     }
 }

@@ -661,7 +661,8 @@ impl AgentLoop {
                             
                             let silent = crate::agent::style::spinner::is_silent();
                             let mut approved = true;
-                            if crate::agent::security::SecurityGuard::is_sensitive(&call.name, &call.arguments) {
+                            let security_mode = &self.config.agents.defaults.security_mode;
+                            if crate::agent::security::SecurityGuard::is_sensitive_with_mode(&call.name, &call.arguments, security_mode) {
                                 // Clear the running tool spinner first so the prompt is clean
                                 if !silent {
                                     print!("\r\x1b[2K");
