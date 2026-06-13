@@ -626,6 +626,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::firefox::FirefoxBrowserTool::new()));
     registry.register(std::sync::Arc::new(IndexNotesTool));
     registry.register(std::sync::Arc::new(SocialSearchTool::new()));
+    registry.register(std::sync::Arc::new(crate::tools::template_compiler::CompileTemplateTool));
 
     // Register configured MCP tools
     let mut total_tools = 0;

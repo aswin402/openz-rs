@@ -205,3 +205,4 @@ pub mod shared_memory;
 pub mod firefox;
 pub mod notes;
 pub mod social_search;
+pub mod template_compiler;

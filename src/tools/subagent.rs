@@ -2414,10 +2414,10 @@ fn filter_tools_for_subagent(subagent_name: &str, all_tools: &[Arc<dyn Tool>]) -
             "read_file", "list_dir", "check_port"
         ]),
         "document_compiler" => Some(&[
-            "read_file", "write_file", "list_dir", "find_files", "doc_reader", "exec_command"
+            "read_file", "write_file", "list_dir", "find_files", "doc_reader", "exec_command", "compile_template"
         ]),
         "presentation_designer" => Some(&[
-            "read_file", "write_file", "list_dir", "find_files", "exec_command", "generate_image"
+            "read_file", "write_file", "list_dir", "find_files", "exec_command", "generate_image", "compile_template"
         ]),
         "code_synthesizer" => Some(&[
             "read_file", "write_file", "list_dir", "find_files", "onpkg", "code_outline", "cargo_manager"
@@ -2591,18 +2591,21 @@ mod tests {
             Arc::new(MockTool { name: "code_outline".to_string() }),
             Arc::new(MockTool { name: "cargo_manager".to_string() }),
             Arc::new(MockTool { name: "grep_search".to_string() }),
+            Arc::new(MockTool { name: "compile_template".to_string() }),
             Arc::new(MockTool { name: "some_other_tool".to_string() }),
         ];
 
         // Test document_compiler
         let filtered = filter_tools_for_subagent("document_compiler", &tools);
-        assert_eq!(filtered.len(), 6);
+        assert_eq!(filtered.len(), 7);
+        assert!(filtered.iter().any(|t| t.name() == "compile_template"));
         assert!(filtered.iter().any(|t| t.name() == "doc_reader"));
         assert!(!filtered.iter().any(|t| t.name() == "onpkg"));
 
         // Test presentation_designer
         let filtered = filter_tools_for_subagent("presentation_designer", &tools);
-        assert_eq!(filtered.len(), 6);
+        assert_eq!(filtered.len(), 7);
+        assert!(filtered.iter().any(|t| t.name() == "compile_template"));
         assert!(filtered.iter().any(|t| t.name() == "generate_image"));
         assert!(!filtered.iter().any(|t| t.name() == "doc_reader"));
 
