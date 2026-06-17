@@ -69,7 +69,7 @@ macro_rules! eprint {
 }
 
 #[derive(Parser)]
-#[command(name = "openz", version = "0.1.0", about = "OpenZ - Rebranded Ultra-Lightweight Personal AI Agent")]
+#[command(name = "openz", version = env!("CARGO_PKG_VERSION"), about = "OpenZ - Rebranded Ultra-Lightweight Personal AI Agent")]
 pub struct CliArgs {
     #[command(subcommand)]
     pub command: Command,
