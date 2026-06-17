@@ -93,6 +93,30 @@ impl SecurityGuard {
         Self::is_sensitive_with_mode(tool_name, arguments, "strict")
     }
 
+    /// Check if a command is strictly forbidden and should be rejected instantly without prompting.
+    pub fn is_forbidden(tool_name: &str, arguments: &Value) -> bool {
+        if tool_name == "exec_command" {
+            if let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) {
+                let cmd_lower = cmd.to_lowercase();
+                
+                let has_raw_rm_root = Self::has_bin(&cmd_lower, "rm") && 
+                    (cmd_lower.contains(" /") || cmd_lower.contains("rm -rf /") || cmd_lower.contains("rm -rf ~") || cmd_lower.contains("rm -rf $home"));
+                let has_destructive_device = Self::has_bin(&cmd_lower, "dd") 
+                    || Self::has_bin(&cmd_lower, "mkfs")
+                    || Self::has_bin(&cmd_lower, "fdisk")
+                    || Self::has_bin(&cmd_lower, "format")
+                    || Self::has_bin(&cmd_lower, "parted");
+                let has_system_kill = Self::has_bin(&cmd_lower, "shutdown")
+                    || Self::has_bin(&cmd_lower, "reboot")
+                    || Self::has_bin(&cmd_lower, "poweroff")
+                    || Self::has_bin(&cmd_lower, "halt");
+
+                return has_raw_rm_root || has_destructive_device || has_system_kill;
+            }
+        }
+        false
+    }
+
     /// Check if a tool call is sensitive and needs user approval, considering a specific security mode.
     pub fn is_sensitive_with_mode(tool_name: &str, arguments: &Value, security_mode: &str) -> bool {
         let mode = security_mode.to_lowercase();

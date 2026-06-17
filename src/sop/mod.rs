@@ -317,8 +317,58 @@ fn get_default_sop_definitions() -> Vec<SopDefinition> {
                 },
             ],
         },
+        SopDefinition {
+            id: "ship-pr-until-green".to_string(),
+            name: "Ship PR Until Green SOP (from loops!)".to_string(),
+            description: "Closed-loop git workflow that implements features on a branch, opens a PR, verifies CI status, and self-heals fixes until all remote tests pass.".to_string(),
+            steps: vec![
+                SopStep {
+                    name: "Implement & Verify Locally".to_string(),
+                    description: "Write modifications to code and run local test suite until green".to_string(),
+                    prompt_template: "A feature request has been received: {{payload.feature_request}}. Work on the branch and make sure local tests run green.".to_string(),
+                    depends_on: vec![],
+                    agent: Some("openz_coordinator".to_string()),
+                },
+                SopStep {
+                    name: "Push & Open PR".to_string(),
+                    description: "Staged changes commit, push branch to remote, and open a PR using GitHub CLI".to_string(),
+                    prompt_template: "Stage and commit the changes from {{steps.Implement & Verify Locally.output}}, push the branch, and open a PR using github CLI.".to_string(),
+                    depends_on: vec!["Implement & Verify Locally".to_string()],
+                    agent: Some("git_ops_agent".to_string()),
+                },
+                SopStep {
+                    name: "Verify CI Checks".to_string(),
+                    description: "Monitor GitHub Actions or remote CI checks, healing and committing fixes if checks fail".to_string(),
+                    prompt_template: "Monitor CI checks for PR created in {{steps.Push & Open PR.output}}. Run 'gh pr checks'. If any check fails, inspect the log, self-heal via code edit tools, commit and push the fix, then check again. Loop until green.".to_string(),
+                    depends_on: vec!["Push & Open PR".to_string()],
+                    agent: Some("openz_coordinator".to_string()),
+                },
+            ],
+        },
+        SopDefinition {
+            id: "pre-commit-guard".to_string(),
+            name: "Pre-Commit Guard SOP (from loops!)".to_string(),
+            description: "Hardened git commit hook loop that runs test suite before every commit to block broken changes".to_string(),
+            steps: vec![
+                SopStep {
+                    name: "Configure Pre-Commit Hook".to_string(),
+                    description: "Sets up a git hook script to execute test suite before git commit".to_string(),
+                    prompt_template: "Create a pre-commit git hook script inside .git/hooks/pre-commit that automatically runs 'cargo test' (or the workspace test suite). Ensure it blocks the commit if tests exit non-zero.".to_string(),
+                    depends_on: vec![],
+                    agent: Some("git_ops_agent".to_string()),
+                },
+                SopStep {
+                    name: "Verify Hook Loop".to_string(),
+                    description: "Simulates a commit with tests passing to verify the hook is functional".to_string(),
+                    prompt_template: "Verify the pre-commit hook is active and properly blocks broken code. Report hook installation status.".to_string(),
+                    depends_on: vec!["Configure Pre-Commit Hook".to_string()],
+                    agent: Some("git_ops_agent".to_string()),
+                },
+            ],
+        },
     ]
 }
+
 
 pub fn substitute_template(template: &str, context: &serde_json::Value) -> String {
     let re = regex::Regex::new(r"\{\{([^}]+)\}\}").unwrap();

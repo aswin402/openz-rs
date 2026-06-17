@@ -33,6 +33,7 @@ No Makefile; no CI config (GitHub Actions, etc.) present.
 | `subagent` | TUI manager for subagent profiles |
 | `sop list \| instances \| trigger \| resume` | SOP workflow engine |
 | `mcp-bridge --port <N> -- <cmd> [args...]` | gRPC-to-stdio MCP bridge |
+| `changelog` | View OpenZ hardware footprint specifications and version release history |
 
 ---
 
@@ -42,6 +43,7 @@ No Makefile; no CI config (GitHub Actions, etc.) present.
 openz/
 ├── Cargo.toml              # ~55 deps. workspace root
 ├── build.rs                # Compiles proto/mcp.proto via tonic-build
+├── CHANGELOG.md            # OpenZ specs, features, versions, and architectures
 ├── onpkg.json              # ONPKG meta: scripts, agent instructions
 ├── src/
 │   ├── main.rs             # dotenv init, tokio runtime, dispatches to cli::run_cli
@@ -168,6 +170,19 @@ Tool call arguments have **no single naming convention**. Some tools use `serde`
 ### Console output must use tui_println! macro
 In the CLI channel, raw mode (crossterm) is active. Use the `tui_println!` macro from `agent/style/mod.rs` which translates `\n` to `\r\n`. Direct `println!` causes diagonal alignment issues.
 
+### Sub-agent CancellationToken lifecycle
+All sub-agent tools (`DelegateTaskTool`, `DelegateProfileTool`, `ParallelResearchTool`, `EvaluatorOptimizerLoopTool`) hold a `cancellation_token: CancellationToken` field. The token is defined in `src/tools/subagent.rs` using `Arc<AtomicBool>` + `Arc<tokio::sync::Notify>`. Each `call()` method wraps sub-agent `run()` with `tokio::select! { biased; _ = cancellation_token.wait_for_cancellation() => { error } }` so cancellation terminates sub-agents immediately rather than waiting for timeout. Nested sub-agents inherit the parent's token via `.clone()`. Top-level tools in `cli.rs` and `ToolRegistry::get()` create fresh tokens with `CancellationToken::new()`.
+
+### seccomp BPF sandbox for exec_command
+The `ExecCommandTool` in `src/tools/shell.rs` applies a BPF seccomp filter before executing shell commands. The sandbox runs inside `pre_exec` (after fork, before exec) and is Linux-only. Key components:
+
+- **`apply_seccomp_guard()`** (`shell.rs:12`): Sets `PR_SET_NO_NEW_PRIVS` (blocks setuid in child), `PR_SET_PDEATHSIG` (SIGKILL if parent dies), resource limits (RLIMIT_CPU=30/60s, RLIMIT_AS=256/512MB, RLIMIT_FSIZE=10MB), then installs the BPF filter.
+- **`allowlist_seccomp_filter()`** (`shell.rs:52`): Linear-scan BPF filter with architecture check (x86_64 + aarch64) and ~110 allowed syscalls covering basic I/O, filesystem, memory, process, and signal operations. Denies networking, module loading, ptrace, mount, and other dangerous syscalls.
+- **Filter installation**: Uses `syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, 0, &prog)` directly instead of `prctl(PR_SET_SECCOMP, ...)` to avoid a kernel quirk where prctl-based filter installation kills execve with SIGKILL on some x86_64 builds.
+- **`sandbox_command()`** (`shell.rs:291`): Wraps the seccomp setup in `cmd.pre_exec()`. Errors are logged but non-fatal — a failed seccomp install still allows the command to run. Only applied if `enable_sandbox` is set to `true` in the configuration.
+- **`enable_sandbox` Toggle**: Can be enabled/disabled via `openz configure` (or `enableSandbox` in `~/.openz/config.json`). When set to `false` (default), subprocesses bypass the seccomp filter to prevent blocking compiler and browser tools (e.g., `gsd_browser`, `chromewright`), while command execution safety is still verified by `SecurityGuard` permissions.
+- **Fallback**: On non-Linux platforms, `sandbox_command()` is a no-op, so `exec_command` also works on macOS/Windows.
+
 ### Self-improvement runs async in background
 After every non-slash-command turn, `tokio::spawn` runs a background curator that calls the LLM to review the conversation, update session memory, and create/update skills in `~/.openz/skills/`. This can cause race conditions if multiple channels hit the same session simultaneously — the curator reloads the session from disk to mitigate this.
 
@@ -180,14 +195,19 @@ Tool outputs >4000 characters are: (1) written to `~/.openz/tool_outputs/<name>_
 ### Session consolidation ensures no orphaned messages
 When truncating session history (Compact state at `agent_loop.rs:107-217`), the code scans backward from the truncation point to find the nearest "user" message. This prevents orphaned "tool" or "assistant" messages from causing API errors.
 
-### MCP servers are hardcoded defaults
-`Config::default()` in `config/schema.rs:296-434` hardcodes paths to specific Rust binaries (`mcp-server-sequential-thinking`, `openmemory_rs`, `opendocswork-mcp`, `spreadsheet-mcp`, `just-mcp`, `headroom-mcp`, `openz-docs-mcp`, `openz-github-mcp`, `database-mcp`, `chromewright`, `sediment`). Paths are resolved relative to `$HOME/.cargo/bin/` with fallback to bare command names.
+### MCP binary resolution uses AI_AGENT_TOOLS_BASE
+`Config::default()` in `config/schema.rs` resolves MCP binary paths via `resolve_mcp_bin(binary, subproject)` with a three-stage priority:
+1. **`{AI_AGENT_TOOLS_BASE}/{subproject}/target/release/{binary}`** — local project build (e.g. `sequentialthinking_rs/target/release/mcp-server-sequential-thinking`)
+2. **`~/.cargo/bin/{binary}`** — cargo-installed binary
+3. **bare `{binary}` name** — fall back to `$PATH`
+
+`AI_AGENT_TOOLS_BASE` is the constant `"/home/aswin/programming/vscode/myProjects/ai_agent_tools"` defined at the top of `config/schema.rs`. Special cases: `sequential-thinking` → `sequentialthinking_rs` project, `memory` → `memory_rs` project (binary: `openmemory_rs`). All other servers (`chromewright`, `database-mcp`, `headroom-mcp`, `just-mcp`, `opendocswork-mcp`, `openz-docs-mcp`, `openz-github-mcp`, `sediment`, `spreadsheet-mcp`) are cargo-installed and resolve via stage 2.
 
 ### Subagents = tools at the LLM level
 Custom subagent profiles from `~/.openz/subagents.json` are dynamically registered as tools in `ToolRegistry::to_openai_format()` (`tools/mod.rs:100-129`). When the LLM "calls" a subagent name as a tool, `ToolRegistry::get()` (`tools/mod.rs:63-82`) matches it and returns a `DelegateProfileTool`.
 
-### gRPC proto lives outside the project
-`build.rs` references `../proto/mcp.proto` relative to the project root. The proto file is not inside the repository — it's at the parent level. The build will fail if `../proto/mcp.proto` is missing.
+### gRPC proto lives inside the repo
+`build.rs` references `proto/mcp.proto` relative to the project root. The proto file is included in the repo at `proto/mcp.proto`.
 
 ---
 

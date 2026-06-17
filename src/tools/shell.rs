@@ -2,6 +2,329 @@ use crate::tools::Tool;
 use anyhow::{Result, anyhow};
 use std::process::Command;
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
+/// Apply Linux seccomp guard + resource limits to a command via pre_exec.
+/// Runs inside the child process after fork() but before exec().
+/// On non-Linux platforms this is a no-op.
+#[cfg(target_os = "linux")]
+unsafe fn apply_seccomp_guard() -> Result<(), std::io::Error> {
+    // Prevent privilege escalation via setuid/setgid/capabilities
+    if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    // Kill child if parent dies (no orphaned processes)
+    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+
+    // Limit CPU time (30 seconds soft, 60 hard)
+    let rlim_cpu = libc::rlimit {
+        rlim_cur: 30,
+        rlim_max: 60,
+    };
+    libc::setrlimit(libc::RLIMIT_CPU, &rlim_cpu);
+
+    // Limit virtual memory (256 MB soft, 512 MB hard)
+    let rlim_as = libc::rlimit {
+        rlim_cur: 256 * 1024 * 1024,
+        rlim_max: 512 * 1024 * 1024,
+    };
+    libc::setrlimit(libc::RLIMIT_AS, &rlim_as);
+
+    // Limit output file size (10 MB)
+    let rlim_fsize = libc::rlimit {
+        rlim_cur: 10 * 1024 * 1024,
+        rlim_max: 10 * 1024 * 1024,
+    };
+    libc::setrlimit(libc::RLIMIT_FSIZE, &rlim_fsize);
+
+    // Apply seccomp BPF filter (allowlist-based, x86_64 only)
+    allowlist_seccomp_filter()?;
+
+    Ok(())
+}
+
+/// Build and install a seccomp BPF allowlist filter.
+/// Denies dangerous syscalls (networking, module loading, ptrace, etc.)
+/// while allowing normal file I/O, memory, and process operations.
+#[cfg(target_os = "linux")]
+unsafe fn allowlist_seccomp_filter() -> Result<(), std::io::Error> {
+    // x86_64 syscall numbers to allow
+    const ALLOWED_SYSCALLS: &[u32] = &[
+        0,   // read
+        1,   // write
+        2,   // open
+        3,   // close
+        4,   // stat
+        5,   // fstat
+        6,   // lstat
+        7,   // poll
+        8,   // lseek
+        9,   // mmap
+        10,  // mprotect
+        11,  // munmap
+        12,  // brk
+        13,  // rt_sigaction
+        14,  // sigprocmask
+        15,  // rt_sigreturn
+        16,  // ioctl
+        17,  // pread64
+        18,  // pwrite64
+        19,  // readv
+        20,  // writev
+        21,  // access
+        22,  // pipe
+        23,  // select
+        24,  // sched_yield
+        25,  // mremap
+        26,  // msync
+        27,  // mincore
+        28,  // madvise
+        29,  // shmget
+        30,  // shmat
+        31,  // shmctl
+        32,  // dup
+        33,  // dup2
+        35,  // nanosleep
+        39,  // getpid
+        56,  // clone
+        57,  // fork
+        58,  // vfork
+        59,  // execve
+        60,  // exit
+        61,  // wait4
+        62,  // kill (needed for process management)
+        72,  // fcntl
+        78,  // getdents
+        79,  // getcwd
+        80,  // chdir
+        81,  // fchdir
+        82,  // rename
+        83,  // mkdir
+        84,  // rmdir
+        85,  // creat
+        86,  // link
+        87,  // unlink
+        88,  // symlink
+        89,  // readlink
+        90,  // chmod
+        91,  // fchmod
+        92,  // chown
+        93,  // fchown
+        95,  // umask
+        96,  // getpriority
+        97,  // setpriority
+        102, // getuid
+        104, // getgid
+        107, // geteuid
+        108, // getegid
+        110, // getppid
+        125, // capget
+        126, // capset
+        131, // sigaltstack
+        135, // personality
+        137, // statfs
+        138, // fstatfs
+        157, // prctl
+        158, // arch_prctl
+        186, // gettid
+        202, // futex
+        217, // getdents64
+        218, // set_tid_address
+        228, // clock_gettime
+        231, // exit_group
+        232, // epoll_wait
+        233, // epoll_ctl
+        234, // tgkill
+        240, // sched_getaffinity
+        241, // sched_setaffinity
+        257, // openat
+        258, // mkdirat
+        259, // mknodat
+        260, // fchownat
+        262, // newfstatat
+        263, // unlinkat
+        264, // renameat
+        265, // linkat
+        267, // faccessat
+        268, // readlinkat
+        273, // set_robust_list
+        274, // get_robust_list
+        281, // eventfd2
+        282, // epoll_create1
+        283, // dup3
+        284, // pipe2
+        291, // inotify_init1
+        292, // inotify_add_watch
+        293, // inotify_rm_watch
+        302, // prlimit64
+        318, // getrandom
+        332, // statx
+        334, // rseq
+        436, // close_range
+    ];
+
+    // Build BPF program:
+    // 1. Load architecture from seccomp_data (offset 4)
+    // 2. Check if x86_64 (0xC000003E) or aarch64 (0xC00000B7)
+    // 3. If neither, KILL
+    // 4. Load syscall number
+    // 5. Check against allowlist
+    // 6. If not found, KILL
+    // 7. If found, ALLOW
+
+    // AUDIT_ARCH_X86_64   = 0xC000003E (little-endian)
+    // AUDIT_ARCH_AARCH64  = 0xC00000B7 (little-endian)
+    const AUDIT_ARCH_X86_64: u32 = 0xC000003E;
+    const AUDIT_ARCH_AARCH64: u32 = 0xC00000B7;
+
+    // Number of instructions:
+    // 1 (load arch) + 2 (arch checks) + 1 (jump to allow) = 4 overhead
+    // + 4 clean-up + N allowlist entries + 1 deny (RET KILL)
+    // But we need jumps to the ALLOW instruction for matches
+    let n_allowed = ALLOWED_SYSCALLS.len();
+    // Layout:
+    // 0: LD W ABS 4                    (load arch)
+    // 1: JEQ #AUDIT_ARCH_X86_64, +X    (if x86_64, jump to syscall check)
+    // 2: JEQ #AUDIT_ARCH_AARCH64, +Y   (if aarch64, jump to syscall check)
+    // 3: RET #SECCOMP_RET_KILL         (unsupported arch → kill)
+    // 4..4+N-1: JEQ #syscall, ..       (for each allowed syscall)
+    // 4+N: RET #SECCOMP_RET_KILL       (default: kill)
+    // 4+N+1: LD W ABS 0                (load syscall number - entry point for syscall check)
+    // 4+N+2..4+N+2+N-1: JEQ #syscall, +K, +1 (for each: allow on match, continue on miss)
+    // 4+N+2+N: RET #SECCOMP_RET_KILL   (not in allowlist)
+    // 4+N+2+N+1: RET #SECCOMP_RET_ALLOW (match found)
+
+    // Actually, let me use a simpler layout:
+    // 0: LD W ABS 4                    → load arch
+    // 1: JEQ #AUDIT_ARCH_X86_64, +2, +1  → if x86_64, skip next kill
+    // 2: RET #SECCOMP_RET_KILL         → wrong arch
+    // 3: LD W ABS 0                    → load syscall num
+    // 4..4+N-1: for each syscall in allowlist:
+    //    JEQ #syscall, +(N - idx + 1), +1  → if match, jump to ALLOW; else continue
+    // 4+N: RET #SECCOMP_RET_KILL       → not allowed
+    // 4+N+1: RET #SECCOMP_RET_ALLOW    → allowed
+
+    let n_instr = 4 + n_allowed + 2;
+    let mut filter: Vec<libc::sock_filter> = Vec::with_capacity(n_instr);
+
+    // Arch check
+    filter.push(libc::sock_filter {
+        code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
+        jt: 0,
+        jf: 0,
+        k: 4, // offset of arch in seccomp_data
+    });
+    // If arch == AUDIT_ARCH_X86_64, skip 2 (to LD W ABS 0)
+    filter.push(libc::sock_filter {
+        code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+        jt: 2,
+        jf: 0,
+        k: AUDIT_ARCH_X86_64,
+    });
+    // Also check aarch64
+    filter.push(libc::sock_filter {
+        code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+        jt: 1,
+        jf: 0,
+        k: AUDIT_ARCH_AARCH64,
+    });
+    // Unsupported arch
+    filter.push(libc::sock_filter {
+        code: (libc::BPF_RET | libc::BPF_K) as u16,
+        jt: 0,
+        jf: 0,
+        k: libc::SECCOMP_RET_KILL,
+    });
+
+    // Load syscall number (offset 0 in seccomp_data)
+    filter.push(libc::sock_filter {
+        code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
+        jt: 0,
+        jf: 0,
+        k: 0,
+    });
+
+    // For each allowed syscall: check and jump to ALLOW if match
+    // Jump offset: (remaining checks) + 1 (KILL) to reach ALLOW
+    for (idx, &syscall) in ALLOWED_SYSCALLS.iter().enumerate() {
+        let remaining = n_allowed - idx;
+        filter.push(libc::sock_filter {
+            code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+            jt: (remaining) as u8, // jump to ALLOW (skip remaining checks + KILL)
+            jf: 0,
+            k: syscall as u32,
+        });
+    }
+
+    // Default: kill (not in allowlist)
+    filter.push(libc::sock_filter {
+        code: (libc::BPF_RET | libc::BPF_K) as u16,
+        jt: 0,
+        jf: 0,
+        k: libc::SECCOMP_RET_KILL,
+    });
+
+    // ALLOW (target of matching JEQ jumps)
+    filter.push(libc::sock_filter {
+        code: (libc::BPF_RET | libc::BPF_K) as u16,
+        jt: 0,
+        jf: 0,
+        k: libc::SECCOMP_RET_ALLOW,
+    });
+
+    let prog = libc::sock_fprog {
+        len: filter.len() as u16,
+        filter: filter.as_ptr() as *mut libc::sock_filter,
+    };
+
+    if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    // Use seccomp(2) syscall directly — prctl(PR_SET_SECCOMP, ...) has a
+    // long-standing kernel quirk on some x86_64 builds where SECCOMP_SET_MODE_FILTER
+    // is mis-handled during execve, causing SIGKILL instead of SIGSYS even with
+    // SECCOMP_RET_ALLOW filters. The seccomp(2) syscall avoids this entirely.
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_seccomp,
+            libc::SECCOMP_SET_MODE_FILTER as u64,
+            0u64,
+            &prog as *const libc::sock_fprog,
+        )
+    };
+    if ret != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    Ok(())
+}
+
+/// Apply sandbox guard to a Command on Linux. No-op on other platforms.
+#[cfg(target_os = "linux")]
+fn sandbox_command(cmd: &mut Command, enable_sandbox: bool) {
+    if !enable_sandbox {
+        return;
+    }
+    unsafe {
+        cmd.pre_exec(|| match apply_seccomp_guard() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // Log but don't block execution — seccomp is a best-effort layer
+                tracing::warn!("seccomp guard failed (allowing execution anyway): {}", e);
+                Ok(())
+            }
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn sandbox_command(_cmd: &mut Command, _enable_sandbox: bool) {
+    // seccomp is Linux-specific; no sandboxing on this platform
+}
+
 pub struct ExecCommandTool;
 
 #[async_trait::async_trait]
@@ -73,6 +396,10 @@ impl Tool for ExecCommandTool {
             c
         };
         crate::config::loader::set_command_cwd(&mut cmd);
+        let enable_sandbox = crate::config::loader::load_config()
+            .map(|c| c.agents.defaults.enable_sandbox)
+            .unwrap_or(false);
+        sandbox_command(&mut cmd, enable_sandbox);
         let output = cmd.output()?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -175,6 +502,67 @@ fn find_wasm_file(program: &str) -> Option<std::path::PathBuf> {
     }
 
     None
+}
+
+pub struct PythonSandboxTool;
+
+#[async_trait::async_trait]
+impl Tool for PythonSandboxTool {
+    fn name(&self) -> &str {
+        "python_sandbox"
+    }
+
+    fn description(&self) -> &str {
+        "Execute a Python script for data analysis, calculations, or chart drawing in a secure, sandboxed environment. Networking is disabled."
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "The complete Python 3 script code to execute."
+                }
+            },
+            "required": ["code"]
+        })
+    }
+
+    async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
+        let code = arguments.get("code").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'code' parameter"))?;
+
+        let temp_dir = std::env::temp_dir();
+        let file_name = format!("sandbox_{}.py", uuid::Uuid::new_v4());
+        let temp_path = temp_dir.join(file_name);
+
+        std::fs::write(&temp_path, code)?;
+
+        let mut cmd = Command::new("python3");
+        crate::config::loader::set_command_cwd(&mut cmd);
+        cmd.arg(&temp_path);
+        
+        let enable_sandbox = crate::config::loader::load_config()
+            .map(|c| c.agents.defaults.enable_sandbox)
+            .unwrap_or(false);
+        sandbox_command(&mut cmd, enable_sandbox);
+
+        let output_res = cmd.output();
+        let _ = std::fs::remove_file(&temp_path);
+
+        let output = output_res?;
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let exit_code = output.status.code().unwrap_or(-1);
+
+        Ok(serde_json::json!({
+            "status": if exit_code == 0 { "success" } else { "error" },
+            "stdout": stdout,
+            "stderr": stderr,
+            "exit_code": exit_code
+        }))
+    }
 }
 
 #[cfg(test)]

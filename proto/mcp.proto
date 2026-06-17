@@ -1,0 +1,19 @@
+syntax = "proto3";
+package mcp;
+
+service McpService {
+  rpc Call(McpRequest) returns (McpResponse);
+}
+
+message McpRequest {
+  string method = 1;      // e.g., "initialize", "tools/list", "tools/call"
+  string params_json = 2; // JSON-RPC params object as a string
+  int64 id = 3;           // JSON-RPC request ID
+  bool has_id = 4;        // True if request has ID, false if notification
+}
+
+message McpResponse {
+  string result_json = 1; // JSON-RPC result object as a string (if successful)
+  string error_json = 2;  // JSON-RPC error object as a string (if failed)
+  int64 id = 3;           // JSON-RPC request ID
+}

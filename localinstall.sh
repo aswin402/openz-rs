@@ -1,8 +1,37 @@
 #!/bin/bash
 set -e
 
+white="\033[38;2;240;240;240m"
+orange="\033[38;2;255;95;0m"
+reset="\033[0m"
+
+echo -e "${white}     ██████╗ ██████╗ ███████╗███╗   ██╗${orange}███████╗"
+echo -e "${white}    ██╔═══██╗██╔══██╗██╔════╝████╗  ██║${orange}╚══███╔╝"
+echo -e "${white}    ██║   ██║██████╔╝█████╗  ██╔██╗ ██║${orange}  ███╔╝"
+echo -e "${white}    ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║${orange} ███╔╝"
+echo -e "${white}    ╚██████╔╝██║     ███████╗██║ ╚████║${orange}███████╗"
+echo -e "${white}     ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝${orange}╚══════╝${reset}"
 echo "🦊 OpenZ Installer: Global Setup"
 echo "────────────────────────────────"
+
+# Parse arguments for resource limits
+LOW_RESOURCE=false
+for arg in "$@"; do
+    if [ "$arg" == "--low-resource" ] || [ "$arg" == "--low-mem" ] || [ "$arg" == "-l" ]; then
+        LOW_RESOURCE=true
+    fi
+done
+
+if [ "$LOW_RESOURCE" = true ]; then
+    echo "⚡ Low-resource build mode active (restricting CPU cores & RAM consumption)..."
+    export CARGO_BUILD_JOBS=1
+    export RUSTFLAGS="-C codegen-units=1"
+    CARGO_FLAGS="-j 1"
+else
+    echo "💡 Tip: If compilation consumes too much RAM or CPU, run: ./localinstall.sh --low-resource"
+    CARGO_FLAGS=""
+fi
+echo ""
 
 # Back up global openz data if present (skipping heavy cache/log directories)
 if [ -d "$HOME/.openz" ]; then
@@ -22,7 +51,7 @@ fi
 
 # 1. Compile and install globally via Cargo
 echo "📦 Compiling and installing openz globally via Cargo..."
-cargo install --path .
+cargo install $CARGO_FLAGS --locked --path .
 
 # 2. Setup folder architecture
 echo "📁 Setting up directory structures at ~/.openz..."

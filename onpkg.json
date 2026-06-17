@@ -5,13 +5,16 @@
       "content.md",
       "design.md",
       "email.md",
+      "image_generator.md",
       "implementation.md",
       "notes.md",
       "prd.md",
       "rust.md",
       "social_search.md",
+      "svg_animator.md",
       "todo.md",
       "tools.md",
+      "video_generator.md",
       "workflow.md"
     ],
     "docs_directory": "onpkg_docs/"
@@ -34,6 +37,11 @@
       "tokio-tungstenite",
       "wasmtime",
       "wasmtime-wasi"
+    ],
+    "tools": [
+      "svg_animator (create_animated_svg)",
+      "image_generator (generate_image)",
+      "video_generator (generate_video)"
     ],
     "core": [
       "ab_glyph",
@@ -60,7 +68,9 @@
       "imap",
       "inquire",
       "lettre",
+      "libc",
       "mailparse",
+      "mermaid-rs-renderer",
       "notify",
       "open",
       "oxc_allocator",
@@ -92,7 +102,8 @@
       "tracing-subscriber",
       "uuid",
       "wasmtime",
-      "wasmtime-wasi"
+      "wasmtime-wasi",
+      "wavyte"
     ]
   },
   "project": {

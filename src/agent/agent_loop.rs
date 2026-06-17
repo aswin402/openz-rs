@@ -1,10 +1,10 @@
 use crate::config::schema::Config;
 use crate::providers::{LLMProvider, GenerationSettings};
 use crate::tools::ToolRegistry;
-use crate::tools::subagent::DelegateTaskTool;
+use crate::tools::subagent::{DelegateTaskTool, CancellationToken};
 use crate::session::{Session, SessionManager, Message};
 use crate::agent::style::*;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::sync::Arc;
 use serde::Deserialize;
 use std::io::Write;
@@ -58,6 +58,66 @@ impl AgentLoop {
         }
     }
 
+    pub fn update_model_and_provider(&mut self, config: Config, provider: Arc<dyn LLMProvider>) {
+        self.config = config.clone();
+        self.provider = provider.clone();
+        if let Some(ref mut ctx) = self.tools.context {
+            ctx.0 = config;
+            ctx.1 = provider;
+        }
+    }
+
+    async fn chat_with_fallback(
+        &self,
+        active_provider: &mut Arc<dyn LLMProvider>,
+        system_prompt: &str,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+        settings: &GenerationSettings,
+        activity_msg: &str,
+    ) -> Result<crate::providers::LLMResponse> {
+        let chat_fut = active_provider.chat(system_prompt, messages, tools, settings);
+        let mut chat_result = with_spinner(activity_msg, chat_fut).await;
+
+        if chat_result.is_err() {
+            let mut fallbacks = Vec::new();
+            for fallback in &self.config.agents.defaults.fallback_models {
+                if let Some(s) = fallback.as_str() {
+                    if !s.trim().is_empty() {
+                        fallbacks.push(s.trim().to_string());
+                    }
+                }
+            }
+
+            let mut resolved_fallback = false;
+            for fallback_model in fallbacks {
+                let silent = crate::agent::style::spinner::is_silent();
+                if !silent {
+                    crate::tui_println!(
+                        "{}▲ Primary provider failed. Attempting fallback model: {}{}",
+                        AURA_GOLD, fallback_model, COLOR_RESET
+                    );
+                }
+                if let Ok(fallback_provider) = crate::tools::subagent::build_provider_for_model(&self.config, &fallback_model) {
+                    let chat_fut = fallback_provider.chat(system_prompt, messages, tools, settings);
+                    chat_result = with_spinner(activity_msg, chat_fut).await;
+                    if chat_result.is_ok() {
+                        resolved_fallback = true;
+                        *active_provider = fallback_provider;
+                        break;
+                    }
+                }
+            }
+
+            if !resolved_fallback {
+                let chat_fut = active_provider.chat(system_prompt, messages, tools, settings);
+                chat_result = with_spinner(activity_msg, chat_fut).await;
+            }
+        }
+
+        chat_result
+    }
+
     pub async fn run(&self, user_content: &str, session_key: &str) -> Result<RunResult> {
         let parent_key = crate::agent::style::spinner::get_current_session_key();
         let target_key = match parent_key {
@@ -65,11 +125,17 @@ impl AgentLoop {
             _ => session_key.to_string(),
         };
 
-        let is_cli = target_key == "cli:direct";
+        let is_cli = target_key == "cli:direct" && !session_key.starts_with("subagent:");
         let silent = !is_cli;
 
         crate::agent::style::spinner::IS_SILENT.scope(silent, async move {
             crate::agent::style::spinner::CURRENT_SESSION_KEY.scope(target_key, async move {
+                // Wrap the entire turn in a tracing span tagged with the session key.
+                // Every log event emitted inside run_inner (tools, MCP, LLM calls) will
+                // carry `session=<key>` in their output, enabling `openz logs --session`
+                // filtering in the live log viewer.
+                let span = tracing::info_span!("turn", session = %session_key);
+                let _enter = span.enter();
                 self.run_inner(user_content, session_key).await
             }).await
         }).await
@@ -79,17 +145,23 @@ impl AgentLoop {
         crate::agent::activity::update_activity(session_key, "Processing user prompt", None);
         let _guard = ActivityGuard { session_key };
 
+        let mut active_provider = self.provider.clone();
         let mut state = TurnState::Restore;
         let mut session = Session::new(session_key);
         let mut messages = Vec::new();
         let mut system_prompt = String::new();
         let mut final_content = String::new();
         let mut tools_used = Vec::new();
+        let mut interaction_id = None;
+        let mut turn_errors = Vec::new();
 
         while state != TurnState::Done {
             match state {
                 TurnState::Restore => {
                     session = self.session_manager.get_or_create(session_key);
+                    if !user_content.starts_with('/') {
+                        interaction_id = crate::tools::shared_memory::log_interaction(session_key, user_content).await.ok();
+                    }
                     session.add_message("user", user_content);
 
                     let parts = crate::providers::parse_multimodal_content(user_content).await;
@@ -152,8 +224,7 @@ impl AgentLoop {
                                 RED_ORANGE,
                                 COLOR_RESET
                             );
-                            let chat_fut = self.provider.chat(&system_prompt_sum, &summary_msgs, &[], &settings);
-                            match with_spinner(&spinner_msg, chat_fut).await {
+                            match self.chat_with_fallback(&mut active_provider, &system_prompt_sum, &summary_msgs, &[], &settings, &spinner_msg).await {
                                 Ok(resp) => {
                                     if let Some(new_summary) = resp.content {
                                         session.metadata.insert("summary".to_string(), serde_json::Value::String(new_summary));
@@ -191,8 +262,7 @@ impl AgentLoop {
                                 RED_ORANGE,
                                 COLOR_RESET
                             );
-                            let chat_fut = self.provider.chat(&system_prompt_mem, &mem_msgs, &[], &settings);
-                            match with_spinner(&spinner_msg, chat_fut).await {
+                            match self.chat_with_fallback(&mut active_provider, &system_prompt_mem, &mem_msgs, &[], &settings, &spinner_msg).await {
                                 Ok(resp) => {
                                     if let Some(new_memory) = resp.content {
                                         session.metadata.insert("memory".to_string(), serde_json::Value::String(new_memory));
@@ -218,6 +288,11 @@ impl AgentLoop {
                     state = TurnState::Command;
                 }
                 TurnState::Command => {
+                    let mut profile_name = None;
+                    let parts_key: Vec<&str> = session_key.split(':').collect();
+                    if parts_key.len() >= 2 && parts_key[0] == "subagent" {
+                        profile_name = Some(parts_key[1]);
+                    }
                     if user_content.starts_with('/') {
                         let parts: Vec<&str> = user_content.split_whitespace().collect();
                         if let Some(cmd) = parts.first() {
@@ -324,7 +399,7 @@ impl AgentLoop {
                                             final_content = "All agent skills have been cleared.".to_string();
                                         }
                                     } else {
-                                        match crate::agent::skills::load_skills() {
+                                        match crate::agent::skills::load_skills_with_profile(profile_name) {
                                             Ok(skills) => {
                                                 if skills.is_empty() {
                                                     final_content = "No active skills recorded yet.".to_string();
@@ -351,7 +426,7 @@ impl AgentLoop {
                                                     final_content = "Usage: /skill view <name>".to_string();
                                                 } else {
                                                     let name = parts[2];
-                                                    match crate::agent::skills::load_skills() {
+                                                    match crate::agent::skills::load_skills_with_profile(profile_name) {
                                                         Ok(skills) => {
                                                             if let Some(skill) = skills.iter().find(|s| s.name == name) {
                                                                 final_content = format!("=== Skill: {} ===\n{}", skill.name, skill.content);
@@ -371,7 +446,12 @@ impl AgentLoop {
                                                 } else {
                                                     let name = parts[2];
                                                     let content = parts[3..].join(" ");
-                                                    if let Err(e) = crate::agent::skills::save_skill(name, &content) {
+                                                    let res = if let Some(prof) = profile_name {
+                                                        crate::agent::skills::save_subagent_skill(prof, name, &content)
+                                                    } else {
+                                                        crate::agent::skills::save_skill(name, &content)
+                                                    };
+                                                    if let Err(e) = res {
                                                         final_content = format!("Error saving skill: {}", e);
                                                     } else {
                                                         final_content = format!("Skill '{}' added/updated successfully.", name);
@@ -383,7 +463,7 @@ impl AgentLoop {
                                                     final_content = "Usage: /skill delete <name>".to_string();
                                                 } else {
                                                     let name = parts[2];
-                                                    if let Err(e) = crate::agent::skills::delete_skill(name) {
+                                                    if let Err(e) = crate::agent::skills::delete_skill_with_profile(name, profile_name) {
                                                         final_content = format!("Error deleting skill: {}", e);
                                                     } else {
                                                         final_content = format!("Skill '{}' deleted successfully.", name);
@@ -409,9 +489,10 @@ impl AgentLoop {
                                             .collect();
                                         let delegate_tool: std::sync::Arc<dyn crate::tools::Tool> = std::sync::Arc::new(DelegateTaskTool {
                                             config: self.config.clone(),
-                                            parent_provider: self.provider.clone(),
+                                            parent_provider: active_provider.clone(),
                                             session_manager: self.session_manager.clone(),
                                             parent_tools,
+                                            cancellation_token: CancellationToken::new(),
                                         });
 
                                         let args = serde_json::json!({
@@ -478,12 +559,22 @@ impl AgentLoop {
                         "planner, researcher, debugger, DevOps, skill_improvement, openz_maintainer, mcps_manager".to_string()
                     };
                     let system_guidelines = format!(
-                        "\n\nYou are OpenZ, a high-performance personal AI agent framework built in Rust. Your architecture is structured as follows:\n\
-                         * Pluggable Gateway Channels: You can receive messages and reply over CLI terminal, WebSocket gateway (serving the WebUI workbench), Telegram bot polling, Discord bot polling, and WhatsApp Business API.\n\
-                         * Local Tools & MCP: You have native tools for file reading/writing, codebase text search ('grep_search'), file code structure parsing ('code_outline'), git operations ('git_manager'), database inspection ('db_inspector'), cargo toolchain execution ('cargo_manager'), system clipboard access ('clipboard'), opening files/folders/URLs ('open_path'), background file change watching ('file_watcher'), structural code search ('ast_grep'), real browser automation ('gsd_browser'), web search queries ('web_search'), shell command execution, web fetching, and remote control forwarding. You support the Model Context Protocol (MCP) powered by high-performance Rust binaries for sequential thinking and memory graph storage, managed via the native 'manage_mcp' tool.\n\
+                        "\n\nYou are OpenZ, a high-performance personal AI agent framework built in Rust, vibe-coded by Aswin. You are inspired by Zeroclaw, Nanobot, hermes-agent, loops!, and DOX. Your architecture is structured as follows:\n\
+                         * Creator & Inspiration: Vibe-coded by Aswin. Inspired by Zeroclaw, Nanobot, hermes-agent, loops!, and DOX.\n\
+                         * Specifications & Changelog: The root of your workspace contains 'CHANGELOG.md' and you have a native command 'openz changelog' displaying system specs (ROM ~10-15MB, RAM ~15-30MB cloud / ~200MB+ local, <5ms startup), design inspirations, key capabilities, and version release history.\n\
+                         * Pluggable Gateway Channels: You can receive messages and reply over CLI terminal, WebSocket gateway (serving the WebUI workbench), Telegram bot polling, Discord bot polling, WhatsApp Business API, and pure Rust IMAP/SMTP Email client.\n\
+                         * Local Tools & MCP: You have native tools for file reading/writing, codebase text search ('grep_search'), file code structure parsing ('code_outline'), git operations ('git_manager'), database inspection ('db_inspector'), cargo toolchain execution ('cargo_manager'), system clipboard access ('clipboard'), opening files/folders/URLs ('open_path'), background file change watching ('file_watcher'), structural code search ('ast_grep'), real browser automation ('gsd_browser'), web search queries ('web_search'), shell command execution, web fetching, remote control forwarding, document reading ('read_doc'), sandboxed WASM execution ('wasm_execute'), and project template/package scaffolding ('onpkg'). You support the Model Context Protocol (MCP) powered by high-performance Rust binaries for sequential thinking, memory graph storage, and the 'headroom' context compression server. Managed via the native 'manage_mcp' tool.\n\
+                         * Context Scoping & Compression: Via the 'headroom' MCP server, you can call:\n\
+                           - 'scope_context' (with target_path): Walks up the tree and compiles relevant AGENTS.md instructions. Use this BEFORE editing files to retrieve rules.\n\
+                           - 'compress_content' (with raw_text and content_type): Compresses logs/code/JSON and registers a CCR reference token (CCR ID).\n\
+                           - 'retrieve_original' (with ccr_id): Retrieves the original raw text. Use this to read the full content of any truncated output or file (it accepts both CCR IDs and file:// file paths!).\n\
                          * Remote Session Control: If the user asks you (e.g., via Telegram or Discord) to execute a command, answer an approval prompt, or run a query in their TUI/CLI session, invoke the 'send_remote_input' tool to forward the prompt directly to that session (e.g., 'cli:direct').\n\
                          * Specialized Subagents: You can spawn concurrent subagents (available subagent tools: {}) to delegate tasks.\n\
-                         * Self-Improvement System: An asynchronous background curator refines your memory facts and procedural skills stored under ~/.openz/skills/.",
+                         * Stateful SOP Workflow Engine: DAG-based template executions (like 'ship-pr-until-green' closed-loop healing, PR creation, CI verification) with Zenflow checkpointed transactions and auto-rollback.\n\
+                         * Compiler Auto-Healing: 'CompilerAutoHealTool' compiles code natively, reads compiler output, and prompts you to fix syntax or borrow checker issues in a loop until green.\n\
+                         * Security Guard & BPF Sandbox: Subprocesses are sandboxed using a Linux seccomp BPF filter to block dangerous commands, with strict/normal/loose levels.\n\
+                         * Cryptographic Audit Ledger: Uses SHA-256 Merkle chain hashing on all session messages/states, verified on boot, with a '/audit' slash command.\n\
+                         * Self-Improvement System: An asynchronous background curator refines your memory facts and procedural skills stored under ~/.openz/skills/ and SQLite database (~/.openz/memory.db).",
                         subagents_list
                     );
 
@@ -536,15 +627,30 @@ impl AgentLoop {
 
                     loop {
                         if iterations >= max_iterations {
-                            return Err(anyhow!("Reached maximum tool loop iterations ({})", max_iterations));
+                            let msg = format!(
+                                "⚠️ Reached tool iteration limit ({}). Summarizing work so far.",
+                                max_iterations
+                            );
+                            final_content = msg.clone();
+                            send_progress_update(session_key, &msg).await;
+                            if !crate::agent::style::spinner::is_silent() {
+                                print!("{}⚠️ {}{}\r\n", AURA_GOLD, msg, COLOR_RESET);
+                                let _ = std::io::stdout().flush();
+                            }
+                            messages.push(Message {
+                                role: "assistant".to_string(),
+                                content: msg,
+                                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                                extra: serde_json::Map::new(),
+                            });
+                            break;
                         }
                         
                         let tools_openai = self.tools.to_openai_format();
                         
                         let activity_msg = format!("{}▶ Thinking{}", RED_ORANGE, COLOR_RESET);
                         let start_time = std::time::Instant::now();
-                        let chat_fut = self.provider.chat(&system_prompt, &messages, &tools_openai, &settings);
-                        let mut resp = with_spinner(&activity_msg, chat_fut).await?;
+                        let mut resp = self.chat_with_fallback(&mut active_provider, &system_prompt, &messages, &tools_openai, &settings, &activity_msg).await?;
                         
                         // Handle potential response truncation (finish_reason = "length") by auto-continuing
                         if resp.finish_reason == "length" {
@@ -573,8 +679,7 @@ impl AgentLoop {
                                 });
                                 
                                 let cont_activity_msg = format!("{}▶ Continuing response... (attempt {}){}", RED_ORANGE, continue_attempts, COLOR_RESET);
-                                let cont_chat_fut = self.provider.chat(&system_prompt, &temp_messages, &tools_openai, &settings);
-                                if let Ok(cont_resp) = with_spinner(&cont_activity_msg, cont_chat_fut).await {
+                                if let Ok(cont_resp) = self.chat_with_fallback(&mut active_provider, &system_prompt, &temp_messages, &tools_openai, &settings, &cont_activity_msg).await {
                                     finish_reason = cont_resp.finish_reason.clone();
                                     if let Some(ref cont_content) = cont_resp.content {
                                         if let Some(ref mut acc) = accumulated_content {
@@ -669,8 +774,12 @@ impl AgentLoop {
                             
                             let silent = crate::agent::style::spinner::is_silent();
                             let mut approved = true;
+                            let mut forbidden = false;
                             let security_mode = &self.config.agents.defaults.security_mode;
-                            if crate::agent::security::SecurityGuard::is_sensitive_with_mode(&call.name, &call.arguments, security_mode) {
+
+                            if crate::agent::security::SecurityGuard::is_forbidden(&call.name, &call.arguments) {
+                                forbidden = true;
+                            } else if crate::agent::security::SecurityGuard::is_sensitive_with_mode(&call.name, &call.arguments, security_mode) {
                                 // Clear the running tool spinner first so the prompt is clean
                                 if !silent {
                                     print!("\r\x1b[2K");
@@ -683,7 +792,15 @@ impl AgentLoop {
                                 }
                             }
 
-                            let result_val = if !approved {
+                            let result_val = if forbidden {
+                                let reject_msg = format!("✕ *{}* - Rejected: Dangerous command is forbidden", formatted_args);
+                                send_progress_update(session_key, &reject_msg).await;
+                                if !silent {
+                                    print!("{}✕{} {} - Rejected: Dangerous command is forbidden\r\n", ERROR_RED, COLOR_RESET, formatted_args);
+                                    let _ = std::io::stdout().flush();
+                                }
+                                serde_json::json!({ "error": "Execution denied by host: This command is forbidden by security rules." })
+                            } else if !approved {
                                 let deny_msg = format!("✕ *{}* - Denied by user", formatted_args);
                                 send_progress_update(session_key, &deny_msg).await;
                                 if !silent {
@@ -707,26 +824,39 @@ impl AgentLoop {
                                             }
                                             Err(e) => {
                                                 let error_str = e.to_string();
+                                                turn_errors.push(format!("Tool {} failed: {}", call.name, error_str));
                                                 let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, error_str);
                                                 send_progress_update(session_key, &fail_msg).await;
                                                 if !silent {
                                                     crate::tui_println!("{}✕ {} - Failed: {}{}", AURA_PURPLE, formatted_args, error_str, COLOR_RESET);
                                                 }
-                                                serde_json::json!({ "error": error_str })
+                                                let hint = generate_self_healing_hint(&call.name, &error_str);
+                                                serde_json::json!({
+                                                    "error": error_str,
+                                                    "self_healing_suggestion": hint
+                                                })
                                             }
                                         }
                                     }
                                     None => {
                                         let error_str = format!("Tool '{}' not found", call.name);
+                                        turn_errors.push(format!("Tool {} not found", call.name));
                                         let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, error_str);
                                         send_progress_update(session_key, &fail_msg).await;
                                         if !silent {
                                             crate::tui_println!("{}✕ {} - Failed: {}{}", AURA_PURPLE, formatted_args, error_str, COLOR_RESET);
                                         }
-                                        serde_json::json!({ "error": error_str })
+                                        let hint = generate_self_healing_hint(&call.name, &error_str);
+                                        serde_json::json!({
+                                            "error": error_str,
+                                            "self_healing_suggestion": hint
+                                        })
                                     }
                                 }
                             };
+                            if let Some(err_val) = result_val.get("error").and_then(|v| v.as_str()) {
+                                turn_errors.push(format!("Tool {} returned error: {}", call.name, err_val));
+                            }
                             crate::agent::activity::update_activity(session_key, "Processing user prompt", None);
                             
                             tool_results.push((call.id.clone(), call.name.clone(), result_val));
@@ -780,7 +910,9 @@ impl AgentLoop {
                             extra.insert("name".to_string(), serde_json::Value::String(name.clone()));
                             
                             let content_str = result.to_string();
-                            let content = if content_str.len() > 4000 {
+                            let limit = self.config.agents.defaults.tool_output_limit.unwrap_or(4000);
+                            let is_retrieve = name == "retrieve_original" || name == "headroom/retrieve_original";
+                            let content = if content_str.len() > limit && !is_retrieve {
                                 let outputs_dir = crate::config::resolve_path("~/.openz/tool_outputs");
                                 let _ = std::fs::create_dir_all(&outputs_dir);
                                 let file_name = format!("output_{}_{}.json", name, uuid::Uuid::new_v4().to_string());
@@ -809,6 +941,12 @@ impl AgentLoop {
                     }
                     
                     session.messages = messages.clone();
+                    if let Some(ref inter_id) = interaction_id {
+                        if !turn_errors.is_empty() {
+                            let errors_str = turn_errors.join("\n");
+                            let _ = crate::tools::shared_memory::update_interaction_errors(inter_id, &errors_str).await;
+                        }
+                    }
                     state = TurnState::Save;
                 }
                 TurnState::Save => {
@@ -838,7 +976,7 @@ impl AgentLoop {
                 "system_prompt": system_prompt,
                 "model": self.config.agents.defaults.model,
                 "messages": messages,
-                "tools_used": tools_used,
+                "tools_used": tools_used.clone(),
                 "final_response": final_content,
             });
             if let Ok(content) = serde_json::to_string_pretty(&trace_record) {
@@ -850,10 +988,79 @@ impl AgentLoop {
         if !user_content.starts_with('/') {
             let session_manager = self.session_manager.clone();
             let session_key = session_key.to_string();
-            let provider = self.provider.clone();
+            let provider = active_provider.clone();
             let messages = messages.clone();
+            let tools_used = tools_used.clone();
 
             tokio::spawn(async move {
+                let mut profile_name = None;
+                let parts_key: Vec<&str> = session_key.split(':').collect();
+                if parts_key.len() >= 2 && parts_key[0] == "subagent" {
+                    profile_name = Some(parts_key[1].to_string());
+                }
+
+                let write_log = |status: &str, memory_updated: bool, skills_saved: Vec<String>, error_message: Option<String>| {
+                    #[derive(serde::Serialize)]
+                    struct CuratorStatus {
+                        last_run_timestamp: String,
+                        status: String,
+                        session_key: String,
+                        memory_updated: bool,
+                        skills_saved: Vec<String>,
+                        error_message: Option<String>,
+                    }
+                    let log_path = crate::config::resolve_path("~/.openz/curator_status.json");
+                    let record = CuratorStatus {
+                        last_run_timestamp: chrono::Utc::now().to_rfc3339(),
+                        status: status.to_string(),
+                        session_key: session_key.clone(),
+                        memory_updated,
+                        skills_saved,
+                        error_message,
+                    };
+                    if let Some(parent) = log_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Ok(content) = serde_json::to_string_pretty(&record) {
+                        let _ = std::fs::write(log_path, content);
+                    }
+                };
+
+                let mut should_run = false;
+                let total_chars: usize = messages.iter().map(|m| m.content.len()).sum();
+                let estimated_tokens = total_chars / 4;
+                if estimated_tokens >= 4000 {
+                    should_run = true;
+                } else {
+                    for tool in &tools_used {
+                        let t = tool.to_lowercase();
+                        if t.contains("write_file") ||
+                           t.contains("patch_file") ||
+                           t.contains("replace_lines") ||
+                           t.contains("zenflow_edit") ||
+                           t.contains("db_write") ||
+                           t.contains("cargo") ||
+                           t.contains("exec_command") ||
+                           t.contains("web_fetch") ||
+                           t.contains("web_search") ||
+                           t.contains("crawl") ||
+                           t.contains("obscura") ||
+                           t.contains("gsd_browser") ||
+                           t.contains("remote_input") ||
+                           t.contains("mcp") {
+                            should_run = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !should_run {
+                    write_log("skipped: throttled (simple turn)", false, vec![], None);
+                    return;
+                }
+
+                write_log("running", false, vec![], None);
+
                 // Run background skill archiving check
                 let _ = crate::agent::skills::archive_stale_skills();
 
@@ -873,7 +1080,10 @@ impl AgentLoop {
                     skills_to_save: Vec<ReviewSkill>,
                 }
 
-                // 1. Get existing memory from current file
+                // 1. Get recent interactions
+                let recent_interactions = crate::tools::shared_memory::get_recent_interactions(15).await.unwrap_or_default();
+
+                // 2. Get existing memory from current file
                 let existing_memory = if let Ok(s) = session_manager.load(&session_key) {
                     s.metadata.get("memory")
                         .and_then(|v| v.as_str())
@@ -883,19 +1093,20 @@ impl AgentLoop {
                     String::new()
                 };
 
-                // 2. Get existing skills list and contents
+                // 3. Get existing skills list and contents
                 let mut existing_skills_desc = String::new();
-                if let Ok(skills) = crate::agent::skills::load_skills() {
+                if let Ok(skills) = crate::agent::skills::load_skills_with_profile(profile_name.as_deref()) {
                     for skill in skills {
                         existing_skills_desc.push_str(&format!("Skill Name: {}\nContent:\n{}\n\n", skill.name, skill.content));
                     }
                 }
 
-                // 3. Setup prompts for self-improvement review
+                // 4. Setup prompts for self-improvement review
                 let system_prompt_review = "You are a specialized Self-Improvement Curator. Your job is to review the conversation between the User and the AI Agent and consolidate two types of learnings:\n\n\
                     1. MEMORY: Facts about the user (e.g. persona, desires, expectations) or the project (e.g. settings, environment details).\n\
                     2. SKILLS: Task-specific procedural guidelines, coding styles, workarounds, or workflows (e.g. 'do not explain code', 'always use async-trait', 'cargo build guidelines').\n\n\
                     CRITICAL: Pay special attention to tool execution outcomes. If a tool call (such as a compiler build, script execution, or API request) failed with an error, look at how the agent resolved it (or what workaround succeeded). Extract this learning and write it into a reusable 'skill' file so the agent will avoid making the same mistake again.\n\n\
+                    REPETITIVE TASKS: Look at the list of recent user tasks provided. If the user is repeatedly asking to do a similar thing, action, or custom automation, extract a skill/workflow to automate that task so future requests can be handled instantly without re-discovering the solution.\n\n\
                     Guidelines for Skills:\n\
                     - Structure each skill as a clean, professional Markdown document containing: a title (# Skill: ...), a description of when to use it, the specific rules/guidelines, and examples of problems and their corresponding workarounds/solutions.\n\
                     - If a skill already exists in the 'Existing Skills' list, you MUST merge the new rules/workarounds into the existing skill content rather than replacing it entirely. Do not lose existing guidelines.\n\
@@ -903,18 +1114,32 @@ impl AgentLoop {
                     You MUST return your response as a raw JSON object with the following structure. Do not output anything else besides the raw JSON (do not wrap it in explanation text).\n\n\
                     JSON Format:\n\
                     {\n\
-                      \"memory_updated\": true/false,\n\
-                      \"memory_content\": \"<updated memory markdown content. If memory_updated is false, keep it identical to existing memory or empty>\",\n\
-                      \"skills_to_save\": [\n\
-                        {\n\
-                          \"name\": \"<name of skill, lowercase with underscores>\",\n\
-                          \"content\": \"<complete updated or new markdown content for the skill. Include headers, rules, and examples. Keep existing rules and merge any new ones.>\"\n\
-                        }\n\
-                      ]\n\
+                       \"memory_updated\": true/false,\n\
+                       \"memory_content\": \"<updated memory markdown content. If memory_updated is false, keep it identical to existing memory or empty>\",\n\
+                       \"skills_to_save\": [\n\
+                         {\n\
+                           \"name\": \"<name of skill, lowercase with underscores>\",\n\
+                           \"content\": \"<complete updated or new markdown content for the skill. Include headers, rules, and examples. Keep existing rules and merge any new ones.>\"\n\
+                         }\n\
+                       ]\n\
                     }";
 
                 let mut prompt_content = String::new();
-                
+
+                if !recent_interactions.is_empty() {
+                    prompt_content.push_str("Recent user tasks across all sessions:\n");
+                    for (i, item) in recent_interactions.iter().enumerate() {
+                        let query = item["query"].as_str().unwrap_or("");
+                        let success = item["success"].as_bool().unwrap_or(true);
+                        let errors = item["errors"].as_str().unwrap_or("");
+                        prompt_content.push_str(&format!("{}. Task: \"{}\" | Status: {}\n", i + 1, query, if success { "SUCCESS" } else { "FAILED" }));
+                        if !errors.is_empty() {
+                            prompt_content.push_str(&format!("   Errors encountered: {}\n", errors));
+                        }
+                    }
+                    prompt_content.push_str("\n");
+                }
+
                 // Autonomous Skill Creation Notice if task was complex (>= 5 tool calls)
                 let tool_count = messages.iter().filter(|m| m.role == "tool").count();
                 if tool_count >= 5 {
@@ -987,44 +1212,79 @@ impl AgentLoop {
                     reasoning_effort: None,
                 };
 
-                // 4. Query the LLM
-                if let Ok(resp) = provider.chat(&system_prompt_review, &review_msgs, &[], &settings).await {
-                    if let Some(content) = resp.content {
-                        let trimmed = content.trim();
-                        // Strip markdown code block markers if any (e.g. ```json ... ```)
-                        let clean_json = if trimmed.starts_with("```") {
-                            let lines: Vec<&str> = trimmed.lines().collect();
-                            let start = if lines.get(0).map(|l| l.starts_with("```")).unwrap_or(false) { 1 } else { 0 };
-                            let end = if lines.last().map(|l| l.starts_with("```")).unwrap_or(false) { lines.len() - 1 } else { lines.len() };
-                            lines[start..end].join("\n")
-                        } else {
-                            trimmed.to_string()
-                        };
+                let mut skills_saved = Vec::new();
+                let mut memory_updated = false;
+                let mut error_msg = None;
 
-                        if let Ok(review) = serde_json::from_str::<ReviewResponse>(&clean_json) {
-                            // Update memory
-                            if review.memory_updated {
-                                if let Ok(mut latest_session) = session_manager.load(&session_key) {
-                                    latest_session.metadata.insert("memory".to_string(), serde_json::Value::String(review.memory_content.trim().to_string()));
-                                    if let Err(e) = session_manager.save(&latest_session) {
-                                        crate::channels::cli::send_notification(&format!("{}▲ [Self-Improvement] Failed to save self-improvement memory: {}{}", AURA_GOLD, e, COLOR_RESET));
+                // 4. Query the LLM
+                match provider.chat(&system_prompt_review, &review_msgs, &[], &settings).await {
+                    Ok(resp) => {
+                        if let Some(content) = resp.content {
+                            let trimmed = content.trim();
+                            // Strip markdown code block markers if any (e.g. ```json ... ```)
+                            let clean_json = if trimmed.starts_with("```") {
+                                let lines: Vec<&str> = trimmed.lines().collect();
+                                let start = if lines.get(0).map(|l| l.starts_with("```")).unwrap_or(false) { 1 } else { 0 };
+                                let end = if lines.last().map(|l| l.starts_with("```")).unwrap_or(false) { lines.len() - 1 } else { lines.len() };
+                                lines[start..end].join("\n")
+                            } else {
+                                trimmed.to_string()
+                            };
+
+                            match serde_json::from_str::<ReviewResponse>(&clean_json) {
+                                Ok(review) => {
+                                    // Update memory
+                                    if review.memory_updated {
+                                        if let Ok(mut latest_session) = session_manager.load(&session_key) {
+                                            latest_session.metadata.insert("memory".to_string(), serde_json::Value::String(review.memory_content.trim().to_string()));
+                                            if let Err(e) = session_manager.save(&latest_session) {
+                                                let msg = format!("Failed to save memory: {}", e);
+                                                error_msg = Some(msg.clone());
+                                                crate::channels::cli::send_notification(&format!("{}▲ [Self-Improvement] Failed to save self-improvement memory: {}{}", AURA_GOLD, e, COLOR_RESET));
+                                            } else {
+                                                memory_updated = true;
+                                                crate::channels::cli::send_notification(&format!("{}◇ [Self-Improvement] Memory updated based on recent conversation.{}", AURA_BLUE, COLOR_RESET));
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Save skills
+                                    for skill in review.skills_to_save {
+                                        if !skill.name.is_empty() && !skill.content.is_empty() {
+                                            let res = if let Some(ref prof) = profile_name {
+                                                crate::agent::skills::save_subagent_skill(prof, &skill.name, &skill.content)
+                                            } else {
+                                                crate::agent::skills::save_skill(&skill.name, &skill.content)
+                                            };
+                                            if let Err(e) = res {
+                                                let msg = format!("Failed to save skill '{}': {}", skill.name, e);
+                                                error_msg = Some(msg);
+                                                crate::channels::cli::send_notification(&format!("{}▲ [Self-Improvement] Failed to save self-improvement skill '{}': {}{}", AURA_GOLD, skill.name, e, COLOR_RESET));
+                                            } else {
+                                                skills_saved.push(skill.name.clone());
+                                                crate::channels::cli::send_notification(&format!("{}◇ [Self-Improvement] Skill '{}' updated/created based on recent conversation.{}", AURA_BLUE, skill.name, COLOR_RESET));
+                                            }
+                                        }
+                                    }
+
+                                    if error_msg.is_none() {
+                                        write_log("success", memory_updated, skills_saved, None);
                                     } else {
-                                        crate::channels::cli::send_notification(&format!("{}◇ [Self-Improvement] Memory updated based on recent conversation.{}", AURA_BLUE, COLOR_RESET));
+                                        write_log("failed", memory_updated, skills_saved, error_msg);
                                     }
                                 }
-                            }
-                            
-                            // Save skills
-                            for skill in review.skills_to_save {
-                                if !skill.name.is_empty() && !skill.content.is_empty() {
-                                    if let Err(e) = crate::agent::skills::save_skill(&skill.name, &skill.content) {
-                                        crate::channels::cli::send_notification(&format!("{}▲ [Self-Improvement] Failed to save self-improvement skill '{}': {}{}", AURA_GOLD, skill.name, e, COLOR_RESET));
-                                    } else {
-                                        crate::channels::cli::send_notification(&format!("{}◇ [Self-Improvement] Skill '{}' updated/created based on recent conversation.{}", AURA_BLUE, skill.name, COLOR_RESET));
-                                    }
+                                Err(e) => {
+                                    let msg = format!("JSON deserialization failed: {}", e);
+                                    write_log("failed", false, vec![], Some(msg));
                                 }
                             }
+                        } else {
+                            write_log("failed", false, vec![], Some("Empty content returned from LLM".to_string()));
                         }
+                    }
+                    Err(e) => {
+                        let msg = format!("LLM chat query failed: {}", e);
+                        write_log("failed", false, vec![], Some(msg));
                     }
                 }
             });
@@ -1133,6 +1393,29 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
             } else {
                 String::new()
             }
+        } else if name == "generate_image" {
+            let path = map.get("output_path").and_then(|v| v.as_str()).unwrap_or("output.png");
+            let filename = std::path::Path::new(path).file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string());
+            let shapes_count = map.get("shapes").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            format!("output: \"{}\", shapes: {}", filename, shapes_count)
+        } else if name == "generate_video" {
+            let path = map.get("output_path").and_then(|v| v.as_str()).unwrap_or("output.mp4");
+            let filename = std::path::Path::new(path).file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string());
+            format!("output: \"{}\"", filename)
+        } else if name == "create_animated_svg" {
+            let path = map.get("output_path").and_then(|v| v.as_str()).unwrap_or("output.svg");
+            let filename = std::path::Path::new(path).file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string());
+            let elem_count = map.get("elements").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            let anim_count: usize = map.get("elements").and_then(|v| v.as_array()).map(|elems| {
+                elems.iter().map(|e| e.get("animations").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0)).sum()
+            }).unwrap_or(0);
+            format!("output: \"{}\", elements: {}, animations: {}", filename, elem_count, anim_count)
         } else {
             let mut parts = Vec::new();
             for (k, v) in map {
@@ -1217,4 +1500,39 @@ async fn send_progress_update(session_key: &str, text: &str) {
     }
 }
 
+fn generate_self_healing_hint(tool_name: &str, error_str: &str) -> String {
+    let err_lower = error_str.to_lowercase();
+    let tool_lower = tool_name.to_lowercase();
 
+    if tool_lower.contains("read") || tool_lower.contains("write") || tool_lower.contains("patch") || tool_lower.contains("replace") || tool_lower.contains("file") {
+        if err_lower.contains("notfound") || err_lower.contains("no such file") {
+            return "The target path does not exist. Ensure the file path is correct and absolute. You can use 'list_dir' or 'find_files' to check the folder contents.".to_string();
+        }
+        if err_lower.contains("permission") || err_lower.contains("denied") {
+            return "Permission denied. The agent process does not have access to read/write this path. Ensure you are targeting files within the permitted workspace folder.".to_string();
+        }
+    }
+
+    if tool_lower.contains("exec") || tool_lower.contains("shell") || tool_lower.contains("command") {
+        if err_lower.contains("permission") || err_lower.contains("denied") {
+            return "Execution permission denied. You may need to make the file executable via 'chmod +x <path>' or run the script using an explicit interpreter (e.g. 'bash <script_path>').".to_string();
+        }
+        if err_lower.contains("not found") || err_lower.contains("127") || err_lower.contains("no such file") {
+            return "Command or script executable not found. Verify the path or binary name is correct and check if the required tool is installed on the system.".to_string();
+        }
+        if err_lower.contains("seccomp") || err_lower.contains("sandbox") || err_lower.contains("operation not permitted") {
+            return "Operation blocked by the seccomp BPF sandbox. Note that networking syscalls (e.g. curl, wget, git push), mount/umount, and other privileged actions are forbidden in the sandboxed environment. Please perform the action without network or sandbox-restricted system calls, or run locally via a different approved script if possible.".to_string();
+        }
+    }
+
+    if err_lower.contains("mcp") || err_lower.contains("connection") || err_lower.contains("broken pipe") || err_lower.contains("bridge") {
+        return "MCP server connection error. The MCP server process might be offline or failed to initialize. Try using the 'manage_mcp' tool to list, configure, or restart the active MCP servers.".to_string();
+    }
+
+    if tool_lower.contains("delegate") || tool_lower.contains("research") || tool_lower.contains("optimizer") || tool_lower.contains("loop") {
+        return "Subagent execution encountered an error. You can use the 'optimize_subagent' tool to refine the subagent system prompt/instructions to handle the issue better, or try breaking the goal down into smaller, simpler tasks for subagent delegation.".to_string();
+    }
+
+    // Default suggestion
+    "Please double-check the arguments format, verify the target file paths or command options exist, and try a different tool or approach if this error persists.".to_string()
+}

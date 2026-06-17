@@ -11,23 +11,20 @@ This skill outlines how to configure, run, and maintain the Email integration ch
 
 ## 1. How It Works
 
-Rather than compiling heavy C-based OpenSSL/TLS libraries natively in Rust (which causes compiler and target platform compatibility issues), OpenZ utilizes a hybrid subprocess daemon pattern:
+OpenZ uses pure Rust libraries for email handling — `imap` for IMAP polling and `lettre` for SMTP dispatch — with `mailparse` for parsing RFC822 MIME envelopes:
 
 ```mermaid
 graph LR
-    Rust[Rust EmailChannel] -->|Spawn Subprocess| Py[email_daemon.py]
-    Py -->|IMAP Poll| Server[Email Server]
-    Server -->|RFC822 Email| Py
-    Py -->|JSON stdout| Rust
+    Rust[Rust EmailChannel] -->|IMAP Poll| Server[Email Server]
+    Server -->|RFC822 Email| Rust
     Rust -->|LLM Turn| Rust
-    Rust -->|JSON stdin reply| Py
-    Py -->|SMTP Send| Server
+    Rust -->|SMTP Send| Server
 ```
 
-1. **Rust Integration** ([src/channels/email.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/email.rs)): Spawns the embedded python script `email_daemon.py` on startup, injecting configuration details as environment variables. It reads events from Python's standard output.
-2. **Python Daemon** ([src/channels/email_daemon.py](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/email_daemon.py)): Connects to the configured IMAP server, selects the INBOX, and polls for unread (`UNSEEN`) emails. 
-3. **Turn Execution**: When an email is received, it is decoded, formatted as JSON, and pushed to Rust. Rust runs the agent loop under the session key `email_<sender_address>`.
-4. **SMTP Reply**: The agent response is pushed back to the daemon's stdin as a JSON action, which delivers it using standard Python SMTP library connections.
+1. **Rust Integration** ([src/channels/email.rs](../src/channels/email.rs)): Uses `imap` crate to connect to the configured IMAP server, select INBOX, and poll for unread (`UNSEEN`) emails.
+2. **Message Parsing**: Uses `mailparse` to decode RFC822 MIME envelopes, extracting sender, subject, and text/plain body recursively from nested multipart structures.
+3. **Turn Execution**: The email text is fed to `AgentLoop` under the session key `email_<sender_address>`, with full tool execution and response generation.
+4. **SMTP Reply**: The agent response is sent back via `lettre`'s async SMTP transport with TLS support.
 
 ---
 

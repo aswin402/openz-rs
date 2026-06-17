@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.11`
+# OpenZ 🦊 `v0.0.12`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -6,48 +6,50 @@
 
 OpenZ is a high-performance, asynchronous, ultra-lightweight personal AI agent framework built entirely in Rust. 
 
-Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent loop while packaging essential developer utilities: native console chat, WebSocket WebUI gateways, Telegram bot channels, local tool calls, stdio-based MCP servers, and OpenAI/Anthropic/Azure LLM client routing.
+Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent loop while packaging essential developer utilities: native console chat, WebSocket WebUI gateways, Telegram/Discord/WhatsApp channels, local tool calls, stdio-based MCP servers, and OpenAI/Anthropic/Azure LLM client routing.
 
-*Vibe coded by **Aswin**.*
-*Inspired by **Zeroclaw** & **Nanobot**.*
+*Vibe coded by **Aswin**.*  
+*Inspired by **Zeroclaw**, **Nanobot**, **hermes-agent**, **loops!**, and **DOX**.*
 
 ---
 
 ## 🚀 Key Features
 
-* **Security Guard Interceptor & Configurable Modes:** Safeguards host environment by intercepting destructive commands (`rm`, `dd`, etc.), privilege escalation (`sudo`), process controls (`kill`), system actions (`reboot`), network transfers (`curl`, `wget`, `scp`), and out-of-workspace writes. Supports three runtime `security_mode` configurations:
-  * `strict`: Prompts for all destructive commands, process termination, network fetches, and out-of-workspace writes.
-  * `normal` (default): Whitelists safe developer commands (like `cargo clean`, `npm run clean`, local process kills, and simple curls) while guarding against privilege escalations, system calls, and dangerous pipeline scripts (e.g. `curl | bash`).
-  * `loose`: Allows all command and write executions within the workspace whitelisted paths, only checking `sudo` and system commands.
-  Features a platform-agnostic directory jailing resolver, TUI select menus, and Telegram inline callback approval buttons.
+* **Hierarchical Context Scoping (DOX-inspired):** Built-in folder-level context management. Integrates with the `headroom` MCP server (`scope_context`) to walk up the directory tree, compile relevant `AGENTS.md` instructions, and supply localized target rules to the agent before making edits. Ensures zero context drift.
+* **Stateful SOP Workflow Engine (loops!-inspired):** Resilient, multi-step Directed Acyclic Graph (DAG) templates executing independent steps in parallel via Tokio. Contains pre-configured, default stateful closed-loop SOPs such as `ship-pr-until-green` (feature implementation, PR creation, CI verification loop, and self-healing) and `pre-commit-guard` (pre-commit testing hooks configuration and verification).
+* **Zenflow Checkpointed Transactions:** Automatically takes a directory/git snapshot before executing file edits, runs tests/compilations, attempts to self-heal errors, and automatically rolls back to the clean snapshot if compilation/healing fails.
+* **Semantic Repository Indexing:** Indexes structural code elements (structs, functions, classes) using `ast_grep` and fast vector embeddings to let agents semantically lookup dependencies instantly.
+* **Sandboxed Data Execution:** Provides a secure local Python/WASM data sandbox allowing research agents to run data analysis scripts and output visual charts.
 * **Cryptographic Merkle Hash-Chain Audit Ledger:** Every message, state transition, and tool call is hashed and linked via SHA-256 to form an immutable, tamper-evident ledger. The hash chain integrity is verified automatically on session startup, and the `/audit` slash command outputs a formatted ledger.
 * **SQLite-Backed Memory & Skill Layer:** Migrated long-term skills and facts storage from slow Markdown/JSON flat files into a dedicated SQLite database (`~/.openz/memory.db`) with auto-migration on startup.
-* **Safe WebAssembly (WASM) Sandbox Interception:** Automatically intercepts shell commands running `.wasm` files and redirects execution to an in-process, sandboxed WebAssembly runtime (`wasmtime`).
-* **Oxc-based Fast JS/TS Tooling:** High-performance native AST-based code outlining and formatting using the `oxc` compiler parser and generator, removing external Node.js dependencies.
+* **Security Guard Interceptor (BPF sandbox):** Safeguards the host environment using a Linux BPF seccomp filter on subprocesses to intercept destructive commands (`rm`, `dd`, etc.), privilege escalation (`sudo`), process controls (`kill`), system actions (`reboot`), network transfers (`curl`, `wget`, `scp`), and out-of-workspace writes. Supports `strict`, `normal`, and `loose` modes.
+* **New Specialized subagents:**
+  * **`mermaid_designer`:** Specializes in parsing code structures and rendering elegant systems flowcharts or diagrams natively.
+  * **`video_editor`:** Orchestrates and compiles video timeline compositions into final neat MP4 files.
 * **Auto-Continuation (Truncation Prevention):** Detects when model responses are cut off due to hitting output token limits (using `finish_reason: "length"`) and automatically prompts the model to continue, stitching the segments together seamlessly.
-* **Persistent Workspace Loops:** Session history, workspace file scopes, and local tool execution survive long-running turn completions.
-* **Memory & Skill Self-Improvement:** Inspired by `hermes-agent`, OpenZ implements a closed-loop learning system. An asynchronous background curator refines long-term memory (facts, preferences) and curates procedural skills (style rules, workarounds) stored in `~/.openz/skills/`. Users can also hand the agent a GitHub repository link, and OpenZ will dynamically clone, install, and configure it on the host machine, saving it as an active skill for future turns. View or manage them using `/memory`, `/skills`, and `/skill` commands.
-* **Dynamic Subagents & Tool Inheritance:** Subagents dynamically inherit all active standard and MCP tools from the parent orchestrator (enabling `researcher` or `reviewer` to use grep_search, ast_grep, cargo_manager, and web_search). Newly created subagents default their primary execution model to the active orchestrator model, and the active model is appended as a last-resort fallback for all subagent profiles.
-* **Pluggable Channel Adapters:** Built around a unified `Channel` trait, enabling modular communication endpoints:
+* **Memory & Skill Self-Improvement:** Asynchronous background curator reviews chat transcripts, updates memory facts, and curates skills. Accepts GitHub repository URLs to dynamically clone, install, compile, and register them as active tools.
+* **Pluggable Channel Adapters:** Conforming to a unified `Channel` trait, offering:
   * **Console CLI (`agent`):** Direct interactive terminal chat with full slash commands support.
-  * **WebSocket Gateway (`gateway`):** Asynchronous Web/WebSocket server powering the visual WebUI workbench. Offers an **OpenAI-compatible local completions endpoint (`/v1/chat/completions`)** with cost-optimized dynamic routing for IDE extensions.
-  * **Email Client (`email`):** 100% pure Rust IMAP polling and SMTP dispatch client (replacing legacy Python daemon wrapper) parsing nested multipart MIME envelopes with `mailparse` and sending replies concurrently with `lettre`.
-  * **Telegram Polling (`telegram`):** Native bot listener with parallel loop handling.
-  * **Discord Gateway (`discord`):** Active bot gateway client listening for events via real-time WebSocket connection.
-  * **WhatsApp API (`whatsapp`):** Active Axum webhook receiver server verifying and processing incoming messages.
-* **Stateful SOP Workflow Engine:** Resilient, multi-step Directed Acyclic Graph (DAG) templates executing independent steps in parallel via Tokio. It persists the current state to disk, maps inputs/outputs in a global context (e.g. `{{steps.StepName.output}}`), validates dependency chains for cycles, and supports resuming paused or failed runs.
-* **Global Activity Tracking:** Shared execution state manager (`~/.openz/activity.json`). If you start a long-running task in the terminal TUI (`openz agent`) and ask the agent what it is doing via Telegram/Discord, it reads the active task logs of the CLI session and dynamically reports on the running command or current tool execution.
-* **Remote Session Control:** Cross-channel prompt forwarding. You can send commands, answers, or new prompts from other channels (like Telegram) to the active TUI session (`cli:direct`) using the `send_remote_input` tool. The TUI terminal prompt polls this queue in real-time, consumes the input, and executes it as if typed locally.
-* **Core Native Tools:** Built-in `read_file`, `write_file`, `list_dir`, `exec_command` (subprocess sandboxing), `web_fetch` (upgraded DOM scraper), `grep_search` (codebase text search), `git_manager` (status/diff/commits), `code_outline` (structural outline), `db_inspector` (SQLite reader), `cargo_manager` (cargo builds/checks/tests), `clipboard` (system clipboard get/set), `open_path` (opening files/URLs in default apps), `file_watcher` (background auto-healing compiler watcher), `ast_grep` (structural code search using AST patterns), `gsd_browser` (real browser navigation/interaction automation), `web_search` (privacy-first search query results), `onpkg` (onpkg package and template manager tool), `crawl_website` (multi-threaded website crawler using spider-rs), and `obscura_browser` (lightweight JS-rendering headless browser via pure-Rust CDP).
-* **Unified gRPC/Tonic Transport:** Connects all workspace MCP servers over gRPC Tonic transport. Includes a **local in-process gRPC bridge** that dynamically wraps standard stdio MCP servers on host TCP ports, filtering out logging noise/stdio pollution to guarantee clean, structured communication.
-* **Rust-Native MCP Servers:** Out-of-the-box support for high-performance Rust MCP binaries (`mcp-server-sequential-thinking` and `openmemory_rs` for memories, `office` via `opendocswork-mcp` for Word/Excel/PowerPoint processing, and `headroom` via `headroom-mcp` for context compression/scoping). Exposes a native `manage_mcp` tool to CRUD configurations.
-* **Cron & Scheduler:** Upgraded scheduling loop supporting Unix cron syntax (`*/5 * * * *`) alongside simple durations.
-* **Native Prompt Compression:** Built-in support for Caveman prompt compression (toggleable via `cavemanMode` config), reducing token consumption by **~75%** while preserving technical substance.
-* **Universal API Clients:** Abstractions supporting OpenAI-compatible endpoints (DeepSeek, Groq, Ollama, OpenRouter, Gemini) and Anthropic Claude. Added custom deployments support for Azure OpenAI.
-* **Auto-Provider Resolution:** Detects the appropriate provider and endpoint automatically based on model name keywords or environment variables.
-* **Visual TUI Polish:** Custom error (`✕`), success (`✓`), warning (`▲`), tool (`▸`), and subagent (`◎`) logs with color-themed formatting, alongside auto-scrolling model name elision in the status bar. Fully raw-mode console log safe (utilizes customized line ending translation to prevent diagonal alignment issues).
-* **Clipboard Image Placeholders:** Paste images via `Ctrl+V` as clean inline `[image]` / `[image1]` placeholders which are automatically expanded to file URLs under the hood.
+  * **WebSocket Gateway (`gateway`):** WebUI workbench connection. Includes an OpenAI-compatible local completions endpoint (`/v1/chat/completions`) with dynamic LLM routing.
+  * **Email Client (`email`):** 100% pure Rust IMAP polling and SMTP dispatch client parsing nested MIME envelopes with `mailparse` and sending replies concurrently.
+  * **Telegram Polling (`telegram`):** Bot listener with parallel loop handling.
+  * **Discord Gateway (`discord`):** Gateway client listening for events via WebSocket.
+  * **WhatsApp API (`whatsapp`):** Axum webhook receiver server verifying and processing incoming messages.
+* **Changelog & System Specifications:** The `openz changelog` command prints system hardware specifications (ROM/RAM footprint, CPU load, boot time), architectural inspirations, key capabilities, model protocol integrations, and release history directly to the terminal.
 
+---
+
+## 🛠️ Core Tools Registry
+
+OpenZ exposes a powerful set of local tools to the LLM:
+* **Filesystem & Code Outline:** `read_file`, `write_file`, `list_dir`, `grep_search`, `code_outline` (structural parser for Rust, Py, Go, JS/TS), `ast_grep` (structural tree searches), `db_inspector` (SQLite reader/writer).
+* **System & Environment:** `exec_command` (sandboxed execution), `clipboard` (system clipboard access), `open_path` (opens files/URLs in default apps), `system_info` (CPU, memory, OS data), `file_watcher` (background auto-compiler/test-watcher).
+* **Web & Search:** `web_fetch` (upgraded DOM scraper), `web_search` (Tavily search API), `crawl_website` (multi-threaded site spidering), `gsd_browser` (Playwright-based browser automation), `obscura_browser` (lightweight headless browser via CDP).
+* **Automation & Cron:** `schedule_job` (registers Unix cron/duration jobs), `list_jobs`, `remove_job`.
+* **Visuals & Graphics:** 
+  * `generate_mermaid` (renders 23+ diagram types to SVG using a pure-Rust parser/renderer `mermaid-rs-renderer`).
+  * `generate_video` (generates neat MP4 videos from timeline compositions using `wavyte`).
+* **MCP Integration:** `manage_mcp` (CRUD configs). All MCP servers use a **unified gRPC Tonic transport** + an in-process TCP port bridge with robust non-JSON noise filtering.
 
 ---
 
@@ -65,55 +67,42 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
 
 ## ⚙️ Quick Start
 
-### 1. Compile the Project
+### 1. Compile and Install Globally
 ```bash
-cargo build --release
+./localinstall.sh
 ```
 
-### 2. Configure OpenZ
-To configure your LLM providers, channels, and gateway auto-start options, run:
+### 2. Configure LLM Providers & Channels
 ```bash
-./target/release/openz configure
+openz configure
 ```
-* **Auto-Start Gateway Preference:** The configuration wizard allows setting the WebSocket gateway to start:
-  1. **When system powers on (Option 1):** Installs and enables a native `systemd` user service unit (`openz-gateway.service`).
-  2. **When OpenZ starts (Option 2):** Launches the WebSocket/WebUI server asynchronously in the background when starting the TUI terminal client (`openz agent`).
-  3. **Manual only (Option 3):** Start it manually via `./target/release/openz gateway`.
-* Settings are saved to `~/.openz/config.json`.
+*Settings are saved to `~/.openz/config.json`.*
 
 ### 3. Run Agent Chat (Terminal)
-To start a direct chat session in your terminal:
 ```bash
-./target/release/openz agent
+openz agent
 ```
-*Use `/help`, `/history`, `/clear`, `/status`, `/memory`, `/skills`, `/skill` slash commands inside the prompt.*
+*Use `/help`, `/history`, `/clear`, `/status`, `/memory`, `/skills`, `/skill`, `/sop` slash commands.*
 
-### 4. Start Gateway (WebUI)
-To start the WebSocket gateway server to connect to the browser WebUI:
+### 4. Start WebSocket Gateway
 ```bash
-./target/release/openz gateway
+openz gateway
 ```
 
-### 5. Start Telegram Bot
-Configure your token in `.env` (or set `TELEGRAM_BOT_TOKEN="your-token"`) and run:
+### 5. View System Specifications & Changelog
 ```bash
-./target/release/openz telegram
+openz changelog
 ```
+*View system hardware footprint specifications, design inspirations, capabilities, tools, and version release history.*
 
 ---
 
-## 🛠️ Rebranded Directories
-
-* **Active Config:** `~/.openz/config.json`
-* **Saves Folder:** `~/.openz/sessions/`
-* **Local Workspace:** `~/.openz/workspace/`
-
----
-
-## 📚 Architecture & Research
+## 📚 Documentation Directory
 
 * **System Architecture:** [architecture.md](docs/architecture.md)
 * **Security Guard & Permissions:** [security.md](docs/security.md)
 * **Pluggable Channels & Configuration:** [channels.md](docs/channels.md)
-* **Self-Improvement Guide:** [self_improvement.md](docs/self_improvement.md)
+* **Self-Improvement & Memory Guide:** [self_improvement.md](docs/self_improvement.md)
+* **Model Context Protocol (MCP):** [mcps.md](docs/mcps.md)
+* **Tools Registry Details:** [tools.md](docs/tools.md)
 * **ZeroClaw Gap Analysis & Roadmap:** [zeroclaw_research.md](docs/zeroclaw_research.md)

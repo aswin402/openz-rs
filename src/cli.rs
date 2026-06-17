@@ -3,10 +3,9 @@ use crate::config::schema::{Config, ProviderConfig};
 use clap::{Parser, Subcommand};
 use inquire::{Text, Select, Password, Confirm, PasswordDisplayMode};
 use anyhow::{Result, anyhow};
-use std::sync::Arc;
-use crate::providers::{openai::OpenAIProvider, anthropic::AnthropicProvider, LLMProvider};
+// Provider resolution now handled by crate::providers::resolver
 use crate::tools::ToolRegistry;
-use crate::tools::filesystem::{ReadFileTool, WriteFileTool, ListDirTool, PatchFileTool, FindFilesTool, ReplaceLinesTool};
+use crate::tools::filesystem::{ReadFileTool, WriteFileTool, ListDirTool, PatchFileTool, FindFilesTool, ReplaceLinesTool, ZenflowEditTool};
 use crate::tools::db_inspector::{DbInspectorTool, DbWriteTool};
 use crate::tools::system_info::SystemInfoTool;
 use crate::tools::network::CheckPortTool;
@@ -14,11 +13,11 @@ use crate::tools::doc_reader::DocReaderTool;
 use crate::tools::wasm_sandbox::WasmSandboxTool;
 use crate::tools::js_format::JsFormatTool;
 use crate::tools::semantic_search::SemanticSearchTool;
-use crate::tools::shared_memory::{StoreMemoryTool, RecallMemoryTool, ClearMemoryTool};
+use crate::tools::shared_memory::{StoreMemoryTool, RecallMemoryTool, ClearMemoryTool, ArchiveResearchTool, SearchResearchTool};
 use crate::tools::notes::IndexNotesTool;
 use crate::tools::social_search::SocialSearchTool;
 use crate::tools::rust_docs::RustDocsTool;
-use crate::tools::shell::ExecCommandTool;
+use crate::tools::shell::{ExecCommandTool, PythonSandboxTool};
 use crate::tools::web::WebFetchTool;
 use crate::tools::subagent::{DelegateTaskTool, OptimizeSubagentTool, CreateSubagentTool, DeleteSubagentTool, ParallelResearchTool};
 use crate::tools::cron::{ScheduleJobTool, ListJobsTool, RemoveJobTool};
@@ -28,6 +27,46 @@ use crate::agent::AgentLoop;
 use crate::agent::style::*;
 use crate::channels::{CliChannel, WsGateway, TelegramChannel, DiscordChannel, WhatsAppChannel, EmailChannel, Channel};
 use crate::cron::scheduler::start_scheduler;
+
+#[allow(unused_macros)]
+macro_rules! println {
+    () => {
+        crate::tui_println!()
+    };
+    ($($arg:tt)*) => {
+        crate::tui_println!($($arg)*)
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! print {
+    () => {
+        crate::tui_print!()
+    };
+    ($($arg:tt)*) => {
+        crate::tui_print!($($arg)*)
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! eprintln {
+    () => {
+        crate::tui_println!()
+    };
+    ($($arg:tt)*) => {
+        crate::tui_println!($($arg)*)
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! eprint {
+    () => {
+        crate::tui_print!()
+    };
+    ($($arg:tt)*) => {
+        crate::tui_print!($($arg)*)
+    };
+}
 
 #[derive(Parser)]
 #[command(name = "openz", version = "0.1.0", about = "OpenZ - Rebranded Ultra-Lightweight Personal AI Agent")]
@@ -48,16 +87,28 @@ pub enum Command {
     Agent,
     
     /// Start the WebSocket and WebUI gateway server
-    Gateway,
+    Gateway {
+        #[command(subcommand)]
+        action: Option<ChannelAction>,
+    },
 
     /// Start the Telegram bot listener
-    Telegram,
+    Telegram {
+        #[command(subcommand)]
+        action: Option<ChannelAction>,
+    },
 
     /// Start the Discord bot listener
-    Discord,
+    Discord {
+        #[command(subcommand)]
+        action: Option<ChannelAction>,
+    },
 
     /// Start the WhatsApp API/webhook listener
-    Whatsapp,
+    Whatsapp {
+        #[command(subcommand)]
+        action: Option<ChannelAction>,
+    },
 
     /// Manage, configure, and design custom subagents
     Subagent,
@@ -78,6 +129,25 @@ pub enum Command {
         #[command(subcommand)]
         action: SopAction,
     },
+
+    /// View real-time structured logs in a live TUI viewer
+    Logs {
+        /// Path to a specific log file (default: ~/.openz/openz.log)
+        #[arg(long, short)]
+        path: Option<std::path::PathBuf>,
+
+        /// Number of historical lines to load on startup
+        #[arg(long, short, default_value = "200")]
+        tail: usize,
+
+        /// Filter log output to a specific session key prefix.
+        /// e.g. --session cli   --session gateway   --session telegram
+        #[arg(long, short)]
+        session: Option<String>,
+    },
+
+    /// View the OpenZ changelog and version release details
+    Changelog,
 }
 
 #[derive(Subcommand)]
@@ -113,17 +183,28 @@ pub enum SopAction {
     },
 }
 
+/// Sub-actions available on channel commands (e.g. `openz telegram logs`).
+#[derive(Subcommand)]
+pub enum ChannelAction {
+    /// Stream live logs for this channel only
+    Logs {
+        /// Number of historical lines to load on startup
+        #[arg(long, short, default_value = "200")]
+        tail: usize,
+    },
+}
+
 pub async fn run_cli() -> Result<()> {
     // Intercept version flags for custom themed print
     for arg in std::env::args() {
         if arg == "--version" || arg == "-V" {
             let logo = format!(
-                r#"
-{white} ▄████▄   ██████  ████████ ███    ██ {orange}████████
-{white}██    ██  ██   ██ ██       ████   ██ {orange}    ██  
-{white}██    ██  ██████  ██████   ██ ██  ██ {orange}   ██   
-{white}██    ██  ██      ██       ██  ██ ██ {orange}  ██    
-{white} ▀████▀   ██      ████████ ██   ████ {orange}████████
+                r#"{white}     ██████╗ ██████╗ ███████╗███╗   ██╗{orange}███████╗
+{white}    ██╔═══██╗██╔══██╗██╔════╝████╗  ██║{orange}╚══███╔╝
+{white}    ██║   ██║██████╔╝█████╗  ██╔██╗ ██║{orange}  ███╔╝
+{white}    ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║{orange} ███╔╝
+{white}    ╚██████╔╝██║     ███████╗██║ ╚████║{orange}███████╗
+{white}     ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝{orange}╚══════╝
 {orange}openz v{version}{reset}
 "#,
                 white = crate::agent::style::colors::LIGHT_WHITE,
@@ -151,17 +232,37 @@ pub async fn run_cli() -> Result<()> {
         Command::Agent => {
             handle_agent().await?;
         }
-        Command::Gateway => {
-            handle_gateway().await?;
+        Command::Gateway { action } => {
+            match action {
+                Some(ChannelAction::Logs { tail }) => {
+                    handle_logs(None, tail, Some("gateway".to_string())).await?;
+                }
+                None => handle_gateway().await?,
+            }
         }
-        Command::Telegram => {
-            handle_telegram().await?;
+        Command::Telegram { action } => {
+            match action {
+                Some(ChannelAction::Logs { tail }) => {
+                    handle_logs(None, tail, Some("telegram".to_string())).await?;
+                }
+                None => handle_telegram().await?,
+            }
         }
-        Command::Discord => {
-            handle_discord().await?;
+        Command::Discord { action } => {
+            match action {
+                Some(ChannelAction::Logs { tail }) => {
+                    handle_logs(None, tail, Some("discord".to_string())).await?;
+                }
+                None => handle_discord().await?,
+            }
         }
-        Command::Whatsapp => {
-            handle_whatsapp().await?;
+        Command::Whatsapp { action } => {
+            match action {
+                Some(ChannelAction::Logs { tail }) => {
+                    handle_logs(None, tail, Some("whatsapp".to_string())).await?;
+                }
+                None => handle_whatsapp().await?,
+            }
         }
         Command::Subagent => {
             let config = load_config()?;
@@ -179,7 +280,105 @@ pub async fn run_cli() -> Result<()> {
         Command::Sop { action } => {
             handle_sop(action).await?;
         }
+        Command::Logs { path, tail, session } => {
+            handle_logs(path, tail, session).await?;
+        }
+        Command::Changelog => {
+            handle_changelog().await?;
+        }
     }
+    
+    Ok(())
+}
+
+async fn handle_logs(
+    path: Option<std::path::PathBuf>,
+    tail: usize,
+    session: Option<String>,
+) -> Result<()> {
+    let filter = crate::logs::SessionFilter::from_opt(session.as_deref());
+    crate::logs::run_logs_viewer(path, tail, filter).await
+}
+
+async fn handle_changelog() -> Result<()> {
+    println!("{purple}=== OpenZ System Specifications & Changelog ==={reset}\n", purple = AURA_PURPLE, reset = COLOR_RESET);
+    
+    println!("{bold}📊 Hardware Footprint & Specifications:{reset}", bold = COLOR_BOLD, reset = COLOR_RESET);
+    println!("  {blue}• ROM (Binary Size):{reset}   ~10 MB - 15 MB (optimized Rust binary)", blue = AURA_BLUE, reset = COLOR_RESET);
+    println!("  {blue}• RAM (Cloud Mode):{reset}    ~15 MB - 30 MB (remote vector embeddings & LLM APIs)", blue = AURA_BLUE, reset = COLOR_RESET);
+    println!("  {blue}• RAM (Local Mode):{reset}    ~200 MB+ (local ONNX embedding model loaded)", blue = AURA_BLUE, reset = COLOR_RESET);
+    println!("  {blue}• CPU Footprint:{reset}       0% when idle (Tokio async event-driven architecture)", blue = AURA_BLUE, reset = COLOR_RESET);
+    println!("  {blue}• Startup Speed:{reset}       < 5 ms boot-to-prompt speed", blue = AURA_BLUE, reset = COLOR_RESET);
+    println!("  {blue}• Inspired By:{reset}         hermes-agent, Zeroclaw, Nanobot, loops!, DOX, codegraph, tantivy, lancedb,", blue = AURA_BLUE, reset = COLOR_RESET);
+    println!("                         surrealdb, petgraph, sentrux, tree-sitter-graph, mistral.rs, agentgateway,");
+    println!("                         cowork-forge, openhuman, mcp-rust-sdk, wasserstein-agents, gsd-browser,");
+    println!("                         chromewright, sediment, ClawDB, ferres-db, native-devtools-mcp,");
+    println!("                         tokio-cron-scheduler, grpc-rust, mcp-searxng, searxng-mcp, opendocswork-mcp,");
+    println!("                         slack-mcp-server, task-master, langgraph, crawl4ai, websurfx, headroom,");
+    println!("                         rust-mcp-filesystem, novada-mcp, obscura, crawlee, katana, librefang,");
+    println!("                         openmetadata, youtube-transcript-api, semble, deep-research, ocrs,");
+    println!("                         agent-skills, superpowers, OpenMemory, SkillSpector, OpenHands, deer-flow,");
+    println!("                         multica, ast-grep, caveman, graphify, notify, mcp-everything, mcp-memory,");
+    println!("                         mcp-sequentialthinking, mcp-git, mcp-fetch, mcp-time, openfang\n");
+
+    println!("{bold}⚡ Key Capabilities & Subsystems:{reset}", bold = COLOR_BOLD, reset = COLOR_RESET);
+    println!("  {gold}1. Memory & Skill Self-Improvement Curator{reset}", gold = AURA_GOLD, reset = COLOR_RESET);
+    println!("     Asynchronously analyzes conversations to extract Tier 1 memory facts and Tier 2");
+    println!("     procedural skills (stored in a SQLite database). Throttled to avoid wasteful LLM calls");
+    println!("     on simple turns and limit stale skill clean-ups to once every 24 hours.");
+    println!("  {gold}2. Native Compiler Auto-Healing{reset}", gold = AURA_GOLD, reset = COLOR_RESET);
+    println!("     `compiler_auto_heal` tool compiles code natively, reads stderr compiler errors,");
+    println!("     and prompts the LLM to fix syntax or borrow checker issues in a loop until green.");
+    println!("  {gold}3. Stateful SOP Workflow Engine{reset}", gold = AURA_GOLD, reset = COLOR_RESET);
+    println!("     Executes multi-step Directed Acyclic Graph (DAG) procedures like `ship-pr-until-green`.");
+    println!("  {gold}4. Pluggable Channel Adapters{reset}", gold = AURA_GOLD, reset = COLOR_RESET);
+    println!("     Operates concurrently via Console TUI, WebSocket, Telegram, Discord, WhatsApp, and Email.");
+    println!("  {gold}5. Security Guard & Subprocess BPF Sandbox{reset}", gold = AURA_GOLD, reset = COLOR_RESET);
+    println!("     Intercepts destructive commands and sandboxes subprocesses using seccomp BPF filters.");
+    println!("  {gold}6. Startup Resource Clean-up{reset}", gold = AURA_GOLD, reset = COLOR_RESET);
+    println!("     Auto-prunes stale git worktrees and temporary workspaces to keep disk ROM footprint low.\n");
+
+    println!("{bold}🔌 Model Context Protocol (MCP) Integration:{reset}", bold = COLOR_BOLD, reset = COLOR_RESET);
+    println!("  OpenZ integrates with MCP servers using Stdio JSON-RPC or an in-process gRPC Tonic bridge.");
+    println!("  {blue}• headroom:{reset}          Runs `scope_context` to scan directory trees for local `AGENTS.md` rules.", blue = AURA_BLUE, reset = COLOR_RESET);
+    println!("  {blue}• office:{reset}            Extracts text structures/tables from `.docx`, `.xlsx`, and `.pptx`.", blue = AURA_BLUE, reset = COLOR_RESET);
+    println!("  {blue}• sequential-thinking:{reset} Allows the model to plan and think logically before code edits.", blue = AURA_BLUE, reset = COLOR_RESET);
+    println!("  {blue}• memory:{reset}            Semantic entity-relationship knowledge graph database.\n", blue = AURA_BLUE, reset = COLOR_RESET);
+
+    println!("{bold}🔧 Core Native Tools & Usages:{reset}", bold = COLOR_BOLD, reset = COLOR_RESET);
+    println!("  {gold}• Filesystem:{reset}         `read_file`, `write_file`, `patch_file`, `list_dir`, `grep_search`, `code_outline`", gold = AURA_GOLD, reset = COLOR_RESET);
+    println!("  {gold}• Browsing & Web:{reset}     `web_search` (Tavily), `web_fetch`, `crawl_website` (spider-rs), `gsd_browser` (Playwright)", gold = AURA_GOLD, reset = COLOR_RESET);
+    println!("  {gold}• Graphics & Video:{reset}   `generate_mermaid` (SVG renderer), `generate_video` (wavyte), `image_generator` (PNG)", gold = AURA_GOLD, reset = COLOR_RESET);
+    println!("  {gold}• Task & Automation:{reset}  `delegate_task` (isolated subagent), `trigger_sop` (workflow engine), `schedule_job` (cron)", gold = AURA_GOLD, reset = COLOR_RESET);
+    println!("  {gold}• Shell & Code:{reset}       `exec_command` (sandboxed), `wasm_sandbox` (wasmtime), `cargo_manager`, `js_format`\n", gold = AURA_GOLD, reset = COLOR_RESET);
+
+    println!("{bold}📅 Version Release History:{reset}", bold = COLOR_BOLD, reset = COLOR_RESET);
+    
+    println!("  {green}[v0.0.12] - Current Release{reset}", green = AURA_GREEN, reset = COLOR_RESET);
+    println!("    • Made the OpenZ agent system prompt aware of its creator (Aswin), inspirations, specifications, features, and `changelog` command.");
+    println!("    • Updated README.md documentation for the `changelog` command.");
+    println!("    • Staged and committed all outstanding code changes and version bump to GitHub.");
+    
+    println!("  {slate}[v0.0.11]{reset}", slate = AURA_SLATE, reset = COLOR_RESET);
+    println!("    • Added `openz changelog` command and root `CHANGELOG.md` file.");
+    println!("    • Implemented Curator and Archival Throttling (reducing context & API token usage).");
+    println!("    • Added Cloud-First Embeddings with remote prioritize and a `cloud_only` low-RAM mode.");
+    println!("    • Added native compiler auto-healing (`CompilerAutoHealTool`).");
+    println!("    • Added automatic workspace clean-up to purge stale git worktrees on boot.");
+    println!("    • Added `--low-resource` flag to build/update scripts to throttle memory & CPU.");
+    println!("    • Configured Cargo.toml release profile (codegen-units, LTO, stripping) to natively limit compilation RAM.");
+    
+    println!("  {slate}[v0.0.10]{reset}", slate = AURA_SLATE, reset = COLOR_RESET);
+    println!("    • SQLite backend database migration (`~/.openz/memory.db`).");
+    println!("    • Structural repository semantic indexing using `ast_grep` & vector embeddings.");
+    println!("    • Added `mermaid_designer` subagent to generate SVG flowcharts.");
+    
+    println!("  {slate}[v0.0.9]{reset}", slate = AURA_SLATE, reset = COLOR_RESET);
+    println!("    • Cryptographic Merkle Hash-Chain ledger (`/audit` command).");
+    println!("    • WhatsApp Axum webhook receiver channel adapter.");
+    println!("    • Dynamic assistant auto-continuation for response truncation.");
+
+    println!("\n{slate}For the full changelog details, please refer to: {reset}{bold}CHANGELOG.md{reset}\n", slate = AURA_SLATE, reset = COLOR_RESET, bold = COLOR_BOLD);
     
     Ok(())
 }
@@ -282,274 +481,8 @@ async fn handle_onboard() -> Result<()> {
 }
 
 pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
-    let defaults = &config.agents.defaults;
-    let mut provider_name = defaults.provider.clone();
-    if provider_name == "auto" {
-        let model_lower = defaults.model.to_lowercase();
-        
-        let has_key = |prov: &str| -> bool {
-            match prov {
-                "anthropic" => config.providers.anthropic.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("ANTHROPIC_API_KEY").is_ok(),
-                "openai" => config.providers.openai.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENAI_API_KEY").is_ok(),
-                "deepseek" => config.providers.deepseek.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("DEEPSEEK_API_KEY").is_ok(),
-                "groq" => config.providers.groq.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("GROQ_API_KEY").is_ok(),
-                "openrouter" => config.providers.openrouter.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENROUTER_API_KEY").is_ok(),
-                "opencode_zen" => config.providers.opencode_zen.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENCODE_ZEN_API_KEY").is_ok(),
-                _ => false,
-            }
-        };
-
-        if model_lower.starts_with("anthropic/") || model_lower.contains("claude") {
-            if has_key("anthropic") {
-                provider_name = "anthropic".to_string();
-            } else if has_key("opencode_zen") {
-                provider_name = "opencode_zen".to_string();
-            } else if has_key("openrouter") {
-                provider_name = "openrouter".to_string();
-            } else {
-                provider_name = "anthropic".to_string();
-            }
-        } else if model_lower.starts_with("openai/") || model_lower.contains("gpt") {
-            if has_key("openai") {
-                provider_name = "openai".to_string();
-            } else if has_key("opencode_zen") {
-                provider_name = "opencode_zen".to_string();
-            } else if has_key("openrouter") {
-                provider_name = "openrouter".to_string();
-            } else {
-                provider_name = "openai".to_string();
-            }
-        } else if model_lower.starts_with("deepseek/") || model_lower.contains("deepseek") {
-            if has_key("deepseek") {
-                provider_name = "deepseek".to_string();
-            } else if has_key("opencode_zen") {
-                provider_name = "opencode_zen".to_string();
-            } else if has_key("openrouter") {
-                provider_name = "openrouter".to_string();
-            } else {
-                provider_name = "deepseek".to_string();
-            }
-        } else if model_lower.starts_with("groq/") {
-            provider_name = "groq".to_string();
-        } else if model_lower.starts_with("openrouter/") {
-            provider_name = "openrouter".to_string();
-        } else if model_lower.starts_with("ollama/") || model_lower.contains("ollama") {
-            provider_name = "ollama".to_string();
-        } else {
-            if config.providers.anthropic.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("ANTHROPIC_API_KEY").is_ok() {
-                provider_name = "anthropic".to_string();
-            } else if config.providers.openai.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENAI_API_KEY").is_ok() {
-                provider_name = "openai".to_string();
-            } else if config.providers.deepseek.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("DEEPSEEK_API_KEY").is_ok() {
-                provider_name = "deepseek".to_string();
-            } else if config.providers.openrouter.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENROUTER_API_KEY").is_ok() {
-                provider_name = "openrouter".to_string();
-            } else if config.providers.groq.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("GROQ_API_KEY").is_ok() {
-                provider_name = "groq".to_string();
-            } else {
-                provider_name = "openai".to_string();
-            }
-        }
-    }
-    
-    let (api_key, api_base, model) = match provider_name.as_str() {
-        "anthropic" => {
-            let p = config.providers.anthropic.as_ref();
-            let key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
-                .unwrap_or_default();
-            let base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://api.anthropic.com".to_string());
-            (key, base, defaults.model.clone())
-        }
-        "openai" => {
-            let p = config.providers.openai.as_ref();
-            let key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-                .unwrap_or_default();
-            let base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-            (key, base, defaults.model.clone())
-        }
-        "openrouter" => {
-            let p = config.providers.openrouter.as_ref();
-            let key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
-                .unwrap_or_default();
-            let base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
-            (key, base, defaults.model.clone())
-        }
-        "deepseek" => {
-            let p = config.providers.deepseek.as_ref();
-            let key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok())
-                .unwrap_or_default();
-            let base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://api.deepseek.com/v1".to_string());
-            (key, base, defaults.model.clone())
-        }
-        "groq" => {
-            let p = config.providers.groq.as_ref();
-            let key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("GROQ_API_KEY").ok())
-                .unwrap_or_default();
-            let base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://api.groq.com/openai/v1".to_string());
-            (key, base, defaults.model.clone())
-        }
-        "ollama" => {
-            let p = config.providers.ollama.as_ref();
-            let base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
-            (String::new(), base, defaults.model.clone())
-        }
-        "minimax" => {
-            let p = config.providers.minimax.as_ref();
-            let key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("MINIMAX_API_KEY").ok())
-                .unwrap_or_default();
-            let base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://api.minimax.io/v1".to_string());
-            (key, base, defaults.model.clone())
-        }
-        "mistral" => {
-            let p = config.providers.mistral.as_ref();
-            let key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("MISTRAL_API_KEY").ok())
-                .unwrap_or_default();
-            let base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://api.mistral.ai/v1".to_string());
-            (key, base, defaults.model.clone())
-        }
-        "z.ai" => {
-            let p = config.providers.z_ai.as_ref();
-            let key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("Z_AI_API_KEY").ok())
-                .unwrap_or_default();
-            let base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://api.z.ai/api/paas/v4/".to_string());
-            (key, base, defaults.model.clone())
-        }
-        "nvidia" => {
-            let p = config.providers.nvidia.as_ref();
-            let key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("NVIDIA_API_KEY").ok())
-                .unwrap_or_default();
-            let base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://integrate.api.nvidia.com/v1".to_string());
-            (key, base, defaults.model.clone())
-        }
-        "opencode_zen" | "opencode zen" => {
-            let p = config.providers.opencode_zen.as_ref();
-            let key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("OPENCODE_ZEN_API_KEY").ok())
-                .unwrap_or_default();
-            let base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://opencode.ai/zen/v1".to_string());
-            (key, base, defaults.model.clone())
-        }
-        "cerebres" => {
-            let p = config.providers.cerebres.as_ref();
-            let key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("CEREBRES_API_KEY").ok())
-                .or_else(|| std::env::var("CEBRAS_API_KEY").ok())
-                .unwrap_or_default();
-            let base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://api.cerebras.ai/v1".to_string());
-            (key, base, defaults.model.clone())
-        }
-        "google_ai_studio" | "google ai studio" => {
-            let p = config.providers.google_ai_studio.as_ref();
-            let key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("GOOGLE_AI_STUDIO_API_KEY").ok())
-                .unwrap_or_default();
-            let base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta/openai/".to_string());
-            (key, base, defaults.model.clone())
-        }
-        _ => {
-            return Err(anyhow!("Unsupported or unconfigured provider: {}", provider_name));
-        }
-    };
-
-    let mut final_provider_name = provider_name.clone();
-    let mut final_api_key = api_key;
-    let mut final_api_base = api_base;
-    let mut final_model = model.clone();
-
-    if final_provider_name != "ollama" && final_api_key.is_empty() {
-        let has_openrouter = config.providers.openrouter.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENROUTER_API_KEY").is_ok();
-        let has_opencode_zen = config.providers.opencode_zen.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENCODE_ZEN_API_KEY").is_ok();
-
-        if has_openrouter {
-            let p = config.providers.openrouter.as_ref();
-            final_api_key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
-                .unwrap_or_default();
-            final_api_base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
-            final_provider_name = "openrouter".to_string();
-            final_model = if model.contains('/') {
-                model.clone()
-            } else {
-                format!("{}/{}", provider_name, model)
-            };
-        } else if has_opencode_zen {
-            let p = config.providers.opencode_zen.as_ref();
-            final_api_key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("OPENCODE_ZEN_API_KEY").ok())
-                .unwrap_or_default();
-            final_api_base = p.and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://opencode.ai/zen/v1".to_string());
-            final_provider_name = "opencode_zen".to_string();
-            final_model = if model.contains('/') {
-                model.clone()
-            } else {
-                format!("{}/{}", provider_name, model)
-            };
-        } else {
-            return Err(anyhow!(
-                "No API key found for provider '{}'. Please run setup wizard first via 'openz onboard' or set the appropriate environment variable (e.g. {}_API_KEY).",
-                provider_name,
-                provider_name.to_uppercase()
-            ));
-        }
-    }
-
-    let mut clean_model = final_model.clone();
-    let model_lower = clean_model.to_lowercase();
-    let prefixes = [
-        "openrouter/", "ollama/", "anthropic/", "openai/", "deepseek/", "groq/",
-        "google_ai_studio/", "google-ai-studio/", "opencode_zen/", "opencode-zen/",
-        "z.ai/", "z_ai/", "nvidia/", "minimax/", "mistral/", "cerebres/", "cerebras/"
-    ];
-    for prefix in &prefixes {
-        if model_lower.starts_with(prefix) {
-            clean_model = clean_model[prefix.len()..].to_string();
-            break;
-        }
-    }
-    if final_provider_name == "nvidia" {
-        if clean_model.ends_with(":free") {
-            clean_model = clean_model[..clean_model.len() - 5].to_string();
-        }
-        if !clean_model.contains('/') {
-            clean_model = format!("nvidia/{}", clean_model);
-        }
-    } else if final_provider_name == "google_ai_studio" {
-        if clean_model.starts_with("google/") {
-            clean_model = clean_model["google/".len()..].to_string();
-        } else if clean_model.starts_with("models/") {
-            clean_model = clean_model["models/".len()..].to_string();
-        }
-    }
-
-    let provider: Arc<dyn LLMProvider> = if final_provider_name == "anthropic" {
-        Arc::new(AnthropicProvider::new(final_api_key, final_api_base, clean_model))
-    } else {
-        Arc::new(OpenAIProvider::new(final_api_key, final_api_base, clean_model))
-    };
+    let resolved = crate::providers::resolver::resolve_provider_full(&config, &config.agents.defaults.model)?;
+    let provider = resolved.instance;
     
     let sessions_dir = resolve_path("~/.openz/sessions");
     let session_manager = SessionManager::new(sessions_dir);
@@ -564,6 +497,10 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(StoreMemoryTool));
     registry.register(std::sync::Arc::new(RecallMemoryTool));
     registry.register(std::sync::Arc::new(ClearMemoryTool));
+    registry.register(std::sync::Arc::new(ArchiveResearchTool));
+    registry.register(std::sync::Arc::new(SearchResearchTool));
+    registry.register(std::sync::Arc::new(ZenflowEditTool { provider: provider.clone() }));
+    registry.register(std::sync::Arc::new(PythonSandboxTool));
     registry.register(std::sync::Arc::new(RustDocsTool::new()));
     registry.register(std::sync::Arc::new(WriteFileTool));
     registry.register(std::sync::Arc::new(PatchFileTool));
@@ -576,18 +513,21 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         parent_provider: provider.clone(),
         session_manager: session_manager.clone(),
         parent_tools: Vec::new(),
+        cancellation_token: crate::tools::subagent::CancellationToken::new(),
     }));
     registry.register(std::sync::Arc::new(ParallelResearchTool {
         config: config.clone(),
         parent_provider: provider.clone(),
         session_manager: session_manager.clone(),
         parent_tools: Vec::new(),
+        cancellation_token: crate::tools::subagent::CancellationToken::new(),
     }));
     registry.register(std::sync::Arc::new(crate::tools::subagent::EvaluatorOptimizerLoopTool {
         config: config.clone(),
         parent_provider: provider.clone(),
         session_manager: session_manager.clone(),
         parent_tools: Vec::new(),
+        cancellation_token: crate::tools::subagent::CancellationToken::new(),
     }));
 
     registry.register(std::sync::Arc::new(OptimizeSubagentTool {
@@ -617,6 +557,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::open::OpenTool));
     registry.register(std::sync::Arc::new(crate::tools::watcher::FileWatcherTool));
     registry.register(std::sync::Arc::new(crate::tools::ast_grep::AstGrepTool));
+    registry.register(std::sync::Arc::new(crate::tools::ast_grep::IndexCodebaseTool));
     registry.register(std::sync::Arc::new(crate::tools::gsd_browser::GsdBrowserTool));
     registry.register(std::sync::Arc::new(crate::tools::web_search::WebSearchTool::new()));
     registry.register(std::sync::Arc::new(crate::tools::onpkg::OnpkgTool));
@@ -627,28 +568,48 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(IndexNotesTool));
     registry.register(std::sync::Arc::new(SocialSearchTool::new()));
     registry.register(std::sync::Arc::new(crate::tools::template_compiler::CompileTemplateTool));
+    registry.register(std::sync::Arc::new(crate::tools::mermaid::MermaidRendererTool));
+    registry.register(std::sync::Arc::new(crate::tools::video::VideoGeneratorTool));
+    registry.register(std::sync::Arc::new(crate::tools::svg_animator::SvgAnimatorTool));
+    registry.register(std::sync::Arc::new(crate::tools::sop::TriggerSopTool { config: config.clone() }));
+    registry.register(std::sync::Arc::new(crate::tools::compiler_auto_heal::CompilerAutoHealTool {
+        config: config.clone(),
+        provider: provider.clone(),
+    }));
 
-    // Register configured MCP tools
-    let mut total_tools = 0;
-    let mut has_any_mcp = false;
-    for (_, mcp_config) in &config.mcp_servers {
-        if mcp_config.enabled {
-            has_any_mcp = true;
-            break;
-        }
-    }
+    // ── MCP: lazy registration ────────────────────────────────────────────────
+    // Phase 1 (now): Spawn a background task per MCP server that connects,
+    //                fetches the tool schema, and registers LazyMcpToolWrapper
+    //                stubs. The agent loop starts immediately — no blocking.
+    // Phase 2 (on call): LazyMcpToolWrapper::call() re-uses the already-alive
+    //                    client (fast path) or spawns on first use (slow path).
 
     let silent = std::env::var("OPENZ_SILENT").is_ok();
+    let slate = "\x1b[38;2;107;122;153m";
+
+    let has_any_mcp = config.mcp_servers.values().any(|c| c.enabled);
 
     if has_any_mcp && !silent {
-        println!("Setting up MCP servers...");
+        println!("{}Setting up MCP servers (background)...{}", slate, COLOR_RESET);
     }
 
-    let emerald_green = "\x1b[38;2;16;185;129m";
-    let error_red = "\x1b[38;2;239;68;68m";
+    // Collect enabled servers for the background task
+    let mcp_configs: Vec<(String, crate::config::schema::McpServerConfig)> = config
+        .mcp_servers
+        .iter()
+        .filter(|(_, c)| c.enabled)
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
 
-    for (name, mcp_config) in &config.mcp_servers {
-        if mcp_config.enabled {
+    let registry_arc = std::sync::Arc::new(tokio::sync::Mutex::new(registry));
+    let registry_arc_bg = registry_arc.clone();
+
+    tokio::spawn(async move {
+        let mut total_tools = 0usize;
+        let mut servers_loaded = 0u32;
+        let mut servers_failed = 0u32;
+
+        for (name, mcp_config) in &mcp_configs {
             match crate::tools::mcp::McpClient::spawn(&mcp_config.command, &mcp_config.args).await {
                 Ok(mcp_client) => {
                     if name == "memory" {
@@ -656,51 +617,66 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
                     }
                     match mcp_client.list_tools().await {
                         Ok(tools) => {
+                            let mut reg = registry_arc_bg.lock().await;
                             let mut count = 0;
                             for t in tools {
-                                if let (Some(t_name), Some(desc)) = (t.get("name").and_then(|v| v.as_str()), t.get("description").and_then(|v| v.as_str())) {
-                                    let params = t.get("inputSchema").cloned().unwrap_or(serde_json::json!({
-                                        "type": "object",
-                                        "properties": {}
-                                    }));
-                                    
-                                    let wrapper = crate::tools::mcp::McpToolWrapper {
-                                        client: mcp_client.clone(),
+                                if let (Some(t_name), Some(desc)) = (
+                                    t.get("name").and_then(|v| v.as_str()),
+                                    t.get("description").and_then(|v| v.as_str()),
+                                ) {
+                                    let params = t.get("inputSchema").cloned().unwrap_or(
+                                        serde_json::json!({"type": "object", "properties": {}})
+                                    );
+                                    let wrapper = crate::tools::mcp::LazyMcpToolWrapper {
+                                        server_name: name.clone(),
+                                        command: mcp_config.command.clone(),
+                                        args: mcp_config.args.clone(),
                                         name: t_name.to_string(),
                                         description: desc.to_string(),
                                         parameters: params,
+                                        is_memory_server: name == "memory",
                                     };
-                                    registry.register(std::sync::Arc::new(wrapper));
+                                    reg.register(std::sync::Arc::new(wrapper));
                                     count += 1;
                                 }
                             }
                             total_tools += count;
-                            if !silent {
-                                println!("{}✓ {}{}", emerald_green, name, COLOR_RESET);
-                            }
+                            servers_loaded += 1;
                         }
                         Err(_) => {
-                            if !silent {
-                                println!("{}✗ {} not connected{}", error_red, name, COLOR_RESET);
-                            }
+                            servers_failed += 1;
                         }
                     }
                 }
                 Err(_) => {
-                    if !silent {
-                        println!("{}✗ {} not connected{}", error_red, name, COLOR_RESET);
-                    }
+                    servers_failed += 1;
                 }
             }
         }
-    }
 
-    if has_any_mcp && !silent {
-        println!("\n{} tools loaded\n", total_tools);
-    }
-    
+        // Update the status bar pill — the render loop reads these atomics every redraw
+        crate::channels::cli::set_mcp_status(servers_loaded, servers_failed);
+
+        if has_any_mcp && !silent {
+            crate::tui_println!(
+                "\n{}{} MCP tools loaded  ({} servers){}\n",
+                slate, total_tools, servers_loaded, COLOR_RESET
+            );
+        }
+    });
+
+
+    // Unwrap the Arc — background task holds a clone so try_unwrap won't succeed yet,
+    // but that's fine: we lock_owned() to get the current registry state.
+    // Background-registered tools are visible to the agent loop because they share the Arc.
+    let registry = match std::sync::Arc::try_unwrap(registry_arc) {
+        Ok(mutex) => mutex.into_inner(),
+        Err(arc) => arc.lock_owned().await.clone(),
+    };
+
     Ok(AgentLoop::new(config, provider, registry, session_manager))
 }
+
 
 
 
@@ -779,10 +755,12 @@ async fn handle_agent() -> Result<()> {
             archive_current_session(&session_manager)?;
         } else {
             let selected_item = &history[selected - 1];
-            archive_current_session(&session_manager)?;
-            let mut session = session_manager.load(&selected_item.key)?;
-            session.key = "cli:direct".to_string();
-            session_manager.save(&session)?;
+            if selected_item.key != "cli:direct" {
+                archive_current_session(&session_manager)?;
+                let mut session = session_manager.load(&selected_item.key)?;
+                session.key = "cli:direct".to_string();
+                session_manager.save(&session)?;
+            }
         }
     }
 
@@ -1032,8 +1010,12 @@ fn update_provider_key(config: &mut Config, provider_name: &str, api_key: String
         "z.ai" => config.providers.z_ai.clone(),
         "nvidia" => config.providers.nvidia.clone(),
         "opencode_zen" => config.providers.opencode_zen.clone(),
-        "cerebres" => config.providers.cerebres.clone(),
+        "cerebras" => config.providers.cerebras.clone(),
         "google_ai_studio" => config.providers.google_ai_studio.clone(),
+        "cohere" => config.providers.cohere.clone(),
+        "llm7" => config.providers.llm7.clone(),
+        "sambanova" => config.providers.sambanova.clone(),
+        "huggingface" => config.providers.huggingface.clone(),
         _ => return,
     }.unwrap_or_else(|| ProviderConfig {
         api_key: None,
@@ -1056,8 +1038,12 @@ fn update_provider_key(config: &mut Config, provider_name: &str, api_key: String
             "z.ai" => "https://api.z.ai/api/paas/v4/",
             "nvidia" => "https://integrate.api.nvidia.com/v1",
             "opencode_zen" => "https://opencode.ai/zen/v1",
-            "cerebres" => "https://api.cerebras.ai/v1",
+            "cerebras" => "https://api.cerebras.ai/v1",
             "google_ai_studio" => "https://generativelanguage.googleapis.com/v1beta/openai/",
+            "cohere" => "https://api.cohere.com/v1",
+            "llm7" => "https://token.llm7.io/v1",
+            "sambanova" => "https://api.sambanova.ai/v1",
+            "huggingface" => "https://api-inference.huggingface.co/v1",
             _ => "",
         };
         p_config.api_base = Some(default_base.to_string());
@@ -1075,8 +1061,12 @@ fn update_provider_key(config: &mut Config, provider_name: &str, api_key: String
         "z.ai" => config.providers.z_ai = Some(p_config),
         "nvidia" => config.providers.nvidia = Some(p_config),
         "opencode_zen" => config.providers.opencode_zen = Some(p_config),
-        "cerebres" => config.providers.cerebres = Some(p_config),
+        "cerebras" => config.providers.cerebras = Some(p_config),
         "google_ai_studio" => config.providers.google_ai_studio = Some(p_config),
+        "cohere" => config.providers.cohere = Some(p_config),
+        "llm7" => config.providers.llm7 = Some(p_config),
+        "sambanova" => config.providers.sambanova = Some(p_config),
+        "huggingface" => config.providers.huggingface = Some(p_config),
         _ => {}
     }
 }
@@ -1140,6 +1130,12 @@ async fn handle_configure() -> Result<()> {
             configure_options.push("WhatsApp".to_string());
         }
 
+        if config.agents.defaults.enable_sandbox {
+            configure_options.push("Sandbox (seccomp) (enabled)".to_string());
+        } else {
+            configure_options.push("Sandbox (seccomp) (disabled)".to_string());
+        }
+
         configure_options.push("Exit".to_string());
 
         let choice_idx = match select_menu_custom(
@@ -1177,6 +1173,9 @@ async fn handle_configure() -> Result<()> {
             4 => {
                 handle_whatsapp_submenu(&mut config).await?;
             }
+            5 => {
+                handle_sandbox_submenu(&mut config).await?;
+            }
             _ => {
                 break;
             }
@@ -1207,8 +1206,12 @@ async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Resu
         ProviderInfo { name: "z.ai", display: "z.ai (Zhipu GLM)" },
         ProviderInfo { name: "nvidia", display: "NVIDIA NIM" },
         ProviderInfo { name: "opencode_zen", display: "OpenCode Zen" },
-        ProviderInfo { name: "cerebres", display: "Cerebras" },
+        ProviderInfo { name: "cerebras", display: "Cerebras" },
         ProviderInfo { name: "google_ai_studio", display: "Google AI Studio (Gemini)" },
+        ProviderInfo { name: "cohere", display: "Cohere" },
+        ProviderInfo { name: "llm7", display: "LLM7 (token.llm7.io)" },
+        ProviderInfo { name: "sambanova", display: "SambaNova" },
+        ProviderInfo { name: "huggingface", display: "Hugging Face Inference" },
     ];
 
     loop {
@@ -1491,6 +1494,35 @@ async fn handle_whatsapp_submenu(config: &mut Config) -> Result<()> {
     save_config(config)?;
     println!("{}✓ WhatsApp channel configured successfully!{}", EMERALD_GREEN, COLOR_RESET);
     println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    Ok(())
+}
+
+async fn handle_sandbox_submenu(config: &mut Config) -> Result<()> {
+    println!("\n{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    println!("{}--- Sandbox (seccomp) Configuration ---{}", COLOR_BOLD, COLOR_RESET);
+    println!("The process sandbox (seccomp) restricts system calls (network, browser, tools like ps/which) inside the command execution sandbox.");
+    println!("Disabling it allows browser automation tools (gsd_browser, chromewright) and local compiler tools to run without seccomp blocking.");
+    println!("Security is still enforced via openz's internal SecurityGuard prompt confirmations.");
+    println!();
+    
+    let current = config.agents.defaults.enable_sandbox;
+    let enable = Confirm::new("Enable process seccomp sandbox?")
+        .with_default(current)
+        .prompt()?;
+        
+    config.agents.defaults.enable_sandbox = enable;
+    save_config(config)?;
+    
+    if enable {
+        println!("{}✓ Sandbox enabled successfully!{}", EMERALD_GREEN, COLOR_RESET);
+    } else {
+        println!("{}✓ Sandbox disabled successfully! (Highly recommended for browser tools and developer shells){}", EMERALD_GREEN, COLOR_RESET);
+    }
+    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    
+    // Give the user a moment to see the success message
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    
     Ok(())
 }
 

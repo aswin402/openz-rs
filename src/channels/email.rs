@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, Tokio1Executor, AsyncSmtpTransport, AsyncTransport};
+use tokio::sync::Semaphore;
 
 pub struct EmailChannel {
     agent_loop: Arc<AgentLoop>,
@@ -140,6 +141,8 @@ impl super::Channel for EmailChannel {
         }
 
         let agent = self.agent_loop.clone();
+        // Limit concurrent email processing to prevent resource exhaustion
+        let concurrency_limit = Arc::new(Semaphore::new(5));
 
         tokio::spawn(async move {
             let poll_interval = std::time::Duration::from_secs(email_config.poll_interval_secs);
@@ -157,12 +160,15 @@ impl super::Channel for EmailChannel {
                     Ok(Ok(emails)) => {
                         for (from, subject, body) in emails {
                             let agent_clone = agent.clone();
+                            let sem_clone = concurrency_limit.clone();
                             let smtp_server = email_config.smtp_server.clone();
                             let smtp_port = email_config.smtp_port;
                             let user_clone = email_config.username.clone();
                             let pass_clone = email_config.password.clone();
 
                             tokio::spawn(async move {
+                                // Acquire semaphore permit to limit concurrency
+                                let _permit = sem_clone.acquire_owned().await;
                                 let reply_subject = if subject.to_lowercase().starts_with("re:") {
                                     subject.clone()
                                 } else {

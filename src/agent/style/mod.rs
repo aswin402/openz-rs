@@ -12,6 +12,9 @@ use std::io::Write;
 
 #[macro_export]
 macro_rules! tui_println {
+    () => {
+        $crate::agent::style::tui_println_fn("")
+    };
     ($($arg:tt)*) => {
         $crate::agent::style::tui_println_fn(format!($($arg)*))
     };
@@ -19,12 +22,18 @@ macro_rules! tui_println {
 
 #[macro_export]
 macro_rules! tui_print {
+    () => {
+        $crate::agent::style::tui_print_fn("")
+    };
     ($($arg:tt)*) => {
         $crate::agent::style::tui_print_fn(format!($($arg)*))
     };
 }
 
 pub fn tui_println_fn<T: AsRef<str>>(msg: T) {
+    if is_silent() {
+        return;
+    }
     let s = msg.as_ref();
     let replaced = s.replace("\r\n", "\n").replace("\n", "\r\n");
     print!("{}\r\n", replaced);
@@ -32,6 +41,9 @@ pub fn tui_println_fn<T: AsRef<str>>(msg: T) {
 }
 
 pub fn tui_print_fn<T: AsRef<str>>(msg: T) {
+    if is_silent() {
+        return;
+    }
     let s = msg.as_ref();
     let replaced = s.replace("\r\n", "\n").replace("\n", "\r\n");
     print!("{}", replaced);

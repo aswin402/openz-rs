@@ -43,6 +43,30 @@ impl Tool for WebSearchTool {
         let query = arguments.get("query").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
 
+        let search_res = self.perform_search(arguments).await?;
+
+        if let Some(arr) = search_res.as_array() {
+            if !arr.is_empty() {
+                let results_str = arr.iter().map(|r| {
+                    format!("Title: {}\nURL: {}\nSnippet: {}\n---", 
+                        r["title"].as_str().unwrap_or_default(),
+                        r["url"].as_str().unwrap_or_default(),
+                        r["snippet"].as_str().unwrap_or_default()
+                    )
+                }).collect::<Vec<String>>().join("\n");
+                let _ = crate::tools::shared_memory::archive_research_entry(query, &results_str, "web_search").await;
+            }
+        }
+
+        Ok(search_res)
+    }
+}
+
+impl WebSearchTool {
+    async fn perform_search(&self, arguments: &Value) -> Result<Value> {
+        let query = arguments.get("query").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
+
         // 0. Try Websurfx Local/Private Search Engine API (if WEBSURFX_URL is set)
         if let Ok(websurfx_url) = std::env::var("WEBSURFX_URL") {
             if !websurfx_url.trim().is_empty() {

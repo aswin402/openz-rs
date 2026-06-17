@@ -112,6 +112,25 @@ pub fn load_config() -> Result<Config> {
         }
     }
 
+    // Upgrade existing database server config to sqlite default if only "stdio" is set
+    if let Some(mcp) = config.mcp_servers.get_mut("database") {
+        if mcp.args.len() == 1 && mcp.args[0] == "stdio" {
+            let db_path = if let Some(home) = dirs::home_dir() {
+                home.join(".openz").join("memory.db").to_string_lossy().to_string()
+            } else {
+                "memory.db".to_string()
+            };
+            mcp.args = vec![
+                "stdio".to_string(),
+                "--db-backend".to_string(),
+                "sqlite".to_string(),
+                "--db-name".to_string(),
+                db_path,
+            ];
+            modified = true;
+        }
+    }
+
     if modified {
         let _ = save_config(&config);
     }

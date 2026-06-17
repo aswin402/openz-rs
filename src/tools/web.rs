@@ -4,6 +4,7 @@ use reqwest::Client;
 use regex::Regex;
 use scraper::Html;
 use scraper::node::Node;
+use std::time::Duration;
 
 pub struct WebFetchTool {
     client: Client,
@@ -76,6 +77,7 @@ impl Tool for WebFetchTool {
 
         let res = self.client.get(url_str)
             .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            .timeout(Duration::from_secs(30))
             .send()
             .await?;
 
@@ -85,26 +87,31 @@ impl Tool for WebFetchTool {
 
         let html = res.text().await?;
 
-        // Parse HTML DOM using scraper
-        let document = Html::parse_document(&html);
-        let mut raw_text = String::new();
-        walk_nodes(document.tree.root(), &mut raw_text);
+        let result_text = {
+            // Parse HTML DOM using scraper
+            let document = Html::parse_document(&html);
+            let mut raw_text = String::new();
+            walk_nodes(document.tree.root(), &mut raw_text);
 
-        // Replace html entities
-        let clean_text = raw_text
-            .replace("&nbsp;", " ")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&amp;", "&")
-            .replace("&quot;", "\"")
-            .replace("&#39;", "'");
+            // Replace html entities
+            let clean_text = raw_text
+                .replace("&nbsp;", " ")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'");
 
-        let re_whitespace = Regex::new(r" +")?;
-        let re_newlines = Regex::new(r"\n\s*\n")?;
-        let clean_text_spaces = re_whitespace.replace_all(&clean_text, " ");
-        let final_text = re_newlines.replace_all(&clean_text_spaces, "\n");
+            let re_whitespace = Regex::new(r" +")?;
+            let re_newlines = Regex::new(r"\n\s*\n")?;
+            let clean_text_spaces = re_whitespace.replace_all(&clean_text, " ");
+            let final_text = re_newlines.replace_all(&clean_text_spaces, "\n");
+            final_text.trim().to_string()
+        };
 
-        Ok(serde_json::Value::String(final_text.trim().to_string()))
+        let _ = crate::tools::shared_memory::archive_research_entry(url_str, &result_text, &format!("web_fetch: {}", url_str)).await;
+
+        Ok(serde_json::Value::String(result_text))
     }
 }
 

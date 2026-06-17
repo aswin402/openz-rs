@@ -11,7 +11,7 @@ impl RustDocsTool {
     pub fn new() -> Self {
         // Crates.io requires a User-Agent header, otherwise it returns 403 Forbidden.
         let client = reqwest::Client::builder()
-            .user_agent("OpenZ-Agent (aswin@openz.ai)")
+            .user_agent("OpenZ-Agent (openz-dev@openz.ai)")
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
         Self { client }

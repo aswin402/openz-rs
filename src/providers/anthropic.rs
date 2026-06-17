@@ -1,14 +1,17 @@
 use crate::providers::{LLMProvider, LLMResponse, GenerationSettings, ToolCallRequest};
 use crate::session::Message;
-use anyhow::{Result, anyhow};
+use crate::providers::circuit_breaker::{CircuitBreaker, retry_with_backoff};
+use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 pub struct AnthropicProvider {
     pub client: Client,
     pub api_key: String,
     pub api_base: String,
     pub model: String,
+    pub breaker: CircuitBreaker,
 }
 
 #[derive(Serialize)]
@@ -54,6 +57,7 @@ impl AnthropicProvider {
             api_key,
             api_base,
             model,
+            breaker: CircuitBreaker::new(5, Duration::from_secs(30)),
         }
     }
 }
@@ -220,25 +224,49 @@ impl LLMProvider for AnthropicProvider {
             tools: anthropic_tools,
         };
 
-        let res = self.client.post(&format!("{}/v1/messages", self.api_base))
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("anthropic-beta", "prompt-caching-2024-07-31")
-            .json(&body)
-            .send()
-            .await?;
+        let client = self.client.clone();
+        let api_key = self.api_key.clone();
+        let api_base = self.api_base.clone();
+        let body_for_retry = serde_json::to_value(&body).map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
 
-        if !res.status().is_success() {
-            let error_text = res.text().await?;
-            return Err(anyhow!("Anthropic API error: {}", error_text));
-        }
+        let response = retry_with_backoff(
+            &self.breaker,
+            3,
+            Duration::from_secs(1),
+            Duration::from_secs(30),
+            "anthropic",
+            || {
+                let client = client.clone();
+                let api_key = api_key.clone();
+                let api_base = api_base.clone();
+                let json_body = body_for_retry.clone();
+                async move {
+                    let res = client
+                        .post(&format!("{}/v1/messages", api_base))
+                        .header("x-api-key", &api_key)
+                        .header("anthropic-version", "2023-06-01")
+                        .header("anthropic-beta", "prompt-caching-2024-07-31")
+                        .json(&json_body)
+                        .send()
+                        .await
+                        .map_err(|e| (0u16, format!("Network error: {e}")))?;
+                    if !res.status().is_success() {
+                        let status = res.status().as_u16();
+                        let error_text = res.text().await.unwrap_or_default();
+                        Err((status, error_text))
+                    } else {
+                        Ok(res)
+                    }
+                }
+            },
+        ).await?;
 
-        let response: AnthropicResponse = res.json().await?;
+        let anthropic_resp: AnthropicResponse = response.json().await?;
         
         let mut text_content = String::new();
         let mut tool_calls = Vec::new();
 
-        for block in response.content {
+        for block in anthropic_resp.content {
             match block {
                 ContentBlock::Text { text } => {
                     text_content.push_str(&text);
@@ -256,7 +284,7 @@ impl LLMProvider for AnthropicProvider {
         let finish_reason = if !tool_calls.is_empty() {
             "tool_calls".to_string()
         } else {
-            response.stop_reason.unwrap_or_else(|| "stop".to_string())
+            anthropic_resp.stop_reason.unwrap_or_else(|| "stop".to_string())
         };
 
         let content = if text_content.is_empty() { None } else { Some(text_content) };

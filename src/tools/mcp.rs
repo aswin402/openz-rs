@@ -292,9 +292,9 @@ impl McpClient {
             }
         };
 
-        match tokio::time::timeout(std::time::Duration::from_secs(5), fut).await {
+        match tokio::time::timeout(std::time::Duration::from_secs(15), fut).await {
             Ok(res) => res,
-            Err(_) => Err(anyhow!("MCP list_tools timed out after 5s")),
+            Err(_) => Err(anyhow!("MCP list_tools timed out after 15s")),
         }
     }
 
@@ -395,6 +395,71 @@ impl Tool for McpToolWrapper {
     }
 }
 
+// ── Lazy MCP tool wrapper ─────────────────────────────────────────────────────
+// Holds server config + tool metadata but spawns the process only on first call.
+
+/// Per-server lazy client, shared across all tools from the same MCP server.
+static LAZY_MCP_CLIENTS: OnceLock<Mutex<std::collections::HashMap<String, McpClient>>> =
+    OnceLock::new();
+
+fn lazy_client_registry() -> &'static Mutex<std::collections::HashMap<String, McpClient>> {
+    LAZY_MCP_CLIENTS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+pub struct LazyMcpToolWrapper {
+    /// Human-readable MCP server name (e.g. "browser", "spreadsheet")
+    pub server_name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,
+    /// Whether this server was flagged as special (e.g. memory → set global client)
+    pub is_memory_server: bool,
+}
+
+#[async_trait::async_trait]
+impl Tool for LazyMcpToolWrapper {
+    fn name(&self) -> &str { &self.name }
+    fn description(&self) -> &str { &self.description }
+    fn parameters(&self) -> Value { self.parameters.clone() }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let cache_key = format!("{}:{}", self.command, self.args.join(" "));
+
+        // Fast path: already connected
+        {
+            let lock = lazy_client_registry().lock().await;
+            if let Some(client) = lock.get(&cache_key) {
+                return client.call_tool(&self.name, arguments).await;
+            }
+        }
+
+        // Slow path: first call — spawn the MCP process now
+        tracing::info!(
+            "Lazy-connecting MCP server '{}' for first tool call: {}",
+            self.server_name, self.name
+        );
+
+        let client = McpClient::spawn(&self.command, &self.args).await
+            .map_err(|e| anyhow!(
+                "Failed to connect MCP server '{}' on demand: {e}", self.server_name
+            ))?;
+
+        if self.is_memory_server {
+            set_memory_mcp_client(client.clone());
+        }
+
+        {
+            let mut lock = lazy_client_registry().lock().await;
+            lock.insert(cache_key, client.clone());
+        }
+
+        client.call_tool(&self.name, arguments).await
+    }
+}
+
+
 // -------------------- gRPC MCP BRIDGE IMPLEMENTATION --------------------
 
 static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(50060);
@@ -417,7 +482,7 @@ fn find_free_port() -> u16 {
 
 pub struct McpBridgeService {
     writer: Arc<Mutex<tokio::process::ChildStdin>>,
-    reader: Arc<Mutex<BufReader<tokio::process::ChildStdout>>>,
+    senders: Arc<Mutex<std::collections::HashMap<i64, tokio::sync::oneshot::Sender<Value>>>>,
 }
 
 #[tonic::async_trait]
@@ -442,45 +507,57 @@ impl mcp_grpc::mcp_service_server::McpService for McpBridgeService {
         
         let req_str = format!("{}\n", serde_json::to_string(&rpc_req).map_err(|e| tonic::Status::invalid_argument(e.to_string()))?);
         
-        let mut writer_lock = self.writer.lock().await;
-        let mut reader_lock = self.reader.lock().await;
-        
-        writer_lock.write_all(req_str.as_bytes()).await.map_err(|e| tonic::Status::internal(e.to_string()))?;
-        writer_lock.flush().await.map_err(|e| tonic::Status::internal(e.to_string()))?;
-        
         if !req.has_id {
+            let mut writer_lock = self.writer.lock().await;
+            writer_lock.write_all(req_str.as_bytes()).await.map_err(|e| tonic::Status::internal(e.to_string()))?;
+            writer_lock.flush().await.map_err(|e| tonic::Status::internal(e.to_string()))?;
             return Ok(tonic::Response::new(mcp_grpc::McpResponse {
                 result_json: String::new(),
                 error_json: String::new(),
                 id: 0,
             }));
         }
-        
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let bytes_read = reader_lock.read_line(&mut line).await.map_err(|e| tonic::Status::internal(e.to_string()))?;
-            if bytes_read == 0 {
-                return Err(tonic::Status::aborted("Child process exited / closed stdout pipe"));
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut senders_lock = self.senders.lock().await;
+            senders_lock.insert(req.id, tx);
+        }
+
+        {
+            let mut writer_lock = self.writer.lock().await;
+            if let Err(e) = writer_lock.write_all(req_str.as_bytes()).await {
+                let mut senders_lock = self.senders.lock().await;
+                senders_lock.remove(&req.id);
+                return Err(tonic::Status::internal(e.to_string()));
             }
-            if line.trim().is_empty() {
-                continue;
+            if let Err(e) = writer_lock.flush().await {
+                let mut senders_lock = self.senders.lock().await;
+                senders_lock.remove(&req.id);
+                return Err(tonic::Status::internal(e.to_string()));
             }
-            if let Ok(resp_val) = serde_json::from_str::<serde_json::Value>(&line) {
-                if resp_val.get("jsonrpc").is_some() && (resp_val.get("id").is_some() || resp_val.get("result").is_some() || resp_val.get("error").is_some()) {
-                    let id = resp_val.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
-                    let result_json = resp_val.get("result").map(|v| v.to_string()).unwrap_or_default();
-                    let error_json = resp_val.get("error").map(|v| v.to_string()).unwrap_or_default();
-                    
-                    return Ok(tonic::Response::new(mcp_grpc::McpResponse {
-                        result_json,
-                        error_json,
-                        id,
-                    }));
-                }
+        }
+
+        match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+            Ok(Ok(resp_val)) => {
+                let result_json = resp_val.get("result").map(|v| v.to_string()).unwrap_or_default();
+                let error_json = resp_val.get("error").map(|v| v.to_string()).unwrap_or_default();
+                let id = resp_val.get("id").and_then(|v| v.as_i64()).unwrap_or(req.id);
+                
+                Ok(tonic::Response::new(mcp_grpc::McpResponse {
+                    result_json,
+                    error_json,
+                    id,
+                }))
             }
-            // Filter out non-JSON-RPC stdout messages
-            tracing::warn!("Filtered non-JSON-RPC stdio output from bridge: {}", line.trim());
+            Ok(Err(_)) => {
+                Err(tonic::Status::aborted("Background stdout reader task exited or dropped connection"))
+            }
+            Err(_) => {
+                let mut senders_lock = self.senders.lock().await;
+                senders_lock.remove(&req.id);
+                Err(tonic::Status::deadline_exceeded("MCP tool call timed out waiting for response"))
+            }
         }
     }
 }
@@ -503,9 +580,51 @@ pub async fn run_mcp_bridge(
     let stdin = child.stdin.take().ok_or_else(|| anyhow!("Failed to open child stdin"))?;
     let stdout = child.stdout.take().ok_or_else(|| anyhow!("Failed to open child stdout"))?;
 
+    let senders: Arc<Mutex<std::collections::HashMap<i64, tokio::sync::oneshot::Sender<Value>>>> =
+        Arc::new(Mutex::new(std::collections::HashMap::new()));
+
+    let senders_clone = senders.clone();
+    let reader_handle = tokio::spawn(async move {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => {
+                    tracing::info!("Child stdout EOF reached");
+                    break;
+                }
+                Ok(_) => {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    if let Ok(resp_val) = serde_json::from_str::<serde_json::Value>(&line) {
+                        if resp_val.get("jsonrpc").is_some() {
+                            if let Some(id_val) = resp_val.get("id") {
+                                if let Some(id) = id_val.as_i64() {
+                                    let mut senders_lock = senders_clone.lock().await;
+                                    if let Some(tx) = senders_lock.remove(&id) {
+                                        let _ = tx.send(resp_val);
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    // Filter out non-JSON-RPC stdout messages
+                    tracing::warn!("Filtered non-JSON-RPC stdio output from bridge: {}", line.trim());
+                }
+                Err(e) => {
+                    tracing::error!("Error reading child stdout: {:?}", e);
+                    break;
+                }
+            }
+        }
+    });
+
     let service = McpBridgeService {
         writer: Arc::new(Mutex::new(stdin)),
-        reader: Arc::new(Mutex::new(BufReader::new(stdout))),
+        senders,
     };
 
     let addr = format!("127.0.0.1:{}", port).parse()?;
@@ -524,5 +643,6 @@ pub async fn run_mcp_bridge(
         }
     }
 
+    reader_handle.abort();
     Ok(())
 }

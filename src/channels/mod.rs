@@ -287,10 +287,10 @@ pub async fn fetch_provider_models(provider_name: &str, config: &crate::config::
                 .unwrap_or_else(|| "https://opencode.ai/zen/v1".to_string());
             (key, base)
         }
-        "cerebres" => {
-            let p = config.providers.cerebres.as_ref();
+        "cerebras" => {
+            let p = config.providers.cerebras.as_ref();
             let key = p.and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("CEREBRES_API_KEY").ok())
+                .or_else(|| std::env::var("CEREBRAS_API_KEY").ok())
                 .or_else(|| std::env::var("CEBRAS_API_KEY").ok())?;
             let base = p.and_then(|x| x.api_base.clone())
                 .unwrap_or_else(|| "https://api.cerebras.ai/v1".to_string());
@@ -302,6 +302,38 @@ pub async fn fetch_provider_models(provider_name: &str, config: &crate::config::
                 .or_else(|| std::env::var("GOOGLE_AI_STUDIO_API_KEY").ok())?;
             let base = p.and_then(|x| x.api_base.clone())
                 .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta/openai/".to_string());
+            (key, base)
+        }
+        "cohere" => {
+            let p = config.providers.cohere.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("COHERE_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.cohere.com/v1".to_string());
+            (key, base)
+        }
+        "llm7" => {
+            let p = config.providers.llm7.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("LLM7_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://token.llm7.io/v1".to_string());
+            (key, base)
+        }
+        "sambanova" => {
+            let p = config.providers.sambanova.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("SAMBANOVA_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api.sambanova.ai/v1".to_string());
+            (key, base)
+        }
+        "huggingface" => {
+            let p = config.providers.huggingface.as_ref();
+            let key = p.and_then(|x| x.api_key.clone())
+                .or_else(|| std::env::var("HUGGINGFACE_API_KEY").ok())?;
+            let base = p.and_then(|x| x.api_base.clone())
+                .unwrap_or_else(|| "https://api-inference.huggingface.co/v1".to_string());
             (key, base)
         }
         _ => return None,

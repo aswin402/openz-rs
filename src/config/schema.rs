@@ -39,9 +39,17 @@ pub struct ProvidersConfig {
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "opencode_zen")]
     pub opencode_zen: Option<ProviderConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cerebres: Option<ProviderConfig>,
+    pub cerebras: Option<ProviderConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "google_ai_studio")]
     pub google_ai_studio: Option<ProviderConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cohere: Option<ProviderConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm7: Option<ProviderConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sambanova: Option<ProviderConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "huggingface")]
+    pub huggingface: Option<ProviderConfig>,
     #[serde(flatten)]
     pub others: HashMap<String, ProviderConfig>,
 }
@@ -75,6 +83,16 @@ pub struct AgentDefaults {
     pub context_limit: Option<usize>,
     #[serde(default = "default_security_mode", alias = "security_mode")]
     pub security_mode: String,
+    #[serde(default, alias = "tool_output_limit")]
+    pub tool_output_limit: Option<usize>,
+    #[serde(default, alias = "subagent_timeout_secs")]
+    pub subagent_timeout_secs: Option<u64>,
+    #[serde(default = "default_enable_sandbox", alias = "enable_sandbox")]
+    pub enable_sandbox: bool,
+}
+
+fn default_enable_sandbox() -> bool {
+    false
 }
 
 fn default_security_mode() -> String {
@@ -117,7 +135,7 @@ fn default_fallback_models() -> Vec<serde_json::Value> {
     vec![
         serde_json::json!("gpt-4o"),
         serde_json::json!("claude-3-5-haiku"),
-        serde_json::json!("openrouter/auto"),
+        serde_json::json!("openrouter/free"),
     ]
 }
 
@@ -137,6 +155,9 @@ impl Default for AgentDefaults {
             caveman_mode: true,
             context_limit: None,
             security_mode: default_security_mode(),
+            tool_output_limit: None,
+            subagent_timeout_secs: None,
+            enable_sandbox: default_enable_sandbox(),
         }
     }
 }
@@ -261,6 +282,27 @@ pub struct McpServerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingsConfig {
+    #[serde(default = "default_embeddings_mode")]
+    pub mode: String, // "local", "cloud", "cloud_only"
+    #[serde(default)]
+    pub preferred_provider: Option<String>,
+}
+
+fn default_embeddings_mode() -> String {
+    "local".to_string()
+}
+
+impl Default for EmbeddingsConfig {
+    fn default() -> Self {
+        EmbeddingsConfig {
+            mode: default_embeddings_mode(),
+            preferred_provider: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub providers: ProvidersConfig,
@@ -270,6 +312,8 @@ pub struct Config {
     pub channels: ChannelsConfig,
     #[serde(default)]
     pub mcp_servers: HashMap<String, McpServerConfig>,
+    #[serde(default)]
+    pub embeddings: Option<EmbeddingsConfig>,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
@@ -288,8 +332,12 @@ impl Default for ProvidersConfig {
             z_ai: None,
             nvidia: None,
             opencode_zen: None,
-            cerebres: None,
+            cerebras: None,
             google_ai_studio: None,
+            cohere: None,
+            llm7: None,
+            sambanova: None,
+            huggingface: None,
             others: HashMap::new(),
         }
     }
@@ -343,135 +391,140 @@ impl Default for ChannelsConfig {
     }
 }
 
+/// Base directory for all local AI agent tool projects.
+const AI_AGENT_TOOLS_BASE: &str = "/home/aswin/programming/vscode/myProjects/ai_agent_tools";
+
+/// Parent workspace target dir — the Cargo.toml at the myProjects level
+/// declares sequentialthinking_rs and memory_rs as workspace members, so
+/// their release binaries land here instead of in their own target/ dirs.
+const PARENT_WORKSPACE_TARGET: &str = "/home/aswin/programming/vscode/myProjects/target/release";
+
+/// Resolve an MCP binary path. Checks (in order):
+/// 1. `{PARENT_WORKSPACE_TARGET}/{binary}`           — parent workspace build (sequentialthinking_rs, memory_rs)
+/// 2. `{AI_AGENT_TOOLS_BASE}/{subproject}/target/release/{binary}` — standalone project build
+/// 3. `~/.cargo/bin/{binary}`                         — cargo-installed binary
+/// 4. bare `{binary}` name                            — rely on PATH
+fn resolve_mcp_bin(binary: &str, subproject: Option<&str>) -> String {
+    use std::path::Path;
+
+    // 1. Parent workspace shared target dir
+    let workspace_bin = Path::new(PARENT_WORKSPACE_TARGET).join(binary);
+    if workspace_bin.exists() {
+        return workspace_bin.to_string_lossy().to_string();
+    }
+
+    // 2. Project-local build (standalone, not in parent workspace)
+    if let Some(sub) = subproject {
+        let local = Path::new(AI_AGENT_TOOLS_BASE)
+            .join(sub)
+            .join("target")
+            .join("release")
+            .join(binary);
+        if local.exists() {
+            return local.to_string_lossy().to_string();
+        }
+    }
+
+    // 3. ~/.cargo/bin
+    if let Some(home) = dirs::home_dir() {
+        let cargo_bin = home.join(".cargo").join("bin").join(binary);
+        if cargo_bin.exists() {
+            return cargo_bin.to_string_lossy().to_string();
+        }
+    }
+
+    // 4. Bare name — let the OS find it on PATH
+    binary.to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         let mut mcp_servers = HashMap::new();
 
+        // sequential-thinking lives in sequentialthinking_rs/target/release/mcp-server-sequential-thinking
         mcp_servers.insert("sequential-thinking".to_string(), McpServerConfig {
-            command: "/home/aswin/programming/vscode/myProjects/target/release/mcp-server-sequential-thinking".to_string(),
+            command: resolve_mcp_bin("mcp-server-sequential-thinking", Some("sequentialthinking_rs")),
             args: vec![],
             enabled: true,
         });
 
+        // memory: openmemory_rs — memory_rs has its own target dir
+        // (it IS listed in parent workspace Cargo.toml but resolves via project-local target)
         mcp_servers.insert("memory".to_string(), McpServerConfig {
-            command: "/home/aswin/programming/vscode/myProjects/target/release/openmemory_rs".to_string(),
+            command: resolve_mcp_bin("openmemory_rs", Some("memory_rs")),
             args: vec!["--grpc".to_string(), "50051".to_string()],
             enabled: true,
         });
 
-        let office_bin = if let Some(home) = dirs::home_dir() {
-            let p = home.join(".cargo").join("bin").join("opendocswork-mcp");
-            if p.exists() { p.to_string_lossy().to_string() } else { "opendocswork-mcp".to_string() }
-        } else {
-            "opendocswork-mcp".to_string()
-        };
-
+        // office: opendocswork-mcp (cargo-installed)
         mcp_servers.insert("office".to_string(), McpServerConfig {
-            command: office_bin,
+            command: resolve_mcp_bin("opendocswork-mcp", None),
             args: vec!["--transport".to_string(), "stdio".to_string()],
             enabled: true,
         });
 
-        let spreadsheet_bin = if let Some(home) = dirs::home_dir() {
-            let p = home.join(".cargo").join("bin").join("spreadsheet-mcp");
-            if p.exists() { p.to_string_lossy().to_string() } else { "spreadsheet-mcp".to_string() }
-        } else {
-            "spreadsheet-mcp".to_string()
-        };
-
+        // spreadsheet: spreadsheet-mcp (cargo-installed) — must use stdio transport
         mcp_servers.insert("spreadsheet".to_string(), McpServerConfig {
-            command: spreadsheet_bin,
-            args: vec![],
+            command: resolve_mcp_bin("spreadsheet-mcp", None),
+            args: vec!["--transport".to_string(), "stdio".to_string()],
             enabled: true,
         });
 
-        let just_bin = if let Some(home) = dirs::home_dir() {
-            let p = home.join(".cargo").join("bin").join("just-mcp");
-            if p.exists() { p.to_string_lossy().to_string() } else { "just-mcp".to_string() }
-        } else {
-            "just-mcp".to_string()
-        };
-
+        // just: just-mcp (cargo-installed)
         mcp_servers.insert("just".to_string(), McpServerConfig {
-            command: just_bin,
+            command: resolve_mcp_bin("just-mcp", None),
             args: vec!["--stdio".to_string()],
             enabled: true,
         });
 
-        let headroom_bin = if let Some(home) = dirs::home_dir() {
-            let p = home.join(".cargo").join("bin").join("headroom-mcp");
-            if p.exists() { p.to_string_lossy().to_string() } else { "headroom-mcp".to_string() }
-        } else {
-            "headroom-mcp".to_string()
-        };
-
+        // headroom: headroom-mcp (cargo-installed)
         mcp_servers.insert("headroom".to_string(), McpServerConfig {
-            command: headroom_bin,
+            command: resolve_mcp_bin("headroom-mcp", None),
             args: vec![],
             enabled: true,
         });
 
-        let docs_mcp_bin = if let Some(home) = dirs::home_dir() {
-            let p = home.join(".cargo").join("bin").join("openz-docs-mcp");
-            if p.exists() { p.to_string_lossy().to_string() } else { "openz-docs-mcp".to_string() }
-        } else {
-            "openz-docs-mcp".to_string()
-        };
-
+        // docs: openz-docs-mcp (cargo-installed)
         mcp_servers.insert("docs".to_string(), McpServerConfig {
-            command: docs_mcp_bin,
+            command: resolve_mcp_bin("openz-docs-mcp", None),
             args: vec![],
             enabled: true,
         });
 
-        let github_mcp_bin = if let Some(home) = dirs::home_dir() {
-            let p = home.join(".cargo").join("bin").join("openz-github-mcp");
-            if p.exists() { p.to_string_lossy().to_string() } else { "openz-github-mcp".to_string() }
-        } else {
-            "openz-github-mcp".to_string()
-        };
-
+        // github: openz-github-mcp (cargo-installed)
         mcp_servers.insert("github".to_string(), McpServerConfig {
-            command: github_mcp_bin,
+            command: resolve_mcp_bin("openz-github-mcp", None),
             args: vec![],
             enabled: true,
         });
 
-        let db_mcp_bin = if let Some(home) = dirs::home_dir() {
-            let p = home.join(".cargo").join("bin").join("database-mcp");
-            if p.exists() { p.to_string_lossy().to_string() } else { "database-mcp".to_string() }
-        } else {
-            "database-mcp".to_string()
-        };
+        // database: database-mcp (cargo-installed)
+        let db_path = dirs::home_dir()
+            .map(|h| h.join(".openz").join("memory.db").to_string_lossy().to_string())
+            .unwrap_or_else(|| "memory.db".to_string());
 
         mcp_servers.insert("database".to_string(), McpServerConfig {
-            command: db_mcp_bin,
-            args: vec!["stdio".to_string()],
+            command: resolve_mcp_bin("database-mcp", None),
+            args: vec![
+                "stdio".to_string(),
+                "--db-backend".to_string(),
+                "sqlite".to_string(),
+                "--db-name".to_string(),
+                db_path,
+            ],
             enabled: true,
         });
 
-        let chromewright_bin = if let Some(home) = dirs::home_dir() {
-            let p = home.join(".cargo").join("bin").join("chromewright");
-            if p.exists() { p.to_string_lossy().to_string() } else { "chromewright".to_string() }
-        } else {
-            "chromewright".to_string()
-        };
-
+        // browser: chromewright (cargo-installed)
         mcp_servers.insert("browser".to_string(), McpServerConfig {
-            command: chromewright_bin,
+            command: resolve_mcp_bin("chromewright", None),
             args: vec!["--headless".to_string()],
             enabled: true,
         });
 
-        let sediment_bin = if let Some(home) = dirs::home_dir() {
-            let p = home.join(".cargo").join("bin").join("sediment");
-            if p.exists() { p.to_string_lossy().to_string() } else { "sediment".to_string() }
-        } else {
-            "sediment".to_string()
-        };
-
+        // sediment: sediment (cargo-installed)
         mcp_servers.insert("sediment".to_string(), McpServerConfig {
-            command: sediment_bin,
+            command: resolve_mcp_bin("sediment", None),
             args: vec![],
             enabled: true,
         });
@@ -481,6 +534,7 @@ impl Default for Config {
             agents: AgentsConfig::default(),
             channels: ChannelsConfig::default(),
             mcp_servers,
+            embeddings: Some(EmbeddingsConfig::default()),
             extra: serde_json::Map::new(),
         }
     }
@@ -500,8 +554,12 @@ impl Config {
             "z.ai" => &self.providers.z_ai,
             "nvidia" => &self.providers.nvidia,
             "opencode_zen" => &self.providers.opencode_zen,
-            "cerebres" => &self.providers.cerebres,
+            "cerebras" => &self.providers.cerebras,
             "google_ai_studio" => &self.providers.google_ai_studio,
+            "cohere" => &self.providers.cohere,
+            "llm7" => &self.providers.llm7,
+            "sambanova" => &self.providers.sambanova,
+            "huggingface" => &self.providers.huggingface,
             _ => return false,
         };
         if provider_name == "ollama" {
@@ -517,8 +575,8 @@ impl Config {
         if self.is_provider_configured(provider_name) {
             return true;
         }
-        if provider_name == "cerebres" {
-            return std::env::var("CEREBRES_API_KEY").is_ok() || std::env::var("CEBRAS_API_KEY").is_ok();
+        if provider_name == "cerebras" {
+            return std::env::var("CEREBRAS_API_KEY").is_ok() || std::env::var("CEBRAS_API_KEY").is_ok();
         }
         let env_var = match provider_name {
             "anthropic" => "ANTHROPIC_API_KEY",
@@ -532,6 +590,10 @@ impl Config {
             "nvidia" => "NVIDIA_API_KEY",
             "opencode_zen" => "OPENCODE_ZEN_API_KEY",
             "google_ai_studio" => "GOOGLE_AI_STUDIO_API_KEY",
+            "cohere" => "COHERE_API_KEY",
+            "llm7" => "LLM7_API_KEY",
+            "sambanova" => "SAMBANOVA_API_KEY",
+            "huggingface" => "HUGGINGFACE_API_KEY",
             _ => "",
         };
         if !env_var.is_empty() && std::env::var(env_var).is_ok() {
@@ -555,7 +617,7 @@ impl Config {
             "opencode_zen",
             "z.ai",
             "mistral",
-            "cerebres",
+            "cerebras",
             "minimax",
             "ollama",
         ];
@@ -597,11 +659,11 @@ impl Config {
                         if is_vision {
                             "openrouter/google/gemini-2.0-flash-exp:free".to_string()
                         } else {
-                            "openrouter/auto".to_string()
+                            "openrouter/free".to_string()
                         }
                     }
                     "opencode_zen" => {
-                        "opencode_zen/gpt-5.5".to_string()
+                        "opencode_zen/deepseek-v4-flash-free".to_string()
                     }
                     "z.ai" => {
                         "z.ai/glm-4.7-flash".to_string()
@@ -613,7 +675,7 @@ impl Config {
                             "mistral/mistral-large-latest".to_string()
                         }
                     }
-                    "cerebres" => {
+                    "cerebras" => {
                         if is_vision {
                             continue;
                         } else {

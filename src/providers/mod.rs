@@ -149,6 +149,12 @@ pub fn model_supports_vision(model: &str) -> bool {
     if m.contains("paligemma") {
         return true;
     }
+    if m.contains("gemma-4") {
+        return true;
+    }
+    if m.contains("omni") {
+        return true;
+    }
     if m.contains("pixtral") {
         return true;
     }
@@ -180,6 +186,11 @@ pub trait LLMProvider: Send + Sync {
 
 pub mod openai;
 pub mod anthropic;
+pub mod resolver;
+pub mod circuit_breaker;
+
+#[cfg(test)]
+pub mod mock;
 
 #[cfg(test)]
 mod tests {
@@ -199,7 +210,10 @@ mod tests {
         // Google
         assert!(model_supports_vision("google/gemini-2.5-flash"));
         assert!(model_supports_vision("google_ai_studio/gemini-2.0-flash"));
-        assert!(!model_supports_vision("nvidia/google/gemma-4-31b-it"));
+        assert!(model_supports_vision("nvidia/google/gemma-4-31b-it"));
+        assert!(model_supports_vision("google/gemma-4-26b-a4b-it:free"));
+        assert!(model_supports_vision("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"));
+        assert!(!model_supports_vision("nvidia/google/gemma-2-31b-it"));
         assert!(!model_supports_vision("google/gemma-2-27b-it"));
         // Meta Llama vision
         assert!(model_supports_vision("meta/llama-3.2-90b-vision"));
@@ -223,7 +237,7 @@ mod tests {
         assert!(!model_supports_vision("deepseek-v4-flash-free"));
         assert!(!model_supports_vision("gpt-3.5-turbo"));
         assert!(!model_supports_vision("llama-3.1-8b-instant"));
-        assert!(!model_supports_vision("openrouter/auto"));
+        assert!(!model_supports_vision("openrouter/free"));
         assert!(!model_supports_vision("my-supervision-model"));
     }
 }

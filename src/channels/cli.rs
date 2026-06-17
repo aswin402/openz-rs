@@ -1,13 +1,68 @@
 use crate::agent::AgentLoop;
 use crate::config::schema::AgentDefaults;
 use crate::agent::style::*;
+
+#[allow(unused_macros)]
+macro_rules! println {
+    () => {
+        crate::tui_println!()
+    };
+    ($($arg:tt)*) => {
+        crate::tui_println!($($arg)*)
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! print {
+    () => {
+        crate::tui_print!()
+    };
+    ($($arg:tt)*) => {
+        crate::tui_print!($($arg)*)
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! eprintln {
+    () => {
+        crate::tui_println!()
+    };
+    ($($arg:tt)*) => {
+        crate::tui_println!($($arg)*)
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! eprint {
+    () => {
+        crate::tui_print!()
+    };
+    ($($arg:tt)*) => {
+        crate::tui_print!($($arg)*)
+    };
+}
 use std::io::{self, Write};
 use std::sync::{OnceLock, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 static PENDING_NOTIFICATIONS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 static IS_RAW_INPUT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static CUSTOM_CONTEXT_LIMIT: Mutex<Option<usize>> = Mutex::new(None);
+
+// ── MCP status pill ──────────────────────────────────────────────────────────
+// 0 = loading (spinner), 1 = done
+static MCP_DONE: AtomicBool   = AtomicBool::new(false);
+static MCP_LOADED: AtomicU32  = AtomicU32::new(0);
+static MCP_FAILED: AtomicU32  = AtomicU32::new(0);
+// Spinner frame index, incremented by the render loop
+static MCP_SPIN: AtomicU32    = AtomicU32::new(0);
+
+/// Called by the background MCP task in cli.rs once all servers have been tried.
+pub fn set_mcp_status(loaded: u32, failed: u32) {
+    MCP_LOADED.store(loaded, Ordering::Relaxed);
+    MCP_FAILED.store(failed, Ordering::Relaxed);
+    MCP_DONE.store(true, Ordering::Relaxed);
+}
 
 fn get_pending_notifications() -> &'static Mutex<Vec<String>> {
     PENDING_NOTIFICATIONS.get_or_init(|| Mutex::new(Vec::new()))
@@ -59,7 +114,18 @@ fn handle_clipboard_paste(index: usize) -> anyhow::Result<std::path::PathBuf> {
 
 fn char_display_width(c: char) -> usize {
     let cp = c as u32;
-    if (cp >= 0x1F000 && cp <= 0x1FBF9) || c == '⬢' || c == '🗑' || c == '📊' || c == '✅' || c == '❌' {
+    if cp == 0xFE0F {
+        0
+    } else if (cp >= 0x1F000 && cp <= 0x1FBF9)
+        || c == '⬢'
+        || c == '🗑'
+        || c == '📊'
+        || c == '✅'
+        || c == '❌'
+        || c == '⚠'
+        || c == '⚡'
+        || c == 'ℹ'
+    {
         2
     } else {
         1
@@ -68,6 +134,23 @@ fn char_display_width(c: char) -> usize {
 
 fn str_display_width(s: &str) -> usize {
     s.chars().map(char_display_width).sum()
+}
+
+fn text_display_width(text: &str) -> usize {
+    let mut cleaned = text.to_string();
+    if let Ok(re_ansi) = regex::Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]") {
+        cleaned = re_ansi.replace_all(&cleaned, "").to_string();
+    }
+    if let Ok(re_bold) = regex::Regex::new(r"\*\*(.*?)\*\*") {
+        cleaned = re_bold.replace_all(&cleaned, "$1").to_string();
+    }
+    if let Ok(re_code) = regex::Regex::new(r"`(.*?)`") {
+        cleaned = re_code.replace_all(&cleaned, "$1").to_string();
+    }
+    if let Ok(re_italic) = regex::Regex::new(r"\*(.*?)\*") {
+        cleaned = re_italic.replace_all(&cleaned, "$1").to_string();
+    }
+    str_display_width(&cleaned)
 }
 
 fn is_table_row(line: &str) -> bool {
@@ -126,7 +209,7 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
         let mut current_width = 0;
         
         for word in paragraph.split_whitespace() {
-            let word_width = str_display_width(word);
+            let word_width = text_display_width(word);
             
             if current_line.is_empty() {
                 if word_width <= max_width {
@@ -324,9 +407,9 @@ fn render_table(table_lines: &[&str]) {
     
     let mut max_content_widths = vec![0; num_cols];
     for col in 0..num_cols {
-        let mut max_w = str_display_width(&headers[col]);
+        let mut max_w = text_display_width(&headers[col]);
         for row in &data_rows {
-            max_w = max_w.max(str_display_width(&row[col]));
+            max_w = max_w.max(text_display_width(&row[col]));
         }
         max_content_widths[col] = max_w.max(3);
     }
@@ -386,7 +469,7 @@ fn render_table(table_lines: &[&str]) {
         let mut header_line_parts = Vec::new();
         for col in 0..num_cols {
             let text = header_cell_lines[col].get(line_idx).cloned().unwrap_or_default();
-            let visible_w = str_display_width(&text);
+            let visible_w = text_display_width(&text);
             let padding_len = col_widths[col].saturating_sub(visible_w);
             let formatted = format_cell_text(&text);
             let colored = format!("{}{}{}{}{}", HEADING_BLUE, COLOR_BOLD, formatted, COLOR_RESET, " ".repeat(padding_len));
@@ -410,7 +493,7 @@ fn render_table(table_lines: &[&str]) {
             let mut row_line_parts = Vec::new();
             for col in 0..num_cols {
                 let text = cell_lines[col].get(line_idx).cloned().unwrap_or_default();
-                let visible_w = str_display_width(&text);
+                let visible_w = text_display_width(&text);
                 let padding_len = col_widths[col].saturating_sub(visible_w);
                 let formatted = format_cell_text(&text);
                 let padded = format!("{}{}", formatted, " ".repeat(padding_len));
@@ -628,7 +711,49 @@ fn render_box(
         model.to_string()
     };
 
-    let visible_status_len = display_provider.chars().count()
+    // ── MCP pill ──────────────────────────────────────────────────────────────
+    const SPIN_FRAMES: &[&str] = &["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+    let mcp_done   = MCP_DONE.load(Ordering::Relaxed);
+    let mcp_loaded = MCP_LOADED.load(Ordering::Relaxed);
+    let mcp_failed = MCP_FAILED.load(Ordering::Relaxed);
+
+    let (mcp_pill_plain, mcp_pill_colored) = if !mcp_done {
+        let frame_idx = MCP_SPIN.fetch_add(1, Ordering::Relaxed) as usize % SPIN_FRAMES.len();
+        let frame = SPIN_FRAMES[frame_idx];
+        (
+            format!(" ◇ MCP {}  │ ", frame),
+            format!(
+                " {}◇ MCP {}{}  {}│{} ",
+                AURA_PURPLE, frame, COLOR_RESET,
+                AURA_SLATE, COLOR_RESET
+            ),
+        )
+    } else if mcp_failed == 0 {
+        (
+            format!(" ◇ MCP {}✓  │ ", mcp_loaded),
+            format!(
+                " {}◇ MCP {}{}{}✓{}  {}│{} ",
+                AURA_PURPLE, AURA_GREEN, mcp_loaded, AURA_GREEN, COLOR_RESET,
+                AURA_SLATE, COLOR_RESET
+            ),
+        )
+    } else {
+        (
+            format!(" ◇ MCP {}✓ {}✗  │ ", mcp_loaded, mcp_failed),
+            format!(
+                " {}◇ MCP {}{}{}✓{} {}{}{}✗{}  {}│{} ",
+                AURA_PURPLE,
+                AURA_GREEN, mcp_loaded, AURA_GREEN, COLOR_RESET,
+                AURA_ROSE, mcp_failed, AURA_ROSE, COLOR_RESET,
+                AURA_SLATE, COLOR_RESET
+            ),
+        )
+    };
+
+    let pill_plain_len = mcp_pill_plain.chars().count();
+
+    let visible_status_len = pill_plain_len
+        + display_provider.chars().count()
         + display_model.chars().count()
         + approx_tokens_str.chars().count()
         + limit_str.chars().count()
@@ -638,7 +763,8 @@ fn render_box(
     let line_fill: String = std::iter::repeat('─').take(fill_chars).collect();
 
     let status_content = format!(
-        " {}{}{} | {}{}{} | {}{}{}/{}{}",
+        "{} {}{}{} | {}{}{} | {}{}{}/{}{}",
+        mcp_pill_colored,
         RED_ORANGE, display_provider, LIGHT_WHITE,
         RED_ORANGE, display_model, LIGHT_WHITE,
         RED_ORANGE, approx_tokens_str, LIGHT_WHITE,
@@ -1258,6 +1384,14 @@ impl super::Channel for CliChannel {
     }
 
     async fn start(&self) -> anyhow::Result<()> {
+        crate::agent::style::spinner::IS_SILENT.scope(false, async move {
+            self.start_inner().await
+        }).await
+    }
+}
+
+impl CliChannel {
+    async fn start_inner(&self) -> anyhow::Result<()> {
         let session_key = "cli:direct";
         
         let white = "\x1b[38;2;240;240;240m";
@@ -1363,13 +1497,29 @@ impl super::Channel for CliChannel {
                     let provider_list = &[
                         ProviderModels {
                             name: "openai",
-                            display: "OpenAI (5)",
-                            models: &["gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "o3-mini"],
+                            display: "OpenAI (8)",
+                            models: &[
+                                "gpt-4.5",
+                                "gpt-4o",
+                                "gpt-4o-mini",
+                                "o1",
+                                "o1-mini",
+                                "o3",
+                                "o3-mini",
+                                "o4-mini",
+                            ],
                         },
                         ProviderModels {
                             name: "anthropic",
-                            display: "Anthropic (3)",
-                            models: &["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
+                            display: "Anthropic (5)",
+                            models: &[
+                                "claude-3-5-sonnet-20241022",
+                                "claude-3-5-sonnet",
+                                "claude-3-5-haiku-20241022",
+                                "claude-3-5-haiku",
+                                "claude-3-opus-20240229",
+                                "claude-3-opus",
+                            ],
                         },
                         ProviderModels {
                             name: "openrouter",
@@ -1417,24 +1567,27 @@ impl super::Channel for CliChannel {
                         },
                         ProviderModels {
                             name: "mistral",
-                            display: "Mistral AI (5)",
+                            display: "Mistral AI (7)",
                             models: &[
                                 "mistral-large-latest",
                                 "pixtral-large-latest",
                                 "mistral-moderation-latest",
                                 "codestral-latest",
                                 "mistral-small-latest",
+                                "ministral-8b-latest",
+                                "ministral-14b-latest",
                             ],
                         },
                         ProviderModels {
                             name: "z.ai",
-                            display: "z.ai (Zhipu GLM) (5)",
+                            display: "z.ai (Zhipu GLM) (6)",
                             models: &[
                                 "glm-5.1",
                                 "glm-5",
                                 "glm-5v-turbo",
                                 "glm-4.7",
                                 "glm-4.7-flash",
+                                "glm-4-flash",
                             ],
                         },
                         ProviderModels {
@@ -1452,14 +1605,14 @@ impl super::Channel for CliChannel {
                             name: "opencode_zen",
                             display: "OpenCode Zen (4)",
                             models: &[
-                                "gpt-5.5-pro",
-                                "gpt-5.5",
-                                "gpt-5.4-pro",
-                                "gpt-5.4",
+                                "deepseek-v4-flash-free",
+                                "mimo-v2.5-free",
+                                "north-mini-code-free",
+                                "nemotron-3-ultra-free",
                             ],
                         },
                         ProviderModels {
-                            name: "cerebres",
+                            name: "cerebras",
                             display: "Cerebras (3)",
                             models: &[
                                 "llama-3.3-70b",
@@ -1469,12 +1622,55 @@ impl super::Channel for CliChannel {
                         },
                         ProviderModels {
                             name: "google_ai_studio",
-                            display: "Google AI Studio (Gemini) (4)",
+                            display: "Google AI Studio (Gemini) (7)",
                             models: &[
+                                "gemini-3.5-flash",
+                                "gemini-3.1-pro-preview",
+                                "gemini-3.1-flash-lite",
                                 "gemini-2.5-pro",
                                 "gemini-2.5-flash",
                                 "gemini-2.0-flash",
                                 "gemini-1.5-pro",
+                            ],
+                        },
+                        ProviderModels {
+                            name: "cohere",
+                            display: "Cohere (5)",
+                            models: &[
+                                "command-a-plus-05-2026",
+                                "command-r7b-12-2024",
+                                "command-r7-12-2025",
+                                "command-r-plus-08-2024",
+                                "command-r-08-2024",
+                            ],
+                        },
+                        ProviderModels {
+                            name: "llm7",
+                            display: "LLM7 (3)",
+                            models: &[
+                                "gpt-4o",
+                                "gpt-4o-mini",
+                                "claude-3-5-sonnet",
+                            ],
+                        },
+                        ProviderModels {
+                            name: "sambanova",
+                            display: "SambaNova (5)",
+                            models: &[
+                                "DeepSeek-V3.2",
+                                "Meta-Llama-3.3-70B-Instruct",
+                                "Qwen2.5-72B-Instruct",
+                                "QwQ-32B",
+                                "gemma-4-31B-it",
+                            ],
+                        },
+                        ProviderModels {
+                            name: "huggingface",
+                            display: "Hugging Face Inference (3)",
+                            models: &[
+                                "meta-llama/Llama-3.3-70B-Instruct",
+                                "Qwen/QwQ-32B",
+                                "deepseek-ai/DeepSeek-R1",
                             ],
                         },
                     ];
@@ -1513,9 +1709,16 @@ impl super::Channel for CliChannel {
                             let _ = std::io::stdout().flush();
                             
                             let mut model_options = match crate::channels::fetch_provider_models(prov_info.name, &config).await {
-                                Some(models) => {
+                                Some(mut models) => {
                                     print!("\r\x1b[2K");
                                     let _ = std::io::stdout().flush();
+                                    for &m in prov_info.models {
+                                        let ms = m.to_string();
+                                        if !models.contains(&ms) {
+                                            models.push(ms);
+                                        }
+                                    }
+                                    models.sort();
                                     models
                                 }
                                 None => {
@@ -1524,6 +1727,7 @@ impl super::Channel for CliChannel {
                                     prov_info.models.iter().map(|&m| m.to_string()).collect()
                                 }
                             };
+                            model_options.push("Type manually (Custom Model)".to_string());
                             model_options.push("Exit".to_string());
                             
                             match crate::agent::style::select_menu_custom(&format!("Choose a model from {}:", prov_info.display), &model_options, &active_mdl, None, false) {
@@ -1534,19 +1738,38 @@ impl super::Channel for CliChannel {
                                         continue;
                                     }
                                     let prov = prov_info.name;
-                                    let mdl = &model_options[selected_model_idx];
+                                    let mdl = if selected_model_idx == model_options.len() - 2 {
+                                        match inquire::Text::new("Enter custom model name:").prompt() {
+                                            Ok(custom) => {
+                                                if custom.trim().is_empty() {
+                                                    println!("Model selection cancelled.");
+                                                    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                                                    continue;
+                                                }
+                                                custom.trim().to_string()
+                                            }
+                                            Err(_) => {
+                                                println!("Model selection cancelled.");
+                                                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                                                continue;
+                                            }
+                                        }
+                                    } else {
+                                        model_options[selected_model_idx].clone()
+                                    };
                                     
                                     use crate::config::loader::{load_config, save_config};
                                     match load_config() {
                                         Ok(mut config) => {
                                             config.agents.defaults.provider = prov.to_string();
-                                            config.agents.defaults.model = mdl.to_string();
+                                            config.agents.defaults.model = mdl.clone();
                                             if let Err(e) = save_config(&config) {
                                                 eprintln!("{}✕ Error: Failed to save config: {}{}", ERROR_RED, e, COLOR_RESET);
                                             } else {
-                                                match crate::cli::build_agent_loop(config.clone()).await {
-                                                    Ok(new_loop) => {
-                                                        *self.agent_loop.lock().await = new_loop;
+                                                match crate::providers::resolver::resolve_provider_full(&config, &mdl) {
+                                                    Ok(resolved) => {
+                                                        let mut loop_lock = self.agent_loop.lock().await;
+                                                        loop_lock.update_model_and_provider(config.clone(), resolved.instance);
                                                         let new_defaults = config.agents.defaults.clone();
                                                         if let Ok(mut guard) = CUSTOM_CONTEXT_LIMIT.lock() {
                                                             *guard = new_defaults.context_limit;
@@ -1595,9 +1818,10 @@ impl super::Channel for CliChannel {
                             if let Err(e) = save_config(&config) {
                                 eprintln!("{}✕ Error: Failed to save config: {}{}", ERROR_RED, e, COLOR_RESET);
                             } else {
-                                match crate::cli::build_agent_loop(config.clone()).await {
-                                    Ok(new_loop) => {
-                                        *self.agent_loop.lock().await = new_loop;
+                                match crate::providers::resolver::resolve_provider_full(&config, mdl) {
+                                    Ok(resolved) => {
+                                        let mut loop_lock = self.agent_loop.lock().await;
+                                        loop_lock.update_model_and_provider(config.clone(), resolved.instance);
                                         let new_defaults = config.agents.defaults.clone();
                                         if let Ok(mut guard) = CUSTOM_CONTEXT_LIMIT.lock() {
                                             *guard = new_defaults.context_limit;
@@ -1606,7 +1830,7 @@ impl super::Channel for CliChannel {
                                         println!("{}✓ Model updated to {} (provider: {}){}", EMERALD_GREEN, mdl, prov, COLOR_RESET);
                                     }
                                     Err(e) => {
-                                        eprintln!("{}✕ Error: Failed to initialize new model: {}{}", ERROR_RED, e, COLOR_RESET);
+                                        eprintln!("{}✕ Error: Failed to resolve provider/model: {}{}", ERROR_RED, e, COLOR_RESET);
                                     }
                                 }
                             }
@@ -1697,11 +1921,15 @@ impl super::Channel for CliChannel {
                                         println!("{}✓ Started new session.{}", EMERALD_GREEN, COLOR_RESET);
                                     } else {
                                         let selected_item = &history[selected - 1];
-                                        let _ = crate::cli::archive_current_session(&session_manager);
-                                        if let Ok(mut session) = session_manager.load(&selected_item.key) {
-                                            session.key = session_key.to_string();
-                                            let _ = session_manager.save(&session);
-                                            println!("{}✓ Loaded session: {}{}", EMERALD_GREEN, selected_item.display_title, COLOR_RESET);
+                                        if selected_item.key != session_key {
+                                            let _ = crate::cli::archive_current_session(&session_manager);
+                                            if let Ok(mut session) = session_manager.load(&selected_item.key) {
+                                                session.key = session_key.to_string();
+                                                let _ = session_manager.save(&session);
+                                                println!("{}✓ Loaded session: {}{}", EMERALD_GREEN, selected_item.display_title, COLOR_RESET);
+                                            }
+                                        } else {
+                                            println!("{}✓ You are already in this session.{}", EMERALD_GREEN, COLOR_RESET);
                                         }
                                     }
                                 }
@@ -1785,11 +2013,13 @@ impl super::Channel for CliChannel {
             let flag_clone = shutdown_flag.clone();
 
             let esc_fut = tokio::task::spawn_blocking(move || {
-                use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+                use crossterm::event::{self, Event, KeyCode, KeyModifiers};
                 while !flag_clone.load(std::sync::atomic::Ordering::Relaxed) {
                     if let Ok(true) = event::poll(std::time::Duration::from_millis(50)) {
                         if let Ok(Event::Key(key_event)) = event::read() {
-                            if key_event.kind != KeyEventKind::Release && key_event.code == KeyCode::Esc {
+                            let is_esc = key_event.code == KeyCode::Esc;
+                            let is_ctrl_c = key_event.code == KeyCode::Char('c') && key_event.modifiers.contains(KeyModifiers::CONTROL);
+                            if is_esc || is_ctrl_c {
                                 return true;
                             }
                         }

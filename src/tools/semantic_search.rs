@@ -3,7 +3,6 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
-use fastembed::{TextEmbedding, InitOptions, EmbeddingModel};
 use serde::{Serialize, Deserialize};
 
 pub struct SemanticSearchTool;
@@ -222,7 +221,8 @@ impl Tool for SemanticSearchTool {
         }
 
         let (query_vec, new_embeds) = tokio::task::spawn_blocking(move || -> Result<(Vec<f32>, Vec<Vec<f32>>)> {
-            let mut model = TextEmbedding::try_new(InitOptions::new(EmbeddingModel::AllMiniLML6V2))?;
+            let model_mutex = crate::tools::shared_memory::get_global_model()?;
+            let mut model = model_mutex.lock().map_err(|e| anyhow!("Failed to lock model Mutex: {:?}", e))?;
             
             // Embed Query
             let query_embeds = model.embed(vec![&query_prefixed], None)?;

@@ -422,6 +422,151 @@ impl Tool for FindFilesTool {
     }
 }
 
+pub struct ZenflowEditTool {
+    pub provider: std::sync::Arc<dyn crate::providers::LLMProvider>,
+}
+
+#[async_trait::async_trait]
+impl Tool for ZenflowEditTool {
+    fn name(&self) -> &str {
+        "zenflow_edit"
+    }
+
+    fn description(&self) -> &str {
+        "Edit a file transactionally. Takes a git snapshot before writing. If compilation/tests fail, it attempts to self-heal using the LLM. If healing fails, it automatically rolls back the changes."
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Path to the file to edit." },
+                "content": { "type": "string", "description": "Complete new content to write to the file." },
+                "compile_command": { "type": "string", "description": "Command to run to verify the build/test (e.g. 'cargo check', 'npm run build', 'pytest')." }
+            },
+            "required": ["path", "content", "compile_command"]
+        })
+    }
+
+    async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
+        let path_str = arguments.get("path")
+            .or(arguments.get("TargetFile"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'path' parameter"))?;
+        let content = arguments.get("content").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'content' parameter"))?;
+        let compile_cmd = arguments.get("compile_command").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'compile_command' parameter"))?;
+
+        let path = resolve_path(path_str);
+        
+        let run_cmd = |cmd: &str| -> Result<(i32, String)> {
+            let mut command = std::process::Command::new("sh");
+            crate::config::loader::set_command_cwd(&mut command);
+            command.arg("-c").arg(cmd);
+            let output = command.output()?;
+            let status = output.status.code().unwrap_or(-1);
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Ok((status, format!("{}{}", stdout, stderr)))
+        };
+
+        let in_git = run_cmd("git rev-parse --is-inside-work-tree")
+            .map(|(code, _)| code == 0)
+            .unwrap_or(false);
+
+        let mut committed = false;
+        let mut original_content = None;
+
+        if in_git {
+            let _ = run_cmd("git add -A");
+            if let Ok((code, _)) = run_cmd("git commit -m \"Zenflow pre-edit backup\" --no-verify") {
+                if code == 0 {
+                    committed = true;
+                }
+            }
+        }
+
+        if !committed {
+            original_content = fs::read_to_string(&path).ok();
+        }
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, content)?;
+
+        let (mut status, mut output_str) = run_cmd(compile_cmd)?;
+
+        if status != 0 {
+            let system_prompt = "You are a Self-Healing Code Assistant. Fix compile/test errors in the provided file.";
+            let user_prompt = format!(
+                "The following file edit was made at path '{}' but caused compile/test errors.\n\n\
+                 Proposed Content:\n\
+                 ```\n\
+                 {}\n\
+                 ```\n\n\
+                 Compilation Error:\n\
+                 ```\n\
+                 {}\n\
+                 ```\n\n\
+                 Please analyze the compilation error and return the corrected, complete file content. Output ONLY the complete corrected content, no markdown wrappers like ```rust, no explanations.",
+                 path.to_string_lossy(),
+                 content,
+                 output_str
+            );
+
+            let messages = vec![crate::session::Message {
+                role: "user".to_string(),
+                content: user_prompt,
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                extra: serde_json::Map::new(),
+            }];
+
+            let settings = crate::providers::GenerationSettings {
+                temperature: 0.1,
+                max_tokens: 4096,
+                reasoning_effort: None,
+            };
+
+            if let Ok(resp) = self.provider.chat(system_prompt, &messages, &[], &settings).await {
+                if let Some(healed_content) = resp.content {
+                    let cleaned = healed_content.trim().to_string();
+                    if !cleaned.is_empty() {
+                        fs::write(&path, &cleaned)?;
+                        if let Ok((h_status, h_output)) = run_cmd(compile_cmd) {
+                            status = h_status;
+                            output_str = h_output;
+                        }
+                    }
+                }
+            }
+        }
+
+        if status == 0 {
+            if committed {
+                let _ = run_cmd("git reset --soft HEAD~1");
+            }
+            Ok(serde_json::json!({
+                "status": "success",
+                "message": "File written and verified successfully."
+            }))
+        } else {
+            if committed {
+                let _ = run_cmd("git reset --hard HEAD~1");
+            } else if let Some(orig) = original_content {
+                fs::write(&path, orig)?;
+            } else {
+                let _ = fs::remove_file(&path);
+            }
+            Ok(serde_json::json!({
+                "status": "error",
+                "error": format!("Compilation failed, self-healing failed. Rolled back changes. Error output:\n{}", output_str)
+            }))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

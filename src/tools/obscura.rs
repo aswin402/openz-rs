@@ -21,6 +21,29 @@ impl ObscuraBrowserTool {
     }
 }
 
+fn kill_browser_on_port_9222() {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("sh")
+            .arg("-c")
+            .arg("fuser -k 9222/tcp || kill $(lsof -t -i:9222)")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("cmd")
+            .arg("/C")
+            .arg("for /f \"tokens=5\" %a in ('netstat -aon ^| findstr 9222') do taskkill /F /PID %a")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
 async fn ensure_browser_running() -> Result<()> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(500))
@@ -34,6 +57,9 @@ async fn ensure_browser_running() -> Result<()> {
     // Attempt to start obscura first
     let child = Command::new("obscura")
         .args(&["serve", "--port", "9222"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn();
 
     if child.is_ok() {
@@ -57,6 +83,9 @@ async fn ensure_browser_running() -> Result<()> {
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
             ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .spawn();
 
         if child.is_ok() {
@@ -158,12 +187,23 @@ impl Tool for ObscuraBrowserTool {
         let client = reqwest::Client::new();
         
         // Open a new tab
-        let res = client.get("http://127.0.0.1:9222/json/new")
+        let mut res = client.get("http://127.0.0.1:9222/json/new")
             .send()
-            .await?;
+            .await;
         
+        if res.is_err() || !res.as_ref().unwrap().status().is_success() {
+            tracing::warn!("CDP HTTP API failed, attempting browser restart...");
+            kill_browser_on_port_9222();
+            sleep(Duration::from_millis(500)).await;
+            ensure_browser_running().await?;
+            res = client.get("http://127.0.0.1:9222/json/new")
+                .send()
+                .await;
+        }
+
+        let res = res?;
         if !res.status().is_success() {
-            return Err(anyhow!("Failed to create a new tab via CDP HTTP API"));
+            return Err(anyhow!("Failed to create a new tab via CDP HTTP API after restart"));
         }
 
         let tab_info: Value = res.json().await?;

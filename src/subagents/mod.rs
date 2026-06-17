@@ -29,6 +29,14 @@ pub fn load_profiles() -> Result<Vec<SubagentProfile>> {
     let path = subagents_file_path();
     let defaults = vec![
         SubagentProfile {
+            name: "orchestrator".to_string(),
+            description: "Coordinates complex, multi-stage project deliverables by planning and delegating subtasks to other specialized subagents.".to_string(),
+            system_prompt: "You are the central Orchestrator. When given a complex goal, do not execute the technical steps yourself. Instead, create a step-by-step execution plan and delegate each subtask to the most appropriate specialized subagent (e.g., planner, researcher, coder, reviewer, debugger) using their tool calls. Compile their outputs and present the final results to the user.".to_string(),
+            model: None,
+            fallbacks: None,
+            extra: serde_json::Map::new(),
+        },
+        SubagentProfile {
             name: "planner".to_string(),
             description: "Decomposes complex goals, manages workstreams, and tracks milestones.".to_string(),
             system_prompt: "You are a specialized Planner. Decompose the user's high-level task into clear, sequential milestones. Outline what needs to be checked, built, and verified at each stage.".to_string(),
@@ -39,7 +47,7 @@ pub fn load_profiles() -> Result<Vec<SubagentProfile>> {
         SubagentProfile {
             name: "researcher".to_string(),
             description: "Searches the web, reads files, and gathers project context.".to_string(),
-            system_prompt: "You are a specialized Researcher. Conduct thorough web searches, analyze codebase directories, read relevant files, and retrieve external documentation to compile complete reference contexts.".to_string(),
+            system_prompt: "You are a specialized Researcher. ALWAYS check the local research cache first using the `search_research` tool before making external web queries or fetching URLs. Conduct thorough web searches, analyze codebase directories, read relevant files, and retrieve external documentation to compile complete reference contexts.".to_string(),
             model: None,
             fallbacks: None,
             extra: serde_json::Map::new(),
@@ -315,6 +323,22 @@ pub fn load_profiles() -> Result<Vec<SubagentProfile>> {
             model: None,
             fallbacks: None,
             extra: serde_json::Map::new(),
+        },
+        SubagentProfile {
+            name: "diagram_designer".to_string(),
+            description: "Creates and renders visual schemas, flowcharts, and diagrams using Mermaid syntax.".to_string(),
+            system_prompt: "You are a specialized Diagram Designer. Your main role is to design and render structural graphs, sequence charts, and process layouts. Use the `render_mermaid` tool to generate and verify clean SVG diagrams, ensuring correct Mermaid syntax is used.".to_string(),
+            model: None,
+            fallbacks: None,
+            extra: serde_json::Map::new(),
+        },
+        SubagentProfile {
+            name: "video_animator".to_string(),
+            description: "Programmatically designs and renders animations and videos using rendering libraries.".to_string(),
+            system_prompt: "You are a specialized Video Animator. Your main role is to programmatically generate and animate short videos (MP4s). Use the `generate_video` tool to construct layers, paths, text animations, and transitions into a compilation timeline, then render it to video.".to_string(),
+            model: None,
+            fallbacks: None,
+            extra: serde_json::Map::new(),
         }
     ];
 
@@ -387,7 +411,7 @@ pub fn load_profiles() -> Result<Vec<SubagentProfile>> {
         "document_compiler", "presentation_designer", "code_synthesizer",
         "summarizer_agent", "media_designer", "openz_coordinator",
         "sop_designer", "api_integrator", "performance_tuner", "communication_manager",
-        "automation_agent", "coding_agent"
+        "automation_agent", "coding_agent", "diagram_designer", "video_animator"
     ];
 
     for profile in &mut loaded_profiles {
@@ -408,7 +432,7 @@ pub fn load_profiles() -> Result<Vec<SubagentProfile>> {
                 while fbs.len() < 2 {
                     fbs.push(String::new());
                 }
-                fbs.push("openrouter/auto".to_string());
+                fbs.push("openrouter/free".to_string());
                 migrated = true;
             }
         }
@@ -820,14 +844,14 @@ async fn prompt_choose_model(prompt_label: &str, current_model: &str, config: &C
             name: "opencode_zen",
             display: "OpenCode Zen (4)",
             models: &[
-                "gpt-5.5-pro",
-                "gpt-5.5",
-                "gpt-5.4-pro",
-                "gpt-5.4",
+                "deepseek-v4-flash-free",
+                "mimo-v2.5-free",
+                "north-mini-code-free",
+                "nemotron-3-ultra-free",
             ],
         },
         ProviderModels {
-            name: "cerebres",
+            name: "cerebras",
             display: "Cerebras (3)",
             models: &[
                 "llama-3.3-70b",
@@ -843,6 +867,42 @@ async fn prompt_choose_model(prompt_label: &str, current_model: &str, config: &C
                 "gemini-2.5-flash",
                 "gemini-2.0-flash",
                 "gemini-1.5-pro",
+            ],
+        },
+        ProviderModels {
+            name: "cohere",
+            display: "Cohere (3)",
+            models: &[
+                "command-r7-12-2025",
+                "command-r-plus-08-2024",
+                "command-r-08-2024",
+            ],
+        },
+        ProviderModels {
+            name: "llm7",
+            display: "LLM7 (3)",
+            models: &[
+                "gpt-4o",
+                "gpt-4o-mini",
+                "claude-3-5-sonnet",
+            ],
+        },
+        ProviderModels {
+            name: "sambanova",
+            display: "SambaNova (3)",
+            models: &[
+                "Meta-Llama-3.3-70B-Instruct",
+                "Qwen2.5-72B-Instruct",
+                "QwQ-32B",
+            ],
+        },
+        ProviderModels {
+            name: "huggingface",
+            display: "Hugging Face Inference (3)",
+            models: &[
+                "meta-llama/Llama-3.3-70B-Instruct",
+                "Qwen/QwQ-32B",
+                "deepseek-ai/DeepSeek-R1",
             ],
         },
     ];

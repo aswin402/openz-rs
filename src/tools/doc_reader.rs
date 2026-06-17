@@ -167,9 +167,30 @@ impl Tool for DocReaderTool {
             }
         };
 
+        let _ = crate::tools::shared_memory::archive_research_entry(path_str, &content, &format!("doc_reader: {}", path_str)).await;
+
         Ok(json!({
             "status": "success",
             "content": content
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_doc_reader_metadata() -> Result<()> {
+        let tool = DocReaderTool;
+        assert_eq!(tool.name(), "read_doc");
+        assert!(tool.description().contains("PDF"));
+        
+        let args = json!({
+            "path": "nonexistent.pdf"
+        });
+        let res = tool.call(&args).await;
+        assert!(res.is_err());
+        Ok(())
     }
 }

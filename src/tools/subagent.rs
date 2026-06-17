@@ -21,6 +21,7 @@ pub struct DelegateTaskTool {
     pub parent_provider: Arc<dyn LLMProvider>,
     pub session_manager: SessionManager,
     pub parent_tools: Vec<Arc<dyn Tool>>,
+    pub cancellation_token: CancellationToken,
 }
 
 #[async_trait::async_trait]
@@ -59,6 +60,7 @@ impl Tool for DelegateTaskTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
+        crate::agent::style::spinner::IS_SILENT.scope(true, async {
         let current_depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
         if current_depth >= 3 {
             crate::tui_println!("{}⚠️ Delegation depth limit reached ({}). Aborting nested delegate_task.{}", AURA_GOLD, current_depth, COLOR_RESET);
@@ -96,6 +98,7 @@ impl Tool for DelegateTaskTool {
             parent_provider: provider.clone(),
             session_manager: self.session_manager.clone(),
             parent_tools: self.parent_tools.clone(),
+            cancellation_token: self.cancellation_token.clone(),
         }));
 
         let child_session_id = format!("subagent:{}", &uuid::Uuid::new_v4().to_string()[..8]);
@@ -301,6 +304,7 @@ impl Tool for DelegateTaskTool {
                 }))
             }
         }
+        }).await
     }
 }
 
@@ -341,6 +345,7 @@ pub struct DelegateProfileTool {
     pub session_manager: SessionManager,
     pub profile: SubagentProfile,
     pub parent_tools: Vec<Arc<dyn Tool>>,
+    pub cancellation_token: CancellationToken,
 }
 
 #[async_trait::async_trait]
@@ -375,6 +380,7 @@ impl Tool for DelegateProfileTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
+        crate::agent::style::spinner::IS_SILENT.scope(true, async {
         let current_depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
         if current_depth >= 3 {
             crate::tui_println!("{}⚠️ Delegation depth limit reached ({}). Aborting nested subagent '{}'.{}", AURA_GOLD, current_depth, self.profile.name, COLOR_RESET);
@@ -390,19 +396,25 @@ impl Tool for DelegateProfileTool {
         let clean_context = ensure_markdown_images(context);
 
         let mut models_to_try = Vec::new();
+
+        // 1. Add primary model from profile override
         if let Some(m) = &self.profile.model {
-            models_to_try.push(m.clone());
-        } else {
-            models_to_try.push(self.config.agents.defaults.model.clone());
+            if !m.trim().is_empty() {
+                models_to_try.push(m.trim().to_string());
+            }
         }
 
+        // 2. Add fallback models from profile overrides
         if let Some(fallbacks) = &self.profile.fallbacks {
             for fallback in fallbacks {
-                if !fallback.trim().is_empty() {
+                if !fallback.trim().is_empty() && !models_to_try.contains(&fallback.trim().to_string()) {
                     models_to_try.push(fallback.trim().to_string());
                 }
             }
-        } else {
+        }
+
+        // 3. If no profile overrides were specified, populate with system dynamic fallbacks for this subagent role
+        if self.profile.model.is_none() && self.profile.fallbacks.is_none() {
             let dynamic_fallbacks = self.config.get_dynamic_fallbacks(&self.profile.name);
             for fallback in dynamic_fallbacks {
                 if !models_to_try.contains(&fallback) {
@@ -411,9 +423,16 @@ impl Tool for DelegateProfileTool {
             }
         }
 
+        // 4. Finally, append our main agent model as the absolute last resort fallback
         let default_model = self.config.agents.defaults.model.clone();
         if !models_to_try.contains(&default_model) {
             models_to_try.push(default_model);
+        } else {
+            // Move the default model to the end of the list if it is already present
+            if let Some(pos) = models_to_try.iter().position(|m| m == &default_model) {
+                models_to_try.remove(pos);
+                models_to_try.push(default_model);
+            }
         }
 
         let child_session_id = format!("subagent:{}:{}", self.profile.name, &uuid::Uuid::new_v4().to_string()[..8]);
@@ -432,15 +451,29 @@ impl Tool for DelegateProfileTool {
         let formatted_name = format_subagent_name(&self.profile.name);
         let mut last_error = None;
 
+        let needs_workspace = match self.profile.name.as_str() {
+            "orchestrator" | "architect" | "git_ops_agent" | "dependency_manager" |
+            "frontend_architect" | "media_designer" | "sop_designer" | "api_integrator" |
+            "performance_tuner" | "document_compiler" | "presentation_designer" |
+            "code_synthesizer" | "automation_agent" | "coding_agent" | "debugger" |
+            "test_engineer" | "devops_agent" | "refactor_agent" | "openz_maintainer" |
+            "mcps_manager" => true,
+            _ => false, // Skip isolated workspace setup for read-only, analytical, and config-focused agents
+        };
+
         let parent_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let workspace_dir = match create_isolated_workspace(&parent_dir) {
-            Ok(dir) => {
-                crate::tui_println!("{}  ✓ Isolated workspace worktree created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
-                dir
-            }
-            Err(e) => {
-                crate::tui_println!("{}⚠️ Failed to create isolated workspace ({:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
-                parent_dir.clone()
+        let workspace_dir = if !needs_workspace {
+            parent_dir.clone()
+        } else {
+            match create_isolated_workspace(&parent_dir) {
+                Ok(dir) => {
+                    crate::tui_println!("{}  ✓ Isolated workspace worktree created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
+                    dir
+                }
+                Err(e) => {
+                    crate::tui_println!("{}⚠️ Failed to create isolated workspace ({:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
+                    parent_dir.clone()
+                }
             }
         };
 
@@ -501,6 +534,7 @@ impl Tool for DelegateProfileTool {
                     parent_provider: provider.clone(),
                     session_manager: self.session_manager.clone(),
                     parent_tools: self.parent_tools.clone(),
+                    cancellation_token: self.cancellation_token.clone(),
                 }));
             }
 
@@ -702,6 +736,7 @@ impl Tool for DelegateProfileTool {
             "status": "error",
             "error": err_msg
         }))
+        }).await
     }
 }
 
@@ -779,7 +814,7 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
                 "nvidia" => config.providers.nvidia.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("NVIDIA_API_KEY").is_ok(),
                 "minimax" => config.providers.minimax.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("MINIMAX_API_KEY").is_ok(),
                 "mistral" => config.providers.mistral.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("MISTRAL_API_KEY").is_ok(),
-                "cerebres" => config.providers.cerebres.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("CEREBRES_API_KEY").is_ok() || std::env::var("CEBRAS_API_KEY").is_ok(),
+                "cerebres" => config.providers.cerebras.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("CEREBRES_API_KEY").is_ok() || std::env::var("CEBRAS_API_KEY").is_ok(),
                 _ => false,
             }
         };
@@ -971,7 +1006,7 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
             (key, base)
         }
         "cerebres" => {
-            let p = config.providers.cerebres.as_ref();
+            let p = config.providers.cerebras.as_ref();
             let key = p.and_then(|x| x.api_key.clone())
                 .or_else(|| std::env::var("CEREBRES_API_KEY").ok())
                 .or_else(|| std::env::var("CEBRAS_API_KEY").ok())
@@ -995,7 +1030,7 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
     };
 
     let mut final_provider_name = provider_name.clone();
-    let mut final_api_key = api_key;
+    let mut final_api_key: String = api_key;
     let mut final_api_base = api_base;
     let mut final_model = clean_model.to_string();
 
@@ -1011,10 +1046,11 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
             final_api_base = p.and_then(|x| x.api_base.clone())
                 .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
             final_provider_name = "openrouter".to_string();
-            final_model = if clean_model.contains('/') {
-                clean_model.to_string()
+            let fb_model = crate::providers::resolver::resolve_fallback_model("openrouter", clean_model);
+            final_model = if fb_model.contains('/') {
+                fb_model
             } else {
-                format!("{}/{}", provider_name, clean_model)
+                format!("{}/{}", provider_name, fb_model)
             };
         } else if has_opencode_zen {
             let p = config.providers.opencode_zen.as_ref();
@@ -1024,10 +1060,11 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
             final_api_base = p.and_then(|x| x.api_base.clone())
                 .unwrap_or_else(|| "https://opencode.ai/zen/v1".to_string());
             final_provider_name = "opencode_zen".to_string();
-            final_model = if clean_model.contains('/') {
-                clean_model.to_string()
+            let fb_model = crate::providers::resolver::resolve_fallback_model("opencode_zen", clean_model);
+            final_model = if fb_model.contains('/') {
+                fb_model
             } else {
-                format!("{}/{}", provider_name, clean_model)
+                format!("{}/{}", provider_name, fb_model)
             };
         } else {
             return Err(anyhow!("No API key configured for provider: {}", provider_name));
@@ -1162,6 +1199,7 @@ pub struct EvaluatorOptimizerLoopTool {
     pub parent_provider: Arc<dyn LLMProvider>,
     pub session_manager: SessionManager,
     pub parent_tools: Vec<Arc<dyn Tool>>,
+    pub cancellation_token: CancellationToken,
 }
 
 #[async_trait::async_trait]
@@ -1208,8 +1246,9 @@ impl Tool for EvaluatorOptimizerLoopTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let optimizer_name = arguments.get("optimizer").and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'optimizer' argument"))?;
+        crate::agent::style::spinner::IS_SILENT.scope(true, async {
+            let optimizer_name = arguments.get("optimizer").and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Missing 'optimizer' argument"))?;
         let evaluator_name = arguments.get("evaluator").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'evaluator' argument"))?;
         let goal = arguments.get("goal").and_then(|v| v.as_str())
@@ -1231,6 +1270,7 @@ impl Tool for EvaluatorOptimizerLoopTool {
             session_manager: self.session_manager.clone(),
             profile: optimizer_profile.clone(),
             parent_tools: self.parent_tools.clone(),
+            cancellation_token: self.cancellation_token.clone(),
         };
 
         let evaluator_tool = DelegateProfileTool {
@@ -1239,6 +1279,7 @@ impl Tool for EvaluatorOptimizerLoopTool {
             session_manager: self.session_manager.clone(),
             profile: evaluator_profile.clone(),
             parent_tools: self.parent_tools.clone(),
+            cancellation_token: self.cancellation_token.clone(),
         };
 
         let mut optimizer_output = String::new();
@@ -1355,6 +1396,7 @@ impl Tool for EvaluatorOptimizerLoopTool {
             "final_output": optimizer_output,
             "final_feedback": feedback
         }))
+        }).await
     }
 }
 
@@ -1588,6 +1630,7 @@ pub struct ParallelResearchTool {
     pub parent_provider: Arc<dyn LLMProvider>,
     pub session_manager: SessionManager,
     pub parent_tools: Vec<Arc<dyn Tool>>,
+    pub cancellation_token: CancellationToken,
 }
 
 const READ_ONLY_TOOLS: &[&str] = &[
@@ -1652,8 +1695,9 @@ impl Tool for ParallelResearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let tasks_val = arguments.get("tasks").and_then(|v| v.as_array())
-            .ok_or_else(|| anyhow!("Missing or invalid 'tasks' argument"))?;
+        crate::agent::style::spinner::IS_SILENT.scope(true, async {
+            let tasks_val = arguments.get("tasks").and_then(|v| v.as_array())
+                .ok_or_else(|| anyhow!("Missing or invalid 'tasks' argument"))?;
 
         if tasks_val.is_empty() {
             return Err(anyhow!("The 'tasks' array cannot be empty"));
@@ -1755,6 +1799,7 @@ impl Tool for ParallelResearchTool {
             "status": "success",
             "results": results
         }))
+        }).await
     }
 }
 
@@ -2490,6 +2535,7 @@ mod tests {
             )),
             session_manager: SessionManager::new(std::env::temp_dir()),
             parent_tools: Vec::new(),
+            cancellation_token: CancellationToken::new(),
         };
 
         // If DELEGATION_DEPTH is 3, calling the tool should return an error immediately
@@ -2723,6 +2769,7 @@ mod tests {
             parent_provider: provider.clone(),
             session_manager: SessionManager::new(temp_dir.clone()),
             parent_tools: Vec::new(),
+            cancellation_token: CancellationToken::new(),
         };
 
         let res = tool.call(&serde_json::json!({
@@ -2749,3 +2796,35 @@ mod tests {
 }
 
 
+
+
+#[derive(Clone, Debug)]
+pub struct CancellationToken {
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    notify: std::sync::Arc<tokio::sync::Notify>,
+}
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self {
+            cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub async fn wait_for_cancellation(&self) {
+        if self.is_cancelled() {
+            return;
+        }
+        self.notify.notified().await;
+    }
+}

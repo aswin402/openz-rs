@@ -1,14 +1,18 @@
 use crate::providers::{LLMProvider, LLMResponse, GenerationSettings, ToolCallRequest};
 use crate::session::Message;
-use anyhow::{Result, anyhow};
+use crate::agent::AgentError;
+use crate::providers::circuit_breaker::{CircuitBreaker, retry_with_backoff};
+use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 pub struct OpenAIProvider {
     pub client: Client,
     pub api_key: String,
     pub api_base: String,
     pub model: String,
+    pub breaker: CircuitBreaker,
 }
 
 #[derive(Serialize)]
@@ -33,6 +37,8 @@ struct OpenAIMessage {
     tool_calls: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
+    /// DeepSeek thinking mode: must be echoed back as a top-level field.
+    /// Other providers (OpenRouter, etc.) receive it embedded in <think> tags instead.
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_content: Option<String>,
 }
@@ -77,15 +83,22 @@ impl OpenAIProvider {
             api_key,
             api_base,
             model,
+            breaker: CircuitBreaker::new(5, Duration::from_secs(30)),
         }
     }
 
     async fn serialize_messages(
         model: &str,
+        api_base: &str,
         system_prompt: &str,
         messages: &[Message],
     ) -> Vec<OpenAIMessage> {
         let mut api_messages = Vec::new();
+
+        // DeepSeek's thinking API requires reasoning_content as a separate top-level
+        // field in assistant messages. Other OpenAI-compatible providers (OpenRouter,
+        // Groq, etc.) don't accept that field, so we fall back to <think> tags for them.
+        let is_deepseek = api_base.contains("deepseek.com") || model.starts_with("deepseek");
         
         if !system_prompt.is_empty() {
             api_messages.push(OpenAIMessage {
@@ -101,27 +114,48 @@ impl OpenAIProvider {
         for msg in messages {
             let mut tool_call_id = None;
             let mut name = None;
-            let mut reasoning_content = None;
             let role = msg.role.clone();
             
             if role == "tool" {
                 tool_call_id = msg.extra.get("tool_call_id").and_then(|v| v.as_str().map(|s| s.to_string()));
             }
 
-            if role == "assistant" {
-                reasoning_content = msg.extra.get("reasoning_content").and_then(|v| v.as_str().map(|s| s.to_string()));
-            }
-
             if let Some(n) = msg.extra.get("name").and_then(|v| v.as_str()) {
                 name = Some(n.to_string());
             }
 
-            let parts = crate::providers::parse_multimodal_content(&msg.content).await;
+            // Handle reasoning_content for assistant messages.
+            // DeepSeek requires it as a dedicated top-level field; other providers
+            // (OpenRouter, Groq, etc.) get it embedded as <think> tags in content.
+            let reasoning_field: Option<String>;
+            let mut text_content = msg.content.clone();
+            if role == "assistant" {
+                if let Some(reasoning) = msg.extra.get("reasoning_content").and_then(|v| v.as_str()) {
+                    if !reasoning.is_empty() {
+                        if is_deepseek {
+                            // Pass as a separate field — DeepSeek API requirement
+                            reasoning_field = Some(reasoning.to_string());
+                        } else {
+                            // Embed in content for other OpenAI-compatible providers
+                            text_content = format!("<think>\n{}\n</think>\n\n{}", reasoning, text_content);
+                            reasoning_field = None;
+                        }
+                    } else {
+                        reasoning_field = None;
+                    }
+                } else {
+                    reasoning_field = None;
+                }
+            } else {
+                reasoning_field = None;
+            }
+
+            let parts = crate::providers::parse_multimodal_content(&text_content).await;
             let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
             let supports_vision = crate::providers::model_supports_vision(model);
 
             let content_value = if !supports_vision || !has_images {
-                serde_json::Value::String(msg.content.clone())
+                serde_json::Value::String(text_content.clone())
             } else if parts.len() == 1 {
                 match &parts[0] {
                     crate::providers::ContentPart::Text(t) => serde_json::Value::String(t.clone()),
@@ -165,7 +199,7 @@ impl OpenAIProvider {
                 name,
                 tool_calls: msg.extra.get("tool_calls").cloned().and_then(|v| v.as_array().cloned()),
                 tool_call_id,
-                reasoning_content,
+                reasoning_content: reasoning_field,
             });
         }
         api_messages
@@ -181,7 +215,7 @@ impl LLMProvider for OpenAIProvider {
         tools: &[serde_json::Value],
         settings: &GenerationSettings,
     ) -> Result<LLMResponse> {
-        let api_messages = Self::serialize_messages(&self.model, system_prompt, messages).await;
+        let api_messages = Self::serialize_messages(&self.model, &self.api_base, system_prompt, messages).await;
 
         let body = OpenAIRequest {
             model: self.model.clone(),
@@ -199,25 +233,48 @@ impl LLMProvider for OpenAIProvider {
             format!("{}/chat/completions", base)
         };
 
-        let mut req = self.client.post(&url);
-        if is_azure {
-            req = req.header("api-key", &self.api_key);
-        } else {
-            req = req.bearer_auth(&self.api_key);
-        }
+        // Clone state for retry closure
+        let client = self.client.clone();
+        let api_key = self.api_key.clone();
+        let url_for_retry = url.clone();
+        let body_for_retry = serde_json::to_value(&body).map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
 
-        let res = req.json(&body)
-            .send()
-            .await?;
+        let response = retry_with_backoff(
+            &self.breaker,
+            3,
+            Duration::from_secs(1),
+            Duration::from_secs(30),
+            "openai",
+            || {
+                let client = client.clone();
+                let api_key = api_key.clone();
+                let url = url_for_retry.clone();
+                let json_body = body_for_retry.clone();
+                async move {
+                    let mut req = client.post(&url);
+                    if is_azure {
+                        req = req.header("api-key", &api_key);
+                    } else {
+                        req = req.bearer_auth(&api_key);
+                    }
+                    let res = req
+                        .json(&json_body)
+                        .send()
+                        .await
+                        .map_err(|e| (0u16, format!("Network error: {e}")))?;
+                    if !res.status().is_success() {
+                        let status = res.status().as_u16();
+                        let error_text = res.text().await.unwrap_or_default();
+                        Err((status, error_text))
+                    } else {
+                        Ok(res)
+                    }
+                }
+            },
+        ).await?;
 
-        if !res.status().is_success() {
-            let status = res.status();
-            let error_text = res.text().await.unwrap_or_default();
-            return Err(anyhow!("OpenAI API error (Status {}): {}", status, error_text));
-        }
-
-        let response: OpenAIResponse = res.json().await?;
-        let choice = response.choices.first().ok_or_else(|| anyhow!("No choices returned"))?;
+        let response: OpenAIResponse = response.json().await?;
+        let choice = response.choices.first().ok_or_else(|| AgentError::provider("openai", "No choices returned"))?;
         
         let tool_calls = choice.message.tool_calls.as_ref().map(|calls| {
             calls.iter().map(|call| {
@@ -265,6 +322,7 @@ mod tests {
         // Test non-vision model (deepseek-v4-flash-free)
         let serialized_non_vision = OpenAIProvider::serialize_messages(
             "deepseek-v4-flash-free",
+            "https://api.openai.com/v1",
             system_prompt,
             &messages,
         ).await;
@@ -280,6 +338,7 @@ mod tests {
         // Test vision model (gpt-4o)
         let serialized_vision = OpenAIProvider::serialize_messages(
             "gpt-4o",
+            "https://api.openai.com/v1",
             system_prompt,
             &messages,
         ).await;

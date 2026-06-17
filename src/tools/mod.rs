@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
+use crate::tools::subagent::CancellationToken;
 
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
@@ -13,9 +14,10 @@ pub trait Tool: Send + Sync {
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value>;
 }
 
+#[derive(Clone)]
 pub struct ToolRegistry {
     static_tools: HashMap<String, Arc<dyn Tool>>,
-    context: Option<(Config, Arc<dyn LLMProvider>, SessionManager)>,
+    pub context: Option<(Config, Arc<dyn LLMProvider>, SessionManager)>,
 }
 
 impl ToolRegistry {
@@ -52,6 +54,7 @@ impl ToolRegistry {
                 parent_provider: provider.clone(),
                 session_manager: session_manager.clone(),
                 parent_tools,
+                cancellation_token: CancellationToken::new(),
             }));
         }
 
@@ -69,6 +72,7 @@ impl ToolRegistry {
                 parent_provider: provider.clone(),
                 session_manager: session_manager.clone(),
                 parent_tools,
+                cancellation_token: CancellationToken::new(),
             }));
         }
 
@@ -86,6 +90,7 @@ impl ToolRegistry {
                 parent_provider: provider.clone(),
                 session_manager: session_manager.clone(),
                 parent_tools,
+                cancellation_token: CancellationToken::new(),
             }));
         }
 
@@ -112,6 +117,7 @@ impl ToolRegistry {
             session_manager: session_manager.clone(),
             profile,
             parent_tools,
+            cancellation_token: CancellationToken::new(),
         }))
     }
 
@@ -206,3 +212,8 @@ pub mod firefox;
 pub mod notes;
 pub mod social_search;
 pub mod template_compiler;
+pub mod mermaid;
+pub mod video;
+pub mod sop;
+pub mod svg_animator;
+pub mod compiler_auto_heal;

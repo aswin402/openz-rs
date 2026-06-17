@@ -55,6 +55,28 @@ pub fn get_sqlite_connection() -> Result<Connection> {
         )",
         [],
     )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS research_archive (
+            id TEXT PRIMARY KEY,
+            query TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            embedding TEXT NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS interaction_history (
+            id TEXT PRIMARY KEY,
+            session_key TEXT NOT NULL,
+            query TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            success INTEGER DEFAULT 1,
+            errors TEXT
+        )",
+        [],
+    )?;
     Ok(conn)
 }
 
@@ -74,10 +96,393 @@ pub fn get_current_workspace() -> String {
     ".".to_string()
 }
 
+static GLOBAL_EMBEDDING_MODEL: OnceLock<std::sync::Mutex<TextEmbedding>> = OnceLock::new();
+
+pub fn get_global_model() -> Result<&'static std::sync::Mutex<TextEmbedding>> {
+    if let Some(m) = GLOBAL_EMBEDDING_MODEL.get() {
+        Ok(m)
+    } else {
+        let model = TextEmbedding::try_new(InitOptions::new(EmbeddingModel::AllMiniLML6V2))?;
+        let _ = GLOBAL_EMBEDDING_MODEL.set(std::sync::Mutex::new(model));
+        Ok(GLOBAL_EMBEDDING_MODEL.get().unwrap())
+    }
+}
+
+async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
+    let config = crate::config::loader::load_config()?;
+    let preferred = config.embeddings.as_ref()
+        .and_then(|e| e.preferred_provider.as_ref().map(|s| s.as_str()));
+
+    let mut providers_order = vec!["google", "cohere", "openai"];
+    if let Some(pref) = preferred {
+        let p_clean = pref.to_lowercase();
+        if let Some(pos) = providers_order.iter().position(|&p| p == p_clean || (p == "openai" && (p_clean == "opencode_zen" || p_clean == "opencode-zen"))) {
+            let removed = providers_order.remove(pos);
+            providers_order.insert(0, removed);
+        }
+    }
+
+    for provider_name in providers_order {
+        match provider_name {
+            "google" => {
+                if let Some(ref google_config) = config.providers.google_ai_studio {
+                    let key_opt = google_config.api_key.as_deref()
+                        .or_else(|| google_config.extra.get("apiKey").and_then(|v| v.as_str()));
+                    if let Some(key) = key_opt {
+                        if !key.trim().is_empty() {
+                            let url = format!(
+                                "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={}",
+                                key
+                            );
+                            let client = reqwest::Client::new();
+                            let res = client.post(&url)
+                                .json(&serde_json::json!({
+                                    "content": {
+                                        "parts": [{
+                                            "text": text
+                                        }]
+                                    }
+                                }))
+                                .send()
+                                .await;
+                            if let Ok(res) = res {
+                                if res.status().is_success() {
+                                    if let Ok(json) = res.json::<serde_json::Value>().await {
+                                        if let Some(values) = json.pointer("/embedding/values").and_then(|v| v.as_array()) {
+                                            let vec: Vec<f32> = values.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                                            if !vec.is_empty() {
+                                                return Ok(vec);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "cohere" => {
+                if let Some(ref cohere_config) = config.providers.cohere {
+                    let key_opt = cohere_config.api_key.as_deref()
+                        .or_else(|| cohere_config.extra.get("apiKey").and_then(|v| v.as_str()));
+                    if let Some(key) = key_opt {
+                        if !key.trim().is_empty() {
+                            let url = "https://api.cohere.com/v1/embed";
+                            let client = reqwest::Client::new();
+                            let input_type = if is_query { "search_query" } else { "search_document" };
+                            let res = client.post(url)
+                                .header("Authorization", format!("bearer {}", key))
+                                .header("Content-Type", "application/json")
+                                .json(&serde_json::json!({
+                                    "texts": [text],
+                                    "model": "embed-english-v3.0",
+                                    "input_type": input_type
+                                }))
+                                .send()
+                                .await;
+                            if let Ok(res) = res {
+                                if res.status().is_success() {
+                                    if let Ok(json) = res.json::<serde_json::Value>().await {
+                                        if let Some(arr) = json.pointer("/embeddings").and_then(|v| v.as_array()) {
+                                            if let Some(first_embed) = arr.first().and_then(|v| v.as_array()) {
+                                                let vec: Vec<f32> = first_embed.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                                                if !vec.is_empty() {
+                                                    return Ok(vec);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "openai" => {
+                let mut openai_key = None;
+                let mut openai_base = "https://api.openai.com/v1".to_string();
+                let openai_model = "text-embedding-3-small".to_string();
+
+                if let Some(ref opencode_config) = config.providers.opencode_zen {
+                    let key_opt = opencode_config.api_key.as_deref()
+                        .or_else(|| opencode_config.extra.get("apiKey").and_then(|v| v.as_str()));
+                    if let Some(key) = key_opt {
+                        if !key.trim().is_empty() {
+                            openai_key = Some(key.to_string());
+                            let base_opt = opencode_config.api_base.as_deref()
+                                .or_else(|| opencode_config.extra.get("apiBase").and_then(|v| v.as_str()));
+                            if let Some(base) = base_opt {
+                                openai_base = base.to_string();
+                            }
+                        }
+                    }
+                }
+
+                if openai_key.is_none() {
+                    if let Some(ref openai_config) = config.providers.openai {
+                        let key_opt = openai_config.api_key.as_deref()
+                            .or_else(|| openai_config.extra.get("apiKey").and_then(|v| v.as_str()));
+                        if let Some(key) = key_opt {
+                            if !key.trim().is_empty() {
+                                openai_key = Some(key.to_string());
+                                let base_opt = openai_config.api_base.as_deref()
+                                    .or_else(|| openai_config.extra.get("apiBase").and_then(|v| v.as_str()));
+                                if let Some(base) = base_opt {
+                                    openai_base = base.to_string();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let Some(key) = openai_key {
+                    let url = format!("{}/embeddings", openai_base.trim_end_matches('/'));
+                    let client = reqwest::Client::new();
+                    let res = client.post(&url)
+                        .header("Authorization", format!("Bearer {}", key))
+                        .json(&serde_json::json!({
+                            "input": text,
+                            "model": openai_model
+                        }))
+                        .send()
+                        .await;
+                    if let Ok(res) = res {
+                        if res.status().is_success() {
+                            if let Ok(json) = res.json::<serde_json::Value>().await {
+                                if let Some(data) = json.pointer("/data").and_then(|v| v.as_array()) {
+                                    if let Some(first) = data.first() {
+                                        if let Some(values) = first.pointer("/embedding").and_then(|v| v.as_array()) {
+                                            let vec: Vec<f32> = values.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                                            if !vec.is_empty() {
+                                                return Ok(vec);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Err(anyhow::anyhow!("No active cloud embedding providers succeeded"))
+}
+
+async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) -> Result<Vec<Vec<f32>>> {
+    if queries.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let config = crate::config::loader::load_config()?;
+    let preferred = config.embeddings.as_ref()
+        .and_then(|e| e.preferred_provider.as_ref().map(|s| s.as_str()));
+
+    let mut providers_order = vec!["google", "cohere", "openai"];
+    if let Some(pref) = preferred {
+        let p_clean = pref.to_lowercase();
+        if let Some(pos) = providers_order.iter().position(|&p| p == p_clean || (p == "openai" && (p_clean == "opencode_zen" || p_clean == "opencode-zen"))) {
+            let removed = providers_order.remove(pos);
+            providers_order.insert(0, removed);
+        }
+    }
+
+    for provider_name in providers_order {
+        match provider_name {
+            "google" => {
+                if let Some(ref google_config) = config.providers.google_ai_studio {
+                    let key_opt = google_config.api_key.as_deref()
+                        .or_else(|| google_config.extra.get("apiKey").and_then(|v| v.as_str()));
+                    if let Some(key) = key_opt {
+                        if !key.trim().is_empty() {
+                            let url = format!(
+                                "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents?key={}",
+                                key
+                            );
+                            let requests: Vec<serde_json::Value> = queries.iter().map(|q| {
+                                serde_json::json!({
+                                    "model": "models/text-embedding-004",
+                                    "content": {
+                                        "parts": [{
+                                            "text": q
+                                        }]
+                                    }
+                                })
+                            }).collect();
+
+                            let client = reqwest::Client::new();
+                            let res = client.post(&url)
+                                .json(&serde_json::json!({
+                                    "requests": requests
+                                }))
+                                .send()
+                                .await;
+
+                            if let Ok(res) = res {
+                                if res.status().is_success() {
+                                    if let Ok(json) = res.json::<serde_json::Value>().await {
+                                        if let Some(embeddings) = json.pointer("/embeddings").and_then(|v| v.as_array()) {
+                                            let mut result = Vec::new();
+                                            for emb in embeddings {
+                                                if let Some(values) = emb.pointer("/values").and_then(|v| v.as_array()) {
+                                                    let vec: Vec<f32> = values.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                                                    result.push(vec);
+                                                }
+                                            }
+                                            if result.len() == queries.len() {
+                                                return Ok(result);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "cohere" => {
+                if let Some(ref cohere_config) = config.providers.cohere {
+                    let key_opt = cohere_config.api_key.as_deref()
+                        .or_else(|| cohere_config.extra.get("apiKey").and_then(|v| v.as_str()));
+                    if let Some(key) = key_opt {
+                        if !key.trim().is_empty() {
+                            let url = "https://api.cohere.com/v1/embed";
+                            let client = reqwest::Client::new();
+                            let input_type = if is_query { "search_query" } else { "search_document" };
+                            let res = client.post(url)
+                                .header("Authorization", format!("bearer {}", key))
+                                .header("Content-Type", "application/json")
+                                .json(&serde_json::json!({
+                                    "texts": queries,
+                                    "model": "embed-english-v3.0",
+                                    "input_type": input_type
+                                }))
+                                .send()
+                                .await;
+                            
+                            if let Ok(res) = res {
+                                if res.status().is_success() {
+                                    if let Ok(json) = res.json::<serde_json::Value>().await {
+                                        if let Some(arr) = json.pointer("/embeddings").and_then(|v| v.as_array()) {
+                                            let mut result = Vec::new();
+                                            for item in arr {
+                                                if let Some(first_embed) = item.as_array() {
+                                                    let vec: Vec<f32> = first_embed.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                                                    result.push(vec);
+                                                }
+                                            }
+                                            if result.len() == queries.len() {
+                                                return Ok(result);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "openai" => {
+                let mut openai_key = None;
+                let mut openai_base = "https://api.openai.com/v1".to_string();
+                let openai_model = "text-embedding-3-small".to_string();
+
+                if let Some(ref opencode_config) = config.providers.opencode_zen {
+                    let key_opt = opencode_config.api_key.as_deref()
+                        .or_else(|| opencode_config.extra.get("apiKey").and_then(|v| v.as_str()));
+                    if let Some(key) = key_opt {
+                        if !key.trim().is_empty() {
+                            openai_key = Some(key.to_string());
+                            let base_opt = opencode_config.api_base.as_deref()
+                                .or_else(|| opencode_config.extra.get("apiBase").and_then(|v| v.as_str()));
+                            if let Some(base) = base_opt {
+                                openai_base = base.to_string();
+                            }
+                        }
+                    }
+                }
+
+                if openai_key.is_none() {
+                    if let Some(ref openai_config) = config.providers.openai {
+                        let key_opt = openai_config.api_key.as_deref()
+                            .or_else(|| openai_config.extra.get("apiKey").and_then(|v| v.as_str()));
+                        if let Some(key) = key_opt {
+                            if !key.trim().is_empty() {
+                                openai_key = Some(key.to_string());
+                                let base_opt = openai_config.api_base.as_deref()
+                                    .or_else(|| openai_config.extra.get("apiBase").and_then(|v| v.as_str()));
+                                if let Some(base) = base_opt {
+                                    openai_base = base.to_string();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if let Some(key) = openai_key {
+                    let url = format!("{}/embeddings", openai_base.trim_end_matches('/'));
+                    let client = reqwest::Client::new();
+                    let res = client.post(&url)
+                        .header("Authorization", format!("Bearer {}", key))
+                        .json(&serde_json::json!({
+                            "input": queries,
+                            "model": openai_model
+                        }))
+                        .send()
+                        .await;
+                    
+                    if let Ok(res) = res {
+                        if res.status().is_success() {
+                            if let Ok(json) = res.json::<serde_json::Value>().await {
+                                if let Some(data) = json.pointer("/data").and_then(|v| v.as_array()) {
+                                    let mut result = Vec::new();
+                                    for item in data {
+                                        if let Some(values) = item.pointer("/embedding").and_then(|v| v.as_array()) {
+                                            let vec: Vec<f32> = values.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                                            result.push(vec);
+                                        }
+                                    }
+                                    if result.len() == queries.len() {
+                                        return Ok(result);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Err(anyhow::anyhow!("No active cloud embedding providers succeeded for batch"))
+}
+
 pub async fn get_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
+    let config = crate::config::loader::load_config().ok();
+    let mode = config.as_ref()
+        .and_then(|c| c.embeddings.as_ref())
+        .map(|e| e.mode.as_str())
+        .unwrap_or("local");
+
+    let cloud_res = get_cloud_embedding(text, is_query).await;
+    match cloud_res {
+        Ok(vec) => return Ok(vec),
+        Err(e) => {
+            if mode == "cloud" || mode == "cloud_only" {
+                return Err(anyhow::anyhow!("Cloud embedding failed and local model fallback is disabled: {:?}", e));
+            }
+            tracing::warn!("Cloud embedding failed: {:?}. Falling back to local fastembed.", e);
+        }
+    }
+
+    // Fall back to local ONNX model
     let text_owned = text.to_string();
     tokio::task::spawn_blocking(move || -> Result<Vec<f32>> {
-        let mut model = TextEmbedding::try_new(InitOptions::new(EmbeddingModel::AllMiniLML6V2))?;
+        let model_mutex = get_global_model()?;
+        let mut model = model_mutex.lock().map_err(|e| anyhow!("Failed to lock model Mutex: {:?}", e))?;
         let formatted = if is_query {
             format!("query: {}", text_owned)
         } else {
@@ -576,6 +981,374 @@ pub async fn consolidate_shared_memory(provider: &std::sync::Arc<dyn crate::prov
     Ok(())
 }
 
+pub fn chunk_content_by_headings(query: &str, content: &str) -> Vec<(String, String)> {
+    let mut chunks = Vec::new();
+    let lines: Vec<&str> = content.lines().collect();
+    
+    let mut current_heading = String::new();
+    let mut current_chunk = Vec::new();
+    let mut current_len = 0;
+    
+    for line in lines {
+        let is_heading = line.trim_start().starts_with('#') 
+            || line.trim_start().starts_with("--- Sheet:")
+            || line.trim_start().starts_with("Title:");
+        
+        if is_heading && !current_chunk.is_empty() {
+            let chunk_text = current_chunk.join("\n");
+            let chunk_query = if current_heading.is_empty() {
+                query.to_string()
+            } else {
+                format!("{} - {}", query, current_heading)
+            };
+            chunks.push((chunk_query, chunk_text));
+            current_chunk.clear();
+            current_len = 0;
+        }
+        
+        if is_heading {
+            current_heading = line.trim().to_string();
+        }
+        
+        current_chunk.push(line);
+        current_len += line.len();
+        
+        if current_len > 2500 {
+            let chunk_text = current_chunk.join("\n");
+            let chunk_query = if current_heading.is_empty() {
+                query.to_string()
+            } else {
+                format!("{} - {}", query, current_heading)
+            };
+            chunks.push((chunk_query, chunk_text));
+            current_chunk.clear();
+            current_len = 0;
+        }
+    }
+    
+    if !current_chunk.is_empty() {
+        let chunk_text = current_chunk.join("\n");
+        let chunk_query = if current_heading.is_empty() {
+            query.to_string()
+        } else {
+            format!("{} - {}", query, current_heading)
+        };
+        chunks.push((chunk_query, chunk_text));
+    }
+    
+    if chunks.is_empty() {
+        chunks.push((query.to_string(), content.to_string()));
+    }
+    
+    chunks
+}
+
+pub async fn archive_research_entry(query: &str, content: &str, source: &str) -> Result<()> {
+    let chunks = chunk_content_by_headings(query, content);
+    for (chunk_query, chunk_content) in chunks {
+        let embedding = get_embedding(&chunk_query, false).await.unwrap_or_else(|e| {
+            eprintln!("Failed to generate embedding for research archive chunk: {:?}", e);
+            Vec::new()
+        });
+
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let id = uuid::Uuid::new_v4().to_string();
+        let embedding_json = serde_json::to_string(&embedding)?;
+
+        let _lock = get_db_mutex().lock().await;
+        let conn = get_sqlite_connection()?;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO research_archive (id, query, content, source, timestamp, embedding)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, chunk_query, chunk_content, source, timestamp, embedding_json],
+        )?;
+    }
+    Ok(())
+}
+
+pub async fn archive_research_entries(entries: Vec<(String, String, String)>) -> Result<()> {
+    let mut all_chunks = Vec::new();
+    for (query, content, source) in entries {
+        let chunks = chunk_content_by_headings(&query, &content);
+        for (chunk_query, chunk_content) in chunks {
+            all_chunks.push((chunk_query, chunk_content, source.clone()));
+        }
+    }
+
+    if all_chunks.is_empty() {
+        return Ok(());
+    }
+
+    let config = crate::config::loader::load_config().ok();
+    let mode = config.as_ref()
+        .and_then(|c| c.embeddings.as_ref())
+        .map(|e| e.mode.as_str())
+        .unwrap_or("local");
+
+    let mut all_embeddings = Vec::new();
+    for chunk_group in all_chunks.chunks(128) {
+        let queries_to_embed: Vec<String> = chunk_group.iter().map(|(q, _, _)| q.clone()).collect();
+        
+        let embeds = match get_cloud_embeddings_batch(queries_to_embed.clone(), false).await {
+            Ok(res) => res,
+            Err(e) => {
+                if mode == "cloud" || mode == "cloud_only" {
+                    return Err(anyhow::anyhow!("Cloud batch embedding failed and local model fallback is disabled: {:?}", e));
+                }
+                tracing::warn!("Cloud batch embedding failed: {:?}. Falling back to local fastembed.", e);
+                tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>> {
+                    let model_mutex = get_global_model()?;
+                    let mut model = model_mutex.lock().map_err(|e| anyhow!("Failed to lock model Mutex: {:?}", e))?;
+                    
+                    let refs: Vec<&str> = queries_to_embed.iter().map(|s| s.as_str()).collect();
+                    let formatted_refs: Vec<String> = refs.iter().map(|s| format!("passage: {}", s)).collect();
+                    let formatted_slices: Vec<&str> = formatted_refs.iter().map(|s| s.as_str()).collect();
+                    
+                    let embeds = model.embed(formatted_slices, None)?;
+                    Ok(embeds)
+                }).await??
+            }
+        };
+        
+        all_embeddings.extend(embeds);
+    }
+
+    let _lock = get_db_mutex().lock().await;
+    let mut conn = get_sqlite_connection()?;
+    let tx = conn.transaction()?;
+
+    let timestamp = chrono::Utc::now().to_rfc3339();
+
+    {
+        let mut stmt = tx.prepare(
+            "INSERT OR REPLACE INTO research_archive (id, query, content, source, timestamp, embedding)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+        )?;
+
+        for (idx, (chunk_query, chunk_content, source)) in all_chunks.into_iter().enumerate() {
+            let embedding = &all_embeddings[idx];
+            let id = uuid::Uuid::new_v4().to_string();
+            let embedding_json = serde_json::to_string(embedding)?;
+
+            stmt.execute(params![
+                id,
+                chunk_query,
+                chunk_content,
+                source,
+                timestamp,
+                embedding_json
+            ])?;
+        }
+    }
+
+    tx.commit()?;
+    Ok(())
+}
+
+
+pub async fn search_research_entries(query: &str, top_k: usize) -> Result<Value> {
+    let query_embed = get_embedding(query, true).await.unwrap_or_default();
+    let query_lower = query.to_lowercase();
+
+    let _lock = get_db_mutex().lock().await;
+    let conn = get_sqlite_connection()?;
+
+    let mut stmt = conn.prepare("SELECT id, query, content, source, timestamp, embedding FROM research_archive")?;
+    let rows = stmt.query_map([], |row| {
+        let embedding_str: String = row.get(5)?;
+        let embedding: Vec<f32> = serde_json::from_str(&embedding_str).unwrap_or_default();
+        Ok(json!({
+            "id": row.get::<_, String>(0)?,
+            "query": row.get::<_, String>(1)?,
+            "content": row.get::<_, String>(2)?,
+            "source": row.get::<_, String>(3)?,
+            "timestamp": row.get::<_, String>(4)?,
+            "embedding": embedding,
+        }))
+    })?;
+
+    let mut scored_results = Vec::new();
+    for entry in rows.flatten() {
+        let entry_query = entry["query"].as_str().unwrap_or_default();
+        let entry_content = entry["content"].as_str().unwrap_or_default();
+        let entry_embed: Vec<f32> = serde_json::from_value(entry["embedding"].clone()).unwrap_or_default();
+
+        let sim = if !query_embed.is_empty() && !entry_embed.is_empty() {
+            cosine_similarity(&query_embed, &entry_embed)
+        } else {
+            0.0
+        };
+
+        let query_lower_entry = entry_query.to_lowercase();
+        let content_lower_entry = entry_content.to_lowercase();
+        let keyword_match = query_lower_entry.contains(&query_lower) || content_lower_entry.contains(&query_lower) || query_lower.contains(&query_lower_entry);
+
+        let final_score = if keyword_match {
+            sim * 0.7 + 0.3
+        } else {
+            sim * 0.7
+        };
+
+        if final_score > 0.15 || keyword_match {
+            scored_results.push((final_score, entry));
+        }
+    }
+
+    scored_results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let selected: Vec<Value> = scored_results.into_iter()
+        .take(top_k)
+        .map(|(score, mut entry)| {
+            if let Some(obj) = entry.as_object_mut() {
+                obj.insert("score".to_string(), json!(score));
+                obj.remove("embedding");
+            }
+            entry
+        })
+        .collect();
+
+    Ok(Value::Array(selected))
+}
+
+pub async fn log_interaction(session_key: &str, query: &str) -> Result<String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let _lock = get_db_mutex().lock().await;
+    let conn = get_sqlite_connection()?;
+    conn.execute(
+        "INSERT INTO interaction_history (id, session_key, query, timestamp, success, errors)
+         VALUES (?1, ?2, ?3, ?4, 1, NULL)",
+        params![id, session_key, query, timestamp],
+    )?;
+    Ok(id)
+}
+
+pub async fn update_interaction_errors(id: &str, errors: &str) -> Result<()> {
+    let _lock = get_db_mutex().lock().await;
+    let conn = get_sqlite_connection()?;
+    conn.execute(
+        "UPDATE interaction_history SET success = 0, errors = ?1 WHERE id = ?2",
+        params![errors, id],
+    )?;
+    Ok(())
+}
+
+pub async fn get_recent_interactions(limit: usize) -> Result<Vec<Value>> {
+    let _lock = get_db_mutex().lock().await;
+    let conn = get_sqlite_connection()?;
+    let mut stmt = conn.prepare("SELECT query, timestamp, success, errors FROM interaction_history ORDER BY timestamp DESC LIMIT ?1")?;
+    let rows = stmt.query_map(params![limit as i64], |row| {
+        Ok(json!({
+            "query": row.get::<_, String>(0)?,
+            "timestamp": row.get::<_, String>(1)?,
+            "success": row.get::<_, i64>(2)? == 1,
+            "errors": row.get::<_, Option<String>>(3)?,
+        }))
+    })?;
+
+    let mut results = Vec::new();
+    for r in rows.flatten() {
+        results.push(r);
+    }
+    Ok(results)
+}
+
+// 4. ArchiveResearchTool
+pub struct ArchiveResearchTool;
+
+#[async_trait::async_trait]
+impl Tool for ArchiveResearchTool {
+    fn name(&self) -> &str {
+        "archive_research"
+    }
+
+    fn description(&self) -> &str {
+        "Archive successful research results (e.g., scrape content, web searches, codebase mappings) to the local persistent knowledge base cache."
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The query, search topic, or file path describing the research."
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The full plain text content or findings to archive."
+                },
+                "source": {
+                    "type": "string",
+                    "description": "The source of the research content (e.g. 'web_fetch: URL', 'web_search', 'local_file')."
+                }
+            },
+            "required": ["query", "content", "source"]
+        })
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let query = arguments.get("query").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
+        let content = arguments.get("content").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'content' parameter"))?;
+        let source = arguments.get("source").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'source' parameter"))?;
+
+        archive_research_entry(query, content, source).await?;
+
+        Ok(json!({
+            "status": "success",
+            "message": "Research content archived successfully to the local knowledge base."
+        }))
+    }
+}
+
+// 5. SearchResearchTool
+pub struct SearchResearchTool;
+
+#[async_trait::async_trait]
+impl Tool for SearchResearchTool {
+    fn name(&self) -> &str {
+        "search_research"
+    }
+
+    fn description(&self) -> &str {
+        "Search the local persistent research archive (knowledge base) using semantic similarity and keyword matching before attempting external web searches or page scraping."
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The query or search term to look up in the archive (e.g. error message, library docs, command usage)."
+                },
+                "top_k": {
+                    "type": "integer",
+                    "description": "Optional number of top matches to return (default 5)."
+                }
+            },
+            "required": ["query"]
+        })
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let query = arguments.get("query").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
+        let top_k = arguments.get("top_k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+
+        let matches = search_research_entries(query, top_k).await?;
+
+        Ok(json!({
+            "status": "success",
+            "matches": matches
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -776,5 +1549,86 @@ mod tests {
         std::env::remove_var("OPENZ_CONFIG_DIR");
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_research_archive_workflow() -> Result<()> {
+        let _lock = TestLock::acquire();
+        let temp_dir = std::env::temp_dir().join(format!("openz_research_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir)?;
+        std::env::set_var("OPENZ_CONFIG_DIR", &temp_dir);
+
+        let archive_tool = ArchiveResearchTool;
+        let search_tool = SearchResearchTool;
+
+        // 1. Archive some mock web research data
+        let res = archive_tool.call(&json!({
+            "query": "Rust actix-web tutorial and basic examples",
+            "content": "To set up actix-web in Rust, add actix-web = \"4\" to Cargo.toml. Then use HttpServer::new and App::new.",
+            "source": "web_fetch: https://actix.rs/docs/"
+        })).await?;
+        assert_eq!(res["status"], "success");
+
+        // 2. Search for the research data
+        let res = search_tool.call(&json!({
+            "query": "actix-web examples",
+            "top_k": 1
+        })).await?;
+        assert_eq!(res["status"], "success");
+        let matches = res["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0]["content"].as_str().unwrap().contains("To set up actix-web"));
+        assert!(matches[0]["source"].as_str().unwrap().contains("actix.rs"));
+
+        // Cleanup
+        std::env::remove_var("OPENZ_CONFIG_DIR");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_interaction_history_workflow() -> Result<()> {
+        let _lock = TestLock::acquire();
+        let temp_dir = std::env::temp_dir().join(format!("openz_interact_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir)?;
+        std::env::set_var("OPENZ_CONFIG_DIR", &temp_dir);
+
+        // 1. Log interaction
+        let id = log_interaction("test_session", "build the web UI dashboard").await?;
+        assert!(!id.is_empty());
+
+        // 2. Fetch recent interactions
+        let history = get_recent_interactions(5).await?;
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0]["query"], "build the web UI dashboard");
+        assert_eq!(history[0]["success"], true);
+
+        // 3. Update errors
+        update_interaction_errors(&id, "Cargo build failed with exit status 101").await?;
+        
+        // 4. Verify updated history
+        let history2 = get_recent_interactions(5).await?;
+        assert_eq!(history2.len(), 1);
+        assert_eq!(history2[0]["success"], false);
+        assert_eq!(history2[0]["errors"].as_str().unwrap(), "Cargo build failed with exit status 101");
+
+        // Cleanup
+        std::env::remove_var("OPENZ_CONFIG_DIR");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_chunk_content_by_headings() {
+        let query = "my query";
+        let content = "# Heading 1\nLine 1\nLine 2\n## Heading 2\nLine 3\n--- Sheet: Sheet1 ---\nLine 4";
+        let chunks = chunk_content_by_headings(query, content);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].0, "my query - # Heading 1");
+        assert!(chunks[0].1.contains("Line 1"));
+        assert_eq!(chunks[1].0, "my query - ## Heading 2");
+        assert!(chunks[1].1.contains("Line 3"));
+        assert_eq!(chunks[2].0, "my query - --- Sheet: Sheet1 ---");
+        assert!(chunks[2].1.contains("Line 4"));
     }
 }

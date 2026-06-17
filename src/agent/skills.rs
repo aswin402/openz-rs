@@ -80,9 +80,9 @@ Decompose high-level tasks into discrete, sequential milestones:
 
         ("researcher", "context_hydration", "# Skill: Context Hydration
 
-Compile precise reference contexts from external sources:
-1. Run targeted web searches for libraries or API documentation.
-2. Fetch web content or extract text from PDFs/Word files.
+Compile precise reference contexts from local research archives and external sources:
+1. ALWAYS check the local research archive first using `search_research` to see if the page, path, or output is already cached.
+2. If not found in the local cache or if the data is stale, run targeted web searches or scrape contents.
 3. Consolidate search facts into reference sheets for the parent agent."),
 
         ("architect", "schema_design", "# Skill: Schema Design
@@ -389,6 +389,21 @@ pub fn load_skills_with_profile(profile_name: Option<&str>) -> Result<Vec<Skill>
 }
 
 pub fn archive_stale_skills() -> Result<()> {
+    let check_path = crate::config::resolve_path("~/.openz/last_stale_skills_check.json");
+    if check_path.exists() {
+        if let Ok(content) = fs::read_to_string(&check_path) {
+            if let Ok(timestamp_str) = serde_json::from_str::<String>(&content) {
+                if let Ok(last_checked) = chrono::DateTime::parse_from_rfc3339(&timestamp_str) {
+                    let last_checked_utc = last_checked.with_timezone(&chrono::Utc);
+                    let now = chrono::Utc::now();
+                    if now.signed_duration_since(last_checked_utc) < chrono::Duration::hours(24) {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
     if let Ok(conn) = get_connection() {
         let now = chrono::Utc::now();
         let stale_duration = chrono::Duration::days(30);
@@ -434,6 +449,11 @@ pub fn archive_stale_skills() -> Result<()> {
                 aura_blue, name, color_reset
             ));
         }
+
+        let now_str = chrono::Utc::now().to_rfc3339();
+        if let Ok(serialized) = serde_json::to_string(&now_str) {
+            let _ = fs::write(&check_path, serialized);
+        }
     }
     Ok(())
 }
@@ -448,6 +468,19 @@ pub fn load_relevant_skills_with_profile(user_content: &str, session_messages: &
         return Ok(Vec::new());
     }
 
+    let mut profile_skills = std::collections::HashSet::new();
+    if let Some(prof) = profile_name {
+        if let Ok(conn) = get_connection() {
+            if let Ok(mut stmt) = conn.prepare("SELECT name FROM skills WHERE profile = ?") {
+                if let Ok(rows) = stmt.query_map(params![prof], |r| r.get::<_, String>(0)) {
+                    for name in rows.flatten() {
+                        profile_skills.insert(name);
+                    }
+                }
+            }
+        }
+    }
+
     let mut search_context = user_content.to_lowercase();
     for msg in session_messages.iter().rev().take(3) {
         search_context.push_str(" ");
@@ -456,6 +489,8 @@ pub fn load_relevant_skills_with_profile(user_content: &str, session_messages: &
 
     let mut relevant = Vec::new();
     for skill in all_skills {
+        let is_profile_specific = profile_skills.contains(&skill.name);
+
         let name_words: Vec<&str> = skill.name.split('_').collect();
         let name_match = name_words.iter().any(|word| {
             word.len() > 2 && search_context.contains(word)
@@ -463,7 +498,7 @@ pub fn load_relevant_skills_with_profile(user_content: &str, session_messages: &
 
         let name_exact_match = search_context.contains(&skill.name.to_lowercase());
 
-        if name_match || name_exact_match {
+        if is_profile_specific || name_match || name_exact_match {
             relevant.push(skill);
         }
     }
@@ -472,10 +507,17 @@ pub fn load_relevant_skills_with_profile(user_content: &str, session_messages: &
         if let Ok(conn) = get_connection() {
             let now = chrono::Utc::now().to_rfc3339();
             for skill in &relevant {
-                let _ = conn.execute(
-                    "UPDATE skills SET use_count = use_count + 1, last_used = ?1 WHERE name = ?2",
-                    params![now, skill.name],
-                );
+                if profile_skills.contains(&skill.name) {
+                    let _ = conn.execute(
+                        "UPDATE skills SET use_count = use_count + 1, last_used = ?1 WHERE name = ?2 AND profile = ?3",
+                        params![now, skill.name, profile_name.unwrap_or("")],
+                    );
+                } else {
+                    let _ = conn.execute(
+                        "UPDATE skills SET use_count = use_count + 1, last_used = ?1 WHERE name = ?2 AND profile IS NULL",
+                        params![now, skill.name],
+                    );
+                }
             }
         }
     }
@@ -529,11 +571,19 @@ pub fn save_skill(name: &str, content: &str) -> Result<()> {
 }
 
 pub fn delete_skill(name: &str) -> Result<()> {
+    delete_skill_with_profile(name, None)
+}
+
+pub fn delete_skill_with_profile(name: &str, profile_name: Option<&str>) -> Result<()> {
     let safe_name = name.to_lowercase()
         .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
 
     let conn = get_connection()?;
-    conn.execute("DELETE FROM skills WHERE name = ?1", params![safe_name])?;
+    if let Some(prof) = profile_name {
+        conn.execute("DELETE FROM skills WHERE name = ?1 AND profile = ?2", params![safe_name, prof])?;
+    } else {
+        conn.execute("DELETE FROM skills WHERE name = ?1 AND profile IS NULL", params![safe_name])?;
+    }
 
     let local_path = std::path::Path::new("skills").join(format!("{}.md", safe_name));
     if local_path.exists() {

@@ -1,6 +1,6 @@
 # OpenZ Model Context Protocol (MCP) Integration 🔌🦀
 
-This document describes how `openz` communicates with stdio-based MCP servers and registers their tools dynamically.
+This document describes how `openz` communicates with stdio-based and gRPC-based Model Context Protocol (MCP) servers and registers their tools dynamically.
 
 ---
 
@@ -27,17 +27,17 @@ pub struct McpToolWrapper {
 }
 ```
 
-Since `McpToolWrapper` implements the `Tool` trait, the agent can call external tools exactly like native rust functions.
+Since `McpToolWrapper` implements the `Tool` trait, the agent can call external tools exactly like native Rust functions.
 
 ---
 
 ## 3. Rust-Native Defaults
 
-By default, OpenZ is pre-configured to utilize high-performance, lightweight Rust-native MCP servers compiled directly in the workspace, bypassing Node.js/npx runtimes completely:
-*   **`sequential-thinking`**: `/home/aswin/programming/vscode/myProjects/target/release/mcp-server-sequential-thinking`
-*   **`memory`**: `/home/aswin/programming/vscode/myProjects/target/release/openmemory_rs`
+By default, OpenZ is pre-configured to utilize high-performance, lightweight Rust-native MCP servers resolved at runtime from `~/.cargo/bin/`, bypassing Node.js/npx runtimes completely:
 *   **`office`**: compiled local-first parser (`opendocswork-mcp` under `~/.cargo/bin/`) to extract text and tables from `.docx`, `.xlsx`, and `.pptx` documents.
-*   **`headroom`**: context compression and directory scoping server (`headroom-mcp` under `~/.cargo/bin/`) to optimize context windows dynamically.
+*   **`headroom`**: context compression and directory scoping server (`headroom-mcp` under `~/.cargo/bin/`) to optimize context windows dynamically. Employs `scope_context` to compile hierarchical `AGENTS.md` instructions and `compress_content` / `retrieve_original` for token budget optimizations.
+*   **`sequential-thinking`**: sequential reasoning server (`mcp-server-sequential-thinking` under `~/.cargo/bin/`) to plan and double check execution paths.
+*   **`memory`**: memory graph database (`openmemory_rs` under `~/.cargo/bin/`) for storing semantic entity relationships.
 
 ---
 
@@ -45,7 +45,7 @@ By default, OpenZ is pre-configured to utilize high-performance, lightweight Rus
 
 OpenZ provides a dual-layer management system for MCP configurations:
 1.  **`manage_mcp` tool**: Allows the agent to list, add, remove, enable, or disable server definitions inside `~/.openz/config.json` dynamically.
-2.  **`mcps_manager` subagent**: A protected subagent designed to inspect runtimes (rust/node/python), resolve dependencies, and automatically install/setup new MCP servers on demand.
+2.  **`mcps_manager` subagent**: A protected subagent designed to inspect runtimes (Rust/Node/Python), resolve dependencies, and automatically install/setup new MCP servers on demand.
 
 ---
 
@@ -59,4 +59,3 @@ For servers that natively only support stdio transport (e.g. `database-mcp`, `ch
 2. **Subprocess Management**: Spawns the stdio target server process with private pipes.
 3. **Robust Noise Filtering**: Reads lines from the subprocess's stdout and filters out any non-JSON logs (logging pollution) before sending correct responses back over the gRPC Tonic channel.
 4. **Timeouts & Safety**: Includes connection timeouts and EOF checks to prevent busy loops and indefinite connection hangs.
-
