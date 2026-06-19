@@ -1266,13 +1266,24 @@ impl AgentLoop {
                                             .or_else(|| tc.get("function").and_then(|f| f.get("arguments")));
                                         
                                         if let (Some(name_str), Some(args_val)) = (name, args) {
-                                            prompt_content.push_str(&format!("    - Call tool '{}' with arguments: {}\n", name_str, args_val));
+                                            let args_str = args_val.to_string();
+                                            let args_truncated = if args_str.len() > 1000 {
+                                                format!("{}... [TRUNCATED - {} bytes]", &args_str[..1000], args_str.len() - 1000)
+                                            } else {
+                                                args_str
+                                            };
+                                            prompt_content.push_str(&format!("    - Call tool '{}' with arguments: {}\n", name_str, args_truncated));
                                         }
                                     }
                                 }
                             }
                             if !msg.content.is_empty() {
-                                prompt_content.push_str(&format!("  Response: {}\n", msg.content));
+                                let content_truncated = if msg.content.len() > 2000 {
+                                    format!("{}... [TRUNCATED - {} bytes]", &msg.content[..2000], msg.content.len() - 2000)
+                                } else {
+                                    msg.content.clone()
+                                };
+                                prompt_content.push_str(&format!("  Response: {}\n", content_truncated));
                             }
                         }
                         "tool" => {
@@ -1301,7 +1312,7 @@ impl AgentLoop {
 
                 let settings = crate::providers::GenerationSettings {
                     temperature: 0.1,
-                    max_tokens: 1024,
+                    max_tokens: 4096,
                     reasoning_effort: None,
                 };
 
@@ -1315,13 +1326,32 @@ impl AgentLoop {
                         if let Some(content) = resp.content {
                             let trimmed = content.trim();
                             // Strip markdown code block markers if any (e.g. ```json ... ```)
-                            let clean_json = if trimmed.starts_with("```") {
-                                let lines: Vec<&str> = trimmed.lines().collect();
-                                let start = if lines.get(0).map(|l| l.starts_with("```")).unwrap_or(false) { 1 } else { 0 };
-                                let end = if lines.last().map(|l| l.starts_with("```")).unwrap_or(false) { lines.len() - 1 } else { lines.len() };
-                                lines[start..end].join("\n")
+                            // Strip markdown code block markers robustly (e.g. ```json ... ```)
+                            let clean_json = if let Some(start_idx) = trimmed.find("```json") {
+                                let after_start = &trimmed[start_idx + 7..];
+                                if let Some(end_idx) = after_start.find("```") {
+                                    after_start[..end_idx].trim().to_string()
+                                } else {
+                                    after_start.trim().to_string()
+                                }
+                            } else if let Some(start_idx) = trimmed.find("```") {
+                                let after_start = &trimmed[start_idx + 3..];
+                                if let Some(end_idx) = after_start.find("```") {
+                                    after_start[..end_idx].trim().to_string()
+                                } else {
+                                    after_start.trim().to_string()
+                                }
                             } else {
-                                trimmed.to_string()
+                                // Fallback: find the first '{' and last '}'
+                                if let (Some(first_brace), Some(last_brace)) = (trimmed.find('{'), trimmed.rfind('}')) {
+                                    if first_brace < last_brace {
+                                        trimmed[first_brace..=last_brace].to_string()
+                                    } else {
+                                        trimmed.to_string()
+                                    }
+                                } else {
+                                    trimmed.to_string()
+                                }
                             };
 
                             match serde_json::from_str::<ReviewResponse>(&clean_json) {
