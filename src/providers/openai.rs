@@ -276,10 +276,19 @@ impl LLMProvider for OpenAIProvider {
         let response: OpenAIResponse = response.json().await?;
         let choice = response.choices.first().ok_or_else(|| AgentError::provider("openai", "No choices returned"))?;
         
-        let tool_calls = choice.message.tool_calls.as_ref().map(|calls| {
+        let mut tool_calls: Vec<ToolCallRequest> = choice.message.tool_calls.as_ref().map(|calls| {
             calls.iter().map(|call| {
-                let args_parsed = serde_json::from_str(&call.function.arguments)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                let args_str = &call.function.arguments;
+                let args_parsed = match serde_json::from_str(args_str) {
+                    Ok(parsed) => parsed,
+                    Err(e) => {
+                        tracing::warn!("Failed to parse native tool call arguments JSON: {}. Raw: {}", e, args_str);
+                        let repaired = args_str.replace("\n", "\\n").replace("\r", "\\r");
+                        serde_json::from_str(&repaired).unwrap_or_else(|_| {
+                            serde_json::Value::Object(serde_json::Map::new())
+                        })
+                    }
+                };
                 ToolCallRequest {
                     id: call.id.clone(),
                     name: call.function.name.clone(),
@@ -288,12 +297,87 @@ impl LLMProvider for OpenAIProvider {
             }).collect()
         }).unwrap_or_default();
 
+        let mut content = choice.message.content.clone();
+
+        if tool_calls.is_empty() {
+            if let Some(ref text) = content {
+                let parsed = parse_fallback_tool_calls(text);
+                if !parsed.is_empty() {
+                    tool_calls = parsed;
+                    content = None;
+                }
+            }
+        }
+
         Ok(LLMResponse {
-            content: choice.message.content.clone(),
+            content,
             tool_calls,
             finish_reason: choice.finish_reason.clone().unwrap_or_else(|| "stop".to_string()),
             reasoning_content: choice.message.reasoning_content.clone(),
         })
+    }
+}
+
+pub fn parse_fallback_tool_calls(content: &str) -> Vec<ToolCallRequest> {
+    let mut tool_calls = Vec::new();
+
+    // Look for ```json ... ``` blocks
+    let start_tag = "```json";
+    let end_tag = "```";
+
+    let mut search_str = content;
+    while let Some(start_idx) = search_str.find(start_tag) {
+        let after_start = &search_str[start_idx + start_tag.len()..];
+        if let Some(end_idx) = after_start.find(end_tag) {
+            let json_str = after_start[..end_idx].trim();
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
+                if let Some(tc) = extract_tool_call(&val) {
+                    tool_calls.push(tc);
+                }
+            }
+            search_str = &after_start[end_idx + end_tag.len()..];
+        } else {
+            break;
+        }
+    }
+
+    // If no markdown JSON blocks found, maybe the whole content is raw JSON?
+    if tool_calls.is_empty() {
+        let trimmed = content.trim();
+        if trimmed.starts_with('{') && trimmed.ends_with('}') {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                if let Some(tc) = extract_tool_call(&val) {
+                    tool_calls.push(tc);
+                }
+            }
+        }
+    }
+
+    tool_calls
+}
+
+fn extract_tool_call(val: &serde_json::Value) -> Option<ToolCallRequest> {
+    let name = val.get("name").and_then(|v| v.as_str())
+        .or_else(|| val.get("function").and_then(|v| v.as_str()));
+
+    if let Some(name_str) = name {
+        let uuid = uuid::Uuid::new_v4().to_string();
+        let args = if let Some(args_val) = val.get("arguments").or_else(|| val.get("parameters")) {
+            args_val.clone()
+        } else {
+            // Treat the entire object as arguments, excluding metadata keys
+            let mut map = val.as_object().cloned().unwrap_or_default();
+            map.remove("name");
+            map.remove("function");
+            serde_json::Value::Object(map)
+        };
+        Some(ToolCallRequest {
+            id: format!("call_{}", uuid),
+            name: name_str.to_string(),
+            arguments: args,
+        })
+    } else {
+        None
     }
 }
 

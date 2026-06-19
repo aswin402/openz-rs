@@ -33,6 +33,7 @@ No Makefile; no CI config (GitHub Actions, etc.) present.
 | `subagent` | TUI manager for subagent profiles |
 | `sop list \| instances \| trigger \| resume` | SOP workflow engine |
 | `mcp-bridge --port <N> -- <cmd> [args...]` | gRPC-to-stdio MCP bridge |
+| `logs` | View real-time structured logs in a live TUI viewer |
 | `changelog` | View OpenZ hardware footprint specifications and version release history |
 
 ---
@@ -97,7 +98,10 @@ openz/
 │   │   ├── clipboard.rs    # system clipboard get/set
 │   │   ├── open.rs         # open files/URLs in default app
 │   │   ├── watcher.rs      # file_watcher (background file change monitor)
-│   │   ├── image_generator.rs  # GenerateImageTool (draw shapes/text to PNG)
+│   │   ├── image_generator.rs  # GenerateImageTool (render HTML/CSS/SVG to PNG)
+│   │   ├── html_video.rs   # HtmlToVideoTool (render HTML animation timeline to MP4 via CDP)
+│   │   ├── video.rs        # GenerateVideoTool (render programmatic MP4 via Wavyte API)
+│   │   ├── svg_animator.rs # SvgAnimatorTool (compile animations into SVG)
 │   │   ├── crawl.rs        # CrawlSiteTool (spider-rs multi-threaded crawler)
 │   │   ├── obscura.rs      # ObscuraBrowserTool (headless browser via CDP)
 │   │   ├── doc_reader.rs   # Read PDF, DOCX, XLSX files

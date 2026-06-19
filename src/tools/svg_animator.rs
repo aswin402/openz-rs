@@ -26,7 +26,11 @@ impl SvgElement {
     }
 
     fn attr(mut self, key: &str, val: &str) -> Self {
-        self.attrs.push((key.to_string(), val.to_string()));
+        if let Some(pos) = self.attrs.iter().position(|(k, _)| k == key) {
+            self.attrs[pos].1 = val.to_string();
+        } else {
+            self.attrs.push((key.to_string(), val.to_string()));
+        }
         self
     }
 
@@ -380,6 +384,26 @@ fn parse_element(elem: &Value) -> Option<SvgElement> {
         el = el.attr("id", id);
     }
 
+    // Apply common SVG attributes if provided
+    if let Some(class) = elem.get("class").and_then(|v| v.as_str()) {
+        el = el.attr("class", class);
+    }
+    if let Some(style) = elem.get("style").and_then(|v| v.as_str()) {
+        el = el.attr("style", style);
+    }
+    if let Some(transform) = elem.get("transform").and_then(|v| v.as_str()) {
+        el = el.attr("transform", transform);
+    }
+    if let Some(filter) = elem.get("filter").and_then(|v| v.as_str()) {
+        el = el.attr("filter", filter);
+    }
+    if let Some(clip_path) = elem.get("clip_path").and_then(|v| v.as_str()) {
+        el = el.attr("clip-path", clip_path);
+    }
+    if let Some(mask) = elem.get("mask").and_then(|v| v.as_str()) {
+        el = el.attr("mask", mask);
+    }
+
     // Apply animations
     if let Some(animations) = elem.get("animations").and_then(|v| v.as_array()) {
         for anim in animations {
@@ -393,6 +417,47 @@ fn parse_element(elem: &Value) -> Option<SvgElement> {
 }
 
 fn build_svg_document(args: &Value) -> Result<String> {
+    if let Some(raw) = args.get("raw_svg").and_then(|v| v.as_str()) {
+        let trimmed = raw.trim();
+        if trimmed.starts_with("<?xml") || (trimmed.starts_with("<svg") && trimmed.contains("</svg>")) {
+            return Ok(trimmed.to_string());
+        }
+        
+        let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(400);
+        let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(400);
+        let bg = args.get("background").and_then(|v| v.as_str()).unwrap_or("#ffffff");
+        let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("Generated SVG");
+        let view_box = args.get("viewBox").and_then(|v| v.as_str()).unwrap_or("");
+        let preserve_ar = args.get("preserveAspectRatio").and_then(|v| v.as_str()).unwrap_or("xMidYMid meet");
+        
+        let vb_attr = if view_box.is_empty() {
+            format!("0 0 {} {}", width, height)
+        } else {
+            view_box.to_string()
+        };
+        
+        let mut svg = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="{width}" height="{height}"
+     viewBox="{vb}"
+     preserveAspectRatio="{par}">
+  <title>{title}</title>
+  <rect width="100%" height="100%" fill="{bg}"/>
+"#,
+            width = width,
+            height = height,
+            vb = vb_attr,
+            par = preserve_ar,
+            title = escape_xml(title),
+            bg = bg
+        );
+        svg.push_str(trimmed);
+        svg.push_str("\n</svg>\n");
+        return Ok(svg);
+    }
+
     let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(400);
     let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(400);
     let bg = args
@@ -401,8 +466,7 @@ fn build_svg_document(args: &Value) -> Result<String> {
         .unwrap_or("#ffffff");
     let title = args
         .get("title")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Generated SVG");
+        .and_then(|v| v.as_str()).unwrap_or("Generated SVG");
     let view_box = args
         .get("viewBox")
         .and_then(|v| v.as_str())
@@ -721,16 +785,24 @@ impl Tool for SvgAnimatorTool {
                         "required": ["shape"]
                     }
                 },
+                "raw_svg": {
+                    "type": "string",
+                    "description": "Optional raw SVG elements or complete SVG document string. If provided, allows writing custom code (embedded CSS transitions/animations, paths, gradients, interactive shapes) directly."
+                },
                 "output_path": {
                     "type": "string",
                     "description": "File path to save the generated SVG (default: 'output.svg')"
                 }
             },
-            "required": ["elements"]
+            "required": ["output_path"]
         }"#).unwrap_or_else(|_| json!({"type": "object", "properties": {}}))
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
+        if arguments.get("elements").is_none() && arguments.get("raw_svg").is_none() {
+            return Err(anyhow!("Either 'elements' or 'raw_svg' parameter must be provided."));
+        }
+
         let output_path_str = arguments
             .get("output_path")
             .and_then(|v| v.as_str())
@@ -772,10 +844,14 @@ impl Tool for SvgAnimatorTool {
         Ok(json!({
             "status": "success",
             "output_path": output_path.to_string_lossy(),
-            "message": format!(
-                "Animated SVG successfully created at '{}' with {} element(s) and {} animation(s).",
-                output_path_str, element_count, anim_count
-            ),
+            "message": if arguments.get("raw_svg").is_some() {
+                format!("Raw SVG successfully written and saved to '{}'.", output_path_str)
+            } else {
+                format!(
+                    "Animated SVG successfully created at '{}' with {} element(s) and {} animation(s).",
+                    output_path_str, element_count, anim_count
+                )
+            },
             "size_bytes": svg_content.len(),
             "element_count": element_count,
             "animation_count": anim_count
@@ -887,6 +963,35 @@ mod tests {
 
         let content = fs::read_to_string(&output_file)?;
         assert!(content.contains("stroke-dashoffset"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_create_svg_raw_string() -> Result<()> {
+        let tool = SvgAnimatorTool;
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_svg_raw_test_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir)?;
+        let output_file = temp_dir.join("raw.svg");
+
+        let args = json!({
+            "width": 200,
+            "height": 200,
+            "background": "#ff00ff",
+            "output_path": output_file.to_str().unwrap(),
+            "raw_svg": "<circle cx=\"100\" cy=\"100\" r=\"50\" fill=\"white\" />"
+        });
+
+        let res = tool.call(&args).await?;
+        assert_eq!(res["status"], "success");
+        assert!(output_file.exists());
+
+        let content = fs::read_to_string(&output_file)?;
+        assert!(content.contains("<svg"));
+        assert!(content.contains("fill=\"#ff00ff\""));
+        assert!(content.contains("<circle cx=\"100\""));
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())

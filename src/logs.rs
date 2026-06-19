@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -20,12 +20,9 @@ const WHITE:   &str = "\x1b[38;2;220;220;220m";   // LIGHT_WHITE  — message bo
 const ORANGE:  &str = "\x1b[38;2;255;133;75m";    // warm accent  — DEBUG
 const CYAN:    &str = "\x1b[38;2;137;221;255m";   // AURA_CYAN    — session tag
 
-/// Resolve the default log file path: ~/.openz/openz.log
+/// Resolve the default log file path: ~/.openz/openz.log (or OPENZ_CONFIG_DIR/openz.log)
 pub fn default_log_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".openz")
-        .join("openz.log")
+    crate::config::config_dir().join("openz.log")
 }
 
 /// Which sessions to show.
@@ -241,7 +238,7 @@ fn print_tail(path: &PathBuf, tail: usize, filter: &SessionFilter) -> Result<u64
     let file_len = f.seek(SeekFrom::End(0))?;
     let _ = f.seek(SeekFrom::Start(0));
 
-    let reader = BufReader::new(&f);
+    let reader = BufReader::new(f.take(file_len));
     let all: Vec<String> = reader.lines().map_while(|l| l.ok()).collect();
     let start = all.len().saturating_sub(tail);
 
@@ -262,15 +259,30 @@ fn print_tail(path: &PathBuf, tail: usize, filter: &SessionFilter) -> Result<u64
 
 // ── Follow loop ─────────────────────────────────────────────────────────────
 
+#[cfg(unix)]
+fn get_file_id(metadata: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    metadata.ino()
+}
+
+#[cfg(not(unix))]
+fn get_file_id(_metadata: &std::fs::Metadata) -> u64 {
+    0
+}
+
 async fn follow(path: &PathBuf, mut pos: u64, filter: SessionFilter) -> Result<()> {
-    // Create ctrl_c future once — re-creating it inside the loop on every
-    // iteration leaks OS signal handler registrations and can cause select!
-    // to stall after many iterations.
     let ctrl_c = tokio::signal::ctrl_c();
     tokio::pin!(ctrl_c);
 
-    let mut interval = tokio::time::interval(Duration::from_millis(200));
+    let mut interval = tokio::time::interval(Duration::from_millis(100));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    let mut current_file_id = None;
+    if let Ok(metadata) = std::fs::metadata(path) {
+        current_file_id = Some(get_file_id(&metadata));
+    }
+
+    let mut buffer = Vec::new();
 
     loop {
         tokio::select! {
@@ -280,30 +292,48 @@ async fn follow(path: &PathBuf, mut pos: u64, filter: SessionFilter) -> Result<(
                 break;
             }
             _ = interval.tick() => {
-                let Ok(mut f) = File::open(path) else {
-                    continue;
-                };
-
-                let file_len = f.seek(SeekFrom::End(0)).unwrap_or(0);
-
-                // Log rotation detection
-                if file_len < pos {
-                    println!("\n  {GOLD}── log rotated, reading from start ──{RESET}\n");
-                    pos = 0;
+                if let Ok(mut f) = File::open(path) {
+                    if let Ok(metadata) = f.metadata() {
+                        let len = metadata.len();
+                        let file_id = get_file_id(&metadata);
+                        
+                        let is_new_file = match current_file_id {
+                            Some(id) => id != file_id,
+                            None => true,
+                        };
+                        
+                        if len < pos || is_new_file {
+                            if is_new_file && current_file_id.is_some() {
+                                println!("\n  {GOLD}── log file recreated, reading from start ──{RESET}\n");
+                            } else if len < pos {
+                                println!("\n  {GOLD}── log rotated/truncated, reading from start ──{RESET}\n");
+                            }
+                            pos = 0;
+                            buffer.clear();
+                            current_file_id = Some(file_id);
+                        }
+                        
+                        if let Ok(_) = f.seek(SeekFrom::Start(pos)) {
+                            let mut temp_buf = Vec::new();
+                            if f.read_to_end(&mut temp_buf).is_ok() && !temp_buf.is_empty() {
+                                pos += temp_buf.len() as u64;
+                                buffer.extend_from_slice(&temp_buf);
+                                
+                                if let Some(last_newline_idx) = buffer.iter().rposition(|&b| b == b'\n') {
+                                    let complete_bytes = &buffer[..=last_newline_idx];
+                                    let text = String::from_utf8_lossy(complete_bytes);
+                                    for line in text.lines() {
+                                        print_line_filtered(line, &filter);
+                                    }
+                                    
+                                    // Keep only the incomplete trailing bytes in the buffer
+                                    buffer = buffer[last_newline_idx + 1..].to_vec();
+                                    let _ = std::io::stdout().flush();
+                                }
+                            }
+                        }
+                    }
                 }
-
-                if file_len == pos {
-                    continue;
-                }
-
-                let _ = f.seek(SeekFrom::Start(pos));
-                let reader = BufReader::new(&f);
-
-                for line in reader.lines().map_while(|l| l.ok()) {
-                    print_line_filtered(&line, &filter);
-                }
-
-                pos = f.seek(SeekFrom::End(0)).unwrap_or(pos);
             }
         }
     }

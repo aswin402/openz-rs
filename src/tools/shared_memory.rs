@@ -467,14 +467,16 @@ pub async fn get_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
         .map(|e| e.mode.as_str())
         .unwrap_or("local");
 
-    let cloud_res = get_cloud_embedding(text, is_query).await;
-    match cloud_res {
-        Ok(vec) => return Ok(vec),
-        Err(e) => {
-            if mode == "cloud" || mode == "cloud_only" {
-                return Err(anyhow::anyhow!("Cloud embedding failed and local model fallback is disabled: {:?}", e));
+    if mode != "local" {
+        let cloud_res = get_cloud_embedding(text, is_query).await;
+        match cloud_res {
+            Ok(vec) => return Ok(vec),
+            Err(e) => {
+                if mode == "cloud_only" {
+                    return Err(anyhow::anyhow!("Cloud embedding failed and local model fallback is disabled: {:?}", e));
+                }
+                tracing::warn!("Cloud embedding failed: {:?}. Falling back to local fastembed.", e);
             }
-            tracing::warn!("Cloud embedding failed: {:?}. Falling back to local fastembed.", e);
         }
     }
 
@@ -1090,13 +1092,24 @@ pub async fn archive_research_entries(entries: Vec<(String, String, String)>) ->
     for chunk_group in all_chunks.chunks(128) {
         let queries_to_embed: Vec<String> = chunk_group.iter().map(|(q, _, _)| q.clone()).collect();
         
-        let embeds = match get_cloud_embeddings_batch(queries_to_embed.clone(), false).await {
-            Ok(res) => res,
-            Err(e) => {
-                if mode == "cloud" || mode == "cloud_only" {
-                    return Err(anyhow::anyhow!("Cloud batch embedding failed and local model fallback is disabled: {:?}", e));
+        let mut embeds = None;
+        if mode != "local" {
+            match get_cloud_embeddings_batch(queries_to_embed.clone(), false).await {
+                Ok(res) => {
+                    embeds = Some(res);
                 }
-                tracing::warn!("Cloud batch embedding failed: {:?}. Falling back to local fastembed.", e);
+                Err(e) => {
+                    if mode == "cloud_only" {
+                        return Err(anyhow::anyhow!("Cloud batch embedding failed and local model fallback is disabled: {:?}", e));
+                    }
+                    tracing::warn!("Cloud batch embedding failed: {:?}. Falling back to local fastembed.", e);
+                }
+            }
+        }
+
+        let embeds = match embeds {
+            Some(res) => res,
+            None => {
                 tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>> {
                     let model_mutex = get_global_model()?;
                     let mut model = model_mutex.lock().map_err(|e| anyhow!("Failed to lock model Mutex: {:?}", e))?;

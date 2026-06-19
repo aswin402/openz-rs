@@ -217,3 +217,4 @@ pub mod video;
 pub mod sop;
 pub mod svg_animator;
 pub mod compiler_auto_heal;
+pub mod html_video;

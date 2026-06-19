@@ -169,74 +169,128 @@ impl WebSearchTool {
         }
 
         // 3. Fallback to DuckDuckGo scraping
+        let mut search_results = Vec::new();
+        let mut ddg_success = false;
+
         let res = self.client.get("https://html.duckduckgo.com/html/")
             .query(&[("q", query)])
             .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .send()
-            .await?;
+            .await;
 
-        if !res.status().is_success() {
-            return Err(anyhow!("Search request failed with HTTP {}", res.status()));
+        if let Ok(response) = res {
+            if response.status().is_success() {
+                if let Ok(html_content) = response.text().await {
+                    let document = Html::parse_document(&html_content);
+
+                    // Select search results
+                    if let (Ok(result_selector), Ok(title_selector), Ok(snippet_selector)) = (
+                        Selector::parse(".result"),
+                        Selector::parse(".result__title .result__a"),
+                        Selector::parse(".result__snippet")
+                    ) {
+                        for element in document.select(&result_selector) {
+                            let title = element.select(&title_selector)
+                                .next()
+                                .map(|e| e.text().collect::<String>().trim().to_string())
+                                .unwrap_or_default();
+
+                            let href = element.select(&title_selector)
+                                .next()
+                                .and_then(|e| e.value().attr("href"))
+                                .map(|s| s.to_string())
+                                .unwrap_or_default();
+
+                            let snippet = element.select(&snippet_selector)
+                                .next()
+                                .map(|e| e.text().collect::<String>().trim().to_string())
+                                .unwrap_or_default();
+
+                            if !title.is_empty() && !href.is_empty() {
+                                // DuckDuckGo redirects URLs inside href (e.g. //duckduckgo.com/l/?uddg=URL)
+                                // We clean it up by extracting uddg parameter if present
+                                let clean_url = if href.contains("uddg=") {
+                                    if let Some(pos) = href.find("uddg=") {
+                                        let raw_url = &href[pos + 5..];
+                                        percent_encoding::percent_decode_str(raw_url)
+                                            .decode_utf8_lossy()
+                                            .into_owned()
+                                    } else {
+                                        href
+                                    }
+                                } else if href.starts_with("//") {
+                                    format!("https:{}", href)
+                                } else {
+                                    href
+                                };
+
+                                // Filter out external parameters after URL if there are any
+                                let clean_url = if let Some(pos) = clean_url.find("&rut=") {
+                                    clean_url[..pos].to_string()
+                                } else {
+                                    clean_url
+                                };
+
+                                search_results.push(json!({
+                                    "title": title,
+                                    "url": clean_url,
+                                    "snippet": snippet
+                                }));
+                            }
+                        }
+                        if !search_results.is_empty() {
+                            ddg_success = true;
+                        }
+                    }
+                }
+            }
         }
 
-        let html_content = res.text().await?;
-        let document = Html::parse_document(&html_content);
+        // 4. Try Mojeek scraping if DuckDuckGo fails or returns no results
+        if !ddg_success {
+            let res = self.client.get("https://www.mojeek.com/search")
+                .query(&[("q", query)])
+                .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .send()
+                .await;
 
-        // Select search results
-        let result_selector = Selector::parse(".result").map_err(|e| anyhow!("Invalid selector: {:?}", e))?;
-        let title_selector = Selector::parse(".result__title .result__a").map_err(|e| anyhow!("Invalid selector: {:?}", e))?;
-        let snippet_selector = Selector::parse(".result__snippet").map_err(|e| anyhow!("Invalid selector: {:?}", e))?;
+            if let Ok(response) = res {
+                if response.status().is_success() {
+                    if let Ok(html_content) = response.text().await {
+                        let document = Html::parse_document(&html_content);
+                        if let (Ok(li_selector), Ok(title_selector), Ok(snippet_selector)) = (
+                            Selector::parse("li"),
+                            Selector::parse("a.title"),
+                            Selector::parse("p.s")
+                        ) {
+                            for element in document.select(&li_selector) {
+                                let title_node = element.select(&title_selector).next();
+                                let snippet_node = element.select(&snippet_selector).next();
 
-        let mut search_results = Vec::new();
+                                if let Some(tn) = title_node {
+                                    let title = tn.text().collect::<String>().trim().to_string();
+                                    let href = tn.value().attr("href").map(|s| s.to_string()).unwrap_or_default();
+                                    let snippet = snippet_node
+                                        .map(|e| e.text().collect::<String>().trim().to_string())
+                                        .unwrap_or_default();
 
-        for element in document.select(&result_selector) {
-            let title = element.select(&title_selector)
-                .next()
-                .map(|e| e.text().collect::<String>().trim().to_string())
-                .unwrap_or_default();
-
-            let href = element.select(&title_selector)
-                .next()
-                .and_then(|e| e.value().attr("href"))
-                .map(|s| s.to_string())
-                .unwrap_or_default();
-
-            let snippet = element.select(&snippet_selector)
-                .next()
-                .map(|e| e.text().collect::<String>().trim().to_string())
-                .unwrap_or_default();
-
-            if !title.is_empty() && !href.is_empty() {
-                // DuckDuckGo redirects URLs inside href (e.g. //duckduckgo.com/l/?uddg=URL)
-                // We clean it up by extracting uddg parameter if present
-                let clean_url = if href.contains("uddg=") {
-                    if let Some(pos) = href.find("uddg=") {
-                        let raw_url = &href[pos + 5..];
-                        percent_encoding::percent_decode_str(raw_url)
-                            .decode_utf8_lossy()
-                            .into_owned()
-                    } else {
-                        href
+                                    if !title.is_empty() && !href.is_empty() {
+                                        search_results.push(json!({
+                                            "title": title,
+                                            "url": href,
+                                            "snippet": snippet
+                                        }));
+                                    }
+                                }
+                            }
+                        }
                     }
-                } else if href.starts_with("//") {
-                    format!("https:{}", href)
-                } else {
-                    href
-                };
-
-                // Filter out external parameters after URL if there are any
-                let clean_url = if let Some(pos) = clean_url.find("&rut=") {
-                    clean_url[..pos].to_string()
-                } else {
-                    clean_url
-                };
-
-                search_results.push(json!({
-                    "title": title,
-                    "url": clean_url,
-                    "snippet": snippet
-                }));
+                }
             }
+        }
+
+        if search_results.is_empty() {
+            return Err(anyhow!("All web search backends (Tavily, Exa, DuckDuckGo, Mojeek) failed or returned no results."));
         }
 
         Ok(Value::Array(search_results))
@@ -251,6 +305,19 @@ mod tests {
     async fn test_web_search() -> Result<()> {
         let tool = WebSearchTool::new();
         assert_eq!(tool.name(), "web_search");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_web_search_query() -> Result<()> {
+        let tool = WebSearchTool::new();
+        let args = json!({ "query": "Rust programming language" });
+        let res = tool.call(&args).await;
+        assert!(res.is_ok());
+        let val = res.unwrap();
+        assert!(val.is_array());
+        let arr = val.as_array().unwrap();
+        assert!(!arr.is_empty(), "Search results should not be empty");
         Ok(())
     }
 }

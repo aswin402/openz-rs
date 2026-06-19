@@ -1,7 +1,6 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use std::process::Command;
 use crate::providers::{LLMProvider, GenerationSettings};
 use crate::agent::style::colors::{AURA_GOLD, EMERALD_GREEN, COLOR_RESET};
 use std::sync::Arc;
@@ -16,33 +15,35 @@ impl CargoManagerTool {
     }
 }
 
-fn run_cargo_cmd(action: &str, cwd: &Option<String>) -> Result<std::process::Output> {
-    let mut cmd = Command::new("cargo");
+async fn run_cargo_cmd(action: &str, cwd: &Option<String>) -> Result<std::process::Output> {
+    let mut std_cmd = std::process::Command::new("cargo");
 
     if let Some(ref cwd_str) = cwd {
         let path = crate::config::loader::resolve_path(cwd_str);
-        cmd.current_dir(path);
+        std_cmd.current_dir(path);
     } else {
-        crate::config::loader::set_command_cwd(&mut cmd);
+        crate::config::loader::set_command_cwd(&mut std_cmd);
     }
 
     match action {
         "build" => {
-            cmd.arg("build");
+            std_cmd.arg("build");
         }
         "test" => {
-            cmd.arg("test");
+            std_cmd.arg("test");
         }
         "clippy" => {
-            cmd.args(&["clippy", "--message-format=json"]);
+            std_cmd.args(&["clippy", "--message-format=json"]);
         }
         "fmt" => {
-            cmd.args(&["fmt", "--", "--check"]);
+            std_cmd.args(&["fmt", "--", "--check"]);
         }
         _ => return Err(anyhow!("Unsupported cargo action: {}", action)),
     }
 
-    Ok(cmd.output()?)
+    let mut tokio_cmd = tokio::process::Command::from(std_cmd);
+    tokio_cmd.kill_on_drop(true);
+    Ok(tokio_cmd.output().await?)
 }
 
 #[async_trait::async_trait]
@@ -83,7 +84,7 @@ impl Tool for CargoManagerTool {
         let cwd = arguments.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string());
         let self_heal = arguments.get("self_heal").and_then(|v| v.as_bool()).unwrap_or(true);
 
-        let mut output = run_cargo_cmd(action, &cwd)?;
+        let mut output = run_cargo_cmd(action, &cwd).await?;
         let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -192,7 +193,7 @@ impl Tool for CargoManagerTool {
                                                 EMERALD_GREEN, target_file, COLOR_RESET
                                             );
                                             // Re-run cargo build
-                                            output = run_cargo_cmd(action, &cwd)?;
+                                            output = run_cargo_cmd(action, &cwd).await?;
                                             stdout = String::from_utf8_lossy(&output.stdout).to_string();
                                             stderr = String::from_utf8_lossy(&output.stderr).to_string();
                                         }

@@ -28,12 +28,37 @@ async fn main() -> anyhow::Result<()> {
             })
     };
 
-    tracing_subscriber::fmt()
+    use tracing_subscriber::prelude::*;
+
+    let is_agent = std::env::args().any(|arg| arg == "agent");
+
+    let file_layer = tracing_subscriber::fmt::layer()
         .with_writer(make_writer)
         .with_ansi(false)       // no ANSI codes in the log file
         .with_target(true)      // include module path for clean parsing in `openz logs`
-        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE) // no ENTER/EXIT noise
-        .init();
+        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE); // no ENTER/EXIT noise
+
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    if is_agent {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(file_layer)
+            .init();
+    } else {
+        let stderr_layer = tracing_subscriber::fmt::layer()
+            .with_writer(std::io::stderr)
+            .with_ansi(true)        // enable ANSI colors on stderr
+            .with_target(true)
+            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
+
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(file_layer)
+            .with(stderr_layer)
+            .init();
+    }
 
     openz::cli::run_cli().await
 }

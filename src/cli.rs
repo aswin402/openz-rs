@@ -137,7 +137,7 @@ pub enum Command {
         path: Option<std::path::PathBuf>,
 
         /// Number of historical lines to load on startup
-        #[arg(long, short, default_value = "200")]
+        #[arg(long, short, default_value = "0")]
         tail: usize,
 
         /// Filter log output to a specific session key prefix.
@@ -189,7 +189,7 @@ pub enum ChannelAction {
     /// Stream live logs for this channel only
     Logs {
         /// Number of historical lines to load on startup
-        #[arg(long, short, default_value = "200")]
+        #[arg(long, short, default_value = "0")]
         tail: usize,
     },
 }
@@ -354,7 +354,13 @@ async fn handle_changelog() -> Result<()> {
 
     println!("{bold}📅 Version Release History:{reset}", bold = COLOR_BOLD, reset = COLOR_RESET);
     
-    println!("  {green}[v0.0.12] - Current Release{reset}", green = AURA_GREEN, reset = COLOR_RESET);
+    println!("  {green}[v0.0.13] - Current Release{reset}", green = AURA_GREEN, reset = COLOR_RESET);
+    println!("    • Configured separate tracing-subscriber layers to prevent ANSI escape code log pollution.");
+    println!("    • Aligned default log path resolution with OPENZ_CONFIG_DIR customization.");
+    println!("    • Changed logs tail default value to 0 to only show real-time stream logs by default.");
+    println!("    • Corrected double caret typo in context compactor backtrace regex.");
+    
+    println!("  {slate}[v0.0.12]{reset}", slate = AURA_SLATE, reset = COLOR_RESET);
     println!("    • Made the OpenZ agent system prompt aware of its creator (Aswin), inspirations, specifications, features, and `changelog` command.");
     println!("    • Updated README.md documentation for the `changelog` command.");
     println!("    • Staged and committed all outstanding code changes and version bump to GitHub.");
@@ -570,6 +576,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::template_compiler::CompileTemplateTool));
     registry.register(std::sync::Arc::new(crate::tools::mermaid::MermaidRendererTool));
     registry.register(std::sync::Arc::new(crate::tools::video::VideoGeneratorTool));
+    registry.register(std::sync::Arc::new(crate::tools::html_video::HtmlToVideoTool));
     registry.register(std::sync::Arc::new(crate::tools::svg_animator::SvgAnimatorTool));
     registry.register(std::sync::Arc::new(crate::tools::sop::TriggerSopTool { config: config.clone() }));
     registry.register(std::sync::Arc::new(crate::tools::compiler_auto_heal::CompilerAutoHealTool {

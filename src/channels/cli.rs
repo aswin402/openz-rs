@@ -1549,6 +1549,11 @@ impl CliChannel {
                             ],
                         },
                         ProviderModels {
+                            name: "ollama_local",
+                            display: "Ollama Local (Auto-Start)",
+                            models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"],
+                        },
+                        ProviderModels {
                             name: "ollama",
                             display: "Ollama (5)",
                             models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"],
@@ -1703,6 +1708,9 @@ impl CliChannel {
                                 continue;
                             }
                             let prov_info = filtered_providers[selected_idx];
+                            if prov_info.name == "ollama_local" {
+                                crate::providers::ollama_manager::ensure_local_ollama(&config);
+                            }
                             
                             use std::io::Write;
                             print!("{}◇ Fetching models for {}...{}", AURA_SLATE, prov_info.display, COLOR_RESET);

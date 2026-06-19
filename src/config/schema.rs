@@ -542,6 +542,9 @@ impl Default for Config {
 
 impl Config {
     pub fn is_provider_configured(&self, provider_name: &str) -> bool {
+        if provider_name == "ollama_local" {
+            return true;
+        }
         let p_opt = match provider_name {
             "anthropic" => &self.providers.anthropic,
             "openai" => &self.providers.openai,

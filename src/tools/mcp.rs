@@ -573,12 +573,29 @@ pub async fn run_mcp_bridge(
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()?;
 
     let stdin = child.stdin.take().ok_or_else(|| anyhow!("Failed to open child stdin"))?;
     let stdout = child.stdout.take().ok_or_else(|| anyhow!("Failed to open child stdout"))?;
+    let stderr = child.stderr.take().ok_or_else(|| anyhow!("Failed to open child stderr"))?;
+
+    let cmd_log = command.to_string();
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr);
+        let mut line = String::new();
+        while let Ok(n) = reader.read_line(&mut line).await {
+            if n == 0 {
+                break;
+            }
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                tracing::warn!("[MCP Stderr - {}] {}", cmd_log, trimmed);
+            }
+            line.clear();
+        }
+    });
 
     let senders: Arc<Mutex<std::collections::HashMap<i64, tokio::sync::oneshot::Sender<Value>>>> =
         Arc::new(Mutex::new(std::collections::HashMap::new()));

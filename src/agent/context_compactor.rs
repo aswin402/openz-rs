@@ -56,7 +56,7 @@ pub fn compress_logs(raw_logs: &str) -> String {
     let mut error_count = 0;
     let mut is_backtrace = false;
 
-    let re_backtrace_line = Regex::new(r"^\s*at\s+|^^\s*\d+:\s+").unwrap();
+    let re_backtrace_line = Regex::new(r"^\s*at\s+|^\s*\d+:\s+").unwrap();
     let re_rust_backtrace = Regex::new(r"stack backtrace:|backtrace::").unwrap();
     let re_cargo_warning = Regex::new(r"(?i)warning:").unwrap();
     let re_cargo_error = Regex::new(r"(?i)error\[E\d+\]:|error:").unwrap();

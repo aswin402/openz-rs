@@ -53,7 +53,8 @@ OpenZ packages a comprehensive suite of local tools for file manipulation, syste
 ### Visualization & Graphics Tools
 *   **`generate_mermaid`** (`src/tools/mermaid.rs`): Renders 23+ diagram types (flowcharts, sequence diagrams, mindmaps, class diagrams) directly to SVG using a pure-Rust parser/renderer (`mermaid-rs-renderer`).
 *   **`generate_video`** (`src/tools/video.rs`): Generates simple, clean MP4 videos from programmatic composition timelines specified in JSON (using `wavyte`).
-*   **`image_generator`** (`src/tools/image_generator.rs`): Programmatic drawing tool to output custom PNG shapes, lines, and text.
+*   **`generate_image`** (`src/tools/image_generator.rs`): Generates premium, high-fidelity PNG images from HTML/CSS, local files, or online URLs using headless Chromium. Supports custom CSS injection, selector cropping, and Retina resolution scale configurations.
+*   **`html_to_video`** (`src/tools/html_video.rs`): Renders high-fidelity timeline-based MP4 videos from HTML/CSS/JS templates frame-by-frame using headless Chrome and FFmpeg (similar to Remotion).
 
 ### Subagent & Workflow Tools
 For details on subagent execution modes, workspace optimizations, and fallback resolution, see the [Subagents Documentation](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/subagents.md).

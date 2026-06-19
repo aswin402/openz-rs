@@ -34,7 +34,8 @@ pub enum ContentPart {
 }
 
 pub async fn parse_multimodal_content(text: &str) -> Vec<ContentPart> {
-    let re = regex::Regex::new(r"!\[.*?\]\((.*?)\)").unwrap();
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"!\[.*?\]\((.*?)\)").unwrap());
     let mut parts = Vec::new();
     let mut last_index = 0;
 
@@ -188,6 +189,7 @@ pub mod openai;
 pub mod anthropic;
 pub mod resolver;
 pub mod circuit_breaker;
+pub mod ollama_manager;
 
 #[cfg(test)]
 pub mod mock;

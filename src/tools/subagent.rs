@@ -751,6 +751,9 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
     if model_lower.starts_with("openrouter/") {
         provider_name = "openrouter".to_string();
         clean_model = &model["openrouter/".len()..];
+    } else if model_lower.starts_with("ollama_local/") {
+        provider_name = "ollama_local".to_string();
+        clean_model = &model["ollama_local/".len()..];
     } else if model_lower.starts_with("ollama/") {
         provider_name = "ollama".to_string();
         clean_model = &model["ollama/".len()..];
@@ -879,6 +882,8 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
             } else {
                 provider_name = "mistral".to_string();
             }
+        } else if model_lower.contains("ollama_local") {
+            provider_name = "ollama_local".to_string();
         } else if model_lower.contains("ollama") {
             provider_name = "ollama".to_string();
         } else {
@@ -953,6 +958,9 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
             let base = p.and_then(|x| x.api_base.clone())
                 .unwrap_or_else(|| "https://api.groq.com/openai/v1".to_string());
             (key, base)
+        }
+        "ollama_local" => {
+            (String::new(), "http://localhost:11434/v1".to_string())
         }
         "ollama" => {
             let p = config.providers.ollama.as_ref();
@@ -1034,7 +1042,7 @@ pub fn build_provider_for_model(config: &Config, model: &str) -> Result<Arc<dyn 
     let mut final_api_base = api_base;
     let mut final_model = clean_model.to_string();
 
-    if final_provider_name != "ollama" && final_api_key.is_empty() {
+    if final_provider_name != "ollama" && final_provider_name != "ollama_local" && final_api_key.is_empty() {
         let has_openrouter = config.providers.openrouter.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENROUTER_API_KEY").is_ok();
         let has_opencode_zen = config.providers.opencode_zen.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENCODE_ZEN_API_KEY").is_ok();
 

@@ -328,6 +328,11 @@ impl FindFilesTool {
     }
 
     fn walk_and_find(dir: &std::path::Path, re: &regex::Regex, results: &mut Vec<String>) -> Result<()> {
+        if let Ok(metadata) = dir.symlink_metadata() {
+            if metadata.file_type().is_symlink() {
+                return Ok(());
+            }
+        }
         if results.len() >= 1000 {
             return Ok(());
         }
@@ -531,9 +536,18 @@ impl Tool for ZenflowEditTool {
 
             if let Ok(resp) = self.provider.chat(system_prompt, &messages, &[], &settings).await {
                 if let Some(healed_content) = resp.content {
-                    let cleaned = healed_content.trim().to_string();
-                    if !cleaned.is_empty() {
-                        fs::write(&path, &cleaned)?;
+                    let mut cleaned = healed_content.trim();
+                    if cleaned.starts_with("```") {
+                        if let Some(pos) = cleaned.find('\n') {
+                            cleaned = &cleaned[pos+1..];
+                        }
+                    }
+                    if cleaned.ends_with("```") {
+                        cleaned = &cleaned[..cleaned.len() - 3].trim();
+                    }
+                    let cleaned_str = cleaned.trim().to_string();
+                    if !cleaned_str.is_empty() {
+                        fs::write(&path, &cleaned_str)?;
                         if let Ok((h_status, h_output)) = run_cmd(compile_cmd) {
                             status = h_status;
                             output_str = h_output;

@@ -82,6 +82,8 @@ async fn ensure_browser_running() -> Result<()> {
                 "--disable-gpu",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
+                "--allow-file-access-from-files",
+                "--disable-web-security",
             ])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -187,18 +189,29 @@ impl Tool for ObscuraBrowserTool {
         let client = reqwest::Client::new();
         
         // Open a new tab
-        let mut res = client.get("http://127.0.0.1:9222/json/new")
+        let mut res = client.put("http://127.0.0.1:9222/json/new")
             .send()
             .await;
+        
+        if res.is_err() || !res.as_ref().unwrap().status().is_success() {
+            res = client.get("http://127.0.0.1:9222/json/new")
+                .send()
+                .await;
+        }
         
         if res.is_err() || !res.as_ref().unwrap().status().is_success() {
             tracing::warn!("CDP HTTP API failed, attempting browser restart...");
             kill_browser_on_port_9222();
             sleep(Duration::from_millis(500)).await;
             ensure_browser_running().await?;
-            res = client.get("http://127.0.0.1:9222/json/new")
+            res = client.put("http://127.0.0.1:9222/json/new")
                 .send()
                 .await;
+            if res.is_err() || !res.as_ref().unwrap().status().is_success() {
+                res = client.get("http://127.0.0.1:9222/json/new")
+                    .send()
+                    .await;
+            }
         }
 
         let res = res?;

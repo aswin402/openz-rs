@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.12`
+# OpenZ 🦊 `v0.0.13`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -47,8 +47,10 @@ OpenZ exposes a powerful set of local tools to the LLM:
 * **Web & Search:** `web_fetch` (upgraded DOM scraper), `web_search` (Tavily search API), `crawl_website` (multi-threaded site spidering), `gsd_browser` (Playwright-based browser automation), `obscura_browser` (lightweight headless browser via CDP).
 * **Automation & Cron:** `schedule_job` (registers Unix cron/duration jobs), `list_jobs`, `remove_job`.
 * **Visuals & Graphics:** 
+  * `generate_image` (renders premium HTML/CSS/SVG templates, local files, or online URLs to crisp PNG via headless Chrome).
+  * `html_to_video` (renders timeline-based MP4 videos from HTML/CSS animation templates).
   * `generate_mermaid` (renders 23+ diagram types to SVG using a pure-Rust parser/renderer `mermaid-rs-renderer`).
-  * `generate_video` (generates neat MP4 videos from timeline compositions using `wavyte`).
+  * `generate_video` (generates programmatic MP4 videos from timeline compositions using `wavyte`).
 * **MCP Integration:** `manage_mcp` (CRUD configs). All MCP servers use a **unified gRPC Tonic transport** + an in-process TCP port bridge with robust non-JSON noise filtering.
 
 ---
@@ -94,6 +96,12 @@ openz gateway
 openz changelog
 ```
 *View system hardware footprint specifications, design inspirations, capabilities, tools, and version release history.*
+
+### 6. View Live Structured Logs
+```bash
+openz logs
+```
+*Tails and streams real-time logs from `~/.openz/openz.log` with support for tail length limits and session filtering.*
 
 ---
 

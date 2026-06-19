@@ -9,6 +9,11 @@ use rusqlite::params;
 pub struct IndexNotesTool;
 
 fn walk_notes(dir: &Path, md_files: &mut Vec<PathBuf>) -> Result<()> {
+    if let Ok(metadata) = dir.symlink_metadata() {
+        if metadata.file_type().is_symlink() {
+            return Ok(());
+        }
+    }
     if dir.is_dir() {
         if let Some(name) = dir.file_name().and_then(|s| s.to_str()) {
             if name == "target" || name == "node_modules" || name == ".git" {

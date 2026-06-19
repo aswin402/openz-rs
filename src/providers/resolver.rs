@@ -60,6 +60,9 @@ pub fn resolve_api_config(config: &Config, provider_name: &str) -> (String, Stri
                 .unwrap_or_else(|| "https://api.groq.com/openai/v1".to_string());
             (key, base)
         }
+        "ollama_local" => {
+            (String::new(), "http://localhost:11434/v1".to_string())
+        }
         "ollama" => {
             let p = config.providers.ollama.as_ref();
             let base = p.and_then(|x| x.api_base.clone())
@@ -212,6 +215,9 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
     if model_lower.starts_with("openrouter/") {
         provider_name = "openrouter".to_string();
         clean_model = &model["openrouter/".len()..];
+    } else if model_lower.starts_with("ollama_local/") {
+        provider_name = "ollama_local".to_string();
+        clean_model = &model["ollama_local/".len()..];
     } else if model_lower.starts_with("ollama/") {
         provider_name = "ollama".to_string();
         clean_model = &model["ollama/".len()..];
@@ -328,6 +334,8 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
             if has_key("huggingface") { provider_name = "huggingface".to_string(); }
             else if has_key("openrouter") { provider_name = "openrouter".to_string(); }
             else { provider_name = "huggingface".to_string(); }
+        } else if model_lower.contains("ollama_local") {
+            provider_name = "ollama_local".to_string();
         } else if model_lower.contains("ollama") {
             provider_name = "ollama".to_string();
         } else {
@@ -352,7 +360,7 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
     let mut final_provider_name = provider_name.clone();
     let mut final_model = clean_model.to_string();
 
-    if final_provider_name != "ollama" && final_api_key.is_empty() {
+    if final_provider_name != "ollama" && final_provider_name != "ollama_local" && final_api_key.is_empty() {
         let has_openrouter = config.providers.openrouter.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENROUTER_API_KEY").is_ok();
         let has_opencode_zen = config.providers.opencode_zen.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENCODE_ZEN_API_KEY").is_ok();
 
@@ -397,7 +405,7 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
     let mut clean_model_str = final_model.clone();
     let clean_lower = clean_model_str.to_lowercase();
     let prefixes = [
-        "openrouter/", "ollama/", "anthropic/", "openai/", "deepseek/", "groq/",
+        "openrouter/", "ollama_local/", "ollama/", "anthropic/", "openai/", "deepseek/", "groq/",
         "google_ai_studio/", "google-ai-studio/", "opencode_zen/", "opencode-zen/",
         "z.ai/", "z_ai/", "nvidia/", "minimax/", "mistral/", "cerebres/", "cerebras/",
         "cohere/", "llm7/", "sambanova/", "huggingface/"
@@ -429,6 +437,34 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
     } else {
         Arc::new(OpenAIProvider::new(final_api_key.clone(), final_api_base.clone(), clean_model_str.clone()))
     };
+    // Handle local Ollama process and model management
+    if final_provider_name == "ollama" || final_provider_name == "ollama_local" {
+        super::ollama_manager::ensure_local_ollama(config);
+    }
+
+    let old_active = super::ollama_manager::get_active_ollama_model();
+    if let Some(old_mdl) = old_active {
+        let is_still_same = (final_provider_name == "ollama" || final_provider_name == "ollama_local") && clean_model_str == old_mdl;
+        if !is_still_same {
+            let config_clone = config.clone();
+            let old_mdl_clone = old_mdl;
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    super::ollama_manager::unload_ollama_model(&config_clone, &old_mdl_clone).await;
+                });
+            }
+
+            if final_provider_name != "ollama" && final_provider_name != "ollama_local" {
+                super::ollama_manager::stop_local_ollama();
+            }
+        }
+    }
+
+    if final_provider_name == "ollama" || final_provider_name == "ollama_local" {
+        super::ollama_manager::set_active_ollama_model(Some(clean_model_str.clone()));
+    } else {
+        super::ollama_manager::set_active_ollama_model(None);
+    }
 
     Ok(ResolvedProvider {
         provider_name: final_provider_name,

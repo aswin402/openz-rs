@@ -191,6 +191,10 @@ pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
             }
         }
     }
+
+    // Unload the active Ollama model and stop the local service if spawned by us
+    crate::providers::ollama_manager::unload_active_ollama_model(config).await;
+    crate::providers::ollama_manager::stop_local_ollama();
 }
 
 pub async fn fetch_provider_models(provider_name: &str, config: &crate::config::schema::Config) -> Option<Vec<String>> {
@@ -240,6 +244,9 @@ pub async fn fetch_provider_models(provider_name: &str, config: &crate::config::
             let base = p.and_then(|x| x.api_base.clone())
                 .unwrap_or_else(|| "https://api.groq.com/openai/v1".to_string());
             (key, base)
+        }
+        "ollama_local" => {
+            (String::new(), "http://localhost:11434/v1".to_string())
         }
         "ollama" => {
             let p = config.providers.ollama.as_ref();
@@ -339,7 +346,7 @@ pub async fn fetch_provider_models(provider_name: &str, config: &crate::config::
         _ => return None,
     };
 
-    if provider_name != "ollama" && api_key.is_empty() {
+    if provider_name != "ollama" && provider_name != "ollama_local" && api_key.is_empty() {
         return None;
     }
 

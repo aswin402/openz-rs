@@ -630,6 +630,7 @@ impl AgentLoop {
                 }
                 TurnState::Run => {
                     let mut iterations = 0;
+                    let mut loop_blocked_count = 0;
                     let max_iterations = self.config.agents.defaults.max_tool_iterations;
                     let settings = GenerationSettings {
                         temperature: self.config.agents.defaults.temperature,
@@ -691,7 +692,8 @@ impl AgentLoop {
                                 });
                                 
                                 let cont_activity_msg = format!("{}▶ Continuing response... (attempt {}){}", RED_ORANGE, continue_attempts, COLOR_RESET);
-                                if let Ok(cont_resp) = self.chat_with_fallback(&mut active_provider, &system_prompt, &temp_messages, &tools_openai, &settings, &cont_activity_msg).await {
+                                // Pass &[] instead of tools_openai so the model does not get confused and attempt to generate tool calls during text continuation
+                                if let Ok(cont_resp) = self.chat_with_fallback(&mut active_provider, &system_prompt, &temp_messages, &[], &settings, &cont_activity_msg).await {
                                     finish_reason = cont_resp.finish_reason.clone();
                                     if let Some(ref cont_content) = cont_resp.content {
                                         if let Some(ref mut acc) = accumulated_content {
@@ -710,6 +712,17 @@ impl AgentLoop {
                             
                             resp.content = accumulated_content;
                             resp.finish_reason = finish_reason;
+
+                            // If tool_calls is empty, try to parse tool calls from the fully completed accumulated content
+                            if resp.tool_calls.is_empty() {
+                                if let Some(ref text) = resp.content {
+                                    let parsed = crate::providers::openai::parse_fallback_tool_calls(text);
+                                    if !parsed.is_empty() {
+                                        resp.tool_calls = parsed;
+                                        resp.content = None;
+                                    }
+                                }
+                            }
                         }
                         
                         let duration = start_time.elapsed();
@@ -754,6 +767,24 @@ impl AgentLoop {
                         }
                         
                         if let Some(content) = resp.content {
+                            let text_repeat = count_previous_text_responses(&messages, &content);
+                            if text_repeat >= 2 {
+                                let loop_msg = "⚠️ Halted execution: Detected repetitive text responses.";
+                                final_content = loop_msg.to_string();
+                                send_progress_update(session_key, loop_msg).await;
+                                if !crate::agent::style::spinner::is_silent() {
+                                    print!("{}⚠️ {}{}\r\n", AURA_GOLD, loop_msg, COLOR_RESET);
+                                    let _ = std::io::stdout().flush();
+                                }
+                                messages.push(Message {
+                                    role: "assistant".to_string(),
+                                    content: loop_msg.to_string(),
+                                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                                    extra: serde_json::Map::new(),
+                                });
+                                break;
+                            }
+
                             final_content = content.clone();
                             let mut extra = serde_json::Map::new();
                             if let Some(ref reasoning) = resp.reasoning_content {
@@ -771,6 +802,7 @@ impl AgentLoop {
                             break;
                         }
 
+                        let mut should_halt = false;
                         let mut tool_results = Vec::new();
                         let mut assistant_tool_calls_json = Vec::new();
                         
@@ -789,9 +821,18 @@ impl AgentLoop {
                             let mut forbidden = false;
                             let security_mode = &self.config.agents.defaults.security_mode;
 
+                            let repeat_count = count_previous_tool_calls(&messages, &call.name, &call.arguments);
+                            let is_loop = repeat_count >= 2;
+                            if is_loop {
+                                loop_blocked_count += 1;
+                                if loop_blocked_count >= 3 {
+                                    should_halt = true;
+                                }
+                            }
+
                             if crate::agent::security::SecurityGuard::is_forbidden(&call.name, &call.arguments) {
                                 forbidden = true;
-                            } else if crate::agent::security::SecurityGuard::is_sensitive_with_mode(&call.name, &call.arguments, security_mode) {
+                            } else if !is_loop && crate::agent::security::SecurityGuard::is_sensitive_with_mode(&call.name, &call.arguments, security_mode) {
                                 // Clear the running tool spinner first so the prompt is clean
                                 if !silent {
                                     print!("\r\x1b[2K");
@@ -804,7 +845,16 @@ impl AgentLoop {
                                 }
                             }
 
-                            let result_val = if forbidden {
+                            let result_val = if is_loop {
+                                let warning_str = format!(
+                                    "Loop detected: You have already executed the tool '{}' with these exact arguments {} times in this turn. To prevent infinite loops, execution was blocked. Do NOT call this tool again. Analyze previous tool outputs and use a different strategy, or finish your response.",
+                                    call.name, repeat_count
+                                );
+                                if !silent {
+                                    crate::tui_println!("{}⚠️ Loop detected for tool '{}'! Blocking execution. (Count: {}){}", AURA_GOLD, call.name, loop_blocked_count, COLOR_RESET);
+                                }
+                                serde_json::json!({ "error": warning_str })
+                            } else if forbidden {
                                 let reject_msg = format!("✕ *{}* - Rejected: Dangerous command is forbidden", formatted_args);
                                 send_progress_update(session_key, &reject_msg).await;
                                 if !silent {
@@ -950,6 +1000,22 @@ impl AgentLoop {
                         }
 
                         iterations += 1;
+                        if should_halt {
+                            let halt_msg = "⚠️ Halted execution: Too many repeating tool calls blocked by loop detection. Halting to save RAM and tokens.";
+                            final_content = halt_msg.to_string();
+                            send_progress_update(session_key, halt_msg).await;
+                            if !crate::agent::style::spinner::is_silent() {
+                                print!("{}⚠️ {}{}\r\n", AURA_GOLD, halt_msg, COLOR_RESET);
+                                let _ = std::io::stdout().flush();
+                            }
+                            messages.push(Message {
+                                role: "assistant".to_string(),
+                                content: halt_msg.to_string(),
+                                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                                extra: serde_json::Map::new(),
+                            });
+                            break;
+                        }
                     }
                     
                     session.messages = messages.clone();
@@ -1184,8 +1250,13 @@ impl AgentLoop {
                                 if !tool_calls.is_empty() {
                                     prompt_content.push_str("  Tool Calls:\n");
                                     for tc in tool_calls {
-                                        if let (Some(name), Some(args)) = (tc.get("name").and_then(|v| v.as_str()), tc.get("arguments")) {
-                                            prompt_content.push_str(&format!("    - Call tool '{}' with arguments: {}\n", name, args));
+                                        let name = tc.get("name").and_then(|v| v.as_str())
+                                            .or_else(|| tc.get("function").and_then(|f| f.get("name")).and_then(|v| v.as_str()));
+                                        let args = tc.get("arguments")
+                                            .or_else(|| tc.get("function").and_then(|f| f.get("arguments")));
+                                        
+                                        if let (Some(name_str), Some(args_val)) = (name, args) {
+                                            prompt_content.push_str(&format!("    - Call tool '{}' with arguments: {}\n", name_str, args_val));
                                         }
                                     }
                                 }
@@ -1547,4 +1618,56 @@ fn generate_self_healing_hint(tool_name: &str, error_str: &str) -> String {
 
     // Default suggestion
     "Please double-check the arguments format, verify the target file paths or command options exist, and try a different tool or approach if this error persists.".to_string()
+}
+
+fn count_previous_tool_calls(messages: &[Message], tool_name: &str, tool_args: &serde_json::Value) -> usize {
+    let last_user_idx = messages.iter().rposition(|m| m.role == "user").unwrap_or(0);
+    let mut count = 0;
+    for msg in &messages[last_user_idx..] {
+        if msg.role == "assistant" {
+            if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
+                for tc in tool_calls {
+                    let name = tc.get("name").and_then(|v| v.as_str())
+                        .or_else(|| tc.get("function").and_then(|f| f.get("name")).and_then(|v| v.as_str()));
+                    let args = tc.get("arguments")
+                        .or_else(|| tc.get("function").and_then(|f| f.get("arguments")));
+                    
+                    if let (Some(name_str), Some(args_val)) = (name, args) {
+                        if name_str == tool_name {
+                            let match_args = if args_val.is_string() {
+                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(args_val.as_str().unwrap()) {
+                                    parsed == *tool_args
+                                } else {
+                                    false
+                                }
+                            } else {
+                                args_val == tool_args
+                            };
+                            if match_args {
+                                count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    count
+}
+
+fn count_previous_text_responses(messages: &[Message], next_content: &str) -> usize {
+    if next_content.trim().is_empty() {
+        return 0;
+    }
+    let last_user_idx = messages.iter().rposition(|m| m.role == "user").unwrap_or(0);
+    let mut count = 0;
+    let next_trimmed = next_content.trim();
+    for msg in &messages[last_user_idx..] {
+        if msg.role == "assistant" && !msg.content.trim().is_empty() {
+            if msg.content.trim() == next_trimmed {
+                count += 1;
+            }
+        }
+    }
+    count
 }

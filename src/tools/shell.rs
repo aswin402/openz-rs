@@ -386,21 +386,24 @@ impl Tool for ExecCommandTool {
         }
 
         // 2. Fallback to standard raw host shell execution
-        let mut cmd = if cfg!(target_os = "windows") {
-            let mut c = Command::new("cmd");
+        let mut std_cmd = if cfg!(target_os = "windows") {
+            let mut c = std::process::Command::new("cmd");
             c.args(["/C", command_str]);
             c
         } else {
-            let mut c = Command::new("sh");
+            let mut c = std::process::Command::new("sh");
             c.args(["-c", command_str]);
             c
         };
-        crate::config::loader::set_command_cwd(&mut cmd);
+        crate::config::loader::set_command_cwd(&mut std_cmd);
         let enable_sandbox = crate::config::loader::load_config()
             .map(|c| c.agents.defaults.enable_sandbox)
             .unwrap_or(false);
-        sandbox_command(&mut cmd, enable_sandbox);
-        let output = cmd.output()?;
+        sandbox_command(&mut std_cmd, enable_sandbox);
+
+        let mut tokio_cmd = tokio::process::Command::from(std_cmd);
+        tokio_cmd.kill_on_drop(true);
+        let output = tokio_cmd.output().await?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -539,16 +542,18 @@ impl Tool for PythonSandboxTool {
 
         std::fs::write(&temp_path, code)?;
 
-        let mut cmd = Command::new("python3");
-        crate::config::loader::set_command_cwd(&mut cmd);
-        cmd.arg(&temp_path);
+        let mut std_cmd = std::process::Command::new("python3");
+        crate::config::loader::set_command_cwd(&mut std_cmd);
+        std_cmd.arg(&temp_path);
         
         let enable_sandbox = crate::config::loader::load_config()
             .map(|c| c.agents.defaults.enable_sandbox)
             .unwrap_or(false);
-        sandbox_command(&mut cmd, enable_sandbox);
+        sandbox_command(&mut std_cmd, enable_sandbox);
 
-        let output_res = cmd.output();
+        let mut tokio_cmd = tokio::process::Command::from(std_cmd);
+        tokio_cmd.kill_on_drop(true);
+        let output_res = tokio_cmd.output().await;
         let _ = std::fs::remove_file(&temp_path);
 
         let output = output_res?;
