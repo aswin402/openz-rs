@@ -821,18 +821,20 @@ impl AgentLoop {
                             let mut forbidden = false;
                             let security_mode = &self.config.agents.defaults.security_mode;
 
+                            let parse_error = call.arguments.get("parse_error").and_then(|v| v.as_str());
+
                             let repeat_count = count_previous_tool_calls(&messages, &call.name, &call.arguments);
                             let is_loop = repeat_count >= 2;
-                            if is_loop {
+                            if is_loop && parse_error.is_none() {
                                 loop_blocked_count += 1;
                                 if loop_blocked_count >= 3 {
                                     should_halt = true;
                                 }
                             }
 
-                            if crate::agent::security::SecurityGuard::is_forbidden(&call.name, &call.arguments) {
+                            if parse_error.is_none() && crate::agent::security::SecurityGuard::is_forbidden(&call.name, &call.arguments) {
                                 forbidden = true;
-                            } else if !is_loop && crate::agent::security::SecurityGuard::is_sensitive_with_mode(&call.name, &call.arguments, security_mode) {
+                            } else if parse_error.is_none() && !is_loop && crate::agent::security::SecurityGuard::is_sensitive_with_mode(&call.name, &call.arguments, security_mode) {
                                 // Clear the running tool spinner first so the prompt is clean
                                 if !silent {
                                     print!("\r\x1b[2K");
@@ -845,7 +847,15 @@ impl AgentLoop {
                                 }
                             }
 
-                            let result_val = if is_loop {
+                            let result_val = if let Some(err_msg) = parse_error {
+                                let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, err_msg);
+                                send_progress_update(session_key, &fail_msg).await;
+                                if !silent {
+                                    crate::tui_println!("{}✕ {} - Failed: {}{}", AURA_PURPLE, formatted_args, err_msg, COLOR_RESET);
+                                }
+                                turn_errors.push(format!("Tool {} arguments parse error: {}", call.name, err_msg));
+                                serde_json::json!({ "error": err_msg })
+                            } else if is_loop {
                                 let warning_str = format!(
                                     "Loop detected: You have already executed the tool '{}' with these exact arguments {} times in this turn. To prevent infinite loops, execution was blocked. Do NOT call this tool again. Analyze previous tool outputs and use a different strategy, or finish your response.",
                                     call.name, repeat_count

@@ -285,7 +285,15 @@ impl LLMProvider for OpenAIProvider {
                         tracing::warn!("Failed to parse native tool call arguments JSON: {}. Raw: {}", e, args_str);
                         let repaired = args_str.replace("\n", "\\n").replace("\r", "\\r");
                         serde_json::from_str(&repaired).unwrap_or_else(|_| {
-                            serde_json::Value::Object(serde_json::Map::new())
+                            let mut map = serde_json::Map::new();
+                            map.insert(
+                                "parse_error".to_string(),
+                                serde_json::Value::String(format!(
+                                    "Tool arguments JSON was truncated or malformed: {}. This typically occurs when the response exceeds the maximum output token limit. Try writing files in smaller chunks or using command-line tools.",
+                                    e
+                                ))
+                            );
+                            serde_json::Value::Object(map)
                         })
                     }
                 };
