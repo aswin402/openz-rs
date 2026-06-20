@@ -152,9 +152,19 @@ impl crate::providers::LLMProvider for MockProvider {
         _settings: &crate::providers::GenerationSettings,
     ) -> anyhow::Result<crate::providers::LLMResponse> {
         // Inject error if remaining (without advancing the response counter).
-        let remaining = self.inject_errors.load(Ordering::Relaxed);
-        if remaining > 0 {
-            self.inject_errors.store(remaining - 1, Ordering::Relaxed);
+        // Use fetch_update for atomic compare-and-swap to avoid race conditions.
+        let prev = self.inject_errors.fetch_update(
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+            |current| {
+                if current > 0 {
+                    Some(current - 1)
+                } else {
+                    None
+                }
+            },
+        );
+        if prev.is_ok() {
             anyhow::bail!("MockProvider injected error");
         }
 

@@ -67,6 +67,35 @@ impl AgentLoop {
         }
     }
 
+    /// Clean up old trace files and tool output files to prevent unbounded disk usage.
+    /// Deletes files older than 7 days in ~/.openz/traces/ and ~/.openz/tool_outputs/.
+    fn cleanup_old_files() {
+        use std::time::{SystemTime, Duration};
+
+        let max_age = Duration::from_secs(7 * 24 * 60 * 60); // 7 days
+        let now = SystemTime::now();
+
+        for dir_name in &["traces", "tool_outputs"] {
+            let dir = crate::config::resolve_path(&format!("~/.openz/{}", dir_name));
+            if !dir.exists() {
+                continue;
+            }
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    if let Ok(metadata) = entry.metadata() {
+                        if let Ok(modified) = metadata.modified() {
+                            if let Ok(age) = now.duration_since(modified) {
+                                if age > max_age {
+                                    let _ = std::fs::remove_file(entry.path());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     async fn chat_with_fallback(
         &self,
         active_provider: &mut Arc<dyn LLMProvider>,
@@ -142,6 +171,9 @@ impl AgentLoop {
     }
 
     async fn run_inner(&self, user_content: &str, session_key: &str) -> Result<RunResult> {
+        // Clean up old traces and tool outputs on first run of session
+        Self::cleanup_old_files();
+
         crate::agent::activity::update_activity(session_key, "Processing user prompt", None);
         let _guard = ActivityGuard { session_key };
 
@@ -1277,7 +1309,8 @@ impl AgentLoop {
                                         if let (Some(name_str), Some(args_val)) = (name, args) {
                                             let args_str = args_val.to_string();
                                             let args_truncated = if args_str.len() > 1000 {
-                                                format!("{}... [TRUNCATED - {} bytes]", &args_str[..1000], args_str.len() - 1000)
+                                                let truncated: String = args_str.chars().take(1000).collect();
+                                                format!("{}... [TRUNCATED - {} bytes]", truncated, args_str.len() - 1000)
                                             } else {
                                                 args_str
                                             };
@@ -1288,7 +1321,8 @@ impl AgentLoop {
                             }
                             if !msg.content.is_empty() {
                                 let content_truncated = if msg.content.len() > 2000 {
-                                    format!("{}... [TRUNCATED - {} bytes]", &msg.content[..2000], msg.content.len() - 2000)
+                                    let truncated: String = msg.content.chars().take(2000).collect();
+                                    format!("{}... [TRUNCATED - {} bytes]", truncated, msg.content.len() - 2000)
                                 } else {
                                     msg.content.clone()
                                 };
@@ -1300,7 +1334,8 @@ impl AgentLoop {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("unknown");
                             let content_truncated = if msg.content.len() > 2000 {
-                                format!("{}... [TRUNCATED {} bytes]", &msg.content[..2000], msg.content.len() - 2000)
+                                let truncated: String = msg.content.chars().take(2000).collect();
+                                format!("{}... [TRUNCATED {} bytes]", truncated, msg.content.len() - 2000)
                             } else {
                                 msg.content.clone()
                             };

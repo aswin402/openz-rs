@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 use anyhow::Result;
 
-pub fn start_scheduler(config: Config) {
+pub fn start_scheduler(config: Config) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         crate::channels::cli::send_notification("⏰ Cron scheduler background service started...");
         loop {
@@ -15,7 +15,7 @@ pub fn start_scheduler(config: Config) {
             }
             sleep(Duration::from_secs(10)).await;
         }
-    });
+    })
 }
 
 async fn tick_scheduler(config: &Config) -> Result<()> {

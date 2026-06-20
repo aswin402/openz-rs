@@ -1,6 +1,6 @@
 [package]
 name = "openz"
-version = "0.0.14"
+version = "0.0.15"
 edition = "2021"
 
 [workspace]
@@ -26,6 +26,8 @@ uuid = { version = "1.8", features = ["v4", "serde"] }
 async-trait = "0.1"
 dotenvy = "0.15"
 base64 = "0.22.1"
+hmac = "0.12"
+hex = "0.4"
 arboard = "3.6.1"
 image = "0.25.10"
 imageproc = "0.25.0"

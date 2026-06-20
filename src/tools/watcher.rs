@@ -73,7 +73,7 @@ impl Tool for FileWatcherTool {
 
                 // Stop any existing watcher first
                 let shutdown_to_await = {
-                    let mut active = ACTIVE_WATCHER.lock().unwrap();
+                    let mut active = ACTIVE_WATCHER.lock().unwrap_or_else(|e| e.into_inner());
                     active.take().map(|h| (h.path, h.shutdown_tx))
                 };
                 if let Some((path, tx)) = shutdown_to_await {
@@ -173,7 +173,7 @@ impl Tool for FileWatcherTool {
                 });
 
                 {
-                    let mut active = ACTIVE_WATCHER.lock().unwrap();
+                    let mut active = ACTIVE_WATCHER.lock().unwrap_or_else(|e| e.into_inner());
                     *active = Some(WatcherHandle {
                         path: resolved_path.clone(),
                         command: command.clone(),
@@ -188,7 +188,7 @@ impl Tool for FileWatcherTool {
             }
             "stop" => {
                 let tx_to_await = {
-                    let mut active = ACTIVE_WATCHER.lock().unwrap();
+                    let mut active = ACTIVE_WATCHER.lock().unwrap_or_else(|e| e.into_inner());
                     active.take().map(|h| h.shutdown_tx)
                 };
                 if let Some(tx) = tx_to_await {
@@ -205,7 +205,7 @@ impl Tool for FileWatcherTool {
                 }
             }
             "status" => {
-                let active = ACTIVE_WATCHER.lock().unwrap();
+                let active = ACTIVE_WATCHER.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(handle) = active.as_ref() {
                     Ok(json!({
                         "status": "active",

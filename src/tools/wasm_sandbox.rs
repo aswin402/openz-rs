@@ -117,17 +117,11 @@ pub fn execute_wasm(wasm_path: &Path, args: Vec<String>) -> Result<Value> {
             }))
         }
         Err(e) => {
-            // Check if it's a WASI exit code trap
-            let exit_code = if let Some(_trap) = e.downcast_ref::<Trap>() {
-                // In wasmtime 45+, Trap does not hold exit codes directly,
-                // but let's check if it's an exit code or just a general error.
-                // We'll report the error string.
-                1
-            } else {
-                1
-            };
+            let exit_code = e.downcast_ref::<wasmtime_wasi::I32Exit>()
+                .map(|exit| exit.0)
+                .unwrap_or(1);
             Ok(json!({
-                "status": "error",
+                "status": if exit_code == 0 { "success" } else { "error" },
                 "error": e.to_string(),
                 "stdout": stdout_str,
                 "stderr": stderr_str,

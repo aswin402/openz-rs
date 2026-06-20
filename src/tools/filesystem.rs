@@ -285,7 +285,11 @@ impl Tool for ReplaceLinesTool {
             new_lines.extend(lines[end_idx..].iter().cloned());
         }
 
-        let new_content = new_lines.join("\n");
+        // Preserve trailing newline of the original file
+        let mut new_content = new_lines.join("\n");
+        if content.ends_with('\n') && !new_content.ends_with('\n') {
+            new_content.push('\n');
+        }
         fs::write(&path, &new_content)
             .with_context(|| format!("Failed to write to file at {:?}", path))?;
 

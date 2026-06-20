@@ -52,9 +52,17 @@ impl super::Channel for WsGateway {
             config: self.config.clone(),
             agent_loop: self.agent_loop.clone(),
         };
+        // Restrict CORS to localhost origins only for security
         let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
+            .allow_origin([
+                "http://localhost".parse().unwrap(),
+                "http://127.0.0.1".parse().unwrap(),
+                "http://localhost:3000".parse().unwrap(),
+                "http://127.0.0.1:3000".parse().unwrap(),
+                "http://localhost:8765".parse().unwrap(),
+                "http://127.0.0.1:8765".parse().unwrap(),
+            ])
+            .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::OPTIONS])
             .allow_headers(Any);
 
         let mut app = Router::new()

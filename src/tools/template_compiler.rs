@@ -3,9 +3,20 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::fs;
 
+const MAX_TEMPLATE_DEPTH: usize = 10;
+
 pub struct CompileTemplateTool;
 
 fn render_template_string(template: &str, data: &Value) -> String {
+    render_template_string_inner(template, data, 0)
+}
+
+fn render_template_string_inner(template: &str, data: &Value, depth: usize) -> String {
+    if depth > MAX_TEMPLATE_DEPTH {
+        tracing::warn!("Template rendering exceeded max depth of {}", MAX_TEMPLATE_DEPTH);
+        return template.to_string();
+    }
+
     let mut result = template.to_string();
 
     // 1. Process loops of the form <!-- loop: key --> ... <!-- endloop -->
@@ -30,7 +41,7 @@ fn render_template_string(template: &str, data: &Value) -> String {
                 let mut loop_replacement = String::new();
                 if let Some(arr) = data.get(key_str).and_then(|v| v.as_array()) {
                     for item in arr {
-                        loop_replacement.push_str(&render_template_string(inner_template, item));
+                        loop_replacement.push_str(&render_template_string_inner(inner_template, item, depth + 1));
                     }
                 }
                 

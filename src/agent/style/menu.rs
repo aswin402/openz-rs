@@ -82,8 +82,9 @@ pub fn select_menu_with_history(prompt: &str, history: &[HistoryItem]) -> Result
             let option_idx = i + 1;
             let friendly_time = format_friendly_time(item.updated_at);
             
-            let truncated_title = if item.display_title.len() > 40 {
-                format!("{}...", &item.display_title[..37])
+            let truncated_title = if item.display_title.chars().count() > 40 {
+                let truncated: String = item.display_title.chars().take(37).collect();
+                format!("{}...", truncated)
             } else {
                 item.display_title.clone()
             };

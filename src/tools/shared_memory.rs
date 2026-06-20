@@ -1053,6 +1053,11 @@ pub async fn archive_research_entry(query: &str, content: &str, source: &str) ->
             Vec::new()
         });
 
+        if embedding.is_empty() {
+            eprintln!("Skipping research archive chunk (empty embedding): {}", chunk_query);
+            continue;
+        }
+
         let timestamp = chrono::Utc::now().to_rfc3339();
         let id = uuid::Uuid::new_v4().to_string();
         let embedding_json = serde_json::to_string(&embedding)?;

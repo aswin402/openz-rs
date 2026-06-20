@@ -428,6 +428,7 @@ pub fn load_profiles() -> Result<Vec<SubagentProfile>> {
         }
 
         if let Some(ref mut fbs) = profile.fallbacks {
+            fbs.retain(|s| !s.is_empty());
             if fbs.len() < 3 {
                 while fbs.len() < 2 {
                     fbs.push(String::new());

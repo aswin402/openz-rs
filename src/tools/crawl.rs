@@ -57,10 +57,10 @@ impl Tool for CrawlSiteTool {
         let url_str = arguments.get("url").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'url' parameter"))?;
         
-        let limit = arguments.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as u32;
-        let depth = arguments.get("depth").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+        let limit = arguments.get("limit").and_then(|v| v.as_u64()).unwrap_or(10).min(1000) as u32;
+        let depth = arguments.get("depth").and_then(|v| v.as_u64()).unwrap_or(3).min(10) as usize;
         let respect = arguments.get("respect_robots_txt").and_then(|v| v.as_bool()).unwrap_or(true);
-        let delay = arguments.get("delay").and_then(|v| v.as_u64()).unwrap_or(250) as u64;
+        let delay = arguments.get("delay").and_then(|v| v.as_u64()).unwrap_or(250).max(50) as u64;
 
         let mut website = Website::new(url_str)
             .with_limit(limit)

@@ -53,11 +53,38 @@ impl Tool for CompilerAutoHealTool {
             .ok_or_else(|| anyhow!("Missing 'instruction' argument"))?;
         let compile_command = arguments.get("compile_command").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'compile_command' argument"))?;
-        let max_iterations = arguments.get("max_iterations").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
+        let max_iterations = arguments.get("max_iterations").and_then(|v| v.as_u64()).unwrap_or(3).min(5) as usize;
+
+        // Validate compile command against allowlist to prevent shell injection
+        let allowed_prefixes = [
+            "cargo ", "rustc ", "gcc ", "g++ ", "clang ", "clang++ ",
+            "make ", "cmake ", "ninja ", "go ", "go build", "go test", "go run",
+            "npm ", "npx ", "yarn ", "pnpm ", "node ",
+            "python ", "python3 ", "pip ", "pip3 ",
+            "javac ", "java ", "mvn ", "gradle ",
+            "swift ", "swiftc ",
+            "dotnet ", "msbuild ",
+            "pytest ", "jest ", "vitest ", "tsc ",
+        ];
+        let cmd_lower = compile_command.trim().to_lowercase();
+        let is_allowed = allowed_prefixes.iter().any(|p| cmd_lower.starts_with(p));
+        if !is_allowed {
+            return Err(anyhow!(
+                "Compile command '{}' is not in the allowed list. \
+                 Allowed: cargo, rustc, gcc, g++, clang, make, cmake, ninja, go, npm, npx, yarn, node, python, javac, java, mvn, gradle, swift, dotnet, pytest, jest, tsc",
+                compile_command
+            ));
+        }
 
         let file_path = crate::config::resolve_path(file_path_str);
         if !file_path.exists() {
             return Err(anyhow!("File does not exist: {:?}", file_path));
+        }
+
+        // Create backup before modification
+        let backup_path = file_path.with_extension(format!("{}.bak", file_path.extension().and_then(|e| e.to_str()).unwrap_or("")));
+        if let Err(e) = std::fs::copy(&file_path, &backup_path) {
+            tracing::warn!("Failed to create backup of {:?}: {}", file_path, e);
         }
 
         // 1. Read initial file content

@@ -35,6 +35,8 @@ fn fetch_unseen_emails(
     username: &str,
     password: &str,
 ) -> Result<Vec<(String, String, String)>> {
+    // Use TLS by default for IMAP (port 993 = implicit TLS, port 143 = STARTTLS)
+    // The imap crate with rustls-tls feature handles TLS automatically
     let client = imap::ClientBuilder::new(imap_server, imap_port).connect()?;
     let mut session = client.login(username, password).map_err(|e| anyhow!("{:?}", e))?;
     session.select("INBOX")?;

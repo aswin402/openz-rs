@@ -121,7 +121,7 @@ pub async fn run_sop_instance_inner(config: Config, instance_id: String, simulat
                         // Update context
                         let steps_obj = inst.context.get_mut("steps")
                             .and_then(|s| s.as_object_mut())
-                            .expect("Context steps should be an object");
+                            .ok_or_else(|| anyhow::anyhow!("Context 'steps' field is missing or not an object"))?;
                         steps_obj.insert(
                             def_step.name.clone(),
                             serde_json::json!({ "output": run_res.content }),

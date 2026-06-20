@@ -373,7 +373,37 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.14 (Latest Release)
+### v0.0.15 (Latest Release)
+*   **Security: SQL Injection Defense (CRITICAL):** Replaced trivially-bypassable keyword blocklist in `DbInspectorTool` with comprehensive SQL injection defense: normalized whitespace removal, blocklist of dangerous SQL keywords (INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, ATTACH, DETACH, PRAGMA, etc.), blocklist of sqlite3 dot-commands (.shell, .import, .output, .read, .system), and whitelist requiring queries start with SELECT or EXPLAIN.
+*   **Security: Shell Command Allowlist (CRITICAL):** Added compile command allowlist validation to `CompilerAutoHealTool` (cargo, rustc, gcc, clang, make, npm, python, etc.), enforced `max_iterations` cap of 5, added backup file creation before AI-generated overwrites.
+*   **Security: SSRF Prevention (CRITICAL):** Added `validate_url()` to `web_fetch` blocking localhost, loopback, cloud metadata endpoints (169.254.169.254), private/reserved IP ranges, and non-HTTP schemes. Restricted `rust_docs` `sub_path` to only `https://docs.rs/` or `https://crates.io/` URLs.
+*   **Security: WhatsApp Webhook Signature Verification (CRITICAL):** Added HMAC-SHA256 signature verification using `X-Hub-Signature-256` header. Reads `WHATSAPP_APP_SECRET` env var; returns 403 on invalid signatures when configured.
+*   **Security: CORS Hardening (CRITICAL):** Replaced `allow_origin(Any)` in WebSocket gateway with explicit localhost origins (localhost, 127.0.0.1 on ports 3000/8765). Restricted methods to GET, POST, OPTIONS.
+*   **Security: Hardcoded Path Removal (CRITICAL):** Replaced hardcoded `AI_AGENT_TOOLS_BASE` and `PARENT_WORKSPACE_TARGET` constants with functions reading from `AI_AGENT_TOOLS_BASE` and `OPENZ_WORKSPACE_TARGET` env vars, falling back to `dirs::home_dir()`-based defaults.
+*   **Security: Browser Flags Hardening (CRITICAL):** Removed `--allow-file-access-from-files` and `--disable-web-security` Chrome flags from `ObscuraBrowserTool`.
+*   **Security: JS Injection Fix (CRITICAL):** Replaced naive selector escaping in `GenerateImageTool` with comprehensive escaping for `\`, `"`, `'`, `\n`, `\r`. Restructured JS to pass selector as function argument.
+*   **Security: Unsafe `env::set_var` (CRITICAL):** Wrapped `set_var("OPENZ_SILENT")` in `unsafe` block with explanation (safe because it runs before spawning threads).
+*   **Security: IMAP TLS (CRITICAL):** Restored `imap::ClientBuilder::new().connect()` (the `imap` crate with `rustls-tls` feature handles TLS automatically).
+*   **Bugfix: UTF-8 Panics (HIGH):** Fixed 4+ byte-slicing panic locations: `social_search.rs` (selftext and YouTube snippet), `agent_loop.rs` (tool args and message truncation), `menu.rs` (display title) — all now use `.chars().count()` and `.chars().take().collect()`.
+*   **Bugfix: Unbounded Disk Usage (HIGH):** Added `cleanup_old_files()` to `AgentLoop` that deletes files older than 7 days in `~/.openz/traces/` and `~/.openz/tool_outputs/`. Called at start of each turn.
+*   **Bugfix: Mutex Poisoning Panics (HIGH):** Changed all 4 `.lock().unwrap()` in `watcher.rs` to `.lock().unwrap_or_else(|e| e.into_inner())` to recover from poisoned mutexes.
+*   **Bugfix: NaN Panic (HIGH):** Changed `.partial_cmp().unwrap()` to `.unwrap_or(Ordering::Equal)` in `semantic_search.rs`.
+*   **Bugfix: SOP Crash (HIGH):** Replaced `.expect()` with proper error propagation in `sop/engine.rs` for malformed context steps.
+*   **Bugfix: Template Recursion Stack Overflow (HIGH):** Added `MAX_TEMPLATE_DEPTH = 10` limit to `template_compiler.rs` recursive rendering.
+*   **Bugfix: Security Bypass in Loose Mode (HIGH):** Pipe-to-shell blocking (`| sh`, `| bash`, `| python`) now enforced in ALL modes, not just strict mode.
+*   **Bugfix: Silent Error Swallowing (MEDIUM):** Added `eprintln!` for directory creation failures in `main.rs`, replaced nested `if let Ok` with `match` blocks logging via `tracing::warn!` in `activity.rs`.
+*   **Bugfix: Vision Model False Positives (MEDIUM):** Changed `m.contains("o1")` to `m.starts_with("o1")` and `m.contains("o3")` to `m.starts_with("o3")` in `model_supports_vision()`.
+*   **Bugfix: MockProvider Atomic Race (MEDIUM):** Replaced load-then-store with `fetch_update` using `Ordering::SeqCst` for thread-safe error injection counter.
+*   **Bugfix: Unbounded Crawl Parameters (MEDIUM):** Added `.min(1000)` to limit, `.min(10)` to depth, `.max(50)` to delay in `CrawlSiteTool`.
+*   **Bugfix: Lost Trailing Newline (MEDIUM):** `ReplaceLinesTool` now preserves trailing newline when original content had one.
+*   **Bugfix: Cron Scheduler Shutdown (LOW):** `start_scheduler()` now returns `JoinHandle<()>` for graceful shutdown.
+*   **Bugfix: Discord Infinite Reconnect (LOW):** Added `MAX_RETRIES = 10` cap with attempt count in error messages.
+*   **Bugfix: WASM Exit Code (LOW):** Extracts real WASI exit code via `I32Exit` downcast instead of hardcoding `1`.
+*   **Bugfix: Empty Embeddings (LOW):** Skips DB insert when embedding generation fails (empty vec) in research archive.
+*   **Bugfix: Subagent Empty Fallback (LOW):** Filters empty strings from fallback model list before padding.
+*   **Maintenance: Version Bump:** Bumped to v0.0.15. All 114 tests passing.
+
+### v0.0.14
 *   **Feature: Incremental Session Saving:** Upgraded `AgentLoop` to save the active conversation session (`cli_direct.json`) incrementally to disk: (1) immediately upon receiving a user prompt in `Restore` state, and (2) at the end of each successful turn iteration inside the run loop. This ensures that even if an execution is interrupted via `Esc` or `Ctrl+C` midway, the prompt, thoughts, and intermediate tool outputs are fully persisted on disk. When restarted, typing "continue" allows the agent to resume execution with complete context.
 *   **Feature: Resumed Session History Visualization:** Implemented `print_session_history` helper in the CLI channel (`cli.rs`) to format and render previous messages, assistant thoughts, and tool executions. This automatically displays the loaded session's history upon startup/resume or when switching sessions via the `/history` command menu, resolving the visual blank-screen confusion.
 

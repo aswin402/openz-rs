@@ -55,10 +55,31 @@ impl Tool for DbInspectorTool {
             "query" => {
                 let sql = arguments.get("sql").and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'sql' parameter for query action"))?;
-                
+
+                // Block dangerous SQL operations — use a strict blocklist
                 let sql_upper = sql.to_uppercase();
-                if sql_upper.contains("INSERT") || sql_upper.contains("UPDATE") || sql_upper.contains("DELETE") || sql_upper.contains("DROP") || sql_upper.contains("ALTER") || sql_upper.contains("CREATE") {
-                    return Err(anyhow!("Only SELECT queries are allowed for safety."));
+                let normalized: String = sql_upper.chars().filter(|c| !c.is_whitespace()).collect();
+                let blocked_keywords = [
+                    "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE",
+                    "ATTACH", "DETACH", "PRAGMA", "REINDEX", "REPLACE",
+                    "VACUUM", "ANALYZE", "INTO",
+                ];
+                // Also block shell-like dot commands used by sqlite3 CLI
+                let blocked_dot = [".shell", ".import", ".output", ".read", ".system"];
+                for kw in &blocked_keywords {
+                    if normalized.contains(kw) {
+                        return Err(anyhow!("Only simple SELECT queries are allowed. Blocked keyword: {}", kw));
+                    }
+                }
+                for dot_cmd in &blocked_dot {
+                    if sql.trim().starts_with(dot_cmd) {
+                        return Err(anyhow!("Blocked sqlite3 dot-command: {}", dot_cmd));
+                    }
+                }
+                // Must start with SELECT or EXPLAIN (for EXPLAIN QUERY PLAN)
+                let trimmed = sql.trim().to_uppercase();
+                if !trimmed.starts_with("SELECT") && !trimmed.starts_with("EXPLAIN") {
+                    return Err(anyhow!("Only SELECT (or EXPLAIN) queries are allowed for safety."));
                 }
                 cmd.arg(sql);
             }

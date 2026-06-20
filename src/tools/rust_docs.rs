@@ -95,13 +95,16 @@ impl Tool for RustDocsTool {
                     .ok_or_else(|| anyhow!("Missing 'crate_name' parameter for get_docs action"))?;
                 
                 let sub_path = arguments.get("sub_path").and_then(|v| v.as_str()).unwrap_or("index.html");
-                
+
                 // Format the URL. Docs.rs uses the structure: https://docs.rs/<crate>/latest/<crate_normalized>/<sub_path>
                 // We'll let docs.rs follow redirect from the base URL if we query: https://docs.rs/<crate>/latest/<crate_normalized>/
                 // Let's normalize name (dashes to underscores for the module name)
                 let module_name = crate_name.replace("-", "_");
-                let url = if sub_path.starts_with("http") {
+                // SSRF protection: only allow docs.rs and crates.io URLs for sub_path
+                let url = if sub_path.starts_with("https://docs.rs/") || sub_path.starts_with("https://crates.io/") {
                     sub_path.to_string()
+                } else if sub_path.starts_with("http://") || sub_path.starts_with("https://") {
+                    return Err(anyhow!("SSRF blocked: sub_path can only reference docs.rs or crates.io URLs"));
                 } else {
                     format!("https://docs.rs/{}/latest/{}/{}", crate_name, module_name, sub_path)
                 };

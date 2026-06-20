@@ -42,8 +42,9 @@ impl SocialSearchTool {
                     let url = format!("https://reddit.com{}", permalink);
                     let snippet = if selftext.is_empty() {
                         format!("Posted by u/{}", author)
-                    } else if selftext.len() > 300 {
-                        format!("Posted by u/{}: {}...", author, &selftext[..297])
+                    } else if selftext.chars().count() > 300 {
+                        let truncated: String = selftext.chars().take(297).collect();
+                        format!("Posted by u/{}: {}...", author, truncated)
                     } else {
                         format!("Posted by u/{}: {}", author, selftext)
                     };
@@ -139,7 +140,10 @@ impl SocialSearchTool {
                             results.push(json!({
                                 "title": title,
                                 "url": url,
-                                "snippet": if snippet.len() > 250 { format!("{}...", &snippet[..247]) } else { snippet }
+                                "snippet": if snippet.chars().count() > 250 {
+                                    let truncated: String = snippet.chars().take(247).collect();
+                                    format!("{}...", truncated)
+                                } else { snippet }
                             }));
                         }
                     }

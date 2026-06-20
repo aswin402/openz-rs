@@ -540,9 +540,11 @@ impl Tool for GenerateImageTool {
         });
 
         if let Some(sel) = selector {
+            // Properly escape the selector for safe JS injection
+            let escaped_sel = sel.replace('\\', "\\\\").replace('"', "\\\"").replace('\'', "\\'").replace('\n', "\\n").replace('\r', "\\r");
             let js_expr = format!(
-                r#"(() => {{
-                    const el = document.querySelector('{}');
+                r#"((sel) => {{
+                    const el = document.querySelector(sel);
                     if (!el) return null;
                     const rect = el.getBoundingClientRect();
                     return {{
@@ -552,8 +554,8 @@ impl Tool for GenerateImageTool {
                         height: rect.height,
                         scale: 1.0
                     }};
-                }})()"#,
-                sel.replace('\'', "\\'")
+                }})('{}')"#,
+                escaped_sel
             );
 
             let eval_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({

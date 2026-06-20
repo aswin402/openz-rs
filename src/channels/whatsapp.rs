@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use std::collections::HashMap;
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::get,
     Json, Router,
@@ -31,6 +31,7 @@ struct WhatsAppState {
     api_key: String,
     phone_number_id: String,
     verify_token: String,
+    app_secret: String,
     client: Client,
 }
 
@@ -97,12 +98,15 @@ impl super::Channel for WhatsAppChannel {
             .unwrap_or(port);
         let verify_token = std::env::var("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
             .unwrap_or(verify_token);
+        let app_secret = std::env::var("WHATSAPP_APP_SECRET")
+            .unwrap_or_default();
 
         let state = WhatsAppState {
             agent_loop: self.agent_loop.clone(),
             api_key: self.api_key.clone(),
             phone_number_id: self.phone_number_id.clone(),
             verify_token,
+            app_secret,
             client: self.client.clone(),
         };
 
@@ -140,8 +144,39 @@ async fn verify_webhook(
 
 async fn receive_webhook(
     State(state): State<WhatsAppState>,
+    headers: HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    // Verify HMAC signature if app_secret is configured
+    if !state.app_secret.is_empty() {
+        let body_bytes = serde_json::to_vec(&payload).unwrap_or_default();
+        if let Some(signature_header) = headers.get("X-Hub-Signature-256") {
+            if let Ok(sig_str) = signature_header.to_str() {
+                // Format: "sha256=<hex>"
+                let expected_sig = sig_str.strip_prefix("sha256=").unwrap_or(sig_str);
+                let computed = {
+                    use hmac::{Hmac, Mac};
+                    use sha2::Sha256;
+                    type HmacSha256 = Hmac<Sha256>;
+                    let mut mac = HmacSha256::new_from_slice(state.app_secret.as_bytes())
+                        .expect("HMAC can take key of any size");
+                    mac.update(&body_bytes);
+                    let result = mac.finalize();
+                    hex::encode(result.into_bytes())
+                };
+                if computed != expected_sig {
+                    tracing::warn!("WhatsApp webhook signature mismatch — rejecting request");
+                    return StatusCode::FORBIDDEN.into_response();
+                }
+            } else {
+                return StatusCode::FORBIDDEN.into_response();
+            }
+        } else {
+            tracing::warn!("WhatsApp webhook missing X-Hub-Signature-256 header");
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
+
     if let Some(entry) = payload.get("entry").and_then(|e| e.as_array()).and_then(|a| a.first()) {
         if let Some(change) = entry.get("changes").and_then(|c| c.as_array()).and_then(|a| a.first()) {
             if let Some(val) = change.get("value") {
@@ -188,7 +223,7 @@ async fn receive_webhook(
             }
         }
     }
-    StatusCode::OK
+    StatusCode::OK.into_response()
 }
 
 #[cfg(test)]
@@ -213,6 +248,7 @@ mod tests {
             api_key: "key".to_string(),
             phone_number_id: "phone".to_string(),
             verify_token: "my_test_token".to_string(),
+            app_secret: String::new(),
             client: reqwest::Client::new(),
         };
 
@@ -241,6 +277,7 @@ mod tests {
             api_key: "key".to_string(),
             phone_number_id: "phone".to_string(),
             verify_token: "my_test_token".to_string(),
+            app_secret: String::new(),
             client: reqwest::Client::new(),
         };
 

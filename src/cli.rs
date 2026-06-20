@@ -777,8 +777,13 @@ async fn handle_agent() -> Result<()> {
 
     let agent_loop = build_agent_loop(config.clone()).await?;
 
-    // Now, set the silent environment variable so any background channels are silent
-    std::env::set_var("OPENZ_SILENT", "true");
+    // Mark silent mode for background channels — use thread-local env to avoid UB in multithreaded context
+    // Note: std::env::set_var is unsafe in multithreaded programs; we use it here only before
+    // spawning threads, which is the documented safe usage pattern.
+    #[allow(unused_unsafe)]
+    unsafe {
+        std::env::set_var("OPENZ_SILENT", "true");
+    }
 
     // Auto-start WebSocket gateway in the background if enabled and configured to start on TUI
     if let Some(ws_config) = &config.channels.websocket {

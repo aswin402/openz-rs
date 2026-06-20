@@ -19,10 +19,20 @@ pub fn update_activity(session_id: &str, status: &str, current_tool: Option<&str
         timestamp: chrono::Utc::now().to_rfc3339(),
     };
     if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+        if let Err(e) = fs::create_dir_all(parent) {
+            tracing::warn!("Failed to create activity directory: {}", e);
+            return;
+        }
     }
-    if let Ok(content) = serde_json::to_string_pretty(&activity) {
-        let _ = fs::write(path, content);
+    match serde_json::to_string_pretty(&activity) {
+        Ok(content) => {
+            if let Err(e) = fs::write(&path, content) {
+                tracing::warn!("Failed to write activity file {:?}: {}", path, e);
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to serialize activity: {}", e);
+        }
     }
 }
 

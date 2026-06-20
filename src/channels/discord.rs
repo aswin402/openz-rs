@@ -92,20 +92,31 @@ impl super::Channel for DiscordChannel {
         }
 
         let mut backoff = Duration::from_secs(2);
+        let mut retry_count = 0;
+        const MAX_RETRIES: u32 = 10;
         loop {
             match connect_and_listen(&self.bot_token, self.agent_loop.clone(), self.client.clone(), silent).await {
                 Ok(_) => {
                     backoff = Duration::from_secs(2);
+                    retry_count = 0;
                 }
                 Err(e) => {
+                    retry_count += 1;
+                    if retry_count >= MAX_RETRIES {
+                        if !silent {
+                            eprintln!("Discord gateway failed after {} retries: {}. Giving up.", MAX_RETRIES, e);
+                        }
+                        break;
+                    }
                     if !silent {
-                        eprintln!("Discord gateway connection error: {}. Reconnecting in {}s...", e, backoff.as_secs());
+                        eprintln!("Discord gateway connection error: {}. Reconnecting in {}s... (attempt {}/{})", e, backoff.as_secs(), retry_count, MAX_RETRIES);
                     }
                     sleep(backoff).await;
                     backoff = std::cmp::min(backoff * 2, Duration::from_secs(60));
                 }
             }
         }
+        Ok(())
     }
 }
 

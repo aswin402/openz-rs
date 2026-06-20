@@ -392,12 +392,25 @@ impl Default for ChannelsConfig {
 }
 
 /// Base directory for all local AI agent tool projects.
-const AI_AGENT_TOOLS_BASE: &str = "/home/aswin/programming/vscode/myProjects/ai_agent_tools";
+/// Configurable via AI_AGENT_TOOLS_BASE env var.
+fn get_ai_agent_tools_base() -> String {
+    std::env::var("AI_AGENT_TOOLS_BASE").unwrap_or_else(|_| {
+        dirs::home_dir()
+            .map(|h| h.join("programming").join("vscode").join("myProjects").join("ai_agent_tools").to_string_lossy().to_string())
+            .unwrap_or_else(|| "/opt/ai_agent_tools".to_string())
+    })
+}
 
 /// Parent workspace target dir — the Cargo.toml at the myProjects level
 /// declares sequentialthinking_rs and memory_rs as workspace members, so
 /// their release binaries land here instead of in their own target/ dirs.
-const PARENT_WORKSPACE_TARGET: &str = "/home/aswin/programming/vscode/myProjects/target/release";
+/// Configurable via OPENZ_WORKSPACE_TARGET env var.
+fn get_parent_workspace_target() -> String {
+    std::env::var("OPENZ_WORKSPACE_TARGET").unwrap_or_else(|_| {
+        let base = get_ai_agent_tools_base();
+        format!("{}/target/release", base)
+    })
+}
 
 /// Resolve an MCP binary path. Checks (in order):
 /// 1. `{PARENT_WORKSPACE_TARGET}/{binary}`           — parent workspace build (sequentialthinking_rs, memory_rs)
@@ -407,15 +420,18 @@ const PARENT_WORKSPACE_TARGET: &str = "/home/aswin/programming/vscode/myProjects
 fn resolve_mcp_bin(binary: &str, subproject: Option<&str>) -> String {
     use std::path::Path;
 
+    let parent_workspace_target = get_parent_workspace_target();
+    let ai_agent_tools_base = get_ai_agent_tools_base();
+
     // 1. Parent workspace shared target dir
-    let workspace_bin = Path::new(PARENT_WORKSPACE_TARGET).join(binary);
+    let workspace_bin = Path::new(&parent_workspace_target).join(binary);
     if workspace_bin.exists() {
         return workspace_bin.to_string_lossy().to_string();
     }
 
     // 2. Project-local build (standalone, not in parent workspace)
     if let Some(sub) = subproject {
-        let local = Path::new(AI_AGENT_TOOLS_BASE)
+        let local = Path::new(&ai_agent_tools_base)
             .join(sub)
             .join("target")
             .join("release")

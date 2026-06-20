@@ -82,8 +82,6 @@ async fn ensure_browser_running() -> Result<()> {
                 "--disable-gpu",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
-                "--allow-file-access-from-files",
-                "--disable-web-security",
             ])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())

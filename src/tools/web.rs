@@ -6,6 +6,47 @@ use scraper::Html;
 use scraper::node::Node;
 use std::time::Duration;
 
+/// Validate URL to prevent SSRF — blocks private IPs, localhost, and metadata endpoints.
+fn validate_url(url: &str) -> Result<()> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| anyhow!("Invalid URL: {}", e))?;
+    let host = parsed.host_str().ok_or_else(|| anyhow!("URL has no host"))?;
+    let lower = host.to_lowercase();
+
+    // Block localhost variants
+    if lower == "localhost" || lower == "127.0.0.1" || lower == "::1" || lower == "[::1]" {
+        return Err(anyhow!("SSRF blocked: localhost/loopback addresses are not allowed"));
+    }
+
+    // Block cloud metadata endpoints
+    if lower == "169.254.169.254" || lower == "metadata.google.internal" {
+        return Err(anyhow!("SSRF blocked: cloud metadata endpoints are not allowed"));
+    }
+
+    // Block private IP ranges
+    if let Ok(ip) = lower.parse::<std::net::IpAddr>() {
+        match ip {
+            std::net::IpAddr::V4(v4) => {
+                if v4.is_private() || v4.is_loopback() || v4.is_link_local()
+                    || v4.is_unspecified() || v4.is_broadcast() {
+                    return Err(anyhow!("SSRF blocked: private/reserved IP addresses are not allowed"));
+                }
+            }
+            std::net::IpAddr::V6(v6) => {
+                if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                    return Err(anyhow!("SSRF blocked: reserved IPv6 addresses are not allowed"));
+                }
+            }
+        }
+    }
+
+    // Block non-HTTP schemes
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err(anyhow!("SSRF blocked: only http/https URLs are allowed (got '{}')", parsed.scheme()));
+    }
+
+    Ok(())
+}
+
 pub struct WebFetchTool {
     client: Client,
 }
@@ -74,6 +115,8 @@ impl Tool for WebFetchTool {
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
         let url_str = arguments.get("url").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'url' argument"))?;
+
+        validate_url(url_str)?;
 
         let res = self.client.get(url_str)
             .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")

@@ -9,7 +9,9 @@ async fn main() -> anyhow::Result<()> {
     // TUI stays clean.
     let log_path = openz::logs::default_log_path();
     if let Some(parent) = log_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("Warning: Failed to create log directory {:?}: {}", parent, e);
+        }
     }
 
     let log_path_clone = log_path.clone();

@@ -285,8 +285,8 @@ impl Tool for SemanticSearchTool {
             results.push((similarity, chunk));
         }
 
-        // Sort descending by similarity
-        results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        // Sort descending by similarity — handle NaN by treating it as lowest value
+        results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
         let mut matches = Vec::new();
         for (sim, chunk) in results.into_iter().take(top_k) {

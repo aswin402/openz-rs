@@ -137,8 +137,8 @@ pub async fn parse_multimodal_content(text: &str) -> Vec<ContentPart> {
 pub fn model_supports_vision(model: &str) -> bool {
     let m = model.to_lowercase();
     
-    // Explicit check for known vision models
-    if m.contains("gpt-4o") || m.contains("o1") || m.contains("o3") {
+    // Explicit check for known vision models — use word-boundary matching to avoid false positives
+    if m.contains("gpt-4o") || m.starts_with("o1") || m.starts_with("o3") {
         return true;
     }
     if m.contains("claude-3") || m.contains("claude-4") {
