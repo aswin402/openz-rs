@@ -1,17 +1,9 @@
 use crate::tools::Tool;
+use crate::tools::browser_common::{connect_to_tab, ensure_browser_running, kill_browser_on_port_9222, send_cdp_cmd};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use std::process::Command;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use futures_util::{StreamExt, SinkExt};
-use futures_util::stream::{SplitSink, SplitStream};
-use tokio::net::TcpStream;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
-
-type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
-type WsStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 
 pub struct ObscuraBrowserTool;
 
@@ -37,8 +29,7 @@ impl ObscuraBrowserTool {
         navigate_url: &str,
         timeout_secs: u64,
     ) -> Result<String> {
-        let (ws_stream, _) = connect_async(ws_url).await?;
-        let (mut write, mut read) = ws_stream.split();
+        let (mut write, mut read) = connect_to_tab(ws_url).await?;
         let mut message_id = 0;
 
         send_cdp_cmd(&mut write, &mut read, &mut message_id, "Page.enable", json!({})).await?;
@@ -95,125 +86,6 @@ impl ObscuraBrowserTool {
             Ok(html2md::parse_html(html_str))
         }
     }
-}
-
-fn kill_browser_on_port_9222() {
-    #[cfg(unix)]
-    {
-        let _ = Command::new("sh")
-            .arg("-c")
-            .arg("fuser -k 9222/tcp || kill $(lsof -t -i:9222)")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-    }
-    #[cfg(windows)]
-    {
-        let _ = Command::new("cmd")
-            .arg("/C")
-            .arg("for /f \"tokens=5\" %a in ('netstat -aon ^| findstr 9222') do taskkill /F /PID %a")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-    }
-}
-
-async fn ensure_browser_running() -> Result<()> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(500))
-        .build()?;
-    
-    // Check if port 9222 is already listening
-    if client.get("http://127.0.0.1:9222/json/list").send().await.is_ok() {
-        return Ok(());
-    }
-
-    // Attempt to start obscura first
-    let child = Command::new("obscura")
-        .args(["serve", "--port", "9222"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-
-    if child.is_ok() {
-        // Wait up to 3 seconds for it to start
-        for _ in 0..15 {
-            sleep(Duration::from_millis(200)).await;
-            if client.get("http://127.0.0.1:9222/json/list").send().await.is_ok() {
-                return Ok(());
-            }
-        }
-    }
-
-    // Obscura failed or not in path, try falling back to chrome/chromium
-    let chrome_paths = ["google-chrome", "chrome", "chromium", "chromium-browser"];
-    for path in chrome_paths {
-        let child = Command::new(path)
-            .args([
-                "--headless",
-                "--remote-debugging-port=9222",
-                "--disable-gpu",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-            ])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
-
-        if child.is_ok() {
-            // Wait up to 5 seconds for it to start
-            for _ in 0..25 {
-                sleep(Duration::from_millis(200)).await;
-                if client.get("http://127.0.0.1:9222/json/list").send().await.is_ok() {
-                    return Ok(());
-                }
-            }
-            break;
-        }
-    }
-
-    if client.get("http://127.0.0.1:9222/json/list").send().await.is_ok() {
-        Ok(())
-    } else {
-        Err(anyhow!("Failed to start any headless browser (obscura, google-chrome, chromium) on port 9222"))
-    }
-}
-
-async fn send_cdp_cmd(
-    write: &mut WsSink,
-    read: &mut WsStream,
-    message_id: &mut u64,
-    method: &str,
-    params: Value,
-) -> Result<Value> {
-    *message_id += 1;
-    let id = *message_id;
-    let req = json!({
-        "id": id,
-        "method": method,
-        "params": params
-    });
-    
-    write.send(Message::Text(req.to_string())).await?;
-    
-    let timeout = std::time::Duration::from_secs(30);
-    tokio::time::timeout(timeout, async {
-        while let Some(msg) = read.next().await {
-            let msg = msg?;
-            if let Message::Text(text) = msg {
-                if let Ok(resp) = serde_json::from_str::<Value>(&text) {
-                    if resp.get("id").and_then(|v| v.as_u64()) == Some(id) {
-                        return Ok::<Value, anyhow::Error>(resp);
-                    }
-                }
-            }
-        }
-        Err(anyhow!("Connection closed before receiving response for ID {}", id))
-    }).await.map_err(|_| anyhow!("CDP command '{}' timed out after {}s", method, timeout.as_secs()))?
 }
 
 #[async_trait::async_trait]

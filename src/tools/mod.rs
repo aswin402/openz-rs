@@ -211,6 +211,7 @@ pub mod rust_docs;
 pub mod image_generator;
 pub mod system_info;
 pub mod network;
+pub mod browser_common;
 pub mod crawl;
 pub mod obscura;
 pub mod shared_memory;

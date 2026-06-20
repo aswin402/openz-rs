@@ -11,11 +11,11 @@
 |----------|-------|--------|
 | P0 — Security | 3 | ✅ Fixed |
 | P1 — Broken Features | 4 | ✅ Fixed |
-| P2 — Integration Bugs | 7 | ✅ Fixed (P2-14 deferred) |
+| P2 — Integration Bugs | 7 | ✅ Fixed |
 | P3 — Dead/Unused Code | 3 | ⏳ Deferred |
 | P4 — Documentation Gaps | 4 | ⏳ Deferred |
 | P5 — Silent Failures | 5 | ✅ Fixed |
-| **Total** | **26** | **21 Fixed, 5 Deferred** |
+| **Total** | **26** | **22 Fixed, 4 Deferred** |
 
 ---
 
@@ -82,10 +82,10 @@
 - **File:** `src/tools/obscura.rs:116-144`
 - **Fix:** Add `tokio::time::timeout` around the CDP read loop
 
-### P2-14. Deduplicate browser code
+### P2-14. Deduplicate browser code ✅ FIXED
 - **Files:** `src/tools/obscura.rs`, `src/tools/image_generator.rs`, `src/tools/html_video.rs`
-- **Fix:** Extract shared `ensure_browser_running()`, `kill_browser_on_port_9222()`, `send_cdp_cmd()` into a shared `browser_common.rs` module
-- **Status:** ⏳ Deferred — larger refactor
+- **Fix:** Extracted shared `ensure_browser_running()`, `kill_browser_on_port_9222()`, `send_cdp_cmd()` into shared `browser_common.rs` module
+- **New file:** `src/tools/browser_common.rs`
 
 ---
 
