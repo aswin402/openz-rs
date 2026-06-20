@@ -43,6 +43,10 @@ impl Tool for ManageMcpTool {
                 "enabled": {
                     "type": "boolean",
                     "description": "Whether the MCP server should be active/enabled. Defaults to true on 'add'."
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Required for 'remove' action. Set to true to confirm permanent deletion of the MCP server configuration."
                 }
             },
             "required": ["action"]
@@ -98,15 +102,24 @@ impl Tool for ManageMcpTool {
                 let name = arguments.get("name").and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'name' parameter for action 'remove'"))?.trim().to_string();
 
-                if config.mcp_servers.remove(&name).is_some() {
-                    save_config(&config)?;
-                    Ok(json!({
-                        "status": "success",
-                        "message": format!("Successfully removed MCP server '{}'", name)
-                    }))
-                } else {
-                    Err(anyhow!("MCP server '{}' not found in configuration", name))
+                if !config.mcp_servers.contains_key(&name) {
+                    return Err(anyhow!("MCP server '{}' not found in configuration", name));
                 }
+
+                let confirm = arguments.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false);
+                if !confirm {
+                    return Ok(json!({
+                        "status": "requires_confirmation",
+                        "message": format!("MCP server '{}' exists. Pass 'confirm: true' to permanently remove it.", name)
+                    }));
+                }
+
+                config.mcp_servers.remove(&name);
+                save_config(&config)?;
+                Ok(json!({
+                    "status": "success",
+                    "message": format!("Successfully removed MCP server '{}'", name)
+                }))
             }
             "enable" => {
                 let name = arguments.get("name").and_then(|v| v.as_str())
@@ -229,10 +242,19 @@ mod tests {
         let res = tool.call(&list_args).await?;
         assert_eq!(res["mcp_servers"]["test-mcp"]["enabled"], true);
 
-        // Test action: remove
+        // Test action: remove (requires confirmation)
         let remove_args = json!({
             "action": "remove",
             "name": "test-mcp"
+        });
+        let res = tool.call(&remove_args).await?;
+        assert_eq!(res["status"], "requires_confirmation");
+
+        // Test action: remove without confirm param should fail
+        let remove_args = json!({
+            "action": "remove",
+            "name": "test-mcp",
+            "confirm": true
         });
         let res = tool.call(&remove_args).await?;
         assert_eq!(res["status"], "success");

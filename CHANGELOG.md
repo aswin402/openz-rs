@@ -388,6 +388,18 @@ Inside `openz agent`, the user can issue direct slash commands:
 *   **Bugfix: Outline String Slicing Panic (MEDIUM):** Added bounds checking on all 4 visitor methods in `outline.rs` (`visit_function`, `visit_class`, `visit_ts_interface_declaration`, `visit_ts_type_alias_declaration`). Changed `self.source_text[..start]` to safe conditional with length check.
 *   **Bugfix: Batch Insert Performance (MEDIUM):** Wrapped the INSERT loop in `notes.rs` in a SQLite transaction (`BEGIN TRANSACTION` / `COMMIT`) for batch insert performance.
 *   **Bugfix: LLM Code Backup (MEDIUM):** Added `.bak` backup creation before writing LLM-generated code in `cargo_manager.rs`. On write failure, restores from backup.
+*   **Security: Chrome Flags Hardening (CRITICAL):** Removed `--disable-web-security` and `--allow-file-access-from-files` from `image_generator.rs` and `html_video.rs` for consistency with `obscura.rs`.
+*   **Security: API Key Redaction (HIGH):** Removed raw tool call argument logging from `openai.rs` to prevent API key leakage in debug logs.
+*   **Security: MCP Server Removal Confirmation (HIGH):** Added `confirm` parameter requirement for `manage_mcp` remove action to prevent accidental bulk deletion.
+*   **Bugfix: Dead Social Search Backends (HIGH):** Replaced dead Nitter and Invidious instances in `social_search.rs`. Twitter search now returns clear error. YouTube search uses direct scraping fallback. Added error propagation in `search_all`.
+*   **Bugfix: Reddit Rate-Limit Handling (HIGH):** Added retry logic with exponential backoff for HTTP 429 responses in Reddit search.
+*   **Bugfix: Shared Memory DB Corruption Recovery (HIGH):** Added `PRAGMA journal_mode=WAL`, integrity check, and automatic recovery (rename corrupt DB, recreate) in `shared_memory.rs`.
+*   **Bugfix: Cron Job Timing (MEDIUM):** Fixed `last_run` being set before execution — now set after completion. `next_run` calculated from actual completion time.
+*   **Bugfix: MCP Stale Client Recovery (MEDIUM):** Added `clear_memory_mcp_client()` and retry logic in `LazyMcpToolWrapper::call()` to reconnect when MCP server crashes.
+*   **Bugfix: Obscura Tab Leak (MEDIUM):** Restructured `call()` to ensure tab is always closed via scope guard pattern, even on error.
+*   **Bugfix: Obscura CDP Timeout (MEDIUM):** Added 30-second timeout to `send_cdp_cmd()` to prevent infinite hang on browser crash.
+*   **Bugfix: Crawl Empty Results (MEDIUM):** Added error when crawl returns zero results instead of silently returning empty array.
+*   **Bugfix: DDG Search Fallback Logging (LOW):** Added warning log when DuckDuckGo scraping fails before falling back to Mojeek.
 *   **Maintenance: Version Bump:** Bumped to v0.0.16. All 114 tests passing, 0 clippy warnings.
 
 ### v0.0.15

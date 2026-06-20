@@ -61,8 +61,6 @@ async fn ensure_browser_running() -> Result<()> {
                 "--disable-gpu",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
-                "--allow-file-access-from-files",
-                "--disable-web-security",
             ]
         };
         let child = Command::new(path)

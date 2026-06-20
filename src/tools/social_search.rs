@@ -2,7 +2,6 @@ use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde_json::{json, Value};
-use scraper::{Html, Selector};
 
 pub struct SocialSearchTool {
     client: Client,
@@ -29,163 +28,102 @@ impl SocialSearchTool {
         let encoded = percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC).to_string();
         let url = format!("https://old.reddit.com/search.json?q={}&limit=5", encoded);
         
-        let res = self.client.get(&url).send().await?;
-        if !res.status().is_success() {
-            return Err(anyhow!("Reddit request failed with HTTP {}", res.status()));
-        }
-
-        let resp_json: Value = res.json().await?;
-        let mut results = Vec::new();
-
-        if let Some(children) = resp_json.get("data").and_then(|d| d.get("children")).and_then(|c| c.as_array()) {
-            for child in children {
-                if let Some(data) = child.get("data") {
-                    let title = data.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                    let permalink = data.get("permalink").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                    let selftext = data.get("selftext").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                    let author = data.get("author").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                    
-                    let url = format!("https://reddit.com{}", permalink);
-                    let snippet = if selftext.is_empty() {
-                        format!("Posted by u/{}", author)
-                    } else if selftext.chars().count() > 300 {
-                        let truncated: String = selftext.chars().take(297).collect();
-                        format!("Posted by u/{}: {}...", author, truncated)
-                    } else {
-                        format!("Posted by u/{}: {}", author, selftext)
-                    };
-
-                    results.push(json!({
-                        "title": title,
-                        "url": url,
-                        "snippet": snippet
-                    }));
+        let mut last_err = None;
+        for attempt in 0..3 {
+            let res = self.client.get(&url).send().await;
+            match res {
+                Ok(r) if r.status().is_success() => {
+                    let resp_json: Value = r.json().await?;
+                    let mut results = Vec::new();
+                    if let Some(children) = resp_json.get("data").and_then(|d| d.get("children")).and_then(|c| c.as_array()) {
+                        for child in children {
+                            if let Some(data) = child.get("data") {
+                                let title = data.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                                let permalink = data.get("permalink").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                                let selftext = data.get("selftext").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                                let author = data.get("author").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                                
+                                let url = format!("https://reddit.com{}", permalink);
+                                let snippet = if selftext.is_empty() {
+                                    format!("Posted by u/{}", author)
+                                } else if selftext.chars().count() > 300 {
+                                    let truncated: String = selftext.chars().take(297).collect();
+                                    format!("Posted by u/{}: {}...", author, truncated)
+                                } else {
+                                    format!("Posted by u/{}: {}", author, selftext)
+                                };
+                                results.push(json!({
+                                    "title": title,
+                                    "url": url,
+                                    "snippet": snippet
+                                }));
+                            }
+                        }
+                    }
+                    return Ok(Value::Array(results));
+                }
+                Ok(r) if r.status().as_u16() == 429 => {
+                    last_err = Some(format!("Reddit rate-limited (HTTP 429) on attempt {}", attempt + 1));
+                    tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt))).await;
+                    continue;
+                }
+                Ok(r) => {
+                    return Err(anyhow!("Reddit request failed with HTTP {}", r.status()));
+                }
+                Err(e) => {
+                    return Err(anyhow!("Reddit request failed: {}", e));
                 }
             }
         }
-
-        Ok(Value::Array(results))
+        Err(anyhow!("Reddit search failed after 3 attempts: {}", last_err.unwrap_or_default()))
     }
 
-    async fn search_twitter(&self, query: &str) -> Result<Value> {
-        let encoded = percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC).to_string();
-        // Use a known public Nitter instance
-        let url = format!("https://nitter.privacydev.net/search?f=tweets&q={}", encoded);
-        
-        let res = self.client.get(&url).send().await?;
-        if !res.status().is_success() {
-            return Err(anyhow!("Twitter (Nitter) request failed with HTTP {}", res.status()));
-        }
-
-        let html_content = res.text().await?;
-        let document = Html::parse_document(&html_content);
-        
-        let tweet_selector = Selector::parse(".timeline-item").unwrap();
-        let author_selector = Selector::parse(".username").unwrap();
-        let text_selector = Selector::parse(".tweet-content").unwrap();
-        let link_selector = Selector::parse(".tweet-link").unwrap();
-
-        let mut results = Vec::new();
-
-        for element in document.select(&tweet_selector).take(5) {
-            let author = element.select(&author_selector)
-                .next()
-                .map(|e| e.text().collect::<String>().trim().to_string())
-                .unwrap_or_else(|| "@anonymous".to_string());
-
-            let text = element.select(&text_selector)
-                .next()
-                .map(|e| e.text().collect::<String>().trim().to_string())
-                .unwrap_or_default();
-
-            let path = element.select(&link_selector)
-                .next()
-                .and_then(|e| e.value().attr("href"))
-                .unwrap_or_default();
-
-            let url = if path.is_empty() {
-                String::new()
-            } else {
-                format!("https://x.com{}", path)
-            };
-
-            if !text.is_empty() {
-                results.push(json!({
-                    "title": format!("Tweet by {}", author),
-                    "url": url,
-                    "snippet": text
-                }));
-            }
-        }
-
-        Ok(Value::Array(results))
+    async fn search_twitter(&self, _query: &str) -> Result<Value> {
+        // Twitter/X API requires authentication. Nitter public instances are all offline.
+        // Return a clear message instead of silently failing.
+        Err(anyhow!("Twitter/X search is unavailable: all public Nitter instances have been shut down. Use web_search to search X.com directly."))
     }
 
     async fn search_youtube(&self, query: &str) -> Result<Value> {
         let encoded = percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC).to_string();
-        // Use a public Invidious API instance
-        let url = format!("https://invidious.io.lol/api/v1/search?q={}", encoded);
-        
-        let res = self.client.get(&url).send().await?;
         let mut results = Vec::new();
 
-        if res.status().is_success() {
-            if let Ok(resp_json) = res.json::<Value>().await {
-                if let Some(items) = resp_json.as_array() {
-                    for item in items.iter().take(5) {
-                        let rtype = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        if rtype == "video" {
-                            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                            let video_id = item.get("videoId").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                            let author = item.get("author").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                            let description = item.get("description").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                            
-                            let url = format!("https://youtube.com/watch?v={}", video_id);
-                            let snippet = format!("Channel: {} | {}", author, description);
-                            
-                            results.push(json!({
-                                "title": title,
-                                "url": url,
-                                "snippet": if snippet.chars().count() > 250 {
-                                    let truncated: String = snippet.chars().take(247).collect();
-                                    format!("{}...", truncated)
-                                } else { snippet }
-                            }));
+        // Primary: scrape YouTube search page directly
+        let scrape_url = format!("https://www.youtube.com/results?search_query={}", encoded);
+        if let Ok(resp) = self.client.get(&scrape_url).send().await {
+            if resp.status().is_success() {
+                if let Ok(text) = resp.text().await {
+                    let re_id = regex::Regex::new(r#"/watch\?v=([a-zA-Z0-9_-]{11})"#).unwrap();
+                    let re_title = regex::Regex::new(r#""title":\{"runs":\[\{"text":"([^"]+)"\}"#).unwrap();
+                    let mut video_ids = Vec::new();
+                    for cap in re_id.captures_iter(&text).take(15) {
+                        let vid = cap[1].to_string();
+                        if !video_ids.contains(&vid) {
+                            video_ids.push(vid);
                         }
+                    }
+
+                    let titles: Vec<String> = re_title.captures_iter(&text).take(10)
+                        .map(|cap| cap[1].to_string())
+                        .collect();
+
+                    for (i, vid) in video_ids.iter().take(5).enumerate() {
+                        let title = titles.get(i).cloned().unwrap_or_else(|| "YouTube Video".to_string());
+                        results.push(json!({
+                            "title": title,
+                            "url": format!("https://youtube.com/watch?v={}", vid),
+                            "snippet": "Video result from YouTube"
+                        }));
                     }
                 }
             }
         }
 
-        // Fallback to scraping youtube search page if API fails
         if results.is_empty() {
-            let scrape_url = format!("https://www.youtube.com/results?search_query={}", encoded);
-            if let Ok(resp) = self.client.get(&scrape_url).send().await {
-                if resp.status().is_success() {
-                    if let Ok(text) = resp.text().await {
-                        // Extract video titles & ids using regex
-                        let re_id = regex::Regex::new(r#"/watch\?v=([a-zA-Z0-9_-]{11})"#).unwrap();
-                        let mut video_ids = Vec::new();
-                        for cap in re_id.captures_iter(&text).take(15) {
-                            let vid = cap[1].to_string();
-                            if !video_ids.contains(&vid) {
-                                video_ids.push(vid);
-                            }
-                        }
-
-                        for vid in video_ids.iter().take(5) {
-                            results.push(json!({
-                                "title": "YouTube Video",
-                                "url": format!("https://youtube.com/watch?v={}", vid),
-                                "snippet": "Search result from YouTube"
-                            }));
-                        }
-                    }
-                }
-            }
+            Err(anyhow!("YouTube search returned no results. The page may have changed format."))
+        } else {
+            Ok(Value::Array(results))
         }
-
-        Ok(Value::Array(results))
     }
 
     async fn search_hacker_news(&self, query: &str) -> Result<Value> {
@@ -277,12 +215,18 @@ impl SocialSearchTool {
             self.search_polymarket(query)
         );
 
+        let mut errors = Vec::new();
+        if let Err(e) = &twitter { errors.push(format!("twitter: {}", e)); }
+        if let Err(e) = &youtube { errors.push(format!("youtube: {}", e)); }
+        if let Err(e) = &reddit { errors.push(format!("reddit: {}", e)); }
+
         Ok(json!({
             "reddit": reddit.unwrap_or_default(),
             "twitter": twitter.unwrap_or_default(),
             "youtube": youtube.unwrap_or_default(),
             "hacker_news": hn.unwrap_or_default(),
-            "polymarket": polymarket.unwrap_or_default()
+            "polymarket": polymarket.unwrap_or_default(),
+            "_errors": if errors.is_empty() { Value::Null } else { json!(errors) }
         }))
     }
 }

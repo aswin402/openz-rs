@@ -282,7 +282,7 @@ impl LLMProvider for OpenAIProvider {
                 let args_parsed = match serde_json::from_str(args_str) {
                     Ok(parsed) => parsed,
                     Err(e) => {
-                        tracing::warn!("Failed to parse native tool call arguments JSON: {}. Raw: {}", e, args_str);
+                        tracing::warn!("Failed to parse native tool call arguments JSON: {}", e);
                         let repaired = args_str.replace("\n", "\\n").replace("\r", "\\r");
                         serde_json::from_str(&repaired).unwrap_or_else(|_| {
                             let mut map = serde_json::Map::new();

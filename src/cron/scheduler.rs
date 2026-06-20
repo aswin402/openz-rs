@@ -48,19 +48,35 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
 
         if now >= next_run {
             // Run the job!
-            job.last_run = Some(now.to_rfc3339());
-            let next = calculate_next_run(&job.schedule, Some(now)).unwrap_or_else(|| now + chrono::Duration::minutes(5));
-            job.next_run = Some(next.to_rfc3339());
-            changed = true;
-
             let job_clone = job.clone();
             let config_clone = config.clone();
 
             tokio::spawn(async move {
                 crate::channels::cli::send_notification(&format!("⏰ Executing Cron Job: {} (schedule: {})", job_clone.id, job_clone.schedule));
+                let completed_at = Utc::now();
                 match run_job(&config_clone, &job_clone).await {
-                    Ok(_) => crate::channels::cli::send_notification(&format!("⏰ Cron Job {} completed successfully.", job_clone.id)),
-                    Err(e) => crate::channels::cli::send_notification(&format!("Error running Cron Job {}: {}", job_clone.id, e)),
+                    Ok(_) => {
+                        if let Ok(mut jobs) = load_jobs() {
+                            if let Some(j) = jobs.iter_mut().find(|j| j.id == job_clone.id) {
+                                j.last_run = Some(completed_at.to_rfc3339());
+                                let next = calculate_next_run(&j.schedule, Some(completed_at)).unwrap_or_else(|| completed_at + chrono::Duration::minutes(5));
+                                j.next_run = Some(next.to_rfc3339());
+                                let _ = save_jobs(&jobs);
+                            }
+                        }
+                        crate::channels::cli::send_notification(&format!("⏰ Cron Job {} completed successfully.", job_clone.id));
+                    }
+                    Err(e) => {
+                        if let Ok(mut jobs) = load_jobs() {
+                            if let Some(j) = jobs.iter_mut().find(|j| j.id == job_clone.id) {
+                                j.last_run = Some(completed_at.to_rfc3339());
+                                let next = calculate_next_run(&j.schedule, Some(completed_at)).unwrap_or_else(|| completed_at + chrono::Duration::minutes(5));
+                                j.next_run = Some(next.to_rfc3339());
+                                let _ = save_jobs(&jobs);
+                            }
+                        }
+                        crate::channels::cli::send_notification(&format!("Error running Cron Job {}: {}", job_clone.id, e));
+                    }
                 }
             });
         }

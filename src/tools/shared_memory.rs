@@ -39,7 +39,23 @@ pub fn get_sqlite_connection() -> Result<Connection> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let conn = Connection::open(path)?;
+    let conn = Connection::open(&path)?;
+
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
+
+    let integrity: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap_or_else(|_| "ok".to_string());
+    if integrity != "ok" {
+        tracing::warn!("Memory database integrity check failed: {}. Recreating database.", integrity);
+        drop(conn);
+        let backup = path.with_extension("db.corrupt");
+        let _ = std::fs::rename(&path, &backup);
+        let _ = std::fs::remove_file(format!("{}.wal", path.display()));
+        let _ = std::fs::remove_file(format!("{}.shm", path.display()));
+        let conn = Connection::open(path)?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
+        return Ok(conn);
+    }
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS cognitive_memory (
             id TEXT PRIMARY KEY,

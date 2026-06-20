@@ -22,6 +22,14 @@ pub fn get_memory_mcp_client() -> Option<McpClient> {
     MEMORY_MCP_CLIENT.get().and_then(|cell| cell.lock().ok().and_then(|lock| lock.clone()))
 }
 
+pub fn clear_memory_mcp_client() {
+    if let Some(cell) = MEMORY_MCP_CLIENT.get() {
+        if let Ok(mut lock) = cell.lock() {
+            *lock = None;
+        }
+    }
+}
+
 pub mod mcp_grpc {
     tonic::include_proto!("mcp");
 }
@@ -431,13 +439,24 @@ impl Tool for LazyMcpToolWrapper {
         {
             let lock = lazy_client_registry().lock().await;
             if let Some(client) = lock.get(&cache_key) {
-                return client.call_tool(&self.name, arguments).await;
+                match client.call_tool(&self.name, arguments).await {
+                    Ok(result) => return Ok(result),
+                    Err(e) => {
+                        tracing::warn!("MCP tool call failed (server may have crashed), reconnecting: {}", e);
+                        drop(lock);
+                        let mut lock = lazy_client_registry().lock().await;
+                        lock.remove(&cache_key);
+                        if self.is_memory_server {
+                            clear_memory_mcp_client();
+                        }
+                    }
+                }
             }
         }
 
-        // Slow path: first call — spawn the MCP process now
+        // Slow path: first call or reconnection — spawn the MCP process
         tracing::info!(
-            "Lazy-connecting MCP server '{}' for first tool call: {}",
+            "Lazy-connecting MCP server '{}' for tool call: {}",
             self.server_name, self.name
         );
 

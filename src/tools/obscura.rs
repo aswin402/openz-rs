@@ -25,6 +25,76 @@ impl ObscuraBrowserTool {
     pub fn new() -> Self {
         ObscuraBrowserTool
     }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_in_tab(
+        &self,
+        _client: &reqwest::Client,
+        ws_url: &str,
+        _tab_id: &str,
+        action: &str,
+        script_str: Option<&str>,
+        navigate_url: &str,
+        timeout_secs: u64,
+    ) -> Result<String> {
+        let (ws_stream, _) = connect_async(ws_url).await?;
+        let (mut write, mut read) = ws_stream.split();
+        let mut message_id = 0;
+
+        send_cdp_cmd(&mut write, &mut read, &mut message_id, "Page.enable", json!({})).await?;
+        send_cdp_cmd(&mut write, &mut read, &mut message_id, "Page.navigate", json!({ "url": navigate_url })).await?;
+
+        let start_time = Instant::now();
+        let max_duration = Duration::from_secs(timeout_secs);
+
+        while start_time.elapsed() < max_duration {
+            sleep(Duration::from_millis(300)).await;
+            let eval_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({
+                "expression": "document.readyState",
+                "returnByValue": true
+            })).await?;
+
+            if let Some(state) = eval_res
+                .get("result").and_then(|r| r.get("result"))
+                .and_then(|res| res.get("value"))
+                .and_then(|v| v.as_str())
+            {
+                if state == "complete" { break; }
+            }
+        }
+
+        if action == "eval_js" {
+            let script_expr = script_str.ok_or_else(|| anyhow!("Missing 'script' parameter for eval_js action"))?;
+            let eval_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({
+                "expression": script_expr,
+                "returnByValue": true
+            })).await?;
+
+            let val = eval_res.get("result").and_then(|r| r.get("result")).and_then(|res| res.get("value"));
+            match val {
+                Some(v) => Ok(v.to_string()),
+                None => {
+                    if let Some(exception) = eval_res.get("result").and_then(|r| r.get("exceptionDetails")) {
+                        return Err(anyhow!("JavaScript exception: {}", exception));
+                    }
+                    Ok("null".to_string())
+                }
+            }
+        } else {
+            let eval_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({
+                "expression": "document.documentElement.outerHTML",
+                "returnByValue": true
+            })).await?;
+
+            let html_str = eval_res
+                .get("result").and_then(|r| r.get("result"))
+                .and_then(|res| res.get("value"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Failed to retrieve document.documentElement.outerHTML"))?;
+
+            Ok(html2md::parse_html(html_str))
+        }
+    }
 }
 
 fn kill_browser_on_port_9222() {
@@ -130,17 +200,20 @@ async fn send_cdp_cmd(
     
     write.send(Message::Text(req.to_string())).await?;
     
-    while let Some(msg) = read.next().await {
-        let msg = msg?;
-        if let Message::Text(text) = msg {
-            if let Ok(resp) = serde_json::from_str::<Value>(&text) {
-                if resp.get("id").and_then(|v| v.as_u64()) == Some(id) {
-                    return Ok(resp);
+    let timeout = std::time::Duration::from_secs(30);
+    tokio::time::timeout(timeout, async {
+        while let Some(msg) = read.next().await {
+            let msg = msg?;
+            if let Message::Text(text) = msg {
+                if let Ok(resp) = serde_json::from_str::<Value>(&text) {
+                    if resp.get("id").and_then(|v| v.as_u64()) == Some(id) {
+                        return Ok::<Value, anyhow::Error>(resp);
+                    }
                 }
             }
         }
-    }
-    Err(anyhow!("Connection closed before receiving response for ID {}", id))
+        Err(anyhow!("Connection closed before receiving response for ID {}", id))
+    }).await.map_err(|_| anyhow!("CDP command '{}' timed out after {}s", method, timeout.as_secs()))?
 }
 
 #[async_trait::async_trait]
@@ -229,90 +302,16 @@ impl Tool for ObscuraBrowserTool {
         let ws_url = tab_info.get("webSocketDebuggerUrl").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("No webSocketDebuggerUrl returned from /json/new"))?;
 
-        // Connect to WebSocket
-        let (ws_stream, _) = connect_async(ws_url).await?;
-        let (mut write, mut read) = ws_stream.split();
+        let tab_id = tab_id.to_string();
+        let result = self.execute_in_tab(&client, ws_url, &tab_id, action, script_str, url_str, timeout_secs).await;
 
-        let mut message_id = 0;
-
-        // Enable Page domain
-        send_cdp_cmd(&mut write, &mut read, &mut message_id, "Page.enable", json!({})).await?;
-
-        // Navigate to URL
-        send_cdp_cmd(&mut write, &mut read, &mut message_id, "Page.navigate", json!({ "url": url_str })).await?;
-
-        // Poll document.readyState until complete or timeout
-        let start_time = Instant::now();
-        let max_duration = Duration::from_secs(timeout_secs);
-        let mut is_complete = false;
-
-        while start_time.elapsed() < max_duration {
-            sleep(Duration::from_millis(300)).await;
-            
-            let eval_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({
-                "expression": "document.readyState",
-                "returnByValue": true
-            })).await?;
-
-            if let Some(state) = eval_res
-                .get("result")
-                .and_then(|r| r.get("result"))
-                .and_then(|res| res.get("value"))
-                .and_then(|v| v.as_str()) 
-            {
-                if state == "complete" {
-                    is_complete = true;
-                    break;
-                }
-            }
-        }
-
-        // Run the action
-        let output = if action == "eval_js" {
-            let script_expr = script_str.ok_or_else(|| anyhow!("Missing 'script' parameter for eval_js action"))?;
-            let eval_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({
-                "expression": script_expr,
-                "returnByValue": true
-            })).await?;
-
-            let val = eval_res
-                .get("result")
-                .and_then(|r| r.get("result"))
-                .and_then(|res| res.get("value"));
-            
-            match val {
-                Some(v) => v.to_string(),
-                None => {
-                    if let Some(exception) = eval_res.get("result").and_then(|r| r.get("exceptionDetails")) {
-                        return Err(anyhow!("JavaScript exception: {}", exception));
-                    }
-                    "null".to_string()
-                }
-            }
-        } else {
-            let eval_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({
-                "expression": "document.documentElement.outerHTML",
-                "returnByValue": true
-            })).await?;
-
-            let html_str = eval_res
-                .get("result")
-                .and_then(|r| r.get("result"))
-                .and_then(|res| res.get("value"))
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Failed to retrieve document.documentElement.outerHTML"))?;
-
-            // Convert to Markdown
-            html2md::parse_html(html_str)
-        };
-
-        // Close the tab
+        // Always close the tab, even on error
         let close_url = format!("http://127.0.0.1:9222/json/close/{}", tab_id);
         let _ = client.get(&close_url).send().await;
 
+        let output = result?;
         Ok(json!({
             "status": "success",
-            "complete": is_complete,
             "output": output
         }))
     }

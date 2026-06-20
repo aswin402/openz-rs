@@ -184,7 +184,11 @@ impl Tool for CrawlSiteTool {
         let _ = handle.await;
 
         let results = pages.lock().await.clone();
-        Ok(Value::Array(results))
+        if results.is_empty() {
+            Err(anyhow!("Crawl returned no results. The site may be unreachable or block automated access."))
+        } else {
+            Ok(Value::Array(results))
+        }
     }
 }
 

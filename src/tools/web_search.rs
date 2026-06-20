@@ -254,6 +254,7 @@ impl WebSearchTool {
 
         // 4. Try Mojeek scraping if DuckDuckGo fails or returns no results
         if !ddg_success {
+            tracing::warn!("DuckDuckGo search returned no results, falling back to Mojeek");
             let res = self.client.get("https://www.mojeek.com/search")
                 .query(&[("q", query)])
                 .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
