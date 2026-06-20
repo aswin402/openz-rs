@@ -27,7 +27,7 @@ fn extract_document_child(child: &DocumentChild, text: &mut String) {
             extract_paragraph(p, text);
         }
         DocumentChild::Table(t) => {
-            extract_table(t, text);
+            extract_table(t, text, 0);
         }
         _ => {}
     }
@@ -58,7 +58,13 @@ fn extract_paragraph_inline(p: &docx_rs::Paragraph, text: &mut String) {
     }
 }
 
-fn extract_table(t: &docx_rs::Table, text: &mut String) {
+fn extract_table(t: &docx_rs::Table, text: &mut String, depth: usize) {
+    // Guard against deeply nested tables causing stack overflow
+    const MAX_TABLE_DEPTH: usize = 20;
+    if depth > MAX_TABLE_DEPTH {
+        text.push_str("[...nested table truncated...]\n");
+        return;
+    }
     for row_child in &t.rows {
         match row_child {
             TableChild::TableRow(tr) => {
@@ -71,7 +77,7 @@ fn extract_table(t: &docx_rs::Table, text: &mut String) {
                                         extract_paragraph_inline(p, text);
                                     }
                                     TableCellContent::Table(nested_t) => {
-                                        extract_table(nested_t, text);
+                                        extract_table(nested_t, text, depth + 1);
                                     }
                                     _ => {}
                                 }
@@ -147,6 +153,11 @@ impl Tool for DocReaderTool {
             Some("docx") => {
                 let mut file = File::open(path)?;
                 let mut buf = Vec::new();
+                // Guard against oversized files (50 MB limit)
+                const MAX_DOC_SIZE: u64 = 50 * 1024 * 1024;
+                if file.metadata()?.len() > MAX_DOC_SIZE {
+                    return Err(anyhow!("Document too large (max {} bytes)", MAX_DOC_SIZE));
+                }
                 file.read_to_end(&mut buf)?;
                 extract_docx_text(&buf)?
             }

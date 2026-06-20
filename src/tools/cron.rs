@@ -104,7 +104,7 @@ impl Tool for ListJobsTool {
         let jobs = load_jobs()?;
         Ok(serde_json::Value::Array(
             jobs.into_iter()
-                .map(|j| serde_json::to_value(j).unwrap())
+                .filter_map(|j| serde_json::to_value(j).ok())
                 .collect()
         ))
     }

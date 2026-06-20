@@ -6,6 +6,58 @@ use scraper::{Html, Selector};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Validate that an IP address is safe (not private, loopback, or reserved).
+fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            !(v4.is_private() || v4.is_loopback() || v4.is_link_local()
+                || v4.is_unspecified() || v4.is_broadcast())
+        }
+        std::net::IpAddr::V6(v6) => {
+            !(v6.is_loopback() || v6.is_unspecified() || v6.is_multicast())
+        }
+    }
+}
+
+/// Validate URL to prevent SSRF — resolves DNS to catch rebinding attacks.
+fn validate_url(url: &str) -> Result<()> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| anyhow!("Invalid URL: {}", e))?;
+    let host = parsed.host_str().ok_or_else(|| anyhow!("URL has no host"))?.to_lowercase();
+
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err(anyhow!("SSRF blocked: only http/https URLs are allowed (got '{}')", parsed.scheme()));
+    }
+
+    if host == "169.254.169.254" || host == "metadata.google.internal" {
+        return Err(anyhow!("SSRF blocked: cloud metadata endpoints are not allowed"));
+    }
+
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if !is_safe_ip(&ip) {
+            return Err(anyhow!("SSRF blocked: private/reserved IP addresses are not allowed"));
+        }
+    }
+
+    // DNS resolution check — prevents rebinding attacks
+    use std::net::ToSocketAddrs;
+    let resolved: Vec<_> = format!("{}:0", host)
+        .to_socket_addrs()
+        .map(|iter| iter.map(|addr| addr.ip()).collect())
+        .unwrap_or_default();
+
+    for ip in &resolved {
+        if !is_safe_ip(ip) {
+            return Err(anyhow!("SSRF blocked: hostname '{}' resolved to private/reserved IP {}", host, ip));
+        }
+    }
+
+    if resolved.is_empty() {
+        return Err(anyhow!("SSRF blocked: hostname '{}' could not be resolved", host));
+    }
+
+    Ok(())
+}
+
 pub struct CrawlSiteTool;
 
 impl Default for CrawlSiteTool {
@@ -62,6 +114,8 @@ impl Tool for CrawlSiteTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let url_str = arguments.get("url").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'url' parameter"))?;
+
+        validate_url(url_str)?;
         
         let limit = arguments.get("limit").and_then(|v| v.as_u64()).unwrap_or(10).min(1000) as u32;
         let depth = arguments.get("depth").and_then(|v| v.as_u64()).unwrap_or(3).min(10) as usize;

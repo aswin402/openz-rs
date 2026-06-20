@@ -27,20 +27,20 @@ impl Tool for SystemInfoTool {
         let arch = std::env::consts::ARCH.to_string();
 
         let disk_usage = if cfg!(target_os = "windows") {
-            let out = Command::new("wmic").args(["logicaldisk", "get", "size,freespace,caption"]).output();
+            let out = tokio::task::spawn_blocking(|| Command::new("wmic").args(["logicaldisk", "get", "size,freespace,caption"]).output()).await?;
             out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_else(|_| "Unavailable".to_string())
         } else {
-            let out = Command::new("df").arg("-h").output();
+            let out = tokio::task::spawn_blocking(|| Command::new("df").arg("-h").output()).await?;
             out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_else(|_| "Unavailable".to_string())
         };
 
         let memory_info = if cfg!(target_os = "linux") {
             std::fs::read_to_string("/proc/meminfo").unwrap_or_else(|_| "Unavailable".to_string())
         } else if cfg!(target_os = "macos") {
-            let out = Command::new("sysctl").args(["hw.memsize", "vm.page_free_target"]).output();
+            let out = tokio::task::spawn_blocking(|| Command::new("sysctl").args(["hw.memsize", "vm.page_free_target"]).output()).await?;
             out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_else(|_| "Unavailable".to_string())
         } else {
-            let out = Command::new("systeminfo").output();
+            let out = tokio::task::spawn_blocking(|| Command::new("systeminfo").output()).await?;
             out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_else(|_| "Unavailable".to_string())
         };
 
@@ -56,12 +56,13 @@ impl Tool for SystemInfoTool {
         ];
 
         for (tool, args) in tool_checks {
-            let status = Command::new(tool).args(&args).output();
+            let tool_name = tool.to_string();
+            let args_clone = args.clone();
+            let status = tokio::task::spawn_blocking(move || Command::new(&tool_name).args(&args_clone).output()).await;
             let available = status.is_ok();
-            let version = if let Ok(ref o) = status {
-                String::from_utf8_lossy(&o.stdout).trim().to_string()
-            } else {
-                String::new()
+            let version = match status {
+                Ok(Ok(ref o)) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+                _ => String::new(),
             };
             tools[tool] = json!({
                 "available": available,

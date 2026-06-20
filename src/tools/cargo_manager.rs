@@ -186,8 +186,11 @@ impl Tool for CargoManagerTool {
                                     }
                                     let corrected_code = corrected_code.trim().to_string();
 
-                                    if !corrected_code.is_empty()
-                                        && std::fs::write(&resolved_path, corrected_code).is_ok() {
+                                    if !corrected_code.is_empty() {
+                                        // Create backup before writing LLM-generated code
+                                        let backup_path = resolved_path.with_extension("rs.bak");
+                                        let _ = std::fs::copy(&resolved_path, &backup_path);
+                                        if std::fs::write(&resolved_path, corrected_code).is_ok() {
                                             crate::tui_println!(
                                                 "{}✓ [Self-Heal] Successfully patched '{}'. Re-compiling...{}",
                                                 EMERALD_GREEN, target_file, COLOR_RESET
@@ -196,7 +199,11 @@ impl Tool for CargoManagerTool {
                                             output = run_cargo_cmd(action, &cwd).await?;
                                             stdout = String::from_utf8_lossy(&output.stdout).to_string();
                                             stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                                        } else {
+                                            // Restore from backup on write failure
+                                            let _ = std::fs::copy(&backup_path, &resolved_path);
                                         }
+                                    }
                                 }
                             }
                             Err(e) => {

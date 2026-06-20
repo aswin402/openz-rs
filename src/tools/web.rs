@@ -16,42 +16,65 @@ fn web_re_newlines() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"\n\s*\n").unwrap())
 }
 
-/// Validate URL to prevent SSRF — blocks private IPs, localhost, and metadata endpoints.
-fn validate_url(url: &str) -> Result<()> {
-    let parsed = reqwest::Url::parse(url).map_err(|e| anyhow!("Invalid URL: {}", e))?;
-    let host = parsed.host_str().ok_or_else(|| anyhow!("URL has no host"))?;
-    let lower = host.to_lowercase();
-
-    // Block localhost variants
-    if lower == "localhost" || lower == "127.0.0.1" || lower == "::1" || lower == "[::1]" {
-        return Err(anyhow!("SSRF blocked: localhost/loopback addresses are not allowed"));
-    }
-
-    // Block cloud metadata endpoints
-    if lower == "169.254.169.254" || lower == "metadata.google.internal" {
-        return Err(anyhow!("SSRF blocked: cloud metadata endpoints are not allowed"));
-    }
-
-    // Block private IP ranges
-    if let Ok(ip) = lower.parse::<std::net::IpAddr>() {
-        match ip {
-            std::net::IpAddr::V4(v4) => {
-                if v4.is_private() || v4.is_loopback() || v4.is_link_local()
-                    || v4.is_unspecified() || v4.is_broadcast() {
-                    return Err(anyhow!("SSRF blocked: private/reserved IP addresses are not allowed"));
-                }
-            }
-            std::net::IpAddr::V6(v6) => {
-                if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
-                    return Err(anyhow!("SSRF blocked: reserved IPv6 addresses are not allowed"));
-                }
-            }
+/// Validate that an IP address is safe (not private, loopback, or reserved).
+fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            !(v4.is_private() || v4.is_loopback() || v4.is_link_local()
+                || v4.is_unspecified() || v4.is_broadcast())
+        }
+        std::net::IpAddr::V6(v6) => {
+            !(v6.is_loopback() || v6.is_unspecified() || v6.is_multicast())
         }
     }
+}
+
+/// Validate URL to prevent SSRF — blocks private IPs, localhost, metadata endpoints,
+/// AND resolves DNS to catch rebinding attacks (domain resolves to private IP after check).
+async fn validate_url(url: &str) -> Result<()> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| anyhow!("Invalid URL: {}", e))?;
+    let host = parsed.host_str().ok_or_else(|| anyhow!("URL has no host"))?.to_lowercase();
 
     // Block non-HTTP schemes
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
         return Err(anyhow!("SSRF blocked: only http/https URLs are allowed (got '{}')", parsed.scheme()));
+    }
+
+    // Block cloud metadata endpoints by hostname
+    if host == "169.254.169.254" || host == "metadata.google.internal" {
+        return Err(anyhow!("SSRF blocked: cloud metadata endpoints are not allowed"));
+    }
+
+    // If the host is already a literal IP, check it directly
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if !is_safe_ip(&ip) {
+            return Err(anyhow!("SSRF blocked: private/reserved IP addresses are not allowed"));
+        }
+    }
+
+    // DNS resolution check — prevents rebinding attacks where a domain
+    // resolves to a private IP after the string-based check passes.
+    // Use a short-lived blocking resolve inside the async context.
+    let host_for_resolve = host.clone();
+    let resolved_ips = tokio::task::spawn_blocking(move || {
+        use std::net::ToSocketAddrs;
+        format!("{}:0", host_for_resolve)
+            .to_socket_addrs()
+            .map(|iter| iter.map(|addr| addr.ip()).collect::<Vec<_>>())
+            .unwrap_or_default()
+    }).await.unwrap_or_default();
+
+    for ip in &resolved_ips {
+        if !is_safe_ip(ip) {
+            return Err(anyhow!(
+                "SSRF blocked: hostname '{}' resolved to private/reserved IP {}",
+                host, ip
+            ));
+        }
+    }
+
+    if resolved_ips.is_empty() {
+        return Err(anyhow!("SSRF blocked: hostname '{}' could not be resolved to any IP", host));
     }
 
     Ok(())
@@ -132,7 +155,7 @@ impl Tool for WebFetchTool {
         let url_str = arguments.get("url").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'url' argument"))?;
 
-        validate_url(url_str)?;
+        validate_url(url_str).await?;
 
         let res = self.client.get(url_str)
             .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")

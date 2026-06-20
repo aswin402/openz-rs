@@ -133,6 +133,8 @@ impl Tool for IndexNotesTool {
             let _lock = get_db_mutex().lock().await;
             let conn = get_sqlite_connection()?;
 
+            // Use a transaction for batch insert performance
+            conn.execute_batch("BEGIN TRANSACTION")?;
             for entry in entries_to_add {
                 let embedding_json = serde_json::to_string(&entry.embedding)?;
                 let tags_json = serde_json::to_string(&entry.tags)?;
@@ -142,6 +144,7 @@ impl Tool for IndexNotesTool {
                     params![entry.id, entry.text, embedding_json, entry.timestamp, entry.workspace, tags_json, entry.importance, entry.last_accessed, entry.access_count, entry.decay_rate],
                 )?;
             }
+            conn.execute_batch("COMMIT")?;
         }
 
         Ok(json!({

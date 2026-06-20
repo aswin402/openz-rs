@@ -31,25 +31,39 @@ impl Tool for OpenTool {
         let target = arguments.get("target").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'target' parameter"))?;
 
-        // Resolve paths containing ~/ to absolute paths
-        let resolved = if target.starts_with("http://") || target.starts_with("https://") {
-            target.to_string()
+        // Validate URLs against SSRF
+        if target.starts_with("http://") || target.starts_with("https://") {
+            // Block shell metacharacters in URLs
+            if target.contains(';') || target.contains('|') || target.contains('&')
+                || target.contains('$') || target.contains('`') || target.contains('\n') {
+                return Err(anyhow!("Security: URL contains shell metacharacters"));
+            }
+            let resolved = target.to_string();
+            let resolved_clone = resolved.clone();
+            let status = tokio::task::spawn_blocking(move || {
+                open::that(resolved_clone)
+            }).await?;
+            match status {
+                Ok(_) => Ok(json!({
+                    "status": "success",
+                    "message": format!("Successfully opened '{}'", resolved)
+                })),
+                Err(e) => Err(anyhow!("Failed to open '{}': {}", resolved, e)),
+            }
         } else {
-            crate::config::resolve_path(target).to_string_lossy().to_string()
-        };
-
-        // We run open::that in a blocking thread since it's a synchronous system call
-        let resolved_clone = resolved.clone();
-        let status = tokio::task::spawn_blocking(move || {
-            open::that(resolved_clone)
-        }).await?;
-
-        match status {
-            Ok(_) => Ok(json!({
-                "status": "success",
-                "message": format!("Successfully opened '{}'", resolved)
-            })),
-            Err(e) => Err(anyhow!("Failed to open '{}': {}", resolved, e)),
+            // For file paths, resolve and validate
+            let resolved = crate::config::resolve_path(target).to_string_lossy().to_string();
+            let resolved_clone = resolved.clone();
+            let status = tokio::task::spawn_blocking(move || {
+                open::that(resolved_clone)
+            }).await?;
+            match status {
+                Ok(_) => Ok(json!({
+                    "status": "success",
+                    "message": format!("Successfully opened '{}'", resolved)
+                })),
+                Err(e) => Err(anyhow!("Failed to open '{}': {}", resolved, e)),
+            }
         }
     }
 }

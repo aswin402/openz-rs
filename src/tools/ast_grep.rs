@@ -48,25 +48,30 @@ impl Tool for AstGrepTool {
         } else {
             std::path::PathBuf::from("ast-grep")
         };
-        let mut cmd = Command::new(bin_path);
-        crate::config::loader::set_command_cwd(&mut cmd);
-        cmd.arg("run");
-        cmd.arg("--pattern").arg(pattern);
-        cmd.arg("--lang").arg(lang);
-        cmd.arg("--json");
 
-        if let Some(path_str) = arguments.get("path")
+        let bin_path_for_spawn = bin_path;
+        let pattern_for_spawn = pattern.to_string();
+        let lang_for_spawn = lang.to_string();
+        let path_arg = arguments.get("path")
             .or(arguments.get("TargetFile"))
             .or(arguments.get("filepath"))
             .or(arguments.get("file"))
             .or(arguments.get("Path"))
             .and_then(|v| v.as_str())
-        {
-            let resolved = crate::config::resolve_path(path_str);
-            cmd.arg(resolved);
-        }
+            .map(crate::config::resolve_path);
 
-        let output = cmd.output()?;
+        let output = tokio::task::spawn_blocking(move || {
+            let mut cmd = Command::new(&bin_path_for_spawn);
+            crate::config::loader::set_command_cwd(&mut cmd);
+            cmd.arg("run");
+            cmd.arg("--pattern").arg(&pattern_for_spawn);
+            cmd.arg("--lang").arg(&lang_for_spawn);
+            cmd.arg("--json");
+            if let Some(ref resolved) = path_arg {
+                cmd.arg(resolved);
+            }
+            cmd.output()
+        }).await??;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 

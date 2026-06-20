@@ -151,8 +151,13 @@ impl<'a> Visit<'a> for OutlineVisitor<'a> {
             let definition = self.source_text.get(start..end)
                 .map(|s| s.lines().next().unwrap_or("").trim().to_string())
                 .unwrap_or_else(|| format!("function {}", ident.name));
-            
-            let line_num = self.source_text[..start].lines().count() + 1;
+
+            // Safe slicing: ensure we don't panic on non-UTF-8 boundaries
+            let line_num = if start <= self.source_text.len() {
+                self.source_text[..start].lines().count() + 1
+            } else {
+                0
+            };
 
             self.symbols.push(Symbol {
                 line: line_num,
@@ -171,8 +176,12 @@ impl<'a> Visit<'a> for OutlineVisitor<'a> {
             let definition = self.source_text.get(start..end)
                 .map(|s| s.lines().next().unwrap_or("").trim().to_string())
                 .unwrap_or_else(|| format!("class {}", ident.name));
-            
-            let line_num = self.source_text[..start].lines().count() + 1;
+
+            let line_num = if start <= self.source_text.len() {
+                self.source_text[..start].lines().count() + 1
+            } else {
+                0
+            };
 
             self.symbols.push(Symbol {
                 line: line_num,
@@ -191,8 +200,12 @@ impl<'a> Visit<'a> for OutlineVisitor<'a> {
         let definition = self.source_text.get(start..end)
             .map(|s| s.lines().next().unwrap_or("").trim().to_string())
             .unwrap_or_else(|| format!("interface {}", ident.name));
-        
-        let line_num = self.source_text[..start].lines().count() + 1;
+
+        let line_num = if start <= self.source_text.len() {
+            self.source_text[..start].lines().count() + 1
+        } else {
+            0
+        };
 
         self.symbols.push(Symbol {
             line: line_num,
@@ -210,8 +223,12 @@ impl<'a> Visit<'a> for OutlineVisitor<'a> {
         let definition = self.source_text.get(start..end)
             .map(|s| s.lines().next().unwrap_or("").trim().to_string())
             .unwrap_or_else(|| format!("type {}", ident.name));
-        
-        let line_num = self.source_text[..start].lines().count() + 1;
+
+        let line_num = if start <= self.source_text.len() {
+            self.source_text[..start].lines().count() + 1
+        } else {
+            0
+        };
 
         self.symbols.push(Symbol {
             line: line_num,

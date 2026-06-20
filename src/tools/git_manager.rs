@@ -96,7 +96,7 @@ impl Tool for GitManagerTool {
             _ => return Err(anyhow!("Unsupported git action: {}", action)),
         }
 
-        let output = cmd.output()?;
+        let output = tokio::task::spawn_blocking(move || cmd.output()).await??;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();

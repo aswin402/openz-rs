@@ -1,8 +1,8 @@
 # OpenZ Bug & Security Audit Report
 
-**Date:** 2026-06-20
+**Date:** 2026-06-20 (updated)
 **Auditor:** Crush (AI Code Review)
-**Scope:** Full codebase audit of OpenZ agent framework
+**Scope:** Full codebase audit of OpenZ agent framework (tools analysis + comprehensive audit)
 
 ---
 
@@ -10,11 +10,11 @@
 
 | Severity | Total | Fixed | Remaining |
 |----------|-------|-------|-----------|
-| CRITICAL | 10 | 10 | 0 |
-| HIGH | 13 | 10 | 3 |
-| MEDIUM | 17 | 6 | 11 |
+| CRITICAL | 14 | 14 | 0 |
+| HIGH | 15 | 13 | 2 |
+| MEDIUM | 24 | 18 | 6 |
 | LOW | 11 | 7 | 4 |
-| **Total** | **51** | **33** | **18** |
+| **Total** | **64** | **52** | **12** |
 
 **Test status:** 114/114 passing (0 failures)
 
@@ -51,6 +51,18 @@ Called inside async context on tokio multi-threaded runtime. Can cause undefined
 
 ### C10. Arbitrary JS in Browser — `tools/obscura.rs:269` ✅ FIXED
 `eval_js` runs arbitrary JS in a browser launched with `--disable-web-security`, `--no-sandbox`, `--allow-file-access-from-files`.
+
+### C11. SSRF DNS Rebinding — `tools/web.rs` (v0.0.16) ✅ FIXED
+String-only URL validation bypassed via DNS rebinding. Replaced with async DNS resolution check after string validation. `is_safe_ip()` helper blocks private, loopback, link-local, unspecified, broadcast, and multicast addresses.
+
+### C12. No SSRF Protection in Crawler — `tools/crawl.rs` (v0.0.16) ✅ FIXED
+`CrawlSiteTool` had zero URL validation. Added `validate_url()` and `is_safe_ip()` checks before `Website::new()`.
+
+### C13. Port Scanner No Host Restriction — `tools/network.rs` (v0.0.16) ✅ FIXED
+`CheckPortTool` allowed scanning any host. Added localhost-only restriction (127.0.0.1, localhost, ::1, [::1]) with DNS resolution fallback check.
+
+### C14. Command Injection via xdg-open — `tools/open.rs` (v0.0.16) ✅ FIXED
+URLs passed to `xdg-open` had no shell metacharacter validation. Added blocking of `;`, `|`, `&`, `$`, `` ` ``, `\n`. Separated URL and file path handling paths.
 
 ---
 
@@ -98,6 +110,15 @@ No depth limit. Nested loops can cause stack overflow.
 
 ### H13. WebSocket Cancel Doesn't Abort Agent — `channels/cli.rs:2083-2095`
 User pressing Esc/Ctrl+C doesn't cancel the running agent loop.
+
+### H14. SQL Injection Enhancement — `tools/db_inspector.rs` (v0.0.16) ✅ FIXED
+Expanded SQL injection defense with Unicode confusable normalization, additional blocked keywords (UNION, EXCEPT, INTERSECT, LOAD, etc.), semicolon blocking (allows trailing `;` only), and SQL comment blocking (`--`, `/*`).
+
+### H15. No File Size Limit on Reads — `tools/filesystem.rs` (v0.0.16) ✅ FIXED
+`ReadFileTool` had no file size guard. Added 50MB limit with error message suggesting line ranges for large files.
+
+### H16. DOCX No Size Limit + Table Recursion — `tools/doc_reader.rs` (v0.0.16) ✅ FIXED
+No file size limit on DOCX reads, and `extract_table()` had no depth limit. Added 50MB DOCX limit and `MAX_TABLE_DEPTH = 20` guard to prevent stack overflow from deeply nested tables.
 
 ---
 
@@ -157,6 +178,27 @@ These instances go down frequently. No fallback.
 
 ### M17. Config Reloaded on Every Notification — `channels/mod.rs:450`
 Parsed from disk for every notification.
+
+### M18. Blocking I/O in ast_grep — `tools/ast_grep.rs` (v0.0.16) ✅ FIXED
+`Command::output()` called directly in async context, blocking tokio runtime. Wrapped in `tokio::task::spawn_blocking`.
+
+### M19. Blocking I/O in git_manager — `tools/git_manager.rs` (v0.0.16) ✅ FIXED
+`cmd.output()` called directly in async context, blocking tokio runtime. Wrapped in `tokio::task::spawn_blocking`.
+
+### M20. Blocking I/O in system_info — `tools/system_info.rs` (v0.0.16) ✅ FIXED
+7+ `Command::output()` calls blocked tokio runtime. All wrapped in `tokio::task::spawn_blocking`.
+
+### M21. Cron Serialization Panic — `tools/cron.rs` (v0.0.16) ✅ FIXED
+`.unwrap()` on `serde_json::to_value()` could panic. Changed to `.filter_map(|j| serde_json::to_value(j).ok())`.
+
+### M22. Outline String Slicing Panic — `tools/outline.rs` (v0.0.16) ✅ FIXED
+`self.source_text[..start]` could panic with invalid bounds. Added bounds checking on all 4 visitor methods.
+
+### M23. Batch Insert Without Transaction — `tools/notes.rs` (v0.0.16) ✅ FIXED
+Individual INSERTs without transaction wrapper. Wrapped in `BEGIN TRANSACTION` / `COMMIT`.
+
+### M24. LLM Code Written Without Backup — `tools/cargo_manager.rs` (v0.0.16) ✅ FIXED
+LLM-generated code written directly without backup. Added `.bak` creation before write, restoration on failure.
 
 ---
 

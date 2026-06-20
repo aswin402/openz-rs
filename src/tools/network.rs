@@ -39,6 +39,24 @@ impl Tool for CheckPortTool {
         let action = arguments.get("action").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
 
+        // Restrict to localhost to prevent internal network enumeration
+        let allowed_hosts = ["127.0.0.1", "localhost", "::1", "[::1]"];
+        let host_lower = host.to_lowercase();
+        if !allowed_hosts.contains(&host_lower.as_str()) {
+            // Also allow resolving to localhost
+            use std::net::ToSocketAddrs;
+            let resolves_to_localhost = format!("{}:0", host)
+                .to_socket_addrs()
+                .map(|mut iter| iter.any(|addr| {
+                    let ip = addr.ip();
+                    ip.is_loopback() || ip == "127.0.0.1".parse::<std::net::IpAddr>().unwrap()
+                }))
+                .unwrap_or(false);
+            if !resolves_to_localhost {
+                return Err(anyhow!("Security: check_port only allows localhost targets to prevent internal network enumeration. Got host: {}", host));
+            }
+        }
+
         let address = format!("{}:{}", host, port);
 
         match action {

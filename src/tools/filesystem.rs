@@ -36,7 +36,18 @@ impl Tool for ReadFileTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
         let path = resolve_path(path_str);
-        
+
+        // Guard against reading excessively large files (>50MB) to prevent OOM
+        let metadata = fs::metadata(&path)
+            .with_context(|| format!("Failed to read file metadata at {:?}", path))?;
+        const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+        if metadata.len() > MAX_FILE_SIZE {
+            return Err(anyhow!(
+                "File too large to read ({} bytes, max {} bytes). Use start_line/end_line to read specific ranges.",
+                metadata.len(), MAX_FILE_SIZE
+            ));
+        }
+
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read file at {:?}", path))?;
         

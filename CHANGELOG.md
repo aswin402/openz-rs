@@ -373,7 +373,24 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.15 (Latest Release)
+### v0.0.16 (Latest Release)
+*   **Security: SSRF DNS Rebinding Defense (CRITICAL):** Replaced string-only URL validation in `web_fetch` with DNS resolution checks. After validating URL syntax and hostname patterns, resolves the hostname to IP addresses via `tokio::task::spawn_blocking` + `ToSocketAddrs`, then verifies all resolved IPs are safe (not private, loopback, link-local, unspecified, broadcast, or multicast). Prevents DNS rebinding attacks where a malicious DNS server returns a private IP after initial validation.
+*   **Security: SSRF Protection for Crawler (CRITICAL):** Added the same `validate_url()` and `is_safe_ip()` functions to `CrawlSiteTool` in `crawl.rs`. Blocks crawling of internal/private endpoints before `Website::new()` is called.
+*   **Security: Port Scanner Restriction (CRITICAL):** Added localhost-only restriction to `CheckPortTool` in `network.rs`. Only allows `127.0.0.1`, `localhost`, `::1`, `[::1]`. If a non-allowed host is given, resolves it and checks if any resolved IP is loopback. Prevents internal network enumeration.
+*   **Security: Command Injection in xdg-open (CRITICAL):** Added shell metacharacter validation for URLs in `open.rs`. Blocks `;`, `|`, `&`, `$`, `` ` ``, `\n` characters. Separated URL and file path handling paths, both using `tokio::task::spawn_blocking`.
+*   **Security: SQL Injection Enhancement (HIGH):** Expanded SQL injection defense in `db_inspector.rs` with Unicode confusable normalization (zero-width chars, fullwidth digits), additional blocked keywords (`UNION`, `EXCEPT`, `INTERSECT`, `LOAD`, `OVERWRITE`, `CALL`, `EXECUTE`, `HAVING`, `GROUPBY`, `ORDERBY`), semicolon blocking (allows trailing `;` only), and SQL comment blocking (`--`, `/*`).
+*   **Bugfix: File Size Guard (HIGH):** Added 50MB file size limit on `ReadFileTool` in `filesystem.rs`. Returns error with guidance to use line ranges for large files.
+*   **Bugfix: DOCX Size Limit + Table Recursion (HIGH):** Added 50MB limit on DOCX file reads in `doc_reader.rs`. Added depth parameter to `extract_table()` with `MAX_TABLE_DEPTH = 20` guard to prevent stack overflow from deeply nested tables.
+*   **Bugfix: Blocking I/O in ast_grep (MEDIUM):** Wrapped `Command::output()` in `tokio::task::spawn_blocking` in `ast_grep.rs` to prevent blocking the tokio runtime thread pool. Also fixed clippy redundant closure warning.
+*   **Bugfix: Blocking I/O in git_manager (MEDIUM):** Wrapped `cmd.output()` in `tokio::task::spawn_blocking` in `git_manager.rs` to prevent blocking the tokio runtime thread pool.
+*   **Bugfix: Blocking I/O in system_info (MEDIUM):** Wrapped all 7+ `Command::output()` calls in `tokio::task::spawn_blocking` in `system_info.rs` to prevent blocking the tokio runtime thread pool.
+*   **Bugfix: Cron Serialization Panic (MEDIUM):** Changed `.unwrap()` to `.filter_map(|j| serde_json::to_value(j).ok())` in `cron.rs` to prevent panics on serialization failures.
+*   **Bugfix: Outline String Slicing Panic (MEDIUM):** Added bounds checking on all 4 visitor methods in `outline.rs` (`visit_function`, `visit_class`, `visit_ts_interface_declaration`, `visit_ts_type_alias_declaration`). Changed `self.source_text[..start]` to safe conditional with length check.
+*   **Bugfix: Batch Insert Performance (MEDIUM):** Wrapped the INSERT loop in `notes.rs` in a SQLite transaction (`BEGIN TRANSACTION` / `COMMIT`) for batch insert performance.
+*   **Bugfix: LLM Code Backup (MEDIUM):** Added `.bak` backup creation before writing LLM-generated code in `cargo_manager.rs`. On write failure, restores from backup.
+*   **Maintenance: Version Bump:** Bumped to v0.0.16. All 114 tests passing, 0 clippy warnings.
+
+### v0.0.15
 *   **Security: SQL Injection Defense (CRITICAL):** Replaced trivially-bypassable keyword blocklist in `DbInspectorTool` with comprehensive SQL injection defense: normalized whitespace removal, blocklist of dangerous SQL keywords (INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, ATTACH, DETACH, PRAGMA, etc.), blocklist of sqlite3 dot-commands (.shell, .import, .output, .read, .system), and whitelist requiring queries start with SELECT or EXPLAIN.
 *   **Security: Shell Command Allowlist (CRITICAL):** Added compile command allowlist validation to `CompilerAutoHealTool` (cargo, rustc, gcc, clang, make, npm, python, etc.), enforced `max_iterations` cap of 5, added backup file creation before AI-generated overwrites.
 *   **Security: SSRF Prevention (CRITICAL):** Added `validate_url()` to `web_fetch` blocking localhost, loopback, cloud metadata endpoints (169.254.169.254), private/reserved IP ranges, and non-HTTP schemes. Restricted `rust_docs` `sub_path` to only `https://docs.rs/` or `https://crates.io/` URLs.

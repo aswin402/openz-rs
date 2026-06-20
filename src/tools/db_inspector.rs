@@ -58,12 +58,32 @@ impl Tool for DbInspectorTool {
 
                 // Block dangerous SQL operations — use a strict blocklist
                 let sql_upper = sql.to_uppercase();
-                let normalized: String = sql_upper.chars().filter(|c| !c.is_whitespace()).collect();
+                // Normalize: remove whitespace and common Unicode confusables
+                let normalized: String = sql_upper.chars()
+                    .filter(|c| !c.is_whitespace())
+                    .map(|c| match c {
+                        '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}' => '\0', // zero-width chars
+                        '\u{FF10}'..='\u{FF19}' => (c as u8 - b'\xEF' + b'0') as char, // fullwidth digits → ASCII
+                        _ => c,
+                    })
+                    .filter(|c| *c != '\0')
+                    .collect();
                 let blocked_keywords = [
                     "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE",
                     "ATTACH", "DETACH", "PRAGMA", "REINDEX", "REPLACE",
-                    "VACUUM", "ANALYZE", "INTO",
+                    "VACUUM", "ANALYZE", "INTO", "UNION", "EXCEPT", "INTERSECT",
+                    "LOAD", "OVERWRITE", "CALL", "EXECUTE", "HAVING", "GROUPBY",
+                    "ORDERBY", "LIMIT", "OFFSET",
                 ];
+                // Also block semicolons (stacked queries) and comment sequences.
+                // Allow a single trailing semicolon (normal SQL syntax) but block mid-query semicolons.
+                let trimmed_sql = sql.trim_end_matches(';').trim();
+                if trimmed_sql.contains(';') {
+                    return Err(anyhow!("Only simple SELECT queries are allowed. Semicolons (stacked queries) are blocked."));
+                }
+                if sql.contains("--") || sql.contains("/*") {
+                    return Err(anyhow!("Only simple SELECT queries are allowed. SQL comments are blocked."));
+                }
                 // Also block shell-like dot commands used by sqlite3 CLI
                 let blocked_dot = [".shell", ".import", ".output", ".read", ".system"];
                 for kw in &blocked_keywords {
