@@ -151,7 +151,7 @@ impl McpClient {
 
             // Automatic in-process gRPC bridge for all stdio servers to avoid stdio pollution
             let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-            let (bridge_port, port_guard) = find_free_port();
+            let (bridge_port, port_guard) = find_free_port()?;
             let cmd_string = cmd.clone();
             let cmd_args = args_vec.clone();
 
@@ -407,7 +407,7 @@ impl Tool for LazyMcpToolWrapper {
 
 static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(50060);
 
-fn find_free_port() -> (u16, std::net::TcpListener) {
+fn find_free_port() -> Result<(u16, std::net::TcpListener)> {
     let start_port = NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if start_port > 65000 {
         NEXT_PORT.store(50060, std::sync::atomic::Ordering::Relaxed);
@@ -416,14 +416,14 @@ fn find_free_port() -> (u16, std::net::TcpListener) {
     let mut port = start_port;
     for _ in 0..100 {
         if let Ok(listener) = std::net::TcpListener::bind(format!("127.0.0.1:{}", port)) {
-            return (port, listener);
+            return Ok((port, listener));
         }
         port = NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     tracing::warn!("Could not find free port after 100 attempts, using last port {}", port);
     let listener = std::net::TcpListener::bind(format!("127.0.0.1:{}", port))
-        .expect("Failed to bind even fallback port");
-    (port, listener)
+        .map_err(|e| anyhow::anyhow!("Failed to bind fallback port {}: {}", port, e))?;
+    Ok((port, listener))
 }
 
 pub struct McpBridgeService {
@@ -640,7 +640,7 @@ mod tests {
 
     #[test]
     fn test_find_free_port_returns_bound_listener() {
-        let (port, listener) = find_free_port();
+        let (port, listener) = find_free_port().unwrap();
         assert!(port >= 50060, "port should be in dynamic range");
         assert!(port <= 65000, "port should be in dynamic range");
         // Listener should be alive — binding same port again should fail
@@ -658,8 +658,8 @@ mod tests {
 
     #[test]
     fn test_find_free_port_sequential_ports_differ() {
-        let (_p1, l1) = find_free_port();
-        let (p2, _l2) = find_free_port();
+        let (_p1, l1) = find_free_port().unwrap();
+        let (p2, _l2) = find_free_port().unwrap();
         // Second call should advance to a different port
         assert_ne!(p2, 0);
         drop(l1);

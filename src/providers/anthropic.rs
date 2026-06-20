@@ -53,7 +53,11 @@ enum ContentBlock {
 impl AnthropicProvider {
     pub fn new(api_key: String, api_base: String, model: String) -> Self {
         AnthropicProvider {
-            client: Client::builder().use_rustls_tls().build().unwrap_or_default(),
+            client: Client::builder()
+                .use_rustls_tls()
+                .timeout(Duration::from_secs(300))
+                .build()
+                .unwrap_or_default(),
             api_key,
             api_base,
             model,
@@ -238,11 +242,12 @@ impl LLMProvider for AnthropicProvider {
             || {
                 let client = client.clone();
                 let api_key = api_key.clone();
-                let api_base = api_base.clone();
+                let clean_base = api_base.trim_end_matches('/').trim_end_matches("/v1");
+                let url = format!("{}/v1/messages", clean_base);
                 let json_body = body_for_retry.clone();
                 async move {
                     let res = client
-                        .post(format!("{}/v1/messages", api_base))
+                        .post(&url)
                         .header("x-api-key", &api_key)
                         .header("anthropic-version", "2023-06-01")
                         .header("anthropic-beta", "prompt-caching-2024-07-31")

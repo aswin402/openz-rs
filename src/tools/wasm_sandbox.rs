@@ -57,6 +57,10 @@ impl Tool for WasmSandboxTool {
         if !wasm_path.exists() {
             return Err(anyhow!("WASM file does not exist: {}", wasm_path_str));
         }
+        let metadata = std::fs::metadata(wasm_path)?;
+        if metadata.len() > 100 * 1024 * 1024 {
+            return Err(anyhow!("WASM module too large (max 100MB)"));
+        }
 
         // Run execution in a spawn_blocking task to not block Tokio runtime
         let path = wasm_path.to_path_buf();
@@ -70,7 +74,9 @@ impl Tool for WasmSandboxTool {
 
 pub fn execute_wasm(wasm_path: &Path, args: Vec<String>) -> Result<Value> {
     // 1. Setup engine and compile module
-    let engine = Engine::default();
+    let mut config = Config::new();
+    config.consume_fuel(true);
+    let engine = Engine::new(&config)?;
     let module = Module::from_file(&engine, wasm_path)?;
     
     // 2. Setup stdout/stderr capturing pipes
@@ -90,6 +96,7 @@ pub fn execute_wasm(wasm_path: &Path, args: Vec<String>) -> Result<Value> {
 
     // 4. Create store and linker
     let mut store = Store::new(&engine, wasi_ctx);
+    store.set_fuel(1_000_000)?;
     let mut linker: Linker<WasiP1Ctx> = Linker::new(&engine);
     
     p1::add_to_linker_sync(&mut linker, |t| t)?;

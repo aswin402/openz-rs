@@ -81,7 +81,7 @@ impl Tool for VideoGeneratorTool {
 
         // Run blocking tasks in spawned threads since wavyte rendering is CPU heavy and synchronous
         let output_path_clone = output_path.clone();
-        tokio::task::spawn_blocking(move || -> Result<()> {
+        let render_future = tokio::task::spawn_blocking(move || -> Result<()> {
             let mut backend = create_backend(BackendKind::Cpu, &settings)
                 .map_err(|e| anyhow!("Failed to create rendering backend: {}", e))?;
             
@@ -103,7 +103,13 @@ impl Tool for VideoGeneratorTool {
             ).map_err(|e| anyhow!("Failed to render composition to MP4: {}", e))?;
 
             Ok(())
-        }).await??;
+        });
+
+        match tokio::time::timeout(std::time::Duration::from_secs(120), render_future).await {
+            Ok(Ok(res)) => res?,
+            Ok(Err(join_err)) => return Err(anyhow!("Rendering task panicked: {}", join_err)),
+            Err(_) => return Err(anyhow!("Rendering timed out after 120 seconds")),
+        }
 
         Ok(json!({
             "status": "success",

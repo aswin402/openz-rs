@@ -202,7 +202,7 @@ impl Tool for GrepSearchTool {
         let is_regex = arguments.get("is_regex").and_then(|v| v.as_bool()).unwrap_or(false);
         
         let search_dir_str = arguments.get("dir").and_then(|v| v.as_str()).unwrap_or(".");
-        let search_dir = PathBuf::from(search_dir_str);
+        let search_dir = crate::config::loader::resolve_path(search_dir_str);
 
         if !search_dir.exists() {
             return Err(anyhow!("Directory '{}' does not exist", search_dir_str));

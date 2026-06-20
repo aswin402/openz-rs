@@ -87,7 +87,7 @@ impl Tool for HtmlToVideoTool {
         let fps = arguments.get("fps").and_then(|v| v.as_i64()).unwrap_or(30);
         let duration_secs = arguments.get("duration_seconds").and_then(|v| v.as_f64()).unwrap_or(5.0);
         let tick_js = arguments.get("tick_js").and_then(|v| v.as_str());
-        let settle_ms = arguments.get("settle_ms").and_then(|v| v.as_i64()).unwrap_or(30);
+        let settle_ms = arguments.get("settle_ms").and_then(|v| v.as_i64()).unwrap_or(30).max(0) as u64;
         let load_delay_ms = arguments.get("load_delay_ms").and_then(|v| v.as_i64()).unwrap_or(1500);
 
         let total_frames = (duration_secs * fps as f64).round() as usize;
@@ -146,20 +146,20 @@ impl Tool for HtmlToVideoTool {
             .send()
             .await;
         
-        if res.is_err() || !res.as_ref().unwrap().status().is_success() {
+        if !matches!(&res, Ok(r) if r.status().is_success()) {
             res = client.get("http://127.0.0.1:9222/json/new")
                 .send()
                 .await;
         }
         
-        if res.is_err() || !res.as_ref().unwrap().status().is_success() {
+        if !matches!(&res, Ok(r) if r.status().is_success()) {
             kill_browser_on_port_9222();
             sleep(Duration::from_millis(500)).await;
             ensure_browser_running().await?;
             res = client.put("http://127.0.0.1:9222/json/new")
                 .send()
                 .await;
-            if res.is_err() || !res.as_ref().unwrap().status().is_success() {
+            if !matches!(&res, Ok(r) if r.status().is_success()) {
                 res = client.get("http://127.0.0.1:9222/json/new")
                     .send()
                     .await;
@@ -200,7 +200,7 @@ impl Tool for HtmlToVideoTool {
             }
 
             if settle_ms > 0 {
-                sleep(Duration::from_millis(settle_ms as u64)).await;
+                sleep(Duration::from_millis(settle_ms)).await;
             }
 
             let screenshot_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Page.captureScreenshot", json!({

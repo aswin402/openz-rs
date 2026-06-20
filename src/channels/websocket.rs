@@ -106,8 +106,14 @@ impl super::Channel for WsGateway {
 
 async fn ws_handler(
     ws: WebSocketUpgrade,
+    headers: axum::http::HeaderMap,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
     State(state): State<WsState>,
 ) -> impl IntoResponse {
+    let query_token = params.get("token").map(|s| s.as_str());
+    if !is_authorized(&headers, query_token) {
+        return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+    }
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
@@ -224,9 +230,16 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
 
 async fn trigger_sop_handler(
     State(state): State<WsState>,
+    headers: axum::http::HeaderMap,
     AxumPath(sop_id): AxumPath<String>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    if !is_authorized(&headers, None) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "Unauthorized" })),
+        ).into_response();
+    }
     let config = state.agent_loop.config.clone();
     match crate::sop::engine::trigger_sop(config, sop_id, payload).await {
         Ok(instance_id) => (
@@ -247,8 +260,15 @@ async fn trigger_sop_handler(
 
 async fn resume_sop_handler(
     State(state): State<WsState>,
+    headers: axum::http::HeaderMap,
     AxumPath(instance_id): AxumPath<String>,
 ) -> impl IntoResponse {
+    if !is_authorized(&headers, None) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "Unauthorized" })),
+        ).into_response();
+    }
     let config = state.agent_loop.config.clone();
     match crate::sop::engine::resume_sop(config, instance_id).await {
         Ok(_) => (
@@ -350,8 +370,20 @@ fn determine_routed_model(
 
 async fn openai_chat_completions(
     State(state): State<WsState>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<OpenAiChatCompletionRequest>,
 ) -> impl IntoResponse {
+    if !is_authorized(&headers, None) {
+        let err_json = serde_json::json!({
+            "error": {
+                "message": "Unauthorized: Invalid or missing gateway token.",
+                "type": "auth_error",
+                "param": null,
+                "code": "unauthorized"
+            }
+        });
+        return (StatusCode::UNAUTHORIZED, Json(err_json)).into_response();
+    }
     let last_user_content = payload.messages.iter().rfind(|m| m.role == "user")
         .map(|m| {
             if let Some(s) = m.content.as_str() {
@@ -477,5 +509,30 @@ mod tests {
         });
         let model_routed = determine_routed_model(&config, "gpt-4o", "Hi there");
         assert_eq!(model_routed, "deepseek/deepseek-chat");
+    }
+}
+
+fn is_authorized(headers: &axum::http::HeaderMap, query_token: Option<&str>) -> bool {
+    if let Ok(expected) = std::env::var("OPENZ_GATEWAY_TOKEN") {
+        if expected.is_empty() {
+            return true;
+        }
+        if let Some(tok) = query_token {
+            if tok == expected {
+                return true;
+            }
+        }
+        if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
+            if let Ok(auth_str) = auth_header.to_str() {
+                if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                    if token.trim() == expected {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    } else {
+        true
     }
 }

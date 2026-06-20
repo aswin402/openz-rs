@@ -168,7 +168,7 @@ impl Tool for CargoManagerTool {
 
                         let settings = GenerationSettings {
                             temperature: 0.1,
-                            max_tokens: 4096,
+                            max_tokens: 16384,
                             reasoning_effort: None,
                         };
 
@@ -199,9 +199,13 @@ impl Tool for CargoManagerTool {
                                             output = run_cargo_cmd(action, &cwd).await?;
                                             stdout = String::from_utf8_lossy(&output.stdout).to_string();
                                             stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                                            
+                                            // Clean up backup file
+                                            let _ = std::fs::remove_file(&backup_path);
                                         } else {
                                             // Restore from backup on write failure
                                             let _ = std::fs::copy(&backup_path, &resolved_path);
+                                            let _ = std::fs::remove_file(&backup_path);
                                         }
                                     }
                                 }

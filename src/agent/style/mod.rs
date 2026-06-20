@@ -49,3 +49,43 @@ pub fn tui_print_fn<T: AsRef<str>>(msg: T) {
     print!("{}", replaced);
     let _ = std::io::stdout().flush();
 }
+
+#[macro_export]
+macro_rules! tui_eprintln {
+    () => {
+        $crate::agent::style::tui_eprintln_fn("")
+    };
+    ($($arg:tt)*) => {
+        $crate::agent::style::tui_eprintln_fn(format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! tui_eprint {
+    () => {
+        $crate::agent::style::tui_eprint_fn("")
+    };
+    ($($arg:tt)*) => {
+        $crate::agent::style::tui_eprint_fn(format!($($arg)*))
+    };
+}
+
+pub fn tui_eprintln_fn<T: AsRef<str>>(msg: T) {
+    if is_silent() {
+        return;
+    }
+    let s = msg.as_ref();
+    let replaced = s.replace("\r\n", "\n").replace("\n", "\r\n");
+    eprint!("{}\r\n", replaced);
+    let _ = std::io::stderr().flush();
+}
+
+pub fn tui_eprint_fn<T: AsRef<str>>(msg: T) {
+    if is_silent() {
+        return;
+    }
+    let s = msg.as_ref();
+    let replaced = s.replace("\r\n", "\n").replace("\n", "\r\n");
+    eprint!("{}", replaced);
+    let _ = std::io::stderr().flush();
+}

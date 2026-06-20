@@ -68,6 +68,12 @@ macro_rules! eprint {
     };
 }
 
+static IS_SILENT_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn is_silent_mode() -> bool {
+    IS_SILENT_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 #[derive(Parser)]
 #[command(name = "openz", version = env!("CARGO_PKG_VERSION"), about = "OpenZ - Rebranded Ultra-Lightweight Personal AI Agent")]
 pub struct CliArgs {
@@ -597,7 +603,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     // Phase 2 (on call): LazyMcpToolWrapper::call() re-uses the already-alive
     //                    client (fast path) or spawns on first use (slow path).
 
-    let silent = std::env::var("OPENZ_SILENT").is_ok();
+    let silent = is_silent_mode();
     let slate = "\x1b[38;2;107;122;153m";
 
     let has_any_mcp = config.mcp_servers.values().any(|c| c.enabled);
@@ -617,7 +623,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     let registry_arc = std::sync::Arc::new(tokio::sync::Mutex::new(registry));
     let registry_arc_bg = registry_arc.clone();
 
-    tokio::spawn(async move {
+    let mcp_handle = tokio::spawn(async move {
         let mut total_tools = 0usize;
         let mut servers_loaded = 0u32;
         let mut servers_failed = 0u32;
@@ -679,9 +685,10 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     });
 
 
-    // Unwrap the Arc — background task holds a clone so try_unwrap won't succeed yet,
-    // but that's fine: we lock_owned() to get the current registry state.
-    // Background-registered tools are visible to the agent loop because they share the Arc.
+    // Wait for MCP tools to be registered before extracting the registry
+    let _ = mcp_handle.await;
+
+    // Now safely unwrap — background task is done, only one Arc reference remains
     let registry = match std::sync::Arc::try_unwrap(registry_arc) {
         Ok(mutex) => mutex.into_inner(),
         Err(arc) => arc.lock_owned().await.clone(),
@@ -692,6 +699,19 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
 
 
 
+
+#[derive(serde::Deserialize)]
+struct SessionMetadataOnly {
+    key: String,
+    updated_at: chrono::DateTime<chrono::Utc>,
+    messages: Vec<MessageMetadataOnly>,
+}
+
+#[derive(serde::Deserialize)]
+struct MessageMetadataOnly {
+    role: String,
+    content: String,
+}
 
 pub fn load_session_history() -> Result<Vec<HistoryItem>> {
     let sessions_dir = resolve_path("~/.openz/sessions");
@@ -705,7 +725,7 @@ pub fn load_session_history() -> Result<Vec<HistoryItem>> {
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) == Some("json") {
             if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(session) = serde_json::from_str::<crate::session::Session>(&content) {
+                if let Ok(session) = serde_json::from_str::<SessionMetadataOnly>(&content) {
                     if !session.messages.is_empty() {
                         let preview = session.messages.iter()
                             .find(|m| m.role == "user")
@@ -779,13 +799,8 @@ async fn handle_agent() -> Result<()> {
 
     let agent_loop = build_agent_loop(config.clone()).await?;
 
-    // Mark silent mode for background channels — use thread-local env to avoid UB in multithreaded context
-    // Note: std::env::set_var is unsafe in multithreaded programs; we use it here only before
-    // spawning threads, which is the documented safe usage pattern.
-    #[allow(unused_unsafe)]
-    unsafe {
-        std::env::set_var("OPENZ_SILENT", "true");
-    }
+    // Mark silent mode for background channels via thread-safe AtomicBool
+    IS_SILENT_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
 
     // Auto-start WebSocket gateway in the background if enabled and configured to start on TUI
     if let Some(ws_config) = &config.channels.websocket {

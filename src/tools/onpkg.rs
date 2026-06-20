@@ -1,7 +1,7 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use std::process::Command;
+use tokio::process::Command;
 
 pub struct OnpkgTool;
 
@@ -77,7 +77,7 @@ impl Tool for OnpkgTool {
 
         let onpkg_bin = Self::resolve_binary();
         let mut cmd = Command::new(&onpkg_bin);
-        crate::config::loader::set_command_cwd(&mut cmd);
+        crate::config::loader::set_tokio_command_cwd(&mut cmd);
 
         match action {
             "list_stacks" => {
@@ -136,7 +136,7 @@ impl Tool for OnpkgTool {
             _ => return Err(anyhow!("Unsupported onpkg action: {}", action)),
         }
 
-        let output = cmd.output()?;
+        let output = cmd.output().await?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -287,7 +287,10 @@ pub fn sync_onpkg_manifest() -> Result<()> {
             for line in toml_str.lines() {
                 let trimmed = line.trim();
                 if trimmed.starts_with('[') {
-                    in_deps = trimmed.starts_with("[dependencies]") || trimmed.starts_with("[workspace.dependencies]");
+                    in_deps = trimmed == "[dependencies]" || trimmed == "[workspace.dependencies]";
+                    if let Some(pkg) = trimmed.strip_prefix("[dependencies.").and_then(|s| s.strip_suffix(']')) {
+                        core_packages.insert(pkg.trim().to_string());
+                    }
                     continue;
                 }
                 if in_deps && !trimmed.is_empty() && !trimmed.starts_with('#') {

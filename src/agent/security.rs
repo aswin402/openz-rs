@@ -39,8 +39,13 @@ impl SecurityGuard {
         let abs_path = if path.is_absolute() {
             path.to_path_buf()
         } else {
-            let workspace = crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone())
-                .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+            let workspace = match crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
+                Ok(w) => w,
+                Err(_) => match std::env::current_dir() {
+                    Ok(cwd) => cwd,
+                    Err(_) => return false, // Can't determine workspace — treat as unsafe
+                },
+            };
             workspace.join(path)
         };
 
@@ -59,8 +64,13 @@ impl SecurityGuard {
         }
 
         // 1. Check workspace whitelist
-        let workspace = crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone())
-            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+        let workspace = match crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
+            Ok(w) => w,
+            Err(_) => match std::env::current_dir() {
+                Ok(cwd) => cwd,
+                Err(_) => return false, // Can't determine workspace — treat as unsafe
+            },
+        };
         if let Ok(w_canon) = workspace.canonicalize() {
             if check_path.starts_with(&w_canon) {
                 return true;
@@ -128,7 +138,9 @@ impl SecurityGuard {
                 let has_privilege = Self::has_bin(&cmd_lower, "sudo")
                     || Self::has_bin(&cmd_lower, "su")
                     || Self::has_bin(&cmd_lower, "chmod")
-                    || Self::has_bin(&cmd_lower, "chown");
+                    || Self::has_bin(&cmd_lower, "chown")
+                    || Self::has_bin(&cmd_lower, "eval")
+                    || Self::has_bin(&cmd_lower, "source");
                 let has_system = Self::has_bin(&cmd_lower, "shutdown")
                     || Self::has_bin(&cmd_lower, "reboot")
                     || Self::has_bin(&cmd_lower, "poweroff")
@@ -167,6 +179,7 @@ impl SecurityGuard {
                         || Self::has_bin(&cmd_lower, "fdisk")
                         || Self::has_bin(&cmd_lower, "parted")
                         || Self::has_bin(&cmd_lower, "format")
+                        || (Self::has_bin(&cmd_lower, "xargs") && (Self::has_bin(&cmd_lower, "rm") || Self::has_bin(&cmd_lower, "kill") || Self::has_bin(&cmd_lower, "chmod") || Self::has_bin(&cmd_lower, "chown")))
                         || cmd_lower.contains("cargo clean")
                         || cmd_lower.contains("npm run clean")
                         || cmd_lower.contains("bun run clean")

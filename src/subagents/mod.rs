@@ -25,7 +25,42 @@ pub fn subagents_file_path() -> PathBuf {
     resolve_path("~/.openz/subagents.json")
 }
 
+struct ProfilesCache {
+    profiles: Vec<SubagentProfile>,
+    last_mtime: Option<std::time::SystemTime>,
+}
+
+static CACHE: std::sync::OnceLock<std::sync::Mutex<ProfilesCache>> = std::sync::OnceLock::new();
+
 pub fn load_profiles() -> Result<Vec<SubagentProfile>> {
+    let path = subagents_file_path();
+    let mtime = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok();
+
+    let cache_mutex = CACHE.get_or_init(|| {
+        std::sync::Mutex::new(ProfilesCache {
+            profiles: Vec::new(),
+            last_mtime: None,
+        })
+    });
+
+    let mut cache = cache_mutex.lock().unwrap();
+
+    if !cache.profiles.is_empty() && cache.last_mtime.is_some() && cache.last_mtime == mtime {
+        return Ok(cache.profiles.clone());
+    }
+
+    let loaded = load_profiles_uncached()?;
+    cache.profiles = loaded.clone();
+    cache.last_mtime = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok();
+
+    Ok(loaded)
+}
+
+pub fn load_profiles_uncached() -> Result<Vec<SubagentProfile>> {
     let path = subagents_file_path();
     let defaults = vec![
         SubagentProfile {

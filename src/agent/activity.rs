@@ -84,7 +84,14 @@ pub fn pop_inbox_message(session_id: &str) -> Option<InboxMessage> {
     if !path.exists() {
         return None;
     }
-    let content = fs::read_to_string(&path).ok()?;
-    let _ = fs::remove_file(&path);
-    serde_json::from_str(&content).ok()
+    let temp_name = format!("inbox_{}.json.tmp.{}", slug, uuid::Uuid::new_v4());
+    let temp_path = path.with_file_name(temp_name);
+    // Atomic rename: if successful, this thread owns this message and can read it
+    if fs::rename(&path, &temp_path).is_ok() {
+        let content = fs::read_to_string(&temp_path).ok()?;
+        let _ = fs::remove_file(&temp_path);
+        serde_json::from_str(&content).ok()
+    } else {
+        None
+    }
 }

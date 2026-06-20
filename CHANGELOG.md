@@ -398,7 +398,19 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.17 (Latest Release)
+### v0.0.18 (Latest Release)
+*   **Bugfix: Discord Sequence & Heartbeat Tracking:** Renamed `_s` to `s` in `GatewayMessage` to correctly deserialize Discord's sequence numbers, and populated the sequence tracker inside the background heartbeat payload to prevent prolonged session disconnections.
+*   **Refactor: Raw-Mode Output & Custom Error Stream:** Added raw-mode compatible `tui_eprintln!` and `tui_eprint!` helpers to prevent line formatting corruption when writing to `stderr`. Updated gateway shutdown logs to use `tui_println!`.
+*   **Refactor: Regex Pre-compilation & Caching:** Swapped inline Regex compilations inside terminal formatting functions with static precompiled `OnceLock` instances.
+*   **Bugfix: Vision Model Matching & Coverage:** Explicitly whitelisted `gpt-4-turbo` and `gpt-4-vision-preview` in `model_supports_vision()`.
+*   **Refactor: Tool Registry Determinism & Profile Cache:** Added alphabetical sorting by function name to the registered tools list to stabilize the system prompt. Added a thread-safe modification time (mtime) cache to `load_profiles()` to optimize dynamic subagent resolution checks.
+*   **Bugfix: Subagent Task Scoping:** Scoped `ACTIVE_WORKSPACE` and `DELEGATION_DEPTH` task-local variables inside `ParallelResearchTool` spawned tasks.
+*   **Refactor: Logging Comment Strip Protection:** Prevented stripping URLs (`http://`, `https://`) in context compaction by ignoring double slashes preceded by colons.
+*   **Security: Hardened Session Hash Chains:** Checked for hash presence inside `verify_hash_chain()` to block tampering via stripping the message validation hashes.
+*   **Bugfix: Cargo.toml Inline Table Dependency Parser:** Fixed parsing of `[dependencies.foo]` tables in `onpkg` package scanner to ignore subproperties like `version` or `features`.
+*   **Maintenance: Version Bump:** Bumped to v0.0.18. All 118 tests passing, 0 clippy warnings.
+
+### v0.0.17
 *   **Refactor: MCP Dual Cache Consolidation:** Removed `LAZY_MCP_CLIENTS` cache, consolidated to single `SPAWNED_MCP_CLIENTS`. `LazyMcpToolWrapper::call()` now delegates to `McpClient::spawn()` which handles both fast and slow paths. Eliminates first-call cache miss.
 *   **Cleanup: Dead Code Removal:** Removed `McpClientType::Stdio` variant and all associated match arms (~60 lines of unreachable code). All spawns use gRPC exclusively.
 *   **Bugfix: find_free_port TOCTOU Race:** `find_free_port()` now returns a bound `TcpListener` guard. The listener is passed to `run_mcp_bridge()` and only dropped right before `tonic::Server::serve()` binds, shrinking the race window from ~100ms to <1µs.

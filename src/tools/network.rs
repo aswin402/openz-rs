@@ -44,14 +44,17 @@ impl Tool for CheckPortTool {
         let host_lower = host.to_lowercase();
         if !allowed_hosts.contains(&host_lower.as_str()) {
             // Also allow resolving to localhost
-            use std::net::ToSocketAddrs;
-            let resolves_to_localhost = format!("{}:0", host)
-                .to_socket_addrs()
-                .map(|mut iter| iter.any(|addr| {
-                    let ip = addr.ip();
-                    ip.is_loopback() || ip == "127.0.0.1".parse::<std::net::IpAddr>().unwrap()
-                }))
-                .unwrap_or(false);
+            let host_clone = host.to_string();
+            let resolves_to_localhost = tokio::task::spawn_blocking(move || {
+                use std::net::ToSocketAddrs;
+                format!("{}:0", host_clone)
+                    .to_socket_addrs()
+                    .map(|mut iter| iter.any(|addr| {
+                        let ip = addr.ip();
+                        ip.is_loopback() || ip == "127.0.0.1".parse::<std::net::IpAddr>().unwrap()
+                    }))
+                    .unwrap_or(false)
+            }).await?;
             if !resolves_to_localhost {
                 return Err(anyhow!("Security: check_port only allows localhost targets to prevent internal network enumeration. Got host: {}", host));
             }
@@ -61,43 +64,56 @@ impl Tool for CheckPortTool {
 
         match action {
             "check_free" => {
-                match TcpListener::bind(&address) {
-                    Ok(_) => Ok(json!({
+                let address_clone = address.clone();
+                let available = tokio::task::spawn_blocking(move || {
+                    TcpListener::bind(&address_clone).is_ok()
+                }).await?;
+
+                if available {
+                    Ok(json!({
                         "status": "success",
                         "port": port,
                         "host": host,
                         "available": true,
                         "message": format!("Port {} is free and available to bind.", port)
-                    })),
-                    Err(_) => Ok(json!({
+                    }))
+                } else {
+                    Ok(json!({
                         "status": "success",
                         "port": port,
                         "host": host,
                         "available": false,
                         "message": format!("Port {} is occupied or unavailable to bind.", port)
-                    })),
+                    }))
                 }
             }
             "check_listening" => {
-                let socket_addrs = address.to_socket_addrs()?
-                    .next()
-                    .ok_or_else(|| anyhow!("Invalid socket address"))?;
-                
-                match TcpStream::connect_timeout(&socket_addrs, Duration::from_millis(1000)) {
-                    Ok(_) => Ok(json!({
+                let address_clone = address.clone();
+                let listening = tokio::task::spawn_blocking(move || {
+                    if let Ok(mut addrs) = address_clone.to_socket_addrs() {
+                        if let Some(socket_addr) = addrs.next() {
+                            return TcpStream::connect_timeout(&socket_addr, Duration::from_millis(1000)).is_ok();
+                        }
+                    }
+                    false
+                }).await?;
+
+                if listening {
+                    Ok(json!({
                         "status": "success",
                         "port": port,
                         "host": host,
                         "listening": true,
                         "message": format!("Port {} is active and listening.", port)
-                    })),
-                    Err(_) => Ok(json!({
+                    }))
+                } else {
+                    Ok(json!({
                         "status": "success",
                         "port": port,
                         "host": host,
                         "listening": false,
                         "message": format!("Port {} is not listening or timed out.", port)
-                    })),
+                    }))
                 }
             }
             _ => Err(anyhow!("Invalid action: {}", action)),

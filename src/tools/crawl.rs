@@ -20,7 +20,7 @@ fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
 }
 
 /// Validate URL to prevent SSRF — resolves DNS to catch rebinding attacks.
-fn validate_url(url: &str) -> Result<()> {
+async fn validate_url(url: &str) -> Result<()> {
     let parsed = reqwest::Url::parse(url).map_err(|e| anyhow!("Invalid URL: {}", e))?;
     let host = parsed.host_str().ok_or_else(|| anyhow!("URL has no host"))?.to_lowercase();
 
@@ -39,11 +39,10 @@ fn validate_url(url: &str) -> Result<()> {
     }
 
     // DNS resolution check — prevents rebinding attacks
-    use std::net::ToSocketAddrs;
-    let resolved: Vec<_> = format!("{}:0", host)
-        .to_socket_addrs()
-        .map(|iter| iter.map(|addr| addr.ip()).collect())
-        .unwrap_or_default();
+    let resolved: Vec<_> = match tokio::net::lookup_host(format!("{}:0", host)).await {
+        Ok(iter) => iter.map(|addr| addr.ip()).collect(),
+        Err(_) => Vec::new(),
+    };
 
     for ip in &resolved {
         if !is_safe_ip(ip) {
@@ -115,7 +114,7 @@ impl Tool for CrawlSiteTool {
         let url_str = arguments.get("url").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'url' parameter"))?;
 
-        validate_url(url_str)?;
+        validate_url(url_str).await?;
         
         let limit = arguments.get("limit").and_then(|v| v.as_u64()).unwrap_or(10).min(1000) as u32;
         let depth = arguments.get("depth").and_then(|v| v.as_u64()).unwrap_or(3).min(10) as usize;
@@ -158,8 +157,8 @@ impl Tool for CrawlSiteTool {
                         .map(|el| el.text().collect::<Vec<_>>().join(" "))
                         .unwrap_or_else(|| html_str.clone());
                     
-                    let snippet = if body_text.len() > 300 {
-                        let mut snippet_str = body_text[..300].to_string();
+                    let snippet = if body_text.chars().count() > 300 {
+                        let mut snippet_str: String = body_text.chars().take(300).collect();
                         snippet_str.push_str("...");
                         snippet_str
                     } else {

@@ -25,20 +25,20 @@ macro_rules! print {
 #[allow(unused_macros)]
 macro_rules! eprintln {
     () => {
-        crate::tui_println!()
+        crate::tui_eprintln!()
     };
     ($($arg:tt)*) => {
-        crate::tui_println!($($arg)*)
+        crate::tui_eprintln!($($arg)*)
     };
 }
 
 #[allow(unused_macros)]
 macro_rules! eprint {
     () => {
-        crate::tui_print!()
+        crate::tui_eprint!()
     };
     ($($arg:tt)*) => {
-        crate::tui_print!($($arg)*)
+        crate::tui_eprint!($($arg)*)
     };
 }
 use std::io::{self, Write};
@@ -310,15 +310,9 @@ fn format_cell_text(text: &str) -> String {
         .replace("❌", &format!("{}{}{}", ERROR_RED, "❌", COLOR_RESET))
         .replace("✗", &format!("{}{}{}", ERROR_RED, "✗", COLOR_RESET));
         
-    if let Ok(re_bold) = regex::Regex::new(r"\*\*(.*?)\*\*") {
-        formatted = re_bold.replace_all(&formatted, &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET)).to_string();
-    }
-    if let Ok(re_code) = regex::Regex::new(r"`(.*?)`") {
-        formatted = re_code.replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
-    }
-    if let Ok(re_italic) = regex::Regex::new(r"\*(.*?)\*") {
-        formatted = re_italic.replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
-    }
+    formatted = cli_re_bold().replace_all(&formatted, &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET)).to_string();
+    formatted = cli_re_code().replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
+    formatted = cli_re_italic().replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
     
     formatted
 }
@@ -345,15 +339,9 @@ fn print_normal_line(line: &str) {
             .replace("❌", &format!("{}{}{}", ERROR_RED, "❌", COLOR_RESET))
             .replace("✗", &format!("{}{}{}", ERROR_RED, "✗", COLOR_RESET));
             
-        if let Ok(re_bold) = regex::Regex::new(r"\*\*(.*?)\*\*") {
-            formatted = re_bold.replace_all(&formatted, &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET)).to_string();
-        }
-        if let Ok(re_code) = regex::Regex::new(r"`(.*?)`") {
-            formatted = re_code.replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
-        }
-        if let Ok(re_italic) = regex::Regex::new(r"\*(.*?)\*") {
-            formatted = re_italic.replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
-        }
+        formatted = cli_re_bold().replace_all(&formatted, &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET)).to_string();
+        formatted = cli_re_code().replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
+        formatted = cli_re_italic().replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
         
         println!("{}", formatted);
     }
@@ -361,17 +349,17 @@ fn print_normal_line(line: &str) {
 
 fn clean_cell_text(text: &str) -> String {
     let mut cleaned = text.trim();
-    while cleaned.starts_with('|') {
-        cleaned = cleaned[1..].trim();
+    while let Some(rest) = cleaned.strip_prefix('|') {
+        cleaned = rest.trim();
     }
-    while cleaned.ends_with('|') {
-        cleaned = cleaned[..cleaned.len() - 1].trim();
+    while let Some(rest) = cleaned.strip_suffix('|') {
+        cleaned = rest.trim();
     }
-    if cleaned.starts_with("**") && cleaned.ends_with("**") && cleaned.len() > 4 {
-        cleaned = cleaned[2..cleaned.len() - 2].trim();
+    if let Some(inner) = cleaned.strip_prefix("**").and_then(|s| s.strip_suffix("**")) {
+        cleaned = inner.trim();
     }
-    if cleaned.starts_with('*') && cleaned.ends_with('*') && cleaned.len() > 2 {
-        cleaned = cleaned[1..cleaned.len() - 1].trim();
+    if let Some(inner) = cleaned.strip_prefix('*').and_then(|s| s.strip_suffix('*')) {
+        cleaned = inner.trim();
     }
     cleaned.to_string()
 }
@@ -511,6 +499,7 @@ fn render_table(table_lines: &[&str]) {
                 let padded = format!("{}{}", formatted, " ".repeat(padding_len));
                 row_line_parts.push(padded);
             }
+            println!("{}", row_line_parts.join(&separator));
         }
     }
 }
@@ -743,8 +732,9 @@ fn render_box(
         30
     };
 
-    let display_model = if model.len() > max_model_len {
-        format!("{}…", &model[..max_model_len - 1])
+    let display_model = if model.chars().count() > max_model_len {
+        let truncated: String = model.chars().take(max_model_len - 1).collect();
+        format!("{}…", truncated)
     } else {
         model.to_string()
     };

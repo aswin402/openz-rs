@@ -23,6 +23,8 @@ struct OpenAIRequest {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_completion_tokens: Option<usize>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<serde_json::Value>,
 }
@@ -79,7 +81,11 @@ struct OpenAIFunction {
 impl OpenAIProvider {
     pub fn new(api_key: String, api_base: String, model: String) -> Self {
         OpenAIProvider {
-            client: Client::builder().use_rustls_tls().build().unwrap_or_default(),
+            client: Client::builder()
+                .use_rustls_tls()
+                .timeout(Duration::from_secs(300))
+                .build()
+                .unwrap_or_default(),
             api_key,
             api_base,
             model,
@@ -217,11 +223,13 @@ impl LLMProvider for OpenAIProvider {
     ) -> Result<LLMResponse> {
         let api_messages = Self::serialize_messages(&self.model, &self.api_base, system_prompt, messages).await;
 
+        let is_reasoning = is_reasoning_model(&self.model);
         let body = OpenAIRequest {
             model: self.model.clone(),
             messages: api_messages,
-            temperature: Some(settings.temperature),
-            max_tokens: Some(settings.max_tokens),
+            temperature: if is_reasoning { None } else { Some(settings.temperature) },
+            max_tokens: if is_reasoning { None } else { Some(settings.max_tokens) },
+            max_completion_tokens: if is_reasoning { Some(settings.max_tokens) } else { None },
             tools: tools.to_vec(),
         };
 
@@ -451,4 +459,9 @@ mod tests {
         // Cleanup
         let _ = std::fs::remove_file(test_img_path);
     }
+}
+
+fn is_reasoning_model(model: &str) -> bool {
+    let m = model.to_lowercase();
+    m.contains("o1") || m.contains("o3") || m.contains("o4-mini")
 }

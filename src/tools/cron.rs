@@ -48,31 +48,33 @@ impl Tool for ScheduleJobTool {
             return Err(anyhow!("Invalid schedule format: {}. Use simple duration like '10s', '5m', '1h' OR standard Unix cron like '*/5 * * * *'", schedule));
         }
 
-        let mut jobs = load_jobs()?;
         let mut found = false;
+        let id_str = id.to_string();
+        let schedule_str = schedule.to_string();
+        let prompt_str = prompt.to_string();
 
-        for job in &mut jobs {
-            if job.id == id {
-                job.schedule = schedule.to_string();
-                job.prompt = prompt.to_string();
-                job.next_run = None; // Reset next run calculation
-                found = true;
-                break;
+        crate::cron::with_cron_jobs_mut(|jobs| {
+            for job in jobs.iter_mut() {
+                if job.id == id_str {
+                    job.schedule = schedule_str.clone();
+                    job.prompt = prompt_str.clone();
+                    job.next_run = None; // Reset next run calculation
+                    found = true;
+                    break;
+                }
             }
-        }
 
-        if !found {
-            jobs.push(CronJob {
-                id: id.to_string(),
-                schedule: schedule.to_string(),
-                prompt: prompt.to_string(),
-                enabled: true,
-                last_run: None,
-                next_run: None,
-            });
-        }
-
-        save_jobs(&jobs)?;
+            if !found {
+                jobs.push(CronJob {
+                    id: id_str,
+                    schedule: schedule_str,
+                    prompt: prompt_str,
+                    enabled: true,
+                    last_run: None,
+                    next_run: None,
+                });
+            }
+        })?;
 
         Ok(serde_json::json!({
             "status": "success",
@@ -139,16 +141,18 @@ impl Tool for RemoveJobTool {
         let id = arguments.get("id").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'id' argument"))?;
 
-        let mut jobs = load_jobs()?;
-        let original_len = jobs.len();
-        
-        jobs.retain(|j| j.id != id);
+        let id_str = id.to_string();
+        let mut removed = false;
 
-        if jobs.len() == original_len {
+        crate::cron::with_cron_jobs_mut(|jobs| {
+            let original_len = jobs.len();
+            jobs.retain(|j| j.id != id_str);
+            removed = jobs.len() < original_len;
+        })?;
+
+        if !removed {
             return Err(anyhow!("Cron job with ID '{}' not found.", id));
         }
-
-        save_jobs(&jobs)?;
 
         Ok(serde_json::json!({
             "status": "success",

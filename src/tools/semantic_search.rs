@@ -73,6 +73,9 @@ fn get_files_recursively(path: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
 }
 
 fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
+    if v1.len() != v2.len() || v1.is_empty() {
+        return 0.0;
+    }
     let mut dot_product = 0.0;
     let mut norm_a = 0.0;
     let mut norm_b = 0.0;
@@ -166,9 +169,17 @@ impl Tool for SemanticSearchTool {
         }
 
         let mut cache = load_cache();
+        let mut cache_updated = false;
+
+        // Prune deleted files from cache to prevent unbounded growth
+        let initial_cache_len = cache.files.len();
+        cache.files.retain(|path_str, _| Path::new(path_str).exists());
+        if cache.files.len() != initial_cache_len {
+            cache_updated = true;
+        }
+
         let mut dirty_files = Vec::new();
         let mut final_chunks = Vec::new();
-        let mut cache_updated = false;
 
         // 1. Separate files into cached and dirty (missing or changed mtime)
         for file_path in &files {

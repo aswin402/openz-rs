@@ -1,7 +1,7 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use std::process::Command;
+use tokio::process::Command;
 
 pub struct AstGrepTool;
 
@@ -60,18 +60,16 @@ impl Tool for AstGrepTool {
             .and_then(|v| v.as_str())
             .map(crate::config::resolve_path);
 
-        let output = tokio::task::spawn_blocking(move || {
-            let mut cmd = Command::new(&bin_path_for_spawn);
-            crate::config::loader::set_command_cwd(&mut cmd);
-            cmd.arg("run");
-            cmd.arg("--pattern").arg(&pattern_for_spawn);
-            cmd.arg("--lang").arg(&lang_for_spawn);
-            cmd.arg("--json");
-            if let Some(ref resolved) = path_arg {
-                cmd.arg(resolved);
-            }
-            cmd.output()
-        }).await??;
+        let mut cmd = Command::new(&bin_path_for_spawn);
+        crate::config::loader::set_tokio_command_cwd(&mut cmd);
+        cmd.arg("run");
+        cmd.arg("--pattern").arg(&pattern_for_spawn);
+        cmd.arg("--lang").arg(&lang_for_spawn);
+        cmd.arg("--json");
+        if let Some(ref resolved) = path_arg {
+            cmd.arg(resolved);
+        }
+        let output = cmd.output().await?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -164,7 +162,7 @@ impl Tool for IndexCodebaseTool {
 
         for pattern in patterns {
             let mut cmd = Command::new(&bin_path);
-            crate::config::loader::set_command_cwd(&mut cmd);
+        crate::config::loader::set_tokio_command_cwd(&mut cmd);
             cmd.arg("run");
             cmd.arg("--pattern").arg(pattern);
             cmd.arg("--lang").arg(lang);
@@ -181,7 +179,7 @@ impl Tool for IndexCodebaseTool {
                 cmd.arg(resolved);
             }
 
-            let output = cmd.output()?;
+            let output = cmd.output().await?;
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
             if output.status.success() && !stdout.trim().is_empty() {

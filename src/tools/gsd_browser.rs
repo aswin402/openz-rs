@@ -1,7 +1,7 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use std::process::Command;
+use tokio::process::Command;
 
 pub struct GsdBrowserTool;
 
@@ -124,7 +124,7 @@ impl Tool for GsdBrowserTool {
             _ => return Err(anyhow!("Unsupported browser action: {}", action)),
         }
 
-        let output = cmd.output()?;
+        let output = cmd.output().await?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 

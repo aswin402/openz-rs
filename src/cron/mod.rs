@@ -20,7 +20,53 @@ pub fn cron_file_path() -> PathBuf {
     resolve_path("~/.openz/cron_jobs.json")
 }
 
-pub fn load_jobs() -> Result<Vec<CronJob>> {
+pub struct FileLock {
+    lock_path: PathBuf,
+}
+
+impl FileLock {
+    pub fn acquire(lock_path: PathBuf) -> Self {
+        loop {
+            match fs::OpenOptions::new().write(true).create_new(true).open(&lock_path) {
+                Ok(_) => {
+                    return FileLock { lock_path };
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if let Ok(metadata) = std::fs::metadata(&lock_path) {
+                        if let Ok(modified) = metadata.modified() {
+                            if let Ok(elapsed) = modified.elapsed() {
+                                if elapsed.as_secs() > 10 {
+                                    let _ = std::fs::remove_file(&lock_path);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(_) => {
+                    if let Some(parent) = lock_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.lock_path);
+    }
+}
+
+pub fn acquire_cron_lock() -> FileLock {
+    let lock_path = resolve_path("~/.openz/cron_jobs.lock");
+    FileLock::acquire(lock_path)
+}
+
+pub fn load_jobs_raw() -> Result<Vec<CronJob>> {
     let path = cron_file_path();
     if !path.exists() {
         return Ok(Vec::new());
@@ -32,7 +78,7 @@ pub fn load_jobs() -> Result<Vec<CronJob>> {
     Ok(jobs)
 }
 
-pub fn save_jobs(jobs: &[CronJob]) -> Result<()> {
+pub fn save_jobs_raw(jobs: &[CronJob]) -> Result<()> {
     let path = cron_file_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -41,6 +87,27 @@ pub fn save_jobs(jobs: &[CronJob]) -> Result<()> {
     fs::write(&path, content)
         .with_context(|| format!("Failed to write cron jobs to {:?}", path))?;
     Ok(())
+}
+
+pub fn load_jobs() -> Result<Vec<CronJob>> {
+    let _lock = acquire_cron_lock();
+    load_jobs_raw()
+}
+
+pub fn save_jobs(jobs: &[CronJob]) -> Result<()> {
+    let _lock = acquire_cron_lock();
+    save_jobs_raw(jobs)
+}
+
+pub fn with_cron_jobs_mut<F, R>(f: F) -> Result<R>
+where
+    F: FnOnce(&mut Vec<CronJob>) -> R,
+{
+    let _lock = acquire_cron_lock();
+    let mut jobs = load_jobs_raw()?;
+    let res = f(&mut jobs);
+    save_jobs_raw(&jobs)?;
+    Ok(res)
 }
 
 pub fn parse_schedule(s: &str) -> Option<chrono::Duration> {

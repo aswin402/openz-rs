@@ -119,21 +119,28 @@ impl Tool for DocReaderTool {
         let path_str = arguments.get("path").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' parameter"))?;
         
-        let path = Path::new(path_str);
-        if !path.exists() {
+        let resolved_path = crate::config::loader::resolve_path(path_str);
+        if !resolved_path.exists() {
             return Err(anyhow!("File does not exist: {}", path_str));
         }
 
-        let extension = path.extension()
+        // Guard against oversized files (50 MB limit)
+        let metadata = std::fs::metadata(&resolved_path)?;
+        const MAX_DOC_SIZE: u64 = 50 * 1024 * 1024;
+        if metadata.len() > MAX_DOC_SIZE {
+            return Err(anyhow!("Document file too large ({} bytes, max {} bytes)", metadata.len(), MAX_DOC_SIZE));
+        }
+
+        let extension = resolved_path.extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.to_lowercase());
 
         let content = match extension.as_deref() {
             Some("pdf") => {
-                pdf_extract::extract_text(path)?
+                pdf_extract::extract_text(&resolved_path)?
             }
             Some("xlsx") | Some("xls") | Some("ods") => {
-                let mut sheets = calamine::open_workbook_auto(path)?;
+                let mut sheets = calamine::open_workbook_auto(&resolved_path)?;
                 let mut text = String::new();
                 for sheet_name in sheets.sheet_names().to_owned() {
                     if let Ok(range) = sheets.worksheet_range(&sheet_name) {
@@ -151,13 +158,8 @@ impl Tool for DocReaderTool {
                 text
             }
             Some("docx") => {
-                let mut file = File::open(path)?;
+                let mut file = File::open(&resolved_path)?;
                 let mut buf = Vec::new();
-                // Guard against oversized files (50 MB limit)
-                const MAX_DOC_SIZE: u64 = 50 * 1024 * 1024;
-                if file.metadata()?.len() > MAX_DOC_SIZE {
-                    return Err(anyhow!("Document too large (max {} bytes)", MAX_DOC_SIZE));
-                }
                 file.read_to_end(&mut buf)?;
                 extract_docx_text(&buf)?
             }

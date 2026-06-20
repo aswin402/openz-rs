@@ -88,11 +88,19 @@ impl Session {
         for (i, msg) in self.messages.iter().enumerate() {
             let ts_ref = msg.timestamp.as_deref();
             let calculated = Self::calculate_message_hash(&msg.role, &msg.content, ts_ref, &prev_hash);
-            if let Some(stored) = msg.get_hash() {
-                if stored != calculated {
+            match msg.get_hash() {
+                Some(stored) => {
+                    if stored != calculated {
+                        anyhow::bail!(
+                            "Cryptographic verification failed: message at index {} has been tampered with. Stored: {}, Calculated: {}",
+                            i, stored, calculated
+                        );
+                    }
+                }
+                None => {
                     anyhow::bail!(
-                        "Cryptographic verification failed: message at index {} has been tampered with. Stored: {}, Calculated: {}",
-                        i, stored, calculated
+                        "Cryptographic verification failed: message at index {} is missing its verification hash.",
+                        i
                     );
                 }
             }
@@ -139,8 +147,13 @@ impl SessionManager {
         session_clone.populate_hashes();
         let path = self.file_path(&session_clone.key);
         let content = serde_json::to_string_pretty(&session_clone)?;
-        fs::write(&path, content)
-            .with_context(|| format!("Failed to write session file to {:?}", path))?;
+        
+        // Atomic write: write to temp file then rename to prevent corruption
+        let temp_path = path.with_extension("json.tmp");
+        fs::write(&temp_path, &content)
+            .with_context(|| format!("Failed to write temp session file to {:?}", temp_path))?;
+        fs::rename(&temp_path, &path)
+            .with_context(|| format!("Failed to rename temp session file {:?} to {:?}", temp_path, path))?;
         Ok(())
     }
 }

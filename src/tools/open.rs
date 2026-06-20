@@ -31,6 +31,10 @@ impl Tool for OpenTool {
         let target = arguments.get("target").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'target' parameter"))?;
 
+        if !is_safe_target(target) {
+            return Err(anyhow!("Security: target contains unsafe characters or shell metacharacters"));
+        }
+
         // Validate URLs against SSRF
         if target.starts_with("http://") || target.starts_with("https://") {
             // Block shell metacharacters in URLs
@@ -66,6 +70,25 @@ impl Tool for OpenTool {
             }
         }
     }
+}
+
+fn is_safe_target(target: &str) -> bool {
+    target.chars().all(|c| {
+        c.is_ascii_alphanumeric()
+            || c == '/'
+            || c == '.'
+            || c == '_'
+            || c == '-'
+            || c == ':'
+            || c == '?'
+            || c == '='
+            || c == '%'
+            || c == '+'
+            || c == '#'
+            || c == '@'
+            || c == '~'
+            || c == ' '
+    })
 }
 
 #[cfg(test)]

@@ -429,90 +429,59 @@ mod tests {
         assert_eq!(substituted, "Hello {{payload.missing_key}}!");
     }
 
-    struct TestLock;
-
-    impl TestLock {
-        fn acquire() -> Self {
-            let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
-            loop {
-                match std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&lock_path)
-                {
-                    Ok(_) => break,
-                    Err(_) => {
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                    }
-                }
-            }
-            TestLock
-        }
-    }
-
-    impl Drop for TestLock {
-        fn drop(&mut self) {
-            let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
-            let _ = std::fs::remove_file(lock_path);
-        }
-    }
-
     #[tokio::test]
     async fn test_sop_lifecycle() {
-        let _lock = TestLock::acquire();
         let temp_dir = std::env::temp_dir().join(format!("openz_sop_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        // Override config directory for testing
-        std::env::set_var("OPENZ_CONFIG_DIR", temp_dir.to_str().unwrap());
+        crate::config::loader::CONFIG_DIR_OVERRIDE.scope(temp_dir.clone(), async move {
+            initialize_sop_system().unwrap();
 
-        initialize_sop_system().unwrap();
+            // Check default definitions are created
+            let defs = load_definitions().unwrap();
+            assert!(!defs.is_empty());
+            let pr_review = defs.iter().find(|d| d.id == "pr-review").unwrap();
+            assert_eq!(pr_review.steps.len(), 3);
 
-        // Check default definitions are created
-        let defs = load_definitions().unwrap();
-        assert!(!defs.is_empty());
-        let pr_review = defs.iter().find(|d| d.id == "pr-review").unwrap();
-        assert_eq!(pr_review.steps.len(), 3);
+            // Save a mock instance
+            let steps = pr_review.steps.iter().map(|step| StepExecutionState {
+                name: step.name.clone(),
+                status: "Pending".to_string(),
+                started_at: None,
+                completed_at: None,
+                output: None,
+                error: None,
+            }).collect();
 
-        // Save a mock instance
-        let steps = pr_review.steps.iter().map(|step| StepExecutionState {
-            name: step.name.clone(),
-            status: "Pending".to_string(),
-            started_at: None,
-            completed_at: None,
-            output: None,
-            error: None,
-        }).collect();
+            let inst = SopInstance {
+                id: "test-inst-123".to_string(),
+                sop_id: pr_review.id.clone(),
+                name: "Test Instance".to_string(),
+                status: SopStatus::Pending,
+                current_step_index: 0,
+                steps,
+                context: serde_json::json!({
+                    "payload": {"repo": "test"},
+                    "steps": {}
+                }),
+                started_at: Utc::now().to_rfc3339(),
+                completed_at: None,
+            };
 
-        let inst = SopInstance {
-            id: "test-inst-123".to_string(),
-            sop_id: pr_review.id.clone(),
-            name: "Test Instance".to_string(),
-            status: SopStatus::Pending,
-            current_step_index: 0,
-            steps,
-            context: serde_json::json!({
-                "payload": {"repo": "test"},
-                "steps": {}
-            }),
-            started_at: Utc::now().to_rfc3339(),
-            completed_at: None,
-        };
+            save_instance(&inst).unwrap();
 
-        save_instance(&inst).unwrap();
+            let loaded = load_instance("test-inst-123").unwrap();
+            assert_eq!(loaded.id, "test-inst-123");
+            assert_eq!(loaded.sop_id, "pr-review");
+            assert_eq!(loaded.status, SopStatus::Pending);
 
-        let loaded = load_instance("test-inst-123").unwrap();
-        assert_eq!(loaded.id, "test-inst-123");
-        assert_eq!(loaded.sop_id, "pr-review");
-        assert_eq!(loaded.status, SopStatus::Pending);
+            let list = list_instances().unwrap();
+            assert_eq!(list.len(), 1);
+            assert_eq!(list[0].id, "test-inst-123");
 
-        let list = list_instances().unwrap();
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].id, "test-inst-123");
-
-        // Clean up temp dir
-        std::fs::remove_dir_all(&temp_dir).unwrap();
-        std::env::remove_var("OPENZ_CONFIG_DIR");
+            // Clean up temp dir
+            std::fs::remove_dir_all(&temp_dir).unwrap();
+        }).await;
     }
 
     #[test]
@@ -646,36 +615,35 @@ mod tests {
 
     #[tokio::test]
     async fn test_trigger_sop_simulation() {
-        let _lock = TestLock::acquire();
         let temp_dir = std::env::temp_dir().join(format!("openz_sop_sim_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        std::env::set_var("OPENZ_CONFIG_DIR", temp_dir.to_str().unwrap());
-        initialize_sop_system().unwrap();
+        crate::config::loader::CONFIG_DIR_OVERRIDE.scope(temp_dir.clone(), async move {
+            initialize_sop_system().unwrap();
 
-        let config = crate::config::schema::Config::default();
-        let payload = serde_json::json!({
-            "feature_request": "Implement SOP simulator"
-        });
+            let config = crate::config::schema::Config::default();
+            let payload = serde_json::json!({
+                "feature_request": "Implement SOP simulator"
+            });
 
-        // Trigger simulation for feature-release SOP
-        let result = engine::trigger_sop_simulation(config, "feature-release".to_string(), payload).await;
-        assert!(result.is_ok());
-        
-        let sim_id = result.unwrap();
-        assert!(sim_id.starts_with("sim-"));
+            // Trigger simulation for feature-release SOP
+            let result = engine::trigger_sop_simulation(config, "feature-release".to_string(), payload).await;
+            assert!(result.is_ok());
+            
+            let sim_id = result.unwrap();
+            assert!(sim_id.starts_with("sim-"));
 
-        // Load the simulated instance to verify it completed
-        let inst = load_instance(&sim_id).unwrap();
-        assert_eq!(inst.status, SopStatus::Completed);
-        assert_eq!(inst.steps.len(), 4);
-        for step in inst.steps {
-            assert_eq!(step.status, "Completed");
-            let output = step.output.unwrap();
-            assert!(output.contains("[Simulated Output for Step:"));
-        }
+            // Load the simulated instance to verify it completed
+            let inst = load_instance(&sim_id).unwrap();
+            assert_eq!(inst.status, SopStatus::Completed);
+            assert_eq!(inst.steps.len(), 4);
+            for step in inst.steps {
+                assert_eq!(step.status, "Completed");
+                let output = step.output.unwrap();
+                assert!(output.contains("[Simulated Output for Step:"));
+            }
 
-        std::fs::remove_dir_all(&temp_dir).unwrap();
-        std::env::remove_var("OPENZ_CONFIG_DIR");
+            std::fs::remove_dir_all(&temp_dir).unwrap();
+        }).await;
     }
 }

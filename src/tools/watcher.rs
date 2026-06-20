@@ -138,13 +138,13 @@ impl Tool for FileWatcherTool {
                                     // Run command
                                     let cmd_parts: Vec<&str> = cmd_clone.split_whitespace().collect();
                                     if !cmd_parts.is_empty() {
-                                        let mut cmd = std::process::Command::new(cmd_parts[0]);
+                                        let mut cmd = tokio::process::Command::new(cmd_parts[0]);
                                         if cmd_parts.len() > 1 {
                                             cmd.args(&cmd_parts[1..]);
                                         }
                                         cmd.current_dir(&path_clone);
                                         
-                                        match cmd.output() {
+                                        match cmd.output().await {
                                             Ok(output) => {
                                                 if !output.status.success() {
                                                     let stderr = String::from_utf8_lossy(&output.stderr).to_string();

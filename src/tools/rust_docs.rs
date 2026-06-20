@@ -154,7 +154,8 @@ impl RustDocsTool {
         
         // Limit markdown output size to keep context clean
         let truncated_md = if markdown.len() > 15000 {
-            format!("{}\n\n... (content truncated for size) ...", &markdown[..15000])
+            let end = markdown.floor_char_boundary(15000);
+            format!("{}\n\n... (content truncated for size) ...", &markdown[..end])
         } else {
             markdown
         };

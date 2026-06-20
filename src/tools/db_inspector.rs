@@ -1,7 +1,7 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use std::process::Command;
+use tokio::process::Command;
 
 pub struct DbInspectorTool;
 
@@ -45,7 +45,7 @@ impl Tool for DbInspectorTool {
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
 
         let mut cmd = Command::new("sqlite3");
-        crate::config::loader::set_command_cwd(&mut cmd);
+        crate::config::loader::set_tokio_command_cwd(&mut cmd);
         cmd.arg(db_path);
 
         match action {
@@ -63,7 +63,7 @@ impl Tool for DbInspectorTool {
                     .filter(|c| !c.is_whitespace())
                     .map(|c| match c {
                         '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}' => '\0', // zero-width chars
-                        '\u{FF10}'..='\u{FF19}' => (c as u8 - b'\xEF' + b'0') as char, // fullwidth digits → ASCII
+                        '\u{FF10}'..='\u{FF19}' => ((c as u32 - 0xFF10) as u8 + b'0') as char, // fullwidth digits → ASCII
                         _ => c,
                     })
                     .filter(|c| *c != '\0')
@@ -72,8 +72,7 @@ impl Tool for DbInspectorTool {
                     "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE",
                     "ATTACH", "DETACH", "PRAGMA", "REINDEX", "REPLACE",
                     "VACUUM", "ANALYZE", "INTO", "UNION", "EXCEPT", "INTERSECT",
-                    "LOAD", "OVERWRITE", "CALL", "EXECUTE", "HAVING", "GROUPBY",
-                    "ORDERBY", "LIMIT", "OFFSET",
+                    "LOAD", "OVERWRITE", "CALL", "EXECUTE",
                 ];
                 // Also block semicolons (stacked queries) and comment sequences.
                 // Allow a single trailing semicolon (normal SQL syntax) but block mid-query semicolons.
@@ -106,7 +105,7 @@ impl Tool for DbInspectorTool {
             _ => return Err(anyhow!("Invalid action: {}", action)),
         }
 
-        let output = cmd.output()?;
+        let output = cmd.output().await?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -155,12 +154,34 @@ impl Tool for DbWriteTool {
         let sql = arguments.get("sql").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'sql' parameter"))?;
 
+        // Safety checks for db_write
+        let trimmed_sql = sql.trim_end_matches(';').trim();
+        if trimmed_sql.contains(';') {
+            return Err(anyhow!("Stacked queries are not allowed. Use separate calls for multiple statements."));
+        }
+        if sql.contains("--") || sql.contains("/*") {
+            return Err(anyhow!("SQL comments are not allowed in write operations."));
+        }
+        let blocked_dot = [".shell", ".import", ".output", ".read", ".system"];
+        for dot_cmd in &blocked_dot {
+            if sql.trim().to_lowercase().starts_with(dot_cmd) {
+                return Err(anyhow!("Blocked sqlite3 dot-command: {}", dot_cmd));
+            }
+        }
+        let sql_upper = sql.trim().to_uppercase();
+        let blocked_write_keywords = ["ATTACH", "DETACH", "LOAD"];
+        for kw in &blocked_write_keywords {
+            if sql_upper.starts_with(kw) {
+                return Err(anyhow!("Blocked SQL keyword for safety: {}", kw));
+            }
+        }
+
         let mut cmd = Command::new("sqlite3");
-        crate::config::loader::set_command_cwd(&mut cmd);
+        crate::config::loader::set_tokio_command_cwd(&mut cmd);
         cmd.arg(db_path);
         cmd.arg(sql);
 
-        let output = cmd.output()?;
+        let output = cmd.output().await?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -220,7 +241,7 @@ mod tests {
         let db_path_str = db_file.to_str().unwrap();
 
         // Create table and insert test data via sqlite3 CLI
-        let init_status = Command::new("sqlite3")
+        let init_status = std::process::Command::new("sqlite3")
             .arg(db_path_str)
             .arg("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO users (name) VALUES ('Alice');")
             .status()?;

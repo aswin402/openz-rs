@@ -27,7 +27,7 @@ pub fn compress_json(raw_json: &str) -> anyhow::Result<String> {
     } else {
         let minified = serde_json::to_string(&value)?;
         if minified.len() > 1000 {
-            Ok(format!("{}...", &minified[..1000]))
+            Ok(format!("{}...", minified.chars().take(1000).collect::<String>()))
         } else {
             Ok(minified)
         }
@@ -41,7 +41,7 @@ fn re_block() -> &'static Regex {
 
 fn re_line() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"//.*").unwrap())
+    RE.get_or_init(|| Regex::new(r"(?m)(^|[^:])//.*").unwrap())
 }
 
 fn re_lines() -> &'static Regex {
@@ -76,7 +76,7 @@ fn re_cargo_error() -> &'static Regex {
 
 pub fn compress_code(raw_code: &str) -> String {
     let no_blocks = re_block().replace_all(raw_code, "");
-    let no_comments = re_line().replace_all(&no_blocks, "");
+    let no_comments = re_line().replace_all(&no_blocks, "$1");
     let collapsed = re_lines().replace_all(&no_comments, "\n");
     collapsed.trim().to_string()
 }

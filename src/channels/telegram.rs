@@ -170,8 +170,7 @@ impl super::Channel for TelegramChannel {
                 let send_url = format!("https://api.telegram.org/bot{}/sendMessage", self.bot_token);
                 let payload = serde_json::json!({
                     "chat_id": chat_id,
-                    "text": active_msg,
-                    "parse_mode": "Markdown"
+                    "text": active_msg
                 });
                 let _ = self.client.post(&send_url).json(&payload).send().await;
             }
@@ -194,19 +193,22 @@ impl super::Channel for TelegramChannel {
         });
         let client_clone = self.client.clone();
         let silent_clone = silent;
+        let token_clone = self.bot_token.clone();
         tokio::spawn(async move {
             match client_clone.post(&set_commands_url).json(&commands_payload).send().await {
                 Ok(res) => {
                     if !res.status().is_success() {
                         if let Ok(text) = res.text().await {
-                            eprintln!("Failed to register Telegram slash commands: {}", text);
+                            let text_redacted = text.replace(&token_clone, "[REDACTED_TELEGRAM_TOKEN]");
+                            eprintln!("Failed to register Telegram slash commands: {}", text_redacted);
                         }
                     } else if !silent_clone {
                         println!("✓ Telegram slash commands registered successfully.");
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error registering Telegram slash commands: {}", e);
+                    let err_msg = e.to_string().replace(&token_clone, "[REDACTED_TELEGRAM_TOKEN]");
+                    eprintln!("Error registering Telegram slash commands: {}", err_msg);
                 }
             }
         });
@@ -220,7 +222,8 @@ impl super::Channel for TelegramChannel {
             let res = match self.client.get(&url).send().await {
                 Ok(r) => r,
                 Err(e) => {
-                    eprintln!("Telegram poll error: {}", e);
+                    let err_msg = e.to_string().replace(&self.bot_token, "[REDACTED_TELEGRAM_TOKEN]");
+                    eprintln!("Telegram poll error: {}", err_msg);
                     sleep(Duration::from_secs(5)).await;
                     continue;
                 }
@@ -281,7 +284,7 @@ impl super::Channel for TelegramChannel {
                                             } else {
                                                 for (name, mcp_cfg) in &agent.config.mcp_servers {
                                                     let status = if mcp_cfg.enabled { "✅ enabled" } else { "❌ disabled" };
-                                                    response.push_str(&format!("• *{}* ({}) \n`{}`\n", name, status, mcp_cfg.command));
+                                                    response.push_str(&format!("• *{}* ({}) \n`{}`\n", escape_markdown(name), status, escape_markdown(&mcp_cfg.command)));
                                                 }
                                             }
                                             tokio::spawn(async move {
@@ -304,9 +307,14 @@ impl super::Channel for TelegramChannel {
                                                 if session.metadata.is_empty() {
                                                     response.push_str("No memory or metadata recorded for this session.");
                                                 } else {
-                                                    for (k, v) in &session.metadata {
-                                                        response.push_str(&format!("• *{}*: {}\n", k, v));
-                                                    }
+                                                     for (k, v) in &session.metadata {
+                                                         let v_str = if let Some(s) = v.as_str() {
+                                                             s.to_string()
+                                                         } else {
+                                                             v.to_string()
+                                                         };
+                                                         response.push_str(&format!("• *{}*: {}\n", escape_markdown(k), escape_markdown(&v_str)));
+                                                     }
                                                 }
                                             } else {
                                                 response.push_str("No active session found.");
@@ -331,12 +339,12 @@ impl super::Channel for TelegramChannel {
                                                         response.push_str("No active skills found in ~/.openz/skills");
                                                     } else {
                                                         for skill in skills {
-                                                            response.push_str(&format!("• *{}*\n", skill.name));
+                                                            response.push_str(&format!("• *{}*\n", escape_markdown(&skill.name)));
                                                         }
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    response.push_str(&format!("❌ Failed to load skills: {}", e));
+                                                    response.push_str(&format!("❌ Failed to load skills: {}", escape_markdown(&e.to_string())));
                                                 }
                                             }
                                             tokio::spawn(async move {
@@ -354,7 +362,7 @@ impl super::Channel for TelegramChannel {
                                         if cmd.starts_with("/model") {
                                             let model = &agent.config.agents.defaults.model;
                                             let provider = &agent.config.agents.defaults.provider;
-                                            let response = format!("🤖 *Active Model:* `{}`\n*Provider:* `{}`", model, provider);
+                                            let response = format!("🤖 *Active Model:* `{}`\n*Provider:* `{}`", escape_markdown(model), escape_markdown(provider));
                                             tokio::spawn(async move {
                                                 let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
                                                 let payload = serde_json::json!({
@@ -482,11 +490,13 @@ impl super::Channel for TelegramChannel {
                                                 "https://api.telegram.org/bot{}/sendMessage",
                                                 token
                                             );
-                                            let payload = serde_json::json!({
-                                                "chat_id": chat_id,
-                                                "text": res.content
-                                            });
-                                            let _ = client.post(&send_url).json(&payload).send().await;
+                                            for chunk in chunk_message(&res.content, 4096) {
+                                                let payload = serde_json::json!({
+                                                    "chat_id": chat_id,
+                                                    "text": chunk
+                                                });
+                                                let _ = client.post(&send_url).json(&payload).send().await;
+                                            }
                                         }
                                         Err(e) => {
                                             let send_url = format!(
@@ -558,4 +568,58 @@ impl super::Channel for TelegramChannel {
             sleep(Duration::from_millis(500)).await;
         }
     }
+}
+
+fn escape_markdown(s: &str) -> String {
+    let mut res = String::new();
+    for c in s.chars() {
+        match c {
+            '_' | '*' | '`' | '[' => {
+                res.push('\\');
+                res.push(c);
+            }
+            _ => res.push(c),
+        }
+    }
+    res
+}
+
+fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
+    if text.len() <= max_len {
+        return vec![text.to_string()];
+    }
+    let mut chunks = Vec::new();
+    let mut remaining = text;
+    while !remaining.is_empty() {
+        if remaining.len() <= max_len {
+            chunks.push(remaining.to_string());
+            break;
+        }
+        
+        let mut split_at = max_len;
+        while split_at > 0 && !remaining.is_char_boundary(split_at) {
+            split_at -= 1;
+        }
+        if split_at == 0 {
+            split_at = 1;
+            while split_at < remaining.len() && !remaining.is_char_boundary(split_at) {
+                split_at += 1;
+            }
+        }
+        
+        let candidate = &remaining[..split_at];
+        let final_split = if let Some(idx) = candidate.rfind('\n') {
+            if idx > 0 {
+                idx
+            } else {
+                split_at
+            }
+        } else {
+            split_at
+        };
+        
+        chunks.push(remaining[..final_split].to_string());
+        remaining = remaining[final_split..].trim_start_matches('\n');
+    }
+    chunks
 }

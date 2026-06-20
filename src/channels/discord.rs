@@ -23,7 +23,7 @@ pub struct DiscordChannel {
 struct GatewayMessage {
     op: u8,
     d: Option<serde_json::Value>,
-    _s: Option<i64>,
+    s: Option<i64>,
     t: Option<String>,
 }
 
@@ -156,14 +156,23 @@ async fn connect_and_listen(
         }
     });
 
+    let last_sequence = Arc::new(std::sync::atomic::AtomicI64::new(-1));
+
     // Spawn heartbeat task
     let tx_heartbeat = tx.clone();
+    let last_sequence_clone = last_sequence.clone();
     let heartbeat_handle = tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_millis(heartbeat_interval)).await;
+            let seq = last_sequence_clone.load(std::sync::atomic::Ordering::Relaxed);
+            let d_val = if seq == -1 {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!(seq)
+            };
             let heartbeat_pkt = serde_json::json!({
                 "op": 1,
-                "d": null
+                "d": d_val
             });
             if let Ok(pkt_str) = serde_json::to_string(&heartbeat_pkt) {
                 if tx_heartbeat.send(Message::Text(pkt_str)).await.is_err() {
@@ -195,6 +204,9 @@ async fn connect_and_listen(
     // Process incoming gateway events
     while let Some(Ok(Message::Text(text))) = read.next().await {
         if let Ok(msg) = serde_json::from_str::<GatewayMessage>(&text) {
+            if let Some(s) = msg.s {
+                last_sequence.store(s, std::sync::atomic::Ordering::Relaxed);
+            }
             if msg.op == 0 {
                 if let Some(ref event_type) = msg.t {
                     if event_type == "MESSAGE_CREATE" {
@@ -219,14 +231,16 @@ async fn connect_and_listen(
                                     };
 
                                     let send_url = format!("https://discord.com/api/v10/channels/{}/messages", payload.channel_id);
-                                    let reply_payload = serde_json::json!({
-                                        "content": response_text
-                                    });
-                                    let _ = client_clone.post(&send_url)
-                                        .header("Authorization", format!("Bot {}", bot_token_clone))
-                                        .json(&reply_payload)
-                                        .send()
-                                        .await;
+                                    for chunk in chunk_message(&response_text, 2000) {
+                                        let reply_payload = serde_json::json!({
+                                            "content": chunk
+                                        });
+                                        let _ = client_clone.post(&send_url)
+                                            .header("Authorization", format!("Bot {}", bot_token_clone))
+                                            .json(&reply_payload)
+                                            .send()
+                                            .await;
+                                    }
                                 });
                             }
                         }
@@ -241,6 +255,46 @@ async fn connect_and_listen(
     writer_handle.abort();
 
     Ok(())
+}
+
+fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
+    if text.len() <= max_len {
+        return vec![text.to_string()];
+    }
+    let mut chunks = Vec::new();
+    let mut remaining = text;
+    while !remaining.is_empty() {
+        if remaining.len() <= max_len {
+            chunks.push(remaining.to_string());
+            break;
+        }
+        
+        let mut split_at = max_len;
+        while split_at > 0 && !remaining.is_char_boundary(split_at) {
+            split_at -= 1;
+        }
+        if split_at == 0 {
+            split_at = 1;
+            while split_at < remaining.len() && !remaining.is_char_boundary(split_at) {
+                split_at += 1;
+            }
+        }
+        
+        let candidate = &remaining[..split_at];
+        let final_split = if let Some(idx) = candidate.rfind('\n') {
+            if idx > 0 {
+                idx
+            } else {
+                split_at
+            }
+        } else {
+            split_at
+        };
+        
+        chunks.push(remaining[..final_split].to_string());
+        remaining = remaining[final_split..].trim_start_matches('\n');
+    }
+    chunks
 }
 
 #[cfg(test)]

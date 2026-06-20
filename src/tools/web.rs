@@ -167,6 +167,13 @@ impl Tool for WebFetchTool {
             return Err(anyhow!("Failed to fetch URL: HTTP {}", res.status()));
         }
 
+        // Check Content-Length to avoid downloading enormous pages
+        const MAX_RESPONSE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+        if let Some(content_length) = res.content_length() {
+            if content_length > MAX_RESPONSE_SIZE {
+                return Err(anyhow!("Response too large ({} bytes, max {} bytes)", content_length, MAX_RESPONSE_SIZE));
+            }
+        }
         let html = res.text().await?;
 
         let result_text = {

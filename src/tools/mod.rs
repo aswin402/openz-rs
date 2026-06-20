@@ -174,6 +174,13 @@ impl ToolRegistry {
             }
         }
 
+        // Sort tools list alphabetically by function name for determinism
+        tools_list.sort_by(|a, b| {
+            let name_a = a["function"]["name"].as_str().unwrap_or("");
+            let name_b = b["function"]["name"].as_str().unwrap_or("");
+            name_a.cmp(name_b)
+        });
+
         if tools_list.len() > 128 {
             tracing::warn!("Too many tools registered ({}); truncating to 128 to satisfy API limits.", tools_list.len());
             tools_list.truncate(128);

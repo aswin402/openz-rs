@@ -128,6 +128,8 @@ impl Tool for ObscuraBrowserTool {
         let url_str = arguments.get("url").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'url' parameter"))?;
         
+        validate_url(url_str).await?;
+        
         let action = arguments.get("action").and_then(|v| v.as_str()).unwrap_or("render");
         let script_str = arguments.get("script").and_then(|v| v.as_str());
         let timeout_secs = arguments.get("timeout").and_then(|v| v.as_u64()).unwrap_or(15);
@@ -142,13 +144,13 @@ impl Tool for ObscuraBrowserTool {
             .send()
             .await;
         
-        if res.is_err() || !res.as_ref().unwrap().status().is_success() {
+        if !matches!(&res, Ok(r) if r.status().is_success()) {
             res = client.get("http://127.0.0.1:9222/json/new")
                 .send()
                 .await;
         }
         
-        if res.is_err() || !res.as_ref().unwrap().status().is_success() {
+        if !matches!(&res, Ok(r) if r.status().is_success()) {
             tracing::warn!("CDP HTTP API failed, attempting browser restart...");
             kill_browser_on_port_9222();
             sleep(Duration::from_millis(500)).await;
@@ -156,7 +158,7 @@ impl Tool for ObscuraBrowserTool {
             res = client.put("http://127.0.0.1:9222/json/new")
                 .send()
                 .await;
-            if res.is_err() || !res.as_ref().unwrap().status().is_success() {
+            if !matches!(&res, Ok(r) if r.status().is_success()) {
                 res = client.get("http://127.0.0.1:9222/json/new")
                     .send()
                     .await;
@@ -187,6 +189,54 @@ impl Tool for ObscuraBrowserTool {
             "output": output
         }))
     }
+}
+
+fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            !(v4.is_private() || v4.is_loopback() || v4.is_link_local()
+                || v4.is_unspecified() || v4.is_broadcast())
+        }
+        std::net::IpAddr::V6(v6) => {
+            !(v6.is_loopback() || v6.is_unspecified() || v6.is_multicast())
+        }
+    }
+}
+
+async fn validate_url(url: &str) -> Result<()> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| anyhow::anyhow!("Invalid URL: {}", e))?;
+    let host = parsed.host_str().ok_or_else(|| anyhow::anyhow!("URL has no host"))?.to_lowercase();
+
+    if parsed.scheme() != "http" && parsed.scheme() != "https" {
+        return Err(anyhow::anyhow!("SSRF blocked: only http/https URLs are allowed (got '{}')", parsed.scheme()));
+    }
+
+    if host == "169.254.169.254" || host == "metadata.google.internal" {
+        return Err(anyhow::anyhow!("SSRF blocked: cloud metadata endpoints are not allowed"));
+    }
+
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if !is_safe_ip(&ip) {
+            return Err(anyhow::anyhow!("SSRF blocked: private/reserved IP addresses are not allowed"));
+        }
+    }
+
+    let resolved: Vec<_> = match tokio::net::lookup_host(format!("{}:0", host)).await {
+        Ok(iter) => iter.map(|addr| addr.ip()).collect(),
+        Err(_) => Vec::new(),
+    };
+
+    for ip in &resolved {
+        if !is_safe_ip(ip) {
+            return Err(anyhow::anyhow!("SSRF blocked: hostname '{}' resolved to private/reserved IP {}", host, ip));
+        }
+    }
+
+    if resolved.is_empty() {
+        return Err(anyhow::anyhow!("SSRF blocked: hostname '{}' could not be resolved", host));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

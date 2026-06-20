@@ -145,8 +145,10 @@ pub async fn parse_multimodal_content(text: &str) -> Vec<ContentPart> {
 pub fn model_supports_vision(model: &str) -> bool {
     let m = model.to_lowercase();
     
-    // Explicit check for known vision models — use word-boundary matching to avoid false positives
-    if m.contains("gpt-4o") || m.starts_with("o1") || m.starts_with("o3") {
+    if m.contains("gpt-4o") || m.starts_with("o3") || m.contains("gpt-4-turbo") || m.contains("gpt-4-vision-preview") {
+        return true;
+    }
+    if m.starts_with("o1") && !m.contains("mini") && !m.contains("preview") {
         return true;
     }
     if m.contains("claude-3") || m.contains("claude-4") {
@@ -211,7 +213,11 @@ mod tests {
         // OpenAI
         assert!(model_supports_vision("gpt-4o"));
         assert!(model_supports_vision("gpt-4o-mini"));
+        assert!(model_supports_vision("gpt-4-turbo"));
+        assert!(model_supports_vision("gpt-4-vision-preview"));
         assert!(model_supports_vision("o1"));
+        assert!(!model_supports_vision("o1-mini"));
+        assert!(!model_supports_vision("o1-preview"));
         assert!(model_supports_vision("o3-mini"));
         // Anthropic
         assert!(model_supports_vision("claude-3-5-sonnet"));

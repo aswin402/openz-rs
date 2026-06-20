@@ -16,28 +16,36 @@ unsafe fn apply_seccomp_guard() -> Result<(), std::io::Error> {
     }
 
     // Kill child if parent dies (no orphaned processes)
-    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong, 0, 0, 0) != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
 
     // Limit CPU time (30 seconds soft, 60 hard)
     let rlim_cpu = libc::rlimit {
         rlim_cur: 30,
         rlim_max: 60,
     };
-    libc::setrlimit(libc::RLIMIT_CPU, &rlim_cpu);
+    if libc::setrlimit(libc::RLIMIT_CPU, &rlim_cpu) != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
 
     // Limit virtual memory (256 MB soft, 512 MB hard)
     let rlim_as = libc::rlimit {
         rlim_cur: 256 * 1024 * 1024,
         rlim_max: 512 * 1024 * 1024,
     };
-    libc::setrlimit(libc::RLIMIT_AS, &rlim_as);
+    if libc::setrlimit(libc::RLIMIT_AS, &rlim_as) != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
 
     // Limit output file size (10 MB)
     let rlim_fsize = libc::rlimit {
         rlim_cur: 10 * 1024 * 1024,
         rlim_max: 10 * 1024 * 1024,
     };
-    libc::setrlimit(libc::RLIMIT_FSIZE, &rlim_fsize);
+    if libc::setrlimit(libc::RLIMIT_FSIZE, &rlim_fsize) != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
 
     // Apply seccomp BPF filter (allowlist-based, x86_64 only)
     allowlist_seccomp_filter()?;

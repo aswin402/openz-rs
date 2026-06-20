@@ -1705,6 +1705,11 @@ impl Tool for ParallelResearchTool {
 
         crate::tui_println!("{}◎ Parallel Research: Spawning {} subagents concurrently...{}", AURA_PURPLE, tasks_val.len(), COLOR_RESET);
 
+        let current_depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
+        let current_workspace = crate::config::loader::ACTIVE_WORKSPACE
+            .try_with(|w| w.clone())
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+
         let mut join_handles = Vec::new();
 
         for task_val in tasks_val {
@@ -1726,42 +1731,48 @@ impl Tool for ParallelResearchTool {
                 }
             }
 
+            let current_workspace = current_workspace.clone();
             let handle = tokio::spawn(crate::agent::style::spinner::IS_SILENT.scope(true, async move {
-                let provider = if let Some(ref m) = model_override {
-                    match build_provider_for_model(&config, m) {
-                        Ok(p) => p,
-                        Err(_) => parent_provider.clone()
-                    }
-                } else {
-                    parent_provider.clone()
-                };
+                let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(current_workspace, async {
+                    DELEGATION_DEPTH.scope(current_depth + 1, async {
+                        let provider = if let Some(ref m) = model_override {
+                            match build_provider_for_model(&config, m) {
+                                Ok(p) => p,
+                                Err(_) => parent_provider.clone()
+                            }
+                        } else {
+                            parent_provider.clone()
+                        };
 
-                let mut child_registry = ToolRegistry::new_with_context(
-                    config.clone(),
-                    provider.clone(),
-                    session_manager.clone(),
-                );
-                for tool in read_only_parent_tools {
-                    child_registry.register(tool);
-                }
+                        let mut child_registry = ToolRegistry::new_with_context(
+                            config.clone(),
+                            provider.clone(),
+                            session_manager.clone(),
+                        );
+                        for tool in read_only_parent_tools {
+                            child_registry.register(tool);
+                        }
 
-                let child_session_id = format!("subagent:parallel:{}", &uuid::Uuid::new_v4().to_string()[..8]);
-                let child_agent = AgentLoop::new(
-                    config,
-                    provider,
-                    child_registry,
-                    session_manager,
-                );
+                        let child_session_id = format!("subagent:parallel:{}", &uuid::Uuid::new_v4().to_string()[..8]);
+                        let child_agent = AgentLoop::new(
+                            config,
+                            provider,
+                            child_registry,
+                            session_manager,
+                        );
 
-                let subagent_prompt = format!(
-                    "You are a focused research subagent. Complete the following task using the read-only tools available.\n\n\
-                    TASK:\n{}\n\n\
-                    CONTEXT:\n{}\n\n\
-                    When finished, provide a clear, concise summary of what you did and found.",
-                    goal, context
-                );
+                        let subagent_prompt = format!(
+                            "You are a focused research subagent. Complete the following task using the read-only tools available.\n\n\
+                            TASK:\n{}\n\n\
+                            CONTEXT:\n{}\n\n\
+                            When finished, provide a clear, concise summary of what you did and found.",
+                            goal, context
+                        );
 
-                let run_res = child_agent.run(&subagent_prompt, &child_session_id).await;
+                        child_agent.run(&subagent_prompt, &child_session_id).await
+                    }).await
+                });
+                let run_res = run_res_fut.await;
                 (goal, run_res)
             }));
             join_handles.push(handle);
@@ -2717,40 +2728,11 @@ mod tests {
         }
     }
 
-    struct TestLock;
-
-    impl TestLock {
-        fn acquire() -> Self {
-            let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
-            loop {
-                match std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&lock_path)
-                {
-                    Ok(_) => break,
-                    Err(_) => {
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                    }
-                }
-            }
-            TestLock
-        }
-    }
-
-    impl Drop for TestLock {
-        fn drop(&mut self) {
-            let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
-            let _ = std::fs::remove_file(lock_path);
-        }
-    }
-
     #[tokio::test]
     async fn test_evaluator_optimizer_loop_success() -> Result<()> {
-        let _lock = TestLock::acquire();
         let temp_dir = std::env::temp_dir().join(format!("openz_eval_opt_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir)?;
-        std::env::set_var("OPENZ_CONFIG_DIR", &temp_dir);
+
         std::env::set_var("ANTHROPIC_API_KEY", "dummy");
         std::env::set_var("OPENAI_API_KEY", "dummy");
         std::env::set_var("OPENZ_USE_MOCK_PROVIDER", "true");
@@ -2767,21 +2749,22 @@ mod tests {
             cancellation_token: CancellationToken::new(),
         };
 
-        let res = tool.call(&serde_json::json!({
-            "optimizer": "coding_agent",
-            "evaluator": "reviewer",
-            "goal": "Write a hello world program in Rust",
-            "checklist": "Must have a main function and print hello",
-            "max_iterations": 3
-        })).await?;
+        let res = crate::config::loader::CONFIG_DIR_OVERRIDE.scope(temp_dir.clone(), async move {
+            tool.call(&serde_json::json!({
+                "optimizer": "coding_agent",
+                "evaluator": "reviewer",
+                "goal": "Write a hello world program in Rust",
+                "checklist": "Must have a main function and print hello",
+                "max_iterations": 3
+            })).await
+        }).await?;
 
         assert_eq!(res.get("status").and_then(|v| v.as_str()), Some("success"));
         assert_eq!(res.get("passed").and_then(|v| v.as_bool()), Some(true));
         assert!(res.get("iterations_run").and_then(|v| v.as_i64()).unwrap() > 1);
         assert!(res.get("final_output").and_then(|v| v.as_str()).unwrap().contains("Draft version"));
 
-        // Cleanup config dir
-        std::env::remove_var("OPENZ_CONFIG_DIR");
+        // Cleanup env vars
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("OPENAI_API_KEY");
         std::env::remove_var("OPENZ_USE_MOCK_PROVIDER");

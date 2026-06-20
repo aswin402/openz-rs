@@ -499,7 +499,21 @@ impl Tool for ZenflowEditTool {
         let mut original_content = None;
 
         if in_git {
-            let _ = run_cmd("git add -A");
+            let escaped_path = {
+                let s = path.to_string_lossy();
+                let mut escaped = String::with_capacity(s.len() + 2);
+                escaped.push('\'');
+                for c in s.chars() {
+                    if c == '\'' {
+                        escaped.push_str("'\\''");
+                    } else {
+                        escaped.push(c);
+                    }
+                }
+                escaped.push('\'');
+                escaped
+            };
+            let _ = run_cmd(&format!("git add -- {}", escaped_path));
             if let Ok((code, _)) = run_cmd("git commit -m \"Zenflow pre-edit backup\" --no-verify") {
                 if code == 0 {
                     committed = true;
@@ -574,7 +588,7 @@ impl Tool for ZenflowEditTool {
 
         if status == 0 {
             if committed {
-                let _ = run_cmd("git reset --soft HEAD~1");
+                let _ = run_cmd("git reset HEAD~1");
             }
             Ok(serde_json::json!({
                 "status": "success",

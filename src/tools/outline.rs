@@ -80,7 +80,18 @@ impl Tool for CodeOutlineTool {
             for (idx, line) in content.lines().enumerate() {
                 let line_num = idx + 1;
                 let trimmed = line.trim();
-                if trimmed.starts_with("//") || trimmed.starts_with("#") || trimmed.starts_with("/*") || trimmed.is_empty() {
+                
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                let is_comment = if ext == "py" || ext == "rb" || ext == "sh" {
+                    trimmed.starts_with("//") || trimmed.starts_with("#") || trimmed.starts_with("/*")
+                } else {
+                    trimmed.starts_with("//") || trimmed.starts_with("/*")
+                };
+                
+                if is_comment {
                     continue;
                 }
 

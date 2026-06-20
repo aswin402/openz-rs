@@ -35,8 +35,11 @@ pub fn get_connection() -> Result<Connection> {
         )",
         [],
     )?;
-    let _ = migrate_old_skills_to_db(&conn);
-    let _ = initialize_default_subagent_skills(&conn);
+    static SKILLS_INIT_ONCE: std::sync::Once = std::sync::Once::new();
+    SKILLS_INIT_ONCE.call_once(|| {
+        let _ = migrate_old_skills_to_db(&conn);
+        let _ = initialize_default_subagent_skills(&conn);
+    });
     Ok(conn)
 }
 

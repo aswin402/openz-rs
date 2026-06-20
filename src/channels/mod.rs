@@ -60,20 +60,15 @@ pub fn select_random_message(messages: &[&str]) -> String {
     if messages.is_empty() {
         return String::new();
     }
-    let uuid_bytes = uuid::Uuid::new_v4().into_bytes();
-    // Use all 16 bytes for unbiased selection across any array size
-    let mut seed: u128 = 0;
-    for &b in &uuid_bytes {
-        seed = seed.wrapping_mul(256).wrapping_add(b as u128);
-    }
-    let idx = (seed as usize) % messages.len();
+    use rand::Rng;
+    let idx = rand::thread_rng().gen_range(0..messages.len());
     messages[idx].to_string()
 }
 
 pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
     let silent = std::env::var("OPENZ_SILENT").is_ok();
     if !silent {
-        println!("Shutting down gateways...");
+        crate::tui_println!("Shutting down gateways...");
     }
     
     let sessions_dir = crate::config::loader::resolve_path("~/.openz/sessions");
@@ -95,8 +90,7 @@ pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
                         let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
                         let payload = serde_json::json!({
                             "chat_id": chat_id,
-                            "text": msg,
-                            "parse_mode": "Markdown"
+                            "text": msg
                         });
                         match client.post(&send_url).json(&payload).send().await {
                             Ok(resp) => {

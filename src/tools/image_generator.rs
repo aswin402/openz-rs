@@ -306,20 +306,20 @@ impl Tool for GenerateImageTool {
             .send()
             .await;
         
-        if res.is_err() || !res.as_ref().unwrap().status().is_success() {
+        if !matches!(&res, Ok(r) if r.status().is_success()) {
             res = client.get("http://127.0.0.1:9222/json/new")
                 .send()
                 .await;
         }
         
-        if res.is_err() || !res.as_ref().unwrap().status().is_success() {
+        if !matches!(&res, Ok(r) if r.status().is_success()) {
             kill_browser_on_port_9222();
             sleep(Duration::from_millis(500)).await;
             ensure_browser_running().await?;
             res = client.put("http://127.0.0.1:9222/json/new")
                 .send()
                 .await;
-            if res.is_err() || !res.as_ref().unwrap().status().is_success() {
+            if !matches!(&res, Ok(r) if r.status().is_success()) {
                 res = client.get("http://127.0.0.1:9222/json/new")
                     .send()
                     .await;

@@ -42,6 +42,16 @@ impl<'a> Drop for ActivityGuard<'a> {
     }
 }
 
+static SESSION_LOCKS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>> = std::sync::OnceLock::new();
+
+fn get_session_lock(session_key: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    let map = SESSION_LOCKS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut guard = map.lock().unwrap();
+    guard.entry(session_key.to_string())
+        .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
+
 impl AgentLoop {
     pub fn new(
         config: Config,
@@ -147,6 +157,9 @@ impl AgentLoop {
     }
 
     pub async fn run(&self, user_content: &str, session_key: &str) -> Result<RunResult> {
+        let lock = get_session_lock(session_key);
+        let _guard = lock.lock().await;
+
         let parent_key = crate::agent::style::spinner::get_current_session_key();
         let target_key = match parent_key {
             Some(ref pk) if !pk.starts_with("subagent:") => pk.clone(),
@@ -171,7 +184,10 @@ impl AgentLoop {
 
     async fn run_inner(&self, user_content: &str, session_key: &str) -> Result<RunResult> {
         // Clean up old traces and tool outputs on first run of session
-        Self::cleanup_old_files();
+        static CLEANUP_ONCE: std::sync::Once = std::sync::Once::new();
+        CLEANUP_ONCE.call_once(|| {
+            Self::cleanup_old_files();
+        });
 
         crate::agent::activity::update_activity(session_key, "Processing user prompt", None);
         let _guard = ActivityGuard { session_key };
@@ -1514,7 +1530,7 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
             {
                 let first_line = cmd.lines().next().unwrap_or("").trim();
                 if first_line.len() > 60 {
-                    format!("{}...", &first_line[..57])
+                    format!("{}...", first_line.chars().take(57).collect::<String>())
                 } else {
                     first_line.to_string()
                 }
@@ -1587,7 +1603,7 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 let val_str = match v {
                     serde_json::Value::String(s) => {
                         if s.len() > 30 {
-                            format!("\"{}...\"", &s[..27])
+                            format!("\"{}...\"", s.chars().take(27).collect::<String>())
                         } else {
                             format!("\"{}\"", s)
                         }

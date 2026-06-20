@@ -8,7 +8,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::get,
-    Json, Router,
+    Router,
 };
 use tokio::net::TcpListener;
 
@@ -114,7 +114,7 @@ impl super::Channel for WhatsAppChannel {
             .route("/webhook/whatsapp", get(verify_webhook).post(receive_webhook))
             .with_state(state);
 
-        let addr = format!("0.0.0.0:{}", port);
+        let addr = format!("127.0.0.1:{}", port);
         if !silent {
             println!("🤖 WhatsApp Channel webhook server started on http://{}/webhook/whatsapp", addr);
         }
@@ -145,14 +145,12 @@ async fn verify_webhook(
 async fn receive_webhook(
     State(state): State<WhatsAppState>,
     headers: HeaderMap,
-    Json(payload): Json<serde_json::Value>,
+    body: axum::body::Bytes,
 ) -> impl IntoResponse {
     // Verify HMAC signature if app_secret is configured
     if !state.app_secret.is_empty() {
-        let body_bytes = serde_json::to_vec(&payload).unwrap_or_default();
         if let Some(signature_header) = headers.get("X-Hub-Signature-256") {
             if let Ok(sig_str) = signature_header.to_str() {
-                // Format: "sha256=<hex>"
                 let expected_sig = sig_str.strip_prefix("sha256=").unwrap_or(sig_str);
                 let computed = {
                     use hmac::{Hmac, Mac};
@@ -160,7 +158,7 @@ async fn receive_webhook(
                     type HmacSha256 = Hmac<Sha256>;
                     let mut mac = HmacSha256::new_from_slice(state.app_secret.as_bytes())
                         .expect("HMAC can take key of any size");
-                    mac.update(&body_bytes);
+                    mac.update(&body);
                     let result = mac.finalize();
                     hex::encode(result.into_bytes())
                 };
@@ -176,6 +174,14 @@ async fn receive_webhook(
             return StatusCode::FORBIDDEN.into_response();
         }
     }
+
+    let payload: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("WhatsApp webhook body parse error: {}", e);
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+    };
 
     if let Some(entry) = payload.get("entry").and_then(|e| e.as_array()).and_then(|a| a.first()) {
         if let Some(change) = entry.get("changes").and_then(|c| c.as_array()).and_then(|a| a.first()) {
@@ -201,20 +207,22 @@ async fn receive_webhook(
                                     };
 
                                     let send_url = format!("https://graph.facebook.com/v18.0/{}/messages", phone_number_id);
-                                    let reply_payload = serde_json::json!({
-                                        "messaging_product": "whatsapp",
-                                        "recipient_type": "individual",
-                                        "to": from_str,
-                                        "type": "text",
-                                        "text": {
-                                            "body": body_text
-                                        }
-                                    });
-                                    let _ = client.post(&send_url)
-                                        .bearer_auth(&api_key)
-                                        .json(&reply_payload)
-                                        .send()
-                                        .await;
+                                    for chunk in chunk_message(&body_text, 65536) {
+                                        let reply_payload = serde_json::json!({
+                                            "messaging_product": "whatsapp",
+                                            "recipient_type": "individual",
+                                            "to": from_str,
+                                            "type": "text",
+                                            "text": {
+                                                "body": chunk
+                                            }
+                                        });
+                                        let _ = client.post(&send_url)
+                                            .bearer_auth(&api_key)
+                                            .json(&reply_payload)
+                                            .send()
+                                            .await;
+                                    }
                                 });
                             }
                         }
@@ -284,4 +292,44 @@ mod tests {
         let response = verify_webhook(Query(params), State(state)).await.into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
+}
+
+fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
+    if text.len() <= max_len {
+        return vec![text.to_string()];
+    }
+    let mut chunks = Vec::new();
+    let mut remaining = text;
+    while !remaining.is_empty() {
+        if remaining.len() <= max_len {
+            chunks.push(remaining.to_string());
+            break;
+        }
+        
+        let mut split_at = max_len;
+        while split_at > 0 && !remaining.is_char_boundary(split_at) {
+            split_at -= 1;
+        }
+        if split_at == 0 {
+            split_at = 1;
+            while split_at < remaining.len() && !remaining.is_char_boundary(split_at) {
+                split_at += 1;
+            }
+        }
+        
+        let candidate = &remaining[..split_at];
+        let final_split = if let Some(idx) = candidate.rfind('\n') {
+            if idx > 0 {
+                idx
+            } else {
+                split_at
+            }
+        } else {
+            split_at
+        };
+        
+        chunks.push(remaining[..final_split].to_string());
+        remaining = remaining[final_split..].trim_start_matches('\n');
+    }
+    chunks
 }
