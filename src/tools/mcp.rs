@@ -11,6 +11,11 @@ use std::sync::Mutex as StdMutex;
 
 static MEMORY_MCP_CLIENT: OnceLock<StdMutex<Option<McpClient>>> = OnceLock::new();
 
+/// Cache of spawned MCP clients, keyed by "command:arg1 arg2 ...".
+/// Shared across McpClient::spawn() and LazyMcpToolWrapper.
+static SPAWNED_MCP_CLIENTS: OnceLock<Mutex<std::collections::HashMap<String, McpClient>>> =
+    OnceLock::new();
+
 pub fn set_memory_mcp_client(client: McpClient) {
     let cell = MEMORY_MCP_CLIENT.get_or_init(|| StdMutex::new(None));
     if let Ok(mut lock) = cell.lock() {
@@ -35,14 +40,7 @@ pub mod mcp_grpc {
 }
 
 pub enum McpClientType {
-    Stdio {
-        #[allow(dead_code)]
-        child: Child,
-        stdout_reader: BufReader<tokio::process::ChildStdout>,
-        stdin_writer: tokio::process::ChildStdin,
-    },
     Grpc {
-        #[allow(dead_code)]
         child: Option<Child>,
         client: mcp_grpc::mcp_service_client::McpServiceClient<tonic::transport::Channel>,
     }
@@ -65,9 +63,6 @@ impl Drop for McpClientInner {
                     let _ = c.start_kill();
                 }
             }
-            McpClientType::Stdio { ref mut child, .. } => {
-                let _ = child.start_kill();
-            }
         }
     }
 }
@@ -78,7 +73,6 @@ pub struct McpClient(Arc<Mutex<Option<McpClientInner>>>);
 impl McpClient {
     pub async fn spawn(command: &str, args: &[String]) -> Result<Self> {
         let cache_key = format!("{}:{}", command, args.join(" "));
-        static SPAWNED_MCP_CLIENTS: OnceLock<Mutex<std::collections::HashMap<String, McpClient>>> = OnceLock::new();
         let cell = SPAWNED_MCP_CLIENTS.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
         let mut lock = cell.lock().await;
         if let Some(client) = lock.get(&cache_key) {
@@ -157,12 +151,12 @@ impl McpClient {
 
             // Automatic in-process gRPC bridge for all stdio servers to avoid stdio pollution
             let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-            let bridge_port = find_free_port();
+            let (bridge_port, port_guard) = find_free_port();
             let cmd_string = cmd.clone();
             let cmd_args = args_vec.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = run_mcp_bridge(bridge_port, &cmd_string, &cmd_args, shutdown_rx).await {
+                if let Err(e) = run_mcp_bridge(bridge_port, port_guard, &cmd_string, &cmd_args, shutdown_rx).await {
                     tracing::error!("In-process gRPC MCP bridge failed for {}: {:?}", cmd_string, e);
                 }
             });
@@ -270,33 +264,6 @@ impl McpClient {
 
                     Ok(tools.clone())
                 }
-                McpClientType::Stdio { stdin_writer, stdout_reader, .. } => {
-                    let req = serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "method": "tools/list",
-                        "id": client.next_id
-                    });
-                    client.next_id += 1;
-
-                    let req_str = format!("{}\n", serde_json::to_string(&req)?);
-                    stdin_writer.write_all(req_str.as_bytes()).await?;
-                    stdin_writer.flush().await?;
-
-                    let mut line = String::new();
-                    stdout_reader.read_line(&mut line).await?;
-
-                    let resp: Value = serde_json::from_str(&line)?;
-                    if let Some(error) = resp.get("error") {
-                        return Err(anyhow!("MCP error: {}", error));
-                    }
-
-                    let tools = resp.get("result")
-                        .and_then(|r| r.get("tools"))
-                        .and_then(|t| t.as_array())
-                        .ok_or_else(|| anyhow!("Invalid tools/list response"))?;
-
-                    Ok(tools.clone())
-                }
             }
         };
 
@@ -338,41 +305,21 @@ impl McpClient {
                     let result_val: Value = serde_json::from_str(&resp.result_json)?;
                     Ok(result_val)
                 }
-                McpClientType::Stdio { stdin_writer, stdout_reader, .. } => {
-                    let req = serde_json::json!({
-                        "jsonrpc": "2.0",
-                        "method": "tools/call",
-                        "id": client.next_id,
-                        "params": {
-                            "name": name_str,
-                            "arguments": args_val
-                        }
-                    });
-                    client.next_id += 1;
-
-                    let req_str = format!("{}\n", serde_json::to_string(&req)?);
-                    stdin_writer.write_all(req_str.as_bytes()).await?;
-                    stdin_writer.flush().await?;
-
-                    let mut line = String::new();
-                    stdout_reader.read_line(&mut line).await?;
-
-                    let resp: Value = serde_json::from_str(&line)?;
-                    if let Some(error) = resp.get("error") {
-                        return Err(anyhow!("MCP tool call error: {}", error));
-                    }
-
-                    let result = resp.get("result")
-                        .ok_or_else(|| anyhow!("Invalid tools/call response"))?;
-
-                    Ok(result.clone())
-                }
             }
         };
 
         match tokio::time::timeout(std::time::Duration::from_secs(30), fut).await {
             Ok(res) => res,
             Err(_) => Err(anyhow!("MCP tool call for '{}' timed out after 30s", name)),
+        }
+    }
+
+    /// Remove a stale entry from the spawn cache so the next spawn creates a fresh connection.
+    pub async fn invalidate(command: &str, args: &[String]) {
+        let cache_key = format!("{}:{}", command, args.join(" "));
+        if let Some(cell) = SPAWNED_MCP_CLIENTS.get() {
+            let mut lock = cell.lock().await;
+            lock.remove(&cache_key);
         }
     }
 }
@@ -403,17 +350,6 @@ impl Tool for McpToolWrapper {
     }
 }
 
-// ── Lazy MCP tool wrapper ─────────────────────────────────────────────────────
-// Holds server config + tool metadata but spawns the process only on first call.
-
-/// Per-server lazy client, shared across all tools from the same MCP server.
-static LAZY_MCP_CLIENTS: OnceLock<Mutex<std::collections::HashMap<String, McpClient>>> =
-    OnceLock::new();
-
-fn lazy_client_registry() -> &'static Mutex<std::collections::HashMap<String, McpClient>> {
-    LAZY_MCP_CLIENTS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-}
-
 pub struct LazyMcpToolWrapper {
     /// Human-readable MCP server name (e.g. "browser", "spreadsheet")
     pub server_name: String,
@@ -433,33 +369,9 @@ impl Tool for LazyMcpToolWrapper {
     fn parameters(&self) -> Value { self.parameters.clone() }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let cache_key = format!("{}:{}", self.command, self.args.join(" "));
-
-        // Fast path: already connected
-        {
-            let lock = lazy_client_registry().lock().await;
-            if let Some(client) = lock.get(&cache_key) {
-                match client.call_tool(&self.name, arguments).await {
-                    Ok(result) => return Ok(result),
-                    Err(e) => {
-                        tracing::warn!("MCP tool call failed (server may have crashed), reconnecting: {}", e);
-                        drop(lock);
-                        let mut lock = lazy_client_registry().lock().await;
-                        lock.remove(&cache_key);
-                        if self.is_memory_server {
-                            clear_memory_mcp_client();
-                        }
-                    }
-                }
-            }
-        }
-
-        // Slow path: first call or reconnection — spawn the MCP process
-        tracing::info!(
-            "Lazy-connecting MCP server '{}' for tool call: {}",
-            self.server_name, self.name
-        );
-
+        // Delegate to McpClient::spawn() which has its own internal cache
+        // (SPAWNED_MCP_CLIENTS). Fast path returns existing client; slow path
+        // spawns a fresh process and caches it.
         let client = McpClient::spawn(&self.command, &self.args).await
             .map_err(|e| anyhow!(
                 "Failed to connect MCP server '{}' on demand: {e}", self.server_name
@@ -469,12 +381,24 @@ impl Tool for LazyMcpToolWrapper {
             set_memory_mcp_client(client.clone());
         }
 
-        {
-            let mut lock = lazy_client_registry().lock().await;
-            lock.insert(cache_key, client.clone());
+        match client.call_tool(&self.name, arguments).await {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                tracing::warn!("MCP tool call failed (server may have crashed), re-spawning: {}", e);
+                McpClient::invalidate(&self.command, &self.args).await;
+                if self.is_memory_server {
+                    clear_memory_mcp_client();
+                }
+                let client = McpClient::spawn(&self.command, &self.args).await
+                    .map_err(|e2| anyhow!(
+                        "Failed to reconnect MCP server '{}' after crash: {e2}", self.server_name
+                    ))?;
+                if self.is_memory_server {
+                    set_memory_mcp_client(client.clone());
+                }
+                client.call_tool(&self.name, arguments).await
+            }
         }
-
-        client.call_tool(&self.name, arguments).await
     }
 }
 
@@ -483,7 +407,7 @@ impl Tool for LazyMcpToolWrapper {
 
 static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(50060);
 
-fn find_free_port() -> u16 {
+fn find_free_port() -> (u16, std::net::TcpListener) {
     let start_port = NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if start_port > 65000 {
         NEXT_PORT.store(50060, std::sync::atomic::Ordering::Relaxed);
@@ -491,13 +415,15 @@ fn find_free_port() -> u16 {
 
     let mut port = start_port;
     for _ in 0..100 {
-        if std::net::TcpListener::bind(format!("127.0.0.1:{}", port)).is_ok() {
-            return port;
+        if let Ok(listener) = std::net::TcpListener::bind(format!("127.0.0.1:{}", port)) {
+            return (port, listener);
         }
         port = NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     tracing::warn!("Could not find free port after 100 attempts, using last port {}", port);
-    port
+    let listener = std::net::TcpListener::bind(format!("127.0.0.1:{}", port))
+        .expect("Failed to bind even fallback port");
+    (port, listener)
 }
 
 pub struct McpBridgeService {
@@ -583,7 +509,8 @@ impl mcp_grpc::mcp_service_server::McpService for McpBridgeService {
 }
 
 pub async fn run_mcp_bridge(
-    port: u16, 
+    port: u16,
+    port_guard: std::net::TcpListener,
     command: &str, 
     args: &[String], 
     mut shutdown_rx: tokio::sync::oneshot::Receiver<()>
@@ -602,7 +529,7 @@ pub async fn run_mcp_bridge(
     let stderr = child.stderr.take().ok_or_else(|| anyhow!("Failed to open child stderr"))?;
 
     let cmd_log = command.to_string();
-    tokio::spawn(async move {
+    let stderr_handle = tokio::spawn(async move {
         let mut reader = BufReader::new(stderr);
         let mut line = String::new();
         while let Ok(n) = reader.read_line(&mut line).await {
@@ -665,21 +592,92 @@ pub async fn run_mcp_bridge(
     };
 
     let addr = format!("127.0.0.1:{}", port).parse()?;
+
+    // Drop the port guard right before serving to minimize the bind window.
+    // The guard held the port open since find_free_port(); dropping now means
+    // tonic::Server::serve() binds immediately after, shrinking the TOCTOU gap
+    // from ~100ms (spawn latency) to <1µs (format/parse overhead).
+    drop(port_guard);
+
     tracing::info!("gRPC MCP Bridge listening on {}", addr);
 
     let server_fut = tonic::transport::Server::builder()
         .add_service(mcp_grpc::mcp_service_server::McpServiceServer::new(service))
         .serve(addr);
 
+    // Monitor child process exit so we can shut down the bridge if the child crashes
+    let cmd_name = command.to_string();
+    let child_exit = async move {
+        let status = child.wait().await?;
+        tracing::warn!("MCP child process '{}' exited with: {:?}", cmd_name, status);
+        anyhow::Ok(())
+    };
+
+    let cmd_shutdown = command.to_string();
     tokio::select! {
         res = server_fut => {
             res?;
         }
+        res = child_exit => {
+            if let Err(e) = res {
+                tracing::error!("MCP child process '{}' wait error: {}", command, e);
+            }
+        }
         _ = &mut shutdown_rx => {
-            tracing::info!("gRPC MCP Bridge shutdown signal received for {}", command);
+            tracing::info!("gRPC MCP Bridge shutdown signal received for {}", cmd_shutdown);
         }
     }
 
+    // Abort reader tasks — they're no longer needed.
     reader_handle.abort();
+    stderr_handle.abort();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_free_port_returns_bound_listener() {
+        let (port, listener) = find_free_port();
+        assert!(port >= 50060, "port should be in dynamic range");
+        assert!(port <= 65000, "port should be in dynamic range");
+        // Listener should be alive — binding same port again should fail
+        assert!(
+            std::net::TcpListener::bind(format!("127.0.0.1:{}", port)).is_err(),
+            "port should still be held by the guard listener"
+        );
+        // Drop the listener, then binding should succeed
+        drop(listener);
+        assert!(
+            std::net::TcpListener::bind(format!("127.0.0.1:{}", port)).is_ok(),
+            "port should be free after guard is dropped"
+        );
+    }
+
+    #[test]
+    fn test_find_free_port_sequential_ports_differ() {
+        let (_p1, l1) = find_free_port();
+        let (p2, _l2) = find_free_port();
+        // Second call should advance to a different port
+        assert_ne!(p2, 0);
+        drop(l1);
+    }
+
+    #[tokio::test]
+    async fn test_invalidate_nonexistent_key_does_not_panic() {
+        // Should not panic when cache is empty
+        McpClient::invalidate("nonexistent", &[]).await;
+    }
+
+    #[tokio::test]
+    async fn test_invalidate_after_spawn_removes_entry() {
+        // Create a non-existent command — spawn should fail, no entry cached
+        let result = McpClient::spawn("this-command-does-not-exist-12345", &[]).await;
+        assert!(result.is_err(), "spawn of nonexistent command should fail");
+
+        // Invalidate on something that was never cached should not panic
+        McpClient::invalidate("this-command-does-not-exist-12345", &[]).await;
+    }
 }

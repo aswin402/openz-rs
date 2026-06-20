@@ -275,7 +275,10 @@ pub async fn run_cli() -> Result<()> {
             let command = &command_args[0];
             let args = &command_args[1..];
             let (_tx, rx) = tokio::sync::oneshot::channel();
-            crate::tools::mcp::run_mcp_bridge(port, command, args, rx).await?;
+            // Bind a port guard to keep the port reserved, same as find_free_port() does
+            let port_guard = std::net::TcpListener::bind(format!("127.0.0.1:{}", port))
+                .map_err(|e| anyhow!("Cannot bind to port {}: {}", port, e))?;
+            crate::tools::mcp::run_mcp_bridge(port, port_guard, command, args, rx).await?;
         }
         Command::Sop { action } => {
             handle_sop(action).await?;

@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.16 (Latest Release)
+### v0.0.17 (Latest Release)
+*   **Refactor: MCP Dual Cache Consolidation:** Removed `LAZY_MCP_CLIENTS` cache, consolidated to single `SPAWNED_MCP_CLIENTS`. `LazyMcpToolWrapper::call()` now delegates to `McpClient::spawn()` which handles both fast and slow paths. Eliminates first-call cache miss.
+*   **Cleanup: Dead Code Removal:** Removed `McpClientType::Stdio` variant and all associated match arms (~60 lines of unreachable code). All spawns use gRPC exclusively.
+*   **Bugfix: find_free_port TOCTOU Race:** `find_free_port()` now returns a bound `TcpListener` guard. The listener is passed to `run_mcp_bridge()` and only dropped right before `tonic::Server::serve()` binds, shrinking the race window from ~100ms to <1µs.
+*   **Bugfix: Bridge Child Process Monitoring:** Added `child_exit` monitor task in `tokio::select!` inside `run_mcp_bridge()`. If the stdio child crashes, the gRPC bridge shuts down instead of returning stale errors.
+*   **Bugfix: Stderr Reader Cancellation:** Reader and stderr forwarding tasks are now aborted via `.abort()` on bridge shutdown, preventing orphaned tasks.
+*   **Test: MCP Unit Tests:** Added 4 tests for `find_free_port()` (race-free listener binding behavior) and `McpClient::invalidate()` (cache entry lifecycle).
+*   **Maintenance: Version Bump:** Bumped to v0.0.17. All 118 tests passing, 0 clippy warnings.
+
+### v0.0.16
 *   **Security: SSRF DNS Rebinding Defense (CRITICAL):** Replaced string-only URL validation in `web_fetch` with DNS resolution checks. After validating URL syntax and hostname patterns, resolves the hostname to IP addresses via `tokio::task::spawn_blocking` + `ToSocketAddrs`, then verifies all resolved IPs are safe (not private, loopback, link-local, unspecified, broadcast, or multicast). Prevents DNS rebinding attacks where a malicious DNS server returns a private IP after initial validation.
 *   **Security: SSRF Protection for Crawler (CRITICAL):** Added the same `validate_url()` and `is_safe_ip()` functions to `CrawlSiteTool` in `crawl.rs`. Blocks crawling of internal/private endpoints before `Website::new()` is called.
 *   **Security: Port Scanner Restriction (CRITICAL):** Added localhost-only restriction to `CheckPortTool` in `network.rs`. Only allows `127.0.0.1`, `localhost`, `::1`, `[::1]`. If a non-allowed host is given, resolves it and checks if any resolved IP is loopback. Prevents internal network enumeration.

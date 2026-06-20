@@ -104,14 +104,6 @@ pub fn load_config() -> Result<Config> {
         }
     }
 
-    // Upgrade existing memory server config to use gRPC if args are empty
-    if let Some(mcp) = config.mcp_servers.get_mut("memory") {
-        if mcp.command.contains("openmemory_rs") && mcp.args.is_empty() {
-            mcp.args = vec!["--grpc".to_string(), "50051".to_string()];
-            modified = true;
-        }
-    }
-
     // Upgrade existing database server config to sqlite default if only "stdio" is set
     if let Some(mcp) = config.mcp_servers.get_mut("database") {
         if mcp.args.len() == 1 && mcp.args[0] == "stdio" {

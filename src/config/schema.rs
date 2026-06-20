@@ -428,11 +428,10 @@ impl Default for Config {
             enabled: true,
         });
 
-        // memory: openmemory_rs — memory_rs has its own target dir
-        // (it IS listed in parent workspace Cargo.toml but resolves via project-local target)
+        // memory: openmemory_rs — auto-bridge via stdio (dynamic port)
         mcp_servers.insert("memory".to_string(), McpServerConfig {
             command: resolve_mcp_bin("openmemory_rs", Some("memory_rs")),
-            args: vec!["--grpc".to_string(), "50051".to_string()],
+            args: vec![],
             enabled: true,
         });
 
