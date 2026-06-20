@@ -8,6 +8,12 @@ pub struct WebSearchTool {
     client: Client,
 }
 
+impl Default for WebSearchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebSearchTool {
     pub fn new() -> Self {
         WebSearchTool {

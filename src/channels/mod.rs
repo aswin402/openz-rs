@@ -57,8 +57,16 @@ pub fn get_active_session_targets(session_dir: &std::path::Path, prefix: &str) -
 }
 
 pub fn select_random_message(messages: &[&str]) -> String {
+    if messages.is_empty() {
+        return String::new();
+    }
     let uuid_bytes = uuid::Uuid::new_v4().into_bytes();
-    let idx = (uuid_bytes[0] as usize) % messages.len();
+    // Use all 16 bytes for unbiased selection across any array size
+    let mut seed: u128 = 0;
+    for &b in &uuid_bytes {
+        seed = seed.wrapping_mul(256).wrapping_add(b as u128);
+    }
+    let idx = (seed as usize) % messages.len();
     messages[idx].to_string()
 }
 

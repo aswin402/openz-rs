@@ -33,10 +33,10 @@ async fn run_cargo_cmd(action: &str, cwd: &Option<String>) -> Result<std::proces
             std_cmd.arg("test");
         }
         "clippy" => {
-            std_cmd.args(&["clippy", "--message-format=json"]);
+            std_cmd.args(["clippy", "--message-format=json"]);
         }
         "fmt" => {
-            std_cmd.args(&["fmt", "--", "--check"]);
+            std_cmd.args(["fmt", "--", "--check"]);
         }
         _ => return Err(anyhow!("Unsupported cargo action: {}", action)),
     }
@@ -97,8 +97,8 @@ impl Tool for CargoManagerTool {
                 let mut errors_found = Vec::new();
                 for line in stderr.lines() {
                     let line_trimmed = line.trim();
-                    if line_trimmed.starts_with("--> ") {
-                        let parts: Vec<&str> = line_trimmed[4..].split(':').collect();
+                    if let Some(stripped) = line_trimmed.strip_prefix("--> ") {
+                        let parts: Vec<&str> = stripped.split(':').collect();
                         if parts.len() >= 2 {
                             let file_path = parts[0].trim().to_string();
                             if let Ok(line_num) = parts[1].trim().parse::<usize>() {
@@ -182,12 +182,12 @@ impl Tool for CargoManagerTool {
                                         }
                                     }
                                     if corrected_code.ends_with("```") {
-                                        corrected_code = &corrected_code[..corrected_code.len() - 3].trim();
+                                        corrected_code = corrected_code[..corrected_code.len() - 3].trim();
                                     }
                                     let corrected_code = corrected_code.trim().to_string();
 
-                                    if !corrected_code.is_empty() {
-                                        if std::fs::write(&resolved_path, corrected_code).is_ok() {
+                                    if !corrected_code.is_empty()
+                                        && std::fs::write(&resolved_path, corrected_code).is_ok() {
                                             crate::tui_println!(
                                                 "{}✓ [Self-Heal] Successfully patched '{}'. Re-compiling...{}",
                                                 EMERALD_GREEN, target_file, COLOR_RESET
@@ -197,7 +197,6 @@ impl Tool for CargoManagerTool {
                                             stdout = String::from_utf8_lossy(&output.stdout).to_string();
                                             stderr = String::from_utf8_lossy(&output.stderr).to_string();
                                         }
-                                    }
                                 }
                             }
                             Err(e) => {

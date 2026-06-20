@@ -10,10 +10,10 @@ static SPAWNED_BY_US: Mutex<bool> = Mutex::new(false);
 static ACTIVE_OLLAMA_MODEL: Mutex<Option<String>> = Mutex::new(None);
 
 fn parse_addr(api_base: &str) -> String {
-    let without_scheme = if api_base.starts_with("http://") {
-        &api_base["http://".len()..]
-    } else if api_base.starts_with("https://") {
-        &api_base["https://".len()..]
+    let without_scheme = if let Some(stripped) = api_base.strip_prefix("http://") {
+        stripped
+    } else if let Some(stripped) = api_base.strip_prefix("https://") {
+        stripped
     } else {
         api_base
     };
@@ -45,14 +45,10 @@ pub fn ensure_local_ollama(config: &Config) {
 
     let addr = parse_addr(&api_base);
 
-    // If port is already open, it is running. We do not need to do anything.
-    if is_port_open(&addr) {
-        return;
-    }
-
-    // Check if we already have a child running
-    if let Ok(guard) = LOCAL_OLLAMA_CHILD.lock() {
-        if guard.is_some() {
+    // Atomic check: verify port is open OR we already have a child running
+    {
+        let child_guard = LOCAL_OLLAMA_CHILD.lock().unwrap_or_else(|e| e.into_inner());
+        if is_port_open(&addr) || child_guard.is_some() {
             return;
         }
     }

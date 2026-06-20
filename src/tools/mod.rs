@@ -20,6 +20,12 @@ pub struct ToolRegistry {
     pub context: Option<(Config, Arc<dyn LLMProvider>, SessionManager)>,
 }
 
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolRegistry {
     pub fn new() -> Self {
         ToolRegistry {

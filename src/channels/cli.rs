@@ -116,7 +116,7 @@ fn char_display_width(c: char) -> usize {
     let cp = c as u32;
     if cp == 0xFE0F {
         0
-    } else if (cp >= 0x1F000 && cp <= 0x1FBF9)
+    } else if (0x1F000..=0x1FBF9).contains(&cp)
         || c == '⬢'
         || c == '🗑'
         || c == '📊'
@@ -136,20 +136,32 @@ fn str_display_width(s: &str) -> usize {
     s.chars().map(char_display_width).sum()
 }
 
+fn cli_re_ansi() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").unwrap())
+}
+
+fn cli_re_bold() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"\*\*(.*?)\*\*").unwrap())
+}
+
+fn cli_re_code() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"`(.*?)`").unwrap())
+}
+
+fn cli_re_italic() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"\*(.*?)\*").unwrap())
+}
+
 fn text_display_width(text: &str) -> usize {
     let mut cleaned = text.to_string();
-    if let Ok(re_ansi) = regex::Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]") {
-        cleaned = re_ansi.replace_all(&cleaned, "").to_string();
-    }
-    if let Ok(re_bold) = regex::Regex::new(r"\*\*(.*?)\*\*") {
-        cleaned = re_bold.replace_all(&cleaned, "$1").to_string();
-    }
-    if let Ok(re_code) = regex::Regex::new(r"`(.*?)`") {
-        cleaned = re_code.replace_all(&cleaned, "$1").to_string();
-    }
-    if let Ok(re_italic) = regex::Regex::new(r"\*(.*?)\*") {
-        cleaned = re_italic.replace_all(&cleaned, "$1").to_string();
-    }
+    cleaned = cli_re_ansi().replace_all(&cleaned, "").to_string();
+    cleaned = cli_re_bold().replace_all(&cleaned, "$1").to_string();
+    cleaned = cli_re_code().replace_all(&cleaned, "$1").to_string();
+    cleaned = cli_re_italic().replace_all(&cleaned, "$1").to_string();
     str_display_width(&cleaned)
 }
 
@@ -638,6 +650,7 @@ const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/skill", "List active skills"),
 ];
 
+#[allow(clippy::too_many_arguments)]
 fn render_box(
     model: &str,
     provider: &str,
@@ -683,19 +696,13 @@ fn render_box(
         2_097_152
     } else if model_lower.contains("gemini") {
         1_048_576
-    } else if model_lower.contains("claude-3-5") || model_lower.contains("claude-3") {
-        200_000
-    } else if model_lower.contains("o1-") || model_lower.contains("o3-mini") {
+    } else if model_lower.contains("claude-3-5") || model_lower.contains("claude-3") || model_lower.contains("o1-") || model_lower.contains("o3-mini") {
         200_000
     } else if model_lower.contains("gpt-4") || model_lower.contains("gpt-4o") {
         128_000
     } else if model_lower.contains("deepseek-v4") {
         1_000_000
-    } else if model_lower.contains("deepseek-v3") || model_lower.contains("deepseek-r1") || model_lower.contains("deepseek-chat") || model_lower.contains("deepseek-reasoner") {
-        128_000
-    } else if model_lower.contains("deepseek") {
-        128_000
-    } else if model_lower.contains("llama-3.1") || model_lower.contains("llama-3.2") || model_lower.contains("llama-3.3") || model_lower.contains("llama3.1") || model_lower.contains("llama3.2") || model_lower.contains("llama3.3") {
+    } else if model_lower.contains("deepseek-v3") || model_lower.contains("deepseek-r1") || model_lower.contains("deepseek-chat") || model_lower.contains("deepseek-reasoner") || model_lower.contains("deepseek") || model_lower.contains("llama-3.1") || model_lower.contains("llama-3.2") || model_lower.contains("llama-3.3") || model_lower.contains("llama3.1") || model_lower.contains("llama3.2") || model_lower.contains("llama3.3") {
         128_000
     } else if model_lower.contains("llama-3") || model_lower.contains("llama3") {
         8_192
@@ -791,7 +798,7 @@ fn render_box(
         + 11; // spacing, vertical pipes, slash, brackets
 
     let fill_chars = width.saturating_sub(visible_status_len);
-    let line_fill: String = std::iter::repeat('─').take(fill_chars).collect();
+    let line_fill: String = std::iter::repeat_n('─', fill_chars).collect();
 
     let status_content = format!(
         "{} {}{}{} | {}{}{} | {}{}{}/{}{}",
@@ -813,7 +820,7 @@ fn render_box(
     }
 
     let status_line = if autocomplete_visible && !matches.is_empty() {
-        let line_fill: String = std::iter::repeat('─').take(width).collect();
+        let line_fill: String = std::iter::repeat_n('─', width).collect();
         format!("{}{}{}", LIGHT_WHITE, line_fill, COLOR_RESET)
     } else {
         format!(
@@ -852,9 +859,9 @@ fn render_box(
         v_start = active_cursor_idx;
     }
 
-    let mut cursor_offset_width = 0;
-    for i in v_start..active_cursor_idx {
-        cursor_offset_width += char_display_width(display_chars[i]);
+    let mut cursor_offset_width: usize = 0;
+    for item in display_chars.iter().take(active_cursor_idx).skip(v_start) {
+        cursor_offset_width += char_display_width(*item);
     }
 
     while cursor_offset_width > max_input_width && v_start < active_cursor_idx {
@@ -863,8 +870,8 @@ fn render_box(
     }
 
     let mut total_width_from_v_start = cursor_offset_width;
-    for i in active_cursor_idx..char_count {
-        total_width_from_v_start += char_display_width(display_chars[i]);
+    for item in display_chars.iter().take(char_count).skip(active_cursor_idx) {
+        total_width_from_v_start += char_display_width(*item);
     }
     while v_start > 0 {
         let prev_width = char_display_width(display_chars[v_start - 1]);
@@ -912,8 +919,8 @@ fn render_box(
         }
         let end_idx = (start_idx + max_display).min(matches.len());
         
-        for i in start_idx..end_idx {
-            let (cmd, desc) = matches[i];
+        for (i, item) in matches.iter().enumerate().take(end_idx).skip(start_idx) {
+            let (cmd, desc) = *item;
             let is_selected = selected_index == Some(i);
             
             if is_selected {
@@ -950,7 +957,7 @@ fn render_box(
         let model_display = format!("{}{}{}", AURA_SLATE, model, COLOR_RESET);
         let model_width = model.chars().count();
         let spacing = width.saturating_sub(cancel_width + model_width);
-        let spaces: String = std::iter::repeat(' ').take(spacing).collect();
+        let spaces: String = std::iter::repeat_n(' ', spacing).collect();
         
         print!("\r\n\x1b[2K{}{}{}", cancel_text, spaces, model_display);
         new_lines_printed += 2;
@@ -1515,8 +1522,8 @@ impl CliChannel {
                 continue;
             }
 
-            if trimmed.starts_with("/model") {
-                let arg = trimmed["/model".len()..].trim();
+            if let Some(stripped) = trimmed.strip_prefix("/model") {
+                let arg = stripped.trim();
                 if arg.is_empty() {
                     use crate::config::loader::load_config;
                     let config = match load_config() {

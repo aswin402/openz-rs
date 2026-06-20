@@ -8,6 +8,12 @@ pub struct SocialSearchTool {
     client: Client,
 }
 
+impl Default for SocialSearchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SocialSearchTool {
     pub fn new() -> Self {
         SocialSearchTool {

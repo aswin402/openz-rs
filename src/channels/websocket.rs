@@ -352,9 +352,7 @@ async fn openai_chat_completions(
     State(state): State<WsState>,
     Json(payload): Json<OpenAiChatCompletionRequest>,
 ) -> impl IntoResponse {
-    let last_user_content = payload.messages.iter()
-        .filter(|m| m.role == "user")
-        .last()
+    let last_user_content = payload.messages.iter().rfind(|m| m.role == "user")
         .map(|m| {
             if let Some(s) = m.content.as_str() {
                 s.to_string()

@@ -53,7 +53,7 @@ async fn ensure_browser_running() -> Result<()> {
 
     // Attempt to start obscura first
     let child = Command::new("obscura")
-        .args(&["serve", "--port", "9222"])
+        .args(["serve", "--port", "9222"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -73,7 +73,7 @@ async fn ensure_browser_running() -> Result<()> {
     let chrome_paths = ["google-chrome", "chrome", "chromium", "chromium-browser"];
     for path in chrome_paths {
         let child = Command::new(path)
-            .args(&[
+            .args([
                 "--headless",
                 "--remote-debugging-port=9222",
                 "--disable-gpu",
@@ -390,8 +390,7 @@ impl Tool for GenerateImageTool {
         };
 
         let mut _server_guard = ServerGuard(None);
-        let target_url = if target_url.starts_with("file://") {
-            let file_path_str = &target_url["file://".len()..];
+        let target_url = if let Some(file_path_str) = target_url.strip_prefix("file://") {
             let mut raw_path = std::path::PathBuf::from(file_path_str);
             if !raw_path.is_absolute() {
                 if let Ok(cwd) = std::env::current_dir() {
@@ -521,7 +520,7 @@ impl Tool for GenerateImageTool {
                     style.textContent = `{}`;
                     document.head.appendChild(style);
                 }})()"#,
-                css_str.replace('`', "\\`").replace('$', "\\$")
+                css_str.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${")
             );
             let _ = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({
                 "expression": inject_css_js,

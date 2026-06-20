@@ -24,7 +24,7 @@ async fn ensure_geckodriver_running() -> Result<()> {
     }
 
     let child = Command::new("geckodriver")
-        .args(&["--port", "4444"])
+        .args(["--port", "4444"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -72,6 +72,12 @@ async fn reset_driver() {
 }
 
 pub struct FirefoxBrowserTool;
+
+impl Default for FirefoxBrowserTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl FirefoxBrowserTool {
     pub fn new() -> Self {

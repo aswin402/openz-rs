@@ -1,7 +1,6 @@
 use axum::Router;
 use tower_http::services::ServeDir;
 use std::fs;
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::sleep;
 

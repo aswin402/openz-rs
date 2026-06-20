@@ -66,7 +66,7 @@ impl Tool for GitManagerTool {
                 cmd.arg("status");
             }
             "diff" => {
-                cmd.args(&["diff", "HEAD"]);
+                cmd.args(["diff", "HEAD"]);
             }
             "add" => {
                 let files_arr = arguments.get("files").and_then(|v| v.as_array())
@@ -87,11 +87,11 @@ impl Tool for GitManagerTool {
                 if message.is_empty() {
                     return Err(anyhow!("Commit message cannot be empty"));
                 }
-                cmd.args(&["commit", "-m", message]);
+                cmd.args(["commit", "-m", message]);
             }
             "log" => {
                 let limit = arguments.get("limit").and_then(|v| v.as_u64()).unwrap_or(5);
-                cmd.args(&["log", &format!("-n{}", limit), "--oneline"]);
+                cmd.args(["log", &format!("-n{}", limit), "--oneline"]);
             }
             _ => return Err(anyhow!("Unsupported git action: {}", action)),
         }

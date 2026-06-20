@@ -791,12 +791,9 @@ async fn handle_agent() -> Result<()> {
             let config_clone = config.clone();
             let ws_config_clone = ws_config.clone();
             tokio::spawn(async move {
-                match build_agent_loop(config_clone).await {
-                    Ok(agent_loop) => {
-                        let gateway = WsGateway::new(ws_config_clone, agent_loop);
-                        let _ = gateway.start().await;
-                    }
-                    _ => {}
+                if let Ok(agent_loop) = build_agent_loop(config_clone).await {
+                    let gateway = WsGateway::new(ws_config_clone, agent_loop);
+                    let _ = gateway.start().await;
                 }
             });
         }
@@ -813,12 +810,9 @@ async fn handle_agent() -> Result<()> {
             if let Some(token) = token {
                 let config_clone = config.clone();
                 tokio::spawn(async move {
-                    match build_agent_loop(config_clone).await {
-                        Ok(agent_loop) => {
-                            let channel = TelegramChannel::new(token, agent_loop);
-                            let _ = channel.start().await;
-                        }
-                        _ => {}
+                    if let Ok(agent_loop) = build_agent_loop(config_clone).await {
+                        let channel = TelegramChannel::new(token, agent_loop);
+                        let _ = channel.start().await;
                     }
                 });
             }
@@ -836,12 +830,9 @@ async fn handle_agent() -> Result<()> {
             if let Some(token) = token {
                 let config_clone = config.clone();
                 tokio::spawn(async move {
-                    match build_agent_loop(config_clone).await {
-                        Ok(agent_loop) => {
-                            let channel = DiscordChannel::new(token, agent_loop);
-                            let _ = channel.start().await;
-                        }
-                        _ => {}
+                    if let Ok(agent_loop) = build_agent_loop(config_clone).await {
+                        let channel = DiscordChannel::new(token, agent_loop);
+                        let _ = channel.start().await;
                     }
                 });
             }
@@ -854,16 +845,13 @@ async fn handle_agent() -> Result<()> {
             let config_clone = config.clone();
             let wa_config_clone = wa_config.clone();
             tokio::spawn(async move {
-                match build_agent_loop(config_clone).await {
-                    Ok(agent_loop) => {
-                        let channel = WhatsAppChannel::new(
-                            wa_config_clone.api_key,
-                            wa_config_clone.phone_number_id,
-                            agent_loop,
-                        );
-                        let _ = channel.start().await;
-                    }
-                    _ => {}
+                if let Ok(agent_loop) = build_agent_loop(config_clone).await {
+                    let channel = WhatsAppChannel::new(
+                        wa_config_clone.api_key,
+                        wa_config_clone.phone_number_id,
+                        agent_loop,
+                    );
+                    let _ = channel.start().await;
                 }
             });
         }
@@ -874,12 +862,9 @@ async fn handle_agent() -> Result<()> {
         if email_config.enabled {
             let config_clone = config.clone();
             tokio::spawn(async move {
-                match build_agent_loop(config_clone).await {
-                    Ok(agent_loop) => {
-                        let channel = EmailChannel::new(agent_loop);
-                        let _ = channel.start().await;
-                    }
-                    _ => {}
+                if let Ok(agent_loop) = build_agent_loop(config_clone).await {
+                    let channel = EmailChannel::new(agent_loop);
+                    let _ = channel.start().await;
                 }
             });
         }

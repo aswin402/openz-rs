@@ -6,6 +6,16 @@ use scraper::Html;
 use scraper::node::Node;
 use std::time::Duration;
 
+fn web_re_whitespace() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r" +").unwrap())
+}
+
+fn web_re_newlines() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\n\s*\n").unwrap())
+}
+
 /// Validate URL to prevent SSRF — blocks private IPs, localhost, and metadata endpoints.
 fn validate_url(url: &str) -> Result<()> {
     let parsed = reqwest::Url::parse(url).map_err(|e| anyhow!("Invalid URL: {}", e))?;
@@ -49,6 +59,12 @@ fn validate_url(url: &str) -> Result<()> {
 
 pub struct WebFetchTool {
     client: Client,
+}
+
+impl Default for WebFetchTool {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WebFetchTool {
@@ -145,10 +161,8 @@ impl Tool for WebFetchTool {
                 .replace("&quot;", "\"")
                 .replace("&#39;", "'");
 
-            let re_whitespace = Regex::new(r" +")?;
-            let re_newlines = Regex::new(r"\n\s*\n")?;
-            let clean_text_spaces = re_whitespace.replace_all(&clean_text, " ");
-            let final_text = re_newlines.replace_all(&clean_text_spaces, "\n");
+            let clean_text_spaces = web_re_whitespace().replace_all(&clean_text, " ");
+            let final_text = web_re_newlines().replace_all(&clean_text_spaces, "\n");
             final_text.trim().to_string()
         };
 

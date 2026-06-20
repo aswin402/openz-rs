@@ -242,7 +242,7 @@ impl LLMProvider for AnthropicProvider {
                 let json_body = body_for_retry.clone();
                 async move {
                     let res = client
-                        .post(&format!("{}/v1/messages", api_base))
+                        .post(format!("{}/v1/messages", api_base))
                         .header("x-api-key", &api_key)
                         .header("anthropic-version", "2023-06-01")
                         .header("anthropic-beta", "prompt-caching-2024-07-31")

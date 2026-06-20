@@ -35,18 +35,12 @@ fn extract_document_child(child: &DocumentChild, text: &mut String) {
 
 fn extract_paragraph(p: &docx_rs::Paragraph, text: &mut String) {
     for p_child in &p.children {
-        match p_child {
-            ParagraphChild::Run(r) => {
-                for r_child in &r.children {
-                    match r_child {
-                        RunChild::Text(t) => {
-                            text.push_str(&t.text);
-                        }
-                        _ => {}
-                    }
+        if let ParagraphChild::Run(r) = p_child {
+            for r_child in &r.children {
+                if let RunChild::Text(t) = r_child {
+                    text.push_str(&t.text);
                 }
             }
-            _ => {}
         }
     }
     text.push('\n');
@@ -54,18 +48,12 @@ fn extract_paragraph(p: &docx_rs::Paragraph, text: &mut String) {
 
 fn extract_paragraph_inline(p: &docx_rs::Paragraph, text: &mut String) {
     for p_child in &p.children {
-        match p_child {
-            ParagraphChild::Run(r) => {
-                for r_child in &r.children {
-                    match r_child {
-                        RunChild::Text(t) => {
-                            text.push_str(&t.text);
-                        }
-                        _ => {}
-                    }
+        if let ParagraphChild::Run(r) = p_child {
+            for r_child in &r.children {
+                if let RunChild::Text(t) = r_child {
+                    text.push_str(&t.text);
                 }
             }
-            _ => {}
         }
     }
 }

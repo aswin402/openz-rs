@@ -153,7 +153,7 @@ impl Tool for CompilerAutoHealTool {
             let mut updated_content = response_text.trim().to_string();
             if updated_content.starts_with("```") {
                 let lines: Vec<&str> = updated_content.lines().collect();
-                let start = if lines.get(0).map(|l| l.starts_with("```")).unwrap_or(false) { 1 } else { 0 };
+                let start = if lines.first().map(|l| l.starts_with("```")).unwrap_or(false) { 1 } else { 0 };
                 let end = if lines.last().map(|l| l.starts_with("```")).unwrap_or(false) { lines.len() - 1 } else { lines.len() };
                 updated_content = lines[start..end].join("\n");
             }

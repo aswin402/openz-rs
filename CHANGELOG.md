@@ -391,16 +391,27 @@ Inside `openz agent`, the user can issue direct slash commands:
 *   **Bugfix: SOP Crash (HIGH):** Replaced `.expect()` with proper error propagation in `sop/engine.rs` for malformed context steps.
 *   **Bugfix: Template Recursion Stack Overflow (HIGH):** Added `MAX_TEMPLATE_DEPTH = 10` limit to `template_compiler.rs` recursive rendering.
 *   **Bugfix: Security Bypass in Loose Mode (HIGH):** Pipe-to-shell blocking (`| sh`, `| bash`, `| python`) now enforced in ALL modes, not just strict mode.
+*   **Bugfix: Activity File Race Condition (HIGH):** Replaced direct `fs::write` with atomic write (temp file + rename) in `activity.rs` to prevent partial reads from concurrent sessions.
+*   **Bugfix: Ollama Double-Spawn Race (HIGH):** Combined port check and child guard check into single lock scope in `ollama_manager.rs` to eliminate TOCTOU window.
 *   **Bugfix: Silent Error Swallowing (MEDIUM):** Added `eprintln!` for directory creation failures in `main.rs`, replaced nested `if let Ok` with `match` blocks logging via `tracing::warn!` in `activity.rs`.
 *   **Bugfix: Vision Model False Positives (MEDIUM):** Changed `m.contains("o1")` to `m.starts_with("o1")` and `m.contains("o3")` to `m.starts_with("o3")` in `model_supports_vision()`.
 *   **Bugfix: MockProvider Atomic Race (MEDIUM):** Replaced load-then-store with `fetch_update` using `Ordering::SeqCst` for thread-safe error injection counter.
 *   **Bugfix: Unbounded Crawl Parameters (MEDIUM):** Added `.min(1000)` to limit, `.min(10)` to depth, `.max(50)` to delay in `CrawlSiteTool`.
 *   **Bugfix: Lost Trailing Newline (MEDIUM):** `ReplaceLinesTool` now preserves trailing newline when original content had one.
+*   **Bugfix: Empty API Key Warning (MEDIUM):** Added `tracing::warn!` when API key resolution returns empty string for a provider.
+*   **Bugfix: HTTP Client Reuse (MEDIUM):** Replaced per-call `reqwest::Client` creation in multimodal parsing with a shared static client via `OnceLock`.
+*   **Bugfix: Regex Recompilation (MEDIUM):** Replaced per-call `Regex::new()` in `context_compactor.rs`, `cli.rs`, and `web.rs` with static `OnceLock<Regex>` patterns.
+*   **Bugfix: SVG Attribute Injection (MEDIUM):** Applied `escape_xml()` to all attribute values in `SvgElement::to_svg_string()`.
+*   **Bugfix: CSS Template Injection (MEDIUM):** Added backslash escaping to CSS injection in `GenerateImageTool` to prevent template literal breakout.
+*   **Bugfix: Python Execution Timeout (MEDIUM):** Added 60-second `tokio::time::timeout` to `PythonSandboxTool` to prevent infinite hangs.
+*   **Bugfix: Port Allocation Warning (MEDIUM):** Added `tracing::warn!` when `find_free_port()` exhausts 100 attempts.
 *   **Bugfix: Cron Scheduler Shutdown (LOW):** `start_scheduler()` now returns `JoinHandle<()>` for graceful shutdown.
 *   **Bugfix: Discord Infinite Reconnect (LOW):** Added `MAX_RETRIES = 10` cap with attempt count in error messages.
 *   **Bugfix: WASM Exit Code (LOW):** Extracts real WASI exit code via `I32Exit` downcast instead of hardcoding `1`.
 *   **Bugfix: Empty Embeddings (LOW):** Skips DB insert when embedding generation fails (empty vec) in research archive.
 *   **Bugfix: Subagent Empty Fallback (LOW):** Filters empty strings from fallback model list before padding.
+*   **Bugfix: Biased Random Selection (LOW):** `select_random_message` now uses all 16 UUID bytes for unbiased selection instead of just byte 0.
+*   **Code Quality: Clippy Cleanup:** Fixed all 112 clippy warnings across the codebase (strip_prefix, matches! macro, while let loops, static regex, too_many_arguments suppression, etc.).
 *   **Maintenance: Version Bump:** Bumped to v0.0.15. All 114 tests passing.
 
 ### v0.0.14

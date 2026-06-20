@@ -50,7 +50,7 @@ fn fetch_unseen_emails(
             if let Some(body_bytes) = msg.body() {
                 if let Ok(parsed) = mailparse::parse_mail(body_bytes) {
                     let from_header = parsed.headers.iter()
-                        .find(|h| h.get_key().to_ascii_lowercase() == "from")
+                        .find(|h| h.get_key().eq_ignore_ascii_case("from"))
                         .map(|h| h.get_value())
                         .unwrap_or_default();
 
@@ -66,7 +66,7 @@ fn fetch_unseen_emails(
                     };
 
                     let subject = parsed.headers.iter()
-                        .find(|h| h.get_key().to_ascii_lowercase() == "subject")
+                        .find(|h| h.get_key().eq_ignore_ascii_case("subject"))
                         .map(|h| h.get_value())
                         .unwrap_or_default()
                         .trim()

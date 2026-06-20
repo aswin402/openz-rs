@@ -254,7 +254,7 @@ unsafe fn allowlist_seccomp_filter() -> Result<(), std::io::Error> {
             code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
             jt: (remaining) as u8, // jump to ALLOW (skip remaining checks + KILL)
             jf: 0,
-            k: syscall as u32,
+            k: syscall,
         });
     }
 
@@ -422,9 +422,9 @@ fn parse_command_line(cmd: &str) -> Vec<String> {
     let mut current = String::new();
     let mut in_double_quote = false;
     let mut in_single_quote = false;
-    let mut chars = cmd.chars().peekable();
+    let chars = cmd.chars().peekable();
 
-    while let Some(c) = chars.next() {
+    for c in chars {
         match c {
             '"' if !in_single_quote => {
                 in_double_quote = !in_double_quote;
@@ -453,11 +453,10 @@ fn find_wasm_file(program: &str) -> Option<std::path::PathBuf> {
     let path = crate::config::resolve_path(program);
     
     // Check if the path exists and is a WASM file
-    if path.exists() && path.is_file() {
-        if path.extension().and_then(|s| s.to_str()) == Some("wasm") {
+    if path.exists() && path.is_file()
+        && path.extension().and_then(|s| s.to_str()) == Some("wasm") {
             return Some(path);
         }
-    }
 
     // Try appending .wasm if not already present
     if path.extension().and_then(|s| s.to_str()) != Some("wasm") {
@@ -472,11 +471,10 @@ fn find_wasm_file(program: &str) -> Option<std::path::PathBuf> {
     let skills_dir = crate::agent::skills::get_skills_dir();
     if let Some(file_name) = std::path::Path::new(program).file_name() {
         let skill_path = skills_dir.join(file_name);
-        if skill_path.exists() && skill_path.is_file() {
-            if skill_path.extension().and_then(|s| s.to_str()) == Some("wasm") {
+        if skill_path.exists() && skill_path.is_file()
+            && skill_path.extension().and_then(|s| s.to_str()) == Some("wasm") {
                 return Some(skill_path);
             }
-        }
         if skill_path.extension().and_then(|s| s.to_str()) != Some("wasm") {
             let mut skill_wasm_path = skill_path.clone();
             skill_wasm_path.set_extension("wasm");
@@ -489,11 +487,10 @@ fn find_wasm_file(program: &str) -> Option<std::path::PathBuf> {
         let local_skills_dir = std::path::Path::new("skills");
         if local_skills_dir.exists() && local_skills_dir.is_dir() {
             let local_skill_path = local_skills_dir.join(file_name);
-            if local_skill_path.exists() && local_skill_path.is_file() {
-                if local_skill_path.extension().and_then(|s| s.to_str()) == Some("wasm") {
+            if local_skill_path.exists() && local_skill_path.is_file()
+                && local_skill_path.extension().and_then(|s| s.to_str()) == Some("wasm") {
                     return Some(local_skill_path);
                 }
-            }
             if local_skill_path.extension().and_then(|s| s.to_str()) != Some("wasm") {
                 let mut local_skill_wasm_path = local_skill_path.clone();
                 local_skill_wasm_path.set_extension("wasm");
@@ -553,10 +550,24 @@ impl Tool for PythonSandboxTool {
 
         let mut tokio_cmd = tokio::process::Command::from(std_cmd);
         tokio_cmd.kill_on_drop(true);
-        let output_res = tokio_cmd.output().await;
+        let output_res = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            tokio_cmd.output()
+        ).await;
         let _ = std::fs::remove_file(&temp_path);
 
-        let output = output_res?;
+        let output = match output_res {
+            Ok(Ok(o)) => o,
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => {
+                return Ok(serde_json::json!({
+                    "status": "error",
+                    "stdout": "",
+                    "stderr": "Python execution timed out after 60 seconds",
+                    "exit_code": -1
+                }));
+            }
+        };
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let exit_code = output.status.code().unwrap_or(-1);

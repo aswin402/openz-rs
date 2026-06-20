@@ -2,6 +2,18 @@ use serde::{Deserialize, Serialize};
 use anyhow::Result;
 use crate::session::Message;
 
+static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+fn get_http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .use_rustls_tls()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default()
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallRequest {
     pub id: String,
@@ -54,11 +66,7 @@ pub async fn parse_multimodal_content(text: &str) -> Vec<ContentPart> {
 
         if path_or_url.starts_with("http://") || path_or_url.starts_with("https://") {
             // Fetch remote image asynchronously
-            let client = reqwest::Client::builder()
-                .use_rustls_tls()
-                .timeout(std::time::Duration::from_secs(10))
-                .build()
-                .unwrap_or_default();
+            let client = get_http_client();
             
             if let Ok(resp) = client.get(path_or_url).send().await {
                 let mut size_ok = true;
@@ -165,7 +173,7 @@ pub fn model_supports_vision(model: &str) -> bool {
     
     // Check if the model name has a distinct vision/multimodal word separated by -, _, or /
     // This avoids false positives like "supervision"
-    let has_vision_word = m.split(|c| c == '/' || c == '-' || c == '_' || c == ':')
+    let has_vision_word = m.split(['/', '-', '_', ':'])
         .any(|word| word == "vision" || word == "vl" || word == "vlm" || word == "multimodal");
     if has_vision_word {
         return true;

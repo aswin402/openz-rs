@@ -15,6 +15,12 @@ type WsStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 
 pub struct ObscuraBrowserTool;
 
+impl Default for ObscuraBrowserTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ObscuraBrowserTool {
     pub fn new() -> Self {
         ObscuraBrowserTool
@@ -56,7 +62,7 @@ async fn ensure_browser_running() -> Result<()> {
 
     // Attempt to start obscura first
     let child = Command::new("obscura")
-        .args(&["serve", "--port", "9222"])
+        .args(["serve", "--port", "9222"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -76,7 +82,7 @@ async fn ensure_browser_running() -> Result<()> {
     let chrome_paths = ["google-chrome", "chrome", "chromium", "chromium-browser"];
     for path in chrome_paths {
         let child = Command::new(path)
-            .args(&[
+            .args([
                 "--headless",
                 "--remote-debugging-port=9222",
                 "--disable-gpu",

@@ -483,7 +483,7 @@ pub fn load_relevant_skills_with_profile(user_content: &str, session_messages: &
 
     let mut search_context = user_content.to_lowercase();
     for msg in session_messages.iter().rev().take(3) {
-        search_context.push_str(" ");
+        search_context.push(' ');
         search_context.push_str(&msg.content.to_lowercase());
     }
 

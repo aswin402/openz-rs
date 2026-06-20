@@ -34,13 +34,13 @@ pub fn resolve_path(path_str: &str) -> PathBuf {
 }
 
 pub fn set_command_cwd(cmd: &mut std::process::Command) {
-    if let Some(dir) = ACTIVE_WORKSPACE.try_with(|w| w.clone()).ok() {
+    if let Ok(dir) = ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
         cmd.current_dir(dir);
     }
 }
 
 pub fn set_tokio_command_cwd(cmd: &mut tokio::process::Command) {
-    if let Some(dir) = ACTIVE_WORKSPACE.try_with(|w| w.clone()).ok() {
+    if let Ok(dir) = ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
         cmd.current_dir(dir);
     }
 }
@@ -98,8 +98,8 @@ pub fn load_config() -> Result<Config> {
     // Auto-populate default Rust MCP servers if they are missing
     let defaults = Config::default();
     for (name, server_config) in defaults.mcp_servers {
-        if !config.mcp_servers.contains_key(&name) {
-            config.mcp_servers.insert(name, server_config);
+        if let std::collections::hash_map::Entry::Vacant(e) = config.mcp_servers.entry(name) {
+            e.insert(server_config);
             modified = true;
         }
     }

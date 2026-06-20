@@ -50,7 +50,7 @@ impl SvgElement {
         let attrs: String = self
             .attrs
             .iter()
-            .map(|(k, v)| format!(" {}=\"{}\"", k, v))
+            .map(|(k, v)| format!(" {}=\"{}\"", k, escape_xml(v)))
             .collect();
 
         if self.children.is_empty() && self.text_content.is_none() {
@@ -470,7 +470,7 @@ fn build_svg_document(args: &Value) -> Result<String> {
     let view_box = args
         .get("viewBox")
         .and_then(|v| v.as_str())
-        .unwrap_or_else(|| "");
+        .unwrap_or("");
     let preserve_ar = args
         .get("preserveAspectRatio")
         .and_then(|v| v.as_str())
@@ -536,7 +536,7 @@ fn build_svg_document(args: &Value) -> Result<String> {
                 "clipPath" => {
                     let id = def.get("id").and_then(|v| v.as_str()).unwrap_or("clip1");
                     let shape_def = def.get("shape").and_then(|v| v.as_str()).unwrap_or("rect");
-                    let _ = write!(defs_content, "    <clipPath id=\"{}\">\n", id);
+                    let _ = writeln!(defs_content, "    <clipPath id=\"{}\">", id);
                     match shape_def {
                         "rect" => {
                             let x = def.get("x").and_then(|v| v.as_str()).unwrap_or("0");

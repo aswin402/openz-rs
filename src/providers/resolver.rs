@@ -14,7 +14,7 @@ pub struct ResolvedProvider {
 
 /// Resolve API key and base URL for a given provider name from config + env vars.
 pub fn resolve_api_config(config: &Config, provider_name: &str) -> (String, String) {
-    match provider_name {
+    let (key, base) = match provider_name {
         "anthropic" => {
             let p = config.providers.anthropic.as_ref();
             let key = p.and_then(|x| x.api_key.clone())
@@ -170,7 +170,11 @@ pub fn resolve_api_config(config: &Config, provider_name: &str) -> (String, Stri
             (key, base)
         }
         _ => (String::new(), String::new()),
+    };
+    if key.is_empty() {
+        tracing::warn!("No API key configured for provider '{}'. Requests will likely fail with 401.", provider_name);
     }
+    (key, base)
 }
 
 pub fn resolve_fallback_model(target_provider: &str, original_model: &str) -> String {
@@ -190,8 +194,6 @@ pub fn resolve_fallback_model(target_provider: &str, original_model: &str) -> St
                 "mimo-v2.5-free".to_string()
             } else if original_lower.contains("gpt") {
                 "nemotron-3-ultra-free".to_string()
-            } else if original_lower.contains("deepseek") {
-                "deepseek-v4-flash-free".to_string()
             } else {
                 "deepseek-v4-flash-free".to_string()
             }

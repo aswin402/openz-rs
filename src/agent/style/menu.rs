@@ -77,8 +77,7 @@ pub fn select_menu_with_history(prompt: &str, history: &[HistoryItem]) -> Result
         }
         let end_idx = (start_idx + max_history_display).min(history.len());
 
-        for i in start_idx..end_idx {
-            let item = &history[i];
+        for (i, item) in history.iter().enumerate().take(end_idx).skip(start_idx) {
             let option_idx = i + 1;
             let friendly_time = format_friendly_time(item.updated_at);
             
@@ -264,9 +263,8 @@ pub fn select_menu_custom(
         let end_idx = (start_idx + max_display).min(num_options);
 
         // Print visible items
-        for i in start_idx..end_idx {
+        for (i, opt) in options.iter().enumerate().take(end_idx).skip(start_idx) {
             let is_selected = selected_idx == i;
-            let opt = &options[i];
             if is_selected {
                 print!("\r\n\x1b[2K> {}{}{}", RED_ORANGE, opt, COLOR_RESET);
             } else {
@@ -303,7 +301,7 @@ pub fn select_menu_custom(
         let model_display = format!("{}{}{}", AURA_SLATE, model_name, COLOR_RESET);
         let model_width = model_name.chars().count();
         let spacing = width_usize.saturating_sub(cancel_width + model_width);
-        let spaces: String = std::iter::repeat(' ').take(spacing).collect();
+        let spaces: String = std::iter::repeat_n(' ', spacing).collect();
 
         print!("\r\n\x1b[2K{}{}{}", cancel_text, spaces, model_display);
         count += 1;

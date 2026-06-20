@@ -173,8 +173,7 @@ impl Tool for DelegateTaskTool {
 
         if let Some(ref schema) = json_schema {
             let mut attempts = 0;
-            loop {
-                if let Ok(ref mut res) = run_res {
+            while let Ok(ref mut res) = run_res {
                     let text_output = res.content.trim();
                     let clean_json_str = if text_output.starts_with("```json") {
                         text_output.strip_prefix("```json").unwrap().strip_suffix("```").unwrap_or(text_output).trim()
@@ -253,9 +252,6 @@ impl Tool for DelegateTaskTool {
                             };
                         }
                     }
-                } else {
-                    break;
-                }
             }
         }
 
@@ -602,8 +598,7 @@ impl Tool for DelegateProfileTool {
             // Enforce schema validation on child agent success
             if let Some(ref schema) = json_schema {
                 let mut attempts = 0;
-                loop {
-                    if let Ok(ref mut res) = run_res {
+                while let Ok(ref mut res) = run_res {
                         let text_output = res.content.trim();
                         let clean_json_str = if text_output.starts_with("```json") {
                             text_output.strip_prefix("```json").unwrap().strip_suffix("```").unwrap_or(text_output).trim()
@@ -682,10 +677,7 @@ impl Tool for DelegateProfileTool {
                                 };
                             }
                         }
-                    } else {
-                        break;
                     }
-                }
             }
 
             match run_res {
@@ -1926,11 +1918,10 @@ pub fn cleanup_stale_resources() {
                 let path = entry.path();
                 if path.is_dir() {
                     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if name.starts_with("openz_worktree_") {
-                        if is_older_than(&path, ttl_seconds) {
+                    if name.starts_with("openz_worktree_")
+                        && is_older_than(&path, ttl_seconds) {
                             let _ = std::fs::remove_dir_all(&path);
                         }
-                    }
                 }
             }
         }
@@ -1943,11 +1934,10 @@ pub fn cleanup_stale_resources() {
             let path = entry.path();
             if path.is_dir() {
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if name.starts_with("openz_worktree_") {
-                    if is_older_than(&path, ttl_seconds) {
+                if name.starts_with("openz_worktree_")
+                    && is_older_than(&path, ttl_seconds) {
                         let _ = std::fs::remove_dir_all(&path);
                     }
-                }
             }
         }
     }
@@ -1960,11 +1950,10 @@ pub fn cleanup_stale_resources() {
         if let Ok(entries) = std::fs::read_dir(&tool_outputs_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_file() {
-                    if is_older_than(&path, seven_days_in_seconds) {
+                if path.is_file()
+                    && is_older_than(&path, seven_days_in_seconds) {
                         let _ = std::fs::remove_file(&path);
                     }
-                }
             }
         }
     }
@@ -1975,11 +1964,10 @@ pub fn cleanup_stale_resources() {
         if let Ok(entries) = std::fs::read_dir(&traces_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_file() {
-                    if is_older_than(&path, seven_days_in_seconds) {
+                if path.is_file()
+                    && is_older_than(&path, seven_days_in_seconds) {
                         let _ = std::fs::remove_file(&path);
                     }
-                }
             }
         }
     }
@@ -1990,11 +1978,10 @@ pub fn cleanup_stale_resources() {
         if let Ok(entries) = std::fs::read_dir(&cron_logs_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_file() {
-                    if is_older_than(&path, seven_days_in_seconds) {
+                if path.is_file()
+                    && is_older_than(&path, seven_days_in_seconds) {
                         let _ = std::fs::remove_file(&path);
                     }
-                }
             }
         }
     }
@@ -2407,8 +2394,8 @@ fn validate_schema(value: &serde_json::Value, schema: &serde_json::Value) -> Res
 }
 
 fn clean_suffix_ticks(s: &str) -> &str {
-    if s.ends_with("```") {
-        &s[..s.len() - 3]
+    if let Some(stripped) = s.strip_suffix("```") {
+        stripped
     } else {
         s
     }
@@ -2810,6 +2797,12 @@ mod tests {
 pub struct CancellationToken {
     cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     notify: std::sync::Arc<tokio::sync::Notify>,
+}
+
+impl Default for CancellationToken {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CancellationToken {

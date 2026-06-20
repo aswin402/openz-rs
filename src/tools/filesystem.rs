@@ -372,7 +372,7 @@ impl FindFilesTool {
         for c in pattern.chars() {
             match c {
                 '*' => regex_str.push_str(".*"),
-                '?' => regex_str.push_str("."),
+                '?' => regex_str.push('.'),
                 '.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|' | '\\' => {
                     regex_str.push('\\');
                     regex_str.push(c);
@@ -547,7 +547,7 @@ impl Tool for ZenflowEditTool {
                         }
                     }
                     if cleaned.ends_with("```") {
-                        cleaned = &cleaned[..cleaned.len() - 3].trim();
+                        cleaned = cleaned[..cleaned.len() - 3].trim();
                     }
                     let cleaned_str = cleaned.trim().to_string();
                     if !cleaned_str.is_empty() {

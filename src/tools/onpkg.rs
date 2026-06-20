@@ -81,17 +81,17 @@ impl Tool for OnpkgTool {
 
         match action {
             "list_stacks" => {
-                cmd.args(&["stack", "list"]);
+                cmd.args(["stack", "list"]);
             }
             "show_stack" => {
                 let stack = arguments.get("stack_name").and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'stack_name' parameter for show_stack action"))?;
-                cmd.args(&["stack", "show", stack]);
+                cmd.args(["stack", "show", stack]);
             }
             "scaffold" => {
                 let stack = arguments.get("stack_name").and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'stack_name' parameter for scaffold action"))?;
-                cmd.args(&["stack", "add", stack]);
+                cmd.args(["stack", "add", stack]);
                 if let Some(dir) = arguments.get("dir").and_then(|v| v.as_str()) {
                     let resolved = crate::config::resolve_path(dir);
                     cmd.arg("--dir");
@@ -106,19 +106,19 @@ impl Tool for OnpkgTool {
                     .ok_or_else(|| anyhow!("Missing 'name' parameter for add_template action"))?;
                 let source = arguments.get("source").and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'source' parameter for add_template action"))?;
-                cmd.args(&["template", "add", name, source]);
+                cmd.args(["template", "add", name, source]);
             }
             "add_skill" => {
                 let name = arguments.get("name").and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'name' parameter for add_skill action"))?;
                 let source = arguments.get("source").and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'source' parameter for add_skill action"))?;
-                cmd.args(&["skill", "add", name, source]);
+                cmd.args(["skill", "add", name, source]);
             }
             "add_package" => {
                 let name = arguments.get("name").and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'name' parameter for add_package action"))?;
-                cmd.args(&["pkg", "add", name]);
+                cmd.args(["pkg", "add", name]);
                 if let Some(rt) = arguments.get("runtime").and_then(|v| v.as_str()) {
                     cmd.arg("--runtime");
                     cmd.arg(rt);
@@ -127,7 +127,7 @@ impl Tool for OnpkgTool {
             "install_package" => {
                 let name = arguments.get("name").and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'name' parameter for install_package action"))?;
-                cmd.args(&["pkg", "install", name]);
+                cmd.args(["pkg", "install", name]);
                 if let Some(rt) = arguments.get("runtime").and_then(|v| v.as_str()) {
                     cmd.arg("--runtime");
                     cmd.arg(rt);

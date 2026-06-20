@@ -200,11 +200,10 @@ impl AgentLoop {
                     let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
                     let supports_vision = crate::providers::model_supports_vision(&self.config.agents.defaults.model);
                     let silent = crate::agent::style::spinner::is_silent();
-                    if has_images && !supports_vision {
-                        if !silent {
+                    if has_images && !supports_vision
+                        && !silent {
                             eprintln!("{}▲ Image unsupported: The active model '{}' does not support images. Images will be ignored.{}", AURA_GOLD, self.config.agents.defaults.model, COLOR_RESET);
                         }
-                    }
 
                     if let Err(e) = self.session_manager.save(&session) {
                         tracing::warn!("Failed to save session incrementally in Restore: {}", e);
@@ -260,7 +259,7 @@ impl AgentLoop {
                                 RED_ORANGE,
                                 COLOR_RESET
                             );
-                            match self.chat_with_fallback(&mut active_provider, &system_prompt_sum, &summary_msgs, &[], &settings, &spinner_msg).await {
+                            match self.chat_with_fallback(&mut active_provider, system_prompt_sum, &summary_msgs, &[], &settings, &spinner_msg).await {
                                 Ok(resp) => {
                                     if let Some(new_summary) = resp.content {
                                         session.metadata.insert("summary".to_string(), serde_json::Value::String(new_summary));
@@ -298,7 +297,7 @@ impl AgentLoop {
                                 RED_ORANGE,
                                 COLOR_RESET
                             );
-                            match self.chat_with_fallback(&mut active_provider, &system_prompt_mem, &mem_msgs, &[], &settings, &spinner_msg).await {
+                            match self.chat_with_fallback(&mut active_provider, system_prompt_mem, &mem_msgs, &[], &settings, &spinner_msg).await {
                                 Ok(resp) => {
                                     if let Some(new_memory) = resp.content {
                                         session.metadata.insert("memory".to_string(), serde_json::Value::String(new_memory));
@@ -368,7 +367,7 @@ impl AgentLoop {
                                 "/audit" => {
                                     match session.verify_hash_chain() {
                                         Ok(_) => {
-                                            let mut output = format!("✅ MERKLE AUDIT PASS: Chain integrity verified successfully.\n\n");
+                                            let mut output = "✅ MERKLE AUDIT PASS: Chain integrity verified successfully.\n\n".to_string();
                                             output.push_str("Index | Role | Timestamp | Merkle Block Hash\n");
                                             output.push_str("------|------|-----------|-------------------\n");
                                             for (i, msg) in session.messages.iter().enumerate() {
@@ -411,7 +410,7 @@ impl AgentLoop {
                                                         .unwrap_or("")
                                                         .to_string();
                                                     if !existing.is_empty() {
-                                                        existing.push_str("\n");
+                                                        existing.push('\n');
                                                     }
                                                     existing.push_str(&format!("* {}", fact));
                                                     session.metadata.insert("memory".to_string(), serde_json::Value::String(existing));
@@ -1023,7 +1022,7 @@ impl AgentLoop {
                             let content = if content_str.len() > limit && !is_retrieve {
                                 let outputs_dir = crate::config::resolve_path("~/.openz/tool_outputs");
                                 let _ = std::fs::create_dir_all(&outputs_dir);
-                                let file_name = format!("output_{}_{}.json", name, uuid::Uuid::new_v4().to_string());
+                                let file_name = format!("output_{}_{}.json", name, uuid::Uuid::new_v4());
                                 let file_path = outputs_dir.join(file_name);
                                 let _ = std::fs::write(&file_path, &content_str);
                                 
@@ -1266,7 +1265,7 @@ impl AgentLoop {
                             prompt_content.push_str(&format!("   Errors encountered: {}\n", errors));
                         }
                     }
-                    prompt_content.push_str("\n");
+                    prompt_content.push('\n');
                 }
 
                 // Autonomous Skill Creation Notice if task was complex (>= 5 tool calls)
@@ -1365,7 +1364,7 @@ impl AgentLoop {
                 let mut error_msg = None;
 
                 // 4. Query the LLM
-                match provider.chat(&system_prompt_review, &review_msgs, &[], &settings).await {
+                match provider.chat(system_prompt_review, &review_msgs, &[], &settings).await {
                     Ok(resp) => {
                         if let Some(content) = resp.content {
                             let trimmed = content.trim();
@@ -1747,11 +1746,10 @@ fn count_previous_text_responses(messages: &[Message], next_content: &str) -> us
     let mut count = 0;
     let next_trimmed = next_content.trim();
     for msg in &messages[last_user_idx..] {
-        if msg.role == "assistant" && !msg.content.trim().is_empty() {
-            if msg.content.trim() == next_trimmed {
+        if msg.role == "assistant" && !msg.content.trim().is_empty()
+            && msg.content.trim() == next_trimmed {
                 count += 1;
             }
-        }
     }
     count
 }

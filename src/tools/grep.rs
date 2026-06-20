@@ -58,10 +58,7 @@ impl GrepSearchTool {
             if let Ok(content) = fs::read_to_string(dir) {
                 let lines: Vec<&str> = content.lines().collect();
                 let re = if is_regex {
-                    match Regex::new(query) {
-                        Ok(r) => Some(r),
-                        Err(_) => None,
-                    }
+                    Regex::new(query).ok()
                 } else {
                     None
                 };

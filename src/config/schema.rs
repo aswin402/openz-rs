@@ -15,6 +15,7 @@ pub struct ProviderConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct ProvidersConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openai: Option<ProviderConfig>,
@@ -163,6 +164,7 @@ impl Default for AgentDefaults {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct AgentsConfig {
     #[serde(default)]
     pub defaults: AgentDefaults,
@@ -318,38 +320,7 @@ pub struct Config {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
-impl Default for ProvidersConfig {
-    fn default() -> Self {
-        ProvidersConfig {
-            openai: None,
-            anthropic: None,
-            openrouter: None,
-            deepseek: None,
-            groq: None,
-            ollama: None,
-            minimax: None,
-            mistral: None,
-            z_ai: None,
-            nvidia: None,
-            opencode_zen: None,
-            cerebras: None,
-            google_ai_studio: None,
-            cohere: None,
-            llm7: None,
-            sambanova: None,
-            huggingface: None,
-            others: HashMap::new(),
-        }
-    }
-}
 
-impl Default for AgentsConfig {
-    fn default() -> Self {
-        AgentsConfig {
-            defaults: AgentDefaults::default(),
-        }
-    }
-}
 
 impl Default for ChannelsConfig {
     fn default() -> Self {

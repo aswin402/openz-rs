@@ -34,32 +34,65 @@ pub fn compress_json(raw_json: &str) -> anyhow::Result<String> {
     }
 }
 
+fn re_block() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?s)/\*.*?\*/").unwrap())
+}
+
+fn re_line() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"//.*").unwrap())
+}
+
+fn re_lines() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\n\s*\n").unwrap())
+}
+
+fn re_ansi() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").unwrap())
+}
+
+fn re_backtrace_line() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^\s*at\s+|^\s*\d+:\s+").unwrap())
+}
+
+fn re_rust_backtrace() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"stack backtrace:|backtrace::").unwrap())
+}
+
+fn re_cargo_warning() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)warning:").unwrap())
+}
+
+fn re_cargo_error() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)error\[E\d+\]:|error:").unwrap())
+}
+
 pub fn compress_code(raw_code: &str) -> String {
-    let re_block = Regex::new(r"(?s)/\*.*?\*/").unwrap();
-    let no_blocks = re_block.replace_all(raw_code, "");
-
-    let re_line = Regex::new(r"//.*").unwrap();
-    let no_comments = re_line.replace_all(&no_blocks, "");
-
-    let re_lines = Regex::new(r"\n\s*\n").unwrap();
-    let collapsed = re_lines.replace_all(&no_comments, "\n");
-
+    let no_blocks = re_block().replace_all(raw_code, "");
+    let no_comments = re_line().replace_all(&no_blocks, "");
+    let collapsed = re_lines().replace_all(&no_comments, "\n");
     collapsed.trim().to_string()
 }
 
 pub fn compress_logs(raw_logs: &str) -> String {
-    let re_ansi = Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").unwrap();
-    let clean_logs = re_ansi.replace_all(raw_logs, "");
+    let clean_logs = re_ansi().replace_all(raw_logs, "");
 
     let mut filtered_lines = Vec::new();
     let mut warning_count = 0;
     let mut error_count = 0;
     let mut is_backtrace = false;
 
-    let re_backtrace_line = Regex::new(r"^\s*at\s+|^\s*\d+:\s+").unwrap();
-    let re_rust_backtrace = Regex::new(r"stack backtrace:|backtrace::").unwrap();
-    let re_cargo_warning = Regex::new(r"(?i)warning:").unwrap();
-    let re_cargo_error = Regex::new(r"(?i)error\[E\d+\]:|error:").unwrap();
+    let re_backtrace_line = re_backtrace_line();
+    let re_rust_backtrace = re_rust_backtrace();
+    let re_cargo_warning = re_cargo_warning();
+    let re_cargo_error = re_cargo_error();
 
     for line in clean_logs.lines() {
         let trimmed = line.trim();

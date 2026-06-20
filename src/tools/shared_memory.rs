@@ -81,7 +81,7 @@ pub fn get_sqlite_connection() -> Result<Connection> {
 }
 
 pub fn get_current_workspace() -> String {
-    if let Some(dir) = crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()).ok() {
+    if let Ok(dir) = crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
         if let Ok(abs_path) = std::fs::canonicalize(&dir) {
             return abs_path.to_string_lossy().to_string();
         }
@@ -111,7 +111,7 @@ pub fn get_global_model() -> Result<&'static std::sync::Mutex<TextEmbedding>> {
 async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
     let config = crate::config::loader::load_config()?;
     let preferred = config.embeddings.as_ref()
-        .and_then(|e| e.preferred_provider.as_ref().map(|s| s.as_str()));
+        .and_then(|e| e.preferred_provider.as_deref());
 
     let mut providers_order = vec!["google", "cohere", "openai"];
     if let Some(pref) = preferred {
@@ -278,7 +278,7 @@ async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) -> Res
 
     let config = crate::config::loader::load_config()?;
     let preferred = config.embeddings.as_ref()
-        .and_then(|e| e.preferred_provider.as_ref().map(|s| s.as_str()));
+        .and_then(|e| e.preferred_provider.as_deref());
 
     let mut providers_order = vec!["google", "cohere", "openai"];
     if let Some(pref) = preferred {

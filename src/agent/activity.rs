@@ -26,8 +26,18 @@ pub fn update_activity(session_id: &str, status: &str, current_tool: Option<&str
     }
     match serde_json::to_string_pretty(&activity) {
         Ok(content) => {
-            if let Err(e) = fs::write(&path, content) {
-                tracing::warn!("Failed to write activity file {:?}: {}", path, e);
+            // Atomic write: write to temp file then rename to prevent partial reads
+            let tmp_path = path.with_extension("json.tmp");
+            match fs::write(&tmp_path, &content) {
+                Ok(()) => {
+                    if let Err(e) = fs::rename(&tmp_path, &path) {
+                        tracing::warn!("Failed to rename activity file {:?}: {}", tmp_path, e);
+                        let _ = fs::remove_file(&tmp_path);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to write activity file {:?}: {}", path, e);
+                }
             }
         }
         Err(e) => {

@@ -66,7 +66,7 @@ Called inside async context on tokio multi-threaded runtime. Can cause undefined
 - `~/.openz/tool_outputs/` files accumulate with no cleanup
 - `~/.openz/traces/` files written every turn, no rotation
 
-### H3. Race Condition on Activity File — `agent/activity.rs:13-26`
+### H3. Race Condition on Activity File — `agent/activity.rs:13-26` ✅ FIXED
 Multiple concurrent sessions write to `~/.openz/activity.json` without file locking. TOCTOU race in `pop_inbox_message()`.
 
 ### H4. Race Condition on Port Allocation — `tools/mcp.rs:467-481`
@@ -81,7 +81,7 @@ Multiple concurrent sessions write to `~/.openz/activity.json` without file lock
 ### H7. SOP .expect() Crash — `sop/engine.rs:124` ✅ FIXED
 Crafted SOP instance with `"steps"` as non-object crashes the application.
 
-### H8. Ollama Double-Spawn Race — `providers/ollama_manager.rs:46-84`
+### H8. Ollama Double-Spawn Race — `providers/ollama_manager.rs:46-84` ✅ FIXED
 TOCTOU between port check, static guard check, and `Command::new("ollama").spawn()`.
 
 ### H9. No Rate Limiting on Task Spawning — `channels/websocket.rs:172`, `channels/whatsapp.rs:159`
@@ -110,7 +110,7 @@ User pressing Esc/Ctrl+C doesn't cancel the running agent loop.
 - `channels/mod.rs` — notification send errors discarded
 - `agent/skills.rs:355-369` — DB connection failure silently returns empty vec
 
-### M2. Empty API Key Silently Proceeds — `providers/resolver.rs:22`
+### M2. Empty API Key Silently Proceeds — `providers/resolver.rs:22` ✅ FIXED
 `unwrap_or_default()` returns `""` for missing keys, failing later with cryptic 401.
 
 ### M3. Client `unwrap_or_default()` TLS Fallback — `providers/openai.rs:82`, `providers/anthropic.rs:56`
@@ -119,19 +119,19 @@ TLS setup failure creates a broken client. Subsequent requests fail confusingly.
 ### M4. Blocking `std::thread::sleep` in Async — `providers/ollama_manager.rs:89`
 Blocks tokio worker thread for up to 6 seconds.
 
-### M5. New `reqwest::Client` per Multimodal Parse — `providers/mod.rs:57-61`
+### M5. New `reqwest::Client` per Multimodal Parse — `providers/mod.rs:57-61` ✅ FIXED
 New HTTP client created for every image URL. Should reuse.
 
-### M6. Regex Recompilation per Call — `channels/cli.rs:141-152`, `tools/web.rs:105-106`, `agent/context_compactor.rs:38-62`
+### M6. Regex Recompilation per Call — `channels/cli.rs:141-152`, `tools/web.rs:105-106`, `agent/context_compactor.rs:38-62` ✅ FIXED
 Static regex patterns recompiled on every invocation.
 
-### M7. SVG Injection — `tools/svg_animator.rs:47-71`
+### M7. SVG Injection — `tools/svg_animator.rs:47-71` ✅ FIXED
 `escape_xml()` exists but only used for `<title>`, not for fill/stroke/class attributes.
 
-### M8. `find_free_port()` Returns Invalid Port — `tools/mcp.rs:480`
+### M8. `find_free_port()` Returns Invalid Port — `tools/mcp.rs:480` ✅ FIXED
 If all 100 attempts fail, returns the last failed port value.
 
-### M9. CSS Injection — `tools/image_generator.rs:517-529`
+### M9. CSS Injection — `tools/image_generator.rs:517-529` ✅ FIXED
 Minimal escaping on template literals doesn't handle backslash sequences.
 
 ### M10. `model_supports_vision` False Positives — `providers/mod.rs:141` ✅ FIXED
@@ -140,7 +140,7 @@ Minimal escaping on template literals doesn't handle backslash sequences.
 ### M11. MockProvider Atomic Race — `providers/mock.rs:155-158` ✅ FIXED
 Load-then-store with `Relaxed` ordering is not atomic.
 
-### M12. No Timeout on Python Execution — `tools/shell.rs:535-570`
+### M12. No Timeout on Python Execution — `tools/shell.rs:535-570` ✅ FIXED
 Infinite loops hang the tool indefinitely.
 
 ### M13. Unchecked Crawl Parameters — `tools/crawl.rs:60-63` ✅ FIXED
@@ -186,11 +186,11 @@ Both branches return `exit_code: 1`. Real WASI exit code never extracted.
 ### L8. Empty Embeddings Stored on Failure — `tools/shared_memory.rs:1051` ✅ FIXED
 `unwrap_or_else` returns empty vectors stored in archive, polluting semantic search.
 
-### L9. Cron Job Logs `Option<String>` Literally — `cron/scheduler.rs:102`
+### L9. Cron Job Logs `Option<String>` Literally — `cron/scheduler.rs:102` ✅ FALSE POSITIVE
 If content is `None`, the log contains the literal text "None".
 
 ### L10. Subagent Fallback Inserts Empty Model Names — `subagents/mod.rs:431-435` ✅ FIXED
 `String::new()` pushed as fallback model name, causing API errors.
 
-### L11. `select_random_message` Biased Selection — `channels/mod.rs:60-63`
+### L11. `select_random_message` Biased Selection — `channels/mod.rs:60-63` ✅ FIXED
 Uses only byte 0 of UUID. Biased for arrays >128 elements (latent bug).

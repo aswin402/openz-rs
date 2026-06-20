@@ -469,7 +469,7 @@ fn find_free_port() -> u16 {
     if start_port > 65000 {
         NEXT_PORT.store(50060, std::sync::atomic::Ordering::Relaxed);
     }
-    
+
     let mut port = start_port;
     for _ in 0..100 {
         if std::net::TcpListener::bind(format!("127.0.0.1:{}", port)).is_ok() {
@@ -477,6 +477,7 @@ fn find_free_port() -> u16 {
         }
         port = NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
+    tracing::warn!("Could not find free port after 100 attempts, using last port {}", port);
     port
 }
 

@@ -257,9 +257,8 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
 
     let actual_session = crate::agent::style::spinner::get_current_session_key().unwrap_or_else(|| session_key.to_string());
 
-    if actual_session.starts_with("telegram:") {
+    if let Some(chat_id_str) = actual_session.strip_prefix("telegram:") {
         // Telegram approval flow
-        let chat_id_str = &actual_session["telegram:".len()..];
         let chat_id: i64 = chat_id_str.parse()?;
         
         let (token, client) = match crate::channels::telegram::get_telegram_bot_info() {

@@ -416,10 +416,7 @@ pub fn load_profiles() -> Result<Vec<SubagentProfile>> {
 
     for profile in &mut loaded_profiles {
         if default_names.contains(&profile.name.as_str()) {
-            let is_old_default_model = match profile.model.as_deref() {
-                Some("gpt-4o-mini") | Some("claude-3-5-sonnet") | Some("gpt-4o") | Some("google_ai_studio/gemini-2.0-flash") => true,
-                _ => false,
-            };
+            let is_old_default_model = matches!(profile.model.as_deref(), Some("gpt-4o-mini") | Some("claude-3-5-sonnet") | Some("gpt-4o") | Some("google_ai_studio/gemini-2.0-flash"));
             if is_old_default_model {
                 profile.model = None;
                 profile.fallbacks = None;

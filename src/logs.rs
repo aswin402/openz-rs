@@ -106,9 +106,9 @@ fn extract_session_field(raw: &str) -> (&str, Option<String>) {
         let value = raw[pos + " session=".len()..].trim().to_string();
         let msg = raw[..pos].trim_end();
         (msg, Some(value))
-    } else if raw.starts_with("session=") {
+    } else if let Some(stripped) = raw.strip_prefix("session=") {
         // Edge: no message body, only the field
-        let value = raw["session=".len()..].trim().to_string();
+        let value = stripped.trim().to_string();
         ("", Some(value))
     } else {
         (raw, None)
@@ -201,7 +201,7 @@ fn print_line_filtered(raw: &str, filter: &SessionFilter) {
 
 // ── Header banner ───────────────────────────────────────────────────────────
 
-fn print_header(path: &PathBuf, tail: usize, filter: &SessionFilter) {
+fn print_header(path: &std::path::Path, tail: usize, filter: &SessionFilter) {
     let fname = path.display();
     let filter_label = filter.label();
     println!(
@@ -212,8 +212,8 @@ fn print_header(path: &PathBuf, tail: usize, filter: &SessionFilter) {
         "─".repeat(72)
     );
     println!(
-        "  {SLATE}{DIM}{:<8}  {:<5}  {:<35}  {}{RESET}",
-        "TIME", "LEVEL", "TARGET", "MESSAGE"
+        "  {SLATE}{DIM}{:<8}  {:<5}  {:<35}  MESSAGE{RESET}",
+        "TIME", "LEVEL", "TARGET"
     );
     println!(
         "  {SLATE}{DIM}{}{RESET}\n",
@@ -313,7 +313,7 @@ async fn follow(path: &PathBuf, mut pos: u64, filter: SessionFilter) -> Result<(
                             current_file_id = Some(file_id);
                         }
                         
-                        if let Ok(_) = f.seek(SeekFrom::Start(pos)) {
+                        if f.seek(SeekFrom::Start(pos)).is_ok() {
                             let mut temp_buf = Vec::new();
                             if f.read_to_end(&mut temp_buf).is_ok() && !temp_buf.is_empty() {
                                 pos += temp_buf.len() as u64;

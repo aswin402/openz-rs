@@ -7,6 +7,12 @@ pub struct RustDocsTool {
     client: reqwest::Client,
 }
 
+impl Default for RustDocsTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RustDocsTool {
     pub fn new() -> Self {
         // Crates.io requires a User-Agent header, otherwise it returns 403 Forbidden.

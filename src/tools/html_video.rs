@@ -209,8 +209,8 @@ impl Tool for HtmlToVideoTool {
         let target_url = if html_path_str.starts_with("http://") || html_path_str.starts_with("https://") {
             html_path_str.to_string()
         } else {
-            let mut raw_path = if html_path_str.starts_with("file://") {
-                std::path::PathBuf::from(&html_path_str["file://".len()..])
+            let mut raw_path = if let Some(stripped) = html_path_str.strip_prefix("file://") {
+                std::path::PathBuf::from(stripped)
             } else {
                 resolve_path(html_path_str)
             };
@@ -328,7 +328,7 @@ impl Tool for HtmlToVideoTool {
         }
 
         let target_id = tab_info.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        let _ = client.get(&format!("http://127.0.0.1:9222/json/close/{}", target_id)).send().await;
+        let _ = client.get(format!("http://127.0.0.1:9222/json/close/{}", target_id)).send().await;
 
         if let Some(parent) = output_path.parent() {
             fs::create_dir_all(parent)?;
