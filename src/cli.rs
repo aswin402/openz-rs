@@ -354,7 +354,11 @@ async fn handle_changelog() -> Result<()> {
 
     println!("{bold}📅 Version Release History:{reset}", bold = COLOR_BOLD, reset = COLOR_RESET);
     
-    println!("  {green}[v0.0.13] - Current Release{reset}", green = AURA_GREEN, reset = COLOR_RESET);
+    println!("  {green}[v0.0.14] - Current Release{reset}", green = AURA_GREEN, reset = COLOR_RESET);
+    println!("    • Implemented incremental session saving to disk to prevent data loss on early command cancellation.");
+    println!("    • Added print_session_history to render previous messages and tool runs when starting/switching sessions.");
+    
+    println!("  {slate}[v0.0.13]{reset}", slate = AURA_SLATE, reset = COLOR_RESET);
     println!("    • Configured separate tracing-subscriber layers to prevent ANSI escape code log pollution.");
     println!("    • Aligned default log path resolution with OPENZ_CONFIG_DIR customization.");
     println!("    • Changed logs tail default value to 0 to only show real-time stream logs by default.");

@@ -499,9 +499,40 @@ fn render_table(table_lines: &[&str]) {
                 let padded = format!("{}{}", formatted, " ".repeat(padding_len));
                 row_line_parts.push(padded);
             }
-            println!("{}", row_line_parts.join(&separator));
         }
     }
+}
+
+fn print_session_history(session: &crate::session::Session) {
+    if session.messages.is_empty() {
+        return;
+    }
+    println!("{}=== Session History ==={}", COLOR_BOLD, COLOR_RESET);
+    for msg in &session.messages {
+        let role_str = match msg.role.as_str() {
+            "user" => format!("{}◇ User:{}", COLOR_BOLD, COLOR_RESET),
+            "assistant" => format!("{}🤖 OpenZ:{}", EMERALD_GREEN, COLOR_RESET),
+            "tool" => format!("{}🛠 Tool:{}", AURA_GOLD, COLOR_RESET),
+            other => format!("{}{}:{}{}", AURA_SLATE, other, COLOR_BOLD, COLOR_RESET),
+        };
+        let content = msg.content.trim();
+        if !content.is_empty() {
+            println!("{} {}", role_str, COLOR_RESET);
+            print_colored_markdown(content);
+            println!();
+        } else if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
+            let names: Vec<String> = tool_calls.iter()
+                .filter_map(|tc| tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()))
+                .map(|n| n.to_string())
+                .collect();
+            if !names.is_empty() {
+                println!("{} [Called tool(s): {}] {}", role_str, names.join(", "), COLOR_RESET);
+            } else {
+                println!("{} [Called tool(s)] {}", role_str, COLOR_RESET);
+            }
+        }
+    }
+    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
 }
 
 fn print_colored_markdown(content: &str) {
@@ -1427,6 +1458,14 @@ impl CliChannel {
         
         println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
         
+        let session_manager = {
+            let agent_loop = self.agent_loop.lock().await;
+            agent_loop.session_manager.clone()
+        };
+        if let Ok(session) = session_manager.load(session_key) {
+            print_session_history(&session);
+        }
+
         loop {
             let (model, provider, session_manager) = {
                 let defaults = self.defaults.lock().await;
@@ -1935,6 +1974,7 @@ impl CliChannel {
                                                 session.key = session_key.to_string();
                                                 let _ = session_manager.save(&session);
                                                 println!("{}✓ Loaded session: {}{}", EMERALD_GREEN, selected_item.display_title, COLOR_RESET);
+                                                print_session_history(&session);
                                             }
                                         } else {
                                             println!("{}✓ You are already in this session.{}", EMERALD_GREEN, COLOR_RESET);

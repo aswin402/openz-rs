@@ -174,6 +174,10 @@ impl AgentLoop {
                         }
                     }
 
+                    if let Err(e) = self.session_manager.save(&session) {
+                        tracing::warn!("Failed to save session incrementally in Restore: {}", e);
+                    }
+
                     state = TurnState::Compact;
                 }
                 TurnState::Compact => {
@@ -1007,6 +1011,11 @@ impl AgentLoop {
                                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
                                 extra,
                             });
+                        }
+
+                        session.messages = messages.clone();
+                        if let Err(e) = self.session_manager.save(&session) {
+                            tracing::warn!("Failed to save session incrementally in Run loop: {}", e);
                         }
 
                         iterations += 1;

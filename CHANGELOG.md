@@ -373,7 +373,11 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.13 (Latest Release)
+### v0.0.14 (Latest Release)
+*   **Feature: Incremental Session Saving:** Upgraded `AgentLoop` to save the active conversation session (`cli_direct.json`) incrementally to disk: (1) immediately upon receiving a user prompt in `Restore` state, and (2) at the end of each successful turn iteration inside the run loop. This ensures that even if an execution is interrupted via `Esc` or `Ctrl+C` midway, the prompt, thoughts, and intermediate tool outputs are fully persisted on disk. When restarted, typing "continue" allows the agent to resume execution with complete context.
+*   **Feature: Resumed Session History Visualization:** Implemented `print_session_history` helper in the CLI channel (`cli.rs`) to format and render previous messages, assistant thoughts, and tool executions. This automatically displays the loaded session's history upon startup/resume or when switching sessions via the `/history` command menu, resolving the visual blank-screen confusion.
+
+### v0.0.13
 *   **Bugfix: ANSI Code Log File Pollution:** Configured separate registry layers for the file writer and standard error in `tracing-subscriber` setup inside `main.rs`. This prevents ANSI escape codes from being written to the log file `openz.log`, which was causing level and target parsing failures in the log viewer (`openz logs`) when background/server subcommands were run in a terminal.
 *   **Bugfix: Consistent Log Path Resolution:** Updated `default_log_path()` in `logs.rs` to resolve relative to `crate::config::config_dir()` instead of hardcoding `~/.openz/openz.log`. This ensures path alignment whenever `OPENZ_CONFIG_DIR` is customized.
 *   **Feature: Real-Time Stream Default:** Changed the default value of the `--tail` parameter from `200` to `0` lines for `openz logs` and channel logs subcommands. This allows `openz logs` to start tailing immediately from the current file end (showing only live logs one by one as they happen, like a Hono server) while still supporting historical inspection via manual `--tail N`.
