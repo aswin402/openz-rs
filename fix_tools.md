@@ -12,10 +12,10 @@
 | P0 — Security | 3 | ✅ Fixed |
 | P1 — Broken Features | 4 | ✅ Fixed |
 | P2 — Integration Bugs | 7 | ✅ Fixed |
-| P3 — Dead/Unused Code | 3 | ⏳ Deferred |
-| P4 — Documentation Gaps | 4 | ⏳ Deferred |
+| P3 — Dead/Unused Code | 3 | ✅ Fixed |
+| P4 — Documentation Gaps | 4 | ✅ Fixed |
 | P5 — Silent Failures | 5 | ✅ Fixed |
-| **Total** | **26** | **22 Fixed, 4 Deferred** |
+| **Total** | **26** | **26 Fixed** |
 
 ---
 
@@ -91,36 +91,36 @@
 
 ## P3 — Dead/Unused Code (3)
 
-### P3-15. Remove unused `api_type` config field
+### P3-15. Remove unused `api_type` config field ✅ FIXED
 - **File:** `src/config/schema.rs`
-- **Fix:** Remove `api_type` from `ProviderConfig` or add `#[serde(default)]` and document future use
+- **Fix:** Removed `api_type` from `ProviderConfig`, cleaned 3 call sites in `cli.rs` and `websocket.rs`
 
-### P3-16. Remove unused `subagent_timeout_secs` config field
+### P3-16. Remove unused `subagent_timeout_secs` config field ✅ FIXED
 - **File:** `src/config/schema.rs`
-- **Fix:** Remove field or wire it into `tools/subagent.rs` to replace hardcoded 300s timeout
+- **Fix:** Removed field and default from `AgentDefaults`
 
-### P3-17. Remove unused `extra` config field
+### P3-17. Remove unused `extra` config field ✅ FIXED
 - **File:** `src/config/schema.rs`
-- **Fix:** Remove field or add documentation for future extensibility
+- **Fix:** Removed `#[serde(flatten)] extra` catch-all from top-level `Config`
 
 ---
 
 ## P4 — Documentation Gaps (4)
 
-### P4-18. Add missing tools to README.md and CHANGELOG.md
+### P4-18. Add missing tools to README.md and CHANGELOG.md ✅ FIXED
 - **Tools:** `find_files`, `replace_lines`, `rust_docs`, `social_search`, `check_port`, `store_memory`, `recall_memory`, `clear_memory`, `archive_research`, `search_research`, `index_notes`, `parallel_research`, `evaluator_optimizer_loop`, `compile_template`, `git_manager`, `python_sandbox`, `open_path`
 
-### P4-19. Document all 38 subagent profiles
-- **File:** `README.md` or `CHANGELOG.md`
-- **Fix:** Add complete subagent profile list
+### P4-19. Document all 38 subagent profiles ✅ FIXED
+- **File:** `docs/subagents.md`
+- **Fix:** Replaced "15+" mention with complete 38-profile table
 
-### P4-20. Document `check_port` localhost restriction
-- **File:** `README.md` or tool description
-- **Fix:** Add note that check_port is restricted to localhost for security
+### P4-20. Document `check_port` localhost restriction ✅ FIXED
+- **File:** `docs/tools.md`
+- **Fix:** Added note that check_port is restricted to localhost
 
-### P4-21. Document `zenflow_edit` git requirement
-- **File:** `README.md` or tool description
-- **Fix:** Note that zenflow_edit requires a git repository
+### P4-21. Document `zenflow_edit` git requirement ✅ FIXED
+- **File:** `docs/tools.md`
+- **Fix:** Added note that zenflow_edit requires a git repository
 
 ---
 
