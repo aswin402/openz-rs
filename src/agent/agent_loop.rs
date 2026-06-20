@@ -17,7 +17,6 @@ pub enum TurnState {
     Build,
     Run,
     Save,
-    Respond,
     Done,
 }
 
@@ -1082,9 +1081,6 @@ impl AgentLoop {
                     if let Err(e) = crate::tools::onpkg::sync_onpkg_manifest() {
                         tracing::warn!("Failed to synchronize onpkg manifest: {}", e);
                     }
-                    state = TurnState::Respond;
-                }
-                TurnState::Respond => {
                     state = TurnState::Done;
                 }
                 TurnState::Done => {}

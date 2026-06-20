@@ -457,7 +457,6 @@ async fn handle_onboard() -> Result<()> {
     let p_config = Some(ProviderConfig {
         api_key,
         api_base,
-        api_type: None,
         extra: std::collections::HashMap::new(),
     });
     
@@ -1021,7 +1020,6 @@ fn update_provider_key(config: &mut Config, provider_name: &str, api_key: String
     }.unwrap_or_else(|| ProviderConfig {
         api_key: None,
         api_base: None,
-        api_type: None,
         extra: std::collections::HashMap::new(),
     });
     p_config.api_key = Some(api_key);

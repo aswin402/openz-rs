@@ -8,8 +8,6 @@ pub struct ProviderConfig {
     pub api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_base: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_type: Option<String>,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -86,8 +84,6 @@ pub struct AgentDefaults {
     pub security_mode: String,
     #[serde(default, alias = "tool_output_limit")]
     pub tool_output_limit: Option<usize>,
-    #[serde(default, alias = "subagent_timeout_secs")]
-    pub subagent_timeout_secs: Option<u64>,
     #[serde(default = "default_enable_sandbox", alias = "enable_sandbox")]
     pub enable_sandbox: bool,
 }
@@ -157,7 +153,6 @@ impl Default for AgentDefaults {
             context_limit: None,
             security_mode: default_security_mode(),
             tool_output_limit: None,
-            subagent_timeout_secs: None,
             enable_sandbox: default_enable_sandbox(),
         }
     }
@@ -316,8 +311,6 @@ pub struct Config {
     pub mcp_servers: HashMap<String, McpServerConfig>,
     #[serde(default)]
     pub embeddings: Option<EmbeddingsConfig>,
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 
@@ -522,7 +515,6 @@ impl Default for Config {
             channels: ChannelsConfig::default(),
             mcp_servers,
             embeddings: Some(EmbeddingsConfig::default()),
-            extra: serde_json::Map::new(),
         }
     }
 }
