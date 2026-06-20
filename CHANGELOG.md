@@ -313,38 +313,63 @@ OpenZ exposes a robust, local tool set categorized below:
 
 ### 1. Filesystem & Repository Analysis
 *   `read_file` / `write_file` / `patch_file`: Reads, writes, or patches target text files recursively.
+*   `find_files`: Searches for files matching glob patterns with size and time filtering.
+*   `replace_lines`: Replaces exact line sequences within a file (surgical line-level edits).
+*   `zenflow_edit`: Multi-file structural editing with smart context matching (requires git repository).
 *   `list_dir`: Lists directory contents including sizes and subfolders.
 *   `grep_search`: Highly optimized ripgrep wrapper for locating patterns across codebases.
 *   `code_outline`: Generates class, struct, function, and interface outline trees (Rust, Python, Go, JS/TS).
 *   `ast_grep`: Executes structural AST searches (e.g. matching syntax patterns).
+*   `index_codebase`: Indexes codebase structure into a structured JSON summary.
+*   `git_manager`: Executes git operations (status, diff, log, commits).
 *   `db_inspector` / `db_write`: Secure SQLite database reader and query writer.
 *   `doc_reader`: Extracts text from PDF, DOCX, and XLSX files.
+*   `rust_docs`: Queries Rust documentation from docs.rs for crate API references.
+*   `compile_template`: Compiles Handlebars/Mustache templates with provided context data.
 
 ### 2. Sandbox & Compilation
 *   `exec_command`: Runs sandboxed shell commands using a Linux BPF seccomp sandbox filter (if enabled).
-*   `wasm_sandbox`: Executes WebAssembly (`.wasm`) binaries inside a secure, sandboxed `wasmtime` engine.
+*   `python_sandbox`: Executes Python scripts in an isolated subprocess with resource limits.
+*   `wasm_execute`: Executes WebAssembly (`.wasm`) binaries inside a secure, sandboxed `wasmtime` engine.
 *   `cargo_manager`: Runs compilation and testing (`cargo check`, `cargo build`, `cargo test`).
 *   `js_format`: Fast JavaScript/TypeScript syntax formatting.
+*   `compiler_auto_heal`: Automatically diagnoses and fixes compilation errors.
 
-### 3. Web Search & Scraping
+### 3. Web Search, Scraping & Social
 *   `web_search`: Conducts Tavily web queries to return search results.
 *   `web_fetch`: Scrapes HTML pages and converts them to formatted markdown.
+*   `social_search`: Searches Hacker News, Reddit, and other social platforms for content.
 *   `crawl_website`: Performs multi-threaded async site spidering via `spider-rs`.
 *   `gsd_browser`: Direct headless Chrome automation (Playwright-based).
-*   `obscura_browser` / `firefox`: CDP-based headless browser controls.
+*   `obscura_browser` / `firefox_browser`: CDP-based headless browser controls.
+*   `semantic_search`: Performs vector-based semantic search across a codebase using embeddings.
 
 ### 4. Job Scheduling & Cron
 *   `schedule_job`: Registers recurring background cron tasks or one-time timers.
 *   `list_jobs` / `remove_job`: Lists or deletes registered jobs.
 *   `file_watcher`: Watches local folders to trigger scripts/commands when files change.
 
-### 5. Graphics & Visuals
-*   `generate_mermaid`: Renders 23+ diagram formats directly to SVG.
-*   `generate_video`: Compiles JSON timeline descriptions to MP4 files via `wavyte`.
-*   `image_generator`: Generates PNG drawings programmatically.
+### 5. Memory & Knowledge
+*   `store_memory`: Stores structured observations, decisions, or facts in the agent's long-term memory.
+*   `recall_memory`: Retrieves stored memories by query context.
+*   `clear_memory`: Clears all entries from the agent's memory store.
+*   `archive_research`: Archives research findings into persistent storage.
+*   `search_research`: Searches archived research content.
+*   `index_notes`: Indexes and searches local markdown notes.
 
-### 6. Subagents & Messaging
+### 6. Graphics & Visuals
+*   `render_mermaid`: Renders 23+ diagram formats directly to SVG.
+*   `generate_video`: Compiles JSON timeline descriptions to MP4 files via `wavyte`.
+*   `generate_image`: Generates PNG images programmatically from HTML/CSS/SVG or URL.
+*   `html_to_video`: Renders timeline-based MP4 videos from HTML/CSS animation templates.
+*   `create_animated_svg`: Creates animated SVG files from motion descriptions.
+
+### 7. Subagents, Messaging & Workflows
 *   `delegate_task`: Runs isolated subtasks in a separate subagent context.
+*   `parallel_research`: Runs multiple research subtasks in parallel and merges results.
+*   `evaluator_optimizer_loop`: Iteratively generates and evaluates responses until quality criteria met.
+*   `optimize_subagent`: Refines a subagent's system prompt using AI based on feedback.
+*   `create_subagent` / `delete_subagent`: Dynamically creates or removes custom subagent profiles.
 *   `trigger_sop`: Instantiates stateful workflows (SOPs).
 *   `send_remote_input`: Forwards commands to other active agent sessions.
 *   `onpkg`: Integrates with the `onpkg` package and stack manager.

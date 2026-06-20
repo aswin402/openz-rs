@@ -42,15 +42,13 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
 ## 🛠️ Core Tools Registry
 
 OpenZ exposes a powerful set of local tools to the LLM:
-* **Filesystem & Code Outline:** `read_file`, `write_file`, `list_dir`, `grep_search`, `code_outline` (structural parser for Rust, Py, Go, JS/TS), `ast_grep` (structural tree searches), `db_inspector` (SQLite reader/writer).
-* **System & Environment:** `exec_command` (sandboxed execution), `clipboard` (system clipboard access), `open_path` (opens files/URLs in default apps), `system_info` (CPU, memory, OS data), `file_watcher` (background auto-compiler/test-watcher).
-* **Web & Search:** `web_fetch` (upgraded DOM scraper), `web_search` (Tavily search API), `crawl_website` (multi-threaded site spidering), `gsd_browser` (Playwright-based browser automation), `obscura_browser` (lightweight headless browser via CDP).
-* **Automation & Cron:** `schedule_job` (registers Unix cron/duration jobs), `list_jobs`, `remove_job`.
-* **Visuals & Graphics:** 
-  * `generate_image` (renders premium HTML/CSS/SVG templates, local files, or online URLs to crisp PNG via headless Chrome).
-  * `html_to_video` (renders timeline-based MP4 videos from HTML/CSS animation templates).
-  * `generate_mermaid` (renders 23+ diagram types to SVG using a pure-Rust parser/renderer `mermaid-rs-renderer`).
-  * `generate_video` (generates programmatic MP4 videos from timeline compositions using `wavyte`).
+* **Filesystem & Code Analysis:** `read_file`, `write_file`, `patch_file`, `find_files`, `replace_lines`, `zenflow_edit`, `list_dir`, `grep_search`, `code_outline`, `ast_grep`, `index_codebase`, `git_manager`, `db_inspector`, `db_write`, `doc_reader`, `rust_docs`, `compile_template`.
+* **System & Environment:** `exec_command` (sandboxed), `python_sandbox`, `clipboard`, `open_path`, `system_info`, `file_watcher`, `check_port` (localhost-only).
+* **Web, Search & Social:** `web_fetch` (DOM scraper), `web_search` (Tavily), `social_search` (HN/Reddit), `crawl_website` (spider-rs), `gsd_browser` (Playwright), `obscura_browser` / `firefox_browser` (CDP), `semantic_search` (vector embeddings).
+* **Automation & Cron:** `schedule_job`, `list_jobs`, `remove_job`, `compiler_auto_heal`.
+* **Memory & Knowledge:** `store_memory`, `recall_memory`, `clear_memory`, `archive_research`, `search_research`, `index_notes`.
+* **Subagents & Orchestration:** `delegate_task`, `parallel_research`, `evaluator_optimizer_loop`, `optimize_subagent`, `create_subagent`, `delete_subagent`, `trigger_sop`.
+* **Visuals & Graphics:** `generate_image` (HTML/CSS→PNG), `html_to_video` (HTML→MP4), `render_mermaid` (diagram→SVG), `generate_video` (JSON→MP4), `create_animated_svg`.
 * **MCP Integration:** `manage_mcp` (CRUD configs). All MCP servers use a **unified gRPC Tonic transport** + an in-process TCP port bridge with robust non-JSON noise filtering.
 
 ---

@@ -5,7 +5,50 @@ OpenZ uses a pluggable, specialized subagent delegation framework. Subagents are
 ---
 
 ## 1. Core Concepts
-* **Built-in Profiles**: OpenZ comes pre-configured with 15+ specialized subagent profiles (like `planner`, `researcher`, `debugger`, `reviewer`, `devops_agent`, `vision_agent`) defined in [src/subagents/mod.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/mod.rs).
+* **Built-in Profiles**: OpenZ comes pre-configured with **38 specialized subagent profiles** defined in [src/subagents/mod.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/mod.rs):
+
+| Profile | Description | Needs Workspace |
+|---------|-------------|:---:|
+| `orchestrator` | Coordinates complex, multi-stage project deliverables | ✅ |
+| `planner` | Decomposes complex goals, manages workstreams, tracks milestones | ❌ |
+| `researcher` | Searches the web, reads files, gathers project context | ❌ |
+| `architect` | Designs system schemas, directory layouts, API contracts | ✅ |
+| `skill_creator` | Writes helper scripts and creates new native shell tools | ✅ |
+| `reviewer` | Audits code for security, bugs, and testing coverage | ❌ |
+| `code_auditor` | Performs security audits on source code | ❌ |
+| `debugger` | Diagnoses errors, reproduces bugs, isolates root causes | ✅ |
+| `test_engineer` | Designs QA test suites and writes tests | ✅ |
+| `devops_agent` | Containerizes apps, drafts CI/CD, manages infra configs | ✅ |
+| `refactor_agent` | Cleans up code complexity, applies patterns, optimizes structure | ✅ |
+| `memory_manager` | Consolidates project facts, preferences, and session context | ❌ |
+| `vision_agent` | Analyzes wireframes, mockups, UI visual layout aesthetics | ❌ |
+| `documentation_agent` | Generates docstrings, updates READMEs, writes guides | ❌ |
+| `self_improvement` | Curates, updates, refines agent memories and skills | ❌ |
+| `skill_improvement` | Audits, optimizes, refines active skills in ~/.openz/skills/ | ❌ |
+| `openz_maintainer` | Diagnoses internal errors and bugs inside OpenZ itself | ✅ |
+| `mcps_manager` | Installs, configures, audits MCP servers and tools | ✅ |
+| `git_ops_agent` | Handles version control, diff reviews, commits | ✅ |
+| `ast_searcher` | Explores code architecture via AST structural grep | ❌ |
+| `database_specialist` | Queries SQLite databases, inspects schemas | ✅ |
+| `browser_operator` | Runs web browser automation, crawls pages | ❌ |
+| `dependency_manager` | Manages packages, scaffolding, config files via onpkg | ✅ |
+| `frontend_architect` | Designs responsive modern frontend interfaces | ✅ |
+| `docs_lookup_agent` | Queries external developer portals and API docs | ❌ |
+| `document_compiler` | Compiles, extracts, formats DOCX and PDF files | ✅ |
+| `presentation_designer` | Designs PPTX and HTML presentations | ✅ |
+| `code_synthesizer` | Generates boilerplate, scaffolds project folders | ✅ |
+| `summarizer_agent` | Synthesizes large logs, traces into dense summaries | ❌ |
+| `media_designer` | Generates images, diagrams, charts, illustrations | ✅ |
+| `openz_coordinator` | Coordinates workflows, delegates tasks, manages configs | ❌ |
+| `sop_designer` | Designs, validates SOP workflow JSON definitions | ✅ |
+| `api_integrator` | Discovers APIs, designs OpenAPI, writes clients | ✅ |
+| `performance_tuner` | Identifies bottlenecks, analyzes traces, optimizes | ✅ |
+| `communication_manager` | Manages multi-channel messages, SMTP routing | ❌ |
+| `automation_agent` | Automates tasks, cron, webhooks, browser interactions | ✅ |
+| `coding_agent` | Generates, refactors, tests, debugs code iteratively | ✅ |
+| `diagram_designer` | Creates, renders visual schemas and Mermaid diagrams | ✅ |
+| `video_animator` | Designs and renders animations and video programmatically | ✅ |
+
 * **Tool Representation**: The `ToolRegistry` dynamically formats subagent profiles as tools. When the LLM calls a subagent tool (e.g., `vision_agent(goal: "...")`), a `DelegateProfileTool` instance executes a child `AgentLoop`.
 
 ---
