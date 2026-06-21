@@ -24,20 +24,34 @@ fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
                 || v4.is_unspecified() || v4.is_broadcast())
         }
         std::net::IpAddr::V6(v6) => {
-            !(v6.is_loopback() || v6.is_unspecified() || v6.is_multicast())
+            if let Some(v4) = v6.to_ipv4() {
+                if !is_safe_ip(&std::net::IpAddr::V4(v4)) {
+                    return false;
+                }
+            }
+            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                return false;
+            }
+            let segments = v6.segments();
+            // ULA fc00::/7
+            if (segments[0] & 0xfe00) == 0xfc00 {
+                return false;
+            }
+            // Link-local fe80::/10
+            if (segments[0] & 0xffc0) == 0xfe80 {
+                return false;
+            }
+            true
         }
     }
 }
 
-/// Validate URL to prevent SSRF — blocks private IPs, localhost, metadata endpoints,
-/// AND resolves DNS to catch rebinding attacks (domain resolves to private IP after check).
-async fn validate_url(url: &str) -> Result<()> {
-    let parsed = reqwest::Url::parse(url).map_err(|e| anyhow!("Invalid URL: {}", e))?;
-    let host = parsed.host_str().ok_or_else(|| anyhow!("URL has no host"))?.to_lowercase();
+fn validate_url_sync(url: &reqwest::Url) -> Result<()> {
+    let host = url.host_str().ok_or_else(|| anyhow!("URL has no host"))?.to_lowercase();
 
     // Block non-HTTP schemes
-    if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return Err(anyhow!("SSRF blocked: only http/https URLs are allowed (got '{}')", parsed.scheme()));
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return Err(anyhow!("SSRF blocked: only http/https URLs are allowed (got '{}')", url.scheme()));
     }
 
     // Block cloud metadata endpoints by hostname
@@ -52,17 +66,12 @@ async fn validate_url(url: &str) -> Result<()> {
         }
     }
 
-    // DNS resolution check — prevents rebinding attacks where a domain
-    // resolves to a private IP after the string-based check passes.
-    // Use a short-lived blocking resolve inside the async context.
-    let host_for_resolve = host.clone();
-    let resolved_ips = tokio::task::spawn_blocking(move || {
-        use std::net::ToSocketAddrs;
-        format!("{}:0", host_for_resolve)
-            .to_socket_addrs()
-            .map(|iter| iter.map(|addr| addr.ip()).collect::<Vec<_>>())
-            .unwrap_or_default()
-    }).await.unwrap_or_default();
+    // DNS resolution check
+    use std::net::ToSocketAddrs;
+    let resolved_ips = format!("{}:0", host)
+        .to_socket_addrs()
+        .map(|iter| iter.map(|addr| addr.ip()).collect::<Vec<_>>())
+        .unwrap_or_default();
 
     for ip in &resolved_ips {
         if !is_safe_ip(ip) {
@@ -80,6 +89,11 @@ async fn validate_url(url: &str) -> Result<()> {
     Ok(())
 }
 
+async fn validate_url(url: &str) -> Result<()> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| anyhow!("Invalid URL: {}", e))?;
+    validate_url_sync(&parsed)
+}
+
 pub struct WebFetchTool {
     client: Client,
 }
@@ -92,8 +106,19 @@ impl Default for WebFetchTool {
 
 impl WebFetchTool {
     pub fn new() -> Self {
+        let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+            if validate_url_sync(attempt.url()).is_err() {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        });
         WebFetchTool {
-            client: Client::builder().use_rustls_tls().build().unwrap_or_default(),
+            client: Client::builder()
+                .use_rustls_tls()
+                .redirect(redirect_policy)
+                .build()
+                .unwrap_or_default(),
         }
     }
 }
@@ -231,5 +256,51 @@ mod tests {
         assert!(clean.contains("This is a test page."));
         assert!(!clean.contains("body {"));
         assert!(!clean.contains("console.log"));
+    }
+
+    #[test]
+    fn test_is_safe_ip() {
+        use std::net::IpAddr;
+
+        // Safe IPv4
+        assert!(is_safe_ip(&"1.1.1.1".parse::<IpAddr>().unwrap()));
+        assert!(is_safe_ip(&"8.8.8.8".parse::<IpAddr>().unwrap()));
+
+        // Unsafe IPv4
+        assert!(!is_safe_ip(&"127.0.0.1".parse::<IpAddr>().unwrap()));
+        assert!(!is_safe_ip(&"10.0.0.1".parse::<IpAddr>().unwrap()));
+        assert!(!is_safe_ip(&"192.168.1.1".parse::<IpAddr>().unwrap()));
+        assert!(!is_safe_ip(&"172.16.0.1".parse::<IpAddr>().unwrap()));
+        assert!(!is_safe_ip(&"169.254.169.254".parse::<IpAddr>().unwrap()));
+        assert!(!is_safe_ip(&"0.0.0.0".parse::<IpAddr>().unwrap()));
+
+        // Safe IPv6
+        assert!(is_safe_ip(&"2001:db8::1".parse::<IpAddr>().unwrap()));
+
+        // Unsafe IPv6
+        assert!(!is_safe_ip(&"::1".parse::<IpAddr>().unwrap()));
+        assert!(!is_safe_ip(&"::".parse::<IpAddr>().unwrap()));
+        assert!(!is_safe_ip(&"fc00::1".parse::<IpAddr>().unwrap())); // ULA
+        assert!(!is_safe_ip(&"fe80::1".parse::<IpAddr>().unwrap())); // Link-Local
+        assert!(!is_safe_ip(&"ff02::1".parse::<IpAddr>().unwrap())); // Multicast
+
+        // IPv4-mapped IPv6
+        assert!(!is_safe_ip(&"::ffff:127.0.0.1".parse::<IpAddr>().unwrap()));
+        assert!(!is_safe_ip(&"::ffff:10.0.0.1".parse::<IpAddr>().unwrap()));
+        assert!(is_safe_ip(&"::ffff:8.8.8.8".parse::<IpAddr>().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn test_validate_url() {
+        assert!(validate_url("http://example.com").await.is_ok());
+        assert!(validate_url("https://google.com/search?q=rust").await.is_ok());
+
+        assert!(validate_url("ftp://example.com").await.is_err());
+        assert!(validate_url("http://127.0.0.1").await.is_err());
+        assert!(validate_url("http://localhost").await.is_err());
+        assert!(validate_url("http://169.254.169.254").await.is_err());
+        assert!(validate_url("http://[::1]").await.is_err());
+        assert!(validate_url("http://[fc00::1]").await.is_err());
+        assert!(validate_url("http://[::ffff:127.0.0.1]").await.is_err());
     }
 }

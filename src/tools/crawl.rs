@@ -6,7 +6,6 @@ use scraper::{Html, Selector};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Validate that an IP address is safe (not private, loopback, or reserved).
 fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => {
@@ -14,7 +13,24 @@ fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
                 || v4.is_unspecified() || v4.is_broadcast())
         }
         std::net::IpAddr::V6(v6) => {
-            !(v6.is_loopback() || v6.is_unspecified() || v6.is_multicast())
+            if let Some(v4) = v6.to_ipv4() {
+                if !is_safe_ip(&std::net::IpAddr::V4(v4)) {
+                    return false;
+                }
+            }
+            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                return false;
+            }
+            let segments = v6.segments();
+            // ULA fc00::/7
+            if (segments[0] & 0xfe00) == 0xfc00 {
+                return false;
+            }
+            // Link-local fe80::/10
+            if (segments[0] & 0xffc0) == 0xfe80 {
+                return false;
+            }
+            true
         }
     }
 }

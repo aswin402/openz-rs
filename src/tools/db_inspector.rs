@@ -1,7 +1,7 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use tokio::process::Command;
+use rusqlite::Connection;
 
 pub struct DbInspectorTool;
 
@@ -44,13 +44,23 @@ impl Tool for DbInspectorTool {
         let action = arguments.get("action").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
 
-        let mut cmd = Command::new("sqlite3");
-        crate::config::loader::set_tokio_command_cwd(&mut cmd);
-        cmd.arg(db_path);
+        let conn = Connection::open(&db_path)
+            .map_err(|e| anyhow!("Failed to open database: {}", e))?;
 
-        match action {
+        let (stdout, status) = match action {
             "schema" => {
-                cmd.arg(".schema");
+                let mut stmt = conn.prepare("SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY tbl_name, type DESC, name")
+                    .map_err(|e| anyhow!("Failed to prepare schema query: {}", e))?;
+                let rows = stmt.query_map([], |row| row.get::<_, String>(0))
+                    .map_err(|e| anyhow!("Failed to execute schema query: {}", e))?;
+                let mut schema = String::new();
+                for row in rows {
+                    if let Ok(sql) = row {
+                        schema.push_str(&sql);
+                        schema.push_str(";\n");
+                    }
+                }
+                (schema, "success")
             }
             "query" => {
                 let sql = arguments.get("sql").and_then(|v| v.as_str())
@@ -100,20 +110,41 @@ impl Tool for DbInspectorTool {
                 if !trimmed.starts_with("SELECT") && !trimmed.starts_with("EXPLAIN") {
                     return Err(anyhow!("Only SELECT (or EXPLAIN) queries are allowed for safety."));
                 }
-                cmd.arg(sql);
+
+                let mut stmt = conn.prepare(sql)
+                    .map_err(|e| anyhow!("Failed to prepare query: {}", e))?;
+                let col_count = stmt.column_count();
+                let mut rows = stmt.query([])
+                    .map_err(|e| anyhow!("Failed to execute query: {}", e))?;
+                
+                let mut output = String::new();
+                while let Some(row) = rows.next().map_err(|e| anyhow!("Failed to retrieve row: {}", e))? {
+                    let mut row_str = Vec::new();
+                    for i in 0..col_count {
+                        let val: rusqlite::types::Value = row.get(i)
+                            .map_err(|e| anyhow!("Failed to get column value: {}", e))?;
+                        let val_str = match val {
+                            rusqlite::types::Value::Null => "".to_string(),
+                            rusqlite::types::Value::Integer(v) => v.to_string(),
+                            rusqlite::types::Value::Real(v) => v.to_string(),
+                            rusqlite::types::Value::Text(s) => s,
+                            rusqlite::types::Value::Blob(b) => String::from_utf8_lossy(&b).to_string(),
+                        };
+                        row_str.push(val_str);
+                    }
+                    output.push_str(&row_str.join("|"));
+                    output.push('\n');
+                }
+                (output, "success")
             }
             _ => return Err(anyhow!("Invalid action: {}", action)),
-        }
-
-        let output = cmd.output().await?;
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        };
 
         Ok(json!({
-            "status": if output.status.success() { "success" } else { "error" },
+            "status": status,
             "stdout": stdout,
-            "stderr": stderr,
-            "code": output.status.code()
+            "stderr": "",
+            "code": 0
         }))
     }
 }
@@ -176,20 +207,18 @@ impl Tool for DbWriteTool {
             }
         }
 
-        let mut cmd = Command::new("sqlite3");
-        crate::config::loader::set_tokio_command_cwd(&mut cmd);
-        cmd.arg(db_path);
-        cmd.arg(sql);
-
-        let output = cmd.output().await?;
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| anyhow!("Failed to open database: {}", e))?;
+        
+        let changes = conn.execute_batch(sql)
+            .map(|_| conn.changes())
+            .map_err(|e| anyhow!("Failed to execute mutation query: {}", e))?;
 
         Ok(json!({
-            "status": if output.status.success() { "success" } else { "error" },
-            "stdout": stdout,
-            "stderr": stderr,
-            "code": output.status.code()
+            "status": "success",
+            "stdout": format!("Query executed successfully. Changes: {}", changes),
+            "stderr": "",
+            "code": 0
         }))
     }
 }

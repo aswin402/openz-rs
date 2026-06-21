@@ -398,7 +398,13 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.19 (Latest Release)
+### v0.0.20 (Latest Release)
+*   **Security: Default-Deny Gateway Auth (CRITICAL):** Changed authorization to default-reject gateway requests if `OPENZ_GATEWAY_TOKEN` is unset or empty. Added timing-attack protection by hashing tokens with SHA-256 before comparing them in constant-time.
+*   **Security: SSRF Redirect & IPv6 Hardening (CRITICAL):** Configured `WebFetchTool`'s reqwest client with a custom redirect policy validating every hop against `validate_url_sync`. Hardened IPv6 network detection to block loopback, unspecified, multicast, Unique Local Addresses (ULA), link-local unicast, and IPv4-mapped IPv6 addresses.
+*   **Security: SQL Injection CLI Spawning Elimination (CRITICAL):** Replaced all subprocess shell-outs to the `sqlite3` CLI process in `DbInspectorTool` and `DbWriteTool` with an in-process integration using the `rusqlite` crate, completely eliminating shell/argument injections and CLI dot-command executions.
+*   **Maintenance: Version Bump:** Bumped to v0.0.20. All 121 tests passing, 0 clippy warnings.
+
+### v0.0.19
 *   **Security: Subagent Loopback Isolation:** Excluded `SendRemoteInputTool` (`send_remote_input`) from dynamically constructed subagent tool lists (`delegate_task`, `parallel_research`, `evaluator_optimizer_loop`, and custom profiles) to prevent loopback command/prompt injection from nested child loops.
 *   **Refactor: Subagent Tool Filtering:** Added a secondary restriction in `filter_tools_for_subagent` to strip out `send_remote_input` from all allowed profile lists.
 *   **Maintenance: Version Bump:** Bumped to v0.0.19. All 118 tests passing, 0 clippy warnings.

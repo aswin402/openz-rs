@@ -96,6 +96,9 @@ impl super::Channel for WsGateway {
 
         if !silent {
             println!("⚡ OpenZ Gateway running on http://{}", addr);
+            if std::env::var("OPENZ_GATEWAY_TOKEN").map(|t| t.is_empty()).unwrap_or(true) {
+                println!("⚠️ WARNING: OPENZ_GATEWAY_TOKEN is not set or is empty. All gateway requests will be rejected for security!");
+            }
         }
         let listener = TcpListener::bind(addr).await?;
         axum::serve(listener, app).await?;
@@ -510,29 +513,84 @@ mod tests {
         let model_routed = determine_routed_model(&config, "gpt-4o", "Hi there");
         assert_eq!(model_routed, "deepseek/deepseek-chat");
     }
+
+    #[test]
+    fn test_is_authorized() {
+        use axum::http::HeaderMap;
+
+        // Unset token -> unauthorized
+        std::env::remove_var("OPENZ_GATEWAY_TOKEN");
+        let headers = HeaderMap::new();
+        assert!(!is_authorized(&headers, None));
+        assert!(!is_authorized(&headers, Some("test")));
+
+        // Empty token -> unauthorized
+        std::env::set_var("OPENZ_GATEWAY_TOKEN", "");
+        assert!(!is_authorized(&headers, None));
+        assert!(!is_authorized(&headers, Some("")));
+
+        // Set token -> verify query token and header
+        std::env::set_var("OPENZ_GATEWAY_TOKEN", "super-secret-token");
+        assert!(!is_authorized(&headers, None));
+        assert!(!is_authorized(&headers, Some("wrong-token")));
+        assert!(is_authorized(&headers, Some("super-secret-token")));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_static("Bearer super-secret-token"),
+        );
+        assert!(is_authorized(&headers, None));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_static("Bearer wrong-token"),
+        );
+        assert!(!is_authorized(&headers, None));
+
+        // Clean up
+        std::env::remove_var("OPENZ_GATEWAY_TOKEN");
+    }
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut accum = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        accum |= x ^ y;
+    }
+    accum == 0
+}
+
+fn secure_compare(a: &str, b: &str) -> bool {
+    use sha2::{Sha256, Digest};
+    let hash_a = Sha256::digest(a.as_bytes());
+    let hash_b = Sha256::digest(b.as_bytes());
+    constant_time_eq(&hash_a, &hash_b)
 }
 
 fn is_authorized(headers: &axum::http::HeaderMap, query_token: Option<&str>) -> bool {
     if let Ok(expected) = std::env::var("OPENZ_GATEWAY_TOKEN") {
         if expected.is_empty() {
-            return true;
+            return false;
         }
         if let Some(tok) = query_token {
-            if tok == expected {
+            if secure_compare(tok, &expected) {
                 return true;
             }
         }
         if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
             if let Ok(auth_str) = auth_header.to_str() {
                 if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                    if token.trim() == expected {
+                    if secure_compare(token.trim(), &expected) {
                         return true;
                     }
                 }
             }
         }
-        false
-    } else {
-        true
     }
+    false
 }
