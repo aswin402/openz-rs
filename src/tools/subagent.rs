@@ -2513,14 +2513,16 @@ fn filter_tools_for_subagent(subagent_name: &str, all_tools: &[Arc<dyn Tool>]) -
         _ => None,
     };
 
-    if let Some(allowed) = allowed_names {
+    let mut filtered: Vec<Arc<dyn Tool>> = if let Some(allowed) = allowed_names {
         all_tools.iter()
             .filter(|t| allowed.contains(&t.name()))
             .cloned()
             .collect()
     } else {
         all_tools.to_vec()
-    }
+    };
+    filtered.retain(|t| t.name() != "send_remote_input");
+    filtered
 }
 
 #[cfg(test)]

@@ -51,7 +51,7 @@ impl ToolRegistry {
             let (config, provider, session_manager) = self.context.as_ref()?;
             let mut parent_tools = Vec::new();
             for tool in self.static_tools.values() {
-                if tool.name() != "delegate_task" && tool.name() != "parallel_research" {
+                if tool.name() != "delegate_task" && tool.name() != "parallel_research" && tool.name() != "send_remote_input" {
                     parent_tools.push(tool.clone());
                 }
             }
@@ -69,7 +69,7 @@ impl ToolRegistry {
             let (config, provider, session_manager) = self.context.as_ref()?;
             let mut parent_tools = Vec::new();
             for tool in self.static_tools.values() {
-                if tool.name() != "delegate_task" && tool.name() != "parallel_research" {
+                if tool.name() != "delegate_task" && tool.name() != "parallel_research" && tool.name() != "send_remote_input" {
                     parent_tools.push(tool.clone());
                 }
             }
@@ -87,7 +87,7 @@ impl ToolRegistry {
             let (config, provider, session_manager) = self.context.as_ref()?;
             let mut parent_tools = Vec::new();
             for tool in self.static_tools.values() {
-                if tool.name() != "delegate_task" && tool.name() != "parallel_research" && tool.name() != "evaluator_optimizer_loop" {
+                if tool.name() != "delegate_task" && tool.name() != "parallel_research" && tool.name() != "evaluator_optimizer_loop" && tool.name() != "send_remote_input" {
                     parent_tools.push(tool.clone());
                 }
             }
@@ -112,7 +112,7 @@ impl ToolRegistry {
 
         let mut parent_tools = Vec::new();
         for tool in self.static_tools.values() {
-            if tool.name() != "delegate_task" && tool.name() != "parallel_research" {
+            if tool.name() != "delegate_task" && tool.name() != "parallel_research" && tool.name() != "send_remote_input" {
                 parent_tools.push(tool.clone());
             }
         }

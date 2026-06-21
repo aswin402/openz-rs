@@ -398,7 +398,12 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.18 (Latest Release)
+### v0.0.19 (Latest Release)
+*   **Security: Subagent Loopback Isolation:** Excluded `SendRemoteInputTool` (`send_remote_input`) from dynamically constructed subagent tool lists (`delegate_task`, `parallel_research`, `evaluator_optimizer_loop`, and custom profiles) to prevent loopback command/prompt injection from nested child loops.
+*   **Refactor: Subagent Tool Filtering:** Added a secondary restriction in `filter_tools_for_subagent` to strip out `send_remote_input` from all allowed profile lists.
+*   **Maintenance: Version Bump:** Bumped to v0.0.19. All 118 tests passing, 0 clippy warnings.
+
+### v0.0.18
 *   **Bugfix: Discord Sequence & Heartbeat Tracking:** Renamed `_s` to `s` in `GatewayMessage` to correctly deserialize Discord's sequence numbers, and populated the sequence tracker inside the background heartbeat payload to prevent prolonged session disconnections.
 *   **Refactor: Raw-Mode Output & Custom Error Stream:** Added raw-mode compatible `tui_eprintln!` and `tui_eprint!` helpers to prevent line formatting corruption when writing to `stderr`. Updated gateway shutdown logs to use `tui_println!`.
 *   **Refactor: Regex Pre-compilation & Caching:** Swapped inline Regex compilations inside terminal formatting functions with static precompiled `OnceLock` instances.
