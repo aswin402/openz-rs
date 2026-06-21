@@ -84,7 +84,17 @@ impl Tool for GitProviderTool {
         let token_arg = arguments.get("token").and_then(|t| t.as_str()).map(|s| s.to_string());
         let api_base_arg = arguments.get("api_base").and_then(|b| b.as_str()).map(|s| s.to_string());
 
-        let client = reqwest::Client::new();
+        let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+            if crate::tools::web::validate_url_sync(attempt.url()).is_err() {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        });
+
+        let client = reqwest::Client::builder()
+            .redirect(redirect_policy)
+            .build()?;
 
         match platform {
             "github" => {
@@ -94,6 +104,7 @@ impl Tool for GitProviderTool {
                     .ok_or_else(|| anyhow!("GitHub token not found. Please provide it in the token argument or set GITHUB_TOKEN environment variable."))?;
 
                 let api_base = api_base_arg.unwrap_or_else(|| "https://api.github.com".to_string());
+                crate::tools::web::validate_url(&api_base).await?;
 
                 let mut headers = HeaderMap::new();
                 headers.insert(USER_AGENT, HeaderValue::from_static("openz"));
@@ -203,6 +214,7 @@ impl Tool for GitProviderTool {
                     .ok_or_else(|| anyhow!("GitLab token not found. Please provide it in the token argument or set GITLAB_TOKEN environment variable."))?;
 
                 let api_base = api_base_arg.unwrap_or_else(|| "https://gitlab.com/api/v4".to_string());
+                crate::tools::web::validate_url(&api_base).await?;
                 let urlencoded_repo = percent_encoding::utf8_percent_encode(repo, percent_encoding::NON_ALPHANUMERIC).to_string();
 
                 let mut headers = HeaderMap::new();
@@ -356,5 +368,28 @@ mod tests {
             "action": "list_issues"
         })).await;
         assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_git_provider_ssrf_blocking() {
+        let tool = GitProviderTool;
+
+        // SSRF target: local loopback
+        let res = tool.call(&json!({
+            "action": "list_issues",
+            "repo": "owner/repo",
+            "api_base": "http://127.0.0.1:8080",
+            "token": "dummy_token"
+        })).await;
+        assert!(res.is_err(), "Loopback API base should be blocked by SSRF filter");
+
+        // SSRF target: local domain
+        let res = tool.call(&json!({
+            "action": "list_issues",
+            "repo": "owner/repo",
+            "api_base": "http://localhost:8080",
+            "token": "dummy_token"
+        })).await;
+        assert!(res.is_err(), "Localhost API base should be blocked by SSRF filter");
     }
 }

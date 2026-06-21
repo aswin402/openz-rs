@@ -17,7 +17,7 @@ fn web_re_newlines() -> &'static Regex {
 }
 
 /// Validate that an IP address is safe (not private, loopback, or reserved).
-fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
+pub fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => {
             !(v4.is_private() || v4.is_loopback() || v4.is_link_local()
@@ -46,7 +46,7 @@ fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
     }
 }
 
-fn validate_url_sync(url: &reqwest::Url) -> Result<()> {
+pub fn validate_url_sync(url: &reqwest::Url) -> Result<()> {
     let host = url.host_str().ok_or_else(|| anyhow!("URL has no host"))?.to_lowercase();
 
     // Block non-HTTP schemes
@@ -89,7 +89,7 @@ fn validate_url_sync(url: &reqwest::Url) -> Result<()> {
     Ok(())
 }
 
-async fn validate_url(url: &str) -> Result<()> {
+pub async fn validate_url(url: &str) -> Result<()> {
     let parsed = reqwest::Url::parse(url).map_err(|e| anyhow!("Invalid URL: {}", e))?;
     validate_url_sync(&parsed)
 }
