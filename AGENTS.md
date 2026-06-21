@@ -33,7 +33,7 @@ No Makefile; no CI config (GitHub Actions, etc.) present.
 | `subagent` | TUI manager for subagent profiles |
 | `sop list \| instances \| trigger \| resume` | SOP workflow engine |
 | `mcp-bridge --port <N> -- <cmd> [args...]` | gRPC-to-stdio MCP bridge |
-| `logs` | View real-time structured logs in a live TUI viewer |
+| `logs` | View real-time color-coded structured logs (supports `--path <file>`, `--tail <lines>`, `--session <prefix|auto>`, and `--level <level>` filters) |
 | `changelog` | View OpenZ hardware footprint specifications and version release history |
 
 ---
@@ -210,8 +210,8 @@ When truncating session history (Compact state at `agent_loop.rs:107-217`), the 
 ### Subagents = tools at the LLM level
 Custom subagent profiles from `~/.openz/subagents.json` are dynamically registered as tools in `ToolRegistry::to_openai_format()` (`tools/mod.rs:100-129`). When the LLM "calls" a subagent name as a tool, `ToolRegistry::get()` (`tools/mod.rs:63-82`) matches it and returns a `DelegateProfileTool`.
 
-### gRPC proto lives inside the repo
-`build.rs` references `proto/mcp.proto` relative to the project root. The proto file is included in the repo at `proto/mcp.proto`.
+### Database tools run in-process
+The `DbInspectorTool` and `DbWriteTool` (`src/tools/db_inspector.rs`) execute SQL queries directly against the SQLite database using the `rusqlite` crate, completely eliminating shell/argument spawning of the `sqlite3` CLI process for safety.
 
 ---
 
