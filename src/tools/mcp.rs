@@ -50,6 +50,8 @@ pub struct McpClientInner {
     client_type: McpClientType,
     next_id: usize,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    command: String,
+    args: Vec<String>,
 }
 
 impl Drop for McpClientInner {
@@ -144,6 +146,8 @@ impl McpClient {
                     },
                     next_id: 2,
                     shutdown_tx: None,
+                    command: cmd.clone(),
+                    args: args_vec.clone(),
                 };
 
                 return Ok(McpClient(Arc::new(Mutex::new(Some(client)))));
@@ -217,6 +221,8 @@ impl McpClient {
                 },
                 next_id: 2,
                 shutdown_tx: Some(shutdown_tx),
+                command: cmd.clone(),
+                args: args_vec.clone(),
             };
 
             Ok(McpClient(Arc::new(Mutex::new(Some(client)))))
@@ -314,6 +320,37 @@ impl McpClient {
         }
     }
 
+    pub async fn ping(&self) -> Result<()> {
+        let self_clone = self.clone();
+        let fut = async move {
+            let mut lock = self_clone.0.lock().await;
+            let client = lock.as_mut().ok_or_else(|| anyhow!("Client closed"))?;
+
+            match &mut client.client_type {
+                McpClientType::Grpc { client: grpc_client, .. } => {
+                    let req = mcp_grpc::McpRequest {
+                        method: "tools/list".to_string(),
+                        params_json: "{}".to_string(),
+                        id: client.next_id as i64,
+                        has_id: true,
+                    };
+                    client.next_id += 1;
+
+                    let resp = grpc_client.call(req).await?.into_inner();
+                    if !resp.error_json.is_empty() {
+                        return Err(anyhow!("MCP error: {}", resp.error_json));
+                    }
+                    Ok(())
+                }
+            }
+        };
+
+        match tokio::time::timeout(std::time::Duration::from_millis(2000), fut).await {
+            Ok(res) => res,
+            Err(_) => Err(anyhow!("MCP ping timed out")),
+        }
+    }
+
     /// Remove a stale entry from the spawn cache so the next spawn creates a fresh connection.
     pub async fn invalidate(command: &str, args: &[String]) {
         let cache_key = format!("{}:{}", command, args.join(" "));
@@ -400,6 +437,93 @@ impl Tool for LazyMcpToolWrapper {
             }
         }
     }
+}
+
+static HEALTH_CHECK_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn start_mcp_health_checks() {
+    if HEALTH_CHECK_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return; // Already started
+    }
+
+    tokio::spawn(async move {
+        let mut unhealthy_servers: std::collections::HashSet<String> = std::collections::HashSet::new();
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+            let cell = if let Some(cell) = SPAWNED_MCP_CLIENTS.get() {
+                cell
+            } else {
+                continue;
+            };
+
+            // Snapshot cache keys and their details
+            let mut clients_info = Vec::new();
+            {
+                let lock = cell.lock().await;
+                for (cache_key, client) in lock.iter() {
+                    if let Ok(guard) = client.0.try_lock() {
+                        if let Some(inner) = guard.as_ref() {
+                            clients_info.push((
+                                cache_key.clone(),
+                                inner.command.clone(),
+                                inner.args.clone(),
+                                client.clone(),
+                            ));
+                        }
+                    }
+                }
+            }
+
+            for (cache_key, command, args, client) in clients_info {
+                let server_name = {
+                    let parts: Vec<&str> = cache_key.splitn(2, ':').collect();
+                    parts.first().copied().unwrap_or(&command).to_string()
+                };
+
+                match client.ping().await {
+                    Ok(_) => {
+                        if unhealthy_servers.remove(&cache_key) {
+                            let recovery_msg = format!("⚡ MCP Server reconnected: {}", server_name);
+                            tracing::info!("{}", recovery_msg);
+                            crate::channels::send_notification(&recovery_msg);
+                        }
+                    }
+                    Err(e) => {
+                        let is_already_unhealthy = unhealthy_servers.contains(&cache_key);
+                        if !is_already_unhealthy {
+                            unhealthy_servers.insert(cache_key.clone());
+                            let warn_msg = format!(
+                                "⚠️ MCP Server '{}' is unresponsive ({}). Attempting auto-reconnect...",
+                                server_name, e
+                            );
+                            tracing::warn!("{}", warn_msg);
+                            crate::channels::send_notification(&warn_msg);
+                        }
+
+                        // Invalidate and try to spawn
+                        McpClient::invalidate(&command, &args).await;
+                        match McpClient::spawn(&command, &args).await {
+                            Ok(_) => {
+                                unhealthy_servers.remove(&cache_key);
+                                let success_msg = format!("⚡ MCP Server '{}' successfully reconnected!", server_name);
+                                tracing::info!("{}", success_msg);
+                                crate::channels::send_notification(&success_msg);
+                            }
+                            Err(spawn_err) => {
+                                let fail_msg = format!(
+                                    "❌ MCP Server '{}' reconnect failed: {}",
+                                    server_name, spawn_err
+                                );
+                                tracing::error!("{}", fail_msg);
+                                crate::channels::send_notification(&fail_msg);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 
@@ -679,5 +803,11 @@ mod tests {
 
         // Invalidate on something that was never cached should not panic
         McpClient::invalidate("this-command-does-not-exist-12345", &[]).await;
+    }
+
+    #[tokio::test]
+    async fn test_ping_on_closed_client_returns_error() {
+        let client = McpClient(Arc::new(Mutex::new(None)));
+        assert!(client.ping().await.is_err());
     }
 }

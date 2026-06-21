@@ -88,6 +88,7 @@ openz/
 │   │   ├── grep.rs         # grep_search
 │   │   ├── ast_grep.rs     # AST structural search
 │   │   ├── git_manager.rs  # git status/diff/commits
+│   │   ├── github.rs       # git_provider (native GitHub/GitLab integration)
 │   │   ├── cargo_manager.rs# cargo build/check/test
 │   │   ├── outline.rs      # code_outline (structural file parsing)
 │   │   ├── db_inspector.rs # SQLite reader + writer

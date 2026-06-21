@@ -571,6 +571,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::mcp_manager::ManageMcpTool));
     registry.register(std::sync::Arc::new(crate::tools::grep::GrepSearchTool));
     registry.register(std::sync::Arc::new(crate::tools::git_manager::GitManagerTool));
+    registry.register(std::sync::Arc::new(crate::tools::github::GitProviderTool));
     registry.register(std::sync::Arc::new(crate::tools::outline::CodeOutlineTool));
     registry.register(std::sync::Arc::new(DbInspectorTool));
     registry.register(std::sync::Arc::new(DbWriteTool));
@@ -693,6 +694,10 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
 
     // Wait for MCP tools to be registered before extracting the registry
     let _ = mcp_handle.await;
+
+    if has_any_mcp {
+        crate::tools::mcp::start_mcp_health_checks();
+    }
 
     // Now safely unwrap — background task is done, only one Arc reference remains
     let registry = match std::sync::Arc::try_unwrap(registry_arc) {
