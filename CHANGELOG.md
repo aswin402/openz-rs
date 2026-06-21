@@ -401,7 +401,8 @@ Inside `openz agent`, the user can issue direct slash commands:
 ### v0.0.22 (Latest Release)
 *   **MCP Server Health Monitoring (HIGH):** Implemented a background monitoring task (`start_mcp_health_checks`) running every 30 seconds to monitor spawned MCP servers via lightweight `"tools/list"` ping calls. Seamlessly handles connection drop detection, invalidates stale connections, performs background auto-reconnections, and emits warning/recovery notifications across CLI and WebSocket channels.
 *   **Git Integration Tool (HIGH):** Created a native `git_provider` tool in `src/tools/github.rs` to interact with GitHub and GitLab API endpoints natively using `reqwest`. Supports creating pull requests (`create_pr`), listing issues (`list_issues`), searching repository code (`search_code`), and fetching PR/MR diff contents (`get_pr_diff`) without calling external shell processes.
-*   **Maintenance: Version Bump:** Bumped to v0.0.22. All 123 tests passing sequentially.
+*   **Security: Git Base URL SSRF Hardening (HIGH):** Hardened the `git_provider` tool against Server-Side Request Forgery (SSRF) by validating `api_base` values against standard IP checking rules and applying an IP-restricted redirect client policy.
+*   **Maintenance: Version Bump:** Bumped to v0.0.22. All 124 tests passing sequentially.
 
 ### v0.0.21
 *   **Reliability: Tool Timeout Enforcement (HIGH):** Wrapped all tool calls in `tokio::time::timeout` using the configured `tool_timeout_secs` to prevent infinite hangs from unresponsive tools or external subprocesses.
