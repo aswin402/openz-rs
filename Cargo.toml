@@ -1,6 +1,6 @@
 [package]
 name = "openz"
-version = "0.0.20"
+version = "0.0.21"
 edition = "2021"
 
 [workspace]
@@ -59,6 +59,7 @@ imap = { version = "3.0.0-alpha.12", default-features = false, features = ["rust
 lettre = { version = "0.11.7", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
 mailparse = "0.15.0"
 sha2 = "0.10"
+fs2 = "0.4"
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 oxc_parser = "0.30.0"
 oxc_allocator = "0.30.0"

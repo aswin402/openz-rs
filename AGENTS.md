@@ -234,7 +234,7 @@ Located at `~/.openz/config.json` (or `$OPENZ_CONFIG_DIR/config.json`). Structur
 | Section | Key fields |
 |---|---|
 | `providers` | 13 optional `{api_key, api_base, api_type}` configs |
-| `agents.defaults` | model, provider, max_tokens: 4096, temperature: 0.1, max_messages: 120, max_tool_iterations: 200, caveman_mode: true |
+| `agents.defaults` | model, provider, max_tokens: 4096, temperature: 0.1, max_messages: 120, max_tool_iterations: 200, caveman_mode: true, tool_timeout_secs: 120, streaming: true |
 | `channels` | websocket {port: 8765, host: 127.0.0.1}, telegram, discord, whatsapp |
 | `mcp_servers` | Map of name → `{command, args, enabled}` |
 

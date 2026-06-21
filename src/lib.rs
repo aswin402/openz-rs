@@ -9,3 +9,4 @@ pub mod cron;
 pub mod sop;
 pub mod subagents;
 pub mod logs;
+pub mod shutdown;

@@ -86,10 +86,22 @@ pub struct AgentDefaults {
     pub tool_output_limit: Option<usize>,
     #[serde(default = "default_enable_sandbox", alias = "enable_sandbox")]
     pub enable_sandbox: bool,
+    #[serde(default = "default_tool_timeout_secs", alias = "tool_timeout_secs")]
+    pub tool_timeout_secs: u64,
+    #[serde(default = "default_streaming", alias = "streaming")]
+    pub streaming: bool,
 }
 
 fn default_enable_sandbox() -> bool {
     false
+}
+
+fn default_streaming() -> bool {
+    true
+}
+
+fn default_tool_timeout_secs() -> u64 {
+    120
 }
 
 fn default_security_mode() -> String {
@@ -154,6 +166,8 @@ impl Default for AgentDefaults {
             security_mode: default_security_mode(),
             tool_output_limit: None,
             enable_sandbox: default_enable_sandbox(),
+            tool_timeout_secs: default_tool_timeout_secs(),
+            streaming: default_streaming(),
         }
     }
 }

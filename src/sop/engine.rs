@@ -89,6 +89,7 @@ pub async fn run_sop_instance_inner(config: Config, instance_id: String, simulat
                     Ok(crate::agent::RunResult {
                         content: format!("[Simulated Output for Step: {}]", def_step_clone.name),
                         tools_used: Vec::new(),
+                        streamed: false,
                     })
                 } else {
                     match prepare_agent_and_prompt(&config_clone, &def_step_clone, &prompt).await {

@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::fs::File;
+use fs2::FileExt;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use sha2::{Sha256, Digest};
@@ -123,6 +125,27 @@ impl SessionManager {
     fn file_path(&self, key: &str) -> PathBuf {
         let safe_key = key.replace(":", "_").replace("/", "_").replace("\\", "_");
         self.dir.join(format!("{}.json", safe_key))
+    }
+
+    fn lock_path(&self, key: &str) -> PathBuf {
+        let safe_key = key.replace(":", "_").replace("/", "_").replace("\\", "_");
+        self.dir.join(format!("{}.lock", safe_key))
+    }
+
+    pub fn acquire_lock(&self, key: &str) -> Result<File> {
+        if !self.dir.exists() {
+            fs::create_dir_all(&self.dir)?;
+        }
+        let path = self.lock_path(key);
+        let file = File::create(&path)
+            .with_context(|| format!("Failed to create lock file {:?}", path))?;
+        file.try_lock_exclusive()
+            .with_context(|| format!(
+                "Session '{}' is locked by another openz process. \
+                 Only one agent can use a session at a time.",
+                key
+            ))?;
+        Ok(file)
     }
 
     pub fn get_or_create(&self, key: &str) -> Session {

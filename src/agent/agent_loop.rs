@@ -30,6 +30,7 @@ pub struct AgentLoop {
 pub struct RunResult {
     pub content: String,
     pub tools_used: Vec<String>,
+    pub streamed: bool,
 }
 
 struct ActivityGuard<'a> {
@@ -156,6 +157,57 @@ impl AgentLoop {
         chat_result
     }
 
+    async fn chat_stream_with_fallback(
+        &self,
+        active_provider: &mut Arc<dyn LLMProvider>,
+        system_prompt: &str,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+        settings: &GenerationSettings,
+        activity_msg: &str,
+    ) -> Result<std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<crate::providers::ChatStreamChunk>> + Send>>> {
+        let chat_fut = active_provider.chat_stream(system_prompt, messages, tools, settings);
+        let mut chat_result = with_spinner(activity_msg, chat_fut).await;
+
+        if chat_result.is_err() {
+            let mut fallbacks = Vec::new();
+            for fallback in &self.config.agents.defaults.fallback_models {
+                if let Some(s) = fallback.as_str() {
+                    if !s.trim().is_empty() {
+                        fallbacks.push(s.trim().to_string());
+                    }
+                }
+            }
+
+            let mut resolved_fallback = false;
+            for fallback_model in fallbacks {
+                let silent = crate::agent::style::spinner::is_silent();
+                if !silent {
+                    crate::tui_println!(
+                        "{}▲ Primary provider failed. Attempting fallback model: {}{}",
+                        AURA_GOLD, fallback_model, COLOR_RESET
+                    );
+                }
+                if let Ok(fallback_provider) = crate::tools::subagent::build_provider_for_model(&self.config, &fallback_model) {
+                    let chat_fut = fallback_provider.chat_stream(system_prompt, messages, tools, settings);
+                    chat_result = with_spinner(activity_msg, chat_fut).await;
+                    if chat_result.is_ok() {
+                        resolved_fallback = true;
+                        *active_provider = fallback_provider;
+                        break;
+                    }
+                }
+            }
+
+            if !resolved_fallback {
+                let chat_fut = active_provider.chat_stream(system_prompt, messages, tools, settings);
+                chat_result = with_spinner(activity_msg, chat_fut).await;
+            }
+        }
+
+        chat_result
+    }
+
     pub async fn run(&self, user_content: &str, session_key: &str) -> Result<RunResult> {
         let lock = get_session_lock(session_key);
         let _guard = lock.lock().await;
@@ -201,10 +253,15 @@ impl AgentLoop {
         let mut tools_used = Vec::new();
         let mut interaction_id = None;
         let mut turn_errors = Vec::new();
+        let mut _session_file_lock = None;
+        let mut streamed = false;
 
         while state != TurnState::Done {
             match state {
                 TurnState::Restore => {
+                    _session_file_lock = Some(self.session_manager.acquire_lock(session_key).map_err(|e| {
+                        anyhow::anyhow!("Cannot start session: {}", e)
+                    })?);
                     session = self.session_manager.get_or_create(session_key);
                     if !user_content.starts_with('/') {
                         interaction_id = crate::tools::shared_memory::log_interaction(session_key, user_content).await.ok();
@@ -713,7 +770,102 @@ impl AgentLoop {
                         
                         let activity_msg = format!("{}▶ Thinking{}", RED_ORANGE, COLOR_RESET);
                         let start_time = std::time::Instant::now();
-                        let mut resp = self.chat_with_fallback(&mut active_provider, &system_prompt, &messages, &tools_openai, &settings, &activity_msg).await?;
+                        let mut resp = if self.config.agents.defaults.streaming {
+                            let mut stream = self.chat_stream_with_fallback(&mut active_provider, &system_prompt, &messages, &tools_openai, &settings, &activity_msg).await?;
+                            let silent = crate::agent::style::spinner::is_silent();
+                            
+                            let mut full_content = String::new();
+                            let mut full_reasoning = String::new();
+                            let mut finish_reason = "stop".to_string();
+                            
+                            struct PartialToolCall {
+                                id: String,
+                                name: String,
+                                arguments: String,
+                            }
+                            let mut partial_tool_calls = std::collections::HashMap::<usize, PartialToolCall>::new();
+
+                            use futures_util::StreamExt;
+                            while let Some(chunk) = stream.next().await {
+                                match chunk? {
+                                    crate::providers::ChatStreamChunk::Content(text) => {
+                                        full_content.push_str(&text);
+                                        if !silent {
+                                            let term_text = text.replace('\n', "\r\n");
+                                            print!("{}", term_text);
+                                            let _ = std::io::stdout().flush();
+                                        }
+                                        send_progress_update(session_key, &text).await;
+                                    }
+                                    crate::providers::ChatStreamChunk::Reasoning(text) => {
+                                        full_reasoning.push_str(&text);
+                                        if !silent {
+                                            let term_text = text.replace('\n', "\r\n");
+                                            print!("{}", term_text);
+                                            let _ = std::io::stdout().flush();
+                                        }
+                                        send_progress_update(session_key, &text).await;
+                                    }
+                                    crate::providers::ChatStreamChunk::ToolCall { index, id, name, arguments } => {
+                                        let entry = partial_tool_calls.entry(index).or_insert_with(|| PartialToolCall {
+                                            id: String::new(),
+                                            name: String::new(),
+                                            arguments: String::new(),
+                                        });
+                                        if let Some(val) = id {
+                                            entry.id = val;
+                                        }
+                                        if let Some(val) = name {
+                                            entry.name = val;
+                                        }
+                                        if let Some(val) = arguments {
+                                            entry.arguments.push_str(&val);
+                                        }
+                                    }
+                                    crate::providers::ChatStreamChunk::Done { finish_reason: reason } => {
+                                        if let Some(r) = reason {
+                                            finish_reason = r;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Collect and parse tool calls
+                            let mut tool_calls = Vec::new();
+                            let mut sorted_keys: Vec<_> = partial_tool_calls.keys().collect();
+                            sorted_keys.sort();
+                            for k in sorted_keys {
+                                if let Some(ptc) = partial_tool_calls.get(k) {
+                                    let args_parsed = match serde_json::from_str(&ptc.arguments) {
+                                        Ok(parsed) => parsed,
+                                        Err(e) => {
+                                            let repaired = ptc.arguments.replace("\n", "\\n").replace("\r", "\\r");
+                                            serde_json::from_str(&repaired).unwrap_or_else(|_| {
+                                                let mut map = serde_json::Map::new();
+                                                map.insert("parse_error".to_string(), serde_json::Value::String(e.to_string()));
+                                                serde_json::Value::Object(map)
+                                            })
+                                        }
+                                    };
+                                    tool_calls.push(crate::providers::ToolCallRequest {
+                                        id: ptc.id.clone(),
+                                        name: ptc.name.clone(),
+                                        arguments: args_parsed,
+                                    });
+                                }
+                            }
+
+                            streamed = true;
+
+                            crate::providers::LLMResponse {
+                                content: if full_content.is_empty() { None } else { Some(full_content) },
+                                tool_calls,
+                                finish_reason,
+                                reasoning_content: if full_reasoning.is_empty() { None } else { Some(full_reasoning) },
+                            }
+                        } else {
+                            self.chat_with_fallback(&mut active_provider, &system_prompt, &messages, &tools_openai, &settings, &activity_msg).await?
+                        };
                         
                         // Handle potential response truncation (finish_reason = "length") by auto-continuing
                         if resp.finish_reason == "length" {
@@ -933,9 +1085,11 @@ impl AgentLoop {
                             } else {
                                 match self.tools.get(&call.name) {
                                     Some(t) => {
+                                        let tool_timeout = std::time::Duration::from_secs(self.config.agents.defaults.tool_timeout_secs);
                                         let fut = t.call(&call.arguments);
-                                        match with_spinner(&tool_spinner_msg, fut).await {
-                                            Ok(res) => {
+                                        let timed_fut = tokio::time::timeout(tool_timeout, fut);
+                                        match with_spinner(&tool_spinner_msg, timed_fut).await {
+                                            Ok(Ok(res)) => {
                                                 let success_msg = format!("✓ *{}*", formatted_args);
                                                 send_progress_update(session_key, &success_msg).await;
                                                 if !silent {
@@ -944,7 +1098,7 @@ impl AgentLoop {
                                                 }
                                                 res
                                             }
-                                            Err(e) => {
+                                            Ok(Err(e)) => {
                                                 let error_str = e.to_string();
                                                 turn_errors.push(format!("Tool {} failed: {}", call.name, error_str));
                                                 let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, error_str);
@@ -956,6 +1110,19 @@ impl AgentLoop {
                                                 serde_json::json!({
                                                     "error": error_str,
                                                     "self_healing_suggestion": hint
+                                                })
+                                            }
+                                            Err(_) => {
+                                                let timeout_msg = format!("Tool '{}' timed out after {}s", call.name, self.config.agents.defaults.tool_timeout_secs);
+                                                turn_errors.push(timeout_msg.clone());
+                                                let fail_msg = format!("⏱️ *{}* - Timed out", formatted_args);
+                                                send_progress_update(session_key, &fail_msg).await;
+                                                if !silent {
+                                                    crate::tui_println!("{}⏱️ {} - Timed out after {}s{}", AURA_GOLD, formatted_args, self.config.agents.defaults.tool_timeout_secs, COLOR_RESET);
+                                                }
+                                                serde_json::json!({
+                                                    "error": timeout_msg,
+                                                    "hint": "The tool exceeded the time limit. Try a more specific query, a smaller scope, or break the task into steps."
                                                 })
                                             }
                                         }
@@ -1471,6 +1638,7 @@ impl AgentLoop {
         Ok(RunResult {
             content: final_content,
             tools_used,
+            streamed,
         })
     }
 }

@@ -62,5 +62,39 @@ async fn main() -> anyhow::Result<()> {
             .init();
     }
 
+    let _shutdown_rx = openz::shutdown::init();
+
+    tokio::spawn(async {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm = signal(SignalKind::terminate())
+                .expect("Failed to register SIGTERM handler");
+            let mut sigint = signal(SignalKind::interrupt())
+                .expect("Failed to register SIGINT handler");
+            tokio::select! {
+                _ = sigint.recv() => {
+                    tracing::info!("Received SIGINT/Ctrl+C");
+                },
+                _ = sigterm.recv() => {
+                    tracing::info!("Received SIGTERM");
+                },
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            tokio::signal::ctrl_c().await.ok();
+            tracing::info!("Received Ctrl+C/SIGINT");
+        }
+
+        tracing::info!("Shutdown signal received — initiating graceful exit");
+        openz::shutdown::trigger();
+
+        // Give in-flight tools up to 5 seconds to finish, then force exit
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        tracing::warn!("Forced exit after 5s graceful window");
+        std::process::exit(0);
+    });
+
     openz::cli::run_cli().await
 }

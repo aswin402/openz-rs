@@ -21,6 +21,21 @@ pub struct ToolCallRequest {
     pub arguments: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ChatStreamChunk {
+    Content(String),
+    Reasoning(String),
+    ToolCall {
+        index: usize,
+        id: Option<String>,
+        name: Option<String>,
+        arguments: Option<String>,
+    },
+    Done {
+        finish_reason: Option<String>,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct LLMResponse {
     pub content: Option<String>,
@@ -193,6 +208,36 @@ pub trait LLMProvider: Send + Sync {
         tools: &[serde_json::Value],
         settings: &GenerationSettings,
     ) -> Result<LLMResponse>;
+
+    async fn chat_stream(
+        &self,
+        system_prompt: &str,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+        settings: &GenerationSettings,
+    ) -> Result<std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<ChatStreamChunk>> + Send>>> {
+        let resp = self.chat(system_prompt, messages, tools, settings).await?;
+        let mut chunks = Vec::new();
+        if let Some(reasoning) = resp.reasoning_content {
+            chunks.push(ChatStreamChunk::Reasoning(reasoning));
+        }
+        if let Some(content) = resp.content {
+            chunks.push(ChatStreamChunk::Content(content));
+        }
+        for (idx, tc) in resp.tool_calls.into_iter().enumerate() {
+            chunks.push(ChatStreamChunk::ToolCall {
+                index: idx,
+                id: Some(tc.id),
+                name: Some(tc.name),
+                arguments: Some(tc.arguments.to_string()),
+            });
+        }
+        chunks.push(ChatStreamChunk::Done {
+            finish_reason: Some(resp.finish_reason),
+        });
+        let stream = futures_util::stream::iter(chunks.into_iter().map(Ok));
+        Ok(Box::pin(stream))
+    }
 }
 
 pub mod openai;

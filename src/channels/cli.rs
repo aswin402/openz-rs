@@ -1005,6 +1005,19 @@ fn read_line_raw(
     )?;
 
     loop {
+        if let Some(rx) = crate::shutdown::receiver() {
+            if *rx.borrow() {
+                if lines_printed > 1 {
+                    for _ in 0..(lines_printed - 1) {
+                        print!("\r\n\x1b[2K");
+                    }
+                    print!("\x1b[{}A\r", lines_printed - 1);
+                }
+                let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);
+                let _ = disable_raw_mode();
+                return Ok(("/exit".to_string(), None));
+            }
+        }
         // Process any pending notifications first
         let mut notifications = Vec::new();
         if let Ok(mut pending) = get_pending_notifications().lock() {
@@ -2106,8 +2119,10 @@ impl CliChannel {
             
             match run_res {
                 Some(Ok(res)) => {
-                    println!();
-                    print_colored_markdown(&res.content);
+                    if !res.streamed {
+                        println!();
+                        print_colored_markdown(&res.content);
+                    }
                     println!();
                     println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
                     

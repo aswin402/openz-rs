@@ -398,7 +398,14 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.20 (Latest Release)
+### v0.0.21 (Latest Release)
+*   **Reliability: Tool Timeout Enforcement (HIGH):** Wrapped all tool calls in `tokio::time::timeout` using the configured `tool_timeout_secs` to prevent infinite hangs from unresponsive tools or external subprocesses.
+*   **Resilience: Graceful Shutdown Coordination (HIGH):** Implemented a global shutdown token and registered SIGTERM/SIGINT signal handlers in `main.rs`. Seamlessly integrated the sync terminal raw-mode input loop in `CliChannel` to exit raw mode cleanly on shutdown, avoiding terminal formatting issues.
+*   **Safety: Cross-Process Session File Locking (HIGH):** Added file-based advisory locking using the `fs2` crate in `SessionManager`. Prevents multiple concurrent `openz` processes from using the same session file and causing data corruption.
+*   **Performance: Real-time Response Streaming (HIGH):** Added `chat_stream` support to `LLMProvider` and implemented SSE chunk parsing in `OpenAIProvider`. Wired up response streaming directly in `AgentLoop`'s Run state for CLI and WebSocket channels, yielding text delta-by-delta while maintaining full tool-call accumulation capability.
+*   **Maintenance: Version Bump:** Bumped to v0.0.21. All 121 tests passing sequentially, 0 clippy warnings.
+
+### v0.0.20
 *   **Security: Default-Deny Gateway Auth (CRITICAL):** Changed authorization to default-reject gateway requests if `OPENZ_GATEWAY_TOKEN` is unset or empty. Added timing-attack protection by hashing tokens with SHA-256 before comparing them in constant-time.
 *   **Security: SSRF Redirect & IPv6 Hardening (CRITICAL):** Configured `WebFetchTool`'s reqwest client with a custom redirect policy validating every hop against `validate_url_sync`. Hardened IPv6 network detection to block loopback, unspecified, multicast, Unique Local Addresses (ULA), link-local unicast, and IPv4-mapped IPv6 addresses.
 *   **Security: SQL Injection CLI Spawning Elimination (CRITICAL):** Replaced all subprocess shell-outs to the `sqlite3` CLI process in `DbInspectorTool` and `DbWriteTool` with an in-process integration using the `rusqlite` crate, completely eliminating shell/argument injections and CLI dot-command executions.
