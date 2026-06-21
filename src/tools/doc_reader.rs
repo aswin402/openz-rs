@@ -3,7 +3,6 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
 use calamine::Reader;
 use docx_rs::{
     read_docx, DocumentChild, ParagraphChild, RunChild,
