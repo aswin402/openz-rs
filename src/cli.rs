@@ -147,9 +147,13 @@ pub enum Command {
         tail: usize,
 
         /// Filter log output to a specific session key prefix.
-        /// e.g. --session cli   --session gateway   --session telegram
+        /// e.g. --session cli   --session gateway   --session telegram   --session auto
         #[arg(long, short)]
         session: Option<String>,
+
+        /// Filter log output by level (error, warn, info, debug, trace)
+        #[arg(long, short = 'l')]
+        level: Option<String>,
     },
 
     /// View the OpenZ changelog and version release details
@@ -238,10 +242,10 @@ pub async fn run_cli() -> Result<()> {
         Command::Agent => {
             handle_agent().await?;
         }
-        Command::Gateway { action } => {
+                Command::Gateway { action } => {
             match action {
                 Some(ChannelAction::Logs { tail }) => {
-                    handle_logs(None, tail, Some("gateway".to_string())).await?;
+                    handle_logs(None, tail, Some("gateway".to_string()), None).await?;
                 }
                 None => handle_gateway().await?,
             }
@@ -249,7 +253,7 @@ pub async fn run_cli() -> Result<()> {
         Command::Telegram { action } => {
             match action {
                 Some(ChannelAction::Logs { tail }) => {
-                    handle_logs(None, tail, Some("telegram".to_string())).await?;
+                    handle_logs(None, tail, Some("telegram".to_string()), None).await?;
                 }
                 None => handle_telegram().await?,
             }
@@ -257,7 +261,7 @@ pub async fn run_cli() -> Result<()> {
         Command::Discord { action } => {
             match action {
                 Some(ChannelAction::Logs { tail }) => {
-                    handle_logs(None, tail, Some("discord".to_string())).await?;
+                    handle_logs(None, tail, Some("discord".to_string()), None).await?;
                 }
                 None => handle_discord().await?,
             }
@@ -265,7 +269,7 @@ pub async fn run_cli() -> Result<()> {
         Command::Whatsapp { action } => {
             match action {
                 Some(ChannelAction::Logs { tail }) => {
-                    handle_logs(None, tail, Some("whatsapp".to_string())).await?;
+                    handle_logs(None, tail, Some("whatsapp".to_string()), None).await?;
                 }
                 None => handle_whatsapp().await?,
             }
@@ -289,8 +293,8 @@ pub async fn run_cli() -> Result<()> {
         Command::Sop { action } => {
             handle_sop(action).await?;
         }
-        Command::Logs { path, tail, session } => {
-            handle_logs(path, tail, session).await?;
+        Command::Logs { path, tail, session, level } => {
+            handle_logs(path, tail, session, level).await?;
         }
         Command::Changelog => {
             handle_changelog().await?;
@@ -304,9 +308,11 @@ async fn handle_logs(
     path: Option<std::path::PathBuf>,
     tail: usize,
     session: Option<String>,
+    level: Option<String>,
 ) -> Result<()> {
     let filter = crate::logs::SessionFilter::from_opt(session.as_deref());
-    crate::logs::run_logs_viewer(path, tail, filter).await
+    let level_filter = crate::logs::LogLevelFilter::from_opt(level.as_deref());
+    crate::logs::run_logs_viewer(path, tail, filter, level_filter).await
 }
 
 async fn handle_changelog() -> Result<()> {

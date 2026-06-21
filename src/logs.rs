@@ -26,19 +26,23 @@ pub fn default_log_path() -> PathBuf {
 }
 
 /// Which sessions to show.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SessionFilter {
     /// Show all sessions (no filter).
     All,
     /// Show only lines that match this session key (prefix match).
     Only(String),
+    /// Automatically follow the most recently active session
+    Auto(Option<String>),
 }
 
 impl SessionFilter {
     /// Build from an optional CLI `--session` string.
     pub fn from_opt(s: Option<&str>) -> Self {
         match s {
-            None | Some("") => SessionFilter::All,
+            None => SessionFilter::All,
+            Some("auto") => SessionFilter::Auto(detect_active_session()),
+            Some(k) if k.is_empty() => SessionFilter::All,
             Some(k) => SessionFilter::Only(k.to_string()),
         }
     }
@@ -48,7 +52,43 @@ impl SessionFilter {
         match self {
             SessionFilter::All => "all sessions".to_string(),
             SessionFilter::Only(k) => format!("session: {}", k),
+            SessionFilter::Auto(None) => "session: auto (detecting...)".to_string(),
+            SessionFilter::Auto(Some(k)) => format!("session: auto ({})", k),
         }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LogLevelFilter {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl LogLevelFilter {
+    pub fn from_opt(s: Option<&str>) -> Self {
+        match s.map(|x| x.to_uppercase()).as_deref() {
+            Some("ERROR") => LogLevelFilter::Error,
+            Some("WARN") => LogLevelFilter::Warn,
+            Some("INFO") => LogLevelFilter::Info,
+            Some("DEBUG") => LogLevelFilter::Debug,
+            Some("TRACE") => LogLevelFilter::Trace,
+            _ => LogLevelFilter::Trace,
+        }
+    }
+
+    pub fn matches(&self, level_str: &str) -> bool {
+        let line_level = match level_str.to_uppercase().as_str() {
+            "ERROR" => LogLevelFilter::Error,
+            "WARN" => LogLevelFilter::Warn,
+            "INFO" => LogLevelFilter::Info,
+            "DEBUG" => LogLevelFilter::Debug,
+            "TRACE" => LogLevelFilter::Trace,
+            _ => return true,
+        };
+        line_level >= *self
     }
 }
 
@@ -127,12 +167,57 @@ fn session_matches(line_session: &Option<String>, filter: &SessionFilter) -> boo
                 Some(s) => s.starts_with(wanted.as_str()),
             }
         }
+        SessionFilter::Auto(opt_wanted) => {
+            match opt_wanted {
+                None => true,
+                Some(wanted) => {
+                    match line_session {
+                        None => true,
+                        Some(s) => s.starts_with(wanted.as_str()),
+                    }
+                }
+            }
+        }
     }
 }
 
 // ── Pretty-print a single line ──────────────────────────────────────────────
 
-fn print_line_filtered(raw: &str, filter: &SessionFilter) {
+fn highlight_message(msg: &str) -> String {
+    static RE_KEY: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re_key = RE_KEY.get_or_init(|| regex::Regex::new(r#""([^"]+)":\s*"#).unwrap());
+
+    static RE_VAL_NUM: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re_val_num = RE_VAL_NUM.get_or_init(|| regex::Regex::new(r#"\b(true|false|null|\d+(\.\d+)?)\b"#).unwrap());
+
+    static RE_STR_LITERAL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re_str_literal = RE_STR_LITERAL.get_or_init(|| regex::Regex::new(r#""([^\x1b"]+)""#).unwrap());
+
+    if !msg.contains('{') && !msg.contains('[') {
+        return msg.to_string();
+    }
+
+    let start_idx = msg.find('{').or_else(|| msg.find('[')).unwrap_or(0);
+    let prefix = &msg[..start_idx];
+    let json_part = &msg[start_idx..];
+
+    let highlighted_json = json_part.to_string();
+    let highlighted_json = re_key.replace_all(&highlighted_json, |caps: &regex::Captures| {
+        format!("\"{}{}{}\": ", CYAN, &caps[1], RESET)
+    }).to_string();
+
+    let highlighted_json = re_val_num.replace_all(&highlighted_json, |caps: &regex::Captures| {
+        format!("{}{}{}", ORANGE, &caps[1], RESET)
+    }).to_string();
+
+    let highlighted_json = re_str_literal.replace_all(&highlighted_json, |caps: &regex::Captures| {
+        format!("\"{}{}{}\"", GREEN, &caps[1], RESET)
+    }).to_string();
+
+    format!("{}{}", prefix, highlighted_json)
+}
+
+fn print_line_filtered(raw: &str, filter: &SessionFilter, level_filter: &LogLevelFilter) {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
@@ -143,6 +228,10 @@ fn print_line_filtered(raw: &str, filter: &SessionFilter) {
     };
 
     if !session_matches(&p.session, filter) {
+        return;
+    }
+
+    if !level_filter.matches(p.level) {
         return;
     }
 
@@ -177,6 +266,19 @@ fn print_line_filtered(raw: &str, filter: &SessionFilter) {
         p.target.to_string()
     };
 
+    // Target grouping colors:
+    let target_col = if p.target.starts_with("openz::agent::") {
+        PURPLE
+    } else if p.target.starts_with("openz::providers::") {
+        CYAN
+    } else if p.target.starts_with("openz::tools::") {
+        GOLD
+    } else if p.target.starts_with("openz::channels::") {
+        GREEN
+    } else {
+        BLUE
+    };
+
     // Session badge (optional) — shown in cyan after the message
     let session_badge = match &p.session {
         Some(s) => {
@@ -187,25 +289,29 @@ fn print_line_filtered(raw: &str, filter: &SessionFilter) {
         None => String::new(),
     };
 
+    let highlighted_msg = highlight_message(p.message);
+
     let _ = writeln!(
         out,
-        "{SLATE}{DIM}{ts}{RESET}  {BOLD}{level_col}{level_label}{RESET}  {BLUE}{target:<35}{RESET}  {msg_col}{}{RESET}{session_badge}",
-        p.message,
+        "{SLATE}{DIM}{ts}{RESET}  {BOLD}{level_col}{level_label}{RESET}  {target_col}{target:<35}{RESET}  {msg_col}{}{RESET}{session_badge}",
+        highlighted_msg,
         ts = ts,
         level_col = level_col,
         level_label = level_label,
         target = target,
+        target_col = target_col,
         msg_col = msg_col,
     );
 }
 
 // ── Header banner ───────────────────────────────────────────────────────────
 
-fn print_header(path: &std::path::Path, tail: usize, filter: &SessionFilter) {
+fn print_header(path: &std::path::Path, tail: usize, filter: &SessionFilter, level_filter: &LogLevelFilter) {
     let fname = path.display();
     let filter_label = filter.label();
+    let level_label = format!("{:?}", level_filter);
     println!(
-        "\n{PURPLE}{BOLD}  ◇ openz{RESET}  {SLATE}live logs{RESET}  {DIM}─{RESET}  {SLATE}{fname}{RESET}  {DIM}(tail {tail}  ·  {filter_label}){RESET}"
+        "\n{PURPLE}{BOLD}  ◇ openz{RESET}  {SLATE}live logs{RESET}  {DIM}─{RESET}  {SLATE}{fname}{RESET}  {DIM}(tail {tail}  ·  {filter_label}  ·  level {level_label}){RESET}"
     );
     println!(
         "{SLATE}{DIM}  {}{RESET}\n",
@@ -223,7 +329,7 @@ fn print_header(path: &std::path::Path, tail: usize, filter: &SessionFilter) {
 
 // ── Tail initial lines ───────────────────────────────────────────────────────
 
-fn print_tail(path: &PathBuf, tail: usize, filter: &SessionFilter) -> Result<u64> {
+fn print_tail(path: &PathBuf, tail: usize, filter: &SessionFilter, level_filter: &LogLevelFilter) -> Result<u64> {
     let mut f = match File::open(path) {
         Ok(f) => f,
         Err(_) => {
@@ -250,7 +356,7 @@ fn print_tail(path: &PathBuf, tail: usize, filter: &SessionFilter) -> Result<u64
     }
 
     for line in &all[start..] {
-        print_line_filtered(line, filter);
+        print_line_filtered(line, filter, level_filter);
     }
 
     // Return current end-of-file position
@@ -270,7 +376,7 @@ fn get_file_id(_metadata: &std::fs::Metadata) -> u64 {
     0
 }
 
-async fn follow(path: &PathBuf, mut pos: u64, filter: SessionFilter) -> Result<()> {
+async fn follow(path: &PathBuf, mut pos: u64, mut filter: SessionFilter, level_filter: LogLevelFilter) -> Result<()> {
     let ctrl_c = tokio::signal::ctrl_c();
     tokio::pin!(ctrl_c);
 
@@ -283,6 +389,7 @@ async fn follow(path: &PathBuf, mut pos: u64, filter: SessionFilter) -> Result<(
     }
 
     let mut buffer = Vec::new();
+    let mut last_session_check = std::time::Instant::now();
 
     loop {
         tokio::select! {
@@ -292,6 +399,21 @@ async fn follow(path: &PathBuf, mut pos: u64, filter: SessionFilter) -> Result<(
                 break;
             }
             _ = interval.tick() => {
+                if last_session_check.elapsed() >= Duration::from_secs(1) {
+                    last_session_check = std::time::Instant::now();
+                    if let SessionFilter::Auto(ref current) = filter {
+                        let active = detect_active_session();
+                        if active != *current {
+                            if let Some(ref new_id) = active {
+                                println!("\n  {CYAN}{DIM}◉ active session changed: {new_id}{RESET}\n");
+                            } else {
+                                println!("\n  {CYAN}{DIM}◉ active session lost (idle){RESET}\n");
+                            }
+                            filter = SessionFilter::Auto(active);
+                        }
+                    }
+                }
+
                 if let Ok(mut f) = File::open(path) {
                     if let Ok(metadata) = f.metadata() {
                         let len = metadata.len();
@@ -323,7 +445,7 @@ async fn follow(path: &PathBuf, mut pos: u64, filter: SessionFilter) -> Result<(
                                     let complete_bytes = &buffer[..=last_newline_idx];
                                     let text = String::from_utf8_lossy(complete_bytes);
                                     for line in text.lines() {
-                                        print_line_filtered(line, &filter);
+                                        print_line_filtered(line, &filter, &level_filter);
                                     }
                                     
                                     // Keep only the incomplete trailing bytes in the buffer
@@ -366,6 +488,7 @@ pub async fn run_logs_viewer(
     log_path: Option<PathBuf>,
     tail: usize,
     filter: SessionFilter,
+    level_filter: LogLevelFilter,
 ) -> Result<()> {
     let path = log_path.unwrap_or_else(default_log_path);
 
@@ -373,6 +496,7 @@ pub async fn run_logs_viewer(
     // If All, check activity.json to see if there is a hot session to highlight.
     let effective_filter = match &filter {
         SessionFilter::Only(_) => filter.clone(),
+        SessionFilter::Auto(_) => filter.clone(),
         SessionFilter::All => {
             // We still show all lines; just note if something is active.
             if let Some(active) = detect_active_session() {
@@ -384,14 +508,14 @@ pub async fn run_logs_viewer(
         }
     };
 
-    print_header(&path, tail, &effective_filter);
+    print_header(&path, tail, &effective_filter, &level_filter);
 
-    let pos = print_tail(&path, tail, &effective_filter)?;
+    let pos = print_tail(&path, tail, &effective_filter, &level_filter)?;
 
     // Print live-follow separator
     println!(
         "\n  {PURPLE}{DIM}── live ──{RESET}\n"
     );
 
-    follow(&path, pos, effective_filter).await
+    follow(&path, pos, effective_filter, level_filter).await
 }
