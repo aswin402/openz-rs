@@ -219,7 +219,9 @@ pub async fn trigger_sop(
     let config_clone = config.clone();
     let inst_id_clone = instance_id.clone();
     tokio::spawn(async move {
-        let _ = run_sop_instance(config_clone, inst_id_clone).await;
+        if let Err(e) = run_sop_instance(config_clone, inst_id_clone).await {
+            tracing::error!("SOP background execution failed: {:?}", e);
+        }
     });
 
     Ok(instance_id)
@@ -291,7 +293,9 @@ pub async fn resume_sop(config: Config, instance_id: String) -> Result<()> {
     let config_clone = config.clone();
     let inst_id_clone = instance_id.clone();
     tokio::spawn(async move {
-        let _ = run_sop_instance(config_clone, inst_id_clone).await;
+        if let Err(e) = run_sop_instance(config_clone, inst_id_clone).await {
+            tracing::error!("SOP background resume failed: {:?}", e);
+        }
     });
 
     Ok(())

@@ -47,7 +47,7 @@ static SESSION_LOCKS: std::sync::OnceLock<std::sync::Mutex<std::collections::Has
 
 fn get_session_lock(session_key: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
     let map = SESSION_LOCKS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    let mut guard = map.lock().unwrap();
+    let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
     guard.entry(session_key.to_string())
         .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
         .clone()
@@ -770,6 +770,10 @@ impl AgentLoop {
                         
                         let activity_msg = format!("{}▶ Thinking{}", RED_ORANGE, COLOR_RESET);
                         let start_time = std::time::Instant::now();
+                        // Track if content was already streamed to terminal (to avoid duplicate display)
+                        let mut content_streaming_started = false;
+                        let mut reasoning_printed = false;
+                        let mut current_line_buffer = String::new();
                         let mut resp = if self.config.agents.defaults.streaming {
                             let mut stream = self.chat_stream_with_fallback(&mut active_provider, &system_prompt, &messages, &tools_openai, &settings, &activity_msg).await?;
                             let silent = crate::agent::style::spinner::is_silent();
@@ -777,6 +781,25 @@ impl AgentLoop {
                             let mut full_content = String::new();
                             let mut full_reasoning = String::new();
                             let mut finish_reason = "stop".to_string();
+                            // Track whether we're currently in reasoning phase (for live spinner)
+                            let mut in_reasoning_phase = false;
+
+                            let print_reasoning = |full_reasoning: &str, in_reasoning_phase: &mut bool, reasoning_printed: &mut bool, start_time: std::time::Instant| {
+                                if !*reasoning_printed && !full_reasoning.is_empty() {
+                                    if !silent {
+                                        let elapsed = start_time.elapsed().as_secs_f32();
+                                        print!("\r\x1b[2K");
+                                        print!("{}{}▶ Thought for {:.1}s{}\r\n", COLOR_BOLD, RED_ORANGE, elapsed, COLOR_RESET);
+                                        for line in full_reasoning.trim().lines() {
+                                            print!("{}{}{}\r\n", AURA_SLATE, line.trim(), COLOR_RESET);
+                                        }
+                                        print!("\r\n");
+                                        let _ = std::io::stdout().flush();
+                                    }
+                                    *reasoning_printed = true;
+                                    *in_reasoning_phase = false;
+                                }
+                            };
                             
                             struct PartialToolCall {
                                 id: String,
@@ -789,24 +812,61 @@ impl AgentLoop {
                             while let Some(chunk) = stream.next().await {
                                 match chunk? {
                                     crate::providers::ChatStreamChunk::Content(text) => {
-                                        full_content.push_str(&text);
-                                        if !silent {
-                                            let term_text = text.replace('\n', "\r\n");
-                                            print!("{}", term_text);
+                                        // If we have reasoning content that hasn't been printed yet, print it now
+                                        print_reasoning(&full_reasoning, &mut in_reasoning_phase, &mut reasoning_printed, start_time);
+                                        
+                                        // If we were in reasoning phase but reasoning was empty/already printed, clear the spinner
+                                        if in_reasoning_phase && !silent {
+                                            print!("\r\x1b[2K");
                                             let _ = std::io::stdout().flush();
+                                            in_reasoning_phase = false;
+                                        }
+                                        full_content.push_str(&text);
+                                        for c in text.chars() {
+                                            if c == '\r' {
+                                                continue;
+                                            }
+                                            if c == '\n' {
+                                                if !silent {
+                                                    content_streaming_started = true;
+                                                    print!("\r\x1b[2K");
+                                                    print!("{}", format_markdown_line(&current_line_buffer));
+                                                    print!("\r\n");
+                                                    let _ = std::io::stdout().flush();
+                                                }
+                                                current_line_buffer.clear();
+                                            } else {
+                                                current_line_buffer.push(c);
+                                                if !silent {
+                                                    content_streaming_started = true;
+                                                    print!("{}", c);
+                                                    let _ = std::io::stdout().flush();
+                                                }
+                                            }
                                         }
                                         send_progress_update(session_key, &text).await;
                                     }
                                     crate::providers::ChatStreamChunk::Reasoning(text) => {
                                         full_reasoning.push_str(&text);
+                                        in_reasoning_phase = true;
+                                        // Show a live thinking spinner instead of raw reasoning text
                                         if !silent {
-                                            let term_text = text.replace('\n', "\r\n");
-                                            print!("{}", term_text);
+                                            let elapsed = start_time.elapsed().as_secs_f32();
+                                            print!("\r\x1b[2K{}{}▶ Thinking... {:.1}s{}", COLOR_BOLD, RED_ORANGE, elapsed, COLOR_RESET);
                                             let _ = std::io::stdout().flush();
                                         }
-                                        send_progress_update(session_key, &text).await;
                                     }
                                     crate::providers::ChatStreamChunk::ToolCall { index, id, name, arguments } => {
+                                        // If we have reasoning content that hasn't been printed yet, print it now
+                                        print_reasoning(&full_reasoning, &mut in_reasoning_phase, &mut reasoning_printed, start_time);
+                                        
+                                        // Also clear thinking spinner if active
+                                        if in_reasoning_phase && !silent {
+                                            print!("\r\x1b[2K");
+                                            let _ = std::io::stdout().flush();
+                                            in_reasoning_phase = false;
+                                        }
+                                        
                                         let entry = partial_tool_calls.entry(index).or_insert_with(|| PartialToolCall {
                                             id: String::new(),
                                             name: String::new(),
@@ -828,6 +888,22 @@ impl AgentLoop {
                                         }
                                     }
                                 }
+                            }
+
+                            if in_reasoning_phase && !silent {
+                                print!("\r\x1b[2K");
+                                let _ = std::io::stdout().flush();
+                                in_reasoning_phase = false;
+                            }
+                            
+                            // Print any reasoning that was not printed yet
+                            print_reasoning(&full_reasoning, &mut in_reasoning_phase, &mut reasoning_printed, start_time);
+
+                            // Print the final line in the buffer if any
+                            if !current_line_buffer.is_empty() && !silent {
+                                print!("\r\x1b[2K");
+                                print!("{}", format_markdown_line(&current_line_buffer));
+                                let _ = std::io::stdout().flush();
                             }
 
                             // Collect and parse tool calls
@@ -927,6 +1003,25 @@ impl AgentLoop {
                             }
                         }
                         
+                        // Handle models that send everything as reasoning_content with no content.
+                        // When there's reasoning but no content and no tool calls, the reasoning IS the response.
+                        // Common with DeepSeek-V4 and similar reasoning models.
+                        if resp.content.is_none() && resp.reasoning_content.is_some() && resp.tool_calls.is_empty() {
+                            resp.content = resp.reasoning_content.take();
+                            // If we already printed it as reasoning on the terminal, set streamed = true
+                            // to avoid printing it again in cli.rs
+                            if reasoning_printed {
+                                streamed = true;
+                            } else {
+                                streamed = false;
+                            }
+                            // Clear any thinking spinner that was active on the terminal
+                            if !crate::agent::style::spinner::is_silent() {
+                                print!("\r\x1b[2K");
+                                let _ = std::io::stdout().flush();
+                            }
+                        }
+
                         let duration = start_time.elapsed();
                         
                         let duration_secs = duration.as_secs_f32();
@@ -935,6 +1030,7 @@ impl AgentLoop {
                         let has_tool_calls = !resp.tool_calls.is_empty();
                         
                         if has_reasoning || (has_content && has_tool_calls) {
+                            // Send reasoning/thought summary to non-CLI channels (Telegram, WS, etc.)
                             if has_reasoning {
                                 if let Some(ref reasoning) = resp.reasoning_content {
                                     let reasoning_msg = format!("▶ *Thought*\n\n> {}", reasoning.trim().replace("\n", "\n> "));
@@ -949,19 +1045,34 @@ impl AgentLoop {
                             
                             let silent = crate::agent::style::spinner::is_silent();
                             if !silent {
-                                print!("{}{}▶ Thought for {:.1}s{}\r\n", COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET);
-                                if has_reasoning {
-                                    if let Some(ref reasoning) = resp.reasoning_content {
-                                        for line in reasoning.trim().lines() {
-                                            print!("{}{}{}\r\n", AURA_SLATE, line.trim(), COLOR_RESET);
+                                if streamed {
+                                    // During streaming, the reasoning spinner was already shown and
+                                    // the "Thought for Xs" badge was already printed when content
+                                    // started arriving or when the stream finished. If no content
+                                    // arrived and no reasoning was printed (e.g. pure tool-call-only response),
+                                    // finalize the spinner and print the badge now.
+                                    if !content_streaming_started && !reasoning_printed {
+                                        print!("\r\x1b[2K");
+                                        print!("{}{}▶ Thought for {:.1}s{}\r\n", COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET);
+                                        let _ = std::io::stdout().flush();
+                                    }
+                                } else {
+                                    // Non-streaming path: print the badge and thinking summary
+                                    print!("{}{}▶ Thought for {:.1}s{}\r\n", COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET);
+                                    if has_reasoning {
+                                        if let Some(ref reasoning) = resp.reasoning_content {
+                                            for line in reasoning.trim().lines() {
+                                                print!("{}{}{}\r\n", AURA_SLATE, line.trim(), COLOR_RESET);
+                                            }
+                                        }
+                                    } else if has_content && has_tool_calls {
+                                        if let Some(ref content) = resp.content {
+                                            for line in content.trim().lines() {
+                                                print!("{}{}{}\r\n", AURA_SLATE, line.trim(), COLOR_RESET);
+                                            }
                                         }
                                     }
-                                } else if has_content && has_tool_calls {
-                                    if let Some(ref content) = resp.content {
-                                        for line in content.trim().lines() {
-                                            print!("{}{}{}\r\n", AURA_SLATE, line.trim(), COLOR_RESET);
-                                        }
-                                    }
+                                    let _ = std::io::stdout().flush();
                                 }
                                 print!("\r\n");
                                 let _ = std::io::stdout().flush();
@@ -1300,6 +1411,11 @@ impl AgentLoop {
             let tools_used = tools_used.clone();
 
             tokio::spawn(async move {
+                if let Some(rx) = crate::shutdown::receiver() {
+                    if *rx.borrow() {
+                        return;
+                    }
+                }
                 let mut profile_name = None;
                 let parts_key: Vec<&str> = session_key.split(':').collect();
                 if parts_key.len() >= 2 && parts_key[0] == "subagent" {
@@ -1580,6 +1696,8 @@ impl AgentLoop {
                                 Ok(review) => {
                                     // Update memory
                                     if review.memory_updated {
+                                        let lock = get_session_lock(&session_key);
+                                        let _guard = lock.lock().await;
                                         if let Ok(mut latest_session) = session_manager.load(&session_key) {
                                             latest_session.metadata.insert("memory".to_string(), serde_json::Value::String(review.memory_content.trim().to_string()));
                                             if let Err(e) = session_manager.save(&latest_session) {
@@ -1932,4 +2050,40 @@ fn count_previous_text_responses(messages: &[Message], next_content: &str) -> us
             }
     }
     count
+}
+
+fn format_markdown_line(line: &str) -> String {
+    static RE_BOLD: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static RE_CODE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static RE_ITALIC: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+
+    let re_bold = RE_BOLD.get_or_init(|| regex::Regex::new(r"\*\*(.*?)\*\*").unwrap());
+    let re_code = RE_CODE.get_or_init(|| regex::Regex::new(r"`(.*?)`").unwrap());
+    let re_italic = RE_ITALIC.get_or_init(|| regex::Regex::new(r"\*(.*?)\*").unwrap());
+
+    let light_blue = "\x1b[38;2;135;206;250m";
+    
+    let trimmed = line.trim();
+    if trimmed.chars().all(|c| c == '-') && trimmed.len() >= 3 && !trimmed.is_empty() {
+        return format!("{}──────{}", LIGHT_WHITE, COLOR_RESET);
+    }
+
+    if line.trim_start().starts_with("#") {
+        return format!("{}{}{}", HEADING_BLUE, line, COLOR_RESET);
+    }
+
+    let mut formatted = line.to_string();
+    formatted = formatted
+        .replace("✔", &format!("{}{}{}", EMERALD_GREEN, "✔", COLOR_RESET))
+        .replace("✅", &format!("{}{}{}", EMERALD_GREEN, "✅", COLOR_RESET))
+        .replace("✓", &format!("{}{}{}", EMERALD_GREEN, "✓", COLOR_RESET))
+        .replace("✖", &format!("{}{}{}", ERROR_RED, "✖", COLOR_RESET))
+        .replace("❌", &format!("{}{}{}", ERROR_RED, "❌", COLOR_RESET))
+        .replace("✗", &format!("{}{}{}", ERROR_RED, "✗", COLOR_RESET));
+
+    formatted = re_bold.replace_all(&formatted, &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET)).to_string();
+    formatted = re_code.replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
+    formatted = re_italic.replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
+
+    formatted
 }

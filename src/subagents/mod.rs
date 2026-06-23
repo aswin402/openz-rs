@@ -45,7 +45,7 @@ pub fn load_profiles() -> Result<Vec<SubagentProfile>> {
         })
     });
 
-    let mut cache = cache_mutex.lock().unwrap();
+    let mut cache = cache_mutex.lock().unwrap_or_else(|e| e.into_inner());
 
     if !cache.profiles.is_empty() && cache.last_mtime.is_some() && cache.last_mtime == mtime {
         return Ok(cache.profiles.clone());

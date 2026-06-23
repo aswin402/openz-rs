@@ -41,7 +41,11 @@ impl WhatsAppChannel {
             api_key,
             phone_number_id,
             agent_loop: Arc::new(agent_loop),
-            client: Client::builder().use_rustls_tls().build().unwrap_or_default(),
+            client: Client::builder()
+                .use_rustls_tls()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .unwrap_or_default(),
         }
     }
 }
@@ -119,8 +123,23 @@ impl super::Channel for WhatsAppChannel {
             println!("🤖 WhatsApp Channel webhook server started on http://{}/webhook/whatsapp", addr);
         }
 
+        let mut shutdown_rx = match crate::shutdown::receiver() {
+            Some(rx) => rx,
+            None => {
+                let (_, rx) = tokio::sync::watch::channel(false);
+                rx
+            }
+        };
+
         let listener = TcpListener::bind(&addr).await?;
-        axum::serve(listener, app).await?;
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                if *shutdown_rx.borrow() {
+                    return;
+                }
+                let _ = shutdown_rx.changed().await;
+            })
+            .await?;
 
         Ok(())
     }

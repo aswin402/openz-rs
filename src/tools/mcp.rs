@@ -35,6 +35,20 @@ pub fn clear_memory_mcp_client() {
     }
 }
 
+pub async fn terminate_all_mcp_clients() {
+    let cell = SPAWNED_MCP_CLIENTS.get();
+    if let Some(mutex) = cell {
+        let mut lock = mutex.lock().await;
+        for (_key, client) in lock.drain() {
+            let mut client_lock = client.0.lock().await;
+            if let Some(inner) = client_lock.take() {
+                drop(inner);
+            }
+        }
+    }
+    clear_memory_mcp_client();
+}
+
 pub mod mcp_grpc {
     tonic::include_proto!("mcp");
 }
@@ -361,31 +375,6 @@ impl McpClient {
     }
 }
 
-pub struct McpToolWrapper {
-    pub client: McpClient,
-    pub name: String,
-    pub description: String,
-    pub parameters: Value,
-}
-
-#[async_trait::async_trait]
-impl Tool for McpToolWrapper {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn description(&self) -> &str {
-        &self.description
-    }
-
-    fn parameters(&self) -> Value {
-        self.parameters.clone()
-    }
-
-    async fn call(&self, arguments: &Value) -> Result<Value> {
-        self.client.call_tool(&self.name, arguments).await
-    }
-}
 
 pub struct LazyMcpToolWrapper {
     /// Human-readable MCP server name (e.g. "browser", "spreadsheet")
@@ -448,8 +437,25 @@ pub fn start_mcp_health_checks() {
 
     tokio::spawn(async move {
         let mut unhealthy_servers: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut shutdown_rx = match crate::shutdown::receiver() {
+            Some(rx) => rx,
+            None => {
+                let (_, rx) = tokio::sync::watch::channel(false);
+                rx
+            }
+        };
+
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            if *shutdown_rx.borrow() {
+                break;
+            }
+
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+                _ = shutdown_rx.changed() => {
+                    break;
+                }
+            }
 
             let cell = if let Some(cell) = SPAWNED_MCP_CLIENTS.get() {
                 cell
@@ -550,6 +556,22 @@ fn find_free_port() -> Result<(u16, std::net::TcpListener)> {
     Ok((port, listener))
 }
 
+struct SenderGuard {
+    senders: Arc<Mutex<std::collections::HashMap<i64, tokio::sync::oneshot::Sender<Value>>>>,
+    id: i64,
+}
+
+impl Drop for SenderGuard {
+    fn drop(&mut self) {
+        let senders = self.senders.clone();
+        let id = self.id;
+        tokio::spawn(async move {
+            let mut senders_lock = senders.lock().await;
+            senders_lock.remove(&id);
+        });
+    }
+}
+
 pub struct McpBridgeService {
     writer: Arc<Mutex<tokio::process::ChildStdin>>,
     senders: Arc<Mutex<std::collections::HashMap<i64, tokio::sync::oneshot::Sender<Value>>>>,
@@ -593,6 +615,10 @@ impl mcp_grpc::mcp_service_server::McpService for McpBridgeService {
             let mut senders_lock = self.senders.lock().await;
             senders_lock.insert(req.id, tx);
         }
+        let _guard = SenderGuard {
+            senders: self.senders.clone(),
+            id: req.id,
+        };
 
         {
             let mut writer_lock = self.writer.lock().await;

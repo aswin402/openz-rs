@@ -146,9 +146,21 @@ impl super::Channel for EmailChannel {
         // Limit concurrent email processing to prevent resource exhaustion
         let concurrency_limit = Arc::new(Semaphore::new(5));
 
+        let mut shutdown_rx = match crate::shutdown::receiver() {
+            Some(rx) => rx,
+            None => {
+                let (_, rx) = tokio::sync::watch::channel(false);
+                rx
+            }
+        };
+
         tokio::spawn(async move {
             let poll_interval = std::time::Duration::from_secs(email_config.poll_interval_secs);
             loop {
+                if *shutdown_rx.borrow() {
+                    break;
+                }
+
                 let imap_server = email_config.imap_server.clone();
                 let imap_port = email_config.imap_port;
                 let username = email_config.username.clone();
@@ -209,7 +221,12 @@ impl super::Channel for EmailChannel {
                     }
                 }
 
-                tokio::time::sleep(poll_interval).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(poll_interval) => {}
+                    _ = shutdown_rx.changed() => {
+                        break;
+                    }
+                }
             }
         });
 

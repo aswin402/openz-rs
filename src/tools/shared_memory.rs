@@ -26,6 +26,17 @@ pub fn get_db_mutex() -> &'static tokio::sync::Mutex<()> {
     DB_MUTEX.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+pub fn get_shared_client() -> &'static reqwest::Client {
+    static SHARED_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    SHARED_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .use_rustls_tls()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .unwrap_or_default()
+    })
+}
+
 pub fn get_sqlite_db_path() -> PathBuf {
     if let Ok(override_dir) = std::env::var("OPENZ_CONFIG_DIR") {
         PathBuf::from(override_dir).join("memory.db")
@@ -150,7 +161,7 @@ async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
                                 "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={}",
                                 key
                             );
-                            let client = reqwest::Client::new();
+                            let client = get_shared_client();
                             let res = client.post(&url)
                                 .json(&serde_json::json!({
                                     "content": {
@@ -184,7 +195,7 @@ async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
                     if let Some(key) = key_opt {
                         if !key.trim().is_empty() {
                             let url = "https://api.cohere.com/v1/embed";
-                            let client = reqwest::Client::new();
+                            let client = get_shared_client();
                             let input_type = if is_query { "search_query" } else { "search_document" };
                             let res = client.post(url)
                                 .header("Authorization", format!("bearer {}", key))
@@ -253,7 +264,7 @@ async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
 
                 if let Some(key) = openai_key {
                     let url = format!("{}/embeddings", openai_base.trim_end_matches('/'));
-                    let client = reqwest::Client::new();
+                    let client = get_shared_client();
                     let res = client.post(&url)
                         .header("Authorization", format!("Bearer {}", key))
                         .json(&serde_json::json!({
@@ -328,7 +339,7 @@ async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) -> Res
                                 })
                             }).collect();
 
-                            let client = reqwest::Client::new();
+                            let client = get_shared_client();
                             let res = client.post(&url)
                                 .json(&serde_json::json!({
                                     "requests": requests
@@ -365,7 +376,7 @@ async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) -> Res
                     if let Some(key) = key_opt {
                         if !key.trim().is_empty() {
                             let url = "https://api.cohere.com/v1/embed";
-                            let client = reqwest::Client::new();
+                            let client = get_shared_client();
                             let input_type = if is_query { "search_query" } else { "search_document" };
                             let res = client.post(url)
                                 .header("Authorization", format!("bearer {}", key))
@@ -439,7 +450,7 @@ async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) -> Res
 
                 if let Some(key) = openai_key {
                     let url = format!("{}/embeddings", openai_base.trim_end_matches('/'));
-                    let client = reqwest::Client::new();
+                    let client = get_shared_client();
                     let res = client.post(&url)
                         .header("Authorization", format!("Bearer {}", key))
                         .json(&serde_json::json!({

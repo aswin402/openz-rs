@@ -92,7 +92,7 @@ impl CircuitBreaker {
     pub fn check(&self) -> Result<(), String> {
         self.inner
             .lock()
-            .map_err(|e| format!("CircuitBreaker lock poisoned: {e}"))?
+            .unwrap_or_else(|e| e.into_inner())
             .check()
             .map_err(|_| {
                 "Provider circuit breaker is open — too many recent failures".to_string()
@@ -101,28 +101,25 @@ impl CircuitBreaker {
 
     /// Record a successful API call.
     pub fn record_success(&self) {
-        if let Ok(mut inner) = self.inner.lock() {
-            inner.record_success();
-        }
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.record_success();
     }
 
     /// Record a failed API call.
     pub fn record_failure(&self) {
-        if let Ok(mut inner) = self.inner.lock() {
-            inner.record_failure();
-        }
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.record_failure();
     }
 
     /// Manually reset the circuit breaker.
     pub fn reset(&self) {
-        if let Ok(mut inner) = self.inner.lock() {
-            inner.reset();
-        }
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.reset();
     }
 
     #[cfg(test)]
     fn state(&self) -> CircuitState {
-        self.inner.lock().map(|inner| inner.state).unwrap_or(CircuitState::Closed)
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).state
     }
 }
 

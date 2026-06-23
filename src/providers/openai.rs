@@ -609,5 +609,10 @@ mod tests {
 
 fn is_reasoning_model(model: &str) -> bool {
     let m = model.to_lowercase();
-    m.contains("o1") || m.contains("o3") || m.contains("o4-mini")
+    (m.contains("o1") || m.contains("o3") || m.contains("o4-mini"))
+        && !m.contains("deepseek")
+        && !m.contains("groq")
+        && !m.contains("openrouter")
+        && !m.contains("r1")
+        && !m.contains("qwq")
 }

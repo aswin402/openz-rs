@@ -5,8 +5,16 @@ use std::time::Duration;
 use crate::config::schema::Config;
 use crate::agent::style::colors::{AURA_SLATE, EMERALD_GREEN, ERROR_RED, COLOR_RESET, AURA_GOLD};
 
-static LOCAL_OLLAMA_CHILD: Mutex<Option<Child>> = Mutex::new(None);
-static SPAWNED_BY_US: Mutex<bool> = Mutex::new(false);
+struct LocalOllamaState {
+    spawned_by_us: bool,
+    child: Option<Child>,
+}
+
+static LOCAL_OLLAMA: Mutex<LocalOllamaState> = Mutex::new(LocalOllamaState {
+    spawned_by_us: false,
+    child: None,
+});
+
 static ACTIVE_OLLAMA_MODEL: Mutex<Option<String>> = Mutex::new(None);
 
 fn parse_addr(api_base: &str) -> String {
@@ -47,8 +55,8 @@ pub fn ensure_local_ollama(config: &Config) {
 
     // Atomic check: verify port is open OR we already have a child running
     {
-        let child_guard = LOCAL_OLLAMA_CHILD.lock().unwrap_or_else(|e| e.into_inner());
-        if is_port_open(&addr) || child_guard.is_some() {
+        let state = LOCAL_OLLAMA.lock().unwrap_or_else(|e| e.into_inner());
+        if is_port_open(&addr) || state.child.is_some() {
             return;
         }
     }
@@ -72,11 +80,10 @@ pub fn ensure_local_ollama(config: &Config) {
         .spawn()
     {
         Ok(child) => {
-            if let Ok(mut spawned_guard) = SPAWNED_BY_US.lock() {
-                *spawned_guard = true;
-            }
-            if let Ok(mut child_guard) = LOCAL_OLLAMA_CHILD.lock() {
-                *child_guard = Some(child);
+            {
+                let mut state = LOCAL_OLLAMA.lock().unwrap_or_else(|e| e.into_inner());
+                state.spawned_by_us = true;
+                state.child = Some(child);
             }
 
             // Poll until it starts listening or we timeout (up to 6 seconds)
@@ -129,46 +136,32 @@ pub fn ensure_local_ollama(config: &Config) {
 }
 
 pub fn stop_local_ollama() {
-    let mut should_kill = false;
-    if let Ok(spawned_guard) = SPAWNED_BY_US.lock() {
-        if *spawned_guard {
-            should_kill = true;
-        }
-    }
-
-    if should_kill {
-        if let Ok(mut child_guard) = LOCAL_OLLAMA_CHILD.lock() {
-            if let Some(mut child) = child_guard.take() {
-                let silent = std::env::var("OPENZ_SILENT").is_ok();
-                if !silent {
-                    crate::tui_println!(
-                        "{}◇ Stopping local Ollama service...{}",
-                        AURA_SLATE,
-                        COLOR_RESET
-                    );
-                }
-                let _ = child.kill();
-                let _ = child.wait();
+    let mut state = LOCAL_OLLAMA.lock().unwrap_or_else(|e| e.into_inner());
+    if state.spawned_by_us {
+        if let Some(mut child) = state.child.take() {
+            let silent = std::env::var("OPENZ_SILENT").is_ok();
+            if !silent {
+                crate::tui_println!(
+                    "{}◇ Stopping local Ollama service...{}",
+                    AURA_SLATE,
+                    COLOR_RESET
+                );
             }
+            let _ = child.kill();
+            let _ = child.wait();
         }
-        if let Ok(mut spawned_guard) = SPAWNED_BY_US.lock() {
-            *spawned_guard = false;
-        }
+        state.spawned_by_us = false;
     }
 }
 
 pub fn get_active_ollama_model() -> Option<String> {
-    if let Ok(guard) = ACTIVE_OLLAMA_MODEL.lock() {
-        guard.clone()
-    } else {
-        None
-    }
+    let guard = ACTIVE_OLLAMA_MODEL.lock().unwrap_or_else(|e| e.into_inner());
+    guard.clone()
 }
 
 pub fn set_active_ollama_model(model: Option<String>) {
-    if let Ok(mut guard) = ACTIVE_OLLAMA_MODEL.lock() {
-        *guard = model;
-    }
+    let mut guard = ACTIVE_OLLAMA_MODEL.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = model;
 }
 
 pub async fn unload_ollama_model(config: &Config, model: &str) {

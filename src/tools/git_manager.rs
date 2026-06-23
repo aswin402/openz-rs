@@ -1,7 +1,7 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use std::process::Command;
+use tokio::process::Command;
 
 pub struct GitManagerTool;
 
@@ -58,7 +58,7 @@ impl Tool for GitManagerTool {
             let path = crate::config::loader::resolve_path(cwd_str);
             cmd.current_dir(path);
         } else {
-            crate::config::loader::set_command_cwd(&mut cmd);
+            crate::config::loader::set_tokio_command_cwd(&mut cmd);
         }
 
         match action {
@@ -96,7 +96,7 @@ impl Tool for GitManagerTool {
             _ => return Err(anyhow!("Unsupported git action: {}", action)),
         }
 
-        let output = tokio::task::spawn_blocking(move || cmd.output()).await??;
+        let output = cmd.output().await?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -123,7 +123,7 @@ mod tests {
         let init_status = Command::new("git")
             .arg("init")
             .current_dir(&temp_dir)
-            .status()?;
+            .status().await?;
         
         if !init_status.success() {
             let _ = std::fs::remove_dir_all(&temp_dir);
@@ -131,8 +131,8 @@ mod tests {
         }
 
         // Configure git locally
-        let _ = Command::new("git").args(&["config", "user.name", "Test User"]).current_dir(&temp_dir).status();
-        let _ = Command::new("git").args(&["config", "user.email", "test@example.com"]).current_dir(&temp_dir).status();
+        let _ = Command::new("git").args(&["config", "user.name", "Test User"]).current_dir(&temp_dir).status().await;
+        let _ = Command::new("git").args(&["config", "user.email", "test@example.com"]).current_dir(&temp_dir).status().await;
 
         let file_path = temp_dir.join("test.txt");
         std::fs::write(&file_path, "initial content")?;

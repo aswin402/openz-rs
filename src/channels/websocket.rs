@@ -100,8 +100,23 @@ impl super::Channel for WsGateway {
                 println!("⚠️ WARNING: OPENZ_GATEWAY_TOKEN is not set or is empty. All gateway requests will be rejected for security!");
             }
         }
+        let mut shutdown_rx = match crate::shutdown::receiver() {
+            Some(rx) => rx,
+            None => {
+                let (_, rx) = tokio::sync::watch::channel(false);
+                rx
+            }
+        };
+
         let listener = TcpListener::bind(addr).await?;
-        axum::serve(listener, app).await?;
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                if *shutdown_rx.borrow() {
+                    return;
+                }
+                let _ = shutdown_rx.changed().await;
+            })
+            .await?;
         
         Ok(())
     }

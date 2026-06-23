@@ -116,6 +116,12 @@ pub enum Command {
         action: Option<ChannelAction>,
     },
 
+    /// Start the Email polling listener
+    Email {
+        #[command(subcommand)]
+        action: Option<ChannelAction>,
+    },
+
     /// Manage, configure, and design custom subagents
     Subagent,
 
@@ -158,6 +164,9 @@ pub enum Command {
 
     /// View the OpenZ changelog and version release details
     Changelog,
+
+    /// Configure response streaming preference via a wizard
+    Streaming,
 }
 
 #[derive(Subcommand)]
@@ -274,6 +283,14 @@ pub async fn run_cli() -> Result<()> {
                 None => handle_whatsapp().await?,
             }
         }
+        Command::Email { action } => {
+            match action {
+                Some(ChannelAction::Logs { tail }) => {
+                    handle_logs(None, tail, Some("email".to_string()), None).await?;
+                }
+                None => handle_email().await?,
+            }
+        }
         Command::Subagent => {
             let config = load_config()?;
             crate::subagents::run_subagent_manager(config).await?;
@@ -298,6 +315,9 @@ pub async fn run_cli() -> Result<()> {
         }
         Command::Changelog => {
             handle_changelog().await?;
+        }
+        Command::Streaming => {
+            handle_streaming().await?;
         }
     }
     
@@ -899,6 +919,14 @@ async fn handle_agent() -> Result<()> {
     }
 
     let channel = CliChannel::new(agent_loop, defaults);
+    let mut shutdown_rx = match crate::shutdown::receiver() {
+        Some(rx) => rx,
+        None => {
+            let (_, rx) = tokio::sync::watch::channel(false);
+            rx
+        }
+    };
+
     tokio::select! {
         res = channel.start() => {
             if let Err(e) = res {
@@ -906,6 +934,9 @@ async fn handle_agent() -> Result<()> {
             }
         }
         _ = tokio::signal::ctrl_c() => {
+            println!("\r\nExiting OpenZ...");
+        }
+        _ = shutdown_rx.changed() => {
             println!("\r\nExiting OpenZ...");
         }
     }
@@ -1026,6 +1057,27 @@ async fn handle_whatsapp() -> Result<()> {
     Ok(())
 }
 
+async fn handle_email() -> Result<()> {
+    let config = load_config()?;
+    start_scheduler(config.clone());
+    let agent_loop = build_agent_loop(config.clone()).await?;
+    let channel = crate::channels::EmailChannel::new(agent_loop);
+    
+    tokio::select! {
+        res = channel.start() => {
+            if let Err(e) = res {
+                eprintln!("Email error: {}", e);
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            println!("\r\nExiting Email channel...");
+        }
+    }
+    
+    crate::channels::shutdown_gateways(&config).await;
+    Ok(())
+}
+
 fn update_provider_key(config: &mut Config, provider_name: &str, api_key: String) {
     let mut p_config = match provider_name {
         "anthropic" => config.providers.anthropic.clone(),
@@ -1101,13 +1153,19 @@ fn update_provider_key(config: &mut Config, provider_name: &str, api_key: String
 
 fn is_telegram_configured(config: &Config) -> bool {
     if let Some(ref tg) = config.channels.telegram {
-        tg.enabled && !tg.bot_token.trim().is_empty()
+        !tg.bot_token.is_empty()
     } else {
         false
     }
 }
 
-
+fn is_email_configured(config: &Config) -> bool {
+    if let Some(ref em) = config.channels.email {
+        em.enabled && !em.imap_server.is_empty() && !em.username.is_empty()
+    } else {
+        false
+    }
+}
 
 async fn handle_configure() -> Result<()> {
     let active_mdl = {
@@ -1158,6 +1216,12 @@ async fn handle_configure() -> Result<()> {
             configure_options.push("WhatsApp".to_string());
         }
 
+        if is_email_configured(&config) {
+            configure_options.push("Email (configured)".to_string());
+        } else {
+            configure_options.push("Email".to_string());
+        }
+
         if config.agents.defaults.enable_sandbox {
             configure_options.push("Sandbox (seccomp) (enabled)".to_string());
         } else {
@@ -1202,6 +1266,9 @@ async fn handle_configure() -> Result<()> {
                 handle_whatsapp_submenu(&mut config).await?;
             }
             5 => {
+                handle_email_submenu(&mut config).await?;
+            }
+            6 => {
                 handle_sandbox_submenu(&mut config).await?;
             }
             _ => {
@@ -1525,6 +1592,77 @@ async fn handle_whatsapp_submenu(config: &mut Config) -> Result<()> {
     Ok(())
 }
 
+async fn handle_email_submenu(config: &mut Config) -> Result<()> {
+    println!("\n{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    println!("{}--- Email Channel Configuration ---{}", COLOR_BOLD, COLOR_RESET);
+    
+    let mut em = config.channels.email.clone().unwrap_or_default();
+    
+    let enabled = Confirm::new("Enable Email channel?")
+        .with_default(em.enabled)
+        .prompt()?;
+    em.enabled = enabled;
+
+    if enabled {
+        let imap_server = Text::new("Enter IMAP Server (e.g. imap.gmail.com): ")
+            .with_default(&em.imap_server)
+            .prompt()?;
+        if !imap_server.trim().is_empty() {
+            em.imap_server = imap_server.trim().to_string();
+        }
+
+        let imap_port_str = Text::new("Enter IMAP Port: ")
+            .with_default(&em.imap_port.to_string())
+            .prompt()?;
+        if let Ok(p) = imap_port_str.trim().parse::<u16>() {
+            em.imap_port = p;
+        }
+
+        let smtp_server = Text::new("Enter SMTP Server (e.g. smtp.gmail.com): ")
+            .with_default(&em.smtp_server)
+            .prompt()?;
+        if !smtp_server.trim().is_empty() {
+            em.smtp_server = smtp_server.trim().to_string();
+        }
+
+        let smtp_port_str = Text::new("Enter SMTP Port: ")
+            .with_default(&em.smtp_port.to_string())
+            .prompt()?;
+        if let Ok(p) = smtp_port_str.trim().parse::<u16>() {
+            em.smtp_port = p;
+        }
+
+        let username = Text::new("Enter Username / Email: ")
+            .with_default(&em.username)
+            .prompt()?;
+        if !username.trim().is_empty() {
+            em.username = username.trim().to_string();
+        }
+
+        let password = Password::new("Enter Password / App Password: ")
+            .without_confirmation()
+            .with_display_mode(PasswordDisplayMode::Masked)
+            .prompt()?;
+        if !password.trim().is_empty() {
+            em.password = password.trim().to_string();
+        }
+
+        let poll_str = Text::new("Enter Email Poll Interval (seconds): ")
+            .with_default(&em.poll_interval_secs.to_string())
+            .prompt()?;
+        if let Ok(s) = poll_str.trim().parse::<u64>() {
+            em.poll_interval_secs = s;
+        }
+    }
+
+    config.channels.email = Some(em);
+    save_config(config)?;
+    println!("{}✓ Email channel configured successfully!{}", EMERALD_GREEN, COLOR_RESET);
+    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    Ok(())
+}
+
+
 async fn handle_sandbox_submenu(config: &mut Config) -> Result<()> {
     println!("\n{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
     println!("{}--- Sandbox (seccomp) Configuration ---{}", COLOR_BOLD, COLOR_RESET);
@@ -1678,6 +1816,43 @@ async fn handle_sop(action: SopAction) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+async fn handle_streaming() -> Result<()> {
+    let mut config = load_config()?;
+    let current_status = if config.agents.defaults.streaming {
+        "Enabled"
+    } else {
+        "Disabled"
+    };
+
+    println!("{}◇ OpenZ Response Streaming Wizard{}", COLOR_BOLD, COLOR_RESET);
+    println!("Current status: {}{}{}\r\n", RED_ORANGE, current_status, COLOR_RESET);
+    println!("Streaming prints response chunks in real-time. However, keeping it disabled");
+    println!("is highly recommended for unstable or rate-limited API gateways (like OpenCode Zen)");
+    println!("to avoid early cut-offs or connection drops.\r\n");
+
+    let options = vec![
+        "Enable streaming (globally)".to_string(),
+        "Disable streaming (globally)".to_string(),
+        "Exit".to_string(),
+    ];
+
+    let choice = Select::new("Choose option:", options).prompt()?;
+
+    if choice.starts_with("Enable") {
+        config.agents.defaults.streaming = true;
+        save_config(&config)?;
+        println!("{}✓ Response streaming has been ENABLED globally for OpenZ.{}", EMERALD_GREEN, COLOR_RESET);
+    } else if choice.starts_with("Disable") {
+        config.agents.defaults.streaming = false;
+        save_config(&config)?;
+        println!("{}✓ Response streaming has been DISABLED globally for OpenZ.{}", EMERALD_GREEN, COLOR_RESET);
+    } else {
+        println!("No changes made.");
+    }
+
     Ok(())
 }
 

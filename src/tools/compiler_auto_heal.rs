@@ -165,16 +165,16 @@ impl Tool for CompilerAutoHealTool {
 
             // Run compile check command
             let mut cmd = if cfg!(target_os = "windows") {
-                let mut c = std::process::Command::new("cmd");
+                let mut c = tokio::process::Command::new("cmd");
                 c.args(["/C", compile_command]);
                 c
             } else {
-                let mut c = std::process::Command::new("sh");
+                let mut c = tokio::process::Command::new("sh");
                 c.args(["-c", compile_command]);
                 c
             };
-            crate::config::loader::set_command_cwd(&mut cmd);
-            let output = cmd.output()?;
+            crate::config::loader::set_tokio_command_cwd(&mut cmd);
+            let output = cmd.output().await?;
 
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);

@@ -35,6 +35,7 @@ No Makefile; no CI config (GitHub Actions, etc.) present.
 | `mcp-bridge --port <N> -- <cmd> [args...]` | gRPC-to-stdio MCP bridge |
 | `logs` | View real-time color-coded structured logs (supports `--path <file>`, `--tail <lines>`, `--session <prefix|auto>`, and `--level <level>` filters) |
 | `changelog` | View OpenZ hardware footprint specifications and version release history |
+| `streaming` | Toggle response streaming preference via a wizard |
 
 ---
 

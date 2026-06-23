@@ -23,20 +23,23 @@ async fn ensure_geckodriver_running() -> Result<()> {
         return Ok(());
     }
 
-    let child = Command::new("geckodriver")
+    match Command::new("geckodriver")
         .args(["--port", "4444"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn();
-
-    if child.is_ok() {
-        for _ in 0..15 {
-            sleep(Duration::from_millis(200)).await;
-            if client.get("http://127.0.0.1:4444/status").send().await.is_ok() {
-                return Ok(());
+        .spawn()
+    {
+        Ok(child_handle) => {
+            crate::shutdown::register_child(child_handle);
+            for _ in 0..15 {
+                sleep(Duration::from_millis(200)).await;
+                if client.get("http://127.0.0.1:4444/status").send().await.is_ok() {
+                    return Ok(());
+                }
             }
         }
+        Err(_) => {}
     }
 
     Err(anyhow!("Failed to start geckodriver on port 4444. Please ensure geckodriver is installed and in your PATH."))

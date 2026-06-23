@@ -4,6 +4,7 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
+use crate::tools::web::is_safe_ip;
 
 pub struct ObscuraBrowserTool;
 
@@ -191,34 +192,6 @@ impl Tool for ObscuraBrowserTool {
     }
 }
 
-fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => {
-            !(v4.is_private() || v4.is_loopback() || v4.is_link_local()
-                || v4.is_unspecified() || v4.is_broadcast())
-        }
-        std::net::IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4() {
-                if !is_safe_ip(&std::net::IpAddr::V4(v4)) {
-                    return false;
-                }
-            }
-            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
-                return false;
-            }
-            let segments = v6.segments();
-            // ULA fc00::/7
-            if (segments[0] & 0xfe00) == 0xfc00 {
-                return false;
-            }
-            // Link-local fe80::/10
-            if (segments[0] & 0xffc0) == 0xfe80 {
-                return false;
-            }
-            true
-        }
-    }
-}
 
 async fn validate_url(url: &str) -> Result<()> {
     let parsed = reqwest::Url::parse(url).map_err(|e| anyhow::anyhow!("Invalid URL: {}", e))?;

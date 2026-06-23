@@ -6,34 +6,7 @@ use scraper::{Html, Selector};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => {
-            !(v4.is_private() || v4.is_loopback() || v4.is_link_local()
-                || v4.is_unspecified() || v4.is_broadcast())
-        }
-        std::net::IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4() {
-                if !is_safe_ip(&std::net::IpAddr::V4(v4)) {
-                    return false;
-                }
-            }
-            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
-                return false;
-            }
-            let segments = v6.segments();
-            // ULA fc00::/7
-            if (segments[0] & 0xfe00) == 0xfc00 {
-                return false;
-            }
-            // Link-local fe80::/10
-            if (segments[0] & 0xffc0) == 0xfe80 {
-                return false;
-            }
-            true
-        }
-    }
-}
+use crate::tools::web::is_safe_ip;
 
 /// Validate URL to prevent SSRF — resolves DNS to catch rebinding attacks.
 async fn validate_url(url: &str) -> Result<()> {

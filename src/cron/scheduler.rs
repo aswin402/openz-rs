@@ -9,11 +9,29 @@ use anyhow::Result;
 pub fn start_scheduler(config: Config) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         crate::channels::cli::send_notification("⏰ Cron scheduler background service started...");
+        let mut shutdown_rx = match crate::shutdown::receiver() {
+            Some(rx) => rx,
+            None => {
+                let (_, rx) = tokio::sync::watch::channel(false);
+                rx
+            }
+        };
+
         loop {
+            if *shutdown_rx.borrow() {
+                break;
+            }
+
             if let Err(e) = tick_scheduler(&config).await {
                 crate::channels::cli::send_notification(&format!("Error in cron scheduler tick: {}", e));
             }
-            sleep(Duration::from_secs(10)).await;
+
+            tokio::select! {
+                _ = sleep(Duration::from_secs(10)) => {}
+                _ = shutdown_rx.changed() => {
+                    break;
+                }
+            }
         }
     })
 }
@@ -55,25 +73,29 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
         tokio::spawn(async move {
             crate::channels::cli::send_notification(&format!("⏰ Executing Cron Job: {} (schedule: {})", job_clone.id, job_clone.schedule));
             let completed_at = Utc::now();
-            match run_job(&config_clone, &job_clone).await {
+             match run_job(&config_clone, &job_clone).await {
                 Ok(_) => {
-                    let _ = crate::cron::with_cron_jobs_mut(|jobs| {
+                    if let Err(e) = crate::cron::with_cron_jobs_mut(|jobs| {
                         if let Some(j) = jobs.iter_mut().find(|j| j.id == job_clone.id) {
                             j.last_run = Some(completed_at.to_rfc3339());
                             let next = calculate_next_run(&j.schedule, Some(completed_at)).unwrap_or_else(|| completed_at + chrono::Duration::minutes(5));
                             j.next_run = Some(next.to_rfc3339());
                         }
-                    });
+                    }) {
+                        tracing::error!("Failed to update cron jobs metadata: {:?}", e);
+                    }
                     crate::channels::cli::send_notification(&format!("⏰ Cron Job {} completed successfully.", job_clone.id));
                 }
                 Err(e) => {
-                    let _ = crate::cron::with_cron_jobs_mut(|jobs| {
+                    if let Err(err) = crate::cron::with_cron_jobs_mut(|jobs| {
                         if let Some(j) = jobs.iter_mut().find(|j| j.id == job_clone.id) {
                             j.last_run = Some(completed_at.to_rfc3339());
                             let next = calculate_next_run(&j.schedule, Some(completed_at)).unwrap_or_else(|| completed_at + chrono::Duration::minutes(5));
                             j.next_run = Some(next.to_rfc3339());
                         }
-                    });
+                    }) {
+                        tracing::error!("Failed to update cron jobs metadata after failure: {:?}", err);
+                    }
                     crate::channels::cli::send_notification(&format!("Error running Cron Job {}: {}", job_clone.id, e));
                 }
             }

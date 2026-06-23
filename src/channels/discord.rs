@@ -17,6 +17,7 @@ pub struct DiscordChannel {
     bot_token: String,
     agent_loop: Arc<AgentLoop>,
     client: Client,
+    concurrency_limit: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -50,6 +51,7 @@ impl DiscordChannel {
             bot_token,
             agent_loop: Arc::new(agent_loop),
             client: Client::builder().use_rustls_tls().build().unwrap_or_default(),
+            concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
         }
     }
 }
@@ -94,8 +96,27 @@ impl super::Channel for DiscordChannel {
         let mut backoff = Duration::from_secs(2);
         let mut retry_count = 0;
         const MAX_RETRIES: u32 = 10;
+        let mut shutdown_rx = match crate::shutdown::receiver() {
+            Some(rx) => rx,
+            None => {
+                let (_, rx) = tokio::sync::watch::channel(false);
+                rx
+            }
+        };
+
         loop {
-            match connect_and_listen(&self.bot_token, self.agent_loop.clone(), self.client.clone(), silent).await {
+            if *shutdown_rx.borrow() {
+                break;
+            }
+
+            match connect_and_listen(
+                &self.bot_token,
+                self.agent_loop.clone(),
+                self.client.clone(),
+                self.concurrency_limit.clone(),
+                silent,
+            )
+            .await {
                 Ok(_) => {
                     backoff = Duration::from_secs(2);
                     retry_count = 0;
@@ -111,7 +132,12 @@ impl super::Channel for DiscordChannel {
                     if !silent {
                         eprintln!("Discord gateway connection error: {}. Reconnecting in {}s... (attempt {}/{})", e, backoff.as_secs(), retry_count, MAX_RETRIES);
                     }
-                    sleep(backoff).await;
+                    tokio::select! {
+                        _ = sleep(backoff) => {}
+                        _ = shutdown_rx.changed() => {
+                            break;
+                        }
+                    }
                     backoff = std::cmp::min(backoff * 2, Duration::from_secs(60));
                 }
             }
@@ -124,6 +150,7 @@ async fn connect_and_listen(
     bot_token: &str,
     agent_loop: Arc<AgentLoop>,
     client: Client,
+    concurrency_limit: Arc<tokio::sync::Semaphore>,
     silent: bool,
 ) -> anyhow::Result<()> {
     let (ws_stream, _) = connect_async("wss://gateway.discord.gg/?v=10&encoding=json").await?;
@@ -201,8 +228,32 @@ async fn connect_and_listen(
         println!("✓ Discord Identify packet sent, listening for events...");
     }
 
-    // Process incoming gateway events
-    while let Some(Ok(Message::Text(text))) = read.next().await {
+    let mut shutdown_rx = match crate::shutdown::receiver() {
+        Some(rx) => rx,
+        None => {
+            let (_, rx) = tokio::sync::watch::channel(false);
+            rx
+        }
+    };
+
+    loop {
+        if *shutdown_rx.borrow() {
+            break;
+        }
+
+        let msg_fut = read.next();
+        let msg_opt = tokio::select! {
+            opt = msg_fut => opt,
+            _ = shutdown_rx.changed() => {
+                break;
+            }
+        };
+
+        let text = match msg_opt {
+            Some(Ok(Message::Text(t))) => t,
+            _ => break,
+        };
+
         if let Ok(msg) = serde_json::from_str::<GatewayMessage>(&text) {
             if let Some(s) = msg.s {
                 last_sequence.store(s, std::sync::atomic::Ordering::Relaxed);
@@ -221,7 +272,12 @@ async fn connect_and_listen(
                                 let agent = agent_loop.clone();
                                 let client_clone = client.clone();
                                 let bot_token_clone = bot_token.to_string();
+                                let concurrency_limit = concurrency_limit.clone();
                                 tokio::spawn(async move {
+                                    let _permit = match concurrency_limit.acquire().await {
+                                        Ok(p) => p,
+                                        Err(_) => return,
+                                    };
                                     let session_key = format!("discord:{}", payload.channel_id);
                                     let run_res = agent.run(&payload.content, &session_key).await;
                                     

@@ -32,6 +32,7 @@ pub struct TelegramChannel {
     bot_token: String,
     agent_loop: Arc<AgentLoop>,
     client: Client,
+    concurrency_limit: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -141,7 +142,12 @@ impl TelegramChannel {
         TelegramChannel {
             bot_token,
             agent_loop: Arc::new(agent_loop),
-            client: Client::builder().use_rustls_tls().build().unwrap_or_default(),
+            client: Client::builder()
+                .use_rustls_tls()
+                .timeout(Duration::from_secs(35))
+                .build()
+                .unwrap_or_default(),
+            concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
         }
     }
 }
@@ -213,19 +219,44 @@ impl super::Channel for TelegramChannel {
             }
         });
 
+        let mut shutdown_rx = match crate::shutdown::receiver() {
+            Some(rx) => rx,
+            None => {
+                let (_, rx) = tokio::sync::watch::channel(false);
+                rx
+            }
+        };
+
         loop {
+            if *shutdown_rx.borrow() {
+                break;
+            }
+
             let url = format!(
                 "https://api.telegram.org/bot{}/getUpdates?offset={}&timeout=30",
                 self.bot_token, offset
             );
 
-            let res = match self.client.get(&url).send().await {
-                Ok(r) => r,
-                Err(e) => {
-                    let err_msg = e.to_string().replace(&self.bot_token, "[REDACTED_TELEGRAM_TOKEN]");
-                    eprintln!("Telegram poll error: {}", err_msg);
-                    sleep(Duration::from_secs(5)).await;
-                    continue;
+            let send_fut = self.client.get(&url).send();
+            let res = tokio::select! {
+                res = send_fut => {
+                    match res {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let err_msg = e.to_string().replace(&self.bot_token, "[REDACTED_TELEGRAM_TOKEN]");
+                            eprintln!("Telegram poll error: {}", err_msg);
+                            tokio::select! {
+                                _ = sleep(Duration::from_secs(5)) => {}
+                                _ = shutdown_rx.changed() => {
+                                    break;
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+                _ = shutdown_rx.changed() => {
+                    break;
                 }
             };
 
@@ -473,7 +504,12 @@ impl super::Channel for TelegramChannel {
                                     continue;
                                 }
 
+                                let concurrency_limit = self.concurrency_limit.clone();
                                 tokio::spawn(async move {
+                                    let _permit = match concurrency_limit.acquire().await {
+                                        Ok(p) => p,
+                                        Err(_) => return,
+                                    };
                                     let silent = std::env::var("OPENZ_SILENT").is_ok();
                                     if !silent {
                                         println!("💬 Telegram message from chat {}: {}", chat_id, text);
@@ -567,6 +603,7 @@ impl super::Channel for TelegramChannel {
             }
             sleep(Duration::from_millis(500)).await;
         }
+        Ok(())
     }
 }
 

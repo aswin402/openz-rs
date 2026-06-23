@@ -56,21 +56,24 @@ pub async fn ensure_browser_running() -> Result<()> {
                 "--disable-dev-shm-usage",
             ]
         };
-        let child = Command::new(path)
+        match Command::new(path)
             .args(&args)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .spawn();
-
-        if child.is_ok() {
-            for _ in 0..25 {
-                sleep(Duration::from_millis(200)).await;
-                if client.get("http://127.0.0.1:9222/json/list").send().await.is_ok() {
-                    return Ok(());
+            .spawn()
+        {
+            Ok(child_handle) => {
+                crate::shutdown::register_child(child_handle);
+                for _ in 0..25 {
+                    sleep(Duration::from_millis(200)).await;
+                    if client.get("http://127.0.0.1:9222/json/list").send().await.is_ok() {
+                        return Ok(());
+                    }
                 }
+                break;
             }
-            break;
+            Err(_) => {}
         }
     }
 

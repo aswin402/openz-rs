@@ -161,7 +161,12 @@ impl Tool for DelegateTaskTool {
             let child_agent_ref = &child_agent;
             let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
                 DELEGATION_DEPTH.scope(current_depth + 1, async {
-                    child_agent_ref.run(p_ref, c_ref).await
+                    tokio::select! {
+                        res = child_agent_ref.run(p_ref, c_ref) => res,
+                        _ = self.cancellation_token.wait_for_cancellation() => {
+                            Err(anyhow!("Subagent task cancelled"))
+                        }
+                    }
                 }).await
             });
             let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
@@ -211,7 +216,12 @@ impl Tool for DelegateTaskTool {
                                     let child_agent_ref = &child_agent;
                                     let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
                                         DELEGATION_DEPTH.scope(current_depth + 1, async {
-                                            child_agent_ref.run(p_ref, c_ref).await
+                                            tokio::select! {
+                                                res = child_agent_ref.run(p_ref, c_ref) => res,
+                                                _ = self.cancellation_token.wait_for_cancellation() => {
+                                                    Err(anyhow!("Subagent task cancelled"))
+                                                }
+                                            }
                                         }).await
                                     });
                                     let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
@@ -242,7 +252,12 @@ impl Tool for DelegateTaskTool {
                             let child_agent_ref = &child_agent;
                             let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
                                 DELEGATION_DEPTH.scope(current_depth + 1, async {
-                                    child_agent_ref.run(p_ref, c_ref).await
+                                    tokio::select! {
+                                        res = child_agent_ref.run(p_ref, c_ref) => res,
+                                        _ = self.cancellation_token.wait_for_cancellation() => {
+                                            Err(anyhow!("Subagent task cancelled"))
+                                        }
+                                    }
                                 }).await
                             });
                             let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
@@ -585,7 +600,12 @@ impl Tool for DelegateProfileTool {
                 let child_agent_ref = &child_agent;
                 let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
                     DELEGATION_DEPTH.scope(current_depth + 1, async {
-                        child_agent_ref.run(p_ref, c_ref).await
+                        tokio::select! {
+                            res = child_agent_ref.run(p_ref, c_ref) => res,
+                            _ = self.cancellation_token.wait_for_cancellation() => {
+                                Err(anyhow!("Subagent task cancelled"))
+                            }
+                        }
                     }).await
                 });
                 let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
@@ -636,7 +656,12 @@ impl Tool for DelegateProfileTool {
                                         let child_agent_ref = &child_agent;
                                         let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
                                             DELEGATION_DEPTH.scope(current_depth + 1, async {
-                                                child_agent_ref.run(p_ref, c_ref).await
+                                                tokio::select! {
+                                                    res = child_agent_ref.run(p_ref, c_ref) => res,
+                                                    _ = self.cancellation_token.wait_for_cancellation() => {
+                                                        Err(anyhow!("Subagent task cancelled"))
+                                                    }
+                                                }
                                             }).await
                                         });
                                         let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
@@ -667,7 +692,12 @@ impl Tool for DelegateProfileTool {
                                 let child_agent_ref = &child_agent;
                                 let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
                                     DELEGATION_DEPTH.scope(current_depth + 1, async {
-                                        child_agent_ref.run(p_ref, c_ref).await
+                                        tokio::select! {
+                                            res = child_agent_ref.run(p_ref, c_ref) => res,
+                                            _ = self.cancellation_token.wait_for_cancellation() => {
+                                                Err(anyhow!("Subagent task cancelled"))
+                                            }
+                                        }
                                     }).await
                                 });
                                 let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
@@ -1300,6 +1330,9 @@ impl Tool for EvaluatorOptimizerLoopTool {
         });
 
         for i in 1..=max_iterations {
+            if self.cancellation_token.is_cancelled() {
+                return Err(anyhow!("Evaluator-Optimizer loop cancelled"));
+            }
             iterations_run = i;
             crate::tui_println!(
                 "{}🔄 [Evaluator-Optimizer] Starting iteration {}/{} (Optimizer: '{}', Evaluator: '{}'){}",
@@ -1723,6 +1756,7 @@ impl Tool for ParallelResearchTool {
             let config = self.config.clone();
             let parent_provider = self.parent_provider.clone();
             let session_manager = self.session_manager.clone();
+            let cancellation_token = self.cancellation_token.clone();
 
             let mut read_only_parent_tools = Vec::new();
             for tool in &self.parent_tools {
@@ -1769,7 +1803,12 @@ impl Tool for ParallelResearchTool {
                             goal, context
                         );
 
-                        child_agent.run(&subagent_prompt, &child_session_id).await
+                        tokio::select! {
+                            res = child_agent.run(&subagent_prompt, &child_session_id) => res,
+                            _ = cancellation_token.wait_for_cancellation() => {
+                                Err(anyhow::anyhow!("Task cancelled"))
+                            }
+                        }
                     }).await
                 });
                 let run_res = run_res_fut.await;
@@ -2792,9 +2831,31 @@ impl Default for CancellationToken {
 
 impl CancellationToken {
     pub fn new() -> Self {
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+
+        let cancelled_clone = cancelled.clone();
+        let notify_clone = notify.clone();
+        tokio::spawn(async move {
+            if let Some(mut rx) = crate::shutdown::receiver() {
+                if *rx.borrow() {
+                    cancelled_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                    notify_clone.notify_waiters();
+                    return;
+                }
+                while rx.changed().await.is_ok() {
+                    if *rx.borrow() {
+                        cancelled_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                        notify_clone.notify_waiters();
+                        break;
+                    }
+                }
+            }
+        });
+
         Self {
-            cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+            cancelled,
+            notify,
         }
     }
 

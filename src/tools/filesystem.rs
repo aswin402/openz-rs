@@ -480,18 +480,19 @@ impl Tool for ZenflowEditTool {
 
         let path = resolve_path(path_str);
         
-        let run_cmd = |cmd: &str| -> Result<(i32, String)> {
-            let mut command = std::process::Command::new("sh");
-            crate::config::loader::set_command_cwd(&mut command);
-            command.arg("-c").arg(cmd);
-            let output = command.output()?;
+        let run_cmd = |cmd: String| async move {
+            let mut command = tokio::process::Command::new("sh");
+            crate::config::loader::set_tokio_command_cwd(&mut command);
+            command.arg("-c").arg(&cmd);
+            let output = command.output().await?;
             let status = output.status.code().unwrap_or(-1);
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            Ok((status, format!("{}{}", stdout, stderr)))
+            Ok::<_, anyhow::Error>((status, format!("{}{}", stdout, stderr)))
         };
 
-        let in_git = run_cmd("git rev-parse --is-inside-work-tree")
+        let in_git = run_cmd("git rev-parse --is-inside-work-tree".to_string())
+            .await
             .map(|(code, _)| code == 0)
             .unwrap_or(false);
 
@@ -513,8 +514,8 @@ impl Tool for ZenflowEditTool {
                 escaped.push('\'');
                 escaped
             };
-            let _ = run_cmd(&format!("git add -- {}", escaped_path));
-            if let Ok((code, _)) = run_cmd("git commit -m \"Zenflow pre-edit backup\" --no-verify") {
+            let _ = run_cmd(format!("git add -- {}", escaped_path)).await;
+            if let Ok((code, _)) = run_cmd("git commit -m \"Zenflow pre-edit backup\" --no-verify".to_string()).await {
                 if code == 0 {
                     committed = true;
                 }
@@ -530,7 +531,7 @@ impl Tool for ZenflowEditTool {
         }
         fs::write(&path, content)?;
 
-        let (mut status, mut output_str) = run_cmd(compile_cmd)?;
+        let (mut status, mut output_str) = run_cmd(compile_cmd.to_string()).await?;
 
         if status != 0 {
             let system_prompt = "You are a Self-Healing Code Assistant. Fix compile/test errors in the provided file.";
@@ -577,7 +578,7 @@ impl Tool for ZenflowEditTool {
                     let cleaned_str = cleaned.trim().to_string();
                     if !cleaned_str.is_empty() {
                         fs::write(&path, &cleaned_str)?;
-                        if let Ok((h_status, h_output)) = run_cmd(compile_cmd) {
+                        if let Ok((h_status, h_output)) = run_cmd(compile_cmd.to_string()).await {
                             status = h_status;
                             output_str = h_output;
                         }
@@ -588,7 +589,7 @@ impl Tool for ZenflowEditTool {
 
         if status == 0 {
             if committed {
-                let _ = run_cmd("git reset HEAD~1");
+                let _ = run_cmd("git reset HEAD~1".to_string()).await;
             }
             Ok(serde_json::json!({
                 "status": "success",
@@ -596,7 +597,7 @@ impl Tool for ZenflowEditTool {
             }))
         } else {
             if committed {
-                let _ = run_cmd("git reset --hard HEAD~1");
+                let _ = run_cmd("git reset --hard HEAD~1".to_string()).await;
             } else if let Some(orig) = original_content {
                 fs::write(&path, orig)?;
             } else {
