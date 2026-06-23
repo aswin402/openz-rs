@@ -648,9 +648,11 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         .collect();
 
     let registry_bg = registry.clone();
+    let num_configs = mcp_configs.len() as u32;
 
     let _mcp_handle = tokio::spawn(async move {
-        let mut total_tools = 0usize;
+        crate::channels::cli::init_mcp_progress(num_configs);
+
         let mut servers_loaded = 0u32;
         let mut servers_failed = 0u32;
 
@@ -671,6 +673,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
 
                 match result {
                     Ok(Ok(tools)) => {
+                        crate::channels::cli::increment_mcp_loaded();
                         let mut count = 0;
                         for t in tools {
                             if let (Some(t_name), Some(desc)) = (
@@ -696,6 +699,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
                         Ok::<usize, anyhow::Error>(count)
                     }
                     _ => {
+                        crate::channels::cli::increment_mcp_failed();
                         Err(anyhow::anyhow!("Failed or timed out starting MCP server {}", name_clone))
                     }
                 }
@@ -705,8 +709,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         let results = futures_util::future::join_all(tasks).await;
         for res in results {
             match res {
-                Ok(Ok(count)) => {
-                    total_tools += count;
+                Ok(Ok(_count)) => {
                     servers_loaded += 1;
                 }
                 _ => {
@@ -717,16 +720,10 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
 
         // Update the status bar pill — the render loop reads these atomics every redraw
         crate::channels::cli::set_mcp_status(servers_loaded, servers_failed);
+        crate::channels::cli::set_mcp_done();
 
         if has_any_mcp {
             crate::tools::mcp::start_mcp_health_checks();
-        }
-
-        if has_any_mcp && !silent {
-            crate::tui_println!(
-                "\n{}{} MCP tools loaded  ({} servers){}\n",
-                slate, total_tools, servers_loaded, COLOR_RESET
-            );
         }
     });
 

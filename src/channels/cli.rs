@@ -50,10 +50,10 @@ static IS_RAW_INPUT_ACTIVE: AtomicBool = AtomicBool::new(false);
 static CUSTOM_CONTEXT_LIMIT: Mutex<Option<usize>> = Mutex::new(None);
 
 // ── MCP status pill ──────────────────────────────────────────────────────────
-// 0 = loading (spinner), 1 = done
 static MCP_DONE: AtomicBool   = AtomicBool::new(false);
 static MCP_LOADED: AtomicU32  = AtomicU32::new(0);
 static MCP_FAILED: AtomicU32  = AtomicU32::new(0);
+static MCP_TOTAL: AtomicU32   = AtomicU32::new(0);
 // Spinner frame index, incremented by the render loop
 static MCP_SPIN: AtomicU32    = AtomicU32::new(0);
 
@@ -61,6 +61,25 @@ static MCP_SPIN: AtomicU32    = AtomicU32::new(0);
 pub fn set_mcp_status(loaded: u32, failed: u32) {
     MCP_LOADED.store(loaded, Ordering::Relaxed);
     MCP_FAILED.store(failed, Ordering::Relaxed);
+    MCP_DONE.store(true, Ordering::Relaxed);
+}
+
+pub fn init_mcp_progress(total: u32) {
+    MCP_TOTAL.store(total, Ordering::Relaxed);
+    MCP_LOADED.store(0, Ordering::Relaxed);
+    MCP_FAILED.store(0, Ordering::Relaxed);
+    MCP_DONE.store(false, Ordering::Relaxed);
+}
+
+pub fn increment_mcp_loaded() {
+    MCP_LOADED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn increment_mcp_failed() {
+    MCP_FAILED.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn set_mcp_done() {
     MCP_DONE.store(true, Ordering::Relaxed);
 }
 
@@ -744,18 +763,32 @@ fn render_box(
     let mcp_done   = MCP_DONE.load(Ordering::Relaxed);
     let mcp_loaded = MCP_LOADED.load(Ordering::Relaxed);
     let mcp_failed = MCP_FAILED.load(Ordering::Relaxed);
+    let mcp_total  = MCP_TOTAL.load(Ordering::Relaxed);
 
     let (mcp_pill_plain, mcp_pill_colored) = if !mcp_done {
         let frame_idx = MCP_SPIN.fetch_add(1, Ordering::Relaxed) as usize % SPIN_FRAMES.len();
         let frame = SPIN_FRAMES[frame_idx];
-        (
-            format!(" ◇ MCP {}  │ ", frame),
-            format!(
-                " {}◇ MCP {}{}  {}│{} ",
-                AURA_PURPLE, frame, COLOR_RESET,
-                AURA_SLATE, COLOR_RESET
-            ),
-        )
+        let total = mcp_total;
+        let processed = mcp_loaded + mcp_failed;
+        if total > 0 {
+            (
+                format!(" ◇ MCP {}/{} {}  │ ", processed, total, frame),
+                format!(
+                    " {}◇ MCP {}{}/{} {}{}  {}│{} ",
+                    AURA_PURPLE, AURA_GOLD, processed, total, frame, COLOR_RESET,
+                    AURA_SLATE, COLOR_RESET
+                ),
+            )
+        } else {
+            (
+                format!(" ◇ MCP {}  │ ", frame),
+                format!(
+                    " {}◇ MCP {}{}  {}│{} ",
+                    AURA_PURPLE, frame, COLOR_RESET,
+                    AURA_SLATE, COLOR_RESET
+                ),
+            )
+        }
     } else if mcp_failed == 0 {
         (
             format!(" ◇ MCP {}✓  │ ", mcp_loaded),
@@ -1066,8 +1099,26 @@ fn read_line_raw(
             return Ok((inbox_msg.message, Some(inbox_msg.sender)));
         }
 
-        if event::poll(std::time::Duration::from_millis(100))? {
-            let ev = event::read()?;
+        if !event::poll(std::time::Duration::from_millis(100))? {
+            if !MCP_DONE.load(Ordering::Relaxed) {
+                let typed_input_str: String = typed_input.iter().collect();
+                render_box(
+                    model,
+                    provider,
+                    session_manager,
+                    session_key,
+                    &typed_input_str,
+                    cursor_idx,
+                    &mut viewport_start,
+                    selected_index,
+                    autocomplete_visible,
+                    width_usize,
+                    &mut lines_printed,
+                )?;
+            }
+            continue;
+        }
+        let ev = event::read()?;
             
             // Handle bracketed paste event
             if let Event::Paste(text) = &ev {
@@ -1385,7 +1436,6 @@ fn read_line_raw(
                 }
             }
         }
-    }
 
     let mut final_input = typed_input.iter().collect::<String>();
     for (i, path) in pasted_images.iter().enumerate() {
