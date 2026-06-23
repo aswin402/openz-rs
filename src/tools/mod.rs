@@ -16,7 +16,7 @@ pub trait Tool: Send + Sync {
 
 #[derive(Clone)]
 pub struct ToolRegistry {
-    static_tools: HashMap<String, Arc<dyn Tool>>,
+    static_tools: Arc<std::sync::RwLock<HashMap<String, Arc<dyn Tool>>>>,
     pub context: Option<(Config, Arc<dyn LLMProvider>, SessionManager)>,
 }
 
@@ -29,20 +29,20 @@ impl Default for ToolRegistry {
 impl ToolRegistry {
     pub fn new() -> Self {
         ToolRegistry {
-            static_tools: HashMap::new(),
+            static_tools: Arc::new(std::sync::RwLock::new(HashMap::new())),
             context: None,
         }
     }
 
     pub fn new_with_context(config: Config, provider: Arc<dyn LLMProvider>, session_manager: SessionManager) -> Self {
         ToolRegistry {
-            static_tools: HashMap::new(),
+            static_tools: Arc::new(std::sync::RwLock::new(HashMap::new())),
             context: Some((config, provider, session_manager)),
         }
     }
 
-    pub fn register(&mut self, tool: Arc<dyn Tool>) {
-        self.static_tools.insert(tool.name().to_string(), tool);
+    pub fn register(&self, tool: Arc<dyn Tool>) {
+        self.static_tools.write().unwrap().insert(tool.name().to_string(), tool);
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
@@ -50,7 +50,7 @@ impl ToolRegistry {
         if name == "delegate_task" {
             let (config, provider, session_manager) = self.context.as_ref()?;
             let mut parent_tools = Vec::new();
-            for tool in self.static_tools.values() {
+            for tool in self.static_tools.read().unwrap().values() {
                 if tool.name() != "delegate_task" && tool.name() != "parallel_research" && tool.name() != "send_remote_input" {
                     parent_tools.push(tool.clone());
                 }
@@ -68,7 +68,7 @@ impl ToolRegistry {
         if name == "parallel_research" {
             let (config, provider, session_manager) = self.context.as_ref()?;
             let mut parent_tools = Vec::new();
-            for tool in self.static_tools.values() {
+            for tool in self.static_tools.read().unwrap().values() {
                 if tool.name() != "delegate_task" && tool.name() != "parallel_research" && tool.name() != "send_remote_input" {
                     parent_tools.push(tool.clone());
                 }
@@ -86,7 +86,7 @@ impl ToolRegistry {
         if name == "evaluator_optimizer_loop" {
             let (config, provider, session_manager) = self.context.as_ref()?;
             let mut parent_tools = Vec::new();
-            for tool in self.static_tools.values() {
+            for tool in self.static_tools.read().unwrap().values() {
                 if tool.name() != "delegate_task" && tool.name() != "parallel_research" && tool.name() != "evaluator_optimizer_loop" && tool.name() != "send_remote_input" {
                     parent_tools.push(tool.clone());
                 }
@@ -101,7 +101,7 @@ impl ToolRegistry {
         }
 
         // 2. Check static tools
-        if let Some(tool) = self.static_tools.get(name) {
+        if let Some(tool) = self.static_tools.read().unwrap().get(name) {
             return Some(tool.clone());
         }
 
@@ -111,7 +111,7 @@ impl ToolRegistry {
         let profile = profiles.into_iter().find(|p| p.name == name)?;
 
         let mut parent_tools = Vec::new();
-        for tool in self.static_tools.values() {
+        for tool in self.static_tools.read().unwrap().values() {
             if tool.name() != "delegate_task" && tool.name() != "parallel_research" && tool.name() != "send_remote_input" {
                 parent_tools.push(tool.clone());
             }
@@ -128,11 +128,11 @@ impl ToolRegistry {
     }
 
     pub fn get_static_tools(&self) -> Vec<Arc<dyn Tool>> {
-        self.static_tools.values().cloned().collect()
+        self.static_tools.read().unwrap().values().cloned().collect()
     }
 
     pub fn to_openai_format(&self) -> Vec<serde_json::Value> {
-        let mut tools_list: Vec<serde_json::Value> = self.static_tools.values().map(|t| {
+        let mut tools_list: Vec<serde_json::Value> = self.static_tools.read().unwrap().values().map(|t| {
             serde_json::json!({
                 "type": "function",
                 "function": {
@@ -147,7 +147,7 @@ impl ToolRegistry {
         if let Some((_, _, _)) = &self.context {
             if let Ok(profiles) = crate::subagents::load_profiles() {
                 for profile in profiles {
-                    if !self.static_tools.contains_key(&profile.name) {
+                    if !self.static_tools.read().unwrap().contains_key(&profile.name) {
                         tools_list.push(serde_json::json!({
                             "type": "function",
                             "function": {

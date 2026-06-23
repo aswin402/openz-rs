@@ -531,7 +531,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     let sessions_dir = resolve_path("~/.openz/sessions");
     let session_manager = SessionManager::new(sessions_dir);
 
-    let mut registry = ToolRegistry::new_with_context(config.clone(), provider.clone(), session_manager.clone());
+    let registry = ToolRegistry::new_with_context(config.clone(), provider.clone(), session_manager.clone());
     registry.register(std::sync::Arc::new(ReadFileTool));
     registry.register(std::sync::Arc::new(FindFilesTool));
     registry.register(std::sync::Arc::new(DocReaderTool));
@@ -647,17 +647,16 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
 
-    let registry_arc = std::sync::Arc::new(tokio::sync::Mutex::new(registry));
-    let registry_arc_bg = registry_arc.clone();
+    let registry_bg = registry.clone();
 
-    let mcp_handle = tokio::spawn(async move {
+    let _mcp_handle = tokio::spawn(async move {
         let mut total_tools = 0usize;
         let mut servers_loaded = 0u32;
         let mut servers_failed = 0u32;
 
         let mut tasks = Vec::new();
         for (name, mcp_config) in mcp_configs {
-            let registry_arc_bg = registry_arc_bg.clone();
+            let registry_bg = registry_bg.clone();
             tasks.push(tokio::spawn(async move {
                 let name_clone = name.clone();
                 let mcp_config_clone = mcp_config.clone();
@@ -672,7 +671,6 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
 
                 match result {
                     Ok(Ok(tools)) => {
-                        let mut reg = registry_arc_bg.lock().await;
                         let mut count = 0;
                         for t in tools {
                             if let (Some(t_name), Some(desc)) = (
@@ -691,7 +689,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
                                     parameters: params,
                                     is_memory_server: name_clone == "memory",
                                 };
-                                reg.register(std::sync::Arc::new(wrapper));
+                                registry_bg.register(std::sync::Arc::new(wrapper));
                                 count += 1;
                             }
                         }
@@ -720,6 +718,10 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         // Update the status bar pill — the render loop reads these atomics every redraw
         crate::channels::cli::set_mcp_status(servers_loaded, servers_failed);
 
+        if has_any_mcp {
+            crate::tools::mcp::start_mcp_health_checks();
+        }
+
         if has_any_mcp && !silent {
             crate::tui_println!(
                 "\n{}{} MCP tools loaded  ({} servers){}\n",
@@ -727,20 +729,6 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
             );
         }
     });
-
-
-    // Wait for MCP tools to be registered before extracting the registry
-    let _ = mcp_handle.await;
-
-    if has_any_mcp {
-        crate::tools::mcp::start_mcp_health_checks();
-    }
-
-    // Now safely unwrap — background task is done, only one Arc reference remains
-    let registry = match std::sync::Arc::try_unwrap(registry_arc) {
-        Ok(mutex) => mutex.into_inner(),
-        Err(arc) => arc.lock_owned().await.clone(),
-    };
 
     Ok(AgentLoop::new(config, provider, registry, session_manager))
 }

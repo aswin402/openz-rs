@@ -85,7 +85,7 @@ impl Tool for DelegateTaskTool {
             self.parent_provider.clone()
         };
 
-        let mut child_registry = ToolRegistry::new_with_context(
+        let child_registry = ToolRegistry::new_with_context(
             self.config.clone(),
             provider.clone(),
             self.session_manager.clone(),
@@ -515,7 +515,7 @@ impl Tool for DelegateProfileTool {
 
             let filtered_parent_tools = filter_tools_for_subagent(&self.profile.name, &self.parent_tools);
 
-            let mut child_registry = ToolRegistry::new_with_context(
+            let child_registry = ToolRegistry::new_with_context(
                 self.config.clone(),
                 provider.clone(),
                 self.session_manager.clone(),
@@ -1778,7 +1778,7 @@ impl Tool for ParallelResearchTool {
                             parent_provider.clone()
                         };
 
-                        let mut child_registry = ToolRegistry::new_with_context(
+                        let child_registry = ToolRegistry::new_with_context(
                             config.clone(),
                             provider.clone(),
                             session_manager.clone(),
