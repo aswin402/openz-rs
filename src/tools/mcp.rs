@@ -90,9 +90,12 @@ impl McpClient {
     pub async fn spawn(command: &str, args: &[String]) -> Result<Self> {
         let cache_key = format!("{}:{}", command, args.join(" "));
         let cell = SPAWNED_MCP_CLIENTS.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
-        let mut lock = cell.lock().await;
-        if let Some(client) = lock.get(&cache_key) {
-            return Ok(client.clone());
+        
+        {
+            let lock = cell.lock().await;
+            if let Some(client) = lock.get(&cache_key) {
+                return Ok(client.clone());
+            }
         }
 
         let cmd = command.to_string();
@@ -249,6 +252,7 @@ impl McpClient {
 
         match result {
             Ok(client) => {
+                let mut lock = cell.lock().await;
                 lock.insert(cache_key, client.clone());
                 Ok(client)
             }
