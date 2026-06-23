@@ -655,46 +655,63 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         let mut servers_loaded = 0u32;
         let mut servers_failed = 0u32;
 
-        for (name, mcp_config) in &mcp_configs {
-            match crate::tools::mcp::McpClient::spawn(&mcp_config.command, &mcp_config.args).await {
-                Ok(mcp_client) => {
-                    if name == "memory" {
+        let mut tasks = Vec::new();
+        for (name, mcp_config) in mcp_configs {
+            let registry_arc_bg = registry_arc_bg.clone();
+            tasks.push(tokio::spawn(async move {
+                let name_clone = name.clone();
+                let mcp_config_clone = mcp_config.clone();
+                let result = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                    let mcp_client = crate::tools::mcp::McpClient::spawn(&mcp_config_clone.command, &mcp_config_clone.args).await?;
+                    if name_clone == "memory" {
                         crate::tools::mcp::set_memory_mcp_client(mcp_client.clone());
                     }
-                    match mcp_client.list_tools().await {
-                        Ok(tools) => {
-                            let mut reg = registry_arc_bg.lock().await;
-                            let mut count = 0;
-                            for t in tools {
-                                if let (Some(t_name), Some(desc)) = (
-                                    t.get("name").and_then(|v| v.as_str()),
-                                    t.get("description").and_then(|v| v.as_str()),
-                                ) {
-                                    let params = t.get("inputSchema").cloned().unwrap_or(
-                                        serde_json::json!({"type": "object", "properties": {}})
-                                    );
-                                    let wrapper = crate::tools::mcp::LazyMcpToolWrapper {
-                                        server_name: name.clone(),
-                                        command: mcp_config.command.clone(),
-                                        args: mcp_config.args.clone(),
-                                        name: t_name.to_string(),
-                                        description: desc.to_string(),
-                                        parameters: params,
-                                        is_memory_server: name == "memory",
-                                    };
-                                    reg.register(std::sync::Arc::new(wrapper));
-                                    count += 1;
-                                }
+                    let tools = mcp_client.list_tools().await?;
+                    Ok::<_, anyhow::Error>(tools)
+                }).await;
+
+                match result {
+                    Ok(Ok(tools)) => {
+                        let mut reg = registry_arc_bg.lock().await;
+                        let mut count = 0;
+                        for t in tools {
+                            if let (Some(t_name), Some(desc)) = (
+                                t.get("name").and_then(|v| v.as_str()),
+                                t.get("description").and_then(|v| v.as_str()),
+                            ) {
+                                let params = t.get("inputSchema").cloned().unwrap_or(
+                                    serde_json::json!({"type": "object", "properties": {}})
+                                );
+                                let wrapper = crate::tools::mcp::LazyMcpToolWrapper {
+                                    server_name: name_clone.clone(),
+                                    command: mcp_config_clone.command.clone(),
+                                    args: mcp_config_clone.args.clone(),
+                                    name: t_name.to_string(),
+                                    description: desc.to_string(),
+                                    parameters: params,
+                                    is_memory_server: name_clone == "memory",
+                                };
+                                reg.register(std::sync::Arc::new(wrapper));
+                                count += 1;
                             }
-                            total_tools += count;
-                            servers_loaded += 1;
                         }
-                        Err(_) => {
-                            servers_failed += 1;
-                        }
+                        Ok::<usize, anyhow::Error>(count)
+                    }
+                    _ => {
+                        Err(anyhow::anyhow!("Failed or timed out starting MCP server {}", name_clone))
                     }
                 }
-                Err(_) => {
+            }));
+        }
+
+        let results = futures_util::future::join_all(tasks).await;
+        for res in results {
+            match res {
+                Ok(Ok(count)) => {
+                    total_tools += count;
+                    servers_loaded += 1;
+                }
+                _ => {
                     servers_failed += 1;
                 }
             }
