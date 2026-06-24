@@ -1037,6 +1037,8 @@ fn read_line_raw(
         &mut lines_printed,
     )?;
 
+    let mut last_mcp_done = MCP_DONE.load(Ordering::Relaxed);
+
     loop {
         if let Some(rx) = crate::shutdown::receiver() {
             if *rx.borrow() {
@@ -1099,8 +1101,14 @@ fn read_line_raw(
             return Ok((inbox_msg.message, Some(inbox_msg.sender)));
         }
 
+        let current_mcp_done = MCP_DONE.load(Ordering::Relaxed);
+        let mcp_status_changed = current_mcp_done != last_mcp_done;
+        if mcp_status_changed {
+            last_mcp_done = current_mcp_done;
+        }
+
         if !event::poll(std::time::Duration::from_millis(100))? {
-            if !MCP_DONE.load(Ordering::Relaxed) {
+            if !current_mcp_done || mcp_status_changed {
                 let typed_input_str: String = typed_input.iter().collect();
                 render_box(
                     model,

@@ -267,6 +267,7 @@ impl AgentLoop {
                         interaction_id = crate::tools::shared_memory::log_interaction(session_key, user_content).await.ok();
                     }
                     session.add_message("user", user_content);
+                    tracing::info!(session = %session_key, "Restored session history ({} messages). User prompt: {:?}", session.messages.len(), user_content);
 
                     let parts = crate::providers::parse_multimodal_content(user_content).await;
                     let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
@@ -331,13 +332,16 @@ impl AgentLoop {
                                 RED_ORANGE,
                                 COLOR_RESET
                             );
+                            tracing::info!(session = %session_key, "Compacting history ({} messages > {} limit)...", len, max_msgs);
                             match self.chat_with_fallback(&mut active_provider, system_prompt_sum, &summary_msgs, &[], &settings, &spinner_msg).await {
                                 Ok(resp) => {
                                     if let Some(new_summary) = resp.content {
+                                        tracing::info!(session = %session_key, "Compacted summary length: {} chars", new_summary.len());
                                         session.metadata.insert("summary".to_string(), serde_json::Value::String(new_summary));
                                     }
                                 }
                                 Err(e) => {
+                                    tracing::error!(session = %session_key, "Failed to compact conversation history: {}", e);
                                     eprintln!("{}▲ Failed to summarize conversation history: {}{}", AURA_GOLD, e, COLOR_RESET);
                                 }
                             }
@@ -372,11 +376,13 @@ impl AgentLoop {
                             match self.chat_with_fallback(&mut active_provider, system_prompt_mem, &mem_msgs, &[], &settings, &spinner_msg).await {
                                 Ok(resp) => {
                                     if let Some(new_memory) = resp.content {
+                                        tracing::info!(session = %session_key, "Consolidated long-term memory. Memory size: {} chars", new_memory.len());
                                         session.metadata.insert("memory".to_string(), serde_json::Value::String(new_memory));
                                     }
                                 }
                                 Err(e) => {
                                     let silent = crate::agent::style::spinner::is_silent();
+                                    tracing::error!(session = %session_key, "Failed to consolidate long-term memory: {}", e);
                                     if !silent {
                                         eprintln!("{}▲ Failed to update long-term memory: {}{}", AURA_GOLD, e, COLOR_RESET);
                                     }
@@ -746,6 +752,7 @@ impl AgentLoop {
                     };
 
                     loop {
+                        tracing::info!(session = %session_key, iteration = iterations, "Sending completion request to LLM (model: {})", self.config.agents.defaults.model);
                         if iterations >= max_iterations {
                             let msg = format!(
                                 "⚠️ Reached tool iteration limit ({}). Summarizing work so far.",
@@ -1023,6 +1030,21 @@ impl AgentLoop {
                         }
 
                         let duration = start_time.elapsed();
+                        tracing::info!(
+                            session = %session_key,
+                            duration_ms = duration.as_millis(),
+                            has_content = resp.content.is_some(),
+                            has_reasoning = resp.reasoning_content.is_some(),
+                            tool_calls = resp.tool_calls.len(),
+                            "Received LLM response (finish_reason: {})",
+                            resp.finish_reason
+                        );
+                        if let Some(ref reasoning) = resp.reasoning_content {
+                            tracing::debug!(session = %session_key, "LLM reasoning content: {:?}", reasoning);
+                        }
+                        if let Some(ref content) = resp.content {
+                            tracing::debug!(session = %session_key, "LLM text content: {:?}", content);
+                        }
                         
                         let duration_secs = duration.as_secs_f32();
                         let has_reasoning = resp.reasoning_content.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
@@ -1129,6 +1151,13 @@ impl AgentLoop {
                             let tool_msg = format!("▸ Running *{}*...", formatted_args);
                             send_progress_update(session_key, &tool_msg).await;
                             
+                            tracing::info!(
+                                session = %session_key,
+                                tool = %call.name,
+                                arguments = %call.arguments,
+                                "Executing tool call"
+                            );
+                            
                             let silent = crate::agent::style::spinner::is_silent();
                             let mut approved = true;
                             let mut forbidden = false;
@@ -1176,6 +1205,11 @@ impl AgentLoop {
                                 if !silent {
                                     crate::tui_println!("{}⚠️ Loop detected for tool '{}'! Blocking execution. (Count: {}){}", AURA_GOLD, call.name, loop_blocked_count, COLOR_RESET);
                                 }
+                                tracing::warn!(
+                                    session = %session_key,
+                                    tool = %call.name,
+                                    "Tool execution blocked (repetition/loop detected)"
+                                );
                                 serde_json::json!({ "error": warning_str })
                             } else if forbidden {
                                 let reject_msg = format!("✕ *{}* - Rejected: Dangerous command is forbidden", formatted_args);
@@ -1184,6 +1218,11 @@ impl AgentLoop {
                                     print!("{}✕{} {} - Rejected: Dangerous command is forbidden\r\n", ERROR_RED, COLOR_RESET, formatted_args);
                                     let _ = std::io::stdout().flush();
                                 }
+                                tracing::warn!(
+                                    session = %session_key,
+                                    tool = %call.name,
+                                    "Tool execution forbidden by security guard"
+                                );
                                 serde_json::json!({ "error": "Execution denied by host: This command is forbidden by security rules." })
                             } else if !approved {
                                 let deny_msg = format!("✕ *{}* - Denied by user", formatted_args);
@@ -1192,6 +1231,11 @@ impl AgentLoop {
                                     print!("{}✕{} {} - Denied by user\r\n", ERROR_RED, COLOR_RESET, formatted_args);
                                     let _ = std::io::stdout().flush();
                                 }
+                                tracing::warn!(
+                                    session = %session_key,
+                                    tool = %call.name,
+                                    "Tool execution denied by user approval request"
+                                );
                                 serde_json::json!({ "error": "Execution denied by user." })
                             } else {
                                 match self.tools.get(&call.name) {
@@ -1207,6 +1251,18 @@ impl AgentLoop {
                                                     print!("{}✓{} {}\r\n", EMERALD_GREEN, COLOR_RESET, formatted_args);
                                                     let _ = std::io::stdout().flush();
                                                 }
+                                                tracing::info!(
+                                                    session = %session_key,
+                                                    tool = %call.name,
+                                                    status = "success",
+                                                    "Tool call completed"
+                                                );
+                                                tracing::debug!(
+                                                    session = %session_key,
+                                                    tool = %call.name,
+                                                    result = %res,
+                                                    "Tool output result"
+                                                );
                                                 res
                                             }
                                             Ok(Err(e)) => {
@@ -1217,6 +1273,12 @@ impl AgentLoop {
                                                 if !silent {
                                                     crate::tui_println!("{}✕ {} - Failed: {}{}", AURA_PURPLE, formatted_args, error_str, COLOR_RESET);
                                                 }
+                                                tracing::error!(
+                                                    session = %session_key,
+                                                    tool = %call.name,
+                                                    error = %error_str,
+                                                    "Tool call failed"
+                                                );
                                                 let hint = generate_self_healing_hint(&call.name, &error_str);
                                                 serde_json::json!({
                                                     "error": error_str,
@@ -1231,6 +1293,11 @@ impl AgentLoop {
                                                 if !silent {
                                                     crate::tui_println!("{}⏱️ {} - Timed out after {}s{}", AURA_GOLD, formatted_args, self.config.agents.defaults.tool_timeout_secs, COLOR_RESET);
                                                 }
+                                                tracing::error!(
+                                                    session = %session_key,
+                                                    tool = %call.name,
+                                                    "Tool call timed out"
+                                                );
                                                 serde_json::json!({
                                                     "error": timeout_msg,
                                                     "hint": "The tool exceeded the time limit. Try a more specific query, a smaller scope, or break the task into steps."
@@ -1375,6 +1442,7 @@ impl AgentLoop {
                     if let Err(e) = crate::tools::onpkg::sync_onpkg_manifest() {
                         tracing::warn!("Failed to synchronize onpkg manifest: {}", e);
                     }
+                    tracing::info!(session = %session_key, "Session saved successfully. Turn complete.");
                     state = TurnState::Done;
                 }
                 TurnState::Done => {}
@@ -1482,6 +1550,7 @@ impl AgentLoop {
                     return;
                 }
 
+                tracing::info!(session = %session_key, "Self-improvement curator: started processing.");
                 write_log("running", false, vec![], None);
 
                 // Run background skill archiving check
@@ -1706,6 +1775,7 @@ impl AgentLoop {
                                                 crate::channels::cli::send_notification(&format!("{}▲ [Self-Improvement] Failed to save self-improvement memory: {}{}", AURA_GOLD, e, COLOR_RESET));
                                             } else {
                                                 memory_updated = true;
+                                                tracing::info!(session = %session_key, "Self-improvement curator: updated session memory.");
                                                 crate::channels::cli::send_notification(&format!("{}◇ [Self-Improvement] Memory updated based on recent conversation.{}", AURA_BLUE, COLOR_RESET));
                                             }
                                         }
@@ -1725,14 +1795,17 @@ impl AgentLoop {
                                                 crate::channels::cli::send_notification(&format!("{}▲ [Self-Improvement] Failed to save self-improvement skill '{}': {}{}", AURA_GOLD, skill.name, e, COLOR_RESET));
                                             } else {
                                                 skills_saved.push(skill.name.clone());
+                                                tracing::info!(session = %session_key, skill = %skill.name, "Self-improvement curator: saved skill.");
                                                 crate::channels::cli::send_notification(&format!("{}◇ [Self-Improvement] Skill '{}' updated/created based on recent conversation.{}", AURA_BLUE, skill.name, COLOR_RESET));
                                             }
                                         }
                                     }
 
                                     if error_msg.is_none() {
+                                        tracing::info!(session = %session_key, "Self-improvement curator finished successfully.");
                                         write_log("success", memory_updated, skills_saved, None);
                                     } else {
+                                        tracing::warn!(session = %session_key, error = ?error_msg, "Self-improvement curator finished with errors.");
                                         write_log("failed", memory_updated, skills_saved, error_msg);
                                     }
                                 }
@@ -1777,13 +1850,30 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
         "clipboard" => "Clipboard",
         "open_path" | "open" => "Open",
         "web_fetch" | "read_url_content" | "read_url" => "Fetch",
+        "generate_image" => "Image",
+        "generate_video" => "Video",
+        "html_to_video" => "HtmlVideo",
+        "create_animated_svg" | "svg_animator" => "SvgAnim",
+        "obscura_browser" => "Obscura",
+        "db_inspector" => "DbInspect",
+        "db_write" => "DbWrite",
+        "doc_reader" => "DocRead",
+        "crawl" => "Crawl",
+        "semantic_search" => "SemanticSearch",
+        "wasm_sandbox" => "Wasm",
+        "cron" => "Cron",
+        "watcher" => "Watcher",
         other => other,
     };
 
     let details = if let serde_json::Value::Object(map) = args {
         if name == "grep_search" {
             if let Some(q) = map.get("Query").and_then(|v| v.as_str()) {
-                q.to_string()
+                if q.len() > 35 {
+                    format!("\"{}...\"", q.chars().take(32).collect::<String>())
+                } else {
+                    format!("\"{}\"", q)
+                }
             } else {
                 String::new()
             }
@@ -1815,8 +1905,8 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 .and_then(|v| v.as_str())
             {
                 let first_line = cmd.lines().next().unwrap_or("").trim();
-                if first_line.len() > 60 {
-                    format!("{}...", first_line.chars().take(57).collect::<String>())
+                if first_line.len() > 40 {
+                    format!("{}...", first_line.chars().take(37).collect::<String>())
                 } else {
                     first_line.to_string()
                 }
@@ -1847,29 +1937,59 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
             }
         } else if name == "web_search" {
             if let Some(q) = map.get("Query").and_then(|v| v.as_str()) {
-                q.to_string()
+                if q.len() > 35 {
+                    format!("\"{}...\"", q.chars().take(32).collect::<String>())
+                } else {
+                    format!("\"{}\"", q)
+                }
             } else {
                 String::new()
             }
         } else if name == "web_fetch" || name == "read_url_content" || name == "read_url" {
             if let Some(url) = map.get("Url").or(map.get("url")).and_then(|v| v.as_str()) {
-                url.to_string()
+                if url.len() > 35 {
+                    format!("\"{}...\"", url.chars().take(32).collect::<String>())
+                } else {
+                    format!("\"{}\"", url)
+                }
             } else {
                 String::new()
             }
         } else if name == "generate_image" {
-            let path = map.get("output_path").and_then(|v| v.as_str()).unwrap_or("output.png");
+            let path = map.get("output_path").or(map.get("ImageName")).and_then(|v| v.as_str()).unwrap_or("output.png");
             let filename = std::path::Path::new(path).file_name()
                 .map(|f| f.to_string_lossy().to_string())
                 .unwrap_or_else(|| path.to_string());
             let shapes_count = map.get("shapes").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-            format!("output: \"{}\", shapes: {}", filename, shapes_count)
+            if shapes_count > 0 {
+                format!("output: \"{}\", shapes: {}", filename, shapes_count)
+            } else {
+                format!("output: \"{}\"", filename)
+            }
         } else if name == "generate_video" {
             let path = map.get("output_path").and_then(|v| v.as_str()).unwrap_or("output.mp4");
             let filename = std::path::Path::new(path).file_name()
                 .map(|f| f.to_string_lossy().to_string())
                 .unwrap_or_else(|| path.to_string());
             format!("output: \"{}\"", filename)
+        } else if name == "html_to_video" {
+            let html_path = map.get("html_path").and_then(|v| v.as_str()).unwrap_or("");
+            let html_filename = if html_path.starts_with("http://") || html_path.starts_with("https://") {
+                if html_path.len() > 30 {
+                    format!("{}...", html_path.chars().take(27).collect::<String>())
+                } else {
+                    html_path.to_string()
+                }
+            } else {
+                std::path::Path::new(html_path).file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| html_path.to_string())
+            };
+            let out_path = map.get("output_path").and_then(|v| v.as_str()).unwrap_or("output.mp4");
+            let out_filename = std::path::Path::new(out_path).file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| out_path.to_string());
+            format!("html: \"{}\", output: \"{}\"", html_filename, out_filename)
         } else if name == "create_animated_svg" {
             let path = map.get("output_path").and_then(|v| v.as_str()).unwrap_or("output.svg");
             let filename = std::path::Path::new(path).file_name()
@@ -1879,7 +1999,95 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
             let anim_count: usize = map.get("elements").and_then(|v| v.as_array()).map(|elems| {
                 elems.iter().map(|e| e.get("animations").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0)).sum()
             }).unwrap_or(0);
-            format!("output: \"{}\", elements: {}, animations: {}", filename, elem_count, anim_count)
+            if elem_count > 0 {
+                format!("output: \"{}\", elements: {}, animations: {}", filename, elem_count, anim_count)
+            } else {
+                format!("output: \"{}\"", filename)
+            }
+        } else if name == "obscura_browser" {
+            let url = map.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("render");
+            let truncated_url = if url.len() > 30 {
+                format!("{}...", url.chars().take(27).collect::<String>())
+            } else {
+                url.to_string()
+            };
+            format!("action: \"{}\", url: \"{}\"", action, truncated_url)
+        } else if name == "gsd_browser" {
+            let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("");
+            let url = map.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            let ref_id = map.get("ref_id").and_then(|v| v.as_str()).unwrap_or("");
+            if !url.is_empty() {
+                let truncated_url = if url.len() > 30 {
+                    format!("{}...", url.chars().take(27).collect::<String>())
+                } else {
+                    url.to_string()
+                };
+                format!("action: \"{}\", url: \"{}\"", action, truncated_url)
+            } else if !ref_id.is_empty() {
+                format!("action: \"{}\", ref_id: \"{}\"", action, ref_id)
+            } else {
+                format!("action: \"{}\"", action)
+            }
+        } else if name == "ast_grep" {
+            if let Some(pattern) = map.get("pattern").and_then(|v| v.as_str()) {
+                if pattern.len() > 35 {
+                    format!("\"{}...\"", pattern.chars().take(32).collect::<String>())
+                } else {
+                    format!("\"{}\"", pattern)
+                }
+            } else {
+                String::new()
+            }
+        } else if name == "crawl" {
+            let url = map.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            if url.len() > 30 {
+                format!("url: \"{}...\"", url.chars().take(27).collect::<String>())
+            } else {
+                format!("url: \"{}\"", url)
+            }
+        } else if name == "semantic_search" {
+            let query = map.get("query").and_then(|v| v.as_str()).unwrap_or("");
+            if query.len() > 35 {
+                format!("query: \"{}...\"", query.chars().take(32).collect::<String>())
+            } else {
+                format!("query: \"{}\"", query)
+            }
+        } else if name == "doc_reader" {
+            let path = map.get("file_path").or(map.get("Path")).and_then(|v| v.as_str()).unwrap_or("");
+            let filename = std::path::Path::new(path).file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string());
+            format!("file: \"{}\"", filename)
+        } else if name == "wasm_sandbox" {
+            let path = map.get("wasm_path").and_then(|v| v.as_str()).unwrap_or("");
+            let filename = std::path::Path::new(path).file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string());
+            format!("wasm: \"{}\"", filename)
+        } else if name == "cron" {
+            let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("");
+            format!("action: \"{}\"", action)
+        } else if name == "watcher" {
+            let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("");
+            format!("action: \"{}\"", action)
+        } else if name == "db_inspector" || name == "db_write" {
+            let db_path = map.get("db_path").and_then(|v| v.as_str()).unwrap_or("");
+            let db_filename = std::path::Path::new(db_path).file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| db_path.to_string());
+            let sql = map.get("sql").and_then(|v| v.as_str()).unwrap_or("");
+            if !sql.is_empty() {
+                let truncated_sql = if sql.len() > 35 {
+                    format!("{}...", sql.chars().take(32).collect::<String>())
+                } else {
+                    sql.to_string()
+                };
+                format!("db: \"{}\", sql: \"{}\"", db_filename, truncated_sql)
+            } else {
+                let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("");
+                format!("db: \"{}\", action: \"{}\"", db_filename, action)
+            }
         } else {
             let mut parts = Vec::new();
             for (k, v) in map {
@@ -1888,20 +2096,37 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 }
                 let val_str = match v {
                     serde_json::Value::String(s) => {
-                        if s.len() > 30 {
-                            format!("\"{}...\"", s.chars().take(27).collect::<String>())
+                        if s.len() > 20 {
+                            format!("\"{}...\"", s.chars().take(17).collect::<String>())
                         } else {
                             format!("\"{}\"", s)
                         }
                     }
-                    other => other.to_string(),
+                    other => {
+                        let os = other.to_string();
+                        if os.len() > 20 {
+                            format!("{}...", os.chars().take(17).collect::<String>())
+                        } else {
+                            os
+                        }
+                    }
                 };
                 parts.push(format!("{}: {}", k, val_str));
             }
-            parts.join(", ")
+            let joined = parts.join(", ");
+            if joined.len() > 50 {
+                format!("{}...", joined.chars().take(47).collect::<String>())
+            } else {
+                joined
+            }
         }
     } else {
-        args.to_string()
+        let as_str = args.to_string();
+        if as_str.len() > 50 {
+            format!("{}...", as_str.chars().take(47).collect::<String>())
+        } else {
+            as_str
+        }
     };
 
     if details.is_empty() {
@@ -2086,4 +2311,49 @@ fn format_markdown_line(line: &str) -> String {
     formatted = re_italic.replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
 
     formatted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_format_tool_args() {
+        // html_to_video
+        let args = json!({
+            "html_path": "src/index.html",
+            "output_path": "video.mp4"
+        });
+        let formatted = format_tool_args("html_to_video", &args);
+        assert!(formatted.contains("HtmlVideo"));
+        assert!(formatted.contains("html: \"index.html\""));
+        assert!(formatted.contains("output: \"video.mp4\""));
+
+        // generate_video
+        let args = json!({
+            "composition_json": "{}",
+            "output_path": "path/to/my_output_file.mp4"
+        });
+        let formatted = format_tool_args("generate_video", &args);
+        assert!(formatted.contains("Video"));
+        assert!(formatted.contains("output: \"my_output_file.mp4\""));
+
+        // obscura_browser
+        let args = json!({
+            "url": "https://a-very-long-url-that-exceeds-thirty-characters.com/index.html",
+            "action": "render"
+        });
+        let formatted = format_tool_args("obscura_browser", &args);
+        assert!(formatted.contains("Obscura"));
+        assert!(formatted.contains("url: \"https://a-very-long-url-tha...\""));
+
+        // fallback with clamping
+        let args = json!({
+            "some_huge_mcp_param": "this is a very long string that should get truncated during formatting to keep things clean"
+        });
+        let formatted = format_tool_args("mcp_custom_tool", &args);
+        assert!(formatted.contains("mcp_custom_tool"));
+        assert!(formatted.contains("some_huge_mcp_param: \"this is a very lo...\""));
+    }
 }

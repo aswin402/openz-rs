@@ -651,7 +651,9 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     let num_configs = mcp_configs.len() as u32;
 
     let _mcp_handle = tokio::spawn(async move {
-        crate::channels::cli::init_mcp_progress(num_configs);
+        if !silent {
+            crate::channels::cli::init_mcp_progress(num_configs);
+        }
 
         let mut servers_loaded = 0u32;
         let mut servers_failed = 0u32;
@@ -673,7 +675,9 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
 
                 match result {
                     Ok(Ok(tools)) => {
-                        crate::channels::cli::increment_mcp_loaded();
+                        if !silent {
+                            crate::channels::cli::increment_mcp_loaded();
+                        }
                         let mut count = 0;
                         for t in tools {
                             if let (Some(t_name), Some(desc)) = (
@@ -699,12 +703,16 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
                         Ok::<usize, anyhow::Error>(count)
                     }
                     Ok(Err(e)) => {
-                        crate::channels::cli::increment_mcp_failed();
+                        if !silent {
+                            crate::channels::cli::increment_mcp_failed();
+                        }
                         tracing::error!("Failed starting MCP server {}: {:?}", name_clone, e);
                         Err(e)
                     }
                     Err(elapsed) => {
-                        crate::channels::cli::increment_mcp_failed();
+                        if !silent {
+                            crate::channels::cli::increment_mcp_failed();
+                        }
                         tracing::error!("Timed out starting MCP server {} after 15s: {:?}", name_clone, elapsed);
                         Err(anyhow::anyhow!("Timed out starting MCP server {}: {:?}", name_clone, elapsed))
                     }
@@ -725,8 +733,10 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         }
 
         // Update the status bar pill — the render loop reads these atomics every redraw
-        crate::channels::cli::set_mcp_status(servers_loaded, servers_failed);
-        crate::channels::cli::set_mcp_done();
+        if !silent {
+            crate::channels::cli::set_mcp_status(servers_loaded, servers_failed);
+            crate::channels::cli::set_mcp_done();
+        }
 
         if has_any_mcp {
             crate::tools::mcp::start_mcp_health_checks();

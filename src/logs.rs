@@ -217,6 +217,292 @@ fn highlight_message(msg: &str) -> String {
     format!("{}{}", prefix, highlighted_json)
 }
 
+fn is_subagent_tool(tool_name: &str) -> bool {
+    if tool_name == "delegate_task" || tool_name == "parallel_research" || tool_name == "evaluator_optimizer_loop" {
+        return true;
+    }
+    if let Ok(profiles) = crate::subagents::load_profiles() {
+        profiles.iter().any(|p| p.name == tool_name)
+    } else {
+        false
+    }
+}
+
+fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static str)> {
+    // 1. USER prompt
+    if message.contains("User prompt:") || message.contains("User input:") {
+        let prompt = if let Some(idx) = message.find("User prompt:") {
+            &message[idx + "User prompt:".len()..]
+        } else if let Some(idx) = message.find("User input:") {
+            &message[idx + "User input:".len()..]
+        } else {
+            message
+        };
+        return Some((
+            "👤".to_string(),
+            "USER".to_string(),
+            prompt.trim().to_string(),
+            CYAN,
+        ));
+    }
+
+    // 2. LLM CALL
+    if message.contains("Sending completion request to LLM") || message.contains("Sending request to LLM") {
+        let model = if let Some(idx) = message.find("model:") {
+            let rest = &message[idx + "model:".len()..];
+            rest.trim_matches(|c| c == ')' || c == '"' || c == '(').trim()
+        } else {
+            ""
+        };
+        let msg = if model.is_empty() {
+            "Sending request to LLM".to_string()
+        } else {
+            format!("Sending request to LLM (model: {})", model)
+        };
+        return Some((
+            "📡".to_string(),
+            "LLM CALL".to_string(),
+            msg,
+            SLATE,
+        ));
+    }
+
+    // 3. THINKING (LLM reasoning)
+    if message.contains("LLM reasoning content:") {
+        let thought = if let Some(idx) = message.find("LLM reasoning content:") {
+            &message[idx + "LLM reasoning content:".len()..]
+        } else {
+            message
+        };
+        return Some((
+            "🧠".to_string(),
+            "THINKING".to_string(),
+            thought.trim().to_string(),
+            ORANGE,
+        ));
+    }
+
+    // 4. RESPONSE (LLM content)
+    if message.contains("LLM text content:") {
+        let resp = if let Some(idx) = message.find("LLM text content:") {
+            &message[idx + "LLM text content:".len()..]
+        } else {
+            message
+        };
+        return Some((
+            "🤖".to_string(),
+            "RESPONSE".to_string(),
+            resp.trim().to_string(),
+            WHITE,
+        ));
+    }
+
+    // 4b. LLM RESPONSE RECEIVED (finish reason)
+    if message.contains("Received LLM response") {
+        let finish = if let Some(idx) = message.find("finish_reason:") {
+            let rest = &message[idx + "finish_reason:".len()..];
+            rest.trim_matches(|c| c == ')' || c == '"' || c == '(').trim()
+        } else {
+            ""
+        };
+        let msg = if finish.is_empty() {
+            "Received LLM response".to_string()
+        } else {
+            format!("Received LLM response (finish_reason: {})", finish)
+        };
+        return Some((
+            "🤖".to_string(),
+            "RESPONSE".to_string(),
+            msg,
+            WHITE,
+        ));
+    }
+
+    // 5. TOOL START / SUBAGENT START
+    if message.contains("Executing tool call") {
+        let tool = extract_quoted_field(message, "tool=");
+        let args = extract_quoted_field(message, "arguments=");
+        let is_subagent = tool.as_ref().map(|t| is_subagent_tool(t)).unwrap_or(false);
+        
+        let formatted = match (tool, args) {
+            (Some(t), Some(a)) => format!("{} with args: {}", t, a),
+            (Some(t), None) => t.to_string(),
+            _ => "tool execution".to_string(),
+        };
+        
+        if is_subagent {
+            return Some((
+                "🤖".to_string(),
+                "SUBAGENT START".to_string(),
+                formatted,
+                PURPLE,
+            ));
+        } else {
+            return Some((
+                "🛠️".to_string(),
+                "TOOL START".to_string(),
+                formatted,
+                GOLD,
+            ));
+        }
+    }
+
+    // 6. TOOL DONE / SUBAGENT DONE
+    if message.contains("Tool call completed") {
+        let tool = extract_quoted_field(message, "tool=");
+        let is_subagent = tool.as_ref().map(|t| is_subagent_tool(t)).unwrap_or(false);
+        
+        let formatted = match tool {
+            Some(t) => format!("{} completed", t),
+            None => "tool completed".to_string(),
+        };
+        
+        if is_subagent {
+            return Some((
+                "🤖".to_string(),
+                "SUBAGENT DONE".to_string(),
+                formatted,
+                GREEN,
+            ));
+        } else {
+            return Some((
+                "✅".to_string(),
+                "TOOL DONE".to_string(),
+                formatted,
+                GREEN,
+            ));
+        }
+    }
+
+    // 7. TOOL FAIL / SUBAGENT FAIL
+    if message.contains("Tool call failed") || message.contains("Tool call timed out") {
+        let tool = extract_quoted_field(message, "tool=");
+        let err = extract_quoted_field(message, "error=");
+        let base = if message.contains("timed out") { "timed out" } else { "failed" };
+        let is_subagent = tool.as_ref().map(|t| is_subagent_tool(t)).unwrap_or(false);
+        
+        let formatted = match (tool, err) {
+            (Some(t), Some(e)) => format!("{} {} - error: {}", t, base, e),
+            (Some(t), None) => format!("{} {}", t, base),
+            _ => format!("tool {}", base),
+        };
+        
+        let icon = if message.contains("timed out") { "⏱️" } else { "✕" };
+        let label = if is_subagent { "SUBAGENT FAIL" } else { "TOOL FAIL" };
+        
+        return Some((
+            icon.to_string(),
+            label.to_string(),
+            formatted,
+            ROSE,
+        ));
+    }
+
+    // 8. BLOCKED
+    if message.contains("Tool execution blocked") || message.contains("forbidden by security") || message.contains("denied by user") {
+        let tool = extract_quoted_field(message, "tool=");
+        let reason = if message.contains("blocked") {
+            "loop/repetition detected"
+        } else if message.contains("forbidden") {
+            "forbidden by security policies"
+        } else {
+            "denied by user"
+        };
+        let formatted = match tool {
+            Some(t) => format!("{} blocked - reason: {}", t, reason),
+            _ => format!("tool blocked - reason: {}", reason),
+        };
+        return Some((
+            "🛡️".to_string(),
+            "BLOCKED".to_string(),
+            formatted,
+            GOLD,
+        ));
+    }
+
+    // 9. CURATOR
+    if message.contains("Self-improvement curator:") || message.contains("Self-improvement curator") {
+        let rest = if let Some(idx) = message.find("Self-improvement curator:") {
+            &message[idx + "Self-improvement curator:".len()..]
+        } else if let Some(idx) = message.find("Self-improvement curator") {
+            &message[idx + "Self-improvement curator".len()..]
+        } else {
+            message
+        };
+        return Some((
+            "🧹".to_string(),
+            "CURATOR".to_string(),
+            rest.trim().trim_start_matches(|c| c == '-' || c == ':').trim().to_string(),
+            PURPLE,
+        ));
+    }
+
+    // 10. COMPACTING / SAVED / EXTRA LIFECYCLE
+    if message.contains("Session saved successfully") || message.contains("Session saved") {
+        return Some((
+            "💾".to_string(),
+            "SAVED".to_string(),
+            "Session saved. Turn complete.".to_string(),
+            GREEN,
+        ));
+    }
+
+    if message.contains("Compacting history") {
+        return Some((
+            "🗜️".to_string(),
+            "COMPACT".to_string(),
+            message.to_string(),
+            SLATE,
+        ));
+    }
+
+    if message.contains("Compacted summary length") || message.contains("Consolidated long-term memory") {
+        return Some((
+            "💾".to_string(),
+            "COMPACTED".to_string(),
+            message.to_string(),
+            SLATE,
+        ));
+    }
+
+    None
+}
+
+fn extract_quoted_field(text: &str, field_prefix: &str) -> Option<String> {
+    if let Some(pos) = text.find(field_prefix) {
+        let start = pos + field_prefix.len();
+        if text[start..].starts_with('"') {
+            let rest = &text[start + 1..];
+            let mut val = String::new();
+            let mut chars = rest.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    if let Some(&next_c) = chars.peek() {
+                        if next_c == '"' || next_c == '\\' {
+                            val.push(chars.next().unwrap());
+                        } else {
+                            val.push(c);
+                        }
+                    } else {
+                        val.push(c);
+                    }
+                } else if c == '"' {
+                    break;
+                } else {
+                    val.push(c);
+                }
+            }
+            return Some(val);
+        } else {
+            // Unquoted field (till space or end of string)
+            let rest = &text[start..];
+            let end = rest.find(' ').unwrap_or(rest.len());
+            return Some(rest[..end].to_string());
+        }
+    }
+    None
+}
+
 fn print_line_filtered(raw: &str, filter: &SessionFilter, level_filter: &LogLevelFilter) {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -289,19 +575,37 @@ fn print_line_filtered(raw: &str, filter: &SessionFilter, level_filter: &LogLeve
         None => String::new(),
     };
 
-    let highlighted_msg = highlight_message(p.message);
-
-    let _ = writeln!(
-        out,
-        "{SLATE}{DIM}{ts}{RESET}  {BOLD}{level_col}{level_label}{RESET}  {target_col}{target:<35}{RESET}  {msg_col}{}{RESET}{session_badge}",
-        highlighted_msg,
-        ts = ts,
-        level_col = level_col,
-        level_label = level_label,
-        target = target,
-        target_col = target_col,
-        msg_col = msg_col,
-    );
+    if let Some((icon, label, formatted_msg, color)) = pretty_format_log(p.message) {
+        let highlighted = highlight_message(&formatted_msg);
+        let _ = writeln!(
+            out,
+            "{SLATE}{DIM}{ts}{RESET}  {BOLD}{level_col}{level_label}{RESET}  {target_col}{target:<35}{RESET}  {icon} {BOLD}{color}[{label}]{RESET} {color}{}{RESET}{session_badge}",
+            highlighted,
+            ts = ts,
+            level_col = level_col,
+            level_label = level_label,
+            target = &target,
+            target_col = target_col,
+            icon = icon,
+            label = label,
+            color = color,
+            session_badge = session_badge,
+        );
+    } else {
+        let highlighted_msg = highlight_message(p.message);
+        let _ = writeln!(
+            out,
+            "{SLATE}{DIM}{ts}{RESET}  {BOLD}{level_col}{level_label}{RESET}  {target_col}{target:<35}{RESET}  {msg_col}{}{RESET}{session_badge}",
+            highlighted_msg,
+            ts = ts,
+            level_col = level_col,
+            level_label = level_label,
+            target = &target,
+            target_col = target_col,
+            msg_col = msg_col,
+            session_badge = session_badge,
+        );
+    }
 }
 
 // ── Header banner ───────────────────────────────────────────────────────────

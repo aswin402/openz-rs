@@ -73,6 +73,12 @@ impl Tool for DelegateTaskTool {
         let model_override = arguments.get("model").and_then(|v| v.as_str());
         let json_schema = arguments.get("json_schema").cloned();
 
+        let clean_goal = ensure_markdown_images(goal);
+        let clean_context = ensure_markdown_images(context);
+
+        let has_images = crate::providers::parse_multimodal_content(&clean_goal).await.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }))
+            || crate::providers::parse_multimodal_content(&clean_context).await.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
+
         let provider = if let Some(m) = model_override {
             match build_provider_for_model(&self.config, m) {
                 Ok(p) => p,
@@ -81,6 +87,19 @@ impl Tool for DelegateTaskTool {
                     self.parent_provider.clone()
                 }
             }
+        } else if has_images && !crate::providers::model_supports_vision(&self.config.agents.defaults.model) {
+            let mut resolved_provider = None;
+            let dynamic_fallbacks = self.config.get_dynamic_fallbacks("vision_agent");
+            for fallback_model in dynamic_fallbacks {
+                if crate::providers::model_supports_vision(&fallback_model) {
+                    if let Ok(p) = build_provider_for_model(&self.config, &fallback_model) {
+                        crate::tui_println!("{}  ✓ Auto-routed vision task to subagent model '{}'{}", EMERALD_GREEN, fallback_model, COLOR_RESET);
+                        resolved_provider = Some(p);
+                        break;
+                    }
+                }
+            }
+            resolved_provider.unwrap_or_else(|| self.parent_provider.clone())
         } else {
             self.parent_provider.clone()
         };
@@ -114,7 +133,7 @@ impl Tool for DelegateTaskTool {
             TASK:\n{}\n\n\
             CONTEXT:\n{}\n\n\
             When finished, provide a clear, concise summary of what you did and found.",
-            goal, context
+            clean_goal, clean_context
         );
 
         if let Some(ref schema) = json_schema {
@@ -299,7 +318,7 @@ impl Tool for DelegateTaskTool {
                 crate::tui_println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
                 
                 // Run evolution review
-                let _ = run_evolution_review(&self.parent_provider, "subagent", goal, context, &res.content).await;
+                let _ = run_evolution_review(&self.parent_provider, "subagent", &clean_goal, &clean_context, &res.content).await;
 
                 Ok(serde_json::json!({
                     "status": "success",

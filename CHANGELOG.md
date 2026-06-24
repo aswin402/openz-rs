@@ -398,7 +398,21 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.24 (Latest Release)
+### v0.0.25 (Latest Release)
+*   **Feat: Structured Live Log Visualizer (HIGH):** Redesigned the terminal-based log follow screen in `openz logs` ([`src/logs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs.rs)) to output high-fidelity trace representations with customized semantic icons, colors, and bold labels representing different workflow events:
+    * 👤 `[USER]` — Human prompt message (Cyan).
+    * 🧠 `[THINKING]` — Model reasoning/thought tokens (Orange).
+    * 📡 `[LLM CALL]` — Outgoing model invocation requests (Slate).
+    * 🤖 `[RESPONSE]` — Model completions output (White).
+    * 🛠️ `[TOOL START]` / `[TOOL DONE]` / `[TOOL FAIL]` — Full tool lifecycle tracking with clean arguments parsing and return statuses (Gold/Green/Rose).
+    * 🤖 `[SUBAGENT START]` / `[SUBAGENT DONE]` / `[SUBAGENT FAIL]` — Correlated trace tracking of child agent delegations (Purple/Green/Rose).
+    * 🛡️ `[BLOCKED]` — Commands intercepted by the SecurityGuard or user denials (Gold).
+    * 🧹 `[CURATOR]` — Progress logs for the background self-improvement curator (Purple).
+    * 💾 `[SAVED]` / `🗜️ [COMPACT]` — History compaction and database transaction saving (Green/Slate).
+*   **Reliability: Comprehensive Execution Tracing (HIGH):** Instrumented the core `AgentLoop` state machine ([`src/agent/agent_loop.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop.rs)) with detailed tracing statements covering context compaction, LLM completions, tool executions, security approvals, and background curator tasks to ensure all developer actions are fully visible in the live logs stream.
+*   **Maintenance: Version Bump:** Bumped to v0.0.25.
+
+### v0.0.24
 *   **Fix: Tokio TcpListener from_std Panic in gRPC MCP Bridge (HIGH):** Resolved a Tokio runtime panic during stdio-based MCP bridge startup by explicitly invoking `port_guard.set_nonblocking(true)?` before converting the standard socket to a Tokio listener via `TcpListener::from_std`.
 *   **Fix: Direct gRPC Server Startup Connection (HIGH):** Replaced the static 500ms sleep and single connect attempt for direct gRPC servers (such as `openmemory_rs` on port 50051) with a robust 20-attempt retry loop (sleeping 150ms between retries, up to 3 seconds total) to prevent early `Connection refused (os error 111)` failures on heavier startup routines.
 *   **Maintenance: Compiled Workspace Binaries:** Recompiled and resolved path routing for local workspace subprojects `openmemory_rs`, `mcp-server-sequential-thinking`, and `context-bus-mcp` to ensure all 10 enabled MCP servers initialize successfully.
