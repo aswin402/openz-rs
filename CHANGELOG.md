@@ -398,7 +398,13 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.23 (Latest Release)
+### v0.0.24 (Latest Release)
+*   **Fix: Tokio TcpListener from_std Panic in gRPC MCP Bridge (HIGH):** Resolved a Tokio runtime panic during stdio-based MCP bridge startup by explicitly invoking `port_guard.set_nonblocking(true)?` before converting the standard socket to a Tokio listener via `TcpListener::from_std`.
+*   **Fix: Direct gRPC Server Startup Connection (HIGH):** Replaced the static 500ms sleep and single connect attempt for direct gRPC servers (such as `openmemory_rs` on port 50051) with a robust 20-attempt retry loop (sleeping 150ms between retries, up to 3 seconds total) to prevent early `Connection refused (os error 111)` failures on heavier startup routines.
+*   **Maintenance: Compiled Workspace Binaries:** Recompiled and resolved path routing for local workspace subprojects `openmemory_rs`, `mcp-server-sequential-thinking`, and `context-bus-mcp` to ensure all 10 enabled MCP servers initialize successfully.
+*   **Maintenance: Version Bump:** Bumped to v0.0.24. All 125 tests passing sequentially.
+
+### v0.0.23
 *   **Fix: LLM Parameter Mapping for Non-OpenAI Reasoning Models (HIGH):** Modified request payload logic to exclude non-OpenAI models like DeepSeek V4/R1, QwQ, etc. from `max_completion_tokens` parameter routing. They are now queried using standard `temperature` and `max_tokens` parameters, which prevents completion token starvation and resolves early truncations / cutoffs on OpenAI-compatible gateways (like OpenCode Zen).
 *   **Feat: CLI Response Streaming Toggle Wizard (MEDIUM):** Implemented a new global CLI subcommand `openz streaming` that runs an interactive terminal menu/wizard. This allows users to easily enable or disable response streaming globally for default agent configurations without manually editing files.
 *   **Maintenance: Version Bump:** Bumped to v0.0.23. All 124 tests passing sequentially.

@@ -99,6 +99,7 @@
       "thirtyfour",
       "tiny-skia",
       "tokio",
+      "tokio-stream",
       "tokio-tungstenite",
       "tonic",
       "tower-http",

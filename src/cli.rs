@@ -662,7 +662,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
             tasks.push(tokio::spawn(async move {
                 let name_clone = name.clone();
                 let mcp_config_clone = mcp_config.clone();
-                let result = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                let result = tokio::time::timeout(std::time::Duration::from_secs(15), async {
                     let mcp_client = crate::tools::mcp::McpClient::spawn(&mcp_config_clone.command, &mcp_config_clone.args).await?;
                     if name_clone == "memory" {
                         crate::tools::mcp::set_memory_mcp_client(mcp_client.clone());
@@ -698,9 +698,15 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
                         }
                         Ok::<usize, anyhow::Error>(count)
                     }
-                    _ => {
+                    Ok(Err(e)) => {
                         crate::channels::cli::increment_mcp_failed();
-                        Err(anyhow::anyhow!("Failed or timed out starting MCP server {}", name_clone))
+                        tracing::error!("Failed starting MCP server {}: {:?}", name_clone, e);
+                        Err(e)
+                    }
+                    Err(elapsed) => {
+                        crate::channels::cli::increment_mcp_failed();
+                        tracing::error!("Timed out starting MCP server {} after 15s: {:?}", name_clone, elapsed);
+                        Err(anyhow::anyhow!("Timed out starting MCP server {}: {:?}", name_clone, elapsed))
                     }
                 }
             }));

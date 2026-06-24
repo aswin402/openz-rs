@@ -4365,7 +4365,7 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "openz"
-version = "0.0.23"
+version = "0.0.24"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -4422,6 +4422,7 @@ dependencies = [
  "thirtyfour",
  "tiny-skia",
  "tokio",
+ "tokio-stream",
  "tokio-tungstenite",
  "tonic",
  "tonic-build",

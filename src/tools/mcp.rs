@@ -120,12 +120,27 @@ impl McpClient {
                     .kill_on_drop(true)
                     .spawn()?;
 
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-                let channel = tonic::transport::Channel::from_shared(format!("http://127.0.0.1:{}", port))?
-                    .connect_timeout(std::time::Duration::from_secs(3))
-                    .connect()
-                    .await?;
+                // Use a robust retry connection loop to connect to the gRPC MCP server, allowing time to bind.
+                let mut channel = None;
+                for i in 0..20 {
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                    match tonic::transport::Channel::from_shared(format!("http://127.0.0.1:{}", port))?
+                        .connect_timeout(std::time::Duration::from_secs(1))
+                        .connect()
+                        .await
+                    {
+                        Ok(ch) => {
+                            channel = Some(ch);
+                            break;
+                        }
+                        Err(e) => {
+                            if i == 19 {
+                                return Err(anyhow!("Failed to connect to gRPC MCP server at 127.0.0.1:{} after 3s: {}", port, e));
+                            }
+                        }
+                    }
+                }
+                let channel = channel.unwrap();
 
                 let mut grpc_client = mcp_grpc::mcp_service_client::McpServiceClient::new(channel);
 
@@ -745,19 +760,17 @@ pub async fn run_mcp_bridge(
         senders,
     };
 
-    let addr = format!("127.0.0.1:{}", port).parse()?;
+    let addr: std::net::SocketAddr = format!("127.0.0.1:{}", port).parse()?;
 
-    // Drop the port guard right before serving to minimize the bind window.
-    // The guard held the port open since find_free_port(); dropping now means
-    // tonic::Server::serve() binds immediately after, shrinking the TOCTOU gap
-    // from ~100ms (spawn latency) to <1µs (format/parse overhead).
-    drop(port_guard);
+    port_guard.set_nonblocking(true)?;
+    let listener = tokio::net::TcpListener::from_std(port_guard)?;
+    let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
 
     tracing::info!("gRPC MCP Bridge listening on {}", addr);
 
     let server_fut = tonic::transport::Server::builder()
         .add_service(mcp_grpc::mcp_service_server::McpServiceServer::new(service))
-        .serve(addr);
+        .serve_with_incoming(incoming);
 
     // Monitor child process exit so we can shut down the bridge if the child crashes
     let cmd_name = command.to_string();
@@ -839,5 +852,14 @@ mod tests {
     async fn test_ping_on_closed_client_returns_error() {
         let client = McpClient(Arc::new(Mutex::new(None)));
         assert!(client.ping().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mcp_bridge_with_cat() {
+        let result = McpClient::spawn("cat", &[]).await;
+        assert!(result.is_ok(), "Failed to spawn cat MCP bridge: {:?}", result.err());
+        let client = result.unwrap();
+        let ping_res = client.ping().await;
+        assert!(ping_res.is_ok(), "Ping failed: {:?}", ping_res.err());
     }
 }
