@@ -793,13 +793,16 @@ impl AgentLoop {
 
                             let print_reasoning = |full_reasoning: &str, in_reasoning_phase: &mut bool, reasoning_printed: &mut bool, start_time: std::time::Instant| {
                                 if !*reasoning_printed && !full_reasoning.is_empty() {
-                                    if !silent {
+                                    let depth = crate::tools::subagent::DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
+                                    if !silent && depth == 0 {
                                         let elapsed = start_time.elapsed().as_secs_f32();
                                         print!("\r\x1b[2K");
                                         print!("{}● {}{}{}Thought for {:.1}s{}\r\n", RED_ORANGE, COLOR_RESET, COLOR_BOLD, LIGHT_WHITE, elapsed, COLOR_RESET);
-                                        let summary = crate::agent::style::format_reasoning_summary(full_reasoning);
                                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                        print!("{}{}{}{}\r\n\r\n", AURA_SLATE, leaf_prefix, summary, COLOR_RESET);
+                                        for line in full_reasoning.trim().lines() {
+                                            print!("{}{}{}{}\r\n", AURA_SLATE, leaf_prefix, line.trim(), COLOR_RESET);
+                                        }
+                                        print!("\r\n");
                                         let _ = std::io::stdout().flush();
                                     }
                                     *reasoning_printed = true;
@@ -1065,7 +1068,8 @@ impl AgentLoop {
                             }
                             
                             let silent = crate::agent::style::spinner::is_silent();
-                            if !silent {
+                            let depth = crate::tools::subagent::DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
+                            if !silent && depth == 0 {
                                 if streamed {
                                     // During streaming, the reasoning spinner was already shown and
                                     // the "Thought for Xs" badge was already printed when content
@@ -1080,16 +1084,19 @@ impl AgentLoop {
                                 } else {
                                     // Non-streaming path: print the badge and thinking summary
                                     print!("{}● {}{}{}Thought for {:.1}s{}\r\n", RED_ORANGE, COLOR_RESET, COLOR_BOLD, LIGHT_WHITE, duration_secs, COLOR_RESET);
-                                    let summary = if has_reasoning {
-                                        resp.reasoning_content.as_ref().map(|s| crate::agent::style::format_reasoning_summary(s)).unwrap_or_default()
+                                    let full_reasoning = if has_reasoning {
+                                        resp.reasoning_content.clone().unwrap_or_default()
                                     } else if has_content && has_tool_calls {
-                                        resp.content.as_ref().map(|s| crate::agent::style::format_reasoning_summary(s)).unwrap_or_default()
+                                        resp.content.clone().unwrap_or_default()
                                     } else {
                                         String::new()
                                     };
-                                    if !summary.is_empty() {
+                                    if !full_reasoning.is_empty() {
                                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                        print!("{}{}{}{}\r\n", AURA_SLATE, leaf_prefix, summary, COLOR_RESET);
+                                        for line in full_reasoning.trim().lines() {
+                                            print!("{}{}{}{}\r\n", AURA_SLATE, leaf_prefix, line.trim(), COLOR_RESET);
+                                        }
+                                        print!("\r\n");
                                     }
                                     let _ = std::io::stdout().flush();
                                 }
@@ -1194,7 +1201,7 @@ impl AgentLoop {
                                 send_progress_update(session_key, &fail_msg).await;
                                 if !silent {
                                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                    crate::tui_println!("{}{}{}✕{} {} - Failed: {}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_ROSE, formatted_args, err_msg, COLOR_RESET);
+                                    crate::tui_println!("{}{}{}✕ {} - Failed: {}{}", AURA_SLATE, leaf_prefix, AURA_ROSE, formatted_args, err_msg, COLOR_RESET);
                                 }
                                 turn_errors.push(format!("Tool {} arguments parse error: {}", call.name, err_msg));
                                 serde_json::json!({ "error": err_msg })
@@ -1205,7 +1212,7 @@ impl AgentLoop {
                                 );
                                 if !silent {
                                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                    crate::tui_println!("{}{}{}↶{} Loop detected for tool '{}'! Blocking execution. (Count: {}){}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GOLD, call.name, loop_blocked_count, COLOR_RESET);
+                                    crate::tui_println!("{}{}{}↶ Loop detected for tool '{}'! Blocking execution. (Count: {}){}", AURA_SLATE, leaf_prefix, AURA_GOLD, call.name, loop_blocked_count, COLOR_RESET);
                                 }
                                 tracing::warn!(
                                     session = %session_key,
@@ -1218,7 +1225,7 @@ impl AgentLoop {
                                 send_progress_update(session_key, &reject_msg).await;
                                 if !silent {
                                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                    crate::tui_println!("{}{}{}✗{} {} - Rejected: Dangerous command is forbidden", AURA_SLATE, leaf_prefix, COLOR_RESET, ERROR_RED, formatted_args);
+                                    crate::tui_println!("{}{}{}✕ {} - Rejected: Dangerous command is forbidden{}", AURA_SLATE, leaf_prefix, ERROR_RED, formatted_args, COLOR_RESET);
                                 }
                                 tracing::warn!(
                                     session = %session_key,
@@ -1231,7 +1238,7 @@ impl AgentLoop {
                                 send_progress_update(session_key, &deny_msg).await;
                                 if !silent {
                                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                    crate::tui_println!("{}{}{}✗{} {} - Denied by user", AURA_SLATE, leaf_prefix, COLOR_RESET, ERROR_RED, formatted_args);
+                                    crate::tui_println!("{}{}{}✕ {} - Denied by user{}", AURA_SLATE, leaf_prefix, ERROR_RED, formatted_args, COLOR_RESET);
                                 }
                                 tracing::warn!(
                                     session = %session_key,
@@ -1259,7 +1266,7 @@ impl AgentLoop {
                                                             if summary.contains("\u{2713}") || summary.contains("\u{2715}") {
                                                                 crate::tui_println!("{}{}{}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, summary);
                                                             } else {
-                                                                crate::tui_println!("{}{}{}✓{} {}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GREEN, summary);
+                                                                crate::tui_println!("{}{}{}✓ {}{}", AURA_SLATE, leaf_prefix, AURA_GREEN, summary, COLOR_RESET);
                                                             }
                                                         }
                                                     }
@@ -1286,7 +1293,7 @@ impl AgentLoop {
                                                 if !silent {
                                                     if !crate::agent::style::is_profile_subagent(&call.name) && call.name != "parallel_research" {
                                                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                                        crate::tui_println!("{}{}{}✕{} {}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_ROSE, error_str);
+                                                        crate::tui_println!("{}{}{}✕ {}{}", AURA_SLATE, leaf_prefix, AURA_ROSE, error_str, COLOR_RESET);
                                                     }
                                                 }
                                                 tracing::error!(
@@ -1309,7 +1316,7 @@ impl AgentLoop {
                                                 if !silent {
                                                     if !crate::agent::style::is_profile_subagent(&call.name) && call.name != "parallel_research" {
                                                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                                        crate::tui_println!("{}{}{}✕{} timeout after {}s", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_ROSE, self.config.agents.defaults.tool_timeout_secs);
+                                                        crate::tui_println!("{}{}{}✕ timeout after {}s{}", AURA_SLATE, leaf_prefix, AURA_ROSE, self.config.agents.defaults.tool_timeout_secs, COLOR_RESET);
                                                     }
                                                 }
                                                 tracing::error!(
@@ -1474,9 +1481,7 @@ impl AgentLoop {
             }
         }
 
-        if !crate::agent::style::spinner::is_silent() && !session_key.starts_with("subagent:") {
-            crate::tui_println!("{}{}● {}goal reached{}", colors::AURA_GREEN, colors::COLOR_BOLD, colors::LIGHT_WHITE, colors::COLOR_RESET);
-        }
+
 
         let traces_dir = crate::config::resolve_path("~/.openz/traces");
         if let Err(e) = std::fs::create_dir_all(&traces_dir) {

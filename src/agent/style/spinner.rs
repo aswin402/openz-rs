@@ -27,7 +27,8 @@ pub async fn with_spinner<F, T>(msg: &str, future: F) -> T
 where
     F: Future<Output = T>,
 {
-    if is_silent() {
+    let depth = crate::tools::subagent::DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
+    if is_silent() || depth > 0 {
         return future.await;
     }
     let msg = msg.to_string();

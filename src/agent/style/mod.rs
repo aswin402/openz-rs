@@ -92,10 +92,16 @@ pub fn tui_eprint_fn<T: AsRef<str>>(msg: T) {
 
 /// Returns the prefix string for a tree trace line at the specified delegation depth.
 pub fn get_tree_prefix_for_depth(is_leaf: bool, depth: usize) -> String {
-    if is_leaf {
-        format!("{}L ", "  ".repeat(depth + 1))
+    if depth > 0 {
+        // For subagent tools, both starts and outcomes get the "L " connector
+        format!("{}L ", "  ".repeat(depth))
     } else {
-        "  ".repeat(depth)
+        // Root agent depth (depth == 0)
+        if is_leaf {
+            "  L ".to_string()
+        } else {
+            "".to_string()
+        }
     }
 }
 
@@ -319,19 +325,19 @@ pub fn format_tool_outcome_summary(name: &str, arguments: &serde_json::Value, re
                 } else {
                     "command succeeded"
                 };
-                format!("{}\u{2713}{} {}", colors::AURA_GREEN, colors::COLOR_RESET, summary)
+                format!("{}\u{2713} {}{}", colors::AURA_GREEN, summary, colors::COLOR_RESET)
             } else {
                 let stdout = res.get("stdout").and_then(|v| v.as_str()).unwrap_or_default();
                 let stderr = res.get("stderr").and_then(|v| v.as_str()).unwrap_or_default();
                 let err_summary = get_command_error_summary(&stdout, &stderr);
-                format!("{}\u{2715}{} {}", colors::AURA_ROSE, colors::COLOR_RESET, err_summary)
+                format!("{}\u{2715} {}{}", colors::AURA_ROSE, err_summary, colors::COLOR_RESET)
             }
         }
         _ => {
             if let Some(err) = res.get("error").and_then(|v| v.as_str()) {
-                format!("{}\u{2715}{} Failed: {}", colors::AURA_ROSE, colors::COLOR_RESET, err)
+                format!("{}\u{2715} Failed: {}{}", colors::AURA_ROSE, err, colors::COLOR_RESET)
             } else {
-                format!("{}\u{2713}{} completed", colors::AURA_GREEN, colors::COLOR_RESET)
+                format!("{}\u{2713} completed{}", colors::AURA_GREEN, colors::COLOR_RESET)
             }
         }
     }
@@ -399,29 +405,29 @@ mod tests {
     #[tokio::test]
     async fn test_tree_prefix_nested() {
         crate::tools::subagent::DELEGATION_DEPTH.scope(1, async {
+            assert_eq!(get_tree_prefix(true), "  L ");
+            assert_eq!(get_tree_prefix(false), "  L ");
+            
+            let spinner = get_tree_spinner_msg("test", "");
+            assert!(spinner.contains("  L "));
+            assert!(spinner.contains("Running..."));
+        }).await;
+
+        crate::tools::subagent::DELEGATION_DEPTH.scope(2, async {
             assert_eq!(get_tree_prefix(true), "    L ");
-            assert_eq!(get_tree_prefix(false), "  ");
+            assert_eq!(get_tree_prefix(false), "    L ");
             
             let spinner = get_tree_spinner_msg("test", "");
             assert!(spinner.contains("    L "));
             assert!(spinner.contains("Running..."));
         }).await;
 
-        crate::tools::subagent::DELEGATION_DEPTH.scope(2, async {
+        crate::tools::subagent::DELEGATION_DEPTH.scope(3, async {
             assert_eq!(get_tree_prefix(true), "      L ");
-            assert_eq!(get_tree_prefix(false), "    ");
+            assert_eq!(get_tree_prefix(false), "      L ");
             
             let spinner = get_tree_spinner_msg("test", "");
             assert!(spinner.contains("      L "));
-            assert!(spinner.contains("Running..."));
-        }).await;
-
-        crate::tools::subagent::DELEGATION_DEPTH.scope(3, async {
-            assert_eq!(get_tree_prefix(true), "        L ");
-            assert_eq!(get_tree_prefix(false), "      ");
-            
-            let spinner = get_tree_spinner_msg("test", "");
-            assert!(spinner.contains("        L "));
             assert!(spinner.contains("Running..."));
         }).await;
     }

@@ -60,7 +60,7 @@ impl Tool for DelegateTaskTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        crate::agent::style::spinner::IS_SILENT.scope(true, async {
+        crate::agent::style::spinner::IS_SILENT.scope(crate::agent::style::is_silent(), async {
         let current_depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
         if current_depth >= 3 {
             crate::tui_println!("{}⚠️ Delegation depth limit reached ({}). Aborting nested delegate_task.{}", AURA_GOLD, current_depth, COLOR_RESET);
@@ -316,12 +316,12 @@ impl Tool for DelegateTaskTool {
             if let Err(e) = sync_changes_back(&workspace_dir, &parent_dir) {
                 if !crate::agent::style::is_silent() {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                    crate::tui_println!("{}{}{}↶{} Failed to sync changes back to active workspace: {}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GOLD, e);
+                    crate::tui_println!("{}{}{}↶ Failed to sync changes back to active workspace: {}{}", AURA_SLATE, leaf_prefix, AURA_GOLD, e, COLOR_RESET);
                 }
             } else {
                 if !crate::agent::style::is_silent() {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                    crate::tui_println!("{}{}{}✓{} Synchronized changes back to active workspace", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GREEN);
+                    crate::tui_println!("{}{}{}✓ Synchronized changes back to active workspace{}", AURA_SLATE, leaf_prefix, AURA_GREEN, COLOR_RESET);
                 }
             }
         }
@@ -330,7 +330,7 @@ impl Tool for DelegateTaskTool {
             Ok(res) => {
                 if !crate::agent::style::is_silent() {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                    crate::tui_println!("{}{}{}✓{} Complete", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GREEN);
+                    crate::tui_println!("{}{}{}✓ Complete{}", AURA_SLATE, leaf_prefix, AURA_GREEN, COLOR_RESET);
                 }
                 
                 // Run evolution review
@@ -429,7 +429,7 @@ impl Tool for DelegateProfileTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        crate::agent::style::spinner::IS_SILENT.scope(true, async {
+        crate::agent::style::spinner::IS_SILENT.scope(crate::agent::style::is_silent(), async {
         let current_depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
         if current_depth >= 3 {
             crate::tui_println!("{}⚠️ Delegation depth limit reached ({}). Aborting nested subagent '{}'.{}", AURA_GOLD, current_depth, self.profile.name, COLOR_RESET);
@@ -763,7 +763,7 @@ impl Tool for DelegateProfileTool {
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                         let summary = crate::agent::style::format_subagent_summary(&run_res.content);
-                        crate::tui_println!("{}{}{}✓{} {}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GREEN, summary);
+                        crate::tui_println!("{}{}{}✓ {}{}", AURA_SLATE, leaf_prefix, AURA_GREEN, summary, COLOR_RESET);
                     }
                     
                     if workspace_dir != parent_dir {
@@ -788,7 +788,7 @@ impl Tool for DelegateProfileTool {
                     }
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                        crate::tui_println!("{}{}{}✕{} Error: {}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_ROSE, e);
+                        crate::tui_println!("{}{}{}✕ Error: {}{}", AURA_SLATE, leaf_prefix, AURA_ROSE, e, COLOR_RESET);
                     }
                     last_error = Some(e);
                 }
@@ -1320,7 +1320,7 @@ impl Tool for EvaluatorOptimizerLoopTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        crate::agent::style::spinner::IS_SILENT.scope(true, async {
+        crate::agent::style::spinner::IS_SILENT.scope(crate::agent::style::is_silent(), async {
             let optimizer_name = arguments.get("optimizer").and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Missing 'optimizer' argument"))?;
         let evaluator_name = arguments.get("evaluator").and_then(|v| v.as_str())
@@ -1877,7 +1877,7 @@ impl Tool for ParallelResearchTool {
                             goal_clone, context
                         );
 
-                        crate::agent::style::spinner::IS_SILENT.scope(true, async {
+                        crate::agent::style::spinner::IS_SILENT.scope(crate::agent::style::is_silent(), async {
                             tokio::select! {
                                 res = child_agent.run(&subagent_prompt, &child_session_id) => res,
                                 _ = cancellation_token.wait_for_cancellation() => {
@@ -1895,16 +1895,18 @@ impl Tool for ParallelResearchTool {
                         Ok(ref run_res) => {
                             let summary = crate::agent::style::format_subagent_summary(&run_res.content);
                             crate::tui_println!(
-                                "{}{}{}✓ {}{} \u{2014} {}",
+                                "{}{}{}{}✓ {}{} \u{2014} {}{}{}",
                                 AURA_SLATE, leaf_prefix, AURA_GREEN,
-                                COLOR_BOLD, role_clone, summary
+                                COLOR_BOLD, role_clone, COLOR_RESET,
+                                AURA_GREEN, summary, COLOR_RESET
                             );
                         }
                         Err(ref e) => {
                             crate::tui_println!(
-                                "{}{}{}✕ {}{} \u{2014} failed: {}",
+                                "{}{}{}{}✕ {}{} \u{2014} failed: {}{}{}",
                                 AURA_SLATE, leaf_prefix, AURA_ROSE,
-                                COLOR_BOLD, role_clone, e
+                                COLOR_BOLD, role_clone, COLOR_RESET,
+                                AURA_ROSE, e, COLOR_RESET
                             );
                         }
                     }
