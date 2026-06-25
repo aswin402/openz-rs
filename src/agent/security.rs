@@ -582,11 +582,27 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
             "Deny (Abort tool)".to_string(),
         ];
         
+        let terminal_width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80) as usize;
+        let max_width = terminal_width.saturating_sub(13).max(10);
+        
+        let mut formatted_details = String::new();
+        let desc_lines: Vec<&str> = description.split('\n').collect();
+        for (line_idx, line) in desc_lines.iter().enumerate() {
+            let wrapped_lines = crate::agent::style::wrap_line(line, max_width);
+            for (sub_idx, sub_line) in wrapped_lines.iter().enumerate() {
+                if line_idx == 0 && sub_idx == 0 {
+                    formatted_details.push_str(sub_line);
+                } else {
+                    formatted_details.push_str(&format!("\n             {}", sub_line));
+                }
+            }
+        }
+        
         let header = format!(
             "{}🔒 SECURITY SHIELD: Sensitive Action Requested{}\n  {}Tool:      {}{}\n  {}Details:   {}{}",
             crate::agent::style::colors::AURA_GOLD, crate::agent::style::colors::COLOR_RESET,
             crate::agent::style::colors::AURA_SLATE, crate::agent::style::colors::COLOR_BOLD, tool_name,
-            crate::agent::style::colors::AURA_SLATE, crate::agent::style::colors::AURA_BLUE, description
+            crate::agent::style::colors::AURA_SLATE, crate::agent::style::colors::AURA_BLUE, formatted_details
         );
         
         // Render minimal themed select menu custom matching the /model command menu
