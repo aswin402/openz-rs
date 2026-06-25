@@ -1,7 +1,7 @@
 pub const COLOR_RESET: &str = "\x1b[0m";
 pub const COLOR_BOLD: &str = "\x1b[1m";
 
-pub const AURA_PURPLE: &str = "\x1b[38;2;111;0;255m"; // Accent / Primary headers (Purple: #6F00FF)
+pub const AURA_PURPLE: &str = "\x1b[38;2;255;0;191m"; // Accent / Primary headers (Purple: #FF00BF)
 pub const AURA_BLUE: &str = "\x1b[38;2;130;170;255m";   // Information / Subagents / Tool exec
 pub const AURA_GREEN: &str = "\x1b[38;2;0;255;0m";  // Success / Completed states (Green: #00FF00)
 pub const AURA_GOLD: &str = "\x1b[38;2;229;192;123m";   // Warnings / Alerts (Yellow: #E5C07B)
