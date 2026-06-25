@@ -631,12 +631,11 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     //                    client (fast path) or spawns on first use (slow path).
 
     let silent = is_silent_mode();
-    let slate = "\x1b[38;2;107;122;153m";
 
     let has_any_mcp = config.mcp_servers.values().any(|c| c.enabled);
 
-    if has_any_mcp && !silent {
-        println!("{}Setting up MCP servers (background)...{}", slate, COLOR_RESET);
+    if has_any_mcp {
+        tracing::info!("Setting up MCP servers (background)...");
     }
 
     // Collect enabled servers for the background task

@@ -8,7 +8,7 @@ use anyhow::Result;
 
 pub fn start_scheduler(config: Config) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        crate::channels::cli::send_notification("⏰ Cron scheduler background service started...");
+        tracing::info!("Cron scheduler background service started...");
         let mut shutdown_rx = match crate::shutdown::receiver() {
             Some(rx) => rx,
             None => {
