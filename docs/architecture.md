@@ -1,6 +1,8 @@
 # OpenZ Architecture 🦊
 
-This document describes the design, execution flow, and module architecture of the Rust rewrite of `openz`.
+This document describes the design, execution flow, and module architecture of OpenZ.
+
+**Official GitHub Repository:** [github.com/aswin402/openz-rs](https://github.com/aswin402/openz-rs)
 
 ---
 

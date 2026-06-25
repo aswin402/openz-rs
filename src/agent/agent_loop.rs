@@ -672,8 +672,8 @@ impl AgentLoop {
                         "planner, researcher, debugger, DevOps, skill_improvement, openz_maintainer, mcps_manager".to_string()
                     };
                     let system_guidelines = format!(
-                        "\n\nYou are OpenZ, a high-performance personal AI agent framework built in Rust, vibe-coded by Aswin. You are inspired by Zeroclaw, Nanobot, hermes-agent, loops!, and DOX. Your architecture is structured as follows:\n\
-                         * Creator & Inspiration: Vibe-coded by Aswin. Inspired by Zeroclaw, Nanobot, hermes-agent, loops!, and DOX.\n\
+                        "\n\nYou are OpenZ, a high-performance personal AI agent framework built in Rust, vibe-coded by Aswin. Your official GitHub repository and source code resides at https://github.com/aswin402/openz-rs. You are inspired by Zeroclaw, Nanobot, hermes-agent, loops!, and DOX. Your architecture is structured as follows:\n\
+                         * Creator & Inspiration: Vibe-coded by Aswin. Inspired by Zeroclaw, Nanobot, hermes-agent, loops!, and DOX. Official Repository: https://github.com/aswin402/openz-rs\n\
                          * Specifications & Changelog: The root of your workspace contains 'CHANGELOG.md' and you have a native command 'openz changelog' displaying system specs (ROM ~10-15MB, RAM ~15-30MB cloud / ~200MB+ local, <5ms startup), design inspirations, key capabilities, and version release history.\n\
                          * CLI Subcommands & Flags: The executable is launched via:\n\
                            - 'openz onboard': Runs the setup wizard for LLM provider API keys.\n\
@@ -797,11 +797,9 @@ impl AgentLoop {
                                     if !silent && depth == 0 {
                                         let elapsed = start_time.elapsed().as_secs_f32();
                                         print!("\r\x1b[2K");
-                                        print!("{}● {}{}{}Thought for {:.1}s{}\r\n", RED_ORANGE, COLOR_RESET, COLOR_BOLD, LIGHT_WHITE, elapsed, COLOR_RESET);
+                                        print!("{}● {}{}{}Thought for {:.1}s{}\r\n", RED_ORANGE, COLOR_RESET, COLOR_BOLD, RED_ORANGE, elapsed, COLOR_RESET);
                                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                        for line in full_reasoning.trim().lines() {
-                                            print!("{}{}{}{}\r\n", AURA_SLATE, leaf_prefix, line.trim(), COLOR_RESET);
-                                        }
+                                        crate::agent::style::print_tree_monologue(&leaf_prefix, full_reasoning);
                                         print!("\r\n");
                                         let _ = std::io::stdout().flush();
                                     }
@@ -1078,12 +1076,12 @@ impl AgentLoop {
                                     // finalize the spinner and print the badge now.
                                     if !content_streaming_started && !reasoning_printed {
                                         print!("\r\x1b[2K");
-                                        print!("{}● {}{}{}Thought for {:.1}s{}\r\n", RED_ORANGE, COLOR_RESET, COLOR_BOLD, LIGHT_WHITE, duration_secs, COLOR_RESET);
+                                        print!("{}● {}{}{}Thought for {:.1}s{}\r\n", RED_ORANGE, COLOR_RESET, COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET);
                                         let _ = std::io::stdout().flush();
                                     }
                                 } else {
                                     // Non-streaming path: print the badge and thinking summary
-                                    print!("{}● {}{}{}Thought for {:.1}s{}\r\n", RED_ORANGE, COLOR_RESET, COLOR_BOLD, LIGHT_WHITE, duration_secs, COLOR_RESET);
+                                    print!("{}● {}{}{}Thought for {:.1}s{}\r\n", RED_ORANGE, COLOR_RESET, COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET);
                                     let full_reasoning = if has_reasoning {
                                         resp.reasoning_content.clone().unwrap_or_default()
                                     } else if has_content && has_tool_calls {
@@ -1093,9 +1091,7 @@ impl AgentLoop {
                                     };
                                     if !full_reasoning.is_empty() {
                                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                        for line in full_reasoning.trim().lines() {
-                                            print!("{}{}{}{}\r\n", AURA_SLATE, leaf_prefix, line.trim(), COLOR_RESET);
-                                        }
+                                        crate::agent::style::print_tree_monologue(&leaf_prefix, &full_reasoning);
                                         print!("\r\n");
                                     }
                                     let _ = std::io::stdout().flush();
@@ -1452,11 +1448,6 @@ impl AgentLoop {
                                 extra: serde_json::Map::new(),
                             });
                             break;
-                        } else if !crate::agent::style::spinner::is_silent() {
-                            crate::tui_println!(
-                                "{}{}\u{27F2} task not done \u{2014} keep going{}",
-                                colors::AURA_GOLD, COLOR_BOLD, COLOR_RESET
-                            );
                         }
                     }
                     

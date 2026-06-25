@@ -577,23 +577,26 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
 
         // CLI / TUI approval flow
         let options = vec![
-            "Approve (once)".to_string(),
-            "Trust session".to_string(),
-            "Deny".to_string(),
+            "Approve (Allow once)".to_string(),
+            "Approve & Trust for this session".to_string(),
+            "Deny (Abort tool)".to_string(),
         ];
         
-        crate::tui_println!(
-            "{}🔒 Security shield sensitive action{}",
-            crate::agent::style::colors::AURA_GOLD, crate::agent::style::colors::COLOR_RESET
-        );
-        let prefix = crate::agent::style::get_tree_prefix(true);
-        crate::tui_println!(
-            "{}{}{}",
-            crate::agent::style::colors::AURA_SLATE, prefix, description
+        let header = format!(
+            "{}🔒 SECURITY SHIELD: Sensitive Action Requested{}\n  {}Tool:      {}{}\n  {}Details:   {}{}",
+            crate::agent::style::colors::AURA_GOLD, crate::agent::style::colors::COLOR_RESET,
+            crate::agent::style::colors::AURA_SLATE, crate::agent::style::colors::COLOR_BOLD, tool_name,
+            crate::agent::style::colors::AURA_SLATE, crate::agent::style::colors::AURA_BLUE, description
         );
         
-        // Render horizontal themed select menu
-        match crate::agent::style::select_menu_horizontal(&options) {
+        // Render minimal themed select menu custom matching the /model command menu
+        match crate::agent::style::select_menu_custom(
+            "Authorize execution?",
+            &options,
+            "Security Shield",
+            Some(&header),
+            false,
+        ) {
             Ok(Some(0)) => Ok(true), // Approve once
             Ok(Some(1)) => {
                 // Save to trusted set for this session
@@ -601,6 +604,7 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
                 if let Ok(mut guard) = map.lock() {
                     guard.insert(trust_key);
                 }
+                crate::tui_println!("{}◇ [Security] Trusted '{}' for session {}.{}", crate::agent::style::colors::AURA_BLUE, tool_name, actual_session, crate::agent::style::colors::COLOR_RESET);
                 Ok(true)
             }
             _ => Ok(false), // Deny or Cancel

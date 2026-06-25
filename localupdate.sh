@@ -55,7 +55,10 @@ cargo check $CARGO_FLAGS
 
 # 3. Compile and install
 echo "🔄 Re-compiling and installing new binary globally..."
-cargo install $CARGO_FLAGS --locked --path .
+if ! cargo install $CARGO_FLAGS --locked --path .; then
+    echo "⚠️ Online install failed (possibly crates.io registry timeout). Retrying in offline mode..."
+    cargo install $CARGO_FLAGS --locked --path . --offline
+fi
 
 echo "────────────────────────────────"
 echo "✅ OpenZ updated successfully!"

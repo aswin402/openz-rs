@@ -398,7 +398,14 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.25 (Latest Release)
+### v0.0.26 (Latest Release)
+*   **Feat: Official Repository Awareness (HIGH):** Updated core system prompt guidelines in `src/agent/agent_loop.rs` to make the agent explicitly aware of its official GitHub repository and source code at `https://github.com/aswin402/openz-rs` for advanced self-querying.
+*   **Feat: Indented and Aligned Monologue Formatting (MEDIUM):** Redesigned thought/reasoning blocks in the TUI to wrap paragraphs dynamically according to the active terminal width. The tree connector (`  L `) is printed only on the very first line of a thought, and subsequent paragraphs/wrapped lines are space-padded to align neatly under the start.
+*   **Style: Custom Color System Update (MEDIUM):** Updated global theme colors in `src/agent/style/colors.rs`: AURA_PURPLE is set to `#6F00FF`, AURA_GREEN to `#00FF00`, and error/fail reds to `#FF0000`. Original `EMERALD_GREEN` was restored.
+*   **Fix: Duplicated Tool Name Display (MEDIUM):** Introduced a clean extraction parser `clean_tool_args_msg` that prevents friendly tool names from duplicating start message outputs (e.g. converting `● Web Search WebSearch` to just `● Web Search`).
+*   **Maintenance: Version Bump:** Bumped to v0.0.26.
+
+### v0.0.25
 *   **Feat: Structured Live Log Visualizer (HIGH):** Redesigned the terminal-based log follow screen in `openz logs` ([`src/logs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs.rs)) to output high-fidelity trace representations with customized semantic icons, colors, and bold labels representing different workflow events:
     * 👤 `[USER]` — Human prompt message (Cyan).
     * 🧠 `[THINKING]` — Model reasoning/thought tokens (Orange).

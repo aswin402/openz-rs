@@ -1,10 +1,12 @@
-# OpenZ 🦊 `v0.0.14`
+# OpenZ 🦊 `v0.0.26`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
 </p>
 
 OpenZ is a high-performance, asynchronous, ultra-lightweight personal AI agent framework built entirely in Rust. 
+
+**Official GitHub Repository:** [github.com/aswin402/openz-rs](https://github.com/aswin402/openz-rs)
 
 Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent loop while packaging essential developer utilities: native console chat, WebSocket WebUI gateways, Telegram/Discord/WhatsApp channels, local tool calls, stdio-based MCP servers, and OpenAI/Anthropic/Azure LLM client routing.
 

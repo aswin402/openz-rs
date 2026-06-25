@@ -141,11 +141,38 @@ pub fn get_tree_spinner_msg(_name: &str, _formatted_args: &str) -> String {
     format!("{}{}{}Running...{}", colors::AURA_SLATE, prefix, colors::AURA_SLATE, colors::COLOR_RESET)
 }
 
+/// Helper to clean up friendly name duplication from formatted tool arguments.
+pub fn clean_tool_args_msg(name: &str, formatted_args: &str) -> String {
+    let trimmed = formatted_args.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    
+    // Check if it ends with ')' and contains '('
+    if trimmed.ends_with(')') {
+        if let Some(open_idx) = trimmed.find('(') {
+            let details = &trimmed[open_idx + 1..trimmed.len() - 1];
+            return details.trim().to_string();
+        }
+    }
+    
+    // If it doesn't have parentheses, check if it is just a friendly name variant of the tool.
+    let clean = get_tool_clean_name(name).to_lowercase().replace(" ", "").replace("_", "");
+    let norm_args = trimmed.to_lowercase().replace(" ", "").replace("_", "");
+    
+    if clean == norm_args {
+        String::new()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// Generates the styled start indicator of a tool execution with tree prefixes.
 pub fn get_tree_tool_start_msg(name: &str, formatted_args: &str) -> String {
     let prefix = get_tree_prefix(false);
     let clean_name = get_tool_clean_name(name);
-    if formatted_args.is_empty() {
+    let details = clean_tool_args_msg(name, formatted_args);
+    if details.is_empty() {
         format!(
             "{}{}{}{}● {}{}{}{}{}",
             colors::AURA_SLATE, prefix, colors::COLOR_RESET,
@@ -160,7 +187,7 @@ pub fn get_tree_tool_start_msg(name: &str, formatted_args: &str) -> String {
             colors::RED_ORANGE,
             colors::COLOR_RESET,
             colors::COLOR_BOLD, colors::LIGHT_WHITE, clean_name, colors::COLOR_RESET,
-            colors::AURA_SLATE, formatted_args, colors::COLOR_RESET
+            colors::AURA_SLATE, details, colors::COLOR_RESET
         )
     }
 }
@@ -374,9 +401,89 @@ fn summarize_patch(patch_str: &str) -> String {
     }
 }
 
+/// Wraps a single line of text into multiple lines, none exceeding `max_width`.
+/// It performs word wrapping on spaces, falling back to character wrapping if a word is longer than `max_width`.
+pub fn wrap_line(line: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![line.to_string()];
+    }
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+    
+    for word in line.split_whitespace() {
+        if current_line.is_empty() {
+            if word.len() <= max_width {
+                current_line.push_str(word);
+            } else {
+                // Word is too long, must split it by characters
+                let mut temp = word;
+                while temp.len() > max_width {
+                    let (left, right) = temp.split_at(max_width);
+                    lines.push(left.to_string());
+                    temp = right;
+                }
+                current_line.push_str(temp);
+            }
+        } else {
+            // Check if adding the word fits
+            if current_line.len() + 1 + word.len() <= max_width {
+                current_line.push(' ');
+                current_line.push_str(word);
+            } else {
+                lines.push(current_line);
+                current_line = String::new();
+                if word.len() <= max_width {
+                    current_line.push_str(word);
+                } else {
+                    let mut temp = word;
+                    while temp.len() > max_width {
+                        let (left, right) = temp.split_at(max_width);
+                        lines.push(left.to_string());
+                        temp = right;
+                    }
+                    current_line.push_str(temp);
+                }
+            }
+        }
+    }
+    if !current_line.is_empty() {
+        lines.push(current_line);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+/// Prints a monologue/thought block with the tree prefix, wrapping long lines and aligning wrapped sub-lines after the prefix.
+pub fn print_tree_monologue(leaf_prefix: &str, text: &str) {
+    let terminal_width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80) as usize;
+    let prefix_len = leaf_prefix.chars().count();
+    let max_width = terminal_width.saturating_sub(prefix_len);
+    
+    let mut is_first_line = true;
+    for line in text.trim().lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            crate::tui_println!("{}{}{}", colors::AURA_SLATE, " ".repeat(prefix_len), colors::COLOR_RESET);
+            continue;
+        }
+        let wrapped = wrap_line(trimmed, max_width);
+        for sub_line in wrapped {
+            if is_first_line {
+                crate::tui_println!("{}{}{}{}", colors::AURA_SLATE, leaf_prefix, sub_line, colors::COLOR_RESET);
+                is_first_line = false;
+            } else {
+                crate::tui_println!("{}{}{}{}", colors::AURA_SLATE, " ".repeat(prefix_len), sub_line, colors::COLOR_RESET);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
 
     #[test]
     fn test_clean_names() {
@@ -459,5 +566,25 @@ mod tests {
         assert!(after_bullet_args.starts_with(" "));
         assert!(after_bullet_args[1..].starts_with(colors::COLOR_RESET));
     }
+
+    #[test]
+    fn test_wrap_line() {
+        let line = "hello world this is a test of wrapping";
+        let wrapped = wrap_line(line, 10);
+        assert_eq!(wrapped, vec!["hello", "world this", "is a test", "of", "wrapping"]);
+
+        let long_word = "supercalifragilistic";
+        let wrapped_long = wrap_line(long_word, 10);
+        assert_eq!(wrapped_long, vec!["supercalif", "ragilistic"]);
+    }
+
+    #[test]
+    fn test_clean_tool_args_msg() {
+        assert_eq!(clean_tool_args_msg("web_search", "WebSearch"), "");
+        assert_eq!(clean_tool_args_msg("web_search", "WebSearch(query: \"ZeroClaw\")"), "query: \"ZeroClaw\"");
+        assert_eq!(clean_tool_args_msg("exec_command", "Bash(cargo build)"), "cargo build");
+        assert_eq!(clean_tool_args_msg("write_file", "--force"), "--force");
+    }
 }
+
 
