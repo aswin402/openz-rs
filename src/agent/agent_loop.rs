@@ -1145,11 +1145,16 @@ impl AgentLoop {
                             tools_used.push(call.name.clone());
                             
                             crate::agent::activity::update_activity(session_key, "Executing tool", Some(&call.name));
+                            let silent = crate::agent::style::spinner::is_silent();
                             let formatted_args = format_tool_args(&call.name, &call.arguments);
-                            let tool_spinner_msg = format!("{}▸{} Running {}...", AURA_GOLD, COLOR_RESET, formatted_args);
+                            let tool_spinner_msg = crate::agent::style::get_tree_spinner_msg(&call.name, &formatted_args);
                             
                             let tool_msg = format!("▸ Running *{}*...", formatted_args);
                             send_progress_update(session_key, &tool_msg).await;
+                            
+                            if !silent {
+                                crate::agent::style::print_tree_tool_start(&call.name, &formatted_args);
+                            }
                             
                             tracing::info!(
                                 session = %session_key,
@@ -1157,8 +1162,6 @@ impl AgentLoop {
                                 arguments = %call.arguments,
                                 "Executing tool call"
                             );
-                            
-                            let silent = crate::agent::style::spinner::is_silent();
                             let mut approved = true;
                             let mut forbidden = false;
                             let security_mode = &self.config.agents.defaults.security_mode;
@@ -1193,7 +1196,8 @@ impl AgentLoop {
                                 let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, err_msg);
                                 send_progress_update(session_key, &fail_msg).await;
                                 if !silent {
-                                    crate::tui_println!("{}✕ {} - Failed: {}{}", AURA_PURPLE, formatted_args, err_msg, COLOR_RESET);
+                                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                    crate::tui_println!("{}{}{}✕{} {} - Failed: {}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_ROSE, formatted_args, err_msg, COLOR_RESET);
                                 }
                                 turn_errors.push(format!("Tool {} arguments parse error: {}", call.name, err_msg));
                                 serde_json::json!({ "error": err_msg })
@@ -1203,7 +1207,8 @@ impl AgentLoop {
                                     call.name, repeat_count
                                 );
                                 if !silent {
-                                    crate::tui_println!("{}⚠️ Loop detected for tool '{}'! Blocking execution. (Count: {}){}", AURA_GOLD, call.name, loop_blocked_count, COLOR_RESET);
+                                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                    crate::tui_println!("{}{}{}↶{} Loop detected for tool '{}'! Blocking execution. (Count: {}){}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GOLD, call.name, loop_blocked_count, COLOR_RESET);
                                 }
                                 tracing::warn!(
                                     session = %session_key,
@@ -1215,8 +1220,8 @@ impl AgentLoop {
                                 let reject_msg = format!("✕ *{}* - Rejected: Dangerous command is forbidden", formatted_args);
                                 send_progress_update(session_key, &reject_msg).await;
                                 if !silent {
-                                    print!("{}✕{} {} - Rejected: Dangerous command is forbidden\r\n", ERROR_RED, COLOR_RESET, formatted_args);
-                                    let _ = std::io::stdout().flush();
+                                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                    crate::tui_println!("{}{}{}✗{} {} - Rejected: Dangerous command is forbidden", AURA_SLATE, leaf_prefix, COLOR_RESET, ERROR_RED, formatted_args);
                                 }
                                 tracing::warn!(
                                     session = %session_key,
@@ -1228,8 +1233,8 @@ impl AgentLoop {
                                 let deny_msg = format!("✕ *{}* - Denied by user", formatted_args);
                                 send_progress_update(session_key, &deny_msg).await;
                                 if !silent {
-                                    print!("{}✕{} {} - Denied by user\r\n", ERROR_RED, COLOR_RESET, formatted_args);
-                                    let _ = std::io::stdout().flush();
+                                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                    crate::tui_println!("{}{}{}✗{} {} - Denied by user", AURA_SLATE, leaf_prefix, COLOR_RESET, ERROR_RED, formatted_args);
                                 }
                                 tracing::warn!(
                                     session = %session_key,
@@ -1248,8 +1253,8 @@ impl AgentLoop {
                                                 let success_msg = format!("✓ *{}*", formatted_args);
                                                 send_progress_update(session_key, &success_msg).await;
                                                 if !silent {
-                                                    print!("{}✓{} {}\r\n", EMERALD_GREEN, COLOR_RESET, formatted_args);
-                                                    let _ = std::io::stdout().flush();
+                                                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                                    crate::tui_println!("{}{}{}✓{} {}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GREEN, formatted_args);
                                                 }
                                                 tracing::info!(
                                                     session = %session_key,
@@ -1271,7 +1276,8 @@ impl AgentLoop {
                                                 let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, error_str);
                                                 send_progress_update(session_key, &fail_msg).await;
                                                 if !silent {
-                                                    crate::tui_println!("{}✕ {} - Failed: {}{}", AURA_PURPLE, formatted_args, error_str, COLOR_RESET);
+                                                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                                    crate::tui_println!("{}{}{}✗{} {} - Failed: {}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_ROSE, formatted_args, error_str, COLOR_RESET);
                                                 }
                                                 tracing::error!(
                                                     session = %session_key,
@@ -1291,7 +1297,8 @@ impl AgentLoop {
                                                 let fail_msg = format!("⏱️ *{}* - Timed out", formatted_args);
                                                 send_progress_update(session_key, &fail_msg).await;
                                                 if !silent {
-                                                    crate::tui_println!("{}⏱️ {} - Timed out after {}s{}", AURA_GOLD, formatted_args, self.config.agents.defaults.tool_timeout_secs, COLOR_RESET);
+                                                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                                    crate::tui_println!("{}{}{}⏱️{} {} - Timed out after {}s{}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GOLD, formatted_args, self.config.agents.defaults.tool_timeout_secs, COLOR_RESET);
                                                 }
                                                 tracing::error!(
                                                     session = %session_key,
@@ -1311,7 +1318,8 @@ impl AgentLoop {
                                         let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, error_str);
                                         send_progress_update(session_key, &fail_msg).await;
                                         if !silent {
-                                            crate::tui_println!("{}✕ {} - Failed: {}{}", AURA_PURPLE, formatted_args, error_str, COLOR_RESET);
+                                            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                            crate::tui_println!("{}{}{}✗{} {} - Failed: {}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_ROSE, formatted_args, error_str, COLOR_RESET);
                                         }
                                         let hint = generate_self_healing_hint(&call.name, &error_str);
                                         serde_json::json!({

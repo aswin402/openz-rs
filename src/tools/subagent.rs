@@ -171,8 +171,15 @@ impl Tool for DelegateTaskTool {
 
         let _worktree_guard = WorktreeGuard::new(parent_dir.clone(), workspace_dir.clone());
 
-        crate::tui_println!("{}◎ Subagent{}", AURA_PURPLE, COLOR_RESET);
-        let spinner_msg = format!("{}  Running...{}", AURA_SLATE, COLOR_RESET);
+        if !crate::agent::style::is_silent() {
+            let prefix = crate::agent::style::get_tree_prefix(false);
+            crate::tui_println!(
+                "{}{}{}● {}{}Subagent{}",
+                AURA_SLATE, prefix, COLOR_RESET,
+                RED_ORANGE, COLOR_BOLD, COLOR_RESET
+            );
+        }
+        let spinner_msg = crate::agent::style::get_tree_spinner_msg("subagent", "");
 
         let mut run_res = {
             let p_ref = &subagent_prompt;
@@ -307,15 +314,24 @@ impl Tool for DelegateTaskTool {
 
         if run_res.is_ok() && workspace_dir != parent_dir {
             if let Err(e) = sync_changes_back(&workspace_dir, &parent_dir) {
-                crate::tui_println!("{}⚠️ Failed to sync changes back to active workspace: {}{}", AURA_GOLD, e, COLOR_RESET);
+                if !crate::agent::style::is_silent() {
+                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                    crate::tui_println!("{}{}{}↶{} Failed to sync changes back to active workspace: {}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GOLD, e);
+                }
             } else {
-                crate::tui_println!("{}  ✓ Synchronized changes back to active workspace{}", EMERALD_GREEN, COLOR_RESET);
+                if !crate::agent::style::is_silent() {
+                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                    crate::tui_println!("{}{}{}✓{} Synchronized changes back to active workspace", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GREEN);
+                }
             }
         }
 
         match run_res {
             Ok(res) => {
-                crate::tui_println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
+                if !crate::agent::style::is_silent() {
+                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                    crate::tui_println!("{}{}{}✓{} Complete", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GREEN);
+                }
                 
                 // Run evolution review
                 let _ = run_evolution_review(&self.parent_provider, "subagent", &clean_goal, &clean_context, &res.content).await;
@@ -327,7 +343,10 @@ impl Tool for DelegateTaskTool {
                 }))
             }
             Err(e) => {
-                crate::tui_println!("{}  ✕ Subagent execution failed: {}{}", ERROR_RED, e, COLOR_RESET);
+                if !crate::agent::style::is_silent() {
+                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                    crate::tui_println!("{}{}{}✗{} Subagent execution failed: {}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, ERROR_RED, e, COLOR_RESET);
+                }
                 Ok(serde_json::json!({
                     "status": "error",
                     "error": format!("Subagent execution failed: {:?}", e)
@@ -576,27 +595,65 @@ impl Tool for DelegateProfileTool {
             );
 
             if is_reviewer {
-                crate::tui_println!("{}◇ Reviewing...{}", AURA_PURPLE, COLOR_RESET);
+                if !crate::agent::style::is_silent() {
+                    let prefix = crate::agent::style::get_tree_prefix(false);
+                    crate::tui_println!(
+                        "{}{}{}{}● {}{}{}{}{}",
+                        AURA_SLATE, prefix, COLOR_RESET,
+                        RED_ORANGE, COLOR_RESET,
+                        COLOR_BOLD, LIGHT_WHITE, "Reviewer", COLOR_RESET
+                    );
+                }
             } else if is_vision {
-                crate::tui_println!("{}◎ Vision Agent{}", AURA_PURPLE, COLOR_RESET);
+                if !crate::agent::style::is_silent() {
+                    let prefix = crate::agent::style::get_tree_prefix(false);
+                    crate::tui_println!(
+                        "{}{}{}{}● {}{}{}{}{}",
+                        AURA_SLATE, prefix, COLOR_RESET,
+                        RED_ORANGE, COLOR_RESET,
+                        COLOR_BOLD, LIGHT_WHITE, "Vision Agent", COLOR_RESET
+                    );
+                }
             } else {
-                crate::tui_println!("{}◎ {}{}", AURA_PURPLE, formatted_name, COLOR_RESET);
+                if !crate::agent::style::is_silent() {
+                    let prefix = crate::agent::style::get_tree_prefix(false);
+                    crate::tui_println!(
+                        "{}{}{}{}● {}{}{}{}{}",
+                        AURA_SLATE, prefix, COLOR_RESET,
+                        RED_ORANGE, COLOR_RESET,
+                        COLOR_BOLD, LIGHT_WHITE, formatted_name, COLOR_RESET
+                    );
+                }
             }
 
-            let spinner_msg = if is_reviewer {
-                format!("{}  Reviewing...{}", AURA_SLATE, COLOR_RESET)
+            let depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
+            let spinner_text = if is_reviewer {
+                "Reviewing..."
             } else if is_vision {
-                format!("{}  Processing image...{}", AURA_SLATE, COLOR_RESET)
+                "Processing image..."
             } else {
-                format!("{}  Running...{}", AURA_SLATE, COLOR_RESET)
+                "Running..."
             };
+            let spinner_body = if depth == 0 {
+                format!("  └─ {}", spinner_text)
+            } else {
+                let mut s = "  ".to_string();
+                for _ in 0..(depth - 1) {
+                    s.push_str("│  ");
+                }
+                format!("{}│  └─ {}", s, spinner_text)
+            };
+            let spinner_msg = format!("{}{}{}", AURA_SLATE, spinner_body, COLOR_RESET);
 
             let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
             let mut has_memory_mcp = false;
             if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
                 match client.call_tool("create_database_branch", &serde_json::json!({ "branchId": branch_id })).await {
                     Ok(_) => {
-                        crate::tui_println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
+                        if !crate::agent::style::is_silent() {
+                            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                            crate::tui_println!("{}{}{}✓{} Isolated simulation space branch '{}' created", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GREEN, branch_id);
+                        }
                         has_memory_mcp = true;
                     }
                     Err(e) => {
@@ -734,12 +791,20 @@ impl Tool for DelegateProfileTool {
                     if has_memory_mcp {
                         if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
                             match client.call_tool("commit_database_branch", &serde_json::json!({})).await {
-                                Ok(_) => crate::tui_println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
+                                Ok(_) => {
+                                    if !crate::agent::style::is_silent() {
+                                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                        crate::tui_println!("{}{}{}✓{} Committed simulation space branch '{}'", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GREEN, branch_id);
+                                    }
+                                }
                                 Err(e) => tracing::warn!("Failed to commit database branch: {:?}", e),
                             }
                         }
                     }
-                    crate::tui_println!("{}  ✓ Complete{}", EMERALD_GREEN, COLOR_RESET);
+                    if !crate::agent::style::is_silent() {
+                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                        crate::tui_println!("{}{}{}✓{} Complete", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GREEN);
+                    }
                     
                     if workspace_dir != parent_dir {
                         let _ = sync_changes_back(&workspace_dir, &parent_dir);
@@ -759,12 +824,20 @@ impl Tool for DelegateProfileTool {
                     if has_memory_mcp {
                         if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
                             match client.call_tool("rollback_database_branch", &serde_json::json!({})).await {
-                                Ok(_) => crate::tui_println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
+                                Ok(_) => {
+                                    if !crate::agent::style::is_silent() {
+                                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                        crate::tui_println!("{}{}{}✓{} Rolled back simulation space branch '{}'", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GOLD, branch_id);
+                                    }
+                                }
                                 Err(e) => tracing::warn!("Failed to rollback database branch: {:?}", e),
                             }
                         }
                     }
-                    crate::tui_println!("{}✕ Error: Model '{}' execution failed: {}{}", ERROR_RED, model_name, e, COLOR_RESET);
+                    if !crate::agent::style::is_silent() {
+                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                        crate::tui_println!("{}{}{}✗{} Error: Model '{}' execution failed: {}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, ERROR_RED, model_name, e, COLOR_RESET);
+                    }
                     last_error = Some(e);
                 }
             }
@@ -1755,7 +1828,16 @@ impl Tool for ParallelResearchTool {
             return Err(anyhow!("The 'tasks' array cannot be empty"));
         }
 
-        crate::tui_println!("{}◎ Parallel Research: Spawning {} subagents concurrently...{}", AURA_PURPLE, tasks_val.len(), COLOR_RESET);
+        if !crate::agent::style::is_silent() {
+            let prefix = crate::agent::style::get_tree_prefix(false);
+            crate::tui_println!(
+                "{}{}{}{}● {}{}{}{}{} {}{}{}",
+                AURA_SLATE, prefix, COLOR_RESET,
+                RED_ORANGE, COLOR_RESET,
+                COLOR_BOLD, LIGHT_WHITE, "Parallel Research", COLOR_RESET,
+                AURA_SLATE, format!("(spawning {} subagents concurrently)", tasks_val.len()), COLOR_RESET
+            );
+        }
 
         let current_depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
         let current_workspace = crate::config::loader::ACTIVE_WORKSPACE
