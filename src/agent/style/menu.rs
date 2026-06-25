@@ -412,3 +412,93 @@ pub fn select_menu_custom(
         }
     }
 }
+
+pub fn select_menu_horizontal(
+    options: &[String],
+) -> Result<Option<usize>> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+    use crossterm::ExecutableCommand;
+    use std::io::{stdout, Write};
+
+    let mut stdout = stdout();
+    let _ = stdout.execute(crossterm::cursor::Hide);
+
+    enable_raw_mode()?;
+    let mut selected = 0;
+    let num_options = options.len();
+
+    let mut draw_menu = |selected_idx: usize| -> Result<()> {
+        print!("\r\x1b[2K");
+        let prefix = "  L ";
+        print!("{}{}", AURA_SLATE, prefix);
+        
+        for i in 0..num_options {
+            if i > 0 {
+                print!("{}  ·  {}", AURA_SLATE, COLOR_RESET);
+            }
+            if i == selected_idx {
+                print!("{}{}{}▸ {}{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET, COLOR_BOLD, options[i]);
+            } else {
+                print!("{}{}", LIGHT_WHITE, options[i]);
+            }
+            print!("{}", COLOR_RESET);
+        }
+        stdout.flush()?;
+        Ok(())
+    };
+
+    draw_menu(selected)?;
+
+    loop {
+        if event::poll(std::time::Duration::from_millis(50))? {
+            if let Event::Key(key_event) = event::read()? {
+                if key_event.kind == KeyEventKind::Release {
+                    continue;
+                }
+
+                match key_event.code {
+                    KeyCode::Left => {
+                        selected = (selected + num_options - 1) % num_options;
+                        draw_menu(selected)?;
+                    }
+                    KeyCode::Right | KeyCode::Tab => {
+                        selected = (selected + 1) % num_options;
+                        draw_menu(selected)?;
+                    }
+                    KeyCode::Enter => {
+                        let _ = stdout.execute(crossterm::cursor::Show);
+                        print!("\r\x1b[2K");
+                        let prefix = "  L ";
+                        let outcome = match selected {
+                            0 => format!("{}approved", AURA_GREEN),
+                            1 => format!("{}approved & trusted", AURA_GREEN),
+                            _ => format!("{}denied", AURA_ROSE),
+                        };
+                        print!("{}{}{}{}\r\n", AURA_SLATE, prefix, COLOR_RESET, outcome);
+                        let _ = stdout.flush();
+                        disable_raw_mode()?;
+                        return Ok(Some(selected));
+                    }
+                    KeyCode::Esc => {
+                        let _ = stdout.execute(crossterm::cursor::Show);
+                        print!("\r\x1b[2K");
+                        let prefix = "  L ";
+                        print!("{}{}{}denied\r\n", AURA_SLATE, prefix, AURA_ROSE);
+                        let _ = stdout.flush();
+                        disable_raw_mode()?;
+                        return Ok(None);
+                    }
+                    KeyCode::Char('c') if key_event.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                        let _ = stdout.execute(crossterm::cursor::Show);
+                        print!("\r\x1b[2K");
+                        disable_raw_mode()?;
+                        return Err(anyhow::anyhow!("Ctrl-C"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+

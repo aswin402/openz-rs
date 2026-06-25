@@ -594,71 +594,38 @@ impl Tool for DelegateProfileTool {
                 self.session_manager.clone(),
             );
 
-            if is_reviewer {
-                if !crate::agent::style::is_silent() {
-                    let prefix = crate::agent::style::get_tree_prefix(false);
-                    crate::tui_println!(
-                        "{}{}{}{}● {}{}{}{}{}",
-                        AURA_SLATE, prefix, COLOR_RESET,
-                        RED_ORANGE, COLOR_RESET,
-                        COLOR_BOLD, LIGHT_WHITE, "Reviewer", COLOR_RESET
-                    );
-                }
+            let label = if is_reviewer {
+                "Reviewer".to_string()
             } else if is_vision {
-                if !crate::agent::style::is_silent() {
-                    let prefix = crate::agent::style::get_tree_prefix(false);
-                    crate::tui_println!(
-                        "{}{}{}{}● {}{}{}{}{}",
-                        AURA_SLATE, prefix, COLOR_RESET,
-                        RED_ORANGE, COLOR_RESET,
-                        COLOR_BOLD, LIGHT_WHITE, "Vision Agent", COLOR_RESET
-                    );
-                }
+                "Vision Agent".to_string()
             } else {
-                if !crate::agent::style::is_silent() {
-                    let prefix = crate::agent::style::get_tree_prefix(false);
-                    crate::tui_println!(
-                        "{}{}{}{}● {}{}{}{}{}",
-                        AURA_SLATE, prefix, COLOR_RESET,
-                        RED_ORANGE, COLOR_RESET,
-                        COLOR_BOLD, LIGHT_WHITE, formatted_name, COLOR_RESET
-                    );
-                }
+                formatted_name.clone()
+            };
+
+            if !crate::agent::style::is_silent() {
+                let prefix = crate::agent::style::get_tree_prefix(false);
+                crate::tui_println!(
+                    "{}{}{}◎ {}{}{} {}{}subagent{}",
+                    AURA_SLATE, prefix, COLOR_RESET,
+                    AURA_PURPLE, COLOR_BOLD, label, COLOR_RESET,
+                    AURA_SLATE, COLOR_RESET
+                );
+                
+                let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                let status_text = get_status_from_goal(goal);
+                crate::tui_println!(
+                    "{}{}{}{}",
+                    AURA_SLATE, leaf_prefix, status_text, COLOR_RESET
+                );
             }
 
-            let depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
-            let spinner_text = if is_reviewer {
-                "Reviewing..."
-            } else if is_vision {
-                "Processing image..."
-            } else {
-                "Running..."
-            };
-            let spinner_body = if depth == 0 {
-                format!("  └─ {}", spinner_text)
-            } else {
-                let mut s = "  ".to_string();
-                for _ in 0..(depth - 1) {
-                    s.push_str("│  ");
-                }
-                format!("{}│  └─ {}", s, spinner_text)
-            };
-            let spinner_msg = format!("{}{}{}", AURA_SLATE, spinner_body, COLOR_RESET);
+            let spinner_msg = format!("{}{}{}Running...{}", AURA_SLATE, crate::agent::style::get_tree_prefix(true), AURA_SLATE, COLOR_RESET);
 
             let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
             let mut has_memory_mcp = false;
             if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
-                match client.call_tool("create_database_branch", &serde_json::json!({ "branchId": branch_id })).await {
-                    Ok(_) => {
-                        if !crate::agent::style::is_silent() {
-                            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                            crate::tui_println!("{}{}{}✓{} Isolated simulation space branch '{}' created", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GREEN, branch_id);
-                        }
-                        has_memory_mcp = true;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to create database branch: {:?}", e);
-                    }
+                if let Ok(_) = client.call_tool("create_database_branch", &serde_json::json!({ "branchId": branch_id })).await {
+                    has_memory_mcp = true;
                 }
             }
 
@@ -790,20 +757,13 @@ impl Tool for DelegateProfileTool {
                 Ok(run_res) => {
                     if has_memory_mcp {
                         if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
-                            match client.call_tool("commit_database_branch", &serde_json::json!({})).await {
-                                Ok(_) => {
-                                    if !crate::agent::style::is_silent() {
-                                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                        crate::tui_println!("{}{}{}✓{} Committed simulation space branch '{}'", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GREEN, branch_id);
-                                    }
-                                }
-                                Err(e) => tracing::warn!("Failed to commit database branch: {:?}", e),
-                            }
+                            let _ = client.call_tool("commit_database_branch", &serde_json::json!({})).await;
                         }
                     }
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                        crate::tui_println!("{}{}{}✓{} Complete", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GREEN);
+                        let summary = crate::agent::style::format_subagent_summary(&run_res.content);
+                        crate::tui_println!("{}{}{}✓{} {}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GREEN, summary);
                     }
                     
                     if workspace_dir != parent_dir {
@@ -823,20 +783,12 @@ impl Tool for DelegateProfileTool {
                 Err(e) => {
                     if has_memory_mcp {
                         if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
-                            match client.call_tool("rollback_database_branch", &serde_json::json!({})).await {
-                                Ok(_) => {
-                                    if !crate::agent::style::is_silent() {
-                                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                        crate::tui_println!("{}{}{}✓{} Rolled back simulation space branch '{}'", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_GOLD, branch_id);
-                                    }
-                                }
-                                Err(e) => tracing::warn!("Failed to rollback database branch: {:?}", e),
-                            }
+                            let _ = client.call_tool("rollback_database_branch", &serde_json::json!({})).await;
                         }
                     }
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                        crate::tui_println!("{}{}{}✗{} Error: Model '{}' execution failed: {}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, ERROR_RED, model_name, e, COLOR_RESET);
+                        crate::tui_println!("{}{}{}✕{} Error: {}", AURA_SLATE, leaf_prefix, COLOR_RESET, AURA_ROSE, e);
                     }
                     last_error = Some(e);
                 }
@@ -1820,22 +1772,20 @@ impl Tool for ParallelResearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        crate::agent::style::spinner::IS_SILENT.scope(true, async {
-            let tasks_val = arguments.get("tasks").and_then(|v| v.as_array())
-                .ok_or_else(|| anyhow!("Missing or invalid 'tasks' argument"))?;
+        let tasks_val = arguments.get("tasks").and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow!("Missing or invalid 'tasks' argument"))?;
 
         if tasks_val.is_empty() {
             return Err(anyhow!("The 'tasks' array cannot be empty"));
         }
 
-        if !crate::agent::style::is_silent() {
+        let is_parent_silent = crate::agent::style::is_silent();
+        if !is_parent_silent {
             let prefix = crate::agent::style::get_tree_prefix(false);
             crate::tui_println!(
-                "{}{}{}{}● {}{}{}{}{} {}{}{}",
+                "{}{}{}◎ {}{}ParallelResearch spawning {} subagents{}",
                 AURA_SLATE, prefix, COLOR_RESET,
-                RED_ORANGE, COLOR_RESET,
-                COLOR_BOLD, LIGHT_WHITE, "Parallel Research", COLOR_RESET,
-                AURA_SLATE, format!("(spawning {} subagents concurrently)", tasks_val.len()), COLOR_RESET
+                AURA_PURPLE, COLOR_BOLD, tasks_val.len(), COLOR_RESET
             );
         }
 
@@ -1846,13 +1796,24 @@ impl Tool for ParallelResearchTool {
 
         let mut join_handles = Vec::new();
 
-        for task_val in tasks_val {
+        for (idx, task_val) in tasks_val.iter().enumerate() {
             let goal = match task_val.get("goal").and_then(|v| v.as_str()) {
                 Some(g) => g.to_string(),
                 None => continue,
             };
             let context = task_val.get("context").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let model_override = task_val.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+            let role = get_heuristic_role(idx, &goal);
+
+            if !is_parent_silent {
+                let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                crate::tui_println!(
+                    "{}{}{}◌ {}{}\u{2014} queued{}",
+                    AURA_SLATE, leaf_prefix, AURA_SLATE,
+                    COLOR_BOLD, role, COLOR_RESET
+                );
+            }
 
             let config = self.config.clone();
             let parent_provider = self.parent_provider.clone();
@@ -1867,7 +1828,19 @@ impl Tool for ParallelResearchTool {
             }
 
             let current_workspace = current_workspace.clone();
-            let handle = tokio::spawn(crate::agent::style::spinner::IS_SILENT.scope(true, async move {
+            let role_clone = role.clone();
+            let goal_clone = goal.clone();
+            
+            let handle = tokio::spawn(async move {
+                if !is_parent_silent {
+                    let leaf_prefix = crate::agent::style::get_tree_prefix_for_depth(true, current_depth);
+                    crate::tui_println!(
+                        "{}{}{}● {}{}\u{2014} running...{}",
+                        AURA_SLATE, leaf_prefix, RED_ORANGE,
+                        COLOR_BOLD, role_clone, COLOR_RESET
+                    );
+                }
+
                 let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(current_workspace, async {
                     DELEGATION_DEPTH.scope(current_depth + 1, async {
                         let provider = if let Some(ref m) = model_override {
@@ -1901,20 +1874,43 @@ impl Tool for ParallelResearchTool {
                             TASK:\n{}\n\n\
                             CONTEXT:\n{}\n\n\
                             When finished, provide a clear, concise summary of what you did and found.",
-                            goal, context
+                            goal_clone, context
                         );
 
-                        tokio::select! {
-                            res = child_agent.run(&subagent_prompt, &child_session_id) => res,
-                            _ = cancellation_token.wait_for_cancellation() => {
-                                Err(anyhow::anyhow!("Task cancelled"))
+                        crate::agent::style::spinner::IS_SILENT.scope(true, async {
+                            tokio::select! {
+                                res = child_agent.run(&subagent_prompt, &child_session_id) => res,
+                                _ = cancellation_token.wait_for_cancellation() => {
+                                    Err(anyhow::anyhow!("Task cancelled"))
+                                }
                             }
-                        }
+                        }).await
                     }).await
                 });
                 let run_res = run_res_fut.await;
-                (goal, run_res)
-            }));
+
+                if !is_parent_silent {
+                    let leaf_prefix = crate::agent::style::get_tree_prefix_for_depth(true, current_depth);
+                    match run_res {
+                        Ok(ref run_res) => {
+                            let summary = crate::agent::style::format_subagent_summary(&run_res.content);
+                            crate::tui_println!(
+                                "{}{}{}✓ {}{} \u{2014} {}",
+                                AURA_SLATE, leaf_prefix, AURA_GREEN,
+                                COLOR_BOLD, role_clone, summary
+                            );
+                        }
+                        Err(ref e) => {
+                            crate::tui_println!(
+                                "{}{}{}✕ {}{} \u{2014} failed: {}",
+                                AURA_SLATE, leaf_prefix, AURA_ROSE,
+                                COLOR_BOLD, role_clone, e
+                            );
+                        }
+                    }
+                }
+                (goal_clone, run_res)
+            });
             join_handles.push(handle);
         }
 
@@ -1950,7 +1946,6 @@ impl Tool for ParallelResearchTool {
             "status": "success",
             "results": results
         }))
-        }).await
     }
 }
 
@@ -2974,5 +2969,42 @@ impl CancellationToken {
             return;
         }
         self.notify.notified().await;
+    }
+}
+
+fn get_status_from_goal(goal: &str) -> String {
+    let trimmed = goal.trim().to_lowercase();
+    if trimmed.starts_with("review ") {
+        format!("reviewing {}...", goal.trim()[7..].trim_end_matches('.'))
+    } else if trimmed.starts_with("analyze ") {
+        format!("analyzing {}...", goal.trim()[8..].trim_end_matches('.'))
+    } else if trimmed.starts_with("debug ") {
+        format!("debugging {}...", goal.trim()[6..].trim_end_matches('.'))
+    } else if trimmed.starts_with("scaffold ") {
+        format!("scaffolding {}...", goal.trim()[9..].trim_end_matches('.'))
+    } else {
+        format!("running {}...", goal.trim().trim_end_matches('.'))
+    }
+}
+
+fn get_heuristic_role(index: usize, goal: &str) -> String {
+    let goal_lower = goal.to_lowercase();
+    if goal_lower.contains("test") {
+        "Tester".to_string()
+    } else if goal_lower.contains("debug") || goal_lower.contains("error") || goal_lower.contains("fail") {
+        "Debugger".to_string()
+    } else if goal_lower.contains("architect") || goal_lower.contains("design") || goal_lower.contains("structure") {
+        "Architect".to_string()
+    } else if goal_lower.contains("write") || goal_lower.contains("code") || goal_lower.contains("implement") {
+        "Developer".to_string()
+    } else if goal_lower.contains("review") || goal_lower.contains("audit") {
+        "Reviewer".to_string()
+    } else {
+        match index % 4 {
+            0 => "Researcher".to_string(),
+            1 => "Debugger".to_string(),
+            2 => "Architect".to_string(),
+            _ => "Developer".to_string(),
+        }
     }
 }

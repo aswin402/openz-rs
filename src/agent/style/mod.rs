@@ -90,27 +90,19 @@ pub fn tui_eprint_fn<T: AsRef<str>>(msg: T) {
     let _ = std::io::stderr().flush();
 }
 
+/// Returns the prefix string for a tree trace line at the specified delegation depth.
+pub fn get_tree_prefix_for_depth(is_leaf: bool, depth: usize) -> String {
+    if is_leaf {
+        format!("{}L ", "  ".repeat(depth + 1))
+    } else {
+        "  ".repeat(depth)
+    }
+}
+
 /// Returns the prefix string for a tree trace line at the current delegation depth.
 pub fn get_tree_prefix(is_leaf: bool) -> String {
     let depth = crate::tools::subagent::DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
-    if depth == 0 {
-        if is_leaf {
-            "  └─ ".to_string()
-        } else {
-            "".to_string()
-        }
-    } else {
-        let mut s = "  ".to_string();
-        for _ in 0..(depth - 1) {
-            s.push_str("│  ");
-        }
-        if is_leaf {
-            s.push_str("└─ ");
-        } else {
-            s.push_str("├─ ");
-        }
-        s
-    }
+    get_tree_prefix_for_depth(is_leaf, depth)
 }
 
 /// Converts a tool name into a clean, visual title.
@@ -139,18 +131,8 @@ pub fn get_tool_clean_name(name: &str) -> String {
 
 /// Generates a styled spinner message indicating a tool is running under the tree bullet.
 pub fn get_tree_spinner_msg(_name: &str, _formatted_args: &str) -> String {
-    let depth = crate::tools::subagent::DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
-    let msg = if depth == 0 {
-        "  └─ Running...".to_string()
-    } else {
-        let mut s = "  ".to_string();
-        for _ in 0..(depth - 1) {
-            s.push_str("│  ");
-        }
-        s.push_str("│  └─ Running...");
-        s
-    };
-    format!("{}{}{}", colors::AURA_SLATE, msg, colors::COLOR_RESET)
+    let prefix = get_tree_prefix(true);
+    format!("{}{}{}Running...{}", colors::AURA_SLATE, prefix, colors::AURA_SLATE, colors::COLOR_RESET)
 }
 
 /// Generates the styled start indicator of a tool execution with tree prefixes.
@@ -182,10 +164,208 @@ pub fn print_tree_tool_start(name: &str, formatted_args: &str) {
     if is_silent() {
         return;
     }
+    if is_profile_subagent(name) || name == "parallel_research" {
+        return;
+    }
     let output = get_tree_tool_start_msg(name, formatted_args);
     let replaced = output.replace("\r\n", "\n").replace("\n", "\r\n");
     print!("{}\r\n", replaced);
     let _ = std::io::stdout().flush();
+}
+
+pub fn is_profile_subagent(name: &str) -> bool {
+    if let Ok(profiles) = crate::subagents::load_profiles() {
+        profiles.iter().any(|p| p.name == name)
+    } else {
+        false
+    }
+}
+
+pub fn get_command_error_summary(stdout: &str, stderr: &str) -> String {
+    for line in stderr.lines().chain(stdout.lines()) {
+        let trimmed = line.trim();
+        if trimmed.starts_with("error[E") {
+            if let Some(pos) = trimmed.find("]: ") {
+                let code = &trimmed[..pos + 2];
+                let msg = &trimmed[pos + 3..];
+                return replace_with_em_dash(&format!("compiler error \u{2014} {} {}", code, msg));
+            }
+        } else if trimmed.starts_with("error:") {
+            let msg = trimmed.strip_prefix("error:").unwrap().trim();
+            return replace_with_em_dash(&format!("compiler error \u{2014} {}", msg));
+        }
+    }
+    for line in stderr.lines().chain(stdout.lines()) {
+        let trimmed = line.trim();
+        if trimmed.to_lowercase().contains("timeout") {
+            return replace_with_em_dash("timeout not handled");
+        }
+        if trimmed.contains("Failed") || trimmed.contains("Error:") || trimmed.contains("error ") {
+            return replace_with_em_dash(trimmed);
+        }
+    }
+    for line in stderr.lines().chain(stdout.lines()) {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            return replace_with_em_dash(trimmed);
+        }
+    }
+    "command failed".to_string()
+}
+
+pub fn format_subagent_summary(content: &str) -> String {
+    let cleaned = content.trim();
+    for line in cleaned.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let mut final_line = trimmed;
+        if final_line.starts_with("- ") {
+            final_line = &final_line[2..];
+        } else if final_line.starts_with("* ") {
+            final_line = &final_line[2..];
+        } else if let Some(pos) = final_line.find(". ") {
+            if final_line[..pos].chars().all(|c| c.is_ascii_digit()) {
+                final_line = &final_line[pos + 2..];
+            }
+        }
+        
+        let final_line = final_line.trim_matches('*').trim();
+        if !final_line.is_empty() {
+            let summary = replace_with_em_dash(final_line);
+            if summary.len() > 80 {
+                return format!("{}...", &summary[..77]);
+            }
+            return summary;
+        }
+    }
+    "completed task".to_string()
+}
+
+pub fn format_reasoning_summary(reasoning: &str) -> String {
+    for line in reasoning.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let mut cleaned = trimmed;
+        if cleaned.starts_with("- ") {
+            cleaned = &cleaned[2..];
+        } else if cleaned.starts_with("* ") {
+            cleaned = &cleaned[2..];
+        }
+        let cleaned = cleaned.trim_matches('*').trim();
+        if !cleaned.is_empty() {
+            let summary = replace_with_em_dash(cleaned);
+            if summary.len() > 100 {
+                return format!("{}...", &summary[..97]);
+            }
+            return summary;
+        }
+    }
+    "analyzing requirements".to_string()
+}
+
+fn replace_with_em_dash(s: &str) -> String {
+    s.replace(" - ", " \u{2014} ")
+     .replace(" -- ", " \u{2014} ")
+     .replace(" \u{2013} ", " \u{2014} ")
+}
+
+pub fn format_tool_outcome_summary(name: &str, arguments: &serde_json::Value, res: &serde_json::Value) -> String {
+    match name {
+        "write_file" => {
+            let content = arguments.get("content")
+                .or(arguments.get("code"))
+                .or(arguments.get("text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let line_count = content.lines().count();
+            format!("{} lines", line_count)
+        }
+        "patch_file" => {
+            let patch_str = arguments.get("patch")
+                .or(arguments.get("content"))
+                .or(arguments.get("diff"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            summarize_patch(patch_str)
+        }
+        "replace_lines" => {
+            let replacement = arguments.get("replacement").and_then(|v| v.as_str()).unwrap_or("");
+            let trimmed = replacement.trim();
+            if trimmed.is_empty() {
+                "removed lines".to_string()
+            } else if trimmed.starts_with("use ") {
+                let cleaned = trimmed.split('\n').next().unwrap_or(trimmed).trim();
+                let cleaned = cleaned.strip_suffix(';').unwrap_or(cleaned);
+                format!("add {}", cleaned)
+            } else {
+                let first_line = trimmed.split('\n').next().unwrap_or(trimmed).trim();
+                format!("replace with {}", first_line)
+            }
+        }
+        "exec_command" => {
+            let status_code = res.get("status_code").and_then(|v| v.as_i64()).unwrap_or(0);
+            let command_str = arguments.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            if status_code == 0 {
+                let summary = if command_str.contains("build") {
+                    "build succeeded"
+                } else if command_str.contains("test") {
+                    "all tests passing"
+                } else if command_str.contains("clippy") {
+                    "clippy passed"
+                } else {
+                    "command succeeded"
+                };
+                format!("{}\u{2713}{} {}", colors::AURA_GREEN, colors::COLOR_RESET, summary)
+            } else {
+                let stdout = res.get("stdout").and_then(|v| v.as_str()).unwrap_or_default();
+                let stderr = res.get("stderr").and_then(|v| v.as_str()).unwrap_or_default();
+                let err_summary = get_command_error_summary(&stdout, &stderr);
+                format!("{}\u{2715}{} {}", colors::AURA_ROSE, colors::COLOR_RESET, err_summary)
+            }
+        }
+        _ => {
+            if let Some(err) = res.get("error").and_then(|v| v.as_str()) {
+                format!("{}\u{2715}{} Failed: {}", colors::AURA_ROSE, colors::COLOR_RESET, err)
+            } else {
+                format!("{}\u{2713}{} completed", colors::AURA_GREEN, colors::COLOR_RESET)
+            }
+        }
+    }
+}
+
+fn summarize_patch(patch_str: &str) -> String {
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
+    for line in patch_str.lines() {
+        if line.starts_with('+') && !line.starts_with("+++") {
+            let trimmed = line[1..].trim();
+            if !trimmed.is_empty() {
+                added.push(trimmed);
+            }
+        } else if line.starts_with('-') && !line.starts_with("---") {
+            let trimmed = line[1..].trim();
+            if !trimmed.is_empty() {
+                removed.push(trimmed);
+            }
+        }
+    }
+    if !added.is_empty() {
+        let first = added[0];
+        if first.starts_with("use ") {
+            let cleaned = first.strip_suffix(';').unwrap_or(first);
+            format!("add {}", cleaned)
+        } else {
+            format!("add {}", first)
+        }
+    } else if !removed.is_empty() {
+        format!("remove {}", removed[0])
+    } else {
+        "modified file".to_string()
+    }
 }
 
 #[cfg(test)]
@@ -207,38 +387,42 @@ mod tests {
     #[test]
     fn test_tree_prefix_depth_0() {
         // Without scoping, DELEGATION_DEPTH should default to 0
-        assert_eq!(get_tree_prefix(true), "  └─ ");
+        assert_eq!(get_tree_prefix(true), "  L ");
         assert_eq!(get_tree_prefix(false), "");
         
         let spinner = get_tree_spinner_msg("test", "");
-        assert!(spinner.contains("  └─ Running..."));
+        assert!(spinner.contains("  L "));
+        assert!(spinner.contains("Running..."));
         assert!(spinner.contains(colors::AURA_SLATE));
     }
 
     #[tokio::test]
     async fn test_tree_prefix_nested() {
         crate::tools::subagent::DELEGATION_DEPTH.scope(1, async {
-            assert_eq!(get_tree_prefix(true), "  └─ ");
-            assert_eq!(get_tree_prefix(false), "  ├─ ");
+            assert_eq!(get_tree_prefix(true), "    L ");
+            assert_eq!(get_tree_prefix(false), "  ");
             
             let spinner = get_tree_spinner_msg("test", "");
-            assert!(spinner.contains("  │  └─ Running..."));
+            assert!(spinner.contains("    L "));
+            assert!(spinner.contains("Running..."));
         }).await;
 
         crate::tools::subagent::DELEGATION_DEPTH.scope(2, async {
-            assert_eq!(get_tree_prefix(true), "  │  └─ ");
-            assert_eq!(get_tree_prefix(false), "  │  ├─ ");
+            assert_eq!(get_tree_prefix(true), "      L ");
+            assert_eq!(get_tree_prefix(false), "    ");
             
             let spinner = get_tree_spinner_msg("test", "");
-            assert!(spinner.contains("  │  │  └─ Running..."));
+            assert!(spinner.contains("      L "));
+            assert!(spinner.contains("Running..."));
         }).await;
 
         crate::tools::subagent::DELEGATION_DEPTH.scope(3, async {
-            assert_eq!(get_tree_prefix(true), "  │  │  └─ ");
-            assert_eq!(get_tree_prefix(false), "  │  │  ├─ ");
+            assert_eq!(get_tree_prefix(true), "        L ");
+            assert_eq!(get_tree_prefix(false), "      ");
             
             let spinner = get_tree_spinner_msg("test", "");
-            assert!(spinner.contains("  │  │  │  └─ Running..."));
+            assert!(spinner.contains("        L "));
+            assert!(spinner.contains("Running..."));
         }).await;
     }
 
