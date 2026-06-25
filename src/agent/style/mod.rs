@@ -141,9 +141,30 @@ pub fn get_tree_spinner_msg(_name: &str, _formatted_args: &str) -> String {
     format!("{}{}{}Running...{}", colors::AURA_SLATE, prefix, colors::AURA_SLATE, colors::COLOR_RESET)
 }
 
+/// Strips standard graphic SGR ANSI escape sequences (\x1b[...m) from a string.
+pub fn strip_ansi_escapes(s: &str) -> String {
+    let mut result = String::new();
+    let mut in_escape = false;
+    let mut chars = s.chars().peekable();
+    
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c == 'm' {
+                in_escape = false;
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 /// Helper to clean up friendly name duplication from formatted tool arguments.
 pub fn clean_tool_args_msg(name: &str, formatted_args: &str) -> String {
-    let trimmed = formatted_args.trim();
+    let stripped = strip_ansi_escapes(formatted_args);
+    let trimmed = stripped.trim();
     if trimmed.is_empty() {
         return String::new();
     }
@@ -580,10 +601,16 @@ mod tests {
 
     #[test]
     fn test_clean_tool_args_msg() {
-        assert_eq!(clean_tool_args_msg("web_search", "WebSearch"), "");
-        assert_eq!(clean_tool_args_msg("web_search", "WebSearch(query: \"ZeroClaw\")"), "query: \"ZeroClaw\"");
-        assert_eq!(clean_tool_args_msg("exec_command", "Bash(cargo build)"), "cargo build");
+        assert_eq!(clean_tool_args_msg("web_search", "\x1b[1mWebSearch\x1b[0m"), "");
+        assert_eq!(clean_tool_args_msg("web_search", "\x1b[1mWebSearch\x1b[0m(\x1b[38;2;107;122;153mquery: \"ZeroClaw\"\x1b[0m)"), "query: \"ZeroClaw\"");
+        assert_eq!(clean_tool_args_msg("exec_command", "\x1b[1mBash\x1b[0m(cargo build)"), "cargo build");
         assert_eq!(clean_tool_args_msg("write_file", "--force"), "--force");
+    }
+
+    #[test]
+    fn test_strip_ansi_escapes() {
+        assert_eq!(strip_ansi_escapes("\x1b[1mRead\x1b[0m"), "Read");
+        assert_eq!(strip_ansi_escapes("\x1b[38;2;255;0;0mError\x1b[0m details"), "Error details");
     }
 }
 
