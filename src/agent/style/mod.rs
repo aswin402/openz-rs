@@ -153,29 +153,36 @@ pub fn get_tree_spinner_msg(_name: &str, _formatted_args: &str) -> String {
     format!("{}{}{}", colors::AURA_SLATE, msg, colors::COLOR_RESET)
 }
 
+/// Generates the styled start indicator of a tool execution with tree prefixes.
+pub fn get_tree_tool_start_msg(name: &str, formatted_args: &str) -> String {
+    let prefix = get_tree_prefix(false);
+    let clean_name = get_tool_clean_name(name);
+    if formatted_args.is_empty() {
+        format!(
+            "{}{}{}{}● {}{}{}{}{}",
+            colors::AURA_SLATE, prefix, colors::COLOR_RESET,
+            colors::RED_ORANGE,
+            colors::COLOR_RESET,
+            colors::COLOR_BOLD, colors::LIGHT_WHITE, clean_name, colors::COLOR_RESET
+        )
+    } else {
+        format!(
+            "{}{}{}{}● {}{}{}{}{} {}{}{}",
+            colors::AURA_SLATE, prefix, colors::COLOR_RESET,
+            colors::RED_ORANGE,
+            colors::COLOR_RESET,
+            colors::COLOR_BOLD, colors::LIGHT_WHITE, clean_name, colors::COLOR_RESET,
+            colors::AURA_SLATE, formatted_args, colors::COLOR_RESET
+        )
+    }
+}
+
 /// Prints the colored start indicator of a tool execution with tree prefixes.
 pub fn print_tree_tool_start(name: &str, formatted_args: &str) {
     if is_silent() {
         return;
     }
-    let prefix = get_tree_prefix(false);
-    let clean_name = get_tool_clean_name(name);
-    let output = if formatted_args.is_empty() {
-        format!(
-            "{}{}{}{}{}● {}{}{}{}",
-            colors::AURA_SLATE, prefix, colors::COLOR_RESET,
-            colors::RED_ORANGE, colors::COLOR_RESET,
-            colors::COLOR_BOLD, colors::LIGHT_WHITE, clean_name, colors::COLOR_RESET
-        )
-    } else {
-        format!(
-            "{}{}{}{}{}● {}{}{}{} {}{}{}",
-            colors::AURA_SLATE, prefix, colors::COLOR_RESET,
-            colors::RED_ORANGE, colors::COLOR_RESET,
-            colors::COLOR_BOLD, colors::LIGHT_WHITE, clean_name, colors::COLOR_RESET,
-            colors::AURA_SLATE, formatted_args, colors::COLOR_RESET
-        )
-    };
+    let output = get_tree_tool_start_msg(name, formatted_args);
     let replaced = output.replace("\r\n", "\n").replace("\n", "\r\n");
     print!("{}\r\n", replaced);
     let _ = std::io::stdout().flush();
@@ -233,6 +240,34 @@ mod tests {
             let spinner = get_tree_spinner_msg("test", "");
             assert!(spinner.contains("  │  │  │  └─ Running..."));
         }).await;
+    }
+
+    #[test]
+    fn test_tree_tool_start_msg() {
+        // Without args
+        let msg = get_tree_tool_start_msg("exec_command", "");
+        assert!(msg.contains("Bash"));
+        assert!(msg.contains('●'));
+        
+        let bullet_idx = msg.find('●').unwrap();
+        // RED_ORANGE should precede bullet
+        assert!(msg[..bullet_idx].ends_with(colors::RED_ORANGE));
+        // COLOR_RESET should follow bullet (followed by a space)
+        let after_bullet = &msg[bullet_idx + '●'.len_utf8()..];
+        assert!(after_bullet.starts_with(" "));
+        assert!(after_bullet[1..].starts_with(colors::COLOR_RESET));
+
+        // With args
+        let msg_args = get_tree_tool_start_msg("write_file", "--force");
+        assert!(msg_args.contains("Write"));
+        assert!(msg_args.contains("--force"));
+        assert!(msg_args.contains('●'));
+        
+        let bullet_idx_args = msg_args.find('●').unwrap();
+        assert!(msg_args[..bullet_idx_args].ends_with(colors::RED_ORANGE));
+        let after_bullet_args = &msg_args[bullet_idx_args + '●'.len_utf8()..];
+        assert!(after_bullet_args.starts_with(" "));
+        assert!(after_bullet_args[1..].starts_with(colors::COLOR_RESET));
     }
 }
 
