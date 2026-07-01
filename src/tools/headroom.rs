@@ -614,6 +614,25 @@ impl TreeNode {
 // Tool 1: ScopeContextTool
 // ═══════════════════════════════════════════════════════════════════
 
+pub const YAGNI_DIRECTIVES: &str = r#"
+---
+### Headroom: YAGNI Minimalism Directives
+
+Before writing ANY code, walk down this ladder and stop at the FIRST rung that applies:
+
+1. **Does this need to exist?** → If no: skip it entirely (YAGNI).
+2. **Already in this codebase?** → Reuse it. Do not rewrite.
+3. **Standard library does it?** → Use std. No external crate/package.
+4. **Native platform feature?** → Use it (e.g., `<input type="date">` over a date-picker library).
+5. **Already-installed dependency does it?** → Use what's there. Don't add a new dep.
+6. **Can it be one line?** → Write one line.
+7. **Only then:** Implement the minimum that works.
+
+**Never skip:** validation, error handling, security checks, accessibility.
+The code should be small because it is *necessary*, not golfed.
+---
+"#;
+
 pub struct ScopeContextTool;
 
 #[async_trait::async_trait]
@@ -690,6 +709,14 @@ impl Tool for ScopeContextTool {
                 let relative = fp.strip_prefix(&cwd).unwrap_or(fp);
                 combined.push_str(&format!("### Context File: {}\n\n{}\n\n", relative.display(), content));
             }
+        }
+
+        let enforce_yagni = std::env::var("HEADROOM_ENFORCE_YAGNI")
+            .map(|val| val.to_lowercase() == "true")
+            .unwrap_or(false);
+
+        if enforce_yagni {
+            combined.push_str(YAGNI_DIRECTIVES);
         }
 
         Ok(json!({ "status": "ok", "files": found_files.iter().filter_map(|f| f.to_str()).collect::<Vec<_>>(), "content": combined }))
@@ -2054,5 +2081,38 @@ mod tests {
         let filtered = filter_python_output(raw);
         assert!(!filtered.contains("Collecting requests"));
         assert!(filtered.contains("real output here"));
+    }
+
+    #[tokio::test]
+    async fn test_scope_context_yagni_enabled() {
+        let _l = test_lock().lock().await;
+        std::env::set_var("HEADROOM_ENFORCE_YAGNI", "true");
+        let temp_dir = std::env::temp_dir().join("headroom_test_yagni_enabled");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::fs::write(temp_dir.join("AGENTS.md"), "test content").unwrap();
+
+        let req = json!({ "target_path": temp_dir.to_str().unwrap() });
+        let res = ScopeContextTool.call(&req).await.unwrap();
+        let content = res["content"].as_str().unwrap();
+        assert!(content.contains("YAGNI Minimalism Directives"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::env::remove_var("HEADROOM_ENFORCE_YAGNI");
+    }
+
+    #[tokio::test]
+    async fn test_scope_context_yagni_disabled() {
+        let _l = test_lock().lock().await;
+        std::env::remove_var("HEADROOM_ENFORCE_YAGNI");
+        let temp_dir = std::env::temp_dir().join("headroom_test_yagni_disabled");
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::fs::write(temp_dir.join("AGENTS.md"), "test content").unwrap();
+
+        let req = json!({ "target_path": temp_dir.to_str().unwrap() });
+        let res = ScopeContextTool.call(&req).await.unwrap();
+        let content = res["content"].as_str().unwrap();
+        assert!(!content.contains("YAGNI"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

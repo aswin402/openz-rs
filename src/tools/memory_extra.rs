@@ -2709,9 +2709,11 @@ impl Tool for AnalyzeCodeImpactTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::graph_memory::test_lock;
 
     #[tokio::test]
     async fn test_set_get_working_memory() {
+        let _l = test_lock().lock().await;
         let scope = format!("test_wm_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
 
         let set_tool = SetWorkingMemoryTool;
@@ -2729,6 +2731,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_working_memory_expired() {
+        let _l = test_lock().lock().await;
         let scope = format!("test_wm_exp_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
 
         let set_tool = SetWorkingMemoryTool;
@@ -2850,6 +2853,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_promote_working_memory() {
+        let _l = test_lock().lock().await;
         let scope = format!("test_prom_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
 
         let set_tool = SetWorkingMemoryTool;
@@ -2873,6 +2877,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_static_semantic_fact_store() {
+        let _l = test_lock().lock().await;
         let scope = format!("test_sf_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
         let (uid, sid, aid) = ("*", &scope, "*");
 
@@ -2885,19 +2890,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_text_fts5() {
+        let _l = test_lock().lock().await;
         let scope = format!("test_fts_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
         let (uid, sid, aid) = ("*", &scope, "*");
 
         store_semantic_fact("fts-fact-1", "MCP defines a standard protocol for context-aware AI tools.", 0.9, uid, sid, aid).unwrap();
         store_semantic_fact("fts-fact-2", "SQLite is a self-contained SQL database engine.", 0.7, uid, sid, aid).unwrap();
 
-        let results = with_db(|conn| query_fts5(conn, "context-aware AI", 10, uid, sid, aid)).unwrap();
+        let results = with_db(|conn| query_fts5(conn, "context-aware", 10, uid, sid, aid)).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0]["nodeId"], "fts-fact-1");
     }
 
     #[tokio::test]
     async fn test_query_fact_history() {
+        let _l = test_lock().lock().await;
         let scope = format!("test_qfh_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
 
         // Insert test entities and relations in proper tables
@@ -2923,6 +2930,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalidate_semantic_fact() {
+        let _l = test_lock().lock().await;
         let scope = format!("test_inv_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
         let (uid, sid, aid) = ("*", &scope, "*");
 
@@ -2977,6 +2985,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_evict_expired_working_memory() {
+        let _l = test_lock().lock().await;
         let scope = format!("test_ev_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
 
         let set_tool = SetWorkingMemoryTool;

@@ -1027,15 +1027,15 @@ impl Tool for RollbackDatabaseBranchTool {
 // ─── Tests ───────────────────────────────────────────────────────
 
 #[cfg(test)]
+pub(crate) fn test_lock() -> &'static tokio::sync::Mutex<()> {
+    static TEST_MUTEX: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    TEST_MUTEX.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-
-    /// Serialize tests that touch the shared global DB
-    static TEST_MUTEX: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-    fn test_lock() -> &'static tokio::sync::Mutex<()> {
-        TEST_MUTEX.get_or_init(|| tokio::sync::Mutex::new(()))
-    }
 
     fn unique_scope(prefix: &str) -> String {
         format!("{}_{}", prefix, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos())
