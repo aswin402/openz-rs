@@ -39,21 +39,26 @@ OpenZ distinguishes between factual awareness and procedural capability:
 
 | Tier | Component | Location | Purpose | Format |
 | :--- | :--- | :--- | :--- | :--- |
-| **Tier 1** | **Memory** | `session.metadata["memory"]` | Captures "who the user is" (desires, preferences, persona) and specific project setup/context details (compiler versions, database selection, entry points). | Markdown list inside session JSON. |
+| **Tier 1** | **Memory** | `session.metadata["memory"]` & SQLite database (`~/.openz/memory.db`) | Captures "who the user is" (desires, preferences, persona) and specific project setup/context details persistently across all sessions. | Markdown list inside session JSON and SQLite database. |
 | **Tier 2** | **Skills** | SQLite Database (`~/.openz/memory.db`) & local `skills/` | Captures "how to perform a class of task" (coding styles, command conventions, workarounds, API usage rules, troubleshooting recipes). For subagents, skills are isolated by profile (e.g. `profile = 'planner'`). | Structured SQLite rows with workspace file overrides. |
 
 ---
 
 ## 3. Dynamic Prompt Injection
 
-When building the system prompt for a new turn, OpenZ automatically loads both memory and skills:
+When building the system prompt for a new turn, OpenZ automatically loads both session-level and persistent cross-session memory, along with matched skills:
 
-1. **Memory:** Read from session metadata and injected as:
+1. **Session Memory:** Read from session metadata:
    ```text
    Here is the long-term memory of key facts, preferences, and decisions from this session:
    <memory_markdown>
    ```
-2. **Skills:** Scans the SQLite database and local `skills/` folder for relevant skill blocks:
+2. **Cross-Session Memory:** Read from the SQLite database (`semantic_metadata` facts and `graph_nodes` observations):
+   ```text
+   Here are persistent key facts, decisions, and context across all past sessions:
+   <persistent_markdown>
+   ```
+3. **Skills:** Scans the SQLite database and local `skills/` folder for relevant skill blocks:
    * **Global Agent:** Dynamically matches active skill names matching keywords in the user query.
    * **Specialized Subagents:** In addition to keyword-matched global skills, a subagent unconditionally loads all profile-specific skills defined for its profile name (e.g., `planner` always receives the `milestone_decomposition` skill).
    ```text

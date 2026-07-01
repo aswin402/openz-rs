@@ -144,12 +144,13 @@ impl Tool for DelegateTaskTool {
         }
 
         let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
-        let mut has_memory_mcp = false;
-        if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
-            match client.call_tool("create_database_branch", &serde_json::json!({ "branchId": branch_id })).await {
+        let mut has_branch = false;
+        {
+            let tool = crate::tools::graph_memory::CreateDatabaseBranchTool;
+            match tool.call(&serde_json::json!({ "branchId": branch_id })).await {
                 Ok(_) => {
                     crate::tui_println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
-                    has_memory_mcp = true;
+                    has_branch = true;
                 }
                 Err(e) => {
                     tracing::warn!("Failed to create database branch: {:?}", e);
@@ -296,18 +297,16 @@ impl Tool for DelegateTaskTool {
             }
         }
 
-        if has_memory_mcp {
-            if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
-                if run_res.is_ok() {
-                    match client.call_tool("commit_database_branch", &serde_json::json!({})).await {
-                        Ok(_) => crate::tui_println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
-                        Err(e) => tracing::warn!("Failed to commit database branch: {:?}", e),
-                    }
-                } else {
-                    match client.call_tool("rollback_database_branch", &serde_json::json!({})).await {
-                        Ok(_) => crate::tui_println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
-                        Err(e) => tracing::warn!("Failed to rollback database branch: {:?}", e),
-                    }
+        if has_branch {
+            if run_res.is_ok() {
+                match crate::tools::graph_memory::CommitDatabaseBranchTool.call(&serde_json::json!({})).await {
+                    Ok(_) => crate::tui_println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, branch_id, COLOR_RESET),
+                    Err(e) => tracing::warn!("Failed to commit database branch: {:?}", e),
+                }
+            } else {
+                match crate::tools::graph_memory::RollbackDatabaseBranchTool.call(&serde_json::json!({})).await {
+                    Ok(_) => crate::tui_println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, branch_id, COLOR_RESET),
+                    Err(e) => tracing::warn!("Failed to rollback database branch: {:?}", e),
                 }
             }
         }
@@ -622,11 +621,9 @@ impl Tool for DelegateProfileTool {
             let spinner_msg = format!("{}{}{}Running...{}", AURA_SLATE, crate::agent::style::get_tree_prefix(true), AURA_SLATE, COLOR_RESET);
 
             let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
-            let mut has_memory_mcp = false;
-            if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
-                if let Ok(_) = client.call_tool("create_database_branch", &serde_json::json!({ "branchId": branch_id })).await {
-                    has_memory_mcp = true;
-                }
+            let mut has_branch = false;
+            if let Ok(_) = crate::tools::graph_memory::CreateDatabaseBranchTool.call(&serde_json::json!({ "branchId": branch_id })).await {
+                has_branch = true;
             }
 
             let mut final_prompt = subagent_prompt.clone();
@@ -755,10 +752,8 @@ impl Tool for DelegateProfileTool {
 
             match run_res {
                 Ok(run_res) => {
-                    if has_memory_mcp {
-                        if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
-                            let _ = client.call_tool("commit_database_branch", &serde_json::json!({})).await;
-                        }
+                    if has_branch {
+                        let _ = crate::tools::graph_memory::CommitDatabaseBranchTool.call(&serde_json::json!({})).await;
                     }
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
@@ -781,10 +776,8 @@ impl Tool for DelegateProfileTool {
                     }));
                 }
                 Err(e) => {
-                    if has_memory_mcp {
-                        if let Some(client) = crate::tools::mcp::get_memory_mcp_client() {
-                            let _ = client.call_tool("rollback_database_branch", &serde_json::json!({})).await;
-                        }
+                    if has_branch {
+                        let _ = crate::tools::graph_memory::RollbackDatabaseBranchTool.call(&serde_json::json!({})).await;
                     }
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);

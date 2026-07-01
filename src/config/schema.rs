@@ -435,20 +435,6 @@ impl Default for Config {
     fn default() -> Self {
         let mut mcp_servers = HashMap::new();
 
-        // sequential-thinking lives in sequentialthinking_rs/target/release/mcp-server-sequential-thinking
-        mcp_servers.insert("sequential-thinking".to_string(), McpServerConfig {
-            command: resolve_mcp_bin("mcp-server-sequential-thinking", Some("sequentialthinking_rs")),
-            args: vec![],
-            enabled: true,
-        });
-
-        // memory: openmemory_rs — auto-bridge via stdio (dynamic port)
-        mcp_servers.insert("memory".to_string(), McpServerConfig {
-            command: resolve_mcp_bin("openmemory_rs", Some("memory_rs")),
-            args: vec![],
-            enabled: true,
-        });
-
         // office: opendocswork-mcp (cargo-installed)
         mcp_servers.insert("office".to_string(), McpServerConfig {
             command: resolve_mcp_bin("opendocswork-mcp", None),
@@ -467,13 +453,6 @@ impl Default for Config {
         mcp_servers.insert("just".to_string(), McpServerConfig {
             command: resolve_mcp_bin("just-mcp", None),
             args: vec!["--stdio".to_string()],
-            enabled: true,
-        });
-
-        // headroom: headroom-mcp (cargo-installed)
-        mcp_servers.insert("headroom".to_string(), McpServerConfig {
-            command: resolve_mcp_bin("headroom-mcp", None),
-            args: vec![],
             enabled: true,
         });
 

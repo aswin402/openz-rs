@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.26 (Latest Release)
+### v0.0.27 (Latest Release)
+*   **Feat: Cross-Session Memory Persistence (HIGH):** Implemented automatic persistence of user/project facts and observations. The background self-improvement curator now parses extracted facts from markdown and stores them permanently into the SQLite database. Added automatic retrieval in `TurnState::Build` that queries all active semantic facts and graph node observations across past sessions and injects them dynamically into the system prompt. Enabled fact-sharing keyword checks to trigger curators even on simple/short turns.
+*   **Fix: Test Isolation & Test Path Caching (MEDIUM):** Isolated `cargo test` database paths to temporary files (`openz_test_graph_memory_<uuid>.db`) and cached the path via a `OnceLock` within the test process. Corrected mathematical expectation in `test_text_similarity` to match Jaccard word-overlap math. All 198 tests now compile and pass cleanly.
+*   **Refactor: MCP-to-Native Tool Port — Sequential Thinking, Memory, Headroom (MEGA):** Ported all 67 tools from 3 external MCP servers to native Rust implementations across 4 new files (`sequential_thinking.rs`: 5 tools, `headroom.rs`: 19 tools, `graph_memory.rs`: 12 tools, `memory_extra.rs`: 31 tools). Eliminates external binary spawns, JSON-RPC overhead, and stdio polling for these servers. Compilation is clean (0 new warnings), 198/198 tests pass.
+*   **Fix: Dual SQLite Connection Elimination (HIGH):** Both `graph_memory.rs` and `memory_extra.rs` now share a single `OnceLock<Mutex<Connection>>` via `pub(crate) with_db()`. Removed ~170 lines of duplicated DB infrastructure from `memory_extra.rs` (`db_static()`, `init_db()`, `get_db_path()`, `with_db()`, `scope_from_args`). All table DDL merged into `graph_memory::init_db()` — eliminates `SQLITE_BUSY` errors from concurrent connections.
+*   **Fix: Name Collision Resolution (MEDIUM):** Renamed `ast_grep::IndexCodebaseTool` to `AstGrepIndexCodebaseTool` (tool name: `ast_grep_index_codebase`) to avoid collision with `memory_extra::IndexCodebaseTool`.
+*   **Config: MCP Server Pruning (MEDIUM):** Removed 5 MCP servers from `~/.openz/config.json` and `config/schema.rs` defaults: `sequential-thinking`, `memory`, `headroom`, `database`, `context-bus`. `database-mcp` was duplicated by native `DbInspectorTool`/`DbWriteTool`; `context-bus-mcp` had no native equivalent and was removed at user request.
+*   **Maintenance: Version Bump:** Bumped to v0.0.27. All 67 native tools registered with zero orphans, zero name collisions.
+
+### v0.0.26
 *   **Feat: Official Repository Awareness (HIGH):** Updated core system prompt guidelines in `src/agent/agent_loop.rs` to make the agent explicitly aware of its official GitHub repository and source code at `https://github.com/aswin402/openz-rs` for advanced self-querying.
 *   **Feat: Indented and Aligned Monologue Formatting (MEDIUM):** Redesigned thought/reasoning blocks in the TUI to wrap paragraphs dynamically according to the active terminal width. The tree connector (`  L `) is printed only on the very first line of a thought, and subsequent paragraphs/wrapped lines are space-padded to align neatly under the start.
 *   **Style: Custom Color System Update (MEDIUM):** Updated global theme colors in `src/agent/style/colors.rs`: AURA_PURPLE is set to `#6F00FF`, AURA_GREEN to `#00FF00`, and error/fail reds to `#FF0000`. Original `EMERALD_GREEN` was restored.

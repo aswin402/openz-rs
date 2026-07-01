@@ -602,7 +602,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::open::OpenTool));
     registry.register(std::sync::Arc::new(crate::tools::watcher::FileWatcherTool));
     registry.register(std::sync::Arc::new(crate::tools::ast_grep::AstGrepTool));
-    registry.register(std::sync::Arc::new(crate::tools::ast_grep::IndexCodebaseTool));
+    registry.register(std::sync::Arc::new(crate::tools::ast_grep::AstGrepIndexCodebaseTool));
     registry.register(std::sync::Arc::new(crate::tools::gsd_browser::GsdBrowserTool));
     registry.register(std::sync::Arc::new(crate::tools::web_search::WebSearchTool::new()));
     registry.register(std::sync::Arc::new(crate::tools::onpkg::OnpkgTool));
@@ -622,6 +622,81 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         config: config.clone(),
         provider: provider.clone(),
     }));
+
+    // ── Sequential Thinking tools (native, ported from MCP) ──────
+    registry.register(std::sync::Arc::new(crate::tools::sequential_thinking::SequentialThinkingTool));
+    registry.register(std::sync::Arc::new(crate::tools::sequential_thinking::AnalyzeGraphTool));
+    registry.register(std::sync::Arc::new(crate::tools::sequential_thinking::ExportSessionTool));
+    registry.register(std::sync::Arc::new(crate::tools::sequential_thinking::SummarizeReasoningTool));
+    registry.register(std::sync::Arc::new(crate::tools::sequential_thinking::TemplatesTool));
+
+    // ── CCR / Headroom tools (native, ported from MCP) ───────────
+    registry.register(std::sync::Arc::new(crate::tools::headroom::ScopeContextTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::CompressContentTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::RetrieveOriginalTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::PingTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::ServerInfoTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::CountTokensTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::CacheStatsTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::ClearCacheTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::SearchCacheTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::CacheAlignTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::CompressSchemaTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::CompressFileTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::CompressDiffTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::ExportCacheTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::ImportCacheTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::CompressUrlTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::RunAndCompressTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::CompressDirectoryTool));
+    registry.register(std::sync::Arc::new(crate::tools::headroom::SummarizeCodebaseTool));
+
+    // ── Graph Memory tools (native, ported from memory_rs MCP) ─────────────
+    registry.register(std::sync::Arc::new(crate::tools::graph_memory::CreateEntitiesTool));
+    registry.register(std::sync::Arc::new(crate::tools::graph_memory::CreateRelationsTool));
+    registry.register(std::sync::Arc::new(crate::tools::graph_memory::AddObservationsTool));
+    registry.register(std::sync::Arc::new(crate::tools::graph_memory::DeleteEntitiesTool));
+    registry.register(std::sync::Arc::new(crate::tools::graph_memory::DeleteObservationsTool));
+    registry.register(std::sync::Arc::new(crate::tools::graph_memory::DeleteRelationsTool));
+    registry.register(std::sync::Arc::new(crate::tools::graph_memory::ReadGraphTool));
+    registry.register(std::sync::Arc::new(crate::tools::graph_memory::SearchNodesTool));
+    registry.register(std::sync::Arc::new(crate::tools::graph_memory::OpenNodesTool));
+    registry.register(std::sync::Arc::new(crate::tools::graph_memory::CreateDatabaseBranchTool));
+    registry.register(std::sync::Arc::new(crate::tools::graph_memory::CommitDatabaseBranchTool));
+    registry.register(std::sync::Arc::new(crate::tools::graph_memory::RollbackDatabaseBranchTool));
+
+    // ── Graph Memory Extra tools (ported from openmemory_rs MCP) ──────────
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::SetWorkingMemoryTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::GetWorkingMemoryTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::EvictExpiredWorkingMemoryTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::PromoteWorkingMemoryTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::LogExecutionEpisodeTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::LogReflectionTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::RetrieveEpisodicReflectionsTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::RecordToolPerformanceTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::QueryToolPerformanceTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::StoreSharedTeamMemoryTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::RetrieveSharedTeamMemoryTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::SearchTextTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::HybridSearchTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::InvalidateFactTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::QueryFactHistoryTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::QueryAsOfTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::SmartStoreTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::ExtractAndStoreFactsTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::ProactiveRecallTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::CompressContextTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::MemoryStatsTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::LogRepositoryEvolutionTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::QueryRepositoryEvolutionTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::TraverseGraphTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::FindPathTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::AnalyzeGraphCommunitiesTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::DetectAndResolveConflictsTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::CompactMemoriesTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::IndexCodebaseTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::QueryCodeGraphTool));
+    registry.register(std::sync::Arc::new(crate::tools::memory_extra::AnalyzeCodeImpactTool));
 
     // ── MCP: lazy registration ────────────────────────────────────────────────
     // Phase 1 (now): Spawn a background task per MCP server that connects,

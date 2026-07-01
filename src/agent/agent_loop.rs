@@ -726,14 +726,16 @@ impl AgentLoop {
                         ""
                     };
 
+                    let cross_session_memory = retrieve_cross_session_memories();
                     system_prompt = format!(
-                        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.{}{}{}{}{}{}{}",
+                        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.{}{}{}{}{}{}{}{}",
                         self.config.agents.defaults.bot_name,
                         chrono::Utc::now().to_rfc3339(),
                         system_guidelines,
                         activity_part,
                         summary_part,
                         memory_part,
+                        cross_session_memory,
                         vision_instruction,
                         skills_part,
                         caveman_rules
@@ -1571,6 +1573,28 @@ impl AgentLoop {
                 }
 
                 if !should_run {
+                    for msg in &messages {
+                        if msg.role == "user" {
+                            let lower = msg.content.to_lowercase();
+                            if lower.contains("name is") ||
+                               lower.contains("my name") ||
+                               lower.contains("call me") ||
+                               lower.contains("remember") ||
+                               lower.contains("prefer") ||
+                               lower.contains("working on") ||
+                               lower.contains("project") ||
+                               lower.contains("github") ||
+                               lower.contains("repository") ||
+                               lower.contains("yesterday") ||
+                               lower.contains("last session") {
+                                should_run = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if !should_run {
                     write_log("skipped: throttled (simple turn)", false, vec![], None);
                     return;
                 }
@@ -1802,6 +1826,48 @@ impl AgentLoop {
                                                 memory_updated = true;
                                                 tracing::info!(session = %session_key, "Self-improvement curator: updated session memory.");
                                                 crate::channels::cli::send_notification(&format!("{}◇ [Self-Improvement] Memory updated based on recent conversation.{}", AURA_BLUE, COLOR_RESET));
+
+                                                // Parse and store facts to persistent SQLite database
+                                                let facts: Vec<String> = review.memory_content
+                                                    .lines()
+                                                    .map(|line| line.trim())
+                                                    .filter(|line| line.starts_with('-') || line.starts_with('*'))
+                                                    .map(|line| {
+                                                        let fact = line[1..].trim();
+                                                        fact.trim_start_matches("**")
+                                                            .trim_end_matches("**")
+                                                            .trim()
+                                                            .to_string()
+                                                    })
+                                                    .filter(|fact| !fact.is_empty())
+                                                    .collect();
+
+                                                let uid = "*";
+                                                let sid = &session_key;
+                                                let aid = "*";
+
+                                                for fact in facts {
+                                                    let node_id = format!("fact_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+                                                    let timestamp = chrono::Utc::now().to_rfc3339();
+                                                    let _ = crate::tools::graph_memory::with_db(|conn| {
+                                                        let mut check_stmt = conn.prepare(
+                                                            "SELECT 1 FROM semantic_metadata WHERE raw_text = ?1 AND valid_until IS NULL"
+                                                        ).map_err(|e| anyhow::anyhow!(e))?;
+                                                        let exists = check_stmt.exists(rusqlite::params![&fact]).map_err(|e| anyhow::anyhow!(e))?;
+                                                        if !exists {
+                                                            conn.execute(
+                                                                "INSERT INTO semantic_metadata (node_id, raw_text, timestamp, importance, user_id, session_id, agent_id)
+                                                                 VALUES (?1, ?2, ?3, 0.8, ?4, ?5, ?6)",
+                                                                rusqlite::params![node_id, fact, timestamp, uid, sid, aid],
+                                                            ).map_err(|e| anyhow::anyhow!(e))?;
+                                                            let _ = conn.execute(
+                                                                "INSERT INTO semantic_fts (node_id, raw_text) VALUES (?1, ?2)",
+                                                                rusqlite::params![node_id, fact],
+                                                            );
+                                                        }
+                                                        Ok(())
+                                                    });
+                                                }
                                             }
                                         }
                                     }
@@ -2336,6 +2402,71 @@ fn format_markdown_line(line: &str) -> String {
     formatted = re_italic.replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
 
     formatted
+}
+
+fn retrieve_cross_session_memories() -> String {
+    let mut persistent_mem = String::new();
+    let uid = "*";
+    let aid = "*";
+
+    // Query semantic_metadata
+    let semantic_facts = crate::tools::graph_memory::with_db(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT raw_text FROM semantic_metadata 
+             WHERE valid_until IS NULL 
+               AND (user_id = ?1 OR user_id = '*')
+               AND (agent_id = ?2 OR agent_id = '*')"
+        ).map_err(|e| anyhow::anyhow!(e))?;
+        let mut rows = stmt.query(rusqlite::params![uid, aid]).map_err(|e| anyhow::anyhow!(e))?;
+        let mut facts = Vec::new();
+        while let Some(row) = rows.next().map_err(|e| anyhow::anyhow!(e))? {
+            let text: String = row.get(0).map_err(|e| anyhow::anyhow!(e))?;
+            facts.push(text);
+        }
+        Ok(facts)
+    }).unwrap_or_default();
+
+    if !semantic_facts.is_empty() {
+        persistent_mem.push_str("\n\nHere are persistent key facts, decisions, and context across all past sessions:\n");
+        for fact in semantic_facts {
+            persistent_mem.push_str(&format!("- {}\n", fact));
+        }
+    }
+
+    // Query graph_nodes
+    let graph_nodes = crate::tools::graph_memory::with_db(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT name, observations FROM graph_nodes 
+             WHERE (user_id = ?1 OR user_id = '*')
+               AND (agent_id = ?2 OR agent_id = '*')"
+        ).map_err(|e| anyhow::anyhow!(e))?;
+        let mut rows = stmt.query(rusqlite::params![uid, aid]).map_err(|e| anyhow::anyhow!(e))?;
+        let mut nodes = Vec::new();
+        while let Some(row) = rows.next().map_err(|e| anyhow::anyhow!(e))? {
+            let name: String = row.get(0).map_err(|e| anyhow::anyhow!(e))?;
+            let obs_json: String = row.get(1).map_err(|e| anyhow::anyhow!(e))?;
+            let obs: Vec<String> = serde_json::from_str(&obs_json).unwrap_or_default();
+            nodes.push((name, obs));
+        }
+        Ok(nodes)
+    }).unwrap_or_default();
+
+    if !graph_nodes.is_empty() {
+        let filtered_nodes: Vec<_> = graph_nodes.into_iter().filter(|(_, obs)| !obs.is_empty()).collect();
+        if !filtered_nodes.is_empty() {
+            if persistent_mem.is_empty() {
+                persistent_mem.push_str("\n\nHere are persistent key facts, decisions, and context across all past sessions:\n");
+            }
+            for (name, obs) in filtered_nodes {
+                persistent_mem.push_str(&format!("- Entity '{}':\n", name));
+                for ob in obs {
+                    persistent_mem.push_str(&format!("  * {}\n", ob));
+                }
+            }
+        }
+    }
+
+    persistent_mem
 }
 
 #[cfg(test)]

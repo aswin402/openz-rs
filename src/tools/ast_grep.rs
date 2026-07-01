@@ -88,12 +88,12 @@ impl Tool for AstGrepTool {
     }
 }
 
-pub struct IndexCodebaseTool;
+pub struct AstGrepIndexCodebaseTool;
 
 #[async_trait::async_trait]
-impl Tool for IndexCodebaseTool {
+impl Tool for AstGrepIndexCodebaseTool {
     fn name(&self) -> &str {
-        "index_codebase"
+        "ast_grep_index_codebase"
     }
 
     fn description(&self) -> &str {

@@ -233,4 +233,7 @@ pub mod svg_animator;
 pub mod compiler_auto_heal;
 pub mod html_video;
 pub mod github;
-
+pub mod sequential_thinking;
+pub mod headroom;
+pub mod graph_memory;
+pub mod memory_extra;
