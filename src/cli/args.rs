@@ -47,8 +47,8 @@ pub enum Command {
     Logs {
         #[arg(long, short)]
         path: Option<PathBuf>,
-        #[arg(long, short)]
-        tail: Option<usize>,
+        #[arg(long, short, default_value = "0")]
+        tail: usize,
         #[arg(long, short)]
         session: Option<String>,
         #[arg(long, short)]
@@ -61,8 +61,8 @@ pub enum Command {
 #[derive(Subcommand, Debug, Clone)]
 pub enum ChannelAction {
     Logs {
-        #[arg(long, short)]
-        tail: Option<usize>,
+        #[arg(long, short, default_value = "0")]
+        tail: usize,
     },
 }
 
@@ -71,15 +71,15 @@ pub enum SopAction {
     List,
     Instances,
     Trigger {
-        #[arg(long, short)]
-        sop_name: String,
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long, short)]
-        model: Option<String>,
+        sop_id: String,
+        payload: Option<String>,
     },
     Resume {
         #[arg(long, short)]
         instance_id: String,
+    },
+    Simulate {
+        sop_id: String,
+        payload: Option<String>,
     },
 }

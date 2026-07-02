@@ -5,7 +5,11 @@ use crate::agent::AgentLoop;
 use crate::tools::ToolRegistry;
 use crate::cli::is_silent_mode;
 
-use crate::tools::filesystem::{ReadFileTool, FindFilesTool, DocReaderTool, WasmSandboxTool, JsFormatTool, SemanticSearchTool};
+use crate::tools::filesystem::{ReadFileTool, FindFilesTool};
+use crate::tools::doc_reader::DocReaderTool;
+use crate::tools::wasm_sandbox::WasmSandboxTool;
+use crate::tools::js_format::JsFormatTool;
+use crate::tools::semantic_search::SemanticSearchTool;
 use crate::tools::shared_memory::{StoreMemoryTool, RecallMemoryTool, ClearMemoryTool, DeleteMemoryTool, UpdateMemoryTool, ArchiveResearchTool, SearchResearchTool};
 use crate::tools::filesystem::ZenflowEditTool;
 use crate::tools::shell::{PythonSandboxTool, ExecCommandTool};
