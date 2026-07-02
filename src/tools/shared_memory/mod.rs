@@ -26,5 +26,5 @@ pub use research::{
     search_research_entries, ArchiveResearchTool, SearchResearchTool,
 };
 
-
-
+pub use interaction::{log_interaction, update_interaction_errors, get_recent_interactions};
+pub use consolidation::consolidate_shared_memory;
