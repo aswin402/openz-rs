@@ -13,3 +13,6 @@ pub use db::{
     get_sqlite_connection,
     get_current_workspace,
 };
+
+pub use embeddings::{get_global_model, get_embedding, cosine_similarity};
+
