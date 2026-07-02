@@ -21,4 +21,10 @@ pub use cognitive::{
     ClearMemoryTool, DeleteMemoryTool, UpdateMemoryTool,
 };
 
+pub use research::{
+    chunk_content_by_headings, archive_research_entry, archive_research_entries,
+    search_research_entries, ArchiveResearchTool, SearchResearchTool,
+};
+
+
 
