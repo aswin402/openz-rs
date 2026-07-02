@@ -12,11 +12,16 @@ pub mod changelog;
 use anyhow::Result;
 pub use args::{CliArgs, Command, ChannelAction, SopAction};
 pub use builder::build_agent_loop;
+pub use agent::{load_session_history, archive_current_session};
 
 static IS_SILENT_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn is_silent_mode() -> bool {
     IS_SILENT_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_silent_mode(val: bool) {
+    IS_SILENT_MODE.store(val, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub async fn run_cli() -> Result<()> {

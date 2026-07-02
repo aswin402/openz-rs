@@ -1,2 +1,255 @@
 use anyhow::Result;
-// Temporary stub for agent.rs
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
+
+use crate::config::loader::{load_config, resolve_path};
+use crate::session::SessionManager;
+use crate::agent::AgentLoop;
+use crate::agent::style::{HistoryItem, select_menu_with_history};
+use crate::cli::builder::build_agent_loop;
+use crate::cron::scheduler::start_scheduler;
+use crate::channels::{
+    CliChannel, WsGateway, TelegramChannel, DiscordChannel, WhatsAppChannel, EmailChannel, Channel,
+};
+
+#[allow(unused_macros)]
+macro_rules! println {
+    () => {
+        crate::tui_println!()
+    };
+    ($($arg:tt)*) => {
+        crate::tui_println!($($arg)*)
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! print {
+    () => {
+        crate::tui_print!()
+    };
+    ($($arg:tt)*) => {
+        crate::tui_print!($($arg)*)
+    };
+}
+
+#[allow(unused_macros)]
+macro_rules! eprintln {
+    () => {
+        crate::tui_println!()
+    };
+    ($($arg:tt)*) => {
+        crate::tui_println!($($arg)*)
+    };
+}
+
+#[derive(Deserialize)]
+struct SessionMetadataOnly {
+    key: String,
+    updated_at: DateTime<Utc>,
+    messages: Vec<MessageMetadataOnly>,
+}
+
+#[derive(Deserialize)]
+struct MessageMetadataOnly {
+    role: String,
+    content: String,
+}
+
+pub fn load_session_history() -> Result<Vec<HistoryItem>> {
+    let sessions_dir = resolve_path("~/.openz/sessions");
+    if !sessions_dir.exists() {
+        return Ok(Vec::new());
+    }
+    
+    let mut items = Vec::new();
+    for entry in std::fs::read_dir(sessions_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("json") {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(session) = serde_json::from_str::<SessionMetadataOnly>(&content) {
+                    if !session.messages.is_empty() {
+                        let preview = session.messages.iter()
+                            .find(|m| m.role == "user")
+                            .map(|m| {
+                                let mut text = m.content.clone();
+                                if text.len() > 50 {
+                                    text.truncate(47);
+                                    text.push_str("...");
+                                }
+                                text
+                            })
+                            .unwrap_or_else(|| "Empty session".to_string());
+                            
+                        items.push(HistoryItem {
+                            key: session.key.clone(),
+                            display_title: preview,
+                            updated_at: session.updated_at,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    
+    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(items)
+}
+
+pub fn archive_current_session(session_manager: &SessionManager) -> Result<()> {
+    if let Ok(mut current_session) = session_manager.load("cli:direct") {
+        if !current_session.messages.is_empty() {
+            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+            let archive_key = format!("cli:history_{}", timestamp);
+            current_session.key = archive_key;
+            session_manager.save(&current_session)?;
+            
+            let empty_session = crate::session::Session::new("cli:direct");
+            session_manager.save(&empty_session)?;
+        }
+    }
+    Ok(())
+}
+
+pub async fn handle_agent() -> Result<()> {
+    let config = load_config()?;
+    let defaults = config.agents.defaults.clone();
+    start_scheduler(config.clone());
+
+    let sessions_dir = resolve_path("~/.openz/sessions");
+    let session_manager = SessionManager::new(sessions_dir);
+
+    let history = load_session_history()?;
+    if history.is_empty() {
+        archive_current_session(&session_manager)?;
+    } else {
+        let selected = select_menu_with_history("Welcome to OpenZ! Select an option:", &history)?;
+        if selected == 0 {
+            archive_current_session(&session_manager)?;
+        } else {
+            let selected_item = &history[selected - 1];
+            if selected_item.key != "cli:direct" {
+                archive_current_session(&session_manager)?;
+                let mut session = session_manager.load(&selected_item.key)?;
+                session.key = "cli:direct".to_string();
+                session_manager.save(&session)?;
+            }
+        }
+    }
+
+    let agent_loop = build_agent_loop(config.clone()).await?;
+
+    // Mark silent mode for background channels via thread-safe AtomicBool
+    crate::cli::set_silent_mode(true);
+
+    // Auto-start WebSocket gateway in the background if enabled and configured to start on TUI
+    if let Some(ws_config) = &config.channels.websocket {
+        if ws_config.enabled && ws_config.start_on_tui {
+            let config_clone = config.clone();
+            let ws_config_clone = ws_config.clone();
+            tokio::spawn(async move {
+                if let Ok(agent_loop) = build_agent_loop(config_clone).await {
+                    let gateway = WsGateway::new(ws_config_clone, agent_loop);
+                    let _ = gateway.start().await;
+                }
+            });
+        }
+    }
+
+    // Auto-start Telegram channel in the background if enabled
+    if let Some(tg_config) = &config.channels.telegram {
+        if tg_config.enabled {
+            let token = if tg_config.bot_token.is_empty() {
+                std::env::var("TELEGRAM_BOT_TOKEN").ok()
+            } else {
+                Some(tg_config.bot_token.clone())
+            };
+            if let Some(token) = token {
+                let config_clone = config.clone();
+                tokio::spawn(async move {
+                    if let Ok(agent_loop) = build_agent_loop(config_clone).await {
+                        let channel = TelegramChannel::new(token, agent_loop);
+                        let _ = channel.start().await;
+                    }
+                });
+            }
+        }
+    }
+
+    // Auto-start Discord channel in the background if enabled
+    if let Some(dc_config) = &config.channels.discord {
+        if dc_config.enabled {
+            let token = if dc_config.bot_token.is_empty() {
+                std::env::var("DISCORD_BOT_TOKEN").ok()
+            } else {
+                Some(dc_config.bot_token.clone())
+            };
+            if let Some(token) = token {
+                let config_clone = config.clone();
+                tokio::spawn(async move {
+                    if let Ok(agent_loop) = build_agent_loop(config_clone).await {
+                        let channel = DiscordChannel::new(token, agent_loop);
+                        let _ = channel.start().await;
+                    }
+                });
+            }
+        }
+    }
+
+    // Auto-start WhatsApp channel in the background if enabled
+    if let Some(wa_config) = &config.channels.whatsapp {
+        if wa_config.enabled {
+            let config_clone = config.clone();
+            let wa_config_clone = wa_config.clone();
+            tokio::spawn(async move {
+                if let Ok(agent_loop) = build_agent_loop(config_clone).await {
+                    let channel = WhatsAppChannel::new(
+                        wa_config_clone.api_key,
+                        wa_config_clone.phone_number_id,
+                        agent_loop,
+                    );
+                    let _ = channel.start().await;
+                }
+            });
+        }
+    }
+
+    // Auto-start Email channel in the background if enabled
+    if let Some(email_config) = &config.channels.email {
+        if email_config.enabled {
+            let config_clone = config.clone();
+            tokio::spawn(async move {
+                if let Ok(agent_loop) = build_agent_loop(config_clone).await {
+                    let channel = EmailChannel::new(agent_loop);
+                    let _ = channel.start().await;
+                }
+            });
+        }
+    }
+
+    let channel = CliChannel::new(agent_loop, defaults);
+    let mut shutdown_rx = match crate::shutdown::receiver() {
+        Some(rx) => rx,
+        None => {
+            let (_, rx) = tokio::sync::watch::channel(false);
+            rx
+        }
+    };
+
+    tokio::select! {
+        res = channel.start() => {
+            if let Err(e) = res {
+                eprintln!("TUI error: {}", e);
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            println!("\r\nExiting OpenZ...");
+        }
+        _ = shutdown_rx.changed() => {
+            println!("\r\nExiting OpenZ...");
+        }
+    }
+    
+    crate::channels::shutdown_gateways(&config).await;
+    Ok(())
+}
