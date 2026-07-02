@@ -11,6 +11,7 @@ pub mod changelog;
 
 use anyhow::Result;
 pub use args::{CliArgs, Command, ChannelAction, SopAction};
+pub use builder::build_agent_loop;
 
 static IS_SILENT_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
