@@ -113,7 +113,9 @@ pub struct SessionInfo {
 trait ThoughtStore: Send {
     fn save_thought(&mut self, session_id: &str, thought: &ThoughtData) -> Result<(), String>;
     fn load_session(&self, session_id: &str) -> Result<Vec<ThoughtData>, String>;
+    #[allow(dead_code)]
     fn list_sessions(&self) -> Result<Vec<SessionInfo>, String>;
+    #[allow(dead_code)]
     fn delete_session(&mut self, session_id: &str) -> Result<(), String>;
 }
 
@@ -1139,7 +1141,7 @@ mod tests {
 
     #[test]
     fn test_cycle_detection() {
-        let mut t1 = ThoughtData {
+        let t1 = ThoughtData {
             thought: "T1".to_string(), thought_number: 1, total_thoughts: 3, next_thought_needed: true,
             is_revision: None, revises_thought: None, branch_from_thought: None, branch_id: None,
             needs_more_thoughts: None, parent_thoughts: Some(vec![2]), assumptions: None,
@@ -1159,7 +1161,7 @@ mod tests {
 
     #[test]
     fn test_quality_contradiction() {
-        let mut t1 = ThoughtData {
+        let t1 = ThoughtData {
             thought: "T1".to_string(), thought_number: 1, total_thoughts: 2, next_thought_needed: true,
             is_revision: None, revises_thought: None, branch_from_thought: None, branch_id: None,
             needs_more_thoughts: None, parent_thoughts: None,

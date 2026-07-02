@@ -112,7 +112,11 @@ openz/
 │   │   ├── rust_docs.rs    # Query rustdoc documentation
 │   │   ├── system_info.rs  # OS/hardware info
 │   │   ├── network.rs      # check_port
-│   │   └── onpkg.rs        # onpkg package/template manager
+│   │   ├── onpkg.rs        # onpkg package/template manager
+│   │   ├── sequential_thinking.rs  # 5 tools: sequentialthinking, analyze_graph, export_session, summarize_reasoning, reasoning_templates
+│   │   ├── headroom.rs     # 19 tools: scope_context, compress_content, retrieve_original, compress_schema, compress_file, compress_diff, etc.
+│   │   ├── graph_memory.rs # 12 tools: create_entities, create_relations, add_observations, read_graph, search_nodes, open_nodes, etc.
+│   │   ├── memory_extra.rs # 31 tools: set_working_memory, smart_store, extract_and_store_facts, proactive_recall, query_fact_history, etc.
 │   │
 │   ├── cron/               # Scheduler loop (cron syntax + duration)
 │   ├── sop/                # Stateful SOP workflow engine (persisted JSON instances)
@@ -196,10 +200,13 @@ After every non-slash-command turn, `tokio::spawn` runs a background curator tha
 The guard intercepts in `agent_loop.rs:635` inside the Run state, **after** the LLM has already consumed tokens to produce the tool call. There's no pre-flight check that prevents the LLM from generating the tool call. Denial just returns `{"error": "Execution denied by user."}` to the LLM.
 
 ### Tool output truncation is aggressive
-Tool outputs >4000 characters are: (1) written to `~/.openz/tool_outputs/<name>_<uuid>.json`, (2) passed through the context compactor (Headroom port / Z-Context), and (3) only the compressed version + file reference is injected into the message list.
+Tool outputs >4000 characters are: (1) written to `~/.openz/tool_outputs/<name>_<uuid>.json`, (2) passed through the context compactor (Headroom port / Z-Context), and (3) only the compressed version + file reference is injected into the message list. You can also use the native headroom tool `retrieve_original` with a CCR ID or `file://` path to retrieve the full original content.
 
 ### Session consolidation ensures no orphaned messages
 When truncating session history (Compact state at `agent_loop.rs:107-217`), the code scans backward from the truncation point to find the nearest "user" message. This prevents orphaned "tool" or "assistant" messages from causing API errors.
+
+### Sequential thinking, headroom, memory are native tools (not MCP servers)
+The systems for structured reasoning (`sequential_thinking.rs`), context compression (`headroom.rs`), knowledge graph memory (`graph_memory.rs`), and extended memory (`memory_extra.rs`) were ported from MCP servers to native Rust tools. They are registered directly in `cli.rs::build_agent_loop()` and require no MCP server config. The MCP server entries for `sequential-thinking`, `headroom-mcp`, and `memory` are intentionally omitted from `Config::default()`.
 
 ### MCP binary resolution uses AI_AGENT_TOOLS_BASE
 `Config::default()` in `config/schema.rs` resolves MCP binary paths via `resolve_mcp_bin(binary, subproject)` with a three-stage priority:
@@ -207,7 +214,7 @@ When truncating session history (Compact state at `agent_loop.rs:107-217`), the 
 2. **`~/.cargo/bin/{binary}`** — cargo-installed binary
 3. **bare `{binary}` name** — fall back to `$PATH`
 
-`AI_AGENT_TOOLS_BASE` is the constant `"/home/aswin/programming/vscode/myProjects/ai_agent_tools"` defined at the top of `config/schema.rs`. Special cases: `sequential-thinking` → `sequentialthinking_rs` project, `memory` → `memory_rs` project (binary: `openmemory_rs`). All other servers (`chromewright`, `database-mcp`, `headroom-mcp`, `just-mcp`, `opendocswork-mcp`, `openz-docs-mcp`, `openz-github-mcp`, `sediment`, `spreadsheet-mcp`) are cargo-installed and resolve via stage 2.
+`AI_AGENT_TOOLS_BASE` is the constant `"/home/aswin/programming/vscode/myProjects/ai_agent_tools"` defined at the top of `config/schema.rs`. All MCP servers in `Config::default()` (`chromewright`, `database-mcp`, `headroom-mcp`, `just-mcp`, `opendocswork-mcp`, `openz-docs-mcp`, `openz-github-mcp`, `sediment`, `spreadsheet-mcp`) are cargo-installed and resolve via stage 2. Note that `sequential-thinking`, `memory`, and `headroom` MCP servers are intentionally excluded from defaults — they have been replaced by native Rust tools (see `sequential_thinking.rs`, `graph_memory.rs`, `memory_extra.rs`, `headroom.rs`).
 
 ### Subagents = tools at the LLM level
 Custom subagent profiles from `~/.openz/subagents.json` are dynamically registered as tools in `ToolRegistry::to_openai_format()` (`tools/mod.rs:100-129`). When the LLM "calls" a subagent name as a tool, `ToolRegistry::get()` (`tools/mod.rs:63-82`) matches it and returns a `DelegateProfileTool`.
@@ -219,12 +226,13 @@ The `DbInspectorTool` and `DbWriteTool` (`src/tools/db_inspector.rs`) execute SQ
 
 ## Testing Patterns
 
-- 28 test modules across the source tree
+- 29 test modules across the source tree (including `cli.rs::tests::test_native_tool_registration_names`)
 - Tests use `#[cfg(test)]` and `#[test]` (standard Rust)
 - Tool tests typically construct inputs as `serde_json::json!({...})` and call the tool's `.call()` method
 - Provider tests mock `reqwest` responses or test `model_supports_vision()` helper
 - Security tests validate `is_sensitive()` against `exec_command` and `write_file` calls
 - Skills tests create, verify, and clean up temporary skill files
+- Tool registration validation: `cargo test --lib -- test_native_tool_registration_names` verifies all native tools are registered without duplicate names and expected module counts match
 - No integration tests or test harness beyond `cargo test`
 
 ---

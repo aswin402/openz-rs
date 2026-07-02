@@ -6,10 +6,12 @@ use std::sync::{Mutex, OnceLock};
 
 // ─── Constants ───────────────────────────────────────────────────
 
-const DB_FILENAME: &str = "graph_memory.db";
+// ─── Constants ───────────────────────────────────────────────────
+
+#[allow(dead_code)]
+pub(crate) const DB_FILENAME: &str = "graph_memory.db";
 
 // ─── Shared DB static ──────────────────────────────────────────
-// Both with_db() and branching tools share this.
 
 fn db_static() -> &'static OnceLock<Mutex<Connection>> {
     static DB: OnceLock<Mutex<Connection>> = OnceLock::new();

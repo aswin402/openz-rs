@@ -862,6 +862,125 @@ impl Tool for ClearMemoryTool {
     }
 }
 
+// 4. DeleteMemoryTool
+pub struct DeleteMemoryTool;
+
+#[async_trait::async_trait]
+impl Tool for DeleteMemoryTool {
+    fn name(&self) -> &str {
+        "delete_memory"
+    }
+
+    fn description(&self) -> &str {
+        "Delete a specific stored memory by its ID. Use recall_memory first to get the ID."
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "The ID of the memory to delete (returned by recall_memory)."
+                }
+            },
+            "required": ["id"]
+        })
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let id = arguments.get("id").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'id' parameter"))?;
+
+        let _lock = get_db_mutex().lock().await;
+        let conn = get_sqlite_connection()?;
+        let deleted = conn.execute("DELETE FROM cognitive_memory WHERE id = ?1", params![id])?;
+
+        if deleted == 0 {
+            Ok(json!({
+                "status": "not_found",
+                "message": format!("No memory found with ID '{}'", id)
+            }))
+        } else {
+            Ok(json!({
+                "status": "success",
+                "message": "Memory deleted successfully."
+            }))
+        }
+    }
+}
+
+// 5. UpdateMemoryTool
+pub struct UpdateMemoryTool;
+
+#[async_trait::async_trait]
+impl Tool for UpdateMemoryTool {
+    fn name(&self) -> &str {
+        "update_memory"
+    }
+
+    fn description(&self) -> &str {
+        "Update the text and/or importance of a specific stored memory by its ID. The embedding is automatically recomputed."
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "The ID of the memory to update (returned by recall_memory)."
+                },
+                "text": {
+                    "type": "string",
+                    "description": "The new text content for the memory."
+                },
+                "importance": {
+                    "type": "number",
+                    "description": "Optional new importance score (0.0 to 1.0)."
+                }
+            },
+            "required": ["id", "text"]
+        })
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let id = arguments.get("id").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'id' parameter"))?;
+        let text = arguments.get("text").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'text' parameter"))?;
+        let importance = arguments.get("importance").and_then(|v| v.as_f64()).map(|v| v as f32);
+
+        let new_embedding = get_embedding(text, false).await?;
+        let embedding_json = serde_json::to_string(&new_embedding)?;
+
+        let _lock = get_db_mutex().lock().await;
+        let conn = get_sqlite_connection()?;
+
+        if let Some(imp) = importance {
+            let updated = conn.execute(
+                "UPDATE cognitive_memory SET text = ?1, embedding = ?2, importance = ?3 WHERE id = ?4",
+                params![text, embedding_json, imp, id],
+            )?;
+            if updated == 0 {
+                Ok(json!({"status": "not_found", "message": format!("No memory found with ID '{}'", id)}))
+            } else {
+                Ok(json!({"status": "success", "message": "Memory updated successfully."}))
+            }
+        } else {
+            let updated = conn.execute(
+                "UPDATE cognitive_memory SET text = ?1, embedding = ?2 WHERE id = ?3",
+                params![text, embedding_json, id],
+            )?;
+            if updated == 0 {
+                Ok(json!({"status": "not_found", "message": format!("No memory found with ID '{}'", id)}))
+            } else {
+                Ok(json!({"status": "success", "message": "Memory updated successfully."}))
+            }
+        }
+    }
+}
+
 pub async fn consolidate_shared_memory(provider: &std::sync::Arc<dyn crate::providers::LLMProvider>) -> Result<()> {
     let _lock = get_db_mutex().lock().await;
     

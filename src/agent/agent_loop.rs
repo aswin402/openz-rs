@@ -674,7 +674,7 @@ impl AgentLoop {
                     let system_guidelines = format!(
                         "\n\nYou are OpenZ, a high-performance personal AI agent framework built in Rust, vibe-coded by Aswin. Your official GitHub repository and source code resides at https://github.com/aswin402/openz-rs. You are inspired by Zeroclaw, Nanobot, hermes-agent, loops!, and DOX. Your architecture is structured as follows:\n\
                          * Creator & Inspiration: Vibe-coded by Aswin. Inspired by Zeroclaw, Nanobot, hermes-agent, loops!, and DOX. Official Repository: https://github.com/aswin402/openz-rs\n\
-                         * Specifications & Changelog: The root of your workspace contains 'CHANGELOG.md' and you have a native command 'openz changelog' displaying system specs (ROM ~10-15MB, RAM ~15-30MB cloud / ~200MB+ local, <5ms startup), design inspirations, key capabilities, and version release history.\n\
+                         * Specifications & Changelog: ROM ~10-15MB, RAM ~15-30MB cloud / ~200MB+ local, <5ms startup. Version history: [v0.0.27] Cross-session memory persistence, 67 MCP-to-native tool port, dual SQLite fix. [v0.0.26] Repo awareness, monologue formatting, color system. [v0.0.25] Live log visualizer, execution tracing. [v0.0.24] gRPC bridge panic fix, retry loop. [v0.0.23] DeepSeek/V4 param fix, streaming toggle. [v0.0.22] MCP health monitoring, native git_provider, SSRF hardening. [v0.0.21] Tool timeouts, graceful shutdown, file locking, streaming. [v0.0.20] Default-deny gateway auth, SSRF/IPv6, SQL injection elim. [v0.0.19] Subagent loopback isolation. [v0.0.18] Discord fix, raw-mode helpers, regex caching. [v0.0.17] MCP cache consolidation, TOCTOU fix, bridge monitoring. [v0.0.16] DNS rebinding defense, port scanner restriction, cmd injection fix, file size limits, blocking I/O fixes. [v0.0.15] SQL injection defense, SSRF, WhatsApp webhook, CORS, browser flags, UTF-8 panics, disk usage. [v0.0.14] Incremental session saving, history rendering. [v0.0.13] Log layer fixes, path resolution, tail default. [v0.0.12] Image/video generation, CDP compat, SVG animator, log streaming. [v0.0.11] Changelog command, curator throttling, cloud embeddings, auto-heal. [v0.0.10] SQLite migration, ast_grep indexing, mermaid_designer. [v0.0.9] Merkle audit ledger, WhatsApp channel, auto-continuation. [v0.0.8] Email & Discord channels. [v0.0.7] Telegram bot, WebSocket gateway. [v0.0.1-v0.0.6] Core foundation.\n\
                          * CLI Subcommands & Flags: The executable is launched via:\n\
                            - 'openz onboard': Runs the setup wizard for LLM provider API keys.\n\
                            - 'openz configure': Configures providers, gateways, channels, and preferences.\n\
@@ -688,8 +688,8 @@ impl AgentLoop {
                            - 'openz mcp-bridge --port <port> -- <command> [args...]': Runs a gRPC MCP bridge wrapper.\n\
                            - 'openz sop <list | instances | trigger <id> | resume <id> | simulate <id>>': Controls the stateful SOP workflow engine.\n\
                          * Pluggable Gateway Channels: You can receive messages and reply over CLI terminal, WebSocket gateway (serving the WebUI workbench), Telegram bot polling, Discord bot polling, WhatsApp Business API, and pure Rust IMAP/SMTP Email client.\n\
-                         * Local Tools & MCP: You have native tools for file reading/writing, codebase text search ('grep_search'), file code structure parsing ('code_outline'), git operations ('git_manager'), database inspection ('db_inspector'), cargo toolchain execution ('cargo_manager'), system clipboard access ('clipboard'), opening files/folders/URLs ('open_path'), background file change watching ('file_watcher'), structural code search ('ast_grep'), real browser automation ('gsd_browser'), web search queries ('web_search'), shell command execution, web fetching, remote control forwarding, document reading ('read_doc'), sandboxed WASM execution ('wasm_execute'), and project template/package scaffolding ('onpkg'). You support the Model Context Protocol (MCP) powered by high-performance Rust binaries for sequential thinking, memory graph storage, and the 'headroom' context compression server. Managed via the native 'manage_mcp' tool.\n\
-                         * Context Scoping & Compression: Via the 'headroom' MCP server, you can call:\n\
+                         * Local Tools & MCP: You have native tools for file reading/writing, codebase text search ('grep_search'), file code structure parsing ('code_outline'), git operations ('git_manager'), database inspection ('db_inspector'), cargo toolchain execution ('cargo_manager'), system clipboard access ('clipboard'), opening files/folders/URLs ('open_path'), background file change watching ('file_watcher'), structural code search ('ast_grep'), real browser automation ('gsd_browser'), web search queries ('web_search'), shell command execution, web fetching, remote control forwarding, document reading ('read_doc'), sandboxed WASM execution ('wasm_execute'), project template/package scaffolding ('onpkg'), sequential thinking ('sequentialthinking', 'analyze_graph', 'summarize_reasoning'), knowledge graph memory ('create_entities', 'create_relations', 'add_observations', 'read_graph', 'search_nodes', 'open_nodes'), context scoping/compression ('scope_context', 'compress_content', 'retrieve_original', 'compress_schema', 'compress_file', 'compress_diff', 'compress_directory', 'run_and_compress', 'compress_url', 'summarize_codebase'), working/ephemeral memory ('set_working_memory', 'get_working_memory'), smart semantic memory ('smart_store', 'extract_and_store_facts', 'proactive_recall', 'invalidate_fact', 'query_fact_history'), and shared team memory ('store_shared_team_memory', 'retrieve_shared_team_memory'). MCP server integration managed via 'manage_mcp' tool.\n\
+                         * Context Scoping & Compression: You have native tools for context management:\n\
                            - 'scope_context' (with target_path): Walks up the tree and compiles relevant AGENTS.md instructions. Use this BEFORE editing files to retrieve rules.\n\
                            - 'compress_content' (with raw_text and content_type): Compresses logs/code/JSON and registers a CCR reference token (CCR ID).\n\
                            - 'retrieve_original' (with ccr_id): Retrieves the original raw text. Use this to read the full content of any truncated output or file (it accepts both CCR IDs and file:// file paths!).\n\
@@ -699,6 +699,7 @@ impl AgentLoop {
                          * Compiler Auto-Healing: 'CompilerAutoHealTool' compiles code natively, reads compiler output, and prompts you to fix syntax or borrow checker issues in a loop until green.\n\
                          * Security Guard & BPF Sandbox: Subprocesses are sandboxed using a Linux seccomp BPF filter to block dangerous commands, with strict/normal/loose levels.\n\
                          * Cryptographic Audit Ledger: Uses SHA-256 Merkle chain hashing on all session messages/states, verified on boot, with a '/audit' slash command.\n\
+                         * Proactive Memory & Knowledge Graph: Three memory layers. (1) Simple KV: 'store_memory'/'recall_memory'/'clear_memory' for quick facts. (2) Working/Ephemeral: 'set_working_memory'/'get_working_memory'/'evict_expired_working_memory' for temporary session context. (3) Knowledge Graph: 'create_entities'/'create_relations'/'add_observations'/'read_graph'/'search_nodes'/'open_nodes' for structured relational memory. Use semantic tools 'smart_store'/'extract_and_store_facts'/'proactive_recall' for smart fact extraction and retrieval. Don't ask for permission — just store it.\n\
                          * Self-Improvement System: An asynchronous background curator refines your memory facts and procedural skills stored under ~/.openz/skills/ and SQLite database (~/.openz/memory.db).",
                         subagents_list
                     );
@@ -726,7 +727,7 @@ impl AgentLoop {
                         ""
                     };
 
-                    let cross_session_memory = retrieve_cross_session_memories();
+                    let cross_session_memory = retrieve_cross_session_memories(user_content).await;
                     system_prompt = format!(
                         "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.{}{}{}{}{}{}{}{}",
                         self.config.agents.defaults.bot_name,
@@ -1573,28 +1574,6 @@ impl AgentLoop {
                 }
 
                 if !should_run {
-                    for msg in &messages {
-                        if msg.role == "user" {
-                            let lower = msg.content.to_lowercase();
-                            if lower.contains("name is") ||
-                               lower.contains("my name") ||
-                               lower.contains("call me") ||
-                               lower.contains("remember") ||
-                               lower.contains("prefer") ||
-                               lower.contains("working on") ||
-                               lower.contains("project") ||
-                               lower.contains("github") ||
-                               lower.contains("repository") ||
-                               lower.contains("yesterday") ||
-                               lower.contains("last session") {
-                                should_run = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if !should_run {
                     write_log("skipped: throttled (simple turn)", false, vec![], None);
                     return;
                 }
@@ -1948,7 +1927,7 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
         "obscura_browser" => "Obscura",
         "db_inspector" => "DbInspect",
         "db_write" => "DbWrite",
-        "doc_reader" => "DocRead",
+        "read_doc" => "DocRead",
         "crawl" => "Crawl",
         "semantic_search" => "SemanticSearch",
         "wasm_sandbox" => "Wasm",
@@ -2404,18 +2383,49 @@ fn format_markdown_line(line: &str) -> String {
     formatted
 }
 
-fn retrieve_cross_session_memories() -> String {
-    let mut persistent_mem = String::new();
+async fn retrieve_cross_session_memories(_user_content: &str) -> String {
+    let mut all_entries: Vec<(f32, String)> = Vec::new();
     let uid = "*";
     let aid = "*";
 
-    // Query semantic_metadata
+    // 1. Query cognitive_memory (from store_memory tool) — top by importance × recency
+    let _lock = crate::tools::shared_memory::get_db_mutex().lock().await;
+    if let Ok(conn) = crate::tools::shared_memory::get_sqlite_connection() {
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT text, importance, last_accessed, decay_rate FROM cognitive_memory ORDER BY importance DESC, last_accessed DESC LIMIT 8"
+        ) {
+            if let Ok(rows) = stmt.query_map([], |row| {
+                let text: String = row.get(0)?;
+                let importance: f32 = row.get(1)?;
+                let last_acc: String = row.get(2)?;
+                let decay_rate: f32 = row.get(3)?;
+                Ok((text, importance, last_acc, decay_rate))
+            }) {
+                for row in rows.flatten() {
+                    let (text, importance, last_acc, decay_rate) = row;
+                    let days_elapsed = chrono::Utc::now()
+                        .signed_duration_since(
+                            chrono::DateTime::parse_from_rfc3339(&last_acc)
+                                .map(|dt| dt.with_timezone(&chrono::Utc))
+                                .unwrap_or_else(|_| chrono::Utc::now())
+                        )
+                        .num_seconds() as f32 / 86400.0;
+                    let score = importance * (-decay_rate * days_elapsed).exp();
+                    all_entries.push((score, text));
+                }
+            }
+        }
+    }
+    drop(_lock);
+
+    // 2. Query semantic_metadata (curator facts)
     let semantic_facts = crate::tools::graph_memory::with_db(|conn| {
         let mut stmt = conn.prepare(
             "SELECT raw_text FROM semantic_metadata 
              WHERE valid_until IS NULL 
                AND (user_id = ?1 OR user_id = '*')
-               AND (agent_id = ?2 OR agent_id = '*')"
+               AND (agent_id = ?2 OR agent_id = '*')
+             ORDER BY timestamp DESC"
         ).map_err(|e| anyhow::anyhow!(e))?;
         let mut rows = stmt.query(rusqlite::params![uid, aid]).map_err(|e| anyhow::anyhow!(e))?;
         let mut facts = Vec::new();
@@ -2426,14 +2436,12 @@ fn retrieve_cross_session_memories() -> String {
         Ok(facts)
     }).unwrap_or_default();
 
-    if !semantic_facts.is_empty() {
-        persistent_mem.push_str("\n\nHere are persistent key facts, decisions, and context across all past sessions:\n");
-        for fact in semantic_facts {
-            persistent_mem.push_str(&format!("- {}\n", fact));
-        }
+    // Score semantic facts just below cognitive ones (base score 0.7, aged)
+    for fact in &semantic_facts {
+        all_entries.push((0.7, fact.clone()));
     }
 
-    // Query graph_nodes
+    // 3. Query graph_nodes (entity observations)
     let graph_nodes = crate::tools::graph_memory::with_db(|conn| {
         let mut stmt = conn.prepare(
             "SELECT name, observations FROM graph_nodes 
@@ -2451,18 +2459,52 @@ fn retrieve_cross_session_memories() -> String {
         Ok(nodes)
     }).unwrap_or_default();
 
-    if !graph_nodes.is_empty() {
-        let filtered_nodes: Vec<_> = graph_nodes.into_iter().filter(|(_, obs)| !obs.is_empty()).collect();
-        if !filtered_nodes.is_empty() {
-            if persistent_mem.is_empty() {
-                persistent_mem.push_str("\n\nHere are persistent key facts, decisions, and context across all past sessions:\n");
-            }
-            for (name, obs) in filtered_nodes {
-                persistent_mem.push_str(&format!("- Entity '{}':\n", name));
-                for ob in obs {
-                    persistent_mem.push_str(&format!("  * {}\n", ob));
-                }
-            }
+    // 4. Sort by score descending
+    all_entries.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // 5. Dedup by normalized text
+    fn normalize(s: &str) -> String {
+        s.trim()
+            .trim_start_matches(|c: char| c == '-' || c == '*' || c == ' ')
+            .trim_start_matches("**").trim_end_matches("**")
+            .trim()
+            .to_lowercase()
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut deduped: Vec<String> = Vec::new();
+    for (_, text) in &all_entries {
+        let norm = normalize(text);
+        if norm.is_empty() || seen.contains(&norm) {
+            continue;
+        }
+        // Check if norm is a substring of any already-seen entry (or vice versa)
+        let is_duplicate = seen.iter().any(|s: &String| {
+            s.contains(&norm) || norm.contains(s)
+        });
+        if !is_duplicate {
+            seen.insert(norm);
+            deduped.push(text.clone());
+        }
+    }
+
+    // 6. Build output — top 30 scored entries, no char truncation
+    let mut persistent_mem = String::new();
+    if deduped.is_empty() && graph_nodes.is_empty() {
+        return persistent_mem;
+    }
+
+    persistent_mem.push_str("\n\nHere are persistent key facts, decisions, and context across all past sessions:\n");
+    for fact in deduped.iter().take(30) {
+        persistent_mem.push_str(&format!("- {}\n", fact));
+    }
+
+    // Append graph nodes
+    let filtered_nodes: Vec<_> = graph_nodes.into_iter().filter(|(_, obs)| !obs.is_empty()).collect();
+    for (name, obs) in filtered_nodes.iter().take(5) {
+        persistent_mem.push_str(&format!("- Entity '{}':\n", name));
+        for ob in obs.iter().take(10) {
+            persistent_mem.push_str(&format!("  * {}\n", ob));
         }
     }
 

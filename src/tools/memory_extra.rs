@@ -977,7 +977,7 @@ impl Tool for QueryFactHistoryTool {
         let (uid, sid, aid) = scope_from_args(arguments);
 
         let results = with_db(|conn| {
-            let sql = if let Some(rel) = relation_type {
+            let sql = if let Some(_rel) = relation_type {
                 "SELECT from_name, to_name, relation_type, valid_from, valid_until
                  FROM graph_edges
                  WHERE (from_name = ?1 OR to_name = ?1)

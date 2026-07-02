@@ -475,6 +475,7 @@ use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 struct CompTreeFile {
+    #[allow(dead_code)]
     ccr_id: String,
     original_tokens: usize,
     compressed_tokens: usize,
