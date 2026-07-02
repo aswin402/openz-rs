@@ -16,3 +16,9 @@ pub use db::{
 
 pub use embeddings::{get_global_model, get_embedding, cosine_similarity};
 
+pub use cognitive::{
+    CognitiveMemoryEntry, prune_decayed_memories, StoreMemoryTool, RecallMemoryTool,
+    ClearMemoryTool, DeleteMemoryTool, UpdateMemoryTool,
+};
+
+
