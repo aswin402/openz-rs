@@ -46,7 +46,7 @@ pub struct TurnContext<'a> {
     pub system_prompt: String,
     pub final_content: String,
     pub tools_used: Vec<String>,
-    pub interaction_id: Option<i64>,
+    pub interaction_id: Option<String>,
     pub turn_errors: Vec<String>,
     pub session_file_lock: Option<std::fs::File>,
     pub streamed: bool,

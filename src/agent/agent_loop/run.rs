@@ -556,7 +556,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 if !silent {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                     crate::tui_println!(
-                        {}{}{}✕ {} - Failed: {}{}",
+                        "{}{}{}✕ {} - Failed: {}{}",
                         AURA_SLATE,
                         leaf_prefix,
                         AURA_ROSE,
@@ -576,7 +576,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 if !silent {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                     crate::tui_println!(
-                        {}{}{}↶ Loop detected for tool '{}'! Blocking execution. (Count: {}){}",
+                        "{}{}{}↶ Loop detected for tool '{}'! Blocking execution. (Count: {}){}",
                         AURA_SLATE,
                         leaf_prefix,
                         AURA_GOLD,
@@ -597,7 +597,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 if !silent {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                     crate::tui_println!(
-                        {}{}{}✕ {} - Rejected: Dangerous command is forbidden{}",
+                        "{}{}{}✕ {} - Rejected: Dangerous command is forbidden{}",
                         AURA_SLATE,
                         leaf_prefix,
                         ERROR_RED,
@@ -617,7 +617,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 if !silent {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                     crate::tui_println!(
-                        {}{}{}✕ {} - Denied by user{}",
+                        "{}{}{}✕ {} - Denied by user{}",
                         AURA_SLATE,
                         leaf_prefix,
                         ERROR_RED,
@@ -657,7 +657,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                         || call.name == "replace_lines"
                                     {
                                         crate::tui_println!(
-                                            {}{}{}{},
+                                            "{}{}{}{}",
                                             AURA_SLATE,
                                             leaf_prefix,
                                             COLOR_RESET,
@@ -665,7 +665,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                         );
                                     } else if summary.contains('\u{2713}') || summary.contains('\u{2715}') {
                                         crate::tui_println!(
-                                            {}{}{}{},
+                                            "{}{}{}{}",
                                             AURA_SLATE,
                                             leaf_prefix,
                                             COLOR_RESET,
@@ -673,7 +673,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                         );
                                     } else {
                                         crate::tui_println!(
-                                            {}{}{}✓ {}{},
+                                            "{}{}{}✓ {}{}",
                                             AURA_SLATE,
                                             leaf_prefix,
                                             AURA_GREEN,
@@ -708,7 +708,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                 {
                                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                                     crate::tui_println!(
-                                        {}{}{}✕ {}{},
+                                        "{}{}{}✕ {}{}",
                                         AURA_SLATE,
                                         leaf_prefix,
                                         AURA_ROSE,
@@ -742,7 +742,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                 {
                                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                                     crate::tui_println!(
-                                        {}{}{}✕ timeout after {}s{}",
+                                        "{}{}{}✕ timeout after {}s{}",
                                         AURA_SLATE,
                                         leaf_prefix,
                                         AURA_ROSE,
@@ -771,7 +771,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         if !silent {
                             let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                             crate::tui_println!(
-                                {}{}{}✗{} {} - Failed: {}{}",
+                                "{}{}{}✗{} {} - Failed: {}{}",
                                 AURA_SLATE,
                                 leaf_prefix,
                                 COLOR_RESET,

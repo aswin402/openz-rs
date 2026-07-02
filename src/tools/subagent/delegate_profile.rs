@@ -355,6 +355,7 @@ impl Tool for DelegateProfileTool {
                                             _ = self.cancellation_token.wait_for_cancellation() => {
                                                 Err(anyhow!("Subagent task cancelled"))
                                             }
+                                        }
                                     }).await
                                 });
                                 let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
