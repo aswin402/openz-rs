@@ -35,7 +35,7 @@ impl Drop for RawInputGuard {
     }
 }
 
-fn handle_clipboard_paste(index: usize) -> Result<PathBuf> {
+pub(super) fn handle_clipboard_paste(index: usize) -> Result<PathBuf> {
     use arboard::Clipboard;
     let mut clipboard = Clipboard::new()?;
     let image = clipboard.get_image()?;
