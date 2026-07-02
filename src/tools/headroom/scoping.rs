@@ -37,7 +37,7 @@ fn is_binary_file(path: &Path) -> bool {
     }
 }
 
-fn detect_project_type(root: &Path) -> &'static str {
+pub fn detect_project_type(root: &Path) -> &'static str {
     if root.join("Cargo.toml").exists() { return "Rust"; }
     if root.join("package.json").exists() { return "Node.js"; }
     if root.join("go.mod").exists() { return "Go"; }
