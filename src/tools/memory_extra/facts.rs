@@ -546,13 +546,14 @@ impl Tool for ExtractAndStoreFactsTool {
     }
 }
 
-struct ExtractedFact {
-    from: String,
-    relation: String,
-    to: String,
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ExtractedFact {
+    pub(crate) from: String,
+    pub(crate) relation: String,
+    pub(crate) to: String,
 }
 
-fn extract_facts(text: &str) -> Vec<ExtractedFact> {
+pub(crate) fn extract_facts(text: &str) -> Vec<ExtractedFact> {
     let patterns: Vec<(regex::Regex, &str)> = vec![
         (regex::Regex::new(r"(\w+)\s+(?:(?:is|are|was|were|am)\s+)?(?:uses?|using)\s+(\w+)").unwrap(), "uses"),
         (regex::Regex::new(r"(\w+)\s+(?:depends\s+on|requires?)\s+(\w+)").unwrap(), "depends_on"),
