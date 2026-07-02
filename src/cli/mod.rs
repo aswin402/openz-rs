@@ -13,6 +13,12 @@ use anyhow::Result;
 pub use args::{CliArgs, Command, ChannelAction, SopAction};
 pub use builder::build_agent_loop;
 pub use agent::{load_session_history, archive_current_session};
+pub use channels::{
+    handle_gateway, handle_telegram, handle_discord, handle_whatsapp, handle_email,
+    is_telegram_configured, is_email_configured,
+};
+pub use sop::handle_sop;
+pub use logs::handle_logs;
 
 static IS_SILENT_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
