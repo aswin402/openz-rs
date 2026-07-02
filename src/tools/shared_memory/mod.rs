@@ -4,6 +4,8 @@ pub mod cognitive;
 pub mod research;
 pub mod interaction;
 pub mod consolidation;
+
+#[cfg(test)]
 pub mod tests;
 
 pub use db::{
