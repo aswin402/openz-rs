@@ -81,12 +81,20 @@ For details on subagent execution modes, workspace optimizations, and fallback r
 *   **`trigger_sop`** (`src/tools/sop.rs`): Triggers a stateful closed-loop SOP workflow loop definition (such as 'ship-pr-until-green' or 'pre-commit-guard') dynamically with an optional payload.
 
 ### Memory & Knowledge Tools
-*   **`store_memory`** (`src/tools/shared_memory.rs`): Stores structured observations, decisions, or facts in the agent's long-term memory.
-*   **`recall_memory`** (`src/tools/shared_memory.rs`): Retrieves stored memories by query context.
-*   **`clear_memory`** (`src/tools/shared_memory.rs`): Clears all entries from the agent's memory store.
-*   **`archive_research`** (`src/tools/shared_memory.rs`): Archives research findings into persistent storage.
-*   **`search_research`** (`src/tools/shared_memory.rs`): Searches archived research content.
+*   **`store_memory`** (`src/tools/shared_memory/cognitive.rs`): Stores structured observations, decisions, or facts in the agent's long-term memory.
+*   **`recall_memory`** (`src/tools/shared_memory/cognitive.rs`): Retrieves stored memories by query context.
+*   **`clear_memory`** (`src/tools/shared_memory/cognitive.rs`): Clears all entries from the agent's memory store.
+*   **`delete_memory`** (`src/tools/shared_memory/cognitive.rs`): Deletes specific memory entries.
+*   **`update_memory`** (`src/tools/shared_memory/cognitive.rs`): Updates an existing memory entry.
+*   **`archive_research`** (`src/tools/shared_memory/research.rs`): Archives research findings into persistent storage.
+*   **`search_research`** (`src/tools/shared_memory/research.rs`): Searches archived research content.
 *   **`index_notes`** (`src/tools/notes.rs`): Indexes and searches local markdown notes.
+
+### Ported Native Reasoning & Context Tools (Mega Ports)
+*   **Sequential Thinking Reasoning Loop** (`src/tools/sequential_thinking/`): Includes `sequentialthinking` (reasoning chain loop), `analyze_graph` (thought query and quality statistics), `export_session` (mermaid/markdown exporter), `summarize_reasoning` (structural timeline summary), and `reasoning_templates` (reasoning design frameworks).
+*   **Context Scoping & Headroom Compression** (`src/tools/headroom/`): Includes `scope_context` (YAGNI contextual filtering), `compress_content` (token-reduction compression), `retrieve_original` (retrieve full output from cached IDs), `compress_file` / `compress_diff` / `compress_url` (specialized format filters), `cache_stats` / `clear_cache` (caching metrics), `summarize_codebase` (code hierarchy summary), and `count_tokens` (FastBPE tokens count).
+*   **Knowledge Graph Memory** (`src/tools/graph_memory/`): Includes `create_entities` (graph node insertion), `create_relations` (node relationship links), `add_observations` (append node facts), `read_graph` (retrieve entity scopes), `search_nodes` (entity search), `open_nodes` (open graph nodes), and `create_database_branch` / `commit_database_branch` / `rollback_database_branch` (SQL database transaction branching).
+*   **Extended Developer Memory (Memory Extra)** (`src/tools/memory_extra/`): Includes `set_working_memory` / `get_working_memory` (short-term cache memory), `log_execution_episode` / `log_reflection` (reflexive action logs), `record_tool_performance` (latency tracking), `hybrid_search` (BM25 + vector search), `extract_and_store_facts` / `proactive_recall` (background fact curators), and `log_repository_evolution` / `traverse_graph` (codebase architecture community maps).
 
 ### System & Networking Tools
 *   **`clipboard`** (`src/tools/clipboard.rs`): Gets or sets text content in the system clipboard.

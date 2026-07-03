@@ -398,7 +398,20 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.27 (Latest Release)
+### v0.0.28 (Latest Release)
+*   **Refactor: Codebase Modularization (MEGA):** Modularized all remaining monolithic files into cleanly structured, package-based submodules:
+    *   Split CLI raw terminal input/render/channel loop (`src/channels/cli.rs`) into [src/channels/cli/](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/).
+    *   Split core agent loop state machine (`src/agent/agent_loop.rs`) into [src/agent/agent_loop/](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/).
+    *   Split CLI subcommands & configuration menus (`src/cli.rs`) into [src/cli/](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/).
+    *   Split memory extra tools (`src/tools/memory_extra.rs`) into [src/tools/memory_extra/](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/).
+    *   Split headroom compression tools (`src/tools/headroom.rs`) into [src/tools/headroom/](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/).
+    *   Split shared memory tools (`src/tools/shared_memory.rs`) into [src/tools/shared_memory/](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/).
+    *   Split sequential thinking tools (`src/tools/sequential_thinking.rs`) into [src/tools/sequential_thinking/](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/sequential_thinking/).
+    *   Split graph memory tools (`src/tools/graph_memory.rs`) into [src/tools/graph_memory/](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/graph_memory/).
+*   **Docs: Repository Architecture Update (MEDIUM):** Updated architecture and tools documentation to match modular packages layout.
+*   **Maintenance: Version Bump:** Bumped to v0.0.28. All 200 unit tests passing sequentially.
+
+### v0.0.27
 *   **Feat: Cross-Session Memory Persistence (HIGH):** Implemented automatic persistence of user/project facts and observations. The background self-improvement curator now parses extracted facts from markdown and stores them permanently into the SQLite database. Added automatic retrieval in `TurnState::Build` that queries all active semantic facts and graph node observations across past sessions and injects them dynamically into the system prompt. Enabled fact-sharing keyword checks to trigger curators even on simple/short turns.
 *   **Fix: Test Isolation & Test Path Caching (MEDIUM):** Isolated `cargo test` database paths to temporary files (`openz_test_graph_memory_<uuid>.db`) and cached the path via a `OnceLock` within the test process. Corrected mathematical expectation in `test_text_similarity` to match Jaccard word-overlap math. All 198 tests now compile and pass cleanly.
 *   **Refactor: MCP-to-Native Tool Port — Sequential Thinking, Memory, Headroom (MEGA):** Ported all 67 tools from 3 external MCP servers to native Rust implementations across 4 new files (`sequential_thinking.rs`: 5 tools, `headroom.rs`: 19 tools, `graph_memory.rs`: 12 tools, `memory_extra.rs`: 31 tools). Eliminates external binary spawns, JSON-RPC overhead, and stdio polling for these servers. Compilation is clean (0 new warnings), 198/198 tests pass.

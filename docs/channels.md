@@ -25,7 +25,7 @@ pub trait Channel: Send + Sync {
 
 ## 2. Supported Channels
 
-* **`cli`** ([src/channels/cli.rs](../src/channels/cli.rs)): Interactive TUI terminal prompt support with clipboard image pasting (`Ctrl+V`) and agent slash commands.
+* **`cli`** ([src/channels/cli/mod.rs](../src/channels/cli/mod.rs)): Interactive TUI terminal prompt support with clipboard image pasting (`Ctrl+V`) and agent slash commands.
 * **`websocket`** ([src/channels/websocket.rs](../src/channels/websocket.rs)): Axum-based WebSocket gateway that serves WebUI static bundles and accepts real-time message events.
 * **`telegram`** ([src/channels/telegram.rs](../src/channels/telegram.rs)): Standard long-polling bot polling messenger messages.
 * **`discord`** ([src/channels/discord.rs](../src/channels/discord.rs)): Active bot gateway client using WebSocket (`tokio-tungstenite`) to connect and listen for message events, execute them, and reply.

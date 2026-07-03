@@ -12,18 +12,18 @@ This document describes the design, execution flow, and module architecture of O
 
 ```mermaid
 graph TD
-    CLI[CLI Main / Commands] --> |configure / agent / gateway / telegram / discord / whatsapp| CLI_RUN[cli.rs]
+    CLI[CLI Main / Commands] --> |configure / agent / gateway / telegram / discord / whatsapp| CLI_RUN["cli package (cli/mod.rs)"]
     CLI_RUN --> |config_path| CONF[config/loader.rs]
     CLI_RUN --> |start channel| TRAIT["Channel Trait (channels/mod.rs)"]
     
-    TRAIT --> |CliChannel| CLI_CHAN[channels/cli.rs]
+    TRAIT --> |CliChannel| CLI_CHAN["channels/cli package (channels/cli/mod.rs)"]
     TRAIT --> |WsGateway| WS_CHAN[channels/websocket.rs]
     TRAIT --> |TelegramChannel| TG_CHAN[channels/telegram.rs]
     TRAIT --> |DiscordChannel| DC_CHAN[channels/discord.rs]
     TRAIT --> |WhatsAppChannel| WA_CHAN[channels/whatsapp.rs]
     TRAIT --> |EmailChannel| EM_CHAN[channels/email.rs]
-
-    CLI_CHAN & WS_CHAN & TG_CHAN & DC_CHAN & WA_CHAN & EM_CHAN --> |execute prompt| LOOP[agent/agent_loop.rs]
+ 
+    CLI_CHAN & WS_CHAN & TG_CHAN & DC_CHAN & WA_CHAN & EM_CHAN --> |execute prompt| LOOP["agent/agent_loop package (agent/agent_loop/mod.rs)"]
     
     LOOP --> |load/save history| SESS[session.rs]
     LOOP --> |chat request| PROV[providers/mod.rs]
@@ -47,19 +47,19 @@ graph TD
 * **`tools/`**: Registry and implementations for native tools, subagent delegation, and MCP stdio wrapper tools.
 * **`cron/`**: Handles scheduling and execution of background cron tasks.
 * **`session.rs`**: Stores conversation message logs and dynamic summaries in JSON files under `~/.openz/sessions/`. Implements **SHA-256 Merkle Hash-Chains** linking every interaction, verifying history integrity on load.
-* **`agent/agent_loop.rs`**: The core execution state machine (`TurnState`) that manages conversation restoration, context compaction (LLM summarization and long-term memory updates), command extraction, context loading, LLM completions, tool call routing, session saving, and message responses. Spawns an asynchronous background self-improvement curator task that refines memory and curates procedural skills.
+* **`agent/agent_loop/`**: The core execution state machine (`TurnState`) package that manages conversation restoration, context compaction (LLM summarization and long-term memory updates), command extraction, context loading, LLM completions, tool call routing, session saving, and message responses. Spawns an asynchronous background self-improvement curator task that refines memory and curates procedural skills.
 * **`agent/skills.rs`**: Manages long-term procedural skills and facts stored inside a structured **SQLite database (`~/.openz/memory.db`)**, migrating legacy flat markdown files automatically on startup.
 * **`agent/activity.rs`**: Tracks global execution states (active session ID, status, and currently running tool) to `~/.openz/activity.json`, providing other communication channels with real-time awareness of what the agent is doing on the machine.
-* **`channels/`**: Pluggable communication adapters conforming to a unified `Channel` trait. Standardizes message handling and execution. Currently supports Terminal CLI, WebSocket Gateway (with local OpenAI completions endpoint), Telegram Polling, Discord Gateway, WhatsApp Webhooks, and a **pure-Rust Email IMAP/SMTP channel** (`src/channels/email.rs`).
+* **`channels/`**: Pluggable communication adapters conforming to a unified `Channel` trait. Standardizes message handling and execution. Currently supports Terminal CLI, WebSocket Gateway (with local OpenAI completions endpoint), Telegram Polling, Discord Gateway, WhatsApp Webhooks, and a **pure-Rust Email IMAP/SMTP channel` (`src/channels/email.rs`).
 * **`sop/`**: Resilient multi-step Directed Acyclic Graph (DAG) templates executing step tasks in parallel via Tokio. Performs dependency cycle checks, persists state to disk, and dynamically scopes context namespaces for context isolation.
 * **`subagents/`**: Built-in specialized subagent profiles. See [docs/subagents.md](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/subagents.md) for detailed subagent architecture, workspace optimizations, and fallback model resolution.
-
+ 
 ---
-
+ 
 ## 3. High-Performance Features
-
+ 
 ### Hierarchical Context Scoping (DOX-inspired)
-OpenZ utilizes the `scope_context` tool powered by the `headroom` MCP server. When executing actions or edits in a given directory, the agent walks up the folder tree, reads any local `AGENTS.md` instruction files, and compiles them into a unified contextual instruction set. This avoids prompt drift and enforces directory-specific constraints.
+OpenZ utilizes the native `scope_context` tool. When executing actions or edits in a given directory, the agent walks up the folder tree, reads any local `AGENTS.md` instruction files, and compiles them into a unified contextual instruction set. This avoids prompt drift and enforces directory-specific constraints.
 
 ### Zenflow Checkpointed Transactions
 Before performing files edits or system operations, the agent utilizes a transactional flow:

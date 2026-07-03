@@ -38,7 +38,7 @@ pub trait Tool: Send + Sync {
 
 ## 2. Registering a Tool
 
-Register new tools in `ToolRegistry` (constructed in `src/cli.rs` or `src/tools/mod.rs`):
+Register new tools in `ToolRegistry` (constructed in `src/cli/builder.rs` or `src/tools/mod.rs`):
 - Use `registry.register(Arc::new(MyNewTool::new()))`.
 - Custom subagents (from `~/.openz/subagents.json`) are dynamically loaded as tools (`DelegateProfileTool`) at LLM runtime via the registry's `.get()` method.
 
