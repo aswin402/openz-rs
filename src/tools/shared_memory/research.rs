@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use rusqlite::params;
 
-use super::db::{get_db_mutex, get_sqlite_connection};
+use super::db::{get_db_mutex, with_db};
 use super::embeddings::{get_embedding, get_cloud_embeddings_batch, get_global_model, cosine_similarity};
 
 pub fn chunk_content_by_headings(query: &str, content: &str) -> Vec<(String, String)> {
@@ -86,13 +86,14 @@ pub async fn archive_research_entry(query: &str, content: &str, source: &str) ->
         let embedding_json = serde_json::to_string(&embedding)?;
 
         let _lock = get_db_mutex().lock().await;
-        let conn = get_sqlite_connection()?;
-
-        conn.execute(
-            "INSERT OR REPLACE INTO research_archive (id, query, content, source, timestamp, embedding)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, chunk_query, chunk_content, source, timestamp, embedding_json],
-        )?;
+        with_db(|conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO research_archive (id, query, content, source, timestamp, embedding)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![id, chunk_query, chunk_content, source, timestamp, embedding_json],
+            )?;
+            Ok(())
+        })?;
     }
     Ok(())
 }
@@ -156,34 +157,35 @@ pub async fn archive_research_entries(entries: Vec<(String, String, String)>) ->
     }
 
     let _lock = get_db_mutex().lock().await;
-    let mut conn = get_sqlite_connection()?;
-    let tx = conn.transaction()?;
+    with_db(|conn| {
+        let tx = conn.transaction()?;
+        let timestamp = chrono::Utc::now().to_rfc3339();
 
-    let timestamp = chrono::Utc::now().to_rfc3339();
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR REPLACE INTO research_archive (id, query, content, source, timestamp, embedding)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+            )?;
 
-    {
-        let mut stmt = tx.prepare(
-            "INSERT OR REPLACE INTO research_archive (id, query, content, source, timestamp, embedding)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
-        )?;
+            for (idx, (chunk_query, chunk_content, source)) in all_chunks.into_iter().enumerate() {
+                let embedding = &all_embeddings[idx];
+                let id = uuid::Uuid::new_v4().to_string();
+                let embedding_json = serde_json::to_string(embedding)?;
 
-        for (idx, (chunk_query, chunk_content, source)) in all_chunks.into_iter().enumerate() {
-            let embedding = &all_embeddings[idx];
-            let id = uuid::Uuid::new_v4().to_string();
-            let embedding_json = serde_json::to_string(embedding)?;
-
-            stmt.execute(params![
-                id,
-                chunk_query,
-                chunk_content,
-                source,
-                timestamp,
-                embedding_json
-            ])?;
+                stmt.execute(params![
+                    id,
+                    chunk_query,
+                    chunk_content,
+                    source,
+                    timestamp,
+                    embedding_json
+                ])?;
+            }
         }
-    }
 
-    tx.commit()?;
+        tx.commit()?;
+        Ok(())
+    })?;
     Ok(())
 }
 
@@ -192,24 +194,29 @@ pub async fn search_research_entries(query: &str, top_k: usize) -> Result<Value>
     let query_lower = query.to_lowercase();
 
     let _lock = get_db_mutex().lock().await;
-    let conn = get_sqlite_connection()?;
-
-    let mut stmt = conn.prepare("SELECT id, query, content, source, timestamp, embedding FROM research_archive")?;
-    let rows = stmt.query_map([], |row| {
-        let embedding_str: String = row.get(5)?;
-        let embedding: Vec<f32> = serde_json::from_str(&embedding_str).unwrap_or_default();
-        Ok(json!({
-            "id": row.get::<_, String>(0)?,
-            "query": row.get::<_, String>(1)?,
-            "content": row.get::<_, String>(2)?,
-            "source": row.get::<_, String>(3)?,
-            "timestamp": row.get::<_, String>(4)?,
-            "embedding": embedding,
-        }))
+    let entries = with_db(|conn| {
+        let mut stmt = conn.prepare("SELECT id, query, content, source, timestamp, embedding FROM research_archive LIMIT 1000")?;
+        let mapped = stmt.query_map([], |row| {
+            let embedding_str: String = row.get(5)?;
+            let embedding: Vec<f32> = serde_json::from_str(&embedding_str).unwrap_or_default();
+            Ok(json!({
+                "id": row.get::<_, String>(0)?,
+                "query": row.get::<_, String>(1)?,
+                "content": row.get::<_, String>(2)?,
+                "source": row.get::<_, String>(3)?,
+                "timestamp": row.get::<_, String>(4)?,
+                "embedding": embedding,
+            }))
+        })?;
+        let mut collected = Vec::new();
+        for item in mapped {
+            collected.push(item?);
+        }
+        Ok(collected)
     })?;
 
     let mut scored_results = Vec::new();
-    for entry in rows.flatten() {
+    for entry in entries {
         let entry_query = entry["query"].as_str().unwrap_or_default();
         let entry_content = entry["content"].as_str().unwrap_or_default();
         let entry_embed: Vec<f32> = serde_json::from_value(entry["embedding"].clone()).unwrap_or_default();

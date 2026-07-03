@@ -291,10 +291,10 @@ impl super::Channel for TelegramChannel {
                                                     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
                                                     let archive_key = format!("telegram:history_{}", timestamp);
                                                     current_session.key = archive_key;
-                                                    let _ = session_manager.save(&current_session);
+                                                    let _ = session_manager.save(&current_session).await;
                                                     
                                                     let empty_session = crate::session::Session::new(&session_key);
-                                                    let _ = session_manager.save(&empty_session);
+                                                    let _ = session_manager.save(&empty_session).await;
                                                 }
                                             }
                                             tokio::spawn(async move {

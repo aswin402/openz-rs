@@ -80,6 +80,16 @@ pub struct CliChannel {
 
 impl CliChannel {
     pub fn new(agent_loop: AgentLoop, defaults: AgentDefaults) -> Self {
+        static PANIC_HOOK: std::sync::Once = std::sync::Once::new();
+        PANIC_HOOK.call_once(|| {
+            let default_hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |panic_info| {
+                let _ = crossterm::terminal::disable_raw_mode();
+                let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen);
+                default_hook(panic_info);
+            }));
+        });
+
         if let Ok(mut guard) = CUSTOM_CONTEXT_LIMIT.lock() {
             *guard = defaults.context_limit;
         }
@@ -582,10 +592,10 @@ impl CliChannel {
                         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
                         let archive_key = format!("cli:history_{}", timestamp);
                         current_session.key = archive_key;
-                        let _ = session_manager.save(&current_session);
+                        let _ = session_manager.save(&current_session).await;
                         
                         let empty_session = crate::session::Session::new(session_key);
-                        let _ = session_manager.save(&empty_session);
+                        let _ = session_manager.save(&empty_session).await;
                     }
                 }
                 println!("{}✓ Session reset. Starting a new session.{}", EMERALD_GREEN, COLOR_RESET);
@@ -645,15 +655,15 @@ impl CliChannel {
                             match select_menu_with_history("Select a session to load:", &history) {
                                 Ok(selected) => {
                                     if selected == 0 {
-                                        let _ = crate::cli::archive_current_session(&session_manager);
+                                        let _ = crate::cli::archive_current_session(&session_manager).await;
                                         println!("{}✓ Started new session.{}", EMERALD_GREEN, COLOR_RESET);
                                     } else {
                                         let selected_item = &history[selected - 1];
                                         if selected_item.key != session_key {
-                                            let _ = crate::cli::archive_current_session(&session_manager);
+                                            let _ = crate::cli::archive_current_session(&session_manager).await;
                                             if let Ok(mut session) = session_manager.load(&selected_item.key) {
                                                 session.key = session_key.to_string();
-                                                let _ = session_manager.save(&session);
+                                                let _ = session_manager.save(&session).await;
                                                 println!("{}✓ Loaded session: {}{}", EMERALD_GREEN, selected_item.display_title, COLOR_RESET);
                                                 render::print_session_history(&session);
                                             }

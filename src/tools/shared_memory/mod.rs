@@ -12,7 +12,7 @@ pub use db::{
     get_db_mutex,
     get_shared_client,
     get_sqlite_db_path,
-    get_sqlite_connection,
+    with_db,
     get_current_workspace,
 };
 

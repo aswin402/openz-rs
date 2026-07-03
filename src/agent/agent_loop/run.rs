@@ -854,10 +854,14 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             let is_retrieve = name == "retrieve_original" || name == "headroom/retrieve_original";
             let content = if content_str.len() > limit && !is_retrieve {
                 let outputs_dir = crate::config::resolve_path("~/.openz/tool_outputs");
-                let _ = std::fs::create_dir_all(&outputs_dir);
+                if let Err(e) = tokio::fs::create_dir_all(&outputs_dir).await {
+                    tracing::warn!("Failed to create tool outputs directory '{}': {}", outputs_dir.display(), e);
+                }
                 let file_name = format!("output_{}_{}.json", name, uuid::Uuid::new_v4());
                 let file_path = outputs_dir.join(file_name);
-                let _ = std::fs::write(&file_path, &content_str);
+                if let Err(e) = tokio::fs::write(&file_path, &content_str).await {
+                    tracing::warn!("Failed to write tool output file '{}': {}", file_path.display(), e);
+                }
 
                 let compressed = crate::agent::context_compactor::compress_tool_output(&name, &content_str);
                 format!(
@@ -878,8 +882,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         }
 
         ctx.session.messages = ctx.messages.clone();
-        if let Err(e) = loop_ref.session_manager.save(&ctx.session) {
-            tracing::warn!("Failed to save session incrementally in Run loop: {}", e);
+        if iterations % 5 == 0 {
+            if let Err(e) = loop_ref.session_manager.save(&ctx.session).await {
+                tracing::warn!("Failed to save session incrementally in Run loop: {}", e);
+            }
         }
 
         iterations += 1;
@@ -902,6 +908,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     }
 
     ctx.session.messages = ctx.messages.clone();
+    if let Err(e) = loop_ref.session_manager.save(&ctx.session).await {
+        tracing::warn!("Failed to save session unconditionally on final iteration in Run loop: {}", e);
+    }
     if let Some(ref inter_id) = ctx.interaction_id {
         if !ctx.turn_errors.is_empty() {
             let errors_str = ctx.turn_errors.join("\n");

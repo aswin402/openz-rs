@@ -1,5 +1,4 @@
 use crate::agent::style::*;
-use regex::Regex;
 use std::io::{Write, stdout};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};

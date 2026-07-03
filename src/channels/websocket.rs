@@ -122,6 +122,8 @@ impl super::Channel for WsGateway {
     }
 }
 
+const MAX_WS_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16 MB
+
 async fn ws_handler(
     ws: WebSocketUpgrade,
     headers: axum::http::HeaderMap,
@@ -132,12 +134,15 @@ async fn ws_handler(
     if !is_authorized(&headers, query_token) {
         return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
     }
-    ws.on_upgrade(|socket| handle_socket(socket, state))
+    ws.max_message_size(MAX_WS_MESSAGE_SIZE)
+      .max_frame_size(MAX_WS_MESSAGE_SIZE)
+      .on_upgrade(|socket| handle_socket(socket, state))
 }
 
 async fn handle_socket(socket: WebSocket, state: WsState) {
     let client_id = format!("client-{}", &uuid::Uuid::new_v4().to_string()[..8]);
     let default_chat_id = uuid::Uuid::new_v4().to_string();
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(1));
 
     let (mut ws_sender, mut ws_receiver) = socket.split();
     let (tx, mut rx) = mpsc::channel::<Message>(100);
@@ -168,6 +173,9 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
 
     while let Some(Ok(msg)) = ws_receiver.next().await {
         if let Message::Text(text) = msg {
+            if text.len() > MAX_WS_MESSAGE_SIZE {
+                continue;
+            }
             let parsed: Result<Value, _> = serde_json::from_str(&text);
             if let Ok(envelope) = parsed {
                 let msg_type = envelope.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -200,8 +208,24 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         let tx_clone = tx.clone();
                         let chat_id_clone = chat_id.clone();
                         let content_str = content.to_string();
+                        let sem_clone = semaphore.clone();
                         
                         tokio::spawn(async move {
+                            let _permit = match sem_clone.try_acquire() {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    let err_evt = serde_json::json!({
+                                        "event": "error",
+                                        "chat_id": chat_id_clone,
+                                        "detail": "Rate limit exceeded: Only one message can be processed at a time."
+                                    });
+                                    if let Ok(evt_str) = serde_json::to_string(&err_evt) {
+                                        let _ = tx_clone.send(Message::Text(evt_str)).await;
+                                    }
+                                    return;
+                                }
+                            };
+                            
                             match agent.run(&content_str, &format!("ws:{}", chat_id_clone)).await {
                                 Ok(res) => {
                                     let delta_evt = serde_json::json!({
@@ -568,24 +592,7 @@ mod tests {
         std::env::remove_var("OPENZ_GATEWAY_TOKEN");
     }
 }
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut accum = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        accum |= x ^ y;
-    }
-    accum == 0
-}
-
-fn secure_compare(a: &str, b: &str) -> bool {
-    use sha2::{Sha256, Digest};
-    let hash_a = Sha256::digest(a.as_bytes());
-    let hash_b = Sha256::digest(b.as_bytes());
-    constant_time_eq(&hash_a, &hash_b)
-}
+use super::secure_compare;
 
 fn is_authorized(headers: &axum::http::HeaderMap, query_token: Option<&str>) -> bool {
     if let Ok(expected) = std::env::var("OPENZ_GATEWAY_TOKEN") {

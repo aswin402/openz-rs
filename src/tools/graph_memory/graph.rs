@@ -50,6 +50,7 @@ impl Tool for CreateEntitiesTool {
 
         let mut created = Vec::new();
         with_db(|conn| {
+            let tx = conn.unchecked_transaction()?;
             for entity in &entities {
                 let name = entity["name"].as_str().ok_or_else(|| anyhow!("Entity missing 'name'"))?;
                 let entity_type = entity["entityType"].as_str().ok_or_else(|| anyhow!("Entity missing 'entityType'"))?;
@@ -58,20 +59,21 @@ impl Tool for CreateEntitiesTool {
                 }).unwrap_or_default();
                 let obs_json = serde_json::to_string(&obs)?;
 
-                let exists: bool = conn.query_row(
+                let exists: bool = tx.query_row(
                     "SELECT EXISTS(SELECT 1 FROM graph_nodes WHERE name = ?1 AND user_id = ?2 AND session_id = ?3 AND agent_id = ?4)",
                     params![name, user_id, session_id, agent_id],
                     |row| row.get(0),
                 )?;
 
                 if !exists {
-                    conn.execute(
+                    tx.execute(
                         "INSERT INTO graph_nodes (name, entity_type, observations, user_id, session_id, agent_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                         params![name, entity_type, obs_json, user_id, session_id, agent_id],
                     )?;
                     created.push(entity.clone());
                 }
             }
+            tx.commit()?;
             Ok(())
         })?;
 
@@ -124,25 +126,27 @@ impl Tool for CreateRelationsTool {
 
         let mut created = Vec::new();
         with_db(|conn| {
+            let tx = conn.unchecked_transaction()?;
             for rel in &relations {
                 let from = rel["from"].as_str().ok_or_else(|| anyhow!("Relation missing 'from'"))?;
                 let to = rel["to"].as_str().ok_or_else(|| anyhow!("Relation missing 'to'"))?;
                 let rel_type = rel["relationType"].as_str().ok_or_else(|| anyhow!("Relation missing 'relationType'"))?;
 
-                let exists: bool = conn.query_row(
+                let exists: bool = tx.query_row(
                     "SELECT EXISTS(SELECT 1 FROM graph_edges WHERE from_name = ?1 AND to_name = ?2 AND relation_type = ?3 AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6 AND valid_until IS NULL)",
                     params![from, to, rel_type, user_id, session_id, agent_id],
                     |row| row.get(0),
                 )?;
 
                 if !exists {
-                    conn.execute(
+                    tx.execute(
                         "INSERT INTO graph_edges (from_name, to_name, relation_type, user_id, session_id, agent_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                         params![from, to, rel_type, user_id, session_id, agent_id],
                     )?;
                     created.push(rel.clone());
                 }
             }
+            tx.commit()?;
             Ok(())
         })?;
 
@@ -194,13 +198,14 @@ impl Tool for AddObservationsTool {
 
         let mut results = Vec::new();
         with_db(|conn| {
+            let tx = conn.unchecked_transaction()?;
             for obs in &observations {
                 let entity_name = obs["entityName"].as_str().ok_or_else(|| anyhow!("Missing 'entityName'"))?;
                 let contents: Vec<String> = obs["contents"].as_array()
                     .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                     .unwrap_or_default();
 
-                let current_obs_str: Option<String> = conn
+                let current_obs_str: Option<String> = tx
                     .query_row(
                         "SELECT observations FROM graph_nodes WHERE name = ?1 AND user_id = ?2 AND session_id = ?3 AND agent_id = ?4",
                         params![entity_name, user_id, session_id, agent_id],
@@ -219,7 +224,7 @@ impl Tool for AddObservationsTool {
                             }
                         }
                         let new_obs_json = serde_json::to_string(&current_obs)?;
-                        conn.execute(
+                        tx.execute(
                             "UPDATE graph_nodes SET observations = ?1 WHERE name = ?2 AND user_id = ?3 AND session_id = ?4 AND agent_id = ?5",
                             params![new_obs_json, entity_name, user_id, session_id, agent_id],
                         )?;
@@ -230,6 +235,7 @@ impl Tool for AddObservationsTool {
                     }
                 }
             }
+            tx.commit()?;
             Ok(())
         })?;
 
@@ -273,16 +279,18 @@ impl Tool for DeleteEntitiesTool {
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
 
         with_db(|conn| {
+            let tx = conn.unchecked_transaction()?;
             for name in &names {
-                conn.execute(
+                tx.execute(
                     "DELETE FROM graph_nodes WHERE name = ?1 AND user_id = ?2 AND session_id = ?3 AND agent_id = ?4",
                     params![name, user_id, session_id, agent_id],
                 )?;
-                conn.execute(
+                tx.execute(
                     "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE (from_name = ?1 OR to_name = ?1) AND user_id = ?2 AND session_id = ?3 AND agent_id = ?4 AND valid_until IS NULL",
                     params![name, user_id, session_id, agent_id],
                 )?;
             }
+            tx.commit()?;
             Ok(())
         })?;
 
@@ -333,13 +341,14 @@ impl Tool for DeleteObservationsTool {
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
 
         with_db(|conn| {
+            let tx = conn.unchecked_transaction()?;
             for del in &deletions {
                 let entity_name = del["entityName"].as_str().ok_or_else(|| anyhow!("Missing 'entityName'"))?;
                 let to_remove: Vec<String> = del["observations"].as_array()
                     .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                     .unwrap_or_default();
 
-                let current_obs_str: Option<String> = conn
+                let current_obs_str: Option<String> = tx
                     .query_row(
                         "SELECT observations FROM graph_nodes WHERE name = ?1 AND user_id = ?2 AND session_id = ?3 AND agent_id = ?4",
                         params![entity_name, user_id, session_id, agent_id],
@@ -353,12 +362,13 @@ impl Tool for DeleteObservationsTool {
                         .filter(|o| !to_remove.contains(o))
                         .collect();
                     let new_obs_json = serde_json::to_string(&filtered)?;
-                    conn.execute(
+                    tx.execute(
                         "UPDATE graph_nodes SET observations = ?1 WHERE name = ?2 AND user_id = ?3 AND session_id = ?4 AND agent_id = ?5",
                         params![new_obs_json, entity_name, user_id, session_id, agent_id],
                     )?;
                 }
             }
+            tx.commit()?;
             Ok(())
         })?;
 
@@ -410,15 +420,17 @@ impl Tool for DeleteRelationsTool {
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
 
         with_db(|conn| {
+            let tx = conn.unchecked_transaction()?;
             for rel in &relations {
                 let from = rel["from"].as_str().ok_or_else(|| anyhow!("Missing 'from'"))?;
                 let to = rel["to"].as_str().ok_or_else(|| anyhow!("Missing 'to'"))?;
                 let rel_type = rel["relationType"].as_str().ok_or_else(|| anyhow!("Missing 'relationType'"))?;
-                conn.execute(
+                tx.execute(
                     "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE from_name = ?1 AND to_name = ?2 AND relation_type = ?3 AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6 AND valid_until IS NULL",
                     params![from, to, rel_type, user_id, session_id, agent_id],
                 )?;
             }
+            tx.commit()?;
             Ok(())
         })?;
 

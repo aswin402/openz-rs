@@ -162,18 +162,18 @@ pub async fn retry_with_backoff<F, T, Fut>(
     max_delay: Duration,
     provider_name: &str,
     operation: F,
-) -> Result<T, crate::agent::AgentError>
+) -> anyhow::Result<T>
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<T, (u16, String)>>,
 {
     // Check circuit breaker before the first attempt.
     if let Err(msg) = breaker.check() {
-        return Err(crate::agent::AgentError::Provider {
-            name: provider_name.to_string(),
-            message: msg,
-            status: Some(503),
-        });
+        return Err(anyhow::anyhow!(
+            "Provider '{}' error (HTTP 503): {}",
+            provider_name,
+            msg
+        ));
     }
 
     let mut last_err = None;
@@ -196,22 +196,17 @@ where
                     breaker.record_failure();
                     // If the circuit opened during this attempt, stop retrying.
                     if breaker.check().is_err() {
-                        return Err(crate::agent::AgentError::Provider {
-                            name: provider_name.to_string(),
-                            message: format!(
-                                "Circuit breaker opened after {}/{} retries. Last error (HTTP {status}): {error_text}",
-                                attempt, max_retries,
-                            ),
-                            status: Some(status),
-                        });
+                        return Err(anyhow::anyhow!(
+                            "Provider '{}' error (HTTP {}): Circuit breaker opened after {}/{} retries. Last error: {}",
+                            provider_name, status, attempt, max_retries, error_text
+                        ));
                     }
                 } else {
                     // Non-retryable — return the error immediately.
-                    return Err(crate::agent::AgentError::Provider {
-                        name: provider_name.to_string(),
-                        message: error_text,
-                        status: Some(status),
-                    });
+                    return Err(anyhow::anyhow!(
+                        "Provider '{}' error (HTTP {}): {}",
+                        provider_name, status, error_text
+                    ));
                 }
             }
         }
@@ -219,13 +214,10 @@ where
 
     // All retries exhausted.
     let (status, error_text) = last_err.unwrap_or((0, "Unknown error".into()));
-    Err(crate::agent::AgentError::Provider {
-        name: provider_name.to_string(),
-        message: format!(
-            "All retries exhausted ({max_retries} attempts). Last error (HTTP {status}): {error_text}"
-        ),
-        status: Some(status),
-    })
+    Err(anyhow::anyhow!(
+        "Provider '{}' error (HTTP {}): All retries exhausted ({max_retries} attempts). Last error: {}",
+        provider_name, status, error_text
+    ))
 }
 
 #[cfg(test)]

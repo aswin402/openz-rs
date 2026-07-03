@@ -1,12 +1,10 @@
 use anyhow::Result;
 use crate::agent::style::*;
-use crate::session::{Session, SessionManager, Message};
-use std::sync::Arc;
 use serde::Deserialize;
 use super::{AgentLoop, TurnContext, TurnState, get_session_lock};
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
-    loop_ref.session_manager.save(&ctx.session)?;
+    loop_ref.session_manager.save(&ctx.session).await?;
     if let Err(e) = crate::tools::onpkg::sync_onpkg_manifest() {
         tracing::warn!("Failed to synchronize onpkg manifest: {}", e);
     }
@@ -39,6 +37,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         let provider = ctx.active_provider.clone();
         let messages = ctx.messages.clone();
         let tools_used = ctx.tools_used.clone();
+        let initial_updated_at = ctx.session.updated_at;
+        let initial_msg_count = ctx.session.messages.len();
 
         tokio::spawn(async move {
             if let Some(rx) = crate::shutdown::receiver() {
@@ -133,7 +133,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
             let recent_interactions = crate::tools::shared_memory::get_recent_interactions(15).await.unwrap_or_default();
 
-            let existing_memory = if let Ok(s) = session_manager.load(&session_key) {
+            let existing_memory = if let Ok(s) = session_manager.load_async(&session_key).await {
                 s.metadata.get("memory")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
@@ -316,56 +316,65 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                 if review.memory_updated {
                                     let lock = get_session_lock(&session_key);
                                     let _guard = lock.lock().await;
-                                    if let Ok(mut latest_session) = session_manager.load(&session_key) {
-                                        latest_session.metadata.insert("memory".to_string(), serde_json::Value::String(review.memory_content.trim().to_string()));
-                                        if let Err(e) = session_manager.save(&latest_session) {
-                                            let msg = format!("Failed to save memory: {}", e);
+                                    if let Ok(mut latest_session) = session_manager.load_async(&session_key).await {
+                                        if latest_session.updated_at != initial_updated_at || latest_session.messages.len() != initial_msg_count {
+                                            let msg = "Aborted memory update: session was modified concurrently".to_string();
                                             error_msg = Some(msg.clone());
-                                            crate::channels::cli::send_notification(&format!("{}▲ [Self-Improvement] Failed to save self-improvement memory: {}{}", AURA_GOLD, e, COLOR_RESET));
+                                            crate::channels::cli::send_notification(&format!(
+                                                "{}▲ [Self-Improvement] Curator update aborted: session was modified concurrently.{}",
+                                                AURA_GOLD, COLOR_RESET
+                                            ));
                                         } else {
-                                            memory_updated = true;
-                                            tracing::info!(session = %session_key, "Self-improvement curator: updated session memory.");
-                                            crate::channels::cli::send_notification(&format!("{}◇ [Self-Improvement] Memory updated based on recent conversation.{}", AURA_BLUE, COLOR_RESET));
+                                            latest_session.metadata.insert("memory".to_string(), serde_json::Value::String(review.memory_content.trim().to_string()));
+                                            if let Err(e) = session_manager.save(&latest_session).await {
+                                                let msg = format!("Failed to save memory: {}", e);
+                                                error_msg = Some(msg.clone());
+                                                crate::channels::cli::send_notification(&format!("{}▲ [Self-Improvement] Failed to save self-improvement memory: {}{}", AURA_GOLD, e, COLOR_RESET));
+                                            } else {
+                                                memory_updated = true;
+                                                tracing::info!(session = %session_key, "Self-improvement curator: updated session memory.");
+                                                crate::channels::cli::send_notification(&format!("{}◇ [Self-Improvement] Memory updated based on recent conversation.{}", AURA_BLUE, COLOR_RESET));
 
-                                            let facts: Vec<String> = review.memory_content
-                                                .lines()
-                                                .map(|line| line.trim())
-                                                .filter(|line| line.starts_with('-') || line.starts_with('*'))
-                                                .map(|line| {
-                                                    let fact = line[1..].trim();
-                                                    fact.trim_start_matches("**")
-                                                        .trim_end_matches("**")
-                                                        .trim()
-                                                        .to_string()
-                                                })
-                                                .filter(|fact| !fact.is_empty())
-                                                .collect();
+                                                let facts: Vec<String> = review.memory_content
+                                                    .lines()
+                                                    .map(|line| line.trim())
+                                                    .filter(|line| line.starts_with('-') || line.starts_with('*'))
+                                                    .map(|line| {
+                                                        let fact = line[1..].trim();
+                                                        fact.trim_start_matches("**")
+                                                            .trim_end_matches("**")
+                                                            .trim()
+                                                            .to_string()
+                                                    })
+                                                    .filter(|fact| !fact.is_empty())
+                                                    .collect();
 
-                                            let uid = "*";
-                                            let sid = &session_key;
-                                            let aid = "*";
+                                                let uid = "*";
+                                                let sid = &session_key;
+                                                let aid = "*";
 
-                                            for fact in facts {
-                                                let node_id = format!("fact_{}", &uuid::Uuid::new_v4().to_string()[..8]);
-                                                let timestamp = chrono::Utc::now().to_rfc3339();
-                                                let _ = crate::tools::graph_memory::with_db(|conn| {
-                                                    let mut check_stmt = conn.prepare(
-                                                        "SELECT 1 FROM semantic_metadata WHERE raw_text = ?1 AND valid_until IS NULL"
-                                                    ).map_err(|e| anyhow::anyhow!(e))?;
-                                                    let exists = check_stmt.exists(rusqlite::params![&fact]).map_err(|e| anyhow::anyhow!(e))?;
-                                                    if !exists {
-                                                        conn.execute(
-                                                            "INSERT INTO semantic_metadata (node_id, raw_text, timestamp, importance, user_id, session_id, agent_id)
-                                                             VALUES (?1, ?2, ?3, 0.8, ?4, ?5, ?6)",
-                                                            rusqlite::params![node_id, fact, timestamp, uid, sid, aid],
+                                                for fact in facts {
+                                                    let node_id = format!("fact_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+                                                    let timestamp = chrono::Utc::now().to_rfc3339();
+                                                    let _ = crate::tools::graph_memory::with_db(|conn| {
+                                                        let mut check_stmt = conn.prepare(
+                                                            "SELECT 1 FROM semantic_metadata WHERE raw_text = ?1 AND valid_until IS NULL"
                                                         ).map_err(|e| anyhow::anyhow!(e))?;
-                                                        let _ = conn.execute(
-                                                            "INSERT INTO semantic_fts (node_id, raw_text) VALUES (?1, ?2)",
-                                                            rusqlite::params![node_id, fact],
-                                                        );
-                                                    }
-                                                    Ok(())
-                                                });
+                                                        let exists = check_stmt.exists(rusqlite::params![&fact]).map_err(|e| anyhow::anyhow!(e))?;
+                                                        if !exists {
+                                                            conn.execute(
+                                                                "INSERT INTO semantic_metadata (node_id, raw_text, timestamp, importance, user_id, session_id, agent_id)
+                                                                 VALUES (?1, ?2, ?3, 0.8, ?4, ?5, ?6)",
+                                                                rusqlite::params![node_id, fact, timestamp, uid, sid, aid],
+                                                            ).map_err(|e| anyhow::anyhow!(e))?;
+                                                            let _ = conn.execute(
+                                                                "INSERT INTO semantic_fts (node_id, raw_text) VALUES (?1, ?2)",
+                                                                rusqlite::params![node_id, fact],
+                                                            );
+                                                        }
+                                                        Ok(())
+                                                    });
+                                                }
                                             }
                                         }
                                     }

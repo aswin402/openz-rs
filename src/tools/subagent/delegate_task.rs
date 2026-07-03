@@ -8,8 +8,6 @@ use crate::session::SessionManager;
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use serde_json::Value;
-use std::path::{Path, PathBuf};
-use std::fs;
 use super::{CancellationToken, DELEGATION_DEPTH, build_provider_for_model};
 use super::evaluator_optimizer::validate_schema;
 

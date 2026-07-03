@@ -529,17 +529,22 @@ pub fn load_relevant_skills_with_profile(user_content: &str, session_messages: &
 }
 
 pub fn scan_skill_content(content: &str) -> Result<bool> {
-    let blacklist = vec![
-        r"(?i)curl.*http",
-        r"(?i)wget.*http",
-        r"(?i)rm\s+-rf\s+/",
-        r"(?i)chmod\s+777",
-        r"(?i)/dev/tcp/\d",
-        r"(?i)nc\s+-e\s+/",
-        r"(?i)bash\s+-i\s+>&"
-    ];
-    for pattern in blacklist {
-        let re = regex::Regex::new(pattern)?;
+    static BLACKLIST_RE: std::sync::OnceLock<Vec<regex::Regex>> = std::sync::OnceLock::new();
+    let regexes = BLACKLIST_RE.get_or_init(|| {
+        let patterns = [
+            r"(?i)curl.*http",
+            r"(?i)wget.*http",
+            r"(?i)rm\s+-rf\s+/",
+            r"(?i)chmod\s+777",
+            r"(?i)/dev/tcp/\d",
+            r"(?i)nc\s+-e\s+/",
+            r"(?i)bash\s+-i\s+>&"
+        ];
+        patterns.iter()
+            .map(|p| regex::Regex::new(p).expect("invalid skill content validation pattern"))
+            .collect()
+    });
+    for re in regexes {
         if re.is_match(content) {
             return Ok(false);
         }

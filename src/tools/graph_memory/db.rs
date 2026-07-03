@@ -5,28 +5,10 @@ use std::sync::{Mutex, OnceLock};
 
 // ─── Constants ───────────────────────────────────────────────────
 
-// ─── Constants ───────────────────────────────────────────────────
-
 #[allow(dead_code)]
 pub(crate) const DB_FILENAME: &str = "graph_memory.db";
 
-// ─── Shared DB static ──────────────────────────────────────────
-
-pub(crate) fn db_static() -> &'static OnceLock<Mutex<Connection>> {
-    static DB: OnceLock<Mutex<Connection>> = OnceLock::new();
-    &DB
-}
-
-pub(crate) fn init_db() -> Connection {
-    let path = get_db_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let conn = Connection::open(&path).unwrap_or_else(|_| {
-        Connection::open_in_memory().unwrap()
-    });
-    conn.execute_batch(
-        "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
+pub(crate) const SCHEMA_DDL: &str = "
          CREATE TABLE IF NOT EXISTS graph_nodes (
              name TEXT NOT NULL,
              entity_type TEXT NOT NULL,
@@ -126,23 +108,6 @@ pub(crate) fn init_db() -> Connection {
          CREATE INDEX IF NOT EXISTS idx_reflection_scope ON reflection_memory(user_id, session_id, agent_id);
          CREATE INDEX IF NOT EXISTS idx_toolperf_scope ON tool_performance(user_id, session_id, agent_id);
          CREATE INDEX IF NOT EXISTS idx_shared_scope ON shared_agent_memory(user_id, session_id, agent_id);
-         CREATE TABLE IF NOT EXISTS repo_evolution (
-             id INTEGER PRIMARY KEY AUTOINCREMENT,
-             file_path TEXT NOT NULL,
-             version TEXT NOT NULL,
-             commit_hash TEXT,
-             author TEXT,
-             change_type TEXT NOT NULL,
-             summary TEXT NOT NULL,
-             bug_introduced INTEGER NOT NULL DEFAULT 0,
-             bug_fixed INTEGER NOT NULL DEFAULT 0,
-             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-         );
-         CREATE VIRTUAL TABLE IF NOT EXISTS semantic_fts USING fts5(
-             node_id UNINDEXED,
-             raw_text,
-             tokenize='porter'
-         );
          CREATE TABLE IF NOT EXISTS code_elements (
              element_id    TEXT PRIMARY KEY,
              file_path     TEXT NOT NULL,
@@ -166,10 +131,45 @@ pub(crate) fn init_db() -> Connection {
          CREATE INDEX IF NOT EXISTS idx_code_elements_scope ON code_elements(user_id, session_id, agent_id);
          CREATE INDEX IF NOT EXISTS idx_code_elements_file ON code_elements(file_path);
          CREATE INDEX IF NOT EXISTS idx_code_elements_name ON code_elements(name);
-        ",
-    )
-    .ok();
-    conn
+         CREATE TABLE IF NOT EXISTS repo_evolution (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             file_path TEXT NOT NULL,
+             version TEXT NOT NULL,
+             commit_hash TEXT,
+             author TEXT,
+             change_type TEXT NOT NULL,
+             summary TEXT NOT NULL,
+             bug_introduced INTEGER NOT NULL DEFAULT 0,
+             bug_fixed INTEGER NOT NULL DEFAULT 0,
+             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+         );
+         CREATE VIRTUAL TABLE IF NOT EXISTS semantic_fts USING fts5(
+             node_id UNINDEXED,
+             raw_text,
+             tokenize='porter'
+         );
+";
+
+// ─── Shared DB static ──────────────────────────────────────────
+
+pub(crate) fn db_static() -> &'static OnceLock<Mutex<Connection>> {
+    static DB: OnceLock<Mutex<Connection>> = OnceLock::new();
+    &DB
+}
+
+pub(crate) fn init_db() -> Result<Connection> {
+    let path = get_db_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let conn = Connection::open(&path).unwrap_or_else(|_| {
+        Connection::open_in_memory().unwrap()
+    });
+    conn.execute_batch(&format!(
+        "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; {}",
+        SCHEMA_DDL
+    ))?;
+    Ok(conn)
 }
 
 // ─── DB helpers ─────────────────────────────────────────────────
@@ -196,9 +196,12 @@ pub(crate) fn with_db<F, T>(f: F) -> Result<T>
 where
     F: FnOnce(&Connection) -> Result<T>,
 {
-    let mtx = db_static().get_or_init(|| {
-        Mutex::new(init_db())
-    });
+    if let Some(mtx) = db_static().get() {
+        let guard = mtx.lock().map_err(|e| anyhow!("Graph memory lock error: {}", e))?;
+        return f(&guard);
+    }
+    let conn = init_db()?;
+    let mtx = db_static().get_or_init(|| Mutex::new(conn));
     let guard = mtx.lock().map_err(|e| anyhow!("Graph memory lock error: {}", e))?;
     f(&guard)
 }

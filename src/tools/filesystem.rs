@@ -2,6 +2,58 @@ use crate::tools::Tool;
 use crate::config::resolve_path;
 use anyhow::{Result, anyhow, Context};
 use std::fs;
+use std::path::Path;
+
+fn verify_safe_path(path: &Path) -> Result<()> {
+    let mut check_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        let workspace = crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone())
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+        workspace.join(path)
+    };
+
+    loop {
+        if let Ok(canon) = check_path.canonicalize() {
+            check_path = canon;
+            break;
+        }
+        if let Some(parent) = check_path.parent() {
+            check_path = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+
+    let workspace = crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone())
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+    if let Ok(w_canon) = workspace.canonicalize() {
+        if check_path.starts_with(&w_canon) {
+            return Ok(());
+        }
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        let openz_dir = home.join(".openz");
+        if let Ok(o_canon) = openz_dir.canonicalize() {
+            if check_path.starts_with(&o_canon) {
+                return Ok(());
+            }
+        }
+    }
+
+    let temp = std::env::temp_dir();
+    if let Ok(t_canon) = temp.canonicalize() {
+        if check_path.starts_with(&t_canon) {
+            return Ok(());
+        }
+    }
+
+    Err(anyhow!(
+        "Path traversal prevention: Path {:?} is not allowed (must be inside workspace, ~/.openz, or temp)",
+        path
+    ))
+}
 
 pub struct ReadFileTool;
 
@@ -36,6 +88,7 @@ impl Tool for ReadFileTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
         let path = resolve_path(path_str);
+        verify_safe_path(&path)?;
 
         // Guard against reading excessively large files (>50MB) to prevent OOM
         let metadata = fs::metadata(&path)
@@ -110,6 +163,7 @@ impl Tool for WriteFileTool {
             .ok_or_else(|| anyhow!("Missing 'content' argument"))?;
         
         let path = resolve_path(path_str);
+        verify_safe_path(&path)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -152,6 +206,7 @@ impl Tool for ListDirTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
         let path = resolve_path(path_str);
+        verify_safe_path(&path)?;
         
         let mut entries = Vec::new();
         for entry in fs::read_dir(&path).with_context(|| format!("Failed to read directory at {:?}", path))? {
@@ -211,6 +266,7 @@ impl Tool for PatchFileTool {
             .ok_or_else(|| anyhow!("Missing 'patch' argument"))?;
 
         let path = resolve_path(path_str);
+        verify_safe_path(&path)?;
         
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read file at {:?}", path))?;
@@ -274,6 +330,7 @@ impl Tool for ReplaceLinesTool {
         }
 
         let path = resolve_path(path_str);
+        verify_safe_path(&path)?;
         
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read file at {:?}", path))?;
@@ -423,6 +480,7 @@ impl Tool for FindFilesTool {
         
         let search_dir_str = arguments.get("dir").and_then(|v| v.as_str()).unwrap_or(".");
         let search_dir = resolve_path(search_dir_str);
+        verify_safe_path(&search_dir)?;
 
         if !search_dir.exists() {
             return Err(anyhow!("Directory '{}' does not exist", search_dir_str));
@@ -479,6 +537,7 @@ impl Tool for ZenflowEditTool {
             .ok_or_else(|| anyhow!("Missing 'compile_command' parameter"))?;
 
         let path = resolve_path(path_str);
+        verify_safe_path(&path)?;
         
         let run_cmd = |cmd: String| async move {
             let mut command = tokio::process::Command::new("sh");

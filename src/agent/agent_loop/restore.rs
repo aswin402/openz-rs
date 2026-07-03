@@ -2,10 +2,10 @@ use anyhow::{Result, anyhow};
 use super::{AgentLoop, TurnContext, TurnState};
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
-    ctx.session_file_lock = Some(loop_ref.session_manager.acquire_lock(ctx.session_key).map_err(|e| {
+    ctx.session_file_lock = Some(loop_ref.session_manager.acquire_lock_async(ctx.session_key).await.map_err(|e| {
         anyhow!("Cannot start session: {}", e)
     })?);
-    ctx.session = loop_ref.session_manager.get_or_create(ctx.session_key);
+    ctx.session = loop_ref.session_manager.get_or_create_async(ctx.session_key).await;
     if !ctx.user_content.starts_with('/') {
         ctx.interaction_id = crate::tools::shared_memory::log_interaction(ctx.session_key, ctx.user_content).await.ok();
     }
@@ -20,7 +20,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         eprintln!("{}▲ Image unsupported: The active model '{}' does not support images. Images will be ignored.{}", crate::agent::style::AURA_GOLD, loop_ref.config.agents.defaults.model, crate::agent::style::COLOR_RESET);
     }
 
-    if let Err(e) = loop_ref.session_manager.save(&ctx.session) {
+    if let Err(e) = loop_ref.session_manager.save(&ctx.session).await {
         tracing::warn!("Failed to save session incrementally in Restore: {}", e);
     }
 

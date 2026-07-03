@@ -4,7 +4,6 @@ use serde::Deserialize;
 
 use crate::config::loader::{load_config, resolve_path};
 use crate::session::SessionManager;
-use crate::agent::AgentLoop;
 use crate::agent::style::{HistoryItem, select_menu_with_history};
 use crate::cli::builder::build_agent_loop;
 use crate::cron::scheduler::start_scheduler;
@@ -96,16 +95,16 @@ pub fn load_session_history() -> Result<Vec<HistoryItem>> {
     Ok(items)
 }
 
-pub fn archive_current_session(session_manager: &SessionManager) -> Result<()> {
+pub async fn archive_current_session(session_manager: &SessionManager) -> Result<()> {
     if let Ok(mut current_session) = session_manager.load("cli:direct") {
         if !current_session.messages.is_empty() {
             let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
             let archive_key = format!("cli:history_{}", timestamp);
             current_session.key = archive_key;
-            session_manager.save(&current_session)?;
+            session_manager.save(&current_session).await?;
             
             let empty_session = crate::session::Session::new("cli:direct");
-            session_manager.save(&empty_session)?;
+            session_manager.save(&empty_session).await?;
         }
     }
     Ok(())
@@ -121,18 +120,18 @@ pub async fn handle_agent() -> Result<()> {
 
     let history = load_session_history()?;
     if history.is_empty() {
-        archive_current_session(&session_manager)?;
+        archive_current_session(&session_manager).await?;
     } else {
         let selected = select_menu_with_history("Welcome to OpenZ! Select an option:", &history)?;
         if selected == 0 {
-            archive_current_session(&session_manager)?;
+            archive_current_session(&session_manager).await?;
         } else {
             let selected_item = &history[selected - 1];
             if selected_item.key != "cli:direct" {
-                archive_current_session(&session_manager)?;
+                archive_current_session(&session_manager).await?;
                 let mut session = session_manager.load(&selected_item.key)?;
                 session.key = "cli:direct".to_string();
-                session_manager.save(&session)?;
+                session_manager.save(&session).await?;
             }
         }
     }

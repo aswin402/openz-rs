@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers, KeyEventKind};
 use std::io::{Write, stdout};
 use std::path::PathBuf;

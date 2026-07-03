@@ -398,7 +398,33 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.28 (Latest Release)
+### v0.0.29 (Latest Release)
+*   **Security: SSRF & timing attack mitigations (HIGH)**:
+    *   Implemented constant-time WhatsApp HMAC signature validation in `src/channels/whatsapp.rs` to protect webhook endpoints from timing attacks.
+    *   Added WebSocket frame size and message limits (16MB) in `src/channels/websocket.rs` to prevent DoS attacks.
+    *   Implemented HTTP chunked response body limits (10MB) in `src/tools/web.rs` to block memory exhaustion.
+    *   Introduced IP pinning for SSRF validation in `src/tools/web.rs` to eliminate the DNS-rebinding TOCTOU race window.
+*   **Database: Hardened shared memory and graph databases (HIGH)**:
+    *   Replaced per-call connection patterns in `shared_memory` with a thread-safe singleton connection using WAL mode and a 5s busy timeout.
+    *   Unified branch and main schema DDLs in `graph_memory` to eliminate schema corruption.
+    *   Established deadlock-free lock ordering (`db_static()` lock before `BRANCH_MUTEX`).
+    *   Optimized queries with `LIMIT` clauses and capped the O(n²) consolidation to the newest 200 entries.
+    *   Added eviction limits to in-memory fallback stores to prevent memory leaks.
+*   **Reliability & Channel Enhancements (HIGH)**:
+    *   Registered global panic hook to restore raw terminal mode and exit alternate screens cleanly.
+    *   Redacted Discord bot tokens in error logs.
+    *   Added concurrency semaphores to WhatsApp webhook axum handlers.
+    *   Updated atomic ordering to prevent race conditions in Discord gateway heartbeat routines.
+*   **Performance: Async I/O and System Prompt budgets (HIGH)**:
+    *   Migrated hot-path filesystem operations in `run.rs` and `session.rs` to async `tokio::fs` or `spawn_blocking`.
+    *   Optimized save frequency to write session incrementally every 5 iterations.
+    *   Added character/token budget caps (32k) for system prompts to prevent context token overflow.
+    *   Implemented path traversal constraints in filesystem tools to prevent unauthorized file access.
+*   **Maintenance: Code Cleanups**:
+    *   Removed `AgentError` dead code and resolved 13 unused compiler warnings across the repository.
+    *   Bumped version to v0.0.29. All 201 unit tests passing cleanly.
+
+### v0.0.28
 *   **Refactor: Codebase Modularization (MEGA):** Modularized all remaining monolithic files into cleanly structured, package-based submodules:
     *   Split CLI raw terminal input/render/channel loop (`src/channels/cli.rs`) into [src/channels/cli/](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/).
     *   Split core agent loop state machine (`src/agent/agent_loop.rs`) into [src/agent/agent_loop/](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/).

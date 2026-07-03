@@ -19,6 +19,11 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         while k > 0 && ctx.session.messages[k].role != "user" {
             k -= 1;
         }
+
+        if k == 0 {
+            tracing::warn!(session = %ctx.session_key, "No user message found to split on. Forcing truncation at half the messages (k = {}).", len / 2);
+            k = len / 2;
+        }
         
         if k > 0 && k < len {
             let messages_to_summarize = ctx.session.messages[0..k].to_vec();

@@ -24,7 +24,7 @@ impl SecurityGuard {
                 true
             } else {
                 let next = cmd.as_bytes()[after_idx] as char;
-                next.is_whitespace() || next == ';' || next == '|' || next == '&' || next == '`' || next == ')' || next == '-' || next == ',' || next == '.'
+                next.is_whitespace() || next == ';' || next == '|' || next == '&' || next == '`' || next == ')' || next == ',' || next == '.'
             };
             
             before && after
@@ -380,12 +380,16 @@ impl SecurityGuard {
                 }
 
                 // Always block piping network scripts to shell in ALL modes (curl ... | bash)
-                let has_pipe_to_shell = cmd_lower.contains("| sh")
-                    || cmd_lower.contains("| bash")
-                    || cmd_lower.contains("|sh")
-                    || cmd_lower.contains("|bash")
-                    || cmd_lower.contains("| python")
-                    || cmd_lower.contains("| python3");
+                let has_pipe_to_shell = {
+                    let mut parts = cmd_lower.split('|');
+                    parts.next(); // skip first command
+                    parts.any(|part| {
+                        Self::has_bin(part, "sh")
+                            || Self::has_bin(part, "bash")
+                            || Self::has_bin(part, "python")
+                            || Self::has_bin(part, "python3")
+                    })
+                };
 
                 if has_pipe_to_shell {
                     return true;
@@ -445,10 +449,14 @@ impl SecurityGuard {
                         || Self::has_bin(&cmd_lower, "netcat")
                 } else {
                     // Normal mode: block piping network scripts directly to shell (e.g. curl ... | bash)
-                    cmd_lower.contains("| sh")
-                        || cmd_lower.contains("| bash")
-                        || cmd_lower.contains("|sh")
-                        || cmd_lower.contains("|bash")
+                    {
+                        let mut parts = cmd_lower.split('|');
+                        parts.next(); // skip first command
+                        parts.any(|part| {
+                            Self::has_bin(part, "sh")
+                                || Self::has_bin(part, "bash")
+                        })
+                    }
                 };
 
                 return has_destructive || has_process || has_network;
@@ -671,6 +679,24 @@ mod tests {
         assert!(SecurityGuard::is_sensitive("exec_command", &json!({"command": "curl -o output.txt https://example.com/file"})));
         assert!(SecurityGuard::is_sensitive("exec_command", &json!({"command": "scp user@host:/file ."})));
         assert!(SecurityGuard::is_sensitive("exec_command", &json!({"command": "rsync -avz dir/ user@host:/dir/"})));
+    }
+
+    #[test]
+    fn test_pipe_to_shell_word_boundaries() {
+        // True positives (proper word boundaries) in normal mode
+        assert!(SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "curl | bash"}), "normal"));
+        assert!(SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "curl |bash"}), "normal"));
+        assert!(SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "curl | sh -c 'echo'"}), "normal"));
+
+        // False positives from simple substring match, now correctly allowed in normal mode
+        assert!(!SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "curl | bash-next"}), "normal"));
+        assert!(!SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "curl | shadow"}), "normal"));
+
+        // True positives (proper word boundaries) in loose mode
+        assert!(SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "curl | python3"}), "loose"));
+
+        // False positives from simple substring match, now correctly allowed in loose mode
+        assert!(!SecurityGuard::is_sensitive_with_mode("exec_command", &json!({"command": "curl | python-cool"}), "loose"));
     }
 
     #[test]

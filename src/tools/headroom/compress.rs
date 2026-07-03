@@ -5,7 +5,7 @@ use chrono::Utc;
 use rusqlite::params;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use super::{estimate_tokens, MAX_INPUT_SIZE};
 use super::cache::{cache_content, get_cache_connection, generate_ccr_id, evict_lru_if_needed};
 

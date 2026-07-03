@@ -1,5 +1,4 @@
 use anyhow::Result;
-use crate::agent::style::*;
 use super::{AgentLoop, TurnContext, TurnState};
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
@@ -96,11 +95,67 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         ""
     };
 
-    let cross_session_memory = retrieve_cross_session_memories(ctx.user_content).await;
-    ctx.system_prompt = format!(
-        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.{}{}{}{}{}{}{}{}",
+    let mut cross_session_memory = retrieve_cross_session_memories(ctx.user_content).await;
+
+    // Calculate total character limit and base length
+    let budget_limit = 32000;
+
+    let header = format!(
+        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.",
         loop_ref.config.agents.defaults.bot_name,
-        chrono::Utc::now().to_rfc3339(),
+        chrono::Utc::now().to_rfc3339()
+    );
+
+    let base_len = header.chars().count()
+        + system_guidelines.chars().count()
+        + activity_part.chars().count()
+        + summary_part.chars().count()
+        + memory_part.chars().count()
+        + vision_instruction.chars().count()
+        + caveman_rules.chars().count();
+
+    let total_len = base_len
+        + skills_part.chars().count()
+        + cross_session_memory.chars().count();
+
+    if total_len > budget_limit {
+        let budget = if budget_limit > base_len { budget_limit - base_len } else { 0 };
+        let half_budget = budget / 2;
+        let skills_len = skills_part.chars().count();
+        let cross_len = cross_session_memory.chars().count();
+
+        let (new_skills_budget, new_cross_budget) = if skills_len <= half_budget {
+            (skills_len, budget.saturating_sub(skills_len))
+        } else if cross_len <= half_budget {
+            (budget.saturating_sub(cross_len), cross_len)
+        } else {
+            (half_budget, budget.saturating_sub(half_budget))
+        };
+
+        fn safe_truncate(s: &str, max_chars: usize) -> String {
+            let char_count = s.chars().count();
+            if char_count <= max_chars {
+                s.to_string()
+            } else {
+                let suffix = "\n... [truncated]";
+                let suffix_len = suffix.chars().count();
+                if max_chars > suffix_len {
+                    let mut truncated: String = s.chars().take(max_chars - suffix_len).collect();
+                    truncated.push_str(suffix);
+                    truncated
+                } else {
+                    s.chars().take(max_chars).collect()
+                }
+            }
+        }
+
+        skills_part = safe_truncate(&skills_part, new_skills_budget);
+        cross_session_memory = safe_truncate(&cross_session_memory, new_cross_budget);
+    }
+
+    ctx.system_prompt = format!(
+        "{}{}{}{}{}{}{}{}{}",
+        header,
         system_guidelines,
         activity_part,
         summary_part,
@@ -121,30 +176,36 @@ async fn retrieve_cross_session_memories(_user_content: &str) -> String {
 
     // 1. Query cognitive_memory (from store_memory tool) — top by importance × recency
     let _lock = crate::tools::shared_memory::get_db_mutex().lock().await;
-    if let Ok(conn) = crate::tools::shared_memory::get_sqlite_connection() {
-        if let Ok(mut stmt) = conn.prepare(
+    let cognitive_rows = crate::tools::shared_memory::with_db(|conn| {
+        let mut stmt = conn.prepare(
             "SELECT text, importance, last_accessed, decay_rate FROM cognitive_memory ORDER BY importance DESC, last_accessed DESC LIMIT 8"
-        ) {
-            if let Ok(rows) = stmt.query_map([], |row| {
-                let text: String = row.get(0)?;
-                let importance: f32 = row.get(1)?;
-                let last_acc: String = row.get(2)?;
-                let decay_rate: f32 = row.get(3)?;
-                Ok((text, importance, last_acc, decay_rate))
-            }) {
-                for row in rows.flatten() {
-                    let (text, importance, last_acc, decay_rate) = row;
-                    let days_elapsed = chrono::Utc::now()
-                        .signed_duration_since(
-                            chrono::DateTime::parse_from_rfc3339(&last_acc)
-                                .map(|dt| dt.with_timezone(&chrono::Utc))
-                                .unwrap_or_else(|_| chrono::Utc::now())
-                        )
-                        .num_seconds() as f32 / 86400.0;
-                    let score = importance * (-decay_rate * days_elapsed).exp();
-                    all_entries.push((score, text));
-                }
-            }
+        )?;
+        let mapped = stmt.query_map([], |row| {
+            let text: String = row.get(0)?;
+            let importance: f32 = row.get(1)?;
+            let last_acc: String = row.get(2)?;
+            let decay_rate: f32 = row.get(3)?;
+            Ok((text, importance, last_acc, decay_rate))
+        })?;
+        let mut collected = Vec::new();
+        for item in mapped {
+            collected.push(item?);
+        }
+        Ok(collected)
+    });
+
+    if let Ok(rows) = cognitive_rows {
+        for row in rows {
+            let (text, importance, last_acc, decay_rate) = row;
+            let days_elapsed = chrono::Utc::now()
+                .signed_duration_since(
+                    chrono::DateTime::parse_from_rfc3339(&last_acc)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now())
+                )
+                .num_seconds() as f32 / 86400.0;
+            let score = importance * (-decay_rate * days_elapsed).exp();
+            all_entries.push((score, text));
         }
     }
     drop(_lock);
@@ -156,7 +217,7 @@ async fn retrieve_cross_session_memories(_user_content: &str) -> String {
              WHERE valid_until IS NULL 
                AND (user_id = ?1 OR user_id = '*')
                AND (agent_id = ?2 OR agent_id = '*')
-             ORDER BY timestamp DESC"
+             ORDER BY timestamp DESC LIMIT 100"
         ).map_err(|e| anyhow::anyhow!(e))?;
         let mut rows = stmt.query(rusqlite::params![uid, aid]).map_err(|e| anyhow::anyhow!(e))?;
         let mut facts = Vec::new();
@@ -177,7 +238,8 @@ async fn retrieve_cross_session_memories(_user_content: &str) -> String {
         let mut stmt = conn.prepare(
             "SELECT name, observations FROM graph_nodes 
              WHERE (user_id = ?1 OR user_id = '*')
-               AND (agent_id = ?2 OR agent_id = '*')"
+               AND (agent_id = ?2 OR agent_id = '*')
+             LIMIT 100"
         ).map_err(|e| anyhow::anyhow!(e))?;
         let mut rows = stmt.query(rusqlite::params![uid, aid]).map_err(|e| anyhow::anyhow!(e))?;
         let mut nodes = Vec::new();

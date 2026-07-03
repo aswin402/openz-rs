@@ -411,7 +411,27 @@ impl Tool for ExecCommandTool {
 
         let mut tokio_cmd = tokio::process::Command::from(std_cmd);
         tokio_cmd.kill_on_drop(true);
-        let output = tokio_cmd.output().await?;
+
+        let timeout_secs = crate::config::loader::load_config()
+            .map(|c| c.agents.defaults.tool_timeout_secs)
+            .unwrap_or(120);
+
+        let output_res = tokio::time::timeout(
+            std::time::Duration::from_secs(timeout_secs),
+            tokio_cmd.output()
+        ).await;
+
+        let output = match output_res {
+            Ok(Ok(o)) => o,
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => {
+                return Ok(serde_json::json!({
+                    "status_code": -1,
+                    "stdout": "",
+                    "stderr": format!("Command execution timed out after {} seconds", timeout_secs)
+                }));
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();

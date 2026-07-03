@@ -1,17 +1,16 @@
 use anyhow::Result;
 use rusqlite::params;
 
-use super::db::{get_db_mutex, get_sqlite_connection};
+use super::db::{get_db_mutex, with_db};
 use super::embeddings::{get_embedding, cosine_similarity};
 use super::cognitive::CognitiveMemoryEntry;
 
 pub async fn consolidate_shared_memory(provider: &std::sync::Arc<dyn crate::providers::LLMProvider>) -> Result<()> {
     let _lock = get_db_mutex().lock().await;
     
-    let mut entries: Vec<CognitiveMemoryEntry> = {
-        let conn = get_sqlite_connection()?;
+    let mut entries: Vec<CognitiveMemoryEntry> = with_db(|conn| {
         let mut stmt = conn.prepare("SELECT id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate FROM cognitive_memory")?;
-        let rows = stmt.query_map([], |row| {
+        let mapped = stmt.query_map([], |row| {
             let embedding_str: String = row.get(2)?;
             let tags_str: String = row.get(5)?;
             let embedding: Vec<f32> = serde_json::from_str(&embedding_str).unwrap_or_default();
@@ -30,8 +29,25 @@ pub async fn consolidate_shared_memory(provider: &std::sync::Arc<dyn crate::prov
                 decay_rate: row.get(9)?,
             })
         })?;
-        rows.flatten().collect()
-    };
+        let mut collected = Vec::new();
+        for item in mapped {
+            collected.push(item?);
+        }
+        Ok(collected)
+    })?;
+
+    if entries.len() > 200 {
+        entries.sort_by(|a, b| {
+            let dt_a = chrono::DateTime::parse_from_rfc3339(&a.timestamp)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            let dt_b = chrono::DateTime::parse_from_rfc3339(&b.timestamp)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            dt_b.cmp(&dt_a)
+        });
+        entries.truncate(200);
+    }
 
     if entries.len() < 5 {
         return Ok(());
@@ -116,18 +132,20 @@ pub async fn consolidate_shared_memory(provider: &std::sync::Arc<dyn crate::prov
                         };
 
                         // Remove from database and insert new merged entry inside a short-lived block
-                        {
-                            let conn = get_sqlite_connection()?;
-                            let _ = conn.execute("DELETE FROM cognitive_memory WHERE id IN (?1, ?2)", params![entry_a.id, entry_b.id]);
+                        with_db(|conn| {
+                            let tx = conn.transaction()?;
+                            tx.execute("DELETE FROM cognitive_memory WHERE id IN (?1, ?2)", params![entry_a.id, entry_b.id])?;
                             
                             let embedding_json = serde_json::to_string(&new_entry.embedding)?;
                             let tags_json = serde_json::to_string(&new_entry.tags)?;
-                            let _ = conn.execute(
+                            tx.execute(
                                 "INSERT INTO cognitive_memory (id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate)
                                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                                 params![new_id, clean_text, embedding_json, now_str, new_entry.workspace, tags_json, new_importance, now_str, new_entry.access_count, new_entry.decay_rate],
-                            );
-                        }
+                            )?;
+                            tx.commit()?;
+                            Ok(())
+                        })?;
 
                         entries.remove(j);
                         entries.remove(i);

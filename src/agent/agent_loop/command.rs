@@ -1,5 +1,4 @@
 use anyhow::Result;
-use crate::agent::style::*;
 use crate::tools::subagent::{DelegateTaskTool, CancellationToken};
 use super::{AgentLoop, TurnContext, TurnState};
 
@@ -27,7 +26,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 }
                 "/clear" | "/restart" => {
                     ctx.session.messages.clear();
-                    loop_ref.session_manager.save(&ctx.session)?;
+                    loop_ref.session_manager.save(&ctx.session).await?;
                     ctx.final_content = "Conversation history has been cleared.".to_string();
                     return Ok(TurnState::Done);
                 }
@@ -73,7 +72,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         match parts[1] {
                             "clear" => {
                                 ctx.session.metadata.remove("memory");
-                                loop_ref.session_manager.save(&ctx.session)?;
+                                loop_ref.session_manager.save(&ctx.session).await?;
                                 ctx.final_content = "Agent memory has been cleared.".to_string();
                             }
                             "add" | "set" => {
@@ -90,7 +89,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                     }
                                     existing.push_str(&format!("* {}", fact));
                                     ctx.session.metadata.insert("memory".to_string(), serde_json::Value::String(existing));
-                                    loop_ref.session_manager.save(&ctx.session)?;
+                                    loop_ref.session_manager.save(&ctx.session).await?;
                                     ctx.final_content = format!("Added to memory: {}", fact);
                                 }
                             }

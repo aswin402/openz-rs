@@ -75,16 +75,36 @@ If OpenZ is running as a background channel (e.g. over Telegram), the approval r
 
 ---
 
-## 📂 Platform-Agnostic Directory Jailing
+## 📂 Platform-Agnostic Directory Jailing & Path Traversal Prevention
 
-To prevent the agent from writing files to sensitive host directories or leaking information outside the expected scope, OpenZ enforces filesystem sandbox containment.
+To prevent the agent from reading or writing files outside authorized host directories, OpenZ enforces filesystem sandbox containment on all filesystem operations:
 
 * **Whitelisted Paths**:
   * The active workspace directory (configured dynamically).
   * The agent config directory `~/.openz/`.
   * The standard OS temporary files directory (e.g., `/tmp` or `C:\Users\...\AppData\Local\Temp`).
 * **Path Traversal Shield**: Paths are fully canonicalized recursively using Rust's `canonicalize` helper (resolving symlinks and parent directories `../`), shielding against tricks trying to escape the jail.
-* **Coverage**: Applies automatically to native tools executing writes (`write_file`, `patch_file`, `replace_lines`). Any out-of-workspace writes to other paths are blocked and prompt for manual security authorization.
+* **Full Coverage**: Applies automatically to all native filesystem tools: `read_file`, `write_file`, `list_dir`, `patch_file`, `replace_lines`, `find_files`, and `zenflow_edit`. Attempts to access paths outside the whitelisted directories are blocked with a path traversal error.
+
+---
+
+## 🌐 Network & Channel Security Hardening
+
+OpenZ includes robust network-layer security protections to mitigate common attack vectors:
+
+### 1. SSRF TOCTOU Mitigation
+* The `WebFetchTool` prevents DNS rebinding Time-of-Check to Time-of-Use (TOCTOU) attacks by resolving target hosts to IP addresses once, performing security checks on the IP, and pinning that exact IP for the duration of the HTTP connection.
+
+### 2. HTTP response limits
+* Outbound HTTP fetches in `WebFetchTool` enforce a strict 10MB body size limit on chunked/streamed transfers to prevent memory exhaustion DoS.
+
+### 3. WebSocket Rate Limiting & DoS Protection
+* The WebSocket channel sets explicit limits on frame sizes and incoming text messages (16MB).
+* In-flight events are protected with a per-client concurrency rate-limiting semaphore (1 concurrent task per client) to prevent server-side event flooding.
+
+### 4. WhatsApp Webhook Timing Attack Mitigation
+* WhatsApp HMAC signatures are validated using constant-time cryptographic comparison (`secure_compare`) to prevent side-channel timing attacks.
+* Axum webhooks are throttled with a concurrency limit semaphore (max 5 concurrent requests) to guard against webhook flood DoS.
 
 ---
 

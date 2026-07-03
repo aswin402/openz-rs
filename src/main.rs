@@ -93,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
         // Give in-flight tools up to 5 seconds to finish, then force exit
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         tracing::warn!("Forced exit after 5s graceful window");
+        let _ = crossterm::terminal::disable_raw_mode();
         std::process::exit(0);
     });
 

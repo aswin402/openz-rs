@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use rusqlite::{Connection, params};
 
-use super::db::{get_db_mutex, get_sqlite_connection, get_current_workspace};
+use super::db::{get_db_mutex, with_db, get_current_workspace};
 use super::embeddings::{get_embedding, cosine_similarity};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -119,15 +119,18 @@ impl Tool for StoreMemoryTool {
         let tags_json = serde_json::to_string(&tags)?;
 
         let _lock = get_db_mutex().lock().await;
-        let conn = get_sqlite_connection()?;
-        
-        conn.execute(
-            "INSERT INTO cognitive_memory (id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)",
-            params![id, text, embedding_json, timestamp, workspace, tags_json, importance, timestamp, decay_rate],
-        )?;
+        with_db(|conn| {
+            let tx = conn.transaction()?;
+            tx.execute(
+                "INSERT INTO cognitive_memory (id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)",
+                params![id, text, embedding_json, timestamp, workspace, tags_json, importance, timestamp, decay_rate],
+            )?;
 
-        let _ = prune_decayed_memories(&conn);
+            let _ = prune_decayed_memories(&tx);
+            tx.commit()?;
+            Ok(())
+        })?;
 
         Ok(json!({
             "status": "success",
@@ -195,33 +198,39 @@ impl Tool for RecallMemoryTool {
         let current_ws = get_current_workspace();
 
         let _lock = get_db_mutex().lock().await;
-        let conn = get_sqlite_connection()?;
+        let entries = with_db(|conn| {
+            let mut stmt = conn.prepare("SELECT id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate FROM cognitive_memory LIMIT 1000")?;
+            let mapped = stmt.query_map([], |row| {
+                let embedding_str: String = row.get(2)?;
+                let tags_str: String = row.get(5)?;
+                let embedding: Vec<f32> = serde_json::from_str(&embedding_str).unwrap_or_default();
+                let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+                
+                Ok(CognitiveMemoryEntry {
+                    id: row.get(0)?,
+                    text: row.get(1)?,
+                    embedding,
+                    timestamp: row.get(3)?,
+                    workspace: row.get(4)?,
+                    tags,
+                    importance: row.get(6)?,
+                    last_accessed: row.get(7)?,
+                    access_count: row.get(8)?,
+                    decay_rate: row.get(9)?,
+                })
+            })?;
 
-        let mut stmt = conn.prepare("SELECT id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate FROM cognitive_memory")?;
-        let rows = stmt.query_map([], |row| {
-            let embedding_str: String = row.get(2)?;
-            let tags_str: String = row.get(5)?;
-            let embedding: Vec<f32> = serde_json::from_str(&embedding_str).unwrap_or_default();
-            let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-            
-            Ok(CognitiveMemoryEntry {
-                id: row.get(0)?,
-                text: row.get(1)?,
-                embedding,
-                timestamp: row.get(3)?,
-                workspace: row.get(4)?,
-                tags,
-                importance: row.get(6)?,
-                last_accessed: row.get(7)?,
-                access_count: row.get(8)?,
-                decay_rate: row.get(9)?,
-            })
+            let mut collected = Vec::new();
+            for item in mapped {
+                collected.push(item?);
+            }
+            Ok(collected)
         })?;
 
         let now = chrono::Utc::now();
         let mut scored_results = Vec::new();
 
-        for entry in rows.flatten() {
+        for entry in entries {
             // Scope filter
             if scope == "workspace" && entry.workspace != current_ws {
                 continue;
@@ -262,12 +271,15 @@ impl Tool for RecallMemoryTool {
 
         // Update last_accessed and access_count for returned matches
         let now_str = now.to_rfc3339();
-        for (_, entry) in &selected_matches {
-            let _ = conn.execute(
-                "UPDATE cognitive_memory SET last_accessed = ?1, access_count = access_count + 1 WHERE id = ?2",
-                params![now_str, entry.id],
-            );
-        }
+        let _ = with_db(|conn| {
+            for (_, entry) in &selected_matches {
+                let _ = conn.execute(
+                    "UPDATE cognitive_memory SET last_accessed = ?1, access_count = access_count + 1 WHERE id = ?2",
+                    params![now_str, entry.id],
+                );
+            }
+            Ok(())
+        });
 
         let matches_val: Vec<Value> = selected_matches.into_iter()
             .map(|(score, entry)| {
@@ -319,28 +331,28 @@ impl Tool for ClearMemoryTool {
         let scope = arguments.get("scope").and_then(|v| v.as_str()).unwrap_or("workspace");
         
         let _lock = get_db_mutex().lock().await;
-        let conn = get_sqlite_connection()?;
-
-        if scope == "all" {
-            conn.execute("DELETE FROM cognitive_memory", [])?;
-            Ok(json!({
-                "status": "success",
-                "message": "All memories cleared successfully."
-            }))
-        } else if scope == "prune" {
-            let count = prune_decayed_memories(&conn)?;
-            Ok(json!({
-                "status": "success",
-                "message": format!("Pruned {} deeply decayed memories from the cognitive database.", count)
-            }))
-        } else {
-            let current_ws = get_current_workspace();
-            let count = conn.execute("DELETE FROM cognitive_memory WHERE workspace = ?", params![current_ws])?;
-            Ok(json!({
-                "status": "success",
-                "message": format!("Cleared {} memories associated with the current workspace.", count)
-            }))
-        }
+        with_db(|conn| {
+            if scope == "all" {
+                conn.execute("DELETE FROM cognitive_memory", [])?;
+                Ok(json!({
+                    "status": "success",
+                    "message": "All memories cleared successfully."
+                }))
+            } else if scope == "prune" {
+                let count = prune_decayed_memories(conn)?;
+                Ok(json!({
+                    "status": "success",
+                    "message": format!("Pruned {} deeply decayed memories from the cognitive database.", count)
+                }))
+            } else {
+                let current_ws = get_current_workspace();
+                let count = conn.execute("DELETE FROM cognitive_memory WHERE workspace = ?", params![current_ws])?;
+                Ok(json!({
+                    "status": "success",
+                    "message": format!("Cleared {} memories associated with the current workspace.", count)
+                }))
+            }
+        })
     }
 }
 
@@ -375,20 +387,21 @@ impl Tool for DeleteMemoryTool {
             .ok_or_else(|| anyhow!("Missing 'id' parameter"))?;
 
         let _lock = get_db_mutex().lock().await;
-        let conn = get_sqlite_connection()?;
-        let deleted = conn.execute("DELETE FROM cognitive_memory WHERE id = ?1", params![id])?;
+        with_db(|conn| {
+            let deleted = conn.execute("DELETE FROM cognitive_memory WHERE id = ?1", params![id])?;
 
-        if deleted == 0 {
-            Ok(json!({
-                "status": "not_found",
-                "message": format!("No memory found with ID '{}'", id)
-            }))
-        } else {
-            Ok(json!({
-                "status": "success",
-                "message": "Memory deleted successfully."
-            }))
-        }
+            if deleted == 0 {
+                Ok(json!({
+                    "status": "not_found",
+                    "message": format!("No memory found with ID '{}'", id)
+                }))
+            } else {
+                Ok(json!({
+                    "status": "success",
+                    "message": "Memory deleted successfully."
+                }))
+            }
+        })
     }
 }
 
@@ -437,28 +450,28 @@ impl Tool for UpdateMemoryTool {
         let embedding_json = serde_json::to_string(&new_embedding)?;
 
         let _lock = get_db_mutex().lock().await;
-        let conn = get_sqlite_connection()?;
-
-        if let Some(imp) = importance {
-            let updated = conn.execute(
-                "UPDATE cognitive_memory SET text = ?1, embedding = ?2, importance = ?3 WHERE id = ?4",
-                params![text, embedding_json, imp, id],
-            )?;
-            if updated == 0 {
-                Ok(json!({"status": "not_found", "message": format!("No memory found with ID '{}'", id)}))
+        with_db(|conn| {
+            if let Some(imp) = importance {
+                let updated = conn.execute(
+                    "UPDATE cognitive_memory SET text = ?1, embedding = ?2, importance = ?3 WHERE id = ?4",
+                    params![text, embedding_json, imp, id],
+                )?;
+                if updated == 0 {
+                    Ok(json!({"status": "not_found", "message": format!("No memory found with ID '{}'", id)}))
+                } else {
+                    Ok(json!({"status": "success", "message": "Memory updated successfully."}))
+                }
             } else {
-                Ok(json!({"status": "success", "message": "Memory updated successfully."}))
+                let updated = conn.execute(
+                    "UPDATE cognitive_memory SET text = ?1, embedding = ?2 WHERE id = ?3",
+                    params![text, embedding_json, id],
+                )?;
+                if updated == 0 {
+                    Ok(json!({"status": "not_found", "message": format!("No memory found with ID '{}'", id)}))
+                } else {
+                    Ok(json!({"status": "success", "message": "Memory updated successfully."}))
+                }
             }
-        } else {
-            let updated = conn.execute(
-                "UPDATE cognitive_memory SET text = ?1, embedding = ?2 WHERE id = ?3",
-                params![text, embedding_json, id],
-            )?;
-            if updated == 0 {
-                Ok(json!({"status": "not_found", "message": format!("No memory found with ID '{}'", id)}))
-            } else {
-                Ok(json!({"status": "success", "message": "Memory updated successfully."}))
-            }
-        }
+        })
     }
 }

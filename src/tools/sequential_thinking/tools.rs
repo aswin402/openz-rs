@@ -7,7 +7,7 @@ use chrono::Utc;
 
 use crate::tools::Tool;
 use super::store::{
-    ThoughtData, ToolResult, QualityReport, SessionInfo, ThoughtStore,
+    ThoughtData, ToolResult, ThoughtStore,
     MemoryThoughtStore, SqliteThoughtStore, get_db_path,
 };
 use super::engine::{

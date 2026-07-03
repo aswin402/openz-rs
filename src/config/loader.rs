@@ -157,5 +157,11 @@ pub fn save_config(config: &Config) -> Result<()> {
         return Err(e).context(format!("Failed to rename temporary config file to {:?}", path));
     }
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+
     Ok(())
 }

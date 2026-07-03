@@ -148,8 +148,35 @@ impl SessionManager {
         Ok(file)
     }
 
+    pub async fn acquire_lock_async(&self, key: &str) -> Result<File> {
+        let dir = self.dir.clone();
+        let path = self.lock_path(key);
+        let key_owned = key.to_string();
+        tokio::task::spawn_blocking(move || {
+            if !dir.exists() {
+                std::fs::create_dir_all(&dir)?;
+            }
+            let file = File::create(&path)
+                .with_context(|| format!("Failed to create lock file {:?}", path))?;
+            file.try_lock_exclusive()
+                .with_context(|| format!(
+                    "Session '{}' is locked by another openz process. \
+                     Only one agent can use a session at a time.",
+                    key_owned
+                ))?;
+            Ok(file)
+        }).await?
+    }
+
     pub fn get_or_create(&self, key: &str) -> Session {
         self.load(key).unwrap_or_else(|_| Session::new(key))
+    }
+
+    pub async fn get_or_create_async(&self, key: &str) -> Session {
+        match self.load_async(key).await {
+            Ok(session) => session,
+            Err(_) => Session::new(key),
+        }
     }
 
     pub fn load(&self, key: &str) -> Result<Session> {
@@ -162,9 +189,22 @@ impl SessionManager {
         Ok(session)
     }
 
-    pub fn save(&self, session: &Session) -> Result<()> {
-        if !self.dir.exists() {
-            fs::create_dir_all(&self.dir)?;
+    pub async fn load_async(&self, key: &str) -> Result<Session> {
+        let path = self.file_path(key);
+        tokio::task::spawn_blocking(move || {
+            let content = std::fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read session file at {:?}", path))?;
+            let session: Session = serde_json::from_str(&content)
+                .with_context(|| format!("Failed to parse session file at {:?}", path))?;
+            session.verify_hash_chain()?;
+            Ok(session)
+        }).await?
+    }
+
+    pub async fn save(&self, session: &Session) -> Result<()> {
+        if tokio::fs::metadata(&self.dir).await.is_err() {
+            tokio::fs::create_dir_all(&self.dir).await
+                .with_context(|| format!("Failed to create directory {:?}", self.dir))?;
         }
         let mut session_clone = session.clone();
         session_clone.populate_hashes();
@@ -173,9 +213,9 @@ impl SessionManager {
         
         // Atomic write: write to temp file then rename to prevent corruption
         let temp_path = path.with_extension("json.tmp");
-        fs::write(&temp_path, &content)
+        tokio::fs::write(&temp_path, &content).await
             .with_context(|| format!("Failed to write temp session file to {:?}", temp_path))?;
-        fs::rename(&temp_path, &path)
+        tokio::fs::rename(&temp_path, &path).await
             .with_context(|| format!("Failed to rename temp session file {:?} to {:?}", temp_path, path))?;
         Ok(())
     }

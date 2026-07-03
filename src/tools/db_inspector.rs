@@ -3,6 +3,22 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use rusqlite::Connection;
 
+fn normalize_sql(sql: &str) -> String {
+    let sql_upper = sql.to_uppercase();
+    sql_upper.chars()
+        .map(|c| if c.is_whitespace() {
+            ' '
+        } else {
+            match c {
+                '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}' => '\0', // zero-width chars
+                '\u{FF10}'..='\u{FF19}' => ((c as u32 - 0xFF10) as u8 + b'0') as char, // fullwidth digits → ASCII
+                _ => c,
+            }
+        })
+        .filter(|c| *c != '\0')
+        .collect()
+}
+
 pub struct DbInspectorTool;
 
 #[async_trait::async_trait]
@@ -67,23 +83,12 @@ impl Tool for DbInspectorTool {
                     .ok_or_else(|| anyhow!("Missing 'sql' parameter for query action"))?;
 
                 // Block dangerous SQL operations — use a strict blocklist
-                let sql_upper = sql.to_uppercase();
-                // Normalize: remove whitespace and common Unicode confusables
-                let normalized: String = sql_upper.chars()
-                    .filter(|c| !c.is_whitespace())
-                    .map(|c| match c {
-                        '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}' => '\0', // zero-width chars
-                        '\u{FF10}'..='\u{FF19}' => ((c as u32 - 0xFF10) as u8 + b'0') as char, // fullwidth digits → ASCII
-                        _ => c,
-                    })
-                    .filter(|c| *c != '\0')
-                    .collect();
-                let blocked_keywords = [
-                    "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE",
-                    "ATTACH", "DETACH", "PRAGMA", "REINDEX", "REPLACE",
-                    "VACUUM", "ANALYZE", "INTO", "UNION", "EXCEPT", "INTERSECT",
-                    "LOAD", "OVERWRITE", "CALL", "EXECUTE",
-                ];
+                let normalized = normalize_sql(sql);
+                static INSPECTOR_BLOCKLIST_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+                let re = INSPECTOR_BLOCKLIST_RE.get_or_init(|| {
+                    regex::Regex::new(r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|ATTACH|DETACH|PRAGMA|REINDEX|REPLACE|VACUUM|ANALYZE|INTO|UNION|EXCEPT|INTERSECT|LOAD|OVERWRITE|CALL|EXECUTE)\b").unwrap()
+                });
+
                 // Also block semicolons (stacked queries) and comment sequences.
                 // Allow a single trailing semicolon (normal SQL syntax) but block mid-query semicolons.
                 let trimmed_sql = sql.trim_end_matches(';').trim();
@@ -95,10 +100,8 @@ impl Tool for DbInspectorTool {
                 }
                 // Also block shell-like dot commands used by sqlite3 CLI
                 let blocked_dot = [".shell", ".import", ".output", ".read", ".system"];
-                for kw in &blocked_keywords {
-                    if normalized.contains(kw) {
-                        return Err(anyhow!("Only simple SELECT queries are allowed. Blocked keyword: {}", kw));
-                    }
+                if let Some(mat) = re.find(&normalized) {
+                    return Err(anyhow!("Only simple SELECT queries are allowed. Blocked keyword: {}", mat.as_str()));
                 }
                 for dot_cmd in &blocked_dot {
                     if sql.trim().starts_with(dot_cmd) {
@@ -199,19 +202,19 @@ impl Tool for DbWriteTool {
                 return Err(anyhow!("Blocked sqlite3 dot-command: {}", dot_cmd));
             }
         }
-        let sql_upper = sql.trim().to_uppercase();
-        let blocked_write_keywords = ["ATTACH", "DETACH", "LOAD"];
-        for kw in &blocked_write_keywords {
-            if sql_upper.starts_with(kw) {
-                return Err(anyhow!("Blocked SQL keyword for safety: {}", kw));
-            }
+        let normalized = normalize_sql(sql);
+        static WRITE_BLOCKLIST_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        let re = WRITE_BLOCKLIST_RE.get_or_init(|| {
+            regex::Regex::new(r"\b(ATTACH|DETACH|LOAD)\b").unwrap()
+        });
+        if let Some(mat) = re.find(&normalized) {
+            return Err(anyhow!("Blocked SQL keyword for safety: {}", mat.as_str()));
         }
 
         let conn = Connection::open(&db_path)
             .map_err(|e| anyhow!("Failed to open database: {}", e))?;
         
-        let changes = conn.execute_batch(sql)
-            .map(|_| conn.changes())
+        let changes = conn.execute(sql, [])
             .map_err(|e| anyhow!("Failed to execute mutation query: {}", e))?;
 
         Ok(json!({

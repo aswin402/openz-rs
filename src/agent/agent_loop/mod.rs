@@ -67,6 +67,9 @@ static SESSION_LOCKS: std::sync::OnceLock<std::sync::Mutex<std::collections::Has
 fn get_session_lock(session_key: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
     let map = SESSION_LOCKS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
     let mut guard = map.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.len() > 100 {
+        guard.retain(|_, arc| std::sync::Arc::strong_count(arc) > 1);
+    }
     guard.entry(session_key.to_string())
         .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
         .clone()

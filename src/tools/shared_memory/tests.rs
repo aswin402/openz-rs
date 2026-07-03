@@ -44,6 +44,9 @@ async fn test_shared_memory_workflow() -> Result<()> {
     let recall_tool = RecallMemoryTool;
     let clear_tool = ClearMemoryTool;
 
+    // Clear any existing memories from previous tests
+    let _ = clear_tool.call(&json!({ "scope": "all" })).await?;
+
     // 1. Initial recall should return empty list
     let res = recall_tool.call(&json!({
         "query": "something",
@@ -93,8 +96,9 @@ async fn test_shared_memory_workflow() -> Result<()> {
 
     // Test decay pruning directly
     {
-        let conn = get_sqlite_connection()?;
-        let count = prune_decayed_memories(&conn)?;
+        let count = with_db(|conn| {
+            prune_decayed_memories(conn)
+        })?;
         assert_eq!(count, 0); // No memory should decay yet
     }
 
@@ -147,6 +151,8 @@ async fn test_shared_memory_consolidation() -> Result<()> {
     std::env::set_var("OPENZ_CONFIG_DIR", &temp_dir);
 
     let store_tool = StoreMemoryTool;
+    let clear_tool = ClearMemoryTool;
+    let _ = clear_tool.call(&json!({ "scope": "all" })).await?;
 
     // 1. Store five entries (at least 5 required for consolidation to run)
     let _ = store_tool.call(&json!({
@@ -185,14 +191,16 @@ async fn test_shared_memory_consolidation() -> Result<()> {
     assert!(res.is_ok());
 
     // 4. Verify that SQLite database has 4 entries (5 - 2 + 1)
-    let conn = get_sqlite_connection()?;
-    let mut stmt = conn.prepare("SELECT COUNT(*) FROM cognitive_memory")?;
-    let count: i64 = stmt.query_row([], |r| r.get(0))?;
-    assert_eq!(count, 4);
+    let (count, text_found) = with_db(|conn| {
+        let mut stmt = conn.prepare("SELECT COUNT(*) FROM cognitive_memory")?;
+        let count: i64 = stmt.query_row([], |r| r.get(0))?;
 
-    // Verify that the consolidated text is present
-    let mut stmt_check = conn.prepare("SELECT text FROM cognitive_memory WHERE text LIKE '%Consolidated Fact%'")?;
-    let text_found: String = stmt_check.query_row([], |r| r.get(0))?;
+        // Verify that the consolidated text is present
+        let mut stmt_check = conn.prepare("SELECT text FROM cognitive_memory WHERE text LIKE '%Consolidated Fact%'")?;
+        let text_found: String = stmt_check.query_row([], |r| r.get(0))?;
+        Ok((count, text_found))
+    })?;
+    assert_eq!(count, 4);
     assert!(text_found.contains("Consolidated Fact: Resolve cargo check"));
 
     // Cleanup

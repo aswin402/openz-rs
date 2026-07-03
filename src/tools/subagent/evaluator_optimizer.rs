@@ -6,7 +6,7 @@ use crate::session::SessionManager;
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use serde_json::Value;
-use super::{CancellationToken, DELEGATION_DEPTH};
+use super::CancellationToken;
 use super::delegate_profile::DelegateProfileTool;
 
 pub struct EvaluatorOptimizerLoopTool {

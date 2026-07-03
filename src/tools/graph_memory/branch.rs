@@ -46,7 +46,12 @@ impl Tool for CreateDatabaseBranchTool {
         }
         let branch_id = arguments["branchId"].as_str().unwrap();
 
-        let active = get_active_branch().lock().map_err(|e| anyhow!("Branch lock error: {}", e))?;
+        // Lock static db connection first
+        let db_mutex = db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()));
+        let mut db_guard = db_mutex.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+
+        // Then lock active branch state
+        let mut active = get_active_branch().lock().map_err(|e| anyhow!("Branch lock error: {}", e))?;
         if active.is_some() {
             return Err(anyhow!("A database branch is already active. Commit or rollback first."));
         }
@@ -55,53 +60,25 @@ impl Tool for CreateDatabaseBranchTool {
         let dst = branch_db_path(branch_id);
 
         // Flush WAL before copying
-        if let Ok(mtx) = db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap())).lock() {
-            let _ = mtx.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-        }
-        drop(active);
+        let _ = db_guard.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+
         std::thread::sleep(std::time::Duration::from_millis(10));
 
         // If src doesn't exist yet (e.g. in tests), create a fresh DB with schema
         if !src.exists() {
-            let fresh = init_db();
+            let fresh = init_db()?;
             drop(fresh);
         }
 
         std::fs::copy(&src, &dst)?;
 
-        let mut active = get_active_branch().lock().map_err(|e| anyhow!("Branch lock error: {}", e))?;
         // Reset the static DB connection to point to branch file
         let branch_conn = Connection::open(&dst)?;
-        branch_conn.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
-             CREATE TABLE IF NOT EXISTS graph_nodes (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 name TEXT NOT NULL,
-                 entity_type TEXT NOT NULL,
-                 observations TEXT DEFAULT '[]',
-                 user_id TEXT NOT NULL DEFAULT '*',
-                 session_id TEXT NOT NULL DEFAULT '*',
-                 agent_id TEXT NOT NULL DEFAULT '*',
-                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                 UNIQUE(name, user_id, session_id, agent_id)
-             );
-             CREATE TABLE IF NOT EXISTS graph_edges (
-                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 from_name TEXT NOT NULL,
-                 to_name TEXT NOT NULL,
-                 relation_type TEXT NOT NULL,
-                 user_id TEXT NOT NULL DEFAULT '*',
-                 session_id TEXT NOT NULL DEFAULT '*',
-                 agent_id TEXT NOT NULL DEFAULT '*',
-                 valid_until TEXT DEFAULT NULL,
-                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
-             );
-             CREATE INDEX IF NOT EXISTS idx_graph_nodes_scope ON graph_nodes(user_id, session_id, agent_id);
-             CREATE INDEX IF NOT EXISTS idx_graph_edges_scope ON graph_edges(user_id, session_id, agent_id);
-             CREATE INDEX IF NOT EXISTS idx_graph_edges_active ON graph_edges(valid_until);"
-        ).ok();
-        *db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()))
-            .lock().map_err(|e| anyhow!("Lock error: {}", e))? = branch_conn;
+        branch_conn.execute_batch(&format!(
+            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; {}",
+            SCHEMA_DDL
+        ))?;
+        *db_guard = branch_conn;
 
         *active = Some(branch_id.to_string());
         Ok(json!({ "status": format!("Created branch: {}", branch_id) }))
@@ -125,6 +102,11 @@ impl Tool for CommitDatabaseBranchTool {
     }
 
     async fn call(&self, _arguments: &Value) -> Result<Value> {
+        // Lock static db connection first
+        let db_mutex = db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()));
+        let mut db_guard = db_mutex.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+
+        // Then lock active branch state
         let mut active = get_active_branch().lock().map_err(|e| anyhow!("Branch lock error: {}", e))?;
         let branch_id = active.as_ref()
             .ok_or_else(|| anyhow!("No active branch to commit."))?
@@ -135,12 +117,10 @@ impl Tool for CommitDatabaseBranchTool {
 
         // Switch DB to in-memory to release file locks
         // Flush WAL first
-        if let Ok(mtx) = db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap())).lock() {
-            let _ = mtx.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-        }
+        let _ = db_guard.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+
         let mem_conn = Connection::open_in_memory()?;
-        *db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()))
-            .lock().map_err(|e| anyhow!("Lock error: {}", e))? = mem_conn;
+        *db_guard = mem_conn;
 
         // Copy branch file over main db
         std::fs::copy(&branch_path, &main_path)?;
@@ -151,9 +131,8 @@ impl Tool for CommitDatabaseBranchTool {
 
         // Restore connection to updated main
         let main_conn = Connection::open(&main_path)?;
-        main_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;").ok();
-        *db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()))
-            .lock().map_err(|e| anyhow!("Lock error: {}", e))? = main_conn;
+        main_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
+        *db_guard = main_conn;
 
         *active = None;
         Ok(json!({ "status": format!("Committed branch: {}", branch_id) }))
@@ -177,6 +156,11 @@ impl Tool for RollbackDatabaseBranchTool {
     }
 
     async fn call(&self, _arguments: &Value) -> Result<Value> {
+        // Lock static db connection first
+        let db_mutex = db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()));
+        let mut db_guard = db_mutex.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
+
+        // Then lock active branch state
         let mut active = get_active_branch().lock().map_err(|e| anyhow!("Branch lock error: {}", e))?;
         let branch_id = active.as_ref()
             .ok_or_else(|| anyhow!("No active branch to rollback."))?
@@ -187,9 +171,8 @@ impl Tool for RollbackDatabaseBranchTool {
         // Restore connection back to main database
         let main_path = get_db_path();
         let main_conn = Connection::open(&main_path)?;
-        main_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;").ok();
-        *db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()))
-            .lock().map_err(|e| anyhow!("Lock error: {}", e))? = main_conn;
+        main_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
+        *db_guard = main_conn;
 
         // Remove branch file
         if branch_path.exists() {

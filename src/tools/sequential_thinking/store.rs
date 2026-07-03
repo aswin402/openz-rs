@@ -133,10 +133,24 @@ impl MemoryThoughtStore {
 
 impl ThoughtStore for MemoryThoughtStore {
     fn save_thought(&mut self, session_id: &str, thought: &ThoughtData) -> Result<(), String> {
+        let is_new = !self.sessions.contains_key(session_id);
         self.sessions.entry(session_id.to_string()).or_default().push(thought.clone());
         let now = Utc::now();
         self.created_at.entry(session_id.to_string()).or_insert(now);
         self.updated_at.insert(session_id.to_string(), now);
+
+        if is_new && self.sessions.len() > 100 {
+            let oldest_key = self.updated_at
+                .iter()
+                .filter(|&(key, _)| key != session_id)
+                .min_by_key(|&(_, time)| time)
+                .map(|(key, _)| key.clone());
+            if let Some(key) = oldest_key {
+                self.sessions.remove(&key);
+                self.created_at.remove(&key);
+                self.updated_at.remove(&key);
+            }
+        }
         Ok(())
     }
     fn load_session(&self, session_id: &str) -> Result<Vec<ThoughtData>, String> {
@@ -171,7 +185,8 @@ pub struct SqliteThoughtStore {
 
 impl SqliteThoughtStore {
     pub fn new(conn: Connection) -> Result<Self, String> {
-        conn.execute("PRAGMA foreign_keys = ON;", []).map_err(|e| e.to_string())?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys = ON;")
+            .map_err(|e| e.to_string())?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY, created_at TEXT NOT NULL,

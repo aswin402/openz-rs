@@ -61,6 +61,17 @@ impl Tool for SetWorkingMemoryTool {
         let scoped = working_scoped_key(key, &uid, &sid, &aid);
 
         let mut map = working_memory_static().lock().map_err(|e| anyhow!("Working memory lock error: {}", e))?;
+        
+        // Eviction limit to prevent unbounded in-memory growth
+        if !map.contains_key(&scoped) && map.len() >= 1000 {
+            let oldest_key = map.iter()
+                .min_by_key(|&(_, entry)| entry.created_at)
+                .map(|(k, _)| k.clone());
+            if let Some(k) = oldest_key {
+                map.remove(&k);
+            }
+        }
+
         map.insert(scoped, WorkingEntry {
             value: value.to_string(),
             created_at: std::time::Instant::now(),

@@ -23,6 +23,7 @@ pub struct WhatsAppChannel {
     phone_number_id: String,
     agent_loop: Arc<AgentLoop>,
     client: Client,
+    concurrency_limit: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Clone)]
@@ -33,6 +34,7 @@ struct WhatsAppState {
     verify_token: String,
     app_secret: String,
     client: Client,
+    concurrency_limit: Arc<tokio::sync::Semaphore>,
 }
 
 impl WhatsAppChannel {
@@ -46,6 +48,7 @@ impl WhatsAppChannel {
                 .timeout(std::time::Duration::from_secs(15))
                 .build()
                 .unwrap_or_default(),
+            concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
         }
     }
 }
@@ -112,6 +115,7 @@ impl super::Channel for WhatsAppChannel {
             verify_token,
             app_secret,
             client: self.client.clone(),
+            concurrency_limit: self.concurrency_limit.clone(),
         };
 
         let app = Router::new()
@@ -181,7 +185,7 @@ async fn receive_webhook(
                     let result = mac.finalize();
                     hex::encode(result.into_bytes())
                 };
-                if computed != expected_sig {
+                if !super::secure_compare(&computed, expected_sig) {
                     tracing::warn!("WhatsApp webhook signature mismatch — rejecting request");
                     return StatusCode::FORBIDDEN.into_response();
                 }
@@ -216,7 +220,12 @@ async fn receive_webhook(
                                 let text = body.to_string();
                                 let from_str = from.to_string();
 
+                                let concurrency_limit = state.concurrency_limit.clone();
                                 tokio::spawn(async move {
+                                    let _permit = match concurrency_limit.acquire().await {
+                                        Ok(p) => p,
+                                        Err(_) => return,
+                                    };
                                     let session_key = format!("whatsapp:{}", from_str);
                                     let run_res = agent.run(&text, &session_key).await;
                                     
@@ -277,6 +286,7 @@ mod tests {
             verify_token: "my_test_token".to_string(),
             app_secret: String::new(),
             client: reqwest::Client::new(),
+            concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
         };
 
         let response = verify_webhook(Query(params), State(state)).await.into_response();
@@ -306,6 +316,7 @@ mod tests {
             verify_token: "my_test_token".to_string(),
             app_secret: String::new(),
             client: reqwest::Client::new(),
+            concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
         };
 
         let response = verify_webhook(Query(params), State(state)).await.into_response();

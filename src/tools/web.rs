@@ -2,6 +2,7 @@ use crate::tools::Tool;
 use anyhow::{Result, anyhow};
 use reqwest::Client;
 use regex::Regex;
+use futures_util::StreamExt;
 use scraper::Html;
 use scraper::node::Node;
 use std::time::Duration;
@@ -46,7 +47,7 @@ pub fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
     }
 }
 
-pub fn validate_url_sync(url: &reqwest::Url) -> Result<()> {
+pub fn validate_url_sync(url: &reqwest::Url) -> Result<std::net::IpAddr> {
     let host = url.host_str().ok_or_else(|| anyhow!("URL has no host"))?.to_lowercase();
 
     // Block non-HTTP schemes
@@ -64,6 +65,7 @@ pub fn validate_url_sync(url: &reqwest::Url) -> Result<()> {
         if !is_safe_ip(&ip) {
             return Err(anyhow!("SSRF blocked: private/reserved IP addresses are not allowed"));
         }
+        return Ok(ip);
     }
 
     // DNS resolution check
@@ -82,19 +84,20 @@ pub fn validate_url_sync(url: &reqwest::Url) -> Result<()> {
         }
     }
 
-    if resolved_ips.is_empty() {
-        return Err(anyhow!("SSRF blocked: hostname '{}' could not be resolved to any IP", host));
-    }
+    let first_ip = resolved_ips.first().copied().ok_or_else(|| {
+        anyhow!("SSRF blocked: hostname '{}' could not be resolved to any IP", host)
+    })?;
 
-    Ok(())
+    Ok(first_ip)
 }
 
-pub async fn validate_url(url: &str) -> Result<()> {
+pub async fn validate_url(url: &str) -> Result<std::net::IpAddr> {
     let parsed = reqwest::Url::parse(url).map_err(|e| anyhow!("Invalid URL: {}", e))?;
     validate_url_sync(&parsed)
 }
 
 pub struct WebFetchTool {
+    #[allow(dead_code)]
     client: Client,
 }
 
@@ -180,9 +183,29 @@ impl Tool for WebFetchTool {
         let url_str = arguments.get("url").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'url' argument"))?;
 
-        validate_url(url_str).await?;
+        let resolved_ip = validate_url(url_str).await?;
 
-        let res = self.client.get(url_str)
+        // Parse host and port to build the resolved Client
+        let parsed_url = reqwest::Url::parse(url_str).map_err(|e| anyhow!("Invalid URL: {}", e))?;
+        let host = parsed_url.host_str().ok_or_else(|| anyhow!("URL has no host"))?.to_lowercase();
+        let port = parsed_url.port_or_known_default().unwrap_or(80);
+
+        let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+            if validate_url_sync(attempt.url()).is_err() {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        });
+
+        let socket_addr = std::net::SocketAddr::new(resolved_ip, port);
+        let client = Client::builder()
+            .use_rustls_tls()
+            .redirect(redirect_policy)
+            .resolve(&host, socket_addr)
+            .build()?;
+
+        let res = client.get(url_str)
             .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
             .timeout(Duration::from_secs(30))
             .send()
@@ -193,13 +216,23 @@ impl Tool for WebFetchTool {
         }
 
         // Check Content-Length to avoid downloading enormous pages
-        const MAX_RESPONSE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+        const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10MB
         if let Some(content_length) = res.content_length() {
-            if content_length > MAX_RESPONSE_SIZE {
+            if content_length > MAX_RESPONSE_SIZE as u64 {
                 return Err(anyhow!("Response too large ({} bytes, max {} bytes)", content_length, MAX_RESPONSE_SIZE));
             }
         }
-        let html = res.text().await?;
+
+        let mut stream = res.bytes_stream();
+        let mut body_bytes = Vec::new();
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result?;
+            if body_bytes.len() + chunk.len() > MAX_RESPONSE_SIZE {
+                return Err(anyhow!("Response too large (exceeds max {} bytes)", MAX_RESPONSE_SIZE));
+            }
+            body_bytes.extend_from_slice(&chunk);
+        }
+        let html = String::from_utf8_lossy(&body_bytes).into_owned();
 
         let result_text = {
             // Parse HTML DOM using scraper

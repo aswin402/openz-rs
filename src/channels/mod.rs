@@ -397,6 +397,24 @@ pub async fn fetch_provider_models(provider_name: &str, config: &crate::config::
     }
 }
 
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut accum = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        accum |= x ^ y;
+    }
+    accum == 0
+}
+
+pub fn secure_compare(a: &str, b: &str) -> bool {
+    use sha2::{Sha256, Digest};
+    let hash_a = Sha256::digest(a.as_bytes());
+    let hash_b = Sha256::digest(b.as_bytes());
+    constant_time_eq(&hash_a, &hash_b)
+}
+
 pub mod websocket;
 pub mod cli;
 pub mod telegram;

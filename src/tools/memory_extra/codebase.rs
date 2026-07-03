@@ -1,7 +1,6 @@
 use crate::tools::graph_memory::{scope_from_args, with_db};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
-use chrono::Utc;
 use regex::Regex;
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
@@ -276,16 +275,19 @@ impl Tool for IndexCodebaseTool {
 
         let start = std::time::Instant::now();
         let count = with_db(|conn| {
+            let tx = conn.unchecked_transaction()?;
             // Clear existing data for this scope first
-            conn.execute(
+            tx.execute(
                 "DELETE FROM code_calls WHERE caller_id IN (SELECT element_id FROM code_elements WHERE (user_id = ?1 OR user_id = '*') AND (session_id = ?2 OR session_id = '*') AND (agent_id = ?3 OR agent_id = '*'))",
                 params![user_id, session_id, agent_id],
             )?;
-            conn.execute(
+            tx.execute(
                 "DELETE FROM code_elements WHERE (user_id = ?1 OR user_id = '*') AND (session_id = ?2 OR session_id = '*') AND (agent_id = ?3 OR agent_id = '*')",
                 params![user_id, session_id, agent_id],
             )?;
-            scan_and_index(Path::new(&scan_path), &user_id, &session_id, &agent_id, conn)
+            let count = scan_and_index(Path::new(&scan_path), &user_id, &session_id, &agent_id, &tx)?;
+            tx.commit()?;
+            Ok(count)
         })?;
 
         Ok(json!({

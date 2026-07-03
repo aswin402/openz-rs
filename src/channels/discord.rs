@@ -123,14 +123,19 @@ impl super::Channel for DiscordChannel {
                 }
                 Err(e) => {
                     retry_count += 1;
+                    let err_msg = if self.bot_token.is_empty() {
+                        e.to_string()
+                    } else {
+                        e.to_string().replace(&self.bot_token, "[REDACTED]")
+                    };
                     if retry_count >= MAX_RETRIES {
                         if !silent {
-                            eprintln!("Discord gateway failed after {} retries: {}. Giving up.", MAX_RETRIES, e);
+                            eprintln!("Discord gateway failed after {} retries: {}. Giving up.", MAX_RETRIES, err_msg);
                         }
                         break;
                     }
                     if !silent {
-                        eprintln!("Discord gateway connection error: {}. Reconnecting in {}s... (attempt {}/{})", e, backoff.as_secs(), retry_count, MAX_RETRIES);
+                        eprintln!("Discord gateway connection error: {}. Reconnecting in {}s... (attempt {}/{})", err_msg, backoff.as_secs(), retry_count, MAX_RETRIES);
                     }
                     tokio::select! {
                         _ = sleep(backoff) => {}
@@ -191,7 +196,7 @@ async fn connect_and_listen(
     let heartbeat_handle = tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_millis(heartbeat_interval)).await;
-            let seq = last_sequence_clone.load(std::sync::atomic::Ordering::Relaxed);
+            let seq = last_sequence_clone.load(std::sync::atomic::Ordering::Acquire);
             let d_val = if seq == -1 {
                 serde_json::Value::Null
             } else {
@@ -256,7 +261,7 @@ async fn connect_and_listen(
 
         if let Ok(msg) = serde_json::from_str::<GatewayMessage>(&text) {
             if let Some(s) = msg.s {
-                last_sequence.store(s, std::sync::atomic::Ordering::Relaxed);
+                last_sequence.store(s, std::sync::atomic::Ordering::Release);
             }
             if msg.op == 0 {
                 if let Some(ref event_type) = msg.t {

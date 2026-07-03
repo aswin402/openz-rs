@@ -1,6 +1,5 @@
 use crate::providers::{LLMProvider, LLMResponse, GenerationSettings, ToolCallRequest};
 use crate::session::Message;
-use crate::agent::AgentError;
 use crate::providers::circuit_breaker::{CircuitBreaker, retry_with_backoff};
 use anyhow::Result;
 use reqwest::Client;
@@ -285,7 +284,7 @@ impl LLMProvider for OpenAIProvider {
         ).await?;
 
         let response: OpenAIResponse = response.json().await?;
-        let choice = response.choices.first().ok_or_else(|| AgentError::provider("openai", "No choices returned"))?;
+        let choice = response.choices.first().ok_or_else(|| anyhow::anyhow!("openai provider error: No choices returned"))?;
         
         let mut tool_calls: Vec<ToolCallRequest> = choice.message.tool_calls.as_ref().map(|calls| {
             calls.iter().map(|call| {
@@ -364,24 +363,45 @@ impl LLMProvider for OpenAIProvider {
             format!("{}/chat/completions", base)
         };
 
-        let mut req = self.client.post(&url);
-        if is_azure {
-            req = req.header("api-key", &self.api_key);
-        } else {
-            req = req.bearer_auth(&self.api_key);
-        }
+        // Clone state for retry closure
+        let client = self.client.clone();
+        let api_key = self.api_key.clone();
+        let url_for_retry = url.clone();
+        let body_for_retry = serde_json::to_value(&body).map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
 
-        let res = req
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("Request failed: {e}"))?;
-
-        if !res.status().is_success() {
-            let status = res.status().as_u16();
-            let error_text = res.text().await.unwrap_or_default();
-            anyhow::bail!("OpenAI API error status {}: {}", status, error_text);
-        }
+        let res = retry_with_backoff(
+            &self.breaker,
+            3,
+            Duration::from_secs(1),
+            Duration::from_secs(30),
+            "openai",
+            || {
+                let client = client.clone();
+                let api_key = api_key.clone();
+                let url = url_for_retry.clone();
+                let json_body = body_for_retry.clone();
+                async move {
+                    let mut req = client.post(&url);
+                    if is_azure {
+                        req = req.header("api-key", &api_key);
+                    } else {
+                        req = req.bearer_auth(&api_key);
+                    }
+                    let res = req
+                        .json(&json_body)
+                        .send()
+                        .await
+                        .map_err(|e| (0u16, format!("Network error: {e}")))?;
+                    if !res.status().is_success() {
+                        let status = res.status().as_u16();
+                        let error_text = res.text().await.unwrap_or_default();
+                        Err((status, error_text))
+                    } else {
+                        Ok(res)
+                    }
+                }
+            },
+        ).await?;
 
         let byte_stream = res.bytes_stream();
         use futures_util::StreamExt;

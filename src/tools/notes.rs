@@ -1,5 +1,5 @@
 use crate::tools::Tool;
-use crate::tools::shared_memory::{get_db_mutex, get_sqlite_connection, get_current_workspace, get_embedding, CognitiveMemoryEntry};
+use crate::tools::shared_memory::{get_db_mutex, with_db, get_current_workspace, get_embedding, CognitiveMemoryEntry};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::fs;
@@ -131,20 +131,21 @@ impl Tool for IndexNotesTool {
 
         if !entries_to_add.is_empty() {
             let _lock = get_db_mutex().lock().await;
-            let conn = get_sqlite_connection()?;
-
-            // Use a transaction for batch insert performance
-            conn.execute_batch("BEGIN TRANSACTION")?;
-            for entry in entries_to_add {
-                let embedding_json = serde_json::to_string(&entry.embedding)?;
-                let tags_json = serde_json::to_string(&entry.tags)?;
-                conn.execute(
-                    "INSERT OR REPLACE INTO cognitive_memory (id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                    params![entry.id, entry.text, embedding_json, entry.timestamp, entry.workspace, tags_json, entry.importance, entry.last_accessed, entry.access_count, entry.decay_rate],
-                )?;
-            }
-            conn.execute_batch("COMMIT")?;
+            with_db(|conn| {
+                // Use a transaction for batch insert performance
+                conn.execute_batch("BEGIN TRANSACTION")?;
+                for entry in entries_to_add {
+                    let embedding_json = serde_json::to_string(&entry.embedding)?;
+                    let tags_json = serde_json::to_string(&entry.tags)?;
+                    conn.execute(
+                        "INSERT OR REPLACE INTO cognitive_memory (id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                        params![entry.id, entry.text, embedding_json, entry.timestamp, entry.workspace, tags_json, entry.importance, entry.last_accessed, entry.access_count, entry.decay_rate],
+                    )?;
+                }
+                conn.execute_batch("COMMIT")?;
+                Ok(())
+            })?;
         }
 
         Ok(json!({
