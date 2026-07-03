@@ -398,6 +398,31 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
+### v0.0.30 (Latest Release)
+*   **Feature: Integrated SearchXyz Tool Suite (HIGH)**:
+    *   Fully integrated the `searchxyz` crate into the Cargo workspace.
+    *   Wrapped all 15 tools from `searchxyz` as native OpenZ tools, prefix-registered under `searchxyz_`:
+        *   `searchxyz_search_web`: Web search dispatcher.
+        *   `searchxyz_read_url`: Document/media/git repo parser.
+        *   `searchxyz_search_and_read`: Multi-step web search and crawl.
+        *   `searchxyz_recall`: Semantic & keyword lookup.
+        *   `searchxyz_list_sources`: Local document source lister.
+        *   `searchxyz_deep_research`: Recursive multi-query crawler & report compiler.
+        *   `searchxyz_index_content`: Custom text manual indexer.
+        *   `searchxyz_site_map`: Fast sitemap/tree crawl discovery.
+        *   `searchxyz_index_relationship`: Knowledge Graph node insertion.
+        *   `searchxyz_query_graph`: Graph query & traversal.
+        *   `searchxyz_read_github_repo`: Repository codebase cloner & indexer.
+        *   `searchxyz_export_research`: Portable JSON metrics/doc exporter.
+        *   `searchxyz_import_research`: JSON bundle importer.
+        *   `searchxyz_delete_source`: URL-based source eviction.
+        *   `searchxyz_clear_index`: Clear all documents and Graph memory.
+*   **Maintenance & Testing**:
+    *   Added `rmcp` and `schemars` dependencies to the workspace root `Cargo.toml`.
+    *   Wiped local package/registry cache to resolve resolving and download contentions.
+    *   Implemented `test_searchxyz_tools_metadata` unit tests verifying wrapper registry.
+    *   Bumped version to `v0.0.30`. All 201 native tests and 38 integrated `searchxyz` tests passing.
+
 ### v0.0.29 (Latest Release)
 *   **Security: SSRF & timing attack mitigations (HIGH)**:
     *   Implemented constant-time WhatsApp HMAC signature validation in `src/channels/whatsapp.rs` to protect webhook endpoints from timing attacks.

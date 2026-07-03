@@ -1,9 +1,13 @@
 [package]
 name = "openz"
-version = "0.0.29"
+version = "0.0.30"
 edition = "2021"
 
 [workspace]
+members = [
+    ".",
+    "tools/searchxyz"
+]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -71,6 +75,12 @@ oxc_syntax = "0.30.0"
 libc = "0.2"
 mermaid-rs-renderer = "0.2.2"
 wavyte = "0.2.1"
+tantivy = "0.22"
+governor = "0.8"
+lru = "0.12"
+rmcp = { version = "1.7.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
+schemars = "1.2"
+searchxyz = { path = "tools/searchxyz" }
 
 
 [build-dependencies]

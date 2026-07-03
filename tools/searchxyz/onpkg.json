@@ -1,0 +1,119 @@
+{
+  "agent_instructions": {
+    "active_skills": [
+      "rust.md"
+    ],
+    "docs_directory": "onpkg_docs/"
+  },
+  "architecture": {
+    "entrypoint": "src/main.rs"
+  },
+  "packages": {
+    "added_by_agent": [],
+    "core": [
+      "anyhow",
+      "async-trait",
+      "axum",
+      "chromiumoxide",
+      "chrono",
+      "clap",
+      "dirs",
+      "ego-tree",
+      "fastembed",
+      "futures",
+      "governor",
+      "lopdf",
+      "lru",
+      "openssl",
+      "openssl-sys",
+      "pdf-extract",
+      "rand",
+      "reqwest",
+      "rmcp",
+      "schemars",
+      "scraper",
+      "serde",
+      "serde_json",
+      "tantivy",
+      "thiserror",
+      "tokio",
+      "toml",
+      "tracing",
+      "tracing-subscriber",
+      "url"
+    ]
+  },
+  "project": {
+    "name": "searchxyz",
+    "package_manager": "cargo",
+    "runtime": "rust",
+    "stack": "rust-cli"
+  },
+  "scripts": {
+    "build": "cargo build",
+    "dev": "cargo run",
+    "test": "cargo test"
+  },
+  "sources": {
+    "directories": [
+      ".fastembed_cache/models--Xenova--bge-small-en-v1.5/snapshots/ea104dacec62c0de699686887e3f920caeb4f3e3",
+      "docs",
+      "src",
+      "src/cache",
+      "src/config",
+      "src/crawler",
+      "src/error",
+      "src/extractor",
+      "src/graph",
+      "src/index",
+      "src/pipeline",
+      "src/search",
+      "src/tools"
+    ],
+    "file_patterns": [
+      "*.json",
+      "*.md",
+      "*.rs",
+      "*.toml"
+    ],
+    "files": [
+      ".fastembed_cache/models--Xenova--bge-small-en-v1.5/snapshots/ea104dacec62c0de699686887e3f920caeb4f3e3/config.json",
+      ".fastembed_cache/models--Xenova--bge-small-en-v1.5/snapshots/ea104dacec62c0de699686887e3f920caeb4f3e3/special_tokens_map.json",
+      ".fastembed_cache/models--Xenova--bge-small-en-v1.5/snapshots/ea104dacec62c0de699686887e3f920caeb4f3e3/tokenizer.json",
+      ".fastembed_cache/models--Xenova--bge-small-en-v1.5/snapshots/ea104dacec62c0de699686887e3f920caeb4f3e3/tokenizer_config.json",
+      "CHANGELOG.md",
+      "Cargo.toml",
+      "README.md",
+      "docs/core.md",
+      "docs/idea.md",
+      "docs/implementation.md",
+      "docs/prd.md",
+      "docs/research.md",
+      "docs/spec.md",
+      "docs/todo.md",
+      "src/cache/mod.rs",
+      "src/config/mod.rs",
+      "src/crawler/fast_spider.rs",
+      "src/crawler/fingerprint.rs",
+      "src/crawler/github.rs",
+      "src/crawler/headless.rs",
+      "src/crawler/mod.rs",
+      "src/crawler/sitemap.rs",
+      "src/crawler/spider.rs",
+      "src/crawler/youtube.rs",
+      "src/error/mod.rs",
+      "src/extractor/mod.rs",
+      "src/graph/mod.rs",
+      "src/index/mod.rs",
+      "src/main.rs",
+      "src/pipeline/mod.rs",
+      "src/search/bing.rs",
+      "src/search/brave.rs",
+      "src/search/duckduckgo.rs",
+      "src/search/google.rs",
+      "src/search/mod.rs",
+      "src/search/searxng.rs",
+      "src/tools/mod.rs"
+    ]
+  }
+}

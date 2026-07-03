@@ -41,7 +41,8 @@
     "tools": [
       "svg_animator (create_animated_svg)",
       "image_generator (generate_image)",
-      "video_generator (generate_video)"
+      "video_generator (generate_video)",
+      "searchxyz (searchxyz_search_web, searchxyz_read_url, searchxyz_search_and_read, searchxyz_recall, searchxyz_list_sources, searchxyz_deep_research, searchxyz_index_content, searchxyz_site_map, searchxyz_index_relationship, searchxyz_query_graph, searchxyz_read_github_repo, searchxyz_export_research, searchxyz_import_research, searchxyz_delete_source, searchxyz_clear_index)"
     ],
     "core": [
       "ab_glyph",
@@ -63,6 +64,7 @@
       "fastembed",
       "fs2",
       "futures-util",
+      "governor",
       "hex",
       "hmac",
       "html2md",
@@ -72,6 +74,7 @@
       "inquire",
       "lettre",
       "libc",
+      "lru",
       "mailparse",
       "mermaid-rs-renderer",
       "notify",
@@ -89,13 +92,17 @@
       "rand",
       "regex",
       "reqwest",
+      "rmcp",
       "rusqlite",
+      "schemars",
       "scraper",
+      "searchxyz",
       "serde",
       "serde_json",
       "sha2",
       "simple-mermaid",
       "spider",
+      "tantivy",
       "thirtyfour",
       "tiny-skia",
       "tokio",
@@ -113,7 +120,7 @@
   },
   "project": {
     "name": "openz",
-    "version": "0.0.29",
+    "version": "0.0.30",
     "package_manager": "cargo",
     "runtime": "rust",
     "stack": "rust-cli"

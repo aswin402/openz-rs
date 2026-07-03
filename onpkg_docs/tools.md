@@ -61,3 +61,26 @@ If a tool returns output larger than 4,000 characters:
 Any tool that executes shell commands or writes files must be declared sensitive.
 - Check and update `SecurityGuard::is_sensitive` inside `src/agent/security.rs` to intercept these tools.
 - When intercepted, the channel prompt pauses and requests user approval before execution begins.
+
+---
+
+## 4. SearchXyz Integrated Tools 🔎
+
+OpenZ natively integrates the `searchxyz` search suite for advanced keyless web search, scraping, document indexing, and Knowledge Graph management. These tools are prefix-registered under `searchxyz_`:
+
+- `searchxyz_search_web`: Search the web (DuckDuckGo, Google, Bing, Brave, SearXng).
+- `searchxyz_read_url`: Parse URLs, PDFs, YouTube transcripts, or Git repositories into clean Markdown.
+- `searchxyz_search_and_read`: Combine web searching and crawling of top results in one call.
+- `searchxyz_recall`: Semantic and keyword search over indexed documents.
+- `searchxyz_list_sources`: List all indexed sources and cached pages.
+- `searchxyz_deep_research`: Perform recursive multi-query crawls and compile a markdown report.
+- `searchxyz_index_content`: Index custom text documents.
+- `searchxyz_site_map`: Map website page trees and links.
+- `searchxyz_index_relationship`: Insert node connections into the Knowledge Graph.
+- `searchxyz_query_graph`: Query and traverse the local Knowledge Graph.
+- `searchxyz_read_github_repo`: Clone and index codebases.
+- `searchxyz_export_research`: Export local documents to a portable bundle.
+- `searchxyz_import_research`: Load external document bundles.
+- `searchxyz_delete_source`: Evict documents by URL or prefix.
+- `searchxyz_clear_index`: Clear all documents and Graph data.
+

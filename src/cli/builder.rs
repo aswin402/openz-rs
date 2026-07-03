@@ -244,6 +244,23 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::memory_extra::QueryCodeGraphTool));
     registry.register(std::sync::Arc::new(crate::tools::memory_extra::AnalyzeCodeImpactTool));
 
+    // ── searchxyz tools ───────────────────────────────────────────────────────
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzSearchWebTool));
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzReadUrlTool));
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzSearchAndReadTool));
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzRecallTool));
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzListSourcesTool));
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzDeepResearchTool));
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzIndexContentTool));
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzSiteMapTool));
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzIndexRelationshipTool));
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzQueryGraphTool));
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzReadGithubRepoTool));
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzExportResearchTool));
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzImportResearchTool));
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzDeleteSourceTool));
+    registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzClearIndexTool));
+
     // ── MCP: lazy registration ────────────────────────────────────────────────
     let silent = is_silent_mode();
 
