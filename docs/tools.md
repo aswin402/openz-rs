@@ -90,6 +90,23 @@ For details on subagent execution modes, workspace optimizations, and fallback r
 *   **`search_research`** (`src/tools/shared_memory/research.rs`): Searches archived research content.
 *   **`index_notes`** (`src/tools/notes.rs`): Indexes and searches local markdown notes.
 
+### Integrated SearchXyz Tools
+*   **`searchxyz_search_web`** (`src/tools/searchxyz.rs`): Federated web search dispatcher querying DuckDuckGo, Google, Bing, Brave, and SearXng.
+*   **`searchxyz_read_url`** (`src/tools/searchxyz.rs`): Fetches and parses URLs, PDFs, YouTube transcripts, or Git repositories into clean Markdown.
+*   **`searchxyz_search_and_read`** (`src/tools/searchxyz.rs`): Performs a web search and crawls the top results in a single call.
+*   **`searchxyz_recall`** (`src/tools/searchxyz.rs`): Searches the local index semantically or via keyword query.
+*   **`searchxyz_list_sources`** (`src/tools/searchxyz.rs`): Lists all cached and indexed document sources.
+*   **`searchxyz_deep_research`** (`src/tools/searchxyz.rs`): Iterative multi-query crawler compiling a research markdown report.
+*   **`searchxyz_index_content`** (`src/tools/searchxyz.rs`): Indexes custom text content manually into the index.
+*   **`searchxyz_site_map`** (`src/tools/searchxyz.rs`): Spiders domain pages to crawl sitemaps or link trees.
+*   **`searchxyz_index_relationship`** (`src/tools/searchxyz.rs`): Records entity relationship facts into the Knowledge Graph.
+*   **`searchxyz_query_graph`** (`src/tools/searchxyz.rs`): Traverses entity nodes inside the local Knowledge Graph.
+*   **`searchxyz_read_github_repo`** (`src/tools/searchxyz.rs`): Clones and recursively indexes repository source code.
+*   **`searchxyz_export_research`** (`src/tools/searchxyz.rs`): Exports local indexed documents into a JSON bundle.
+*   **`searchxyz_import_research`** (`src/tools/searchxyz.rs`): Imports external JSON document bundles into the index.
+*   **`searchxyz_delete_source`** (`src/tools/searchxyz.rs`): Deletes documents and relationships matching a URL prefix.
+*   **`searchxyz_clear_index`** (`src/tools/searchxyz.rs`): Wipes all indexed document text and Graph databases.
+
 ### Ported Native Reasoning & Context Tools (Mega Ports)
 *   **Sequential Thinking Reasoning Loop** (`src/tools/sequential_thinking/`): Includes `sequentialthinking` (reasoning chain loop), `analyze_graph` (thought query and quality statistics), `export_session` (mermaid/markdown exporter), `summarize_reasoning` (structural timeline summary), and `reasoning_templates` (reasoning design frameworks).
 *   **Context Scoping & Headroom Compression** (`src/tools/headroom/`): Includes `scope_context` (YAGNI contextual filtering), `compress_content` (token-reduction compression), `retrieve_original` (retrieve full output from cached IDs), `compress_file` / `compress_diff` / `compress_url` (specialized format filters), `cache_stats` / `clear_cache` (caching metrics), `summarize_codebase` (code hierarchy summary), and `count_tokens` (FastBPE tokens count).

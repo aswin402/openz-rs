@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.28`
+# OpenZ 🦊 `v0.0.30`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -46,7 +46,8 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
 OpenZ exposes a powerful set of local tools to the LLM:
 * **Filesystem & Code Analysis:** `read_file`, `write_file`, `patch_file`, `find_files`, `replace_lines`, `zenflow_edit`, `list_dir`, `grep_search`, `code_outline`, `ast_grep`, `index_codebase`, `git_manager`, `db_inspector`, `db_write`, `doc_reader`, `rust_docs`, `compile_template`.
 * **System & Environment:** `exec_command` (sandboxed), `python_sandbox`, `clipboard`, `open_path`, `system_info`, `file_watcher`, `check_port` (localhost-only).
-* **Web, Search & Social:** `web_fetch` (DOM scraper), `web_search` (Tavily), `social_search` (HN/Reddit), `crawl_website` (spider-rs), `gsd_browser` (Playwright), `obscura_browser` / `firefox_browser` (CDP), `semantic_search` (vector embeddings).
+* **Web, Search & Social:** `web_search` (SearchXyz Dispatcher / Tavily / Exa), `social_search` (HN/Reddit), `crawl_website` (spider-rs), `gsd_browser` (Playwright), `obscura_browser` / `firefox_browser` (CDP), `semantic_search` (vector embeddings).
+* **Integrated SearchXyz Tools:** `searchxyz_search_web`, `searchxyz_read_url`, `searchxyz_search_and_read`, `searchxyz_recall`, `searchxyz_list_sources`, `searchxyz_deep_research`, `searchxyz_index_content`, `searchxyz_site_map`, `searchxyz_index_relationship`, `searchxyz_query_graph`, `searchxyz_read_github_repo`, `searchxyz_export_research`, `searchxyz_import_research`, `searchxyz_delete_source`, `searchxyz_clear_index`.
 * **Automation & Cron:** `schedule_job`, `list_jobs`, `remove_job`, `compiler_auto_heal`.
 * **Memory & Knowledge:** `store_memory`, `recall_memory`, `clear_memory`, `archive_research`, `search_research`, `index_notes`.
 * **Subagents & Orchestration:** `delegate_task`, `parallel_research`, `evaluator_optimizer_loop`, `optimize_subagent`, `create_subagent`, `delete_subagent`, `trigger_sop`.

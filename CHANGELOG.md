@@ -417,11 +417,14 @@ Inside `openz agent`, the user can issue direct slash commands:
         *   `searchxyz_import_research`: JSON bundle importer.
         *   `searchxyz_delete_source`: URL-based source eviction.
         *   `searchxyz_clear_index`: Clear all documents and Graph memory.
+*   **Search Integration (HIGH)**:
+    *   Integrated `SearchXyz`'s federated `SearchDispatcher` into `WebSearchTool` (`web_search`) as the primary web search engine.
+    *   Preserved original search providers (Tavily, Exa, DuckDuckGo scraper, Mojeek scraper) as robust automatic fallbacks in case `SearchXyz` encounters network errors or is unconfigured.
 *   **Maintenance & Testing**:
     *   Added `rmcp` and `schemars` dependencies to the workspace root `Cargo.toml`.
     *   Wiped local package/registry cache to resolve resolving and download contentions.
     *   Implemented `test_searchxyz_tools_metadata` unit tests verifying wrapper registry.
-    *   Bumped version to `v0.0.30`. All 201 native tests and 38 integrated `searchxyz` tests passing.
+    *   Bumped version to `v0.0.30`. All 202 native tests and 38 integrated `searchxyz` tests passing.
 
 ### v0.0.29 (Latest Release)
 *   **Security: SSRF & timing attack mitigations (HIGH)**:
