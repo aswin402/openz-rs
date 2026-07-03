@@ -12,3 +12,8 @@ pub use store::{
 
 pub use engine::{detect_loop, generate_mermaid, analyze_quality, export_session_as_markdown};
 
+pub use tools::{
+    SequentialThinkingTool, AnalyzeGraphTool, ExportSessionTool,
+    SummarizeReasoningTool, TemplatesTool,
+};
+
