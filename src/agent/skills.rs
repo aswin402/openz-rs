@@ -465,6 +465,18 @@ pub fn load_relevant_skills(user_content: &str, session_messages: &[crate::sessi
     load_relevant_skills_with_profile(user_content, session_messages, None)
 }
 
+fn is_stop_word(w: &str) -> bool {
+    matches!(
+        w,
+        "the" | "and" | "for" | "but" | "not" | "you" | "your" | "this" | "that" | "with" | "from" | "have"
+            | "are" | "was" | "were" | "been" | "has" | "had" | "will" | "would" | "should" | "could"
+            | "can" | "about" | "there" | "their" | "here" | "them" | "then" | "than" | "standard"
+            | "openz" | "agent" | "tool" | "logic" | "code" | "implementation" | "project" | "file"
+            | "custom" | "user" | "does" | "done" | "some" | "what" | "when" | "where" | "which"
+            | "who" | "how" | "why"
+    )
+}
+
 pub fn load_relevant_skills_with_profile(user_content: &str, session_messages: &[crate::session::Message], profile_name: Option<&str>) -> Result<Vec<Skill>> {
     let all_skills = load_skills_with_profile(profile_name)?;
     if all_skills.is_empty() {
@@ -501,7 +513,20 @@ pub fn load_relevant_skills_with_profile(user_content: &str, session_messages: &
 
         let name_exact_match = search_context.contains(&skill.name.to_lowercase());
 
-        if is_profile_specific || name_match || name_exact_match {
+        let mut content_match = false;
+        let desc_sample = skill.content.chars().take(400).collect::<String>().to_lowercase();
+        let search_words: Vec<&str> = search_context
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.len() > 3 && !is_stop_word(w))
+            .collect();
+        for word in search_words {
+            if desc_sample.contains(word) {
+                content_match = true;
+                break;
+            }
+        }
+
+        if is_profile_specific || name_match || name_exact_match || content_match {
             relevant.push(skill);
         }
     }
@@ -663,5 +688,18 @@ mod tests {
         let skills_after = load_skills().expect("Failed to load skills");
         let found_after = skills_after.iter().find(|s| s.name == skill_name);
         assert!(found_after.is_none());
+    }
+
+    #[test]
+    fn test_load_relevant_skills_content_matching() {
+        let skill_name = "react_temp_builder";
+        let skill_content = "# React Builder\nThis skill helps build custom homepages and dashboards in React.";
+        let _ = save_skill(skill_name, skill_content);
+
+        let relevant = load_relevant_skills_with_profile("make a custom homepage", &[], None).unwrap();
+        let found = relevant.iter().any(|s| s.name == skill_name);
+        assert!(found);
+
+        let _ = delete_skill(skill_name);
     }
 }
