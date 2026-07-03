@@ -198,13 +198,13 @@ pub struct ResearchBundle {
 pub struct SearchXyzServer {
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
-    dispatcher: Arc<SearchDispatcher>,
-    crawler: Arc<Crawler>,
-    extractor: Arc<ExtractionPipeline>,
-    index: Arc<SearchIndex>,
-    cache: Arc<Mutex<Cache>>,
-    graph: Arc<Mutex<crate::graph::KnowledgeGraph>>,
-    config: Arc<Config>,
+    pub dispatcher: Arc<SearchDispatcher>,
+    pub crawler: Arc<Crawler>,
+    pub extractor: Arc<ExtractionPipeline>,
+    pub index: Arc<SearchIndex>,
+    pub cache: Arc<Mutex<Cache>>,
+    pub graph: Arc<Mutex<crate::graph::KnowledgeGraph>>,
+    pub config: Arc<Config>,
 }
 
 #[tool_router(server_handler)]

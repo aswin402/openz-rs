@@ -29,7 +29,7 @@ use searchxyz::{
 
 use rmcp::handler::server::wrapper::Parameters;
 
-fn get_server() -> &'static SearchXyzServer {
+pub fn get_server() -> &'static SearchXyzServer {
     static SERVER: OnceLock<SearchXyzServer> = OnceLock::new();
     SERVER.get_or_init(|| {
         let config = Config::load(None).unwrap_or_default();

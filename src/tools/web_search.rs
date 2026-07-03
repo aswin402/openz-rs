@@ -73,7 +73,31 @@ impl WebSearchTool {
         let query = arguments.get("query").and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
 
-        // 0. Try Websurfx Local/Private Search Engine API (if WEBSURFX_URL is set)
+        // 0. Try SearchXyz Dispatcher (Local/stealth federated searches)
+        let search_query = searchxyz::search::SearchQuery {
+            query: query.to_string(),
+            max_results: 10,
+        };
+        match crate::tools::searchxyz::get_server().dispatcher.search(&search_query).await {
+            Ok(results) => {
+                let mut search_results = Vec::new();
+                for r in results {
+                    search_results.push(json!({
+                        "title": r.title,
+                        "url": r.url,
+                        "snippet": r.snippet
+                    }));
+                }
+                if !search_results.is_empty() {
+                    return Ok(Value::Array(search_results));
+                }
+            }
+            Err(e) => {
+                tracing::warn!("SearchXyz dispatcher query failed, falling back to other engines: {:?}", e);
+            }
+        }
+
+        // 1. Try Websurfx Local/Private Search Engine API (if WEBSURFX_URL is set)
         if let Ok(websurfx_url) = std::env::var("WEBSURFX_URL") {
             if !websurfx_url.trim().is_empty() {
                 let base = websurfx_url.trim().trim_end_matches('/');
