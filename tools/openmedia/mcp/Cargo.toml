@@ -1,0 +1,35 @@
+[package]
+name = "openmedia-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+openmedia-core = { workspace = true }
+openmedia-image = { workspace = true }
+openmedia-video = { workspace = true }
+openmedia-svg = { workspace = true }
+openmedia-animate = { workspace = true }
+openmedia-process = { workspace = true }
+openmedia-improve = { workspace = true }
+uuid = { workspace = true }
+image = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+mermaid-rs-renderer = "0.2"
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio-util = "0.7"
+schemars = "1"
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+base64 = "0.22"
+
+# MCP SDK
+rmcp = { version = "1.7.0", features = ["server", "transport-io", "macros"] }
+
+[dev-dependencies]
+tempfile = "3.10"

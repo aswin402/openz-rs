@@ -6,8 +6,43 @@ edition = "2021"
 [workspace]
 members = [
     ".",
-    "tools/searchxyz"
+    "tools/searchxyz",
+    "tools/openmedia/core",
+    "tools/openmedia/image",
+    "tools/openmedia/video",
+    "tools/openmedia/svg",
+    "tools/openmedia/animate",
+    "tools/openmedia/process",
+    "tools/openmedia/improve",
+    "tools/openmedia/mcp"
 ]
+
+[workspace.package]
+version = "0.0.17"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.82"
+
+[workspace.dependencies]
+# Internal openmedia crates
+openmedia-core = { path = "tools/openmedia/core" }
+openmedia-image = { path = "tools/openmedia/image" }
+openmedia-video = { path = "tools/openmedia/video" }
+openmedia-svg = { path = "tools/openmedia/svg" }
+openmedia-animate = { path = "tools/openmedia/animate" }
+openmedia-process = { path = "tools/openmedia/process" }
+openmedia-improve = { path = "tools/openmedia/improve" }
+openmedia-mcp = { path = "tools/openmedia/mcp" }
+
+# Shared openmedia dependencies
+tokio = { version = "1.42", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+image = "0.25"
+uuid = { version = "1.11", features = ["v7", "v4"] }
+async-trait = "0.1.80"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -65,7 +100,7 @@ lettre = { version = "0.11.7", default-features = false, features = ["tokio1-rus
 mailparse = "0.15.0"
 sha2 = "0.10"
 fs2 = "0.4"
-rusqlite = { version = "0.31.0", features = ["bundled"] }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
 oxc_parser = "0.30.0"
 oxc_allocator = "0.30.0"
 oxc_codegen = "0.30.0"
@@ -81,6 +116,8 @@ lru = "0.12"
 rmcp = { version = "1.7.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 schemars = "1.2"
 searchxyz = { path = "tools/searchxyz" }
+openmedia-core = { workspace = true }
+openmedia-mcp = { workspace = true }
 
 
 [build-dependencies]

@@ -1,0 +1,18 @@
+[package]
+name = "openmedia-animate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+openmedia-core = { workspace = true }
+openmedia-svg = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+lyon = { version = "1.0" }
+kurbo = { version = "0.11" }

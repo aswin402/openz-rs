@@ -253,3 +253,4 @@ pub mod graph_memory;
 pub mod memory_extra;
 #[path = "searchxyz/mod.rs"]
 pub mod searchxyz;
+pub mod openmedia;

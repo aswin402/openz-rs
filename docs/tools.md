@@ -91,21 +91,60 @@ For details on subagent execution modes, workspace optimizations, and fallback r
 *   **`index_notes`** (`src/tools/notes.rs`): Indexes and searches local markdown notes.
 
 ### Integrated SearchXyz Tools
-*   **`searchxyz_search_web`** (`src/tools/searchxyz.rs`): Federated web search dispatcher querying DuckDuckGo, Google, Bing, Brave, and SearXng.
-*   **`searchxyz_read_url`** (`src/tools/searchxyz.rs`): Fetches and parses URLs, PDFs, YouTube transcripts, or Git repositories into clean Markdown.
-*   **`searchxyz_search_and_read`** (`src/tools/searchxyz.rs`): Performs a web search and crawls the top results in a single call.
-*   **`searchxyz_recall`** (`src/tools/searchxyz.rs`): Searches the local index semantically or via keyword query.
-*   **`searchxyz_list_sources`** (`src/tools/searchxyz.rs`): Lists all cached and indexed document sources.
-*   **`searchxyz_deep_research`** (`src/tools/searchxyz.rs`): Iterative multi-query crawler compiling a research markdown report.
-*   **`searchxyz_index_content`** (`src/tools/searchxyz.rs`): Indexes custom text content manually into the index.
-*   **`searchxyz_site_map`** (`src/tools/searchxyz.rs`): Spiders domain pages to crawl sitemaps or link trees.
-*   **`searchxyz_index_relationship`** (`src/tools/searchxyz.rs`): Records entity relationship facts into the Knowledge Graph.
-*   **`searchxyz_query_graph`** (`src/tools/searchxyz.rs`): Traverses entity nodes inside the local Knowledge Graph.
-*   **`searchxyz_read_github_repo`** (`src/tools/searchxyz.rs`): Clones and recursively indexes repository source code.
-*   **`searchxyz_export_research`** (`src/tools/searchxyz.rs`): Exports local indexed documents into a JSON bundle.
-*   **`searchxyz_import_research`** (`src/tools/searchxyz.rs`): Imports external JSON document bundles into the index.
-*   **`searchxyz_delete_source`** (`src/tools/searchxyz.rs`): Deletes documents and relationships matching a URL prefix.
-*   **`searchxyz_clear_index`** (`src/tools/searchxyz.rs`): Wipes all indexed document text and Graph databases.
+*   **`searchxyz_search_web`** (`src/tools/searchxyz/web.rs`): Federated web search dispatcher querying DuckDuckGo, Google, Bing, Brave, and SearXng.
+*   **`searchxyz_read_url`** (`src/tools/searchxyz/web.rs`): Fetches and parses URLs, PDFs, YouTube transcripts, or Git repositories into clean Markdown.
+*   **`searchxyz_search_and_read`** (`src/tools/searchxyz/web.rs`): Performs a web search and crawls the top results in a single call.
+*   **`searchxyz_recall`** (`src/tools/searchxyz/index.rs`): Searches the local index semantically or via keyword query.
+*   **`searchxyz_list_sources`** (`src/tools/searchxyz/index.rs`): Lists all cached and indexed document sources.
+*   **`searchxyz_deep_research`** (`src/tools/searchxyz/web.rs`): Iterative multi-query crawler compiling a research markdown report.
+*   **`searchxyz_index_content`** (`src/tools/searchxyz/index.rs`): Indexes custom text content manually into the index.
+*   **`searchxyz_site_map`** (`src/tools/searchxyz/web.rs`): Spiders domain pages to crawl sitemaps or link trees.
+*   **`searchxyz_index_relationship`** (`src/tools/searchxyz/graph.rs`): Records entity relationship facts into the Knowledge Graph.
+*   **`searchxyz_query_graph`** (`src/tools/searchxyz/graph.rs`): Traverses entity nodes inside the local Knowledge Graph.
+*   **`searchxyz_read_github_repo`** (`src/tools/searchxyz/graph.rs`): Clones and recursively indexes repository source code.
+*   **`searchxyz_export_research`** (`src/tools/searchxyz/index.rs`): Exports local indexed documents into a JSON bundle.
+*   **`searchxyz_import_research`** (`src/tools/searchxyz/index.rs`): Imports external JSON document bundles into the index.
+*   **`searchxyz_delete_source`** (`src/tools/searchxyz/index.rs`): Deletes documents and relationships matching a URL prefix.
+*   **`searchxyz_clear_index`** (`src/tools/searchxyz/index.rs`): Wipes all indexed document text and Graph databases.
+
+### Integrated OpenMedia Tools
+*   **`openmedia_ping`** (`src/tools/openmedia/mod.rs`): Pings the media generation server to check status and health.
+*   **`openmedia_model_download`** (`src/tools/openmedia/mod.rs`): Downloads a specified model file (CLIP text/vision or Aesthetic predictor) from Hugging Face Hub with progress tracking.
+*   **`openmedia_rasterize_svg`** (`src/tools/openmedia/mod.rs`): Rasterizes an SVG string or file path into a PNG, JPEG, or WebP image.
+*   **`openmedia_diagram_generate_mermaid`** (`src/tools/openmedia/mod.rs`): Compiles a Mermaid diagram string into an SVG, PNG, JPEG, or WebP diagram.
+*   **`openmedia_html_to_image`** (`src/tools/openmedia/mod.rs`): Renders HTML and CSS templates/files into an image (PNG, JPEG, or WebP).
+*   **`openmedia_create_svg`** (`src/tools/openmedia/mod.rs`): Generates custom SVG layouts from a list of shapes.
+*   **`openmedia_create_chart`** (`src/tools/openmedia/mod.rs`): Generates vertical bars, lines, area, scatter, radar, and pie charts from raw data.
+*   **`openmedia_create_icon`** (`src/tools/openmedia/mod.rs`): Retrieves styled vector icons from the embedded Lucide library.
+*   **`openmedia_animate_svg`** (`src/tools/openmedia/mod.rs`): Applies keyframes/SMIL animation presets (fade_in, spin, bounce, etc.) to SVG elements.
+*   **`openmedia_animate_create_timeline`** (`src/tools/openmedia/mod.rs`): Coordinately sequences animations of multiple elements over a timeline.
+*   **`openmedia_animate_morph_paths`** (`src/tools/openmedia/mod.rs`): Interpolates paths morphing between two vector strings.
+*   **`openmedia_animate_generate_spinner`** (`src/tools/openmedia/mod.rs`): Creates beautiful animated loading spinners in SVG.
+*   **`openmedia_animate_from_lottie`** (`src/tools/openmedia/mod.rs`): Converts a Lottie JSON animation into an animated SVG.
+*   **`openmedia_animate_to_lottie`** (`src/tools/openmedia/mod.rs`): Converts an animated SVG back into Lottie JSON.
+*   **`openmedia_image_apply_filter`** (`src/tools/openmedia/mod.rs`): Applies filters (invert, grayscale, etc.) to an image.
+*   **`openmedia_image_resize`** (`src/tools/openmedia/mod.rs`): Resizes an image with configurable width and height.
+*   **`openmedia_image_crop`** (`src/tools/openmedia/mod.rs`): Crops an image using custom bounding box coordinates.
+*   **`openmedia_image_transform`** (`src/tools/openmedia/mod.rs`): Transforms an existing image guided by strength parameters.
+*   **`openmedia_image_convert`** (`src/tools/openmedia/mod.rs`): Converts image file format extension target.
+*   **`openmedia_image_batch_process`** (`src/tools/openmedia/mod.rs`): Processes image filters in batches.
+*   **`openmedia_video_create`** (`src/tools/openmedia/mod.rs`): Compiles frame-by-frame videos defined using a JSON Scene DSL.
+*   **`openmedia_video_preview`** (`src/tools/openmedia/mod.rs`): Generates a video preview frame at a specific timestamp offset.
+*   **`openmedia_video_create_slideshow`** (`src/tools/openmedia/mod.rs`): Compiles an image sequence slideshow with audio overlays.
+*   **`openmedia_video_add_transition`** (`src/tools/openmedia/mod.rs`): Applies scene transition blend clips.
+*   **`openmedia_video_add_audio`** (`src/tools/openmedia/mod.rs`): Adds background narration/music tracks to a video.
+*   **`openmedia_video_from_template`** (`src/tools/openmedia/mod.rs`): Instantiates a video template replacing placeholder arguments.
+*   **`openmedia_video_extract_frames`** (`src/tools/openmedia/mod.rs`): Extracts frames/images from a video at key timestamp offsets.
+*   **`openmedia_video_trim`** (`src/tools/openmedia/mod.rs`): Trims a video file to a specific time range.
+*   **`openmedia_template_create`** (`src/tools/openmedia/mod.rs`): Creates and saves a custom video scene template.
+*   **`openmedia_template_read`** (`src/tools/openmedia/mod.rs`): Reads templates configurations details or list templates.
+*   **`openmedia_template_update`** (`src/tools/openmedia/mod.rs`): Updates an existing template definition.
+*   **`openmedia_template_delete`** (`src/tools/openmedia/mod.rs`): Deletes an existing template definition.
+*   **`openmedia_improve_score_image`** (`src/tools/openmedia/mod.rs`): Scores prompt alignment using CLIP and Aesthetic models.
+*   **`openmedia_improve_refine_prompt`** (`src/tools/openmedia/mod.rs`): Gets prompt refinement suffix recommendations based on score feedbacks.
+*   **`openmedia_improve_auto_refine`** (`src/tools/openmedia/mod.rs`): Iteratively refines prompts to generate high aesthetic quality assets.
+*   **`openmedia_improve_feedback`** (`src/tools/openmedia/mod.rs`): Logs manual ratings score and description feedback on generations.
+*   **`openmedia_improve_quality_report`** (`src/tools/openmedia/mod.rs`): Fetches comprehensive statistics report of the generation history DB.
 
 ### Ported Native Reasoning & Context Tools (Mega Ports)
 *   **Sequential Thinking Reasoning Loop** (`src/tools/sequential_thinking/`): Includes `sequentialthinking` (reasoning chain loop), `analyze_graph` (thought query and quality statistics), `export_session` (mermaid/markdown exporter), `summarize_reasoning` (structural timeline summary), and `reasoning_templates` (reasoning design frameworks).

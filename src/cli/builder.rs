@@ -261,6 +261,45 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzDeleteSourceTool));
     registry.register(std::sync::Arc::new(crate::tools::searchxyz::SearchXyzClearIndexTool));
 
+    // ── OpenMedia native tools ────────────────────────────────────────────────
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaModelDownloadTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaRasterizeSvgTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaDiagramGenerateMermaidTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaHtmlToImageTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaCreateSvgTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaCreateChartTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaCreateIconTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaAnimateSvgTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaAnimateCreateTimelineTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaAnimateMorphPathsTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaAnimateGenerateSpinnerTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaAnimateFromLottieTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaAnimateToLottieTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaImageApplyFilterTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaImageResizeTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaImageCropTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaImageTransformTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaImageConvertTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaImageBatchProcessTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaVideoCreateTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaVideoPreviewTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaVideoCreateSlideshowTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaVideoAddTransitionTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaVideoAddAudioTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaVideoFromTemplateTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaVideoExtractFramesTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaVideoTrimTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaTemplateCreateTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaTemplateReadTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaTemplateUpdateTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaTemplateDeleteTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaImproveScoreImageTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaImproveRefinePromptTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaImproveAutoRefineTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaImproveFeedbackTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaImproveQualityReportTool));
+    registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaPingTool));
+
     // ── MCP: lazy registration ────────────────────────────────────────────────
     let silent = is_silent_mode();
 

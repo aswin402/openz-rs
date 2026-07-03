@@ -398,7 +398,21 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.30 (Latest Release)
+### v0.0.31 (Latest Release)
+*   **Feature: Integrated OpenMedia-RS Crate Workspace (HIGH)**:
+    *   Migrated all 8 crates of `openmedia-rs` directly into the `openz` workspace under [tools/openmedia](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/openmedia), making `openz` fully portable and self-contained.
+    *   Exposed all 37 OpenMedia tools natively under the `openmedia_` prefix, including `openmedia_create_chart` (charts), `openmedia_video_create` (DSL video composition), `openmedia_animate_svg` (SMIL layout animations), and `openmedia_improve_score_image` (aesthetics prompt alignment).
+    *   Constructed a thread-safe static `OnceLock` singleton wrapper in [src/tools/openmedia/mod.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod.rs) for in-memory execution without JSON-RPC stdio overhead.
+    *   Used `schemars::schema_for!` to automatically generate and validate parameters JSON schemas from Rust structs.
+*   **Workspace Manifest Consolidation**:
+    *   Added workspace members and workspace dependencies tables to `openz` root `Cargo.toml`.
+    *   Registered and validated the `openmedia-core` and `openmedia-mcp` crates via standard Cargo workspace dependency inheritance (`workspace = true`).
+*   **Testing & Prompting Integration**:
+    *   Added `openmedia_` tools to the agent's core system prompt template guidelines in [src/agent/agent_loop/build.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs).
+    *   Wrote `test_openmedia_server_ping` unit tests verifying singleton server status.
+    *   Bumped version to `v0.0.31`. All 204 tests passing cleanly.
+
+### v0.0.30 (Previous Release)
 *   **Feature: Integrated SearchXyz Tool Suite (HIGH)**:
     *   Fully integrated the `searchxyz` crate into the Cargo workspace.
     *   Wrapped all 15 tools from `searchxyz` as native OpenZ tools, prefix-registered under `searchxyz_`:

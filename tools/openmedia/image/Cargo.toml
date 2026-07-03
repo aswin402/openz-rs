@@ -1,0 +1,29 @@
+[package]
+name = "openmedia-image"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+openmedia-core = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+image = { workspace = true }
+rayon = { version = "1.10" }
+async-trait = { workspace = true }
+
+# ML / AI Backends
+candle-core = { version = "0.8", optional = true }
+candle-nn = { version = "0.8", optional = true }
+candle-transformers = { version = "0.8", optional = true }
+diffusion-rs = { version = "0.1.20", optional = true, package = "diffusion-rs" }
+ort = { version = "2.0.0-rc.9", default-features = false, features = ["half", "ndarray", "std", "tls-rustls", "download-binaries"], optional = true }
+
+[features]
+default = ["candle", "onnx"]
+candle = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers"]
+onnx = ["dep:ort"]
+diffusion-cpp = ["dep:diffusion-rs"]

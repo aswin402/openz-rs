@@ -1,0 +1,30 @@
+[package]
+name = "openmedia-video"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+openmedia-core = { workspace = true }
+openmedia-svg = { workspace = true }
+openmedia-animate = { workspace = true }
+openmedia-process = { workspace = true }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+image = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+
+resvg = { version = "0.44" }
+tiny-skia = { version = "0.11" }
+chromiumoxide = { version = "0.7", features = ["tokio-runtime"] }
+futures = "0.3"
+symphonia = { version = "0.5", features = ["all"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+base64 = "0.22"
+
