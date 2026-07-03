@@ -1,6 +1,9 @@
-# Tree-Trace TUI Progress Ledger
+# SearchXyz Modularization SDD Progress Ledger
 
-- [x] Task 1: Add style helper functions to `src/agent/style/mod.rs`
-- [x] Task 2: Refactor `AgentLoop` tool execution prints in `src/agent/agent_loop.rs`
-- [x] Task 3: Refactor Subagent tools output in `src/tools/subagent.rs`
-- [x] Task 4: Compilation and Global Verification
+Task 1: complete (commits 8bb6467..91579c5, review clean)
+Task 2: complete (commits 91579c5..d8a025e, review clean)
+Task 3: complete (commits d8a025e..83602c4, review clean)
+Task 4: complete (commits 83602c4..b870639, review clean)
+
+
+

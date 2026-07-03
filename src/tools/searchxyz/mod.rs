@@ -94,3 +94,28 @@ pub fn get_server() -> &'static SearchXyzServer {
 pub fn map_mcp_err(err: rmcp::ErrorData) -> anyhow::Error {
     anyhow!("MCP Error {:?}: {}", err.code, err.message)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::Tool;
+
+    #[test]
+    fn test_searchxyz_tools_metadata() {
+        assert_eq!(SearchXyzSearchWebTool.name(), "searchxyz_search_web");
+        assert_eq!(SearchXyzReadUrlTool.name(), "searchxyz_read_url");
+        assert_eq!(SearchXyzSearchAndReadTool.name(), "searchxyz_search_and_read");
+        assert_eq!(SearchXyzRecallTool.name(), "searchxyz_recall");
+        assert_eq!(SearchXyzListSourcesTool.name(), "searchxyz_list_sources");
+        assert_eq!(SearchXyzDeepResearchTool.name(), "searchxyz_deep_research");
+        assert_eq!(SearchXyzIndexContentTool.name(), "searchxyz_index_content");
+        assert_eq!(SearchXyzSiteMapTool.name(), "searchxyz_site_map");
+        assert_eq!(SearchXyzIndexRelationshipTool.name(), "searchxyz_index_relationship");
+        assert_eq!(SearchXyzQueryGraphTool.name(), "searchxyz_query_graph");
+        assert_eq!(SearchXyzReadGithubRepoTool.name(), "searchxyz_read_github_repo");
+        assert_eq!(SearchXyzExportResearchTool.name(), "searchxyz_export_research");
+        assert_eq!(SearchXyzImportResearchTool.name(), "searchxyz_import_research");
+        assert_eq!(SearchXyzDeleteSourceTool.name(), "searchxyz_delete_source");
+        assert_eq!(SearchXyzClearIndexTool.name(), "searchxyz_clear_index");
+    }
+}
