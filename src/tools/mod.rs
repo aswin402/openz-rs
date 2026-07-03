@@ -251,4 +251,5 @@ pub mod sequential_thinking;
 pub mod headroom;
 pub mod graph_memory;
 pub mod memory_extra;
+#[path = "searchxyz/mod.rs"]
 pub mod searchxyz;
