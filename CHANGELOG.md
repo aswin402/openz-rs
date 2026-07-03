@@ -398,7 +398,21 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.31 (Latest Release)
+### v0.0.32 (Latest Release)
+*   **Feature: Integrated OpenDoc-MCP Native Tool Port (HIGH)**:
+    *   Ported the entire `opendoc-mcp` codebase into the workspace under [tools/opendoc/](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/opendoc) to enable off-grid document intelligence.
+    *   Upgraded the workspace rust toolchain to `stable` to cleanly resolve dependencies (like edition 2024 dependencies).
+    *   Updated the visibility of all 36 document creation, extraction, diffing, and templating methods inside [tools/opendoc/src/server.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/opendoc/src/server.rs) to `pub fn`.
+    *   Wrapped all 36 tools natively under the `opendoc_` prefix in [src/tools/opendoc/mod.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs).
+    *   Registered the tools inside `build_agent_loop` in [src/cli/builder.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs).
+    *   Wrote unit tests verifying initialization of the opendoc server and basic OCR availability check.
+*   **Refactor: SearchXyz Modularization (MEDIUM)**:
+    *   Split the `searchxyz` monolithic wrapper into separate submodules (`web`, `index`, `graph`) under [tools/searchxyz/](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/searchxyz) to follow standard codebase modularization guidelines.
+*   **Prompting & Documentation Update**:
+    *   Added all `opendoc_` tools to the agent's core system prompt guidelines in [src/agent/agent_loop/build.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs).
+    *   Bumped the project version to `v0.0.32`.
+
+### v0.0.31 (Previous Release)
 *   **Feature: Integrated OpenMedia-RS Crate Workspace (HIGH)**:
     *   Migrated all 8 crates of `openmedia-rs` directly into the `openz` workspace under [tools/openmedia](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/openmedia), making `openz` fully portable and self-contained.
     *   Exposed all 37 OpenMedia tools natively under the `openmedia_` prefix, including `openmedia_create_chart` (charts), `openmedia_video_create` (DSL video composition), `openmedia_animate_svg` (SMIL layout animations), and `openmedia_improve_score_image` (aesthetics prompt alignment).

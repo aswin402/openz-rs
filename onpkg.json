@@ -79,6 +79,7 @@
       "mermaid-rs-renderer",
       "notify",
       "open",
+      "opendoc-mcp",
       "openmedia-animate",
       "openmedia-core",
       "openmedia-image",
@@ -129,7 +130,7 @@
   },
   "project": {
     "name": "openz",
-    "version": "0.0.31",
+    "version": "0.0.32",
     "package_manager": "cargo",
     "runtime": "rust",
     "stack": "rust-cli"

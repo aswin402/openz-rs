@@ -1,0 +1,74 @@
+[package]
+name = "opendoc-mcp"
+version = "0.0.12"
+edition = "2021"
+description = "Rust-native Document Intelligence Engine + MCP Server for AI Agents — DOCX, PPTX, XLSX, PDF, HTML, MD, CSV"
+license = "MIT"
+
+
+[dependencies]
+# ── MCP Protocol ──
+rmcp = { version = "0.1", features = ["server", "macros", "transport-io"], optional = true }
+
+# ── Async Runtime ──
+tokio = { version = "1", features = ["full"], optional = true }
+
+# ── Serialization ──
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# ── CLI ──
+clap = { version = "4", features = ["derive"], optional = true }
+
+# ── Document Formats ──
+rdocx = "0.1"                       # DOCX
+pptx = "0.1"                        # PPTX (current)
+lopdf = "0.31"                      # PDF
+rust_xlsxwriter = "0.68"           # XLSX write
+calamine = "0.24"                  # XLSX read
+csv = "1.3"                        # CSV
+
+# ── ZIP / XML (underlying Office formats) ──
+zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
+quick-xml = "0.31"
+roxmltree = "0.19"
+
+# ── HTML ──
+html5ever = "0.27"
+scraper = "0.19"
+
+# ── Markdown ──
+pulldown-cmark = "0.11"
+comrak = "0.25"
+
+# ── Images ──
+image = "0.25"
+
+# ── Templating ──
+regex = "1"
+
+# ── Parallelism ──
+rayon = "1.10"
+
+# ── Errors ──
+anyhow = "1"
+thiserror = "1"
+
+# ── Logging ──
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[features]
+default = ["cli", "server"]
+cli = ["dep:clap"]
+server = ["dep:rmcp", "dep:tokio"]
+ocr = []
+wasm = []
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom_v02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom_v03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+getrandom_v04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+

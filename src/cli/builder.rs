@@ -300,6 +300,44 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaImproveQualityReportTool));
     registry.register(std::sync::Arc::new(crate::tools::openmedia::OpenMediaPingTool));
 
+    // ── Opendoc Native Tools ──────────────────────────────────────────────────
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocOpenDocumentTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocReadDocumentTextTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocSearchDocumentTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocReplaceTextTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocDiffDocumentsTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocDiffDocumentsVisualTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocChunkForEmbeddingTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocFillTemplateTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocValidateDocumentTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocValidatePdfAComplianceTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocExtractStructuredMetadataTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocConvertTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocExtractImagesTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocSplitPdfTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocCreateHtmlTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocBatchConvertTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocCreateDocxTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocDocxAddParagraphTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocDocxAddTableTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocDocxAddImageTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocCreatePptxTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocPptxAddSlideTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocCreateXlsxTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocEditXlsxTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocCreatePdfTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocCreateFormattedPdfTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocMergePdfsTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocExtractPdfTextTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocListPdfFieldsTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocFillPdfFormTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocFindTablesTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocAnalyzeDocumentComplexityTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocOcrDocumentTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocCheckOcrAvailableTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocRenderDocumentPagesTool));
+    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocExtractArchiveDigestTool));
+
     // ── MCP: lazy registration ────────────────────────────────────────────────
     let silent = is_silent_mode();
 
