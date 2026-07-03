@@ -12,3 +12,7 @@ pub use graph::{
     DeleteEntitiesTool, DeleteObservationsTool, DeleteRelationsTool,
     ReadGraphTool, SearchNodesTool, OpenNodesTool,
 };
+
+pub use branch::{
+    CreateDatabaseBranchTool, CommitDatabaseBranchTool, RollbackDatabaseBranchTool,
+};

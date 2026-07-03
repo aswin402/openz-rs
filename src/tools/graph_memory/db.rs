@@ -12,7 +12,7 @@ pub(crate) const DB_FILENAME: &str = "graph_memory.db";
 
 // ─── Shared DB static ──────────────────────────────────────────
 
-fn db_static() -> &'static OnceLock<Mutex<Connection>> {
+pub(crate) fn db_static() -> &'static OnceLock<Mutex<Connection>> {
     static DB: OnceLock<Mutex<Connection>> = OnceLock::new();
     &DB
 }
