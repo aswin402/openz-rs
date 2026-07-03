@@ -1,5 +1,5 @@
 use std::sync::{Arc, OnceLock};
-use anyhow::{anyhow, Result};
+use anyhow::anyhow;
 use searchxyz::{
     config::Config,
     cache::Cache,
