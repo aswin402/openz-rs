@@ -16,16 +16,16 @@ use super::engine::{
 
 // ─── Engine (shared mutable state) ───────────────────────────────
 
-struct SequentialThinkingEngine {
-    store: Box<dyn ThoughtStore>,
-    current_session_id: String,
-    thought_history: Vec<ThoughtData>,
-    branches: HashMap<String, Vec<ThoughtData>>,
+pub(crate) struct SequentialThinkingEngine {
+    pub(crate) store: Box<dyn ThoughtStore>,
+    pub(crate) current_session_id: String,
+    pub(crate) thought_history: Vec<ThoughtData>,
+    pub(crate) branches: HashMap<String, Vec<ThoughtData>>,
 }
 
 static ENGINE: OnceLock<Arc<tokio::sync::Mutex<SequentialThinkingEngine>>> = OnceLock::new();
 
-fn get_engine() -> &'static Arc<tokio::sync::Mutex<SequentialThinkingEngine>> {
+pub(crate) fn get_engine() -> &'static Arc<tokio::sync::Mutex<SequentialThinkingEngine>> {
     ENGINE.get_or_init(|| {
         let db_path = get_db_path();
         if let Some(parent) = db_path.parent() {
@@ -50,7 +50,7 @@ fn get_engine() -> &'static Arc<tokio::sync::Mutex<SequentialThinkingEngine>> {
 }
 
 impl SequentialThinkingEngine {
-    fn load_session(&mut self, session_id: &str) -> Result<(), String> {
+    pub(crate) fn load_session(&mut self, session_id: &str) -> Result<(), String> {
         if self.current_session_id != session_id {
             let thoughts = self.store.load_session(session_id)?;
             self.current_session_id = session_id.to_string();
@@ -65,7 +65,7 @@ impl SequentialThinkingEngine {
         Ok(())
     }
 
-    fn process_thought(&mut self, mut input: ThoughtData) -> Result<ToolResult, String> {
+    pub(crate) fn process_thought(&mut self, mut input: ThoughtData) -> Result<ToolResult, String> {
         let session_id = match input.session_id.as_ref() {
             Some(id) => id.clone(),
             None => {
