@@ -231,6 +231,173 @@ impl Tool for OptimizeToolScopeTool {
     }
 }
 
+fn redact_secrets(val: &mut Value) {
+    match val {
+        Value::Object(map) => {
+            for (k, v) in map.iter_mut() {
+                let lower = k.to_lowercase();
+                if lower.contains("api_key") || lower.contains("bot_token") || lower.contains("verify_token") || lower.contains("password") || lower.contains("secret") {
+                    if v.is_string() {
+                        *v = Value::String("********".to_string());
+                    }
+                } else {
+                    redact_secrets(v);
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                redact_secrets(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub struct ManageConfigTool;
+
+#[async_trait::async_trait]
+impl Tool for ManageConfigTool {
+    fn name(&self) -> &str {
+        "manage_config"
+    }
+
+    fn description(&self) -> &str {
+        "View the active configuration (redacting secrets) or modify default hyperparameters (model, temperature, max tokens, caveman mode) to optimize agent behavior."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["view", "update"],
+                    "description": "Whether to view the current configuration or update hyperparameters."
+                },
+                "updates": {
+                    "type": "object",
+                    "properties": {
+                        "model": {
+                            "type": "string",
+                            "description": "Default model prefix to use (e.g. 'openai/gpt-4o')."
+                        },
+                        "provider": {
+                            "type": "string",
+                            "description": "Default provider (e.g. 'openai')."
+                        },
+                        "max_tokens": {
+                            "type": "integer",
+                            "description": "Maximum completion tokens."
+                        },
+                        "temperature": {
+                            "type": "number",
+                            "description": "Generation temperature."
+                        },
+                        "caveman_mode": {
+                            "type": "boolean",
+                            "description": "Toggles terse/concise system prompt instructions."
+                        },
+                        "tool_timeout_secs": {
+                            "type": "integer",
+                            "description": "Max timeout for tool executions."
+                        },
+                        "streaming": {
+                            "type": "boolean",
+                            "description": "Enable/disable token response streaming."
+                        },
+                        "max_tool_iterations": {
+                            "type": "integer",
+                            "description": "Maximum execution steps per turn."
+                        }
+                    },
+                    "description": "Key-value map of configuration defaults to update. Ignored for action 'view'."
+                }
+            },
+            "required": ["action"]
+        })
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let action = arguments.get("action").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("Missing action"))?;
+
+        match action {
+            "view" => {
+                let config = crate::config::loader::load_config()?;
+                let mut config_val = serde_json::to_value(&config)?;
+                redact_secrets(&mut config_val);
+                Ok(serde_json::json!({
+                    "success": true,
+                    "config": config_val
+                }))
+            }
+            "update" => {
+                let updates = arguments.get("updates").and_then(|v| v.as_object()).ok_or_else(|| anyhow::anyhow!("Missing updates for action 'update'"))?;
+
+                let mut config = crate::config::loader::load_config()?;
+
+                for (k, v) in updates {
+                    match k.as_str() {
+                        "model" => {
+                            if let Some(s) = v.as_str() {
+                                config.agents.defaults.model = s.to_string();
+                            }
+                        }
+                        "provider" => {
+                            if let Some(s) = v.as_str() {
+                                config.agents.defaults.provider = s.to_string();
+                            }
+                        }
+                        "max_tokens" => {
+                            if let Some(n) = v.as_u64() {
+                                config.agents.defaults.max_tokens = n as usize;
+                            }
+                        }
+                        "temperature" => {
+                            if let Some(f) = v.as_f64() {
+                                config.agents.defaults.temperature = f as f32;
+                            }
+                        }
+                        "caveman_mode" => {
+                            if let Some(b) = v.as_bool() {
+                                config.agents.defaults.caveman_mode = b;
+                            }
+                        }
+                        "tool_timeout_secs" => {
+                            if let Some(n) = v.as_u64() {
+                                config.agents.defaults.tool_timeout_secs = n;
+                            }
+                        }
+                        "streaming" => {
+                            if let Some(b) = v.as_bool() {
+                                config.agents.defaults.streaming = b;
+                            }
+                        }
+                        "max_tool_iterations" => {
+                            if let Some(n) = v.as_u64() {
+                                config.agents.defaults.max_tool_iterations = n as usize;
+                            }
+                        }
+                        other => {
+                            return Ok(serde_json::json!({
+                                "success": false,
+                                "error": format!("Cannot modify field '{}' via manage_config", other)
+                            }));
+                        }
+                    }
+                }
+
+                crate::config::loader::save_config(&config)?;
+                Ok(serde_json::json!({
+                    "success": true,
+                    "message": "Configuration successfully updated."
+                }))
+            }
+            _ => Err(anyhow::anyhow!("Invalid action")),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,5 +487,63 @@ mod tests {
             "skill_name": "test_curate_skills_temp"
         }))).unwrap();
         assert!(del_res["success"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_manage_config() {
+        let tool = ManageConfigTool;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        // Save original config
+        let original_config = crate::config::loader::load_config().unwrap();
+
+        // 1. View config
+        let view_res = rt.block_on(tool.call(&serde_json::json!({
+            "action": "view"
+        }))).unwrap();
+        assert!(view_res["success"].as_bool().unwrap());
+        // Verify redacted api_key / secret key format if they exist
+        let config_val = &view_res["config"];
+        if let Some(providers) = config_val.get("providers") {
+            if let Some(openai) = providers.get("openai") {
+                if let Some(api_key) = openai.get("api_key") {
+                    if api_key.is_string() {
+                        assert_eq!(api_key.as_str().unwrap(), "********");
+                    }
+                }
+            }
+        }
+
+        // 2. Update config hyperparameters
+        let update_res = rt.block_on(tool.call(&serde_json::json!({
+            "action": "update",
+            "updates": {
+                "max_tokens": 1234,
+                "temperature": 0.25,
+                "caveman_mode": false,
+                "streaming": false
+            }
+        }))).unwrap();
+        assert!(update_res["success"].as_bool().unwrap());
+
+        // 3. Verify they were updated and saved
+        let updated_config = crate::config::loader::load_config().unwrap();
+        assert_eq!(updated_config.agents.defaults.max_tokens, 1234);
+        assert_eq!(updated_config.agents.defaults.temperature, 0.25f32);
+        assert_eq!(updated_config.agents.defaults.caveman_mode, false);
+        assert_eq!(updated_config.agents.defaults.streaming, false);
+
+        // 4. Try updating an invalid/restricted field (should be blocked)
+        let invalid_res = rt.block_on(tool.call(&serde_json::json!({
+            "action": "update",
+            "updates": {
+                "invalid_field": "some_value"
+            }
+        }))).unwrap();
+        assert_eq!(invalid_res["success"].as_bool().unwrap(), false);
+        assert!(invalid_res["error"].as_str().unwrap().contains("invalid_field"));
+
+        // Restore original config
+        crate::config::loader::save_config(&original_config).unwrap();
     }
 }
