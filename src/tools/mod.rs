@@ -255,3 +255,6 @@ pub mod memory_extra;
 pub mod searchxyz;
 pub mod openmedia;
 pub mod opendoc;
+pub mod github_mcp;
+pub mod docs_mcp;
+

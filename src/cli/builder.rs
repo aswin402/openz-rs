@@ -335,8 +335,21 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocAnalyzeDocumentComplexityTool));
     registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocOcrDocumentTool));
     registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocCheckOcrAvailableTool));
-    registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocRenderDocumentPagesTool));
     registry.register(std::sync::Arc::new(crate::tools::opendoc::OpendocExtractArchiveDigestTool));
+
+    // ── GitHub MCP Tools ──
+    registry.register(std::sync::Arc::new(crate::tools::github_mcp::GithubCreatePullRequestTool));
+    registry.register(std::sync::Arc::new(crate::tools::github_mcp::GithubSearchIssuesTool));
+    registry.register(std::sync::Arc::new(crate::tools::github_mcp::GithubGetIssueCommentsTool));
+
+    // ── Docs MCP Tools ──
+    registry.register(std::sync::Arc::new(crate::tools::docs_mcp::DocsListDocsetsTool));
+    registry.register(std::sync::Arc::new(crate::tools::docs_mcp::DocsInstallDocsetTool));
+    registry.register(std::sync::Arc::new(crate::tools::docs_mcp::DocsSearchDocsTool));
+    registry.register(std::sync::Arc::new(crate::tools::docs_mcp::DocsReadDocPageTool));
+    registry.register(std::sync::Arc::new(crate::tools::docs_mcp::DocsSearchRustCrateTool));
+    registry.register(std::sync::Arc::new(crate::tools::docs_mcp::DocsReadRustDocsTool));
+
 
     // ── MCP: lazy registration ────────────────────────────────────────────────
     let silent = is_silent_mode();

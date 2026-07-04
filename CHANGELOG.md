@@ -398,7 +398,19 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.32 (Latest Release)
+### v0.0.33 (Latest Release)
+*   **Feature: Native Integration of GitHub & Docs MCP Servers (HIGH)**:
+    *   Ported the entire `openz_github_mcp` and `openz_docs_mcp` packages directly into the workspace under `tools/openz-github` and `tools/openz-docs`.
+    *   Converted both codebases to standard Cargo library targets (`lib.rs`) and removed standalone executable entry points.
+    *   Exposed 3 GitHub management tools under the `github_` prefix (e.g. `github_create_pull_request`, `github_search_issues`, `github_get_issue_comments`) using re-exported `octocrab` client integration.
+    *   Exposed 6 local and remote documentation search/caching tools under the `docs_` prefix (e.g. `docs_list_docsets`, `docs_install_docset`, `docs_search_docs`, `docs_read_doc_page`, `docs_search_rust_crate`, `docs_read_rust_docs`).
+    *   Registered all 9 new tools natively inside `build_agent_loop` in [src/cli/builder.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs).
+    *   Wrote unit tests verifying client and database schema initialization.
+*   **Prompting & Version Update**:
+    *   Added `github_` and `docs_` tool prefixes to the system guidelines prompt list in [src/agent/agent_loop/build.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs).
+    *   Bumped framework version to `v0.0.33` across Cargo, README, and `onpkg.json`.
+
+### v0.0.32 (Previous Release)
 *   **Feature: Integrated OpenDoc-MCP Native Tool Port (HIGH)**:
     *   Ported the entire `opendoc-mcp` codebase into the workspace under [tools/opendoc/](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/opendoc) to enable off-grid document intelligence.
     *   Upgraded the workspace rust toolchain to `stable` to cleanly resolve dependencies (like edition 2024 dependencies).

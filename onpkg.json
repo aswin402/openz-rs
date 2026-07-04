@@ -88,6 +88,8 @@
       "openmedia-process",
       "openmedia-svg",
       "openmedia-video",
+      "openz-docs-mcp",
+      "openz-github-mcp",
       "oxc_allocator",
       "oxc_ast",
       "oxc_codegen",
@@ -130,7 +132,7 @@
   },
   "project": {
     "name": "openz",
-    "version": "0.0.32",
+    "version": "0.0.33",
     "package_manager": "cargo",
     "runtime": "rust",
     "stack": "rust-cli"

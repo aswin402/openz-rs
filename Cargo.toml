@@ -1,6 +1,6 @@
 [package]
 name = "openz"
-version = "0.0.32"
+version = "0.0.33"
 edition = "2021"
 
 [workspace]
@@ -15,7 +15,9 @@ members = [
     "tools/openmedia/process",
     "tools/openmedia/improve",
     "tools/openmedia/mcp",
-    "tools/opendoc"
+    "tools/opendoc",
+    "tools/openz-github",
+    "tools/openz-docs"
 ]
 
 [workspace.package]
@@ -120,6 +122,9 @@ searchxyz = { path = "tools/searchxyz" }
 openmedia-core = { workspace = true }
 openmedia-mcp = { workspace = true }
 opendoc-mcp = { path = "tools/opendoc" }
+openz-github-mcp = { path = "tools/openz-github" }
+openz-docs-mcp = { path = "tools/openz-docs" }
+
 
 
 [build-dependencies]
