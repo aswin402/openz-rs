@@ -150,4 +150,15 @@ OpenZ natively integrates document rendering, text extraction, visual and text d
 - `opendoc_render_document_pages`: Render document pages to high-resolution images.
 - `opendoc_extract_archive_digest`: Get metadata summary digest of a ZIP/tar archive.
 
+---
+
+## 8. Self-Management & Self-Healing Tools 🛠️
+
+OpenZ natively integrates tools that allow the agent to test, debug, and optimize its own execution parameters and database guidelines:
+
+- `diagnose_tool`: Test, profile, and validate parameters against JSON schemas for any registered native tool.
+- `curate_skill`: List, add, update, or delete procedural skills and guidelines dynamically in the SQLite database store.
+- `optimize_tool_scope`: Restrict or reset the set of active tool prefixes exposed to the agent loop to minimize prompt size and prevent tool hallucinations.
+
+
 
