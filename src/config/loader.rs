@@ -62,40 +62,12 @@ pub fn config_path() -> PathBuf {
 
 pub fn migrate_config(config: &mut Config) -> bool {
     let mut modified = false;
-    let remove_names = ["sequential-thinking", "fetch", "memory", "puppeteer", "context7"];
+    let remove_names = [
+        "sequential-thinking", "fetch", "memory", "puppeteer", "context7",
+        "office", "spreadsheet", "just", "docs", "github", "database", "browser", "sediment"
+    ];
     for name in &remove_names {
-        if let Some(mcp) = config.mcp_servers.get(*name) {
-            if mcp.command == "npx" {
-                config.mcp_servers.remove(*name);
-                modified = true;
-            }
-        }
-    }
-
-    // Auto-populate default Rust MCP servers if they are missing
-    let defaults = Config::default();
-    for (name, server_config) in defaults.mcp_servers {
-        if let std::collections::hash_map::Entry::Vacant(e) = config.mcp_servers.entry(name) {
-            e.insert(server_config);
-            modified = true;
-        }
-    }
-
-    // Upgrade existing database server config to sqlite default if only "stdio" is set
-    if let Some(mcp) = config.mcp_servers.get_mut("database") {
-        if mcp.args.len() == 1 && mcp.args[0] == "stdio" {
-            let db_path = if let Some(home) = dirs::home_dir() {
-                home.join(".openz").join("memory.db").to_string_lossy().to_string()
-            } else {
-                "memory.db".to_string()
-            };
-            mcp.args = vec![
-                "stdio".to_string(),
-                "--db-backend".to_string(),
-                "sqlite".to_string(),
-                "--db-name".to_string(),
-                db_path,
-            ];
+        if config.mcp_servers.remove(*name).is_some() {
             modified = true;
         }
     }
