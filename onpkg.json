@@ -13,8 +13,8 @@
       "social_search.md",
       "svg_animator.md",
       "todo.md",
-      "tools.md",
       "tool_usage_guide.md",
+      "tools.md",
       "video_generator.md",
       "workflow.md"
     ],
@@ -137,7 +137,7 @@
   },
   "project": {
     "name": "openz",
-    "version": "0.0.36",
+    "version": "0.0.37",
     "package_manager": "cargo",
     "runtime": "rust",
     "stack": "rust-cli"

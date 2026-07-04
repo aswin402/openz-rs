@@ -398,7 +398,22 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.36 (Latest Release)
+### v0.0.37 (Latest Release)
+*   **Feature: Bot Detection Bypass (Stealth) for SearchXyz (HIGH)**:
+    *   Implemented dynamic **Rotating Proxies** inside DuckDuckGo and Google search backends.
+    *   Implemented **Headless Browser Fallback** (`js-rendering` feature utilizing `chromiumoxide`) to bypass Cloudflare captchas and rate-limiting blocks automatically on Raw HTTP request failure.
+    *   Wired up the `Crawler` pool of client proxies and headless browser instances directly into backends initialization in `tools/searchxyz/src/bin/searchxyz.rs` and `src/tools/searchxyz/mod.rs`.
+*   **Feature: Structured Error Self-Healing Recovery ("Errors as Instructions") (HIGH)**:
+    *   Upgraded the tool execution loop in [run.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run.rs) to natively parse and forward structured JSON error responses returned by tools.
+    *   Merges local `self_healing_suggestion` recovery hints seamlessly into structured tool errors if missing, allowing tools to define their own explicit semantic healing protocols.
+*   **Feature: TUI Formatting, Casing, and Duplicate Redundant Suffix/Prefix Fixes (MEDIUM)**:
+    *   Resolved argument casing parameter mismatches (`query`/`Query` and `path`/`Path`) across all native tools (`grep_search`, `read_file`, `view_file`, `write_file`, `list_dir`, and `doc_reader`) to ensure file names and query details print successfully in the terminal.
+    *   Fixed TUI friendly name duplicate suffixing (e.g. `● Grep Search Search` deduplicated to `● Grep Search`).
+*   **Documentation & Guidelines (MEDIUM)**:
+    *   Authored a workspace-level procedural tools selection, safety, and error recovery guide in [skills/tool_usage_guide.md](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/skills/tool_usage_guide.md) and [onpkg_docs/tool_usage_guide.md](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg_docs/tool_usage_guide.md).
+    *   Bumped project and Cargo workspace package version to `v0.0.37`.
+
+### v0.0.36 (Previous Release)
 *   **Feature: System Diagnostics, Session Management, and Safe Test Suites (HIGH)**:
     *   Implemented `DiagnoseSystemTool` (`diagnose_system`) to profile OpenZ storage directories (`sessions/`, `tool_outputs/`, `traces/`, and `skills/`), check SQLite database connectability, size, and integrity (`PRAGMA integrity_check;`) for all 5 databases, and test LLM provider endpoint request latency.
     *   Implemented `ManageSessionsTool` (`manage_sessions`) to list active session files with message counts/sizes, prune old temporary tool outputs to prevent disk exhaustion, archive sessions, or permanently delete session files.

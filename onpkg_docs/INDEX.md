@@ -15,6 +15,7 @@ This directory contains instructions and guidelines for AI agents working on thi
 - [social_search](file://./social_search.md)
 - [svg_animator](file://./svg_animator.md)
 - [todo](file://./todo.md)
+- [tool_usage_guide](file://./tool_usage_guide.md)
 - [tools](file://./tools.md)
 - [video_generator](file://./video_generator.md)
 - [workflow](file://./workflow.md)
