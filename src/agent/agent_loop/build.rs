@@ -396,7 +396,7 @@ mod tests {
     fn test_get_version_history() {
         let history = get_version_history();
         assert!(!history.is_empty());
-        assert!(history.contains("v0.0.33"));
+        assert!(history.contains("v0.0.34"));
     }
 
     #[test]

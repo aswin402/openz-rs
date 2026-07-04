@@ -45,7 +45,8 @@
       "searchxyz (searchxyz_search_web, searchxyz_read_url, searchxyz_search_and_read, searchxyz_recall, searchxyz_list_sources, searchxyz_deep_research, searchxyz_index_content, searchxyz_site_map, searchxyz_index_relationship, searchxyz_query_graph, searchxyz_read_github_repo, searchxyz_export_research, searchxyz_import_research, searchxyz_delete_source, searchxyz_clear_index)",
       "opendoc (opendoc_open_document, opendoc_read_document_text, opendoc_search_document, opendoc_replace_text, opendoc_diff_documents, opendoc_diff_documents_visual, opendoc_chunk_for_embedding, opendoc_fill_template, opendoc_validate_document, opendoc_validate_pdf_a_compliance, opendoc_extract_structured_metadata, opendoc_convert, opendoc_extract_images, opendoc_split_pdf, opendoc_create_html, opendoc_batch_convert, opendoc_create_docx, opendoc_docx_add_paragraph, opendoc_docx_add_table, opendoc_docx_add_image, opendoc_create_pptx, opendoc_pptx_add_slide, opendoc_create_xlsx, opendoc_edit_xlsx, opendoc_create_pdf, opendoc_create_formatted_pdf, opendoc_merge_pdfs, opendoc_extract_pdf_text, opendoc_list_pdf_fields, opendoc_fill_pdf_form, opendoc_find_tables, opendoc_analyze_document_complexity, opendoc_ocr_document, opendoc_check_ocr_available, opendoc_render_document_pages, opendoc_extract_archive_digest)",
       "github_mcp (github_create_pull_request, github_search_issues, github_get_issue_comments)",
-      "docs_mcp (docs_list_docsets, docs_install_docset, docs_search_docs, docs_read_doc_page, docs_search_rust_crate, docs_read_rust_docs)"
+      "docs_mcp (docs_list_docsets, docs_install_docset, docs_search_docs, docs_read_doc_page, docs_search_rust_crate, docs_read_rust_docs)",
+      "self_management (diagnose_tool, curate_skill, optimize_tool_scope)"
     ],
     "core": [
       "ab_glyph",
@@ -135,7 +136,7 @@
   },
   "project": {
     "name": "openz",
-    "version": "0.0.33",
+    "version": "0.0.34",
     "package_manager": "cargo",
     "runtime": "rust",
     "stack": "rust-cli"

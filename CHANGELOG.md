@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.33 (Latest Release)
+### v0.0.34 (Latest Release)
+*   **Feature: Self-Management & Self-Healing Toolkit (HIGH)**:
+    *   Implemented `DiagnoseToolTool` (`diagnose_tool`) to allow the agent to test any native tool in the registry, check schema validity, measure execution latency, and capture standard errors.
+    *   Implemented `CurateSkillTool` (`curate_skill`) to allow the agent to CRUD its own guidelines dynamically in the SQLite database skills store.
+    *   Implemented `OptimizeToolScopeTool` (`optimize_tool_scope`) to allow the agent to filter the set of active tool schemas exposed to the LLM by prefix, saving prompt tokens and avoiding hallucinations.
+    *   Exposed dynamic prefix filtering in `ToolRegistry` across `get`, `get_static_tools`, and `to_openai_format` methods.
+    *   Added dedicated unit tests verifying that all three self-management tools and scope filters behave correctly.
+    *   Bumped framework version to `v0.0.34` across Cargo, README, and `onpkg.json`.
+
+### v0.0.33 (Previous Release)
 *   **Feature: Native Integration of GitHub & Docs MCP Servers (HIGH)**:
     *   Ported the entire `openz_github_mcp` and `openz_docs_mcp` packages directly into the workspace under `tools/openz-github` and `tools/openz-docs`.
     *   Converted both codebases to standard Cargo library targets (`lib.rs`) and removed standalone executable entry points.
