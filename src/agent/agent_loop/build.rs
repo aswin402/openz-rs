@@ -2,6 +2,7 @@ use anyhow::Result;
 use super::{AgentLoop, TurnContext, TurnState};
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
+    let config = &ctx.config;
     let mut summary_part = String::new();
     if let Some(summary) = ctx.session.metadata.get("summary").and_then(|v| v.as_str()) {
         if !summary.is_empty() {
@@ -30,7 +31,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         }
     }
     let mut vision_instruction = "";
-    if !crate::providers::model_supports_vision(&loop_ref.config.agents.defaults.model) {
+    if !crate::providers::model_supports_vision(&config.agents.defaults.model) {
         vision_instruction = " If a message contains a markdown image link (e.g. ![](file://...)) and you need to analyze or describe the image, you MUST delegate the visual analysis task to the specialized 'vision_agent' tool (or the 'delegate_task' tool) to see and report on the image contents.";
     }
     let subagents_list = if let Ok(profiles) = crate::subagents::load_profiles() {
@@ -92,7 +93,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         }
     }
 
-    let caveman_rules = if loop_ref.config.agents.defaults.caveman_mode {
+    let caveman_rules = if config.agents.defaults.caveman_mode {
         "\n\nRespond terse like smart caveman. All technical substance stay. Only fluff die.\nRules:\n- Drop: articles (a/an/the), filler (just/really/basically), pleasantries, hedging\n- Fragments OK. Short synonyms. Technical terms exact. Code unchanged.\n- Pattern: [thing] [action] [reason]. [next step].\n- Not: \"Sure! I'd be happy to help you with that.\"\n- Yes: \"Bug in auth middleware. Fix:\""
     } else {
         ""
@@ -105,7 +106,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
     let header = format!(
         "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.",
-        loop_ref.config.agents.defaults.bot_name,
+        config.agents.defaults.bot_name,
         chrono::Utc::now().to_rfc3339()
     );
 

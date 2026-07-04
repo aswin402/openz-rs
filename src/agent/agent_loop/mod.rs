@@ -50,6 +50,7 @@ pub struct TurnContext<'a> {
     pub turn_errors: Vec<String>,
     pub session_file_lock: Option<std::fs::File>,
     pub streamed: bool,
+    pub config: Config,
 }
 
 struct ActivityGuard<'a> {
@@ -272,10 +273,16 @@ impl AgentLoop {
             turn_errors: Vec::new(),
             session_file_lock: None,
             streamed: false,
+            config: self.config.clone(),
         };
 
         let mut state = TurnState::Restore;
         while state != TurnState::Done {
+            // Reload configuration dynamically from disk at the start of each turn iteration
+            if let Ok(latest_config) = crate::config::loader::load_config() {
+                ctx.config = latest_config;
+            }
+
             state = match state {
                 TurnState::Restore => restore::handle(self, &mut ctx).await?,
                 TurnState::Compact => compact::handle(self, &mut ctx).await?,

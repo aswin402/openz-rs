@@ -7,7 +7,8 @@ use crate::agent::style::{RED_ORANGE, COLOR_RESET, AURA_GOLD};
 use super::{AgentLoop, TurnContext, TurnState};
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
-    let max_msgs = loop_ref.config.agents.defaults.max_messages;
+    let config = &ctx.config;
+    let max_msgs = config.agents.defaults.max_messages;
     let len = ctx.session.messages.len();
     if len > max_msgs {
         let keep_msgs = max_msgs.saturating_sub(10).max(5);

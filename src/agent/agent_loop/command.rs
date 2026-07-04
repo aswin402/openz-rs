@@ -3,6 +3,7 @@ use crate::tools::subagent::{DelegateTaskTool, CancellationToken};
 use super::{AgentLoop, TurnContext, TurnState};
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
+    let config = &ctx.config;
     let mut profile_name = None;
     let parts_key: Vec<&str> = ctx.session_key.split(':').collect();
     if parts_key.len() >= 2 && parts_key[0] == "subagent" {
@@ -33,9 +34,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 "/status" => {
                     ctx.final_content = format!(
                         "OpenZ Agent Status:\nModel: {}\nProvider: {}\nWorkspace: {}\nTotal Messages: {}",
-                        loop_ref.config.agents.defaults.model,
-                        loop_ref.config.agents.defaults.provider,
-                        loop_ref.config.agents.defaults.workspace,
+                        config.agents.defaults.model,
+                        config.agents.defaults.provider,
+                        config.agents.defaults.workspace,
                         ctx.session.messages.len()
                     );
                     return Ok(TurnState::Done);
@@ -195,7 +196,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             .filter(|t| t.name() != "delegate_task" && t.name() != "parallel_research")
                             .collect();
                         let delegate_tool: std::sync::Arc<dyn crate::tools::Tool> = std::sync::Arc::new(DelegateTaskTool {
-                            config: loop_ref.config.clone(),
+                            config: (*config).clone(),
                             parent_provider: ctx.active_provider.clone(),
                             session_manager: loop_ref.session_manager.clone(),
                             parent_tools,

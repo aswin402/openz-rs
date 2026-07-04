@@ -9,19 +9,21 @@ use super::{AgentLoop, TurnContext, TurnState};
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
     let mut iterations = 0;
     let mut loop_blocked_count = 0;
-    let max_iterations = loop_ref.config.agents.defaults.max_tool_iterations;
-    let settings = GenerationSettings {
-        temperature: loop_ref.config.agents.defaults.temperature,
-        max_tokens: loop_ref.config.agents.defaults.max_tokens,
-        reasoning_effort: None,
-    };
+    let max_iterations = ctx.config.agents.defaults.max_tool_iterations;
 
     loop {
+        let config = ctx.config.clone();
+        let settings = GenerationSettings {
+            temperature: config.agents.defaults.temperature,
+            max_tokens: config.agents.defaults.max_tokens,
+            reasoning_effort: None,
+        };
+
         tracing::info!(
             session = %ctx.session_key,
             iteration = iterations,
             "Sending completion request to LLM (model: {})",
-            loop_ref.config.agents.defaults.model
+            config.agents.defaults.model
         );
         if iterations >= max_iterations {
             let msg = format!(
@@ -51,7 +53,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         let mut content_streaming_started = false;
         let mut reasoning_printed = false;
         let mut current_line_buffer = String::new();
-        let mut resp = if loop_ref.config.agents.defaults.streaming {
+        let mut resp = if config.agents.defaults.streaming {
             let mut stream = loop_ref
                 .chat_stream_with_fallback(
                     &mut ctx.active_provider,
@@ -513,7 +515,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             );
             let mut approved = true;
             let mut forbidden = false;
-            let security_mode = &loop_ref.config.agents.defaults.security_mode;
+            let security_mode = &config.agents.defaults.security_mode;
 
             let parse_error = call.arguments.get("parse_error").and_then(|v| v.as_str());
 
@@ -635,7 +637,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 match loop_ref.tools.get(&call.name) {
                     Some(t) => {
                         let tool_timeout =
-                            std::time::Duration::from_secs(loop_ref.config.agents.defaults.tool_timeout_secs);
+                            std::time::Duration::from_secs(config.agents.defaults.tool_timeout_secs);
                         let fut = t.call(&call.arguments);
                         let timed_fut = tokio::time::timeout(tool_timeout, fut);
                         match with_spinner(&tool_spinner_msg, timed_fut).await {
@@ -731,7 +733,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             Err(_) => {
                                 let timeout_msg = format!(
                                     "Tool '{}' timed out after {}s",
-                                    call.name, loop_ref.config.agents.defaults.tool_timeout_secs
+                                    call.name, config.agents.defaults.tool_timeout_secs
                                 );
                                 ctx.turn_errors.push(timeout_msg.clone());
                                 let fail_msg = format!("⏱️ *{}* - Timed out", formatted_args);
@@ -746,7 +748,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                         AURA_SLATE,
                                         leaf_prefix,
                                         AURA_ROSE,
-                                        loop_ref.config.agents.defaults.tool_timeout_secs,
+                                        config.agents.defaults.tool_timeout_secs,
                                         COLOR_RESET
                                     );
                                 }
@@ -850,7 +852,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             extra.insert("name".to_string(), serde_json::Value::String(name.clone()));
 
             let content_str = result.to_string();
-            let limit = loop_ref.config.agents.defaults.tool_output_limit.unwrap_or(4000);
+            let limit = config.agents.defaults.tool_output_limit.unwrap_or(4000);
             let is_retrieve = name == "retrieve_original" || name == "headroom/retrieve_original";
             let content = if content_str.len() > limit && !is_retrieve {
                 let outputs_dir = crate::config::resolve_path("~/.openz/tool_outputs");

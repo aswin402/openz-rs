@@ -4,6 +4,7 @@ use serde::Deserialize;
 use super::{AgentLoop, TurnContext, TurnState, get_session_lock};
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
+    let config = &ctx.config;
     loop_ref.session_manager.save(&ctx.session).await?;
     if let Err(e) = crate::tools::onpkg::sync_onpkg_manifest() {
         tracing::warn!("Failed to synchronize onpkg manifest: {}", e);
@@ -21,7 +22,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             "timestamp": chrono::Utc::now().to_rfc3339(),
             "user_query": ctx.user_content,
             "system_prompt": ctx.system_prompt,
-            "model": loop_ref.config.agents.defaults.model,
+            "model": config.agents.defaults.model,
             "messages": ctx.messages,
             "tools_used": ctx.tools_used.clone(),
             "final_response": ctx.final_content,

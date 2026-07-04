@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use super::{AgentLoop, TurnContext, TurnState};
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
+    let config = &ctx.config;
     ctx.session_file_lock = Some(loop_ref.session_manager.acquire_lock_async(ctx.session_key).await.map_err(|e| {
         anyhow!("Cannot start session: {}", e)
     })?);
@@ -14,10 +15,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
     let parts = crate::providers::parse_multimodal_content(ctx.user_content).await;
     let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
-    let supports_vision = crate::providers::model_supports_vision(&loop_ref.config.agents.defaults.model);
+    let supports_vision = crate::providers::model_supports_vision(&config.agents.defaults.model);
     let silent = crate::agent::style::spinner::is_silent();
     if has_images && !supports_vision && !silent {
-        eprintln!("{}▲ Image unsupported: The active model '{}' does not support images. Images will be ignored.{}", crate::agent::style::AURA_GOLD, loop_ref.config.agents.defaults.model, crate::agent::style::COLOR_RESET);
+        eprintln!("{}▲ Image unsupported: The active model '{}' does not support images. Images will be ignored.{}", crate::agent::style::AURA_GOLD, config.agents.defaults.model, crate::agent::style::COLOR_RESET);
     }
 
     if let Err(e) = loop_ref.session_manager.save(&ctx.session).await {
