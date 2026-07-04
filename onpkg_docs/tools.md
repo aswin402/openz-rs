@@ -159,6 +159,7 @@ OpenZ natively integrates tools that allow the agent to test, debug, and optimiz
 - `diagnose_tool`: Test, profile, and validate parameters against JSON schemas for any registered native tool.
 - `curate_skill`: List, add, update, or delete procedural skills and guidelines dynamically in the SQLite database store.
 - `optimize_tool_scope`: Restrict or reset the set of active tool prefixes exposed to the agent loop to minimize prompt size and prevent tool hallucinations.
+- `manage_config`: View active configuration (with automatic secret key redaction) or update agent hyper-parameters (such as model, provider, temperature, max_tokens, caveman_mode, tool_timeout_secs, streaming, max_tool_iterations) in real-time.
 
 
 

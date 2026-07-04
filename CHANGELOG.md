@@ -398,7 +398,14 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.34 (Latest Release)
+### v0.0.35 (Latest Release)
+*   **Feature: Real-Time Configuration Dynamic Reloading & Management (HIGH)**:
+    *   Dynamic reload of configuration (`config.json`) at the start of each turn loop iteration inside `AgentLoop::run_inner` synced via `TurnContext`.
+    *   Implemented `ManageConfigTool` (`manage_config`) to view the active configuration with recursive secret key redaction (`api_key`, `bot_token`, `verify_token`, `password`, `secret`) and update agent hyper-parameters (`model`, `provider`, `max_tokens`, `temperature`, `caveman_mode`, `tool_timeout_secs`, `streaming`, `max_tool_iterations`).
+    *   Added dedicated unit tests verifying that configuration viewing, secret redaction, and hyper-parameter updates behave correctly.
+    *   Bumped framework version to `v0.0.35` across Cargo, README, and `onpkg.json`.
+
+### v0.0.34 (Previous Release)
 *   **Feature: Self-Management & Self-Healing Toolkit (HIGH)**:
     *   Implemented `DiagnoseToolTool` (`diagnose_tool`) to allow the agent to test any native tool in the registry, check schema validity, measure execution latency, and capture standard errors.
     *   Implemented `CurateSkillTool` (`curate_skill`) to allow the agent to CRUD its own guidelines dynamically in the SQLite database skills store.
