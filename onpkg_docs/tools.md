@@ -84,6 +84,11 @@ OpenZ natively integrates the `searchxyz` search suite for advanced keyless web 
 - `searchxyz_delete_source`: Evict documents by URL or prefix.
 - `searchxyz_clear_index`: Clear all documents and Graph data.
 
+### Anti-Bot-Detection features
+To prevent captchas and rate-limiting blocks during web searches, the DuckDuckGo and Google search backends support:
+1. **Proxy Rotation:** If proxies are enabled in `searchxyz.toml` or config, requests are automatically distributed across the configured proxy list.
+2. **Headless Browser Fallback:** If a raw HTTP search request fails or returns zero organic results (which typically indicates a bot block), the engine falls back to navigating the query URL inside a headless Chromium instance using the `js-rendering` feature (CDP-controlled), which mimics a real browser session TLS fingerprint.
+
 ---
 
 ## 5. GitHub Integrated Tools 🦊
