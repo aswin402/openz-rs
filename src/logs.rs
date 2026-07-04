@@ -432,7 +432,7 @@ fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static 
         return Some((
             "🧹".to_string(),
             "CURATOR".to_string(),
-            rest.trim().trim_start_matches(|c| c == '-' || c == ':').trim().to_string(),
+            rest.trim().trim_start_matches(['-', ':']).trim().to_string(),
             PURPLE,
         ));
     }

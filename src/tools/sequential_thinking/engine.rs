@@ -186,7 +186,7 @@ pub fn export_session_as_markdown(session_id: &str, thoughts: &[ThoughtData]) ->
                 for a in ass {
                     md.push_str(&format!("- 🤔 {}\n", a));
                 }
-                md.push_str("\n");
+                md.push('\n');
             }
         }
         if let Some(ref ver) = t.verified_assumptions {
@@ -195,7 +195,7 @@ pub fn export_session_as_markdown(session_id: &str, thoughts: &[ThoughtData]) ->
                 for v in ver {
                     md.push_str(&format!("- ✅ {}\n", v));
                 }
-                md.push_str("\n");
+                md.push('\n');
             }
         }
         if let Some(conf) = t.confidence_score {

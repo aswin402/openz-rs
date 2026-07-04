@@ -27,7 +27,7 @@ fn get_db_path() -> PathBuf {
 pub fn get_cache_connection() -> Result<std::sync::MutexGuard<'static, Connection>> {
     static DB: OnceLock<std::sync::Mutex<Connection>> = OnceLock::new();
     if let Some(mtx) = DB.get() {
-        return Ok(mtx.lock().map_err(|e| anyhow!("Cache lock error: {}", e))?);
+        return mtx.lock().map_err(|e| anyhow!("Cache lock error: {}", e));
     }
     let path = get_db_path();
     if let Some(parent) = path.parent() {
@@ -59,7 +59,7 @@ pub fn get_cache_connection() -> Result<std::sync::MutexGuard<'static, Connectio
          CREATE INDEX IF NOT EXISTS idx_cache_accessed ON cache_entries(accessed_at);",
     )?;
     let mtx = DB.get_or_init(|| std::sync::Mutex::new(conn));
-    Ok(mtx.lock().map_err(|e| anyhow!("Cache lock error: {}", e))?)
+    mtx.lock().map_err(|e| anyhow!("Cache lock error: {}", e))
 }
 
 // ─── Helper Functions ───────────────────────────────────────────

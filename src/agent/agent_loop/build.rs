@@ -123,7 +123,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         + cross_session_memory.chars().count();
 
     if total_len > budget_limit {
-        let budget = if budget_limit > base_len { budget_limit - base_len } else { 0 };
+        let budget = budget_limit.saturating_sub(base_len);
         let half_budget = budget / 2;
         let skills_len = skills_part.chars().count();
         let cross_len = cross_session_memory.chars().count();
@@ -262,7 +262,7 @@ async fn retrieve_cross_session_memories(_user_content: &str) -> String {
     // 5. Dedup by normalized text
     fn normalize(s: &str) -> String {
         s.trim()
-            .trim_start_matches(|c: char| c == '-' || c == '*' || c == ' ')
+            .trim_start_matches(['-', '*', ' '])
             .trim_start_matches("**").trim_end_matches("**")
             .trim()
             .to_lowercase()

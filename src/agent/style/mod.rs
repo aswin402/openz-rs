@@ -147,7 +147,7 @@ pub fn strip_ansi_escapes(s: &str) -> String {
     let mut in_escape = false;
     let mut chars = s.chars().peekable();
     
-    while let Some(c) = chars.next() {
+    for c in chars {
         if c == '\x1b' {
             in_escape = true;
         } else if in_escape {
@@ -377,7 +377,7 @@ pub fn format_tool_outcome_summary(name: &str, arguments: &serde_json::Value, re
             } else {
                 let stdout = res.get("stdout").and_then(|v| v.as_str()).unwrap_or_default();
                 let stderr = res.get("stderr").and_then(|v| v.as_str()).unwrap_or_default();
-                let err_summary = get_command_error_summary(&stdout, &stderr);
+                let err_summary = get_command_error_summary(stdout, stderr);
                 format!("{}\u{2715} {}{}", colors::AURA_ROSE, err_summary, colors::COLOR_RESET)
             }
         }

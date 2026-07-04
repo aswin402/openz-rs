@@ -330,12 +330,10 @@ impl Tool for AnalyzeGraphCommunitiesTool {
             let edges = edge_stmt.query_map(params![uid, sid, aid], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
             })?;
-            for e in edges {
-                if let Ok((from, to)) = e {
-                    let rf = find(&mut parent, &from);
-                    let rt = find(&mut parent, &to);
-                    if rf != rt { parent.insert(rf, rt); }
-                }
+            for (from, to) in edges.flatten() {
+                let rf = find(&mut parent, &from);
+                let rt = find(&mut parent, &to);
+                if rf != rt { parent.insert(rf, rt); }
             }
 
             // Group by root

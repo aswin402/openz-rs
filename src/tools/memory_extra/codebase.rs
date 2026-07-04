@@ -55,7 +55,7 @@ impl Tool for CompressContextTool {
         let ratio = arguments.get("ratio").and_then(|v| v.as_f64()).unwrap_or(0.5).clamp(0.0, 1.0);
 
         // Simple sentence splitting
-        let sentences: Vec<&str> = text.split(|c: char| c == '.' || c == '!' || c == '?')
+        let sentences: Vec<&str> = text.split(['.', '!', '?'])
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .collect();
@@ -79,7 +79,7 @@ impl Tool for CompressContextTool {
                 .collect::<String>()
                 .split_whitespace()
                 .map(|w| w.to_lowercase())
-                .filter(|w| w.len() >= 3 && !STOP_WORDS.binary_search(&w.as_str()).is_ok())
+                .filter(|w| w.len() >= 3 && STOP_WORDS.binary_search(&w.as_str()).is_err())
                 .collect();
             let unique_terms: HashSet<String> = words.iter().cloned().collect();
             sentence_terms.push(words);
@@ -421,7 +421,7 @@ fn index_file(path: &Path, user_id: &str, session_id: &str, agent_id: &str, conn
                 if let Some(callee) = elements.iter().find(|e| e.1 == callee_name) {
                     // Find nearest caller (the enclosing function/element on this line)
                     let line_num = (idx + 1) as i64;
-                    if let Some(caller) = elements.iter().filter(|e| e.4 <= line_num && line_num <= e.5).last() {
+                    if let Some(caller) = elements.iter().filter(|e| e.4 <= line_num && line_num <= e.5).next_back() {
                         conn.execute(
                             "INSERT OR IGNORE INTO code_calls (caller_id, callee_id, call_site) VALUES (?1, ?2, ?3)",
                             params![caller.0.clone(), callee.0.clone(), format!("{}:{}", relative_path, line_num)],

@@ -126,8 +126,8 @@ impl Tool for CommitDatabaseBranchTool {
         std::fs::copy(&branch_path, &main_path)?;
         std::fs::remove_file(&branch_path)?;
         // Clean up WAL/SHM files
-        let _ = std::fs::remove_file(&main_path.with_extension("db-wal"));
-        let _ = std::fs::remove_file(&main_path.with_extension("db-shm"));
+        let _ = std::fs::remove_file(main_path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(main_path.with_extension("db-shm"));
 
         // Restore connection to updated main
         let main_conn = Connection::open(&main_path)?;

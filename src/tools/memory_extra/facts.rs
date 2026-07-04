@@ -76,7 +76,7 @@ impl Tool for InvalidateFactTool {
             if updated {
                 messages.push(format!("Graph relation '{}->{} ({})' invalidated", from, to, rel_type));
             } else {
-                messages.push(format!("Graph relation not found or already invalidated"));
+                messages.push("Graph relation not found or already invalidated".to_string());
             }
         }
 
@@ -139,7 +139,7 @@ impl Tool for QueryFactHistoryTool {
                  ORDER BY valid_from DESC"
             };
             let mut stmt = conn.prepare(sql)?;
-            let mut rows = if let Some(_) = relation_type {
+            let mut rows = if relation_type.is_some() {
                 stmt.query(params![entity_name, relation_type, uid, sid, aid])?
             } else {
                 stmt.query(params![entity_name, uid, sid, aid])?
@@ -565,7 +565,7 @@ pub(crate) fn extract_facts(text: &str) -> Vec<ExtractedFact> {
 
     let mut facts = Vec::new();
     // Simple sentence splitting by punctuation
-    for sentence in text.split(|c: char| c == '.' || c == '!' || c == '?') {
+    for sentence in text.split(['.', '!', '?']) {
         let sentence = sentence.trim();
         if sentence.is_empty() { continue; }
         for (pattern, rel_type) in &patterns {
@@ -651,7 +651,7 @@ impl Tool for ProactiveRecallTool {
             .collect::<String>()
             .split_whitespace()
             .map(|w| w.to_lowercase())
-            .filter(|w| w.len() >= 3 && !STOP_WORDS.binary_search(&w.as_str()).is_ok())
+            .filter(|w| w.len() >= 3 && STOP_WORDS.binary_search(&w.as_str()).is_err())
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();

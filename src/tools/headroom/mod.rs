@@ -21,7 +21,7 @@ pub const CACHE_CAPACITY: usize = 1000;
 
 pub fn estimate_tokens(text: &str) -> usize {
     if text.is_empty() { return 0; }
-    (text.len() + 3) / 4
+    text.len().div_ceil(4)
 }
 
 #[cfg(test)]

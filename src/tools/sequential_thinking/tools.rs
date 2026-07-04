@@ -355,8 +355,8 @@ impl Tool for ExportSessionTool {
                     md.push_str(&format!("## {} {}\n", kind, t.thought_number));
                     if let Some(ts) = t.timestamp { md.push_str(&format!("*Timestamp: {}*\n\n", ts.format("%Y-%m-%d %H:%M:%S UTC"))); }
                     md.push_str(&format!("{}\n\n", t.thought));
-                    if let Some(ref ass) = t.assumptions { if !ass.is_empty() { md.push_str("### Assumptions\n"); for a in ass { md.push_str(&format!("- 🤔 {}\n", a)); } md.push_str("\n"); } }
-                    if let Some(ref ver) = t.verified_assumptions { if !ver.is_empty() { md.push_str("### Verified Assumptions\n"); for v in ver { md.push_str(&format!("- ✅ {}\n", v)); } md.push_str("\n"); } }
+                    if let Some(ref ass) = t.assumptions { if !ass.is_empty() { md.push_str("### Assumptions\n"); for a in ass { md.push_str(&format!("- 🤔 {}\n", a)); } md.push('\n'); } }
+                    if let Some(ref ver) = t.verified_assumptions { if !ver.is_empty() { md.push_str("### Verified Assumptions\n"); for v in ver { md.push_str(&format!("- ✅ {}\n", v)); } md.push('\n'); } }
                     if let Some(conf) = t.confidence_score { md.push_str(&format!("*Confidence Score: {}/5 ({:.0}%)*\n\n", (conf * 5.0).round(), conf * 100.0)); }
                     if let Some(ref c) = t.criticism { md.push_str(&format!("> **🧐 Self-Criticism:** {}\n\n", c)); }
                     if let Some(ref h) = t.hypothesis { md.push_str(&format!("> **🔬 Hypothesis:** {}\n\n", h)); }

@@ -125,6 +125,12 @@ pub struct MemoryThoughtStore {
     updated_at: HashMap<String, DateTime<Utc>>,
 }
 
+impl Default for MemoryThoughtStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryThoughtStore {
     pub fn new() -> Self {
         Self { sessions: HashMap::new(), created_at: HashMap::new(), updated_at: HashMap::new() }

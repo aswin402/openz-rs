@@ -220,8 +220,7 @@ pub fn parse_unified_diff(text: &str) -> DiffSummary {
     for line in text.lines() {
         if line.starts_with("diff --git ") {
             commit_current_file(&mut files, &mut current_file);
-        } else if line.starts_with("--- ") {
-            let path_part = &line[4..];
+        } else if let Some(path_part) = line.strip_prefix("--- ") {
             let cleaned = clean_path(path_part);
             if cleaned == "/dev/null" {
                 if let Some(ref mut f) = current_file {
@@ -251,8 +250,7 @@ pub fn parse_unified_diff(text: &str) -> DiffSummary {
                     current_file = Some(f);
                 }
             }
-        } else if line.starts_with("+++ ") {
-            let path_part = &line[4..];
+        } else if let Some(path_part) = line.strip_prefix("+++ ") {
             let cleaned = clean_path(path_part);
             if cleaned == "/dev/null" {
                 if let Some(ref mut f) = current_file { f.is_deleted = true; }

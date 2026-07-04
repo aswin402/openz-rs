@@ -70,11 +70,9 @@ impl Tool for DbInspectorTool {
                 let rows = stmt.query_map([], |row| row.get::<_, String>(0))
                     .map_err(|e| anyhow!("Failed to execute schema query: {}", e))?;
                 let mut schema = String::new();
-                for row in rows {
-                    if let Ok(sql) = row {
-                        schema.push_str(&sql);
-                        schema.push_str(";\n");
-                    }
+                for sql in rows.flatten() {
+                    schema.push_str(&sql);
+                    schema.push_str(";\n");
                 }
                 (schema, "success")
             }

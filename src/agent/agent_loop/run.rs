@@ -359,11 +359,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             resp.content = resp.reasoning_content.take();
             // If we already printed it as reasoning on the terminal, set streamed = true
             // to avoid printing it again in cli.rs
-            if reasoning_printed {
-                ctx.streamed = true;
-            } else {
-                ctx.streamed = false;
-            }
+            ctx.streamed = reasoning_printed;
             // Clear any thinking spinner that was active on the terminal
             if !crate::agent::style::spinner::is_silent() {
                 print!("\r\x1b[2K");

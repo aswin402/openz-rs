@@ -331,7 +331,7 @@ impl Tool for GitProviderTool {
                                 
                                 diff_output.push_str(&format!("--- a/{}\n+++ b/{}\n", old_path, new_path));
                                 diff_output.push_str(diff);
-                                diff_output.push_str("\n");
+                                diff_output.push('\n');
                             }
                         }
 
