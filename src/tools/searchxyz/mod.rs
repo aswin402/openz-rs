@@ -29,7 +29,12 @@ pub use graph::{SearchXyzIndexRelationshipTool, SearchXyzQueryGraphTool, SearchX
 pub fn get_server() -> &'static SearchXyzServer {
     static SERVER: OnceLock<SearchXyzServer> = OnceLock::new();
     SERVER.get_or_init(|| {
-        let config = Config::load(None).unwrap_or_default();
+        let mut config = Config::load(None).unwrap_or_default();
+        if cfg!(test) {
+            let temp_dir = std::env::temp_dir().join(format!("searchxyz_test_index_{}", uuid::Uuid::new_v4()));
+            config.index.path = temp_dir.clone();
+            config.cache.path = temp_dir.join("cache.json");
+        }
         let cache = Arc::new(tokio::sync::Mutex::new(Cache::load_from_file(
             config.cache.max_entries,
             config.cache.ttl_secs,

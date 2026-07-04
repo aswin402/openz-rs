@@ -107,6 +107,51 @@ impl OpenAIProvider {
         // Groq, etc.) don't accept that field, so we fall back to <think> tags for them.
         let is_deepseek = api_base.contains("deepseek.com") || model.starts_with("deepseek");
         
+        let mut sanitized_messages: Vec<Message> = Vec::new();
+        for msg in messages {
+            if msg.role == "tool" {
+                let tool_call_id = msg.extra.get("tool_call_id").and_then(|v| v.as_str());
+                if let Some(id) = tool_call_id {
+                    let mut found = false;
+                    let mut tool_name = None;
+                    for prev in sanitized_messages.iter().rev() {
+                        if prev.role == "assistant" {
+                            if let Some(calls) = prev.extra.get("tool_calls").and_then(|v| v.as_array()) {
+                                for call in calls {
+                                    if call.get("id").and_then(|v| v.as_str()) == Some(id) {
+                                        found = true;
+                                        tool_name = call.get("function").and_then(|f| f.get("name")).and_then(|v| v.as_str()).map(|s| s.to_string());
+                                        break;
+                                    }
+                                }
+                            }
+                            if found {
+                                break;
+                            }
+                        }
+                    }
+                    if found {
+                        let mut sanitized_msg = msg.clone();
+                        let current_name = sanitized_msg.extra.get("name").and_then(|v| v.as_str());
+                        if current_name.is_none() || current_name.unwrap().trim().is_empty() {
+                            if let Some(name_str) = tool_name {
+                                sanitized_msg.extra.insert("name".to_string(), serde_json::Value::String(name_str));
+                            } else {
+                                sanitized_msg.extra.insert("name".to_string(), serde_json::Value::String("tool".to_string()));
+                            }
+                        }
+                        sanitized_messages.push(sanitized_msg);
+                    } else {
+                        tracing::warn!("Discarded orphaned tool message with tool_call_id: {}", id);
+                    }
+                } else {
+                    tracing::warn!("Discarded tool message missing tool_call_id");
+                }
+            } else {
+                sanitized_messages.push(msg.clone());
+            }
+        }
+
         if !system_prompt.is_empty() {
             api_messages.push(OpenAIMessage {
                 role: "system".to_string(),
@@ -118,7 +163,7 @@ impl OpenAIProvider {
             });
         }
 
-        for msg in messages {
+        for msg in sanitized_messages {
             let mut tool_call_id = None;
             let mut name = None;
             let role = msg.role.clone();
