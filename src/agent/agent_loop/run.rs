@@ -963,7 +963,7 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 String::new()
             }
         } else if name == "read_file" || name == "view_file" {
-            if let Some(path) = map.get("Path").or_else(|| map.get("AbsolutePath")).and_then(|v| v.as_str()) {
+            if let Some(path) = map.get("path").or_else(|| map.get("Path")).or_else(|| map.get("AbsolutePath")).and_then(|v| v.as_str()) {
                 if let Some(filename) = std::path::Path::new(path).file_name() {
                     filename.to_string_lossy().to_string()
                 } else {
@@ -976,8 +976,10 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
             || name == "write_to_file"
             || name == "replace_file_content"
             || name == "multi_replace_file_content"
+            || name == "patch_file"
+            || name == "replace_lines"
         {
-            if let Some(path) = map.get("TargetFile").or_else(|| map.get("Path")).and_then(|v| v.as_str()) {
+            if let Some(path) = map.get("path").or_else(|| map.get("TargetFile")).or_else(|| map.get("Path")).and_then(|v| v.as_str()) {
                 if let Some(filename) = std::path::Path::new(path).file_name() {
                     filename.to_string_lossy().to_string()
                 } else {
@@ -1004,7 +1006,7 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 String::new()
             }
         } else if name == "list_dir" {
-            if let Some(path) = map.get("DirectoryPath").or_else(|| map.get("Path")).and_then(|v| v.as_str()) {
+            if let Some(path) = map.get("path").or_else(|| map.get("DirectoryPath")).or_else(|| map.get("Path")).and_then(|v| v.as_str()) {
                 if let Some(filename) = std::path::Path::new(path).file_name() {
                     filename.to_string_lossy().to_string()
                 } else {
@@ -1168,7 +1170,7 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 format!("query: \"{}\"", query)
             }
         } else if name == "doc_reader" {
-            let path = map.get("file_path").or_else(|| map.get("Path")).and_then(|v| v.as_str()).unwrap_or("");
+            let path = map.get("path").or_else(|| map.get("file_path")).or_else(|| map.get("Path")).and_then(|v| v.as_str()).unwrap_or("");
             let filename = std::path::Path::new(path)
                 .file_name()
                 .map(|f| f.to_string_lossy().to_string())
