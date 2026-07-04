@@ -42,14 +42,27 @@ pub fn get_server() -> &'static SearchXyzServer {
             .build()
             .unwrap();
 
+        let crawler = Crawler::new(
+            config.crawler.clone(),
+            config.headless.clone(),
+            config.proxy.clone(),
+            cache.clone(),
+        );
+
         let mut backends: Vec<Box<dyn SearchBackend>> = Vec::new();
         for name in &config.search.backends {
             match name.as_str() {
                 "duckduckgo" => {
-                    backends.push(Box::new(DuckDuckGoBackend::new(http_client.clone())));
+                    let b = DuckDuckGoBackend::new(http_client.clone())
+                        .with_proxies(crawler.clients().to_vec())
+                        .with_headless(crawler.headless_browser().clone());
+                    backends.push(Box::new(b));
                 }
                 "google" => {
-                    backends.push(Box::new(GoogleBackend::new(http_client.clone())));
+                    let b = GoogleBackend::new(http_client.clone())
+                        .with_proxies(crawler.clients().to_vec())
+                        .with_headless(crawler.headless_browser().clone());
+                    backends.push(Box::new(b));
                 }
                 "bing" => {
                     backends.push(Box::new(BingBackend::new(http_client.clone())));
@@ -65,12 +78,6 @@ pub fn get_server() -> &'static SearchXyzServer {
         }
         
         let dispatcher = SearchDispatcher::new(backends);
-        let crawler = Crawler::new(
-            config.crawler.clone(),
-            config.headless.clone(),
-            config.proxy.clone(),
-            cache.clone(),
-        );
         let extractor = ExtractionPipeline::new(config.extractor.clone());
         let index = SearchIndex::open(&config.index).unwrap();
         

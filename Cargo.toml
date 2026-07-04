@@ -118,7 +118,7 @@ governor = "0.8"
 lru = "0.12"
 rmcp = { version = "1.7.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 schemars = "1.2"
-searchxyz = { path = "tools/searchxyz" }
+searchxyz = { path = "tools/searchxyz", features = ["js-rendering"] }
 openmedia-core = { workspace = true }
 openmedia-mcp = { workspace = true }
 opendoc-mcp = { path = "tools/opendoc" }

@@ -109,6 +109,14 @@ impl Crawler {
         }
     }
 
+    pub fn clients(&self) -> &[Client] {
+        &self.clients
+    }
+
+    pub fn headless_browser(&self) -> &HeadlessBrowser {
+        &self.headless_browser
+    }
+
     /// Fetch a URL, respecting cache, rate limits, and retries.
     pub async fn fetch_url(
         &self,

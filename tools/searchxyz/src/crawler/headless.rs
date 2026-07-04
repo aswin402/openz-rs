@@ -2,6 +2,7 @@ use crate::config::HeadlessConfig;
 use crate::error::SearchXyzError;
 
 /// Headless browser driver controlling Chromium/Chrome instance natively in Rust.
+#[derive(Clone)]
 pub struct HeadlessBrowser {
     #[allow(dead_code)]
     config: HeadlessConfig,

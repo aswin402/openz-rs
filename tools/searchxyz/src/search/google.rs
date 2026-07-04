@@ -5,15 +5,32 @@ use scraper::{Html, Selector};
 use super::{SearchBackend, SearchQuery, SearchResult};
 use crate::crawler::fingerprint::HeaderGenerator;
 use crate::error::SearchXyzError;
+use crate::crawler::headless::HeadlessBrowser;
 
 /// Native Google Scraper Backend — no API key required.
 pub struct GoogleBackend {
     client: Client,
+    clients: Option<Vec<Client>>,
+    headless_browser: Option<HeadlessBrowser>,
 }
 
 impl GoogleBackend {
     pub fn new(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            clients: None,
+            headless_browser: None,
+        }
+    }
+
+    pub fn with_proxies(mut self, clients: Vec<Client>) -> Self {
+        self.clients = Some(clients);
+        self
+    }
+
+    pub fn with_headless(mut self, headless_browser: HeadlessBrowser) -> Self {
+        self.headless_browser = Some(headless_browser);
+        self
     }
 
     fn parse_results(html_body: &str, max_results: usize) -> Vec<SearchResult> {
@@ -188,34 +205,69 @@ impl SearchBackend for GoogleBackend {
     }
 
     async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>, SearchXyzError> {
-        let resp = self
-            .client
+        use rand::seq::IndexedRandom;
+
+        let client = if let Some(ref clients) = self.clients {
+            if !clients.is_empty() {
+                clients.choose(&mut rand::rng()).unwrap_or(&self.client)
+            } else {
+                &self.client
+            }
+        } else {
+            &self.client
+        };
+
+        let mut results = Vec::new();
+        #[allow(unused_assignments, unused_variables)]
+        let mut http_failed = false;
+
+        match client
             .get("https://www.google.com/search")
             .query(&[("q", &query.query)])
             .headers(HeaderGenerator::random_headers())
             .send()
             .await
-            .map_err(|e| SearchXyzError::SearchFailed {
-                query: query.query.clone(),
-                reason: format!("Google HTTP request failed: {e}"),
-            })?;
-
-        if !resp.status().is_success() {
-            return Err(SearchXyzError::SearchFailed {
-                query: query.query.clone(),
-                reason: format!("Google returned HTTP {}", resp.status()),
-            });
+        {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    match resp.text().await {
+                        Ok(html_body) => {
+                            results = Self::parse_results(&html_body, query.max_results);
+                        }
+                        Err(_) => {
+                            http_failed = true;
+                        }
+                    }
+                } else {
+                    http_failed = true;
+                    tracing::warn!("Google HTTP request returned status {}", resp.status());
+                }
+            }
+            Err(e) => {
+                http_failed = true;
+                tracing::warn!("Google HTTP request failed: {:?}", e);
+            }
         }
 
-        let html_body = resp
-            .text()
-            .await
-            .map_err(|e| SearchXyzError::SearchFailed {
-                query: query.query.clone(),
-                reason: format!("Failed to read Google response body: {e}"),
-            })?;
+        // Fallback to headless browser if raw HTTP failed or returned no organic results (bot detection / captcha page)
+        #[cfg(feature = "js-rendering")]
+        if (http_failed || results.is_empty()) && self.headless_browser.is_some() {
+            if let Some(ref headless) = self.headless_browser {
+                let mut url_parsed = url::Url::parse("https://www.google.com/search").unwrap();
+                url_parsed.query_pairs_mut().append_pair("q", &query.query);
+                let search_url = url_parsed.to_string();
 
-        let results = Self::parse_results(&html_body, query.max_results);
+                tracing::info!(url = %search_url, "Google raw HTTP blocked or empty, falling back to headless browser");
+                match headless.fetch_html(&search_url).await {
+                    Ok(html_body) => {
+                        results = Self::parse_results(&html_body, query.max_results);
+                    }
+                    Err(e) => {
+                        tracing::error!("Google headless fallback failed: {:?}", e);
+                    }
+                }
+            }
+        }
 
         if results.is_empty() {
             tracing::warn!(query = %query.query, "Google returned no parsable results");
