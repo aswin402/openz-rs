@@ -160,7 +160,7 @@ impl Tool for DelegateTaskTool {
                 dir
             }
             Err(e) => {
-                crate::tui_println!("{}⚠️ Failed to create isolated workspace ({:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
+                crate::tui_println!("{}⚠️  Failed to create isolated workspace ({:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
                 parent_dir.clone()
             }
         };
@@ -681,7 +681,11 @@ pub fn copy_dir_recursive_filtered(src: &std::path::Path, dst: &std::path::Path)
             copy_dir_recursive_filtered(&entry_path, &dst.join(entry_name))?;
         }
     } else {
-        std::fs::copy(src, dst)?;
+        if let Ok(metadata) = src.symlink_metadata() {
+            if metadata.file_type().is_file() {
+                std::fs::copy(src, dst)?;
+            }
+        }
     }
     Ok(())
 }

@@ -146,7 +146,7 @@ impl Tool for DelegateProfileTool {
                     dir
                 }
                 Err(e) => {
-                    crate::tui_println!("{}⚠️ Failed to create isolated workspace ({:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
+                    crate::tui_println!("{}⚠️  Failed to create isolated workspace ({:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
                     parent_dir.clone()
                 }
             }

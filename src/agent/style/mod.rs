@@ -145,7 +145,7 @@ pub fn get_tree_spinner_msg(_name: &str, _formatted_args: &str) -> String {
 pub fn strip_ansi_escapes(s: &str) -> String {
     let mut result = String::new();
     let mut in_escape = false;
-    let mut chars = s.chars().peekable();
+    let chars = s.chars();
     
     for c in chars {
         if c == '\x1b' {
