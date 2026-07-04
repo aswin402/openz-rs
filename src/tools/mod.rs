@@ -18,6 +18,7 @@ pub trait Tool: Send + Sync {
 pub struct ToolRegistry {
     static_tools: Arc<std::sync::RwLock<HashMap<String, Arc<dyn Tool>>>>,
     pub context: Option<(Config, Arc<dyn LLMProvider>, SessionManager)>,
+    pub filter_scope: Arc<std::sync::Mutex<Option<Vec<String>>>>,
 }
 
 impl Default for ToolRegistry {
@@ -31,6 +32,7 @@ impl ToolRegistry {
         ToolRegistry {
             static_tools: Arc::new(std::sync::RwLock::new(HashMap::new())),
             context: None,
+            filter_scope: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -38,6 +40,7 @@ impl ToolRegistry {
         ToolRegistry {
             static_tools: Arc::new(std::sync::RwLock::new(HashMap::new())),
             context: Some((config, provider, session_manager)),
+            filter_scope: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -60,6 +63,14 @@ impl ToolRegistry {
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
+        if let Some(ref prefixes) = filter {
+            if name != "delegate_task" && name != "send_remote_input" && name != "optimize_tool_scope" &&
+               !prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+                return None;
+            }
+        }
+
         // 1. If name is "delegate_task", override and inject parent tools dynamically
         if name == "delegate_task" {
             let (config, provider, session_manager) = self.context.as_ref()?;
@@ -142,11 +153,35 @@ impl ToolRegistry {
     }
 
     pub fn get_static_tools(&self) -> Vec<Arc<dyn Tool>> {
-        self.read_tools().values().cloned().collect()
+        let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
+        self.read_tools().values().filter(|t| {
+            if let Some(ref prefixes) = filter {
+                let name = t.name();
+                name == "delegate_task" || name == "send_remote_input" || name == "optimize_tool_scope" ||
+                prefixes.iter().any(|prefix| name.starts_with(prefix))
+            } else {
+                true
+            }
+        }).cloned().collect()
+    }
+
+    pub fn set_filter_scope(&self, prefixes: Option<Vec<String>>) {
+        if let Ok(mut g) = self.filter_scope.lock() {
+            *g = prefixes;
+        }
     }
 
     pub fn to_openai_format(&self) -> Vec<serde_json::Value> {
-        let mut tools_list: Vec<serde_json::Value> = self.read_tools().values().map(|t| {
+        let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
+        let mut tools_list: Vec<serde_json::Value> = self.read_tools().values().filter(|t| {
+            if let Some(ref prefixes) = filter {
+                let name = t.name();
+                name == "delegate_task" || name == "send_remote_input" || name == "optimize_tool_scope" ||
+                prefixes.iter().any(|prefix| name.starts_with(prefix))
+            } else {
+                true
+            }
+        }).map(|t| {
             serde_json::json!({
                 "type": "function",
                 "function": {
@@ -161,6 +196,11 @@ impl ToolRegistry {
         if let Some((_, _, _)) = &self.context {
             if let Ok(profiles) = crate::subagents::load_profiles() {
                 for profile in profiles {
+                    if let Some(ref prefixes) = filter {
+                        if !prefixes.iter().any(|prefix| profile.name.starts_with(prefix) || prefix == "subagent") {
+                            continue;
+                        }
+                    }
                     if !self.read_tools().contains_key(&profile.name) {
                         tools_list.push(serde_json::json!({
                             "type": "function",
@@ -257,4 +297,6 @@ pub mod openmedia;
 pub mod opendoc;
 pub mod github_mcp;
 pub mod docs_mcp;
+pub mod self_management;
+
 
