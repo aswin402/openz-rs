@@ -56,7 +56,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             - 'openz mcp-bridge --port <port> -- <command> [args...]': Runs a gRPC MCP bridge wrapper.\n\
             - 'openz sop <list | instances | trigger <id> | resume <id> | simulate <id>>': Controls the stateful SOP workflow engine.\n\
           * Pluggable Gateway Channels: You can receive messages and reply over CLI terminal, WebSocket gateway (serving the WebUI workbench), Telegram bot polling, Discord bot polling, WhatsApp Business API, and pure Rust IMAP/SMTP Email client.\n\
-          * Local Tools & MCP: You have native tools for file reading/writing, codebase text search ('grep_search'), file code structure parsing ('code_outline'), git operations ('git_manager'), database inspection ('db_inspector'), cargo toolchain execution ('cargo_manager'), system clipboard access ('clipboard'), opening files/folders/URLs ('open_path'), background file change watching ('file_watcher'), structural code search ('ast_grep'), real browser automation ('gsd_browser'), web search queries ('web_search'), integrated search/crawling/indexing engine ('searchxyz_search_web', 'searchxyz_read_url', 'searchxyz_search_and_read', 'searchxyz_recall', 'searchxyz_list_sources', 'searchxyz_deep_research', 'searchxyz_index_content', 'searchxyz_site_map', 'searchxyz_index_relationship', 'searchxyz_query_graph', 'searchxyz_read_github_repo', 'searchxyz_export_research', 'searchxyz_import_research', 'searchxyz_delete_source', 'searchxyz_clear_index'), shell command execution, web fetching, remote control forwarding, document reading ('read_doc'), sandboxed WASM execution ('wasm_execute'), project template/package scaffolding ('onpkg'), sequential thinking ('sequentialthinking', 'analyze_graph', 'summarize_reasoning'), knowledge graph memory ('create_entities', 'create_relations', 'add_observations', 'read_graph', 'search_nodes', 'open_nodes'), context scoping/compression ('scope_context', 'compress_content', 'retrieve_original', 'compress_schema', 'compress_file', 'compress_diff', 'compress_directory', 'run_and_compress', 'compress_url', 'summarize_codebase'), working/ephemeral memory ('set_working_memory', 'get_working_memory'), smart semantic memory ('smart_store', 'extract_and_store_facts', 'proactive_recall', 'invalidate_fact', 'query_fact_history'), shared team memory ('store_shared_team_memory', 'retrieve_shared_team_memory'), and offline media tools ('openmedia_ping', 'openmedia_model_download', 'openmedia_rasterize_svg', 'openmedia_diagram_generate_mermaid', 'openmedia_html_to_image', 'openmedia_create_svg', 'openmedia_create_chart', 'openmedia_create_icon', 'openmedia_animate_svg', 'openmedia_animate_create_timeline', 'openmedia_animate_morph_paths', 'openmedia_animate_generate_spinner', 'openmedia_animate_from_lottie', 'openmedia_animate_to_lottie', 'openmedia_image_apply_filter', 'openmedia_image_resize', 'openmedia_image_crop', 'openmedia_image_transform', 'openmedia_image_convert', 'openmedia_image_batch_process', 'openmedia_video_create', 'openmedia_video_preview', 'openmedia_video_create_slideshow', 'openmedia_video_add_transition', 'openmedia_video_add_audio', 'openmedia_video_from_template', 'openmedia_video_extract_frames', 'openmedia_video_trim', 'openmedia_template_create', 'openmedia_template_read', 'openmedia_template_update', 'openmedia_template_delete', 'openmedia_improve_score_image', 'openmedia_improve_refine_prompt', 'openmedia_improve_auto_refine', 'openmedia_improve_feedback', 'openmedia_improve_quality_report'), and native document intelligence tools ('opendoc_open_document', 'opendoc_read_document_text', 'opendoc_search_document', 'opendoc_replace_text', 'opendoc_diff_documents', 'opendoc_diff_documents_visual', 'opendoc_chunk_for_embedding', 'opendoc_fill_template', 'opendoc_validate_document', 'opendoc_validate_pdf_a_compliance', 'opendoc_extract_structured_metadata', 'opendoc_convert', 'opendoc_extract_images', 'opendoc_split_pdf', 'opendoc_create_html', 'opendoc_batch_convert', 'opendoc_create_docx', 'opendoc_docx_add_paragraph', 'opendoc_docx_add_table', 'opendoc_docx_add_image', 'opendoc_create_pptx', 'opendoc_pptx_add_slide', 'opendoc_create_xlsx', 'opendoc_edit_xlsx', 'opendoc_create_pdf', 'opendoc_create_formatted_pdf', 'opendoc_merge_pdfs', 'opendoc_extract_pdf_text', 'opendoc_list_pdf_fields', 'opendoc_fill_pdf_form', 'opendoc_find_tables', 'opendoc_analyze_document_complexity', 'opendoc_ocr_document', 'opendoc_check_ocr_available', 'opendoc_render_document_pages', 'opendoc_extract_archive_digest'), and native GitHub integration tools ('github_create_pull_request', 'github_search_issues', 'github_get_issue_comments'), and native local and crates documentation tools ('docs_list_docsets', 'docs_install_docset', 'docs_search_docs', 'docs_read_doc_page', 'docs_search_rust_crate', 'docs_read_rust_docs'). MCP server integration managed via 'manage_mcp' tool.\n\
+          * Local Tools & MCP: {}\n\
 \n\
           * Context Scoping & Compression: You have native tools for context management:\n\
             - 'scope_context' (with target_path): Walks up the tree and compiles relevant AGENTS.md instructions. Use this BEFORE editing files to retrieve rules.\n\
@@ -71,6 +71,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
           * Proactive Memory & Knowledge Graph: Three memory layers. (1) Simple KV: 'store_memory'/'recall_memory'/'clear_memory' for quick facts. (2) Working/Ephemeral: 'set_working_memory'/'get_working_memory'/'evict_expired_working_memory' for temporary session context. (3) Knowledge Graph: 'create_entities'/'create_relations'/'add_observations'/'read_graph'/'search_nodes'/'open_nodes' for structured relational memory. Use semantic tools 'smart_store'/'extract_and_store_facts'/'proactive_recall' for smart fact extraction and retrieval. Don't ask for permission — just store it.\n\
           * Self-Improvement System: An asynchronous background curator refines your memory facts and procedural skills stored under ~/.openz/skills/ and SQLite database (~/.openz/memory.db).",
         get_version_history(),
+        get_dynamic_tools_guideline(&loop_ref.tools),
         subagents_list
     );
 
@@ -330,6 +331,63 @@ fn get_version_history() -> String {
     history.trim().to_string()
 }
 
+fn get_dynamic_tools_guideline(registry: &crate::tools::ToolRegistry) -> String {
+    let tools = registry.get_static_tools();
+    let mut core_tools = Vec::new();
+    let mut searchxyz_tools = Vec::new();
+    let mut openmedia_tools = Vec::new();
+    let mut opendoc_tools = Vec::new();
+    let mut github_tools = Vec::new();
+    let mut docs_tools = Vec::new();
+
+    for t in tools {
+        let name = t.name();
+        if name.starts_with("searchxyz_") {
+            searchxyz_tools.push(format!("'{}'", name));
+        } else if name.starts_with("openmedia_") {
+            openmedia_tools.push(format!("'{}'", name));
+        } else if name.starts_with("opendoc_") {
+            opendoc_tools.push(format!("'{}'", name));
+        } else if name.starts_with("github_") {
+            github_tools.push(format!("'{}'", name));
+        } else if name.starts_with("docs_") {
+            docs_tools.push(format!("'{}'", name));
+        } else {
+            core_tools.push(format!("'{}'", name));
+        }
+    }
+
+    core_tools.sort();
+    searchxyz_tools.sort();
+    openmedia_tools.sort();
+    opendoc_tools.sort();
+    github_tools.sort();
+    docs_tools.sort();
+
+    let mut out = String::new();
+    out.push_str("You have native tools for files, shell execution, and other utilities. The following tools are registered in your environment:\n");
+    if !core_tools.is_empty() {
+        out.push_str(&format!("            - Core Tools: {}\n", core_tools.join(", ")));
+    }
+    if !searchxyz_tools.is_empty() {
+        out.push_str(&format!("            - SearchXyz Tools: {}\n", searchxyz_tools.join(", ")));
+    }
+    if !openmedia_tools.is_empty() {
+        out.push_str(&format!("            - OpenMedia Tools: {}\n", openmedia_tools.join(", ")));
+    }
+    if !opendoc_tools.is_empty() {
+        out.push_str(&format!("            - OpenDoc Tools: {}\n", opendoc_tools.join(", ")));
+    }
+    if !github_tools.is_empty() {
+        out.push_str(&format!("            - GitHub Integration Tools: {}\n", github_tools.join(", ")));
+    }
+    if !docs_tools.is_empty() {
+        out.push_str(&format!("            - Local & Crates Docs Tools: {}\n", docs_tools.join(", ")));
+    }
+    out.push_str("            - MCP server integration managed via 'manage_mcp' tool.");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,5 +398,23 @@ mod tests {
         assert!(!history.is_empty());
         assert!(history.contains("v0.0.33"));
     }
+
+    #[test]
+    fn test_get_dynamic_tools_guideline() {
+        let registry = crate::tools::ToolRegistry::new();
+        struct DummyTool;
+        #[async_trait::async_trait]
+        impl crate::tools::Tool for DummyTool {
+            fn name(&self) -> &str { "dummy_tool" }
+            fn description(&self) -> &str { "dummy" }
+            fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+            async fn call(&self, _args: &serde_json::Value) -> Result<serde_json::Value> { Ok(serde_json::json!({})) }
+        }
+        registry.register(std::sync::Arc::new(DummyTool));
+        let guideline = get_dynamic_tools_guideline(&registry);
+        assert!(guideline.contains("dummy_tool"));
+        assert!(guideline.contains("Core Tools"));
+    }
 }
+
 
