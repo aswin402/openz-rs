@@ -560,6 +560,18 @@ pub fn filter_tools_for_subagent(subagent_name: &str, all_tools: &[Arc<dyn Tool>
         "vision_agent" => Some(&[
             "read_file", "list_dir", "find_files", "generate_image", "doc_reader"
         ]),
+        "skill_creator" => Some(&[
+            "read_file", "write_file", "list_dir", "exec_command", "cargo_manager"
+        ]),
+        "documentation_agent" => Some(&[
+            "read_file", "write_file", "list_dir", "find_files"
+        ]),
+        "diagram_designer" => Some(&[
+            "read_file", "write_file", "list_dir", "openmedia_diagram_generate_mermaid"
+        ]),
+        "video_animator" => Some(&[
+            "read_file", "write_file", "list_dir", "openmedia_video_create", "openmedia_video_preview"
+        ]),
         _ => None,
     };
 

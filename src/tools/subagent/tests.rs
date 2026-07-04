@@ -121,6 +121,9 @@ fn test_filter_tools_for_new_default_subagents() {
         Arc::new(MockTool { name: "grep_search".to_string() }),
         Arc::new(MockTool { name: "compile_template".to_string() }),
         Arc::new(MockTool { name: "some_other_tool".to_string() }),
+        Arc::new(MockTool { name: "openmedia_diagram_generate_mermaid".to_string() }),
+        Arc::new(MockTool { name: "openmedia_video_create".to_string() }),
+        Arc::new(MockTool { name: "openmedia_video_preview".to_string() }),
     ];
 
     // Test document_compiler
@@ -148,6 +151,36 @@ fn test_filter_tools_for_new_default_subagents() {
     assert_eq!(filtered.len(), 4);
     assert!(filtered.iter().any(|t| t.name() == "grep_search"));
     assert!(!filtered.iter().any(|t| t.name() == "onpkg"));
+
+    // Test vision_agent
+    let filtered = delegate_profile::filter_tools_for_subagent("vision_agent", &tools);
+    assert_eq!(filtered.len(), 5);
+    assert!(filtered.iter().any(|t| t.name() == "generate_image"));
+    assert!(!filtered.iter().any(|t| t.name() == "exec_command"));
+
+    // Test skill_creator
+    let filtered = delegate_profile::filter_tools_for_subagent("skill_creator", &tools);
+    assert_eq!(filtered.len(), 5);
+    assert!(filtered.iter().any(|t| t.name() == "exec_command"));
+    assert!(!filtered.iter().any(|t| t.name() == "generate_image"));
+
+    // Test documentation_agent
+    let filtered = delegate_profile::filter_tools_for_subagent("documentation_agent", &tools);
+    assert_eq!(filtered.len(), 4);
+    assert!(filtered.iter().any(|t| t.name() == "read_file"));
+    assert!(!filtered.iter().any(|t| t.name() == "exec_command"));
+
+    // Test diagram_designer
+    let filtered = delegate_profile::filter_tools_for_subagent("diagram_designer", &tools);
+    assert_eq!(filtered.len(), 4);
+    assert!(filtered.iter().any(|t| t.name() == "openmedia_diagram_generate_mermaid"));
+    assert!(!filtered.iter().any(|t| t.name() == "exec_command"));
+
+    // Test video_animator
+    let filtered = delegate_profile::filter_tools_for_subagent("video_animator", &tools);
+    assert_eq!(filtered.len(), 5);
+    assert!(filtered.iter().any(|t| t.name() == "openmedia_video_create"));
+    assert!(!filtered.iter().any(|t| t.name() == "exec_command"));
 }
 
 struct LoopMockProvider {
