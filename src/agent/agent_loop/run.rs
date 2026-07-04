@@ -953,11 +953,11 @@ fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
 
     let details = if let serde_json::Value::Object(map) = args {
         if name == "grep_search" {
-            if let Some(q) = map.get("Query").and_then(|v| v.as_str()) {
+            if let Some(q) = map.get("query").or_else(|| map.get("Query")).and_then(|v| v.as_str()) {
                 if q.len() > 35 {
-                    format!("\"{}...\"", q.chars().take(32).collect::<String>())
+                    format!("query: \"{}...\"", q.chars().take(32).collect::<String>())
                 } else {
-                    format!("\"{}\"", q)
+                    format!("query: \"{}\"", q)
                 }
             } else {
                 String::new()
