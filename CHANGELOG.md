@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.35 (Latest Release)
+### v0.0.36 (Latest Release)
+*   **Feature: System Diagnostics, Session Management, and Safe Test Suites (HIGH)**:
+    *   Implemented `DiagnoseSystemTool` (`diagnose_system`) to profile OpenZ storage directories (`sessions/`, `tool_outputs/`, `traces/`, and `skills/`), check SQLite database connectability, size, and integrity (`PRAGMA integrity_check;`) for all 5 databases, and test LLM provider endpoint request latency.
+    *   Implemented `ManageSessionsTool` (`manage_sessions`) to list active session files with message counts/sizes, prune old temporary tool outputs to prevent disk exhaustion, archive sessions, or permanently delete session files.
+    *   Created a safe test execution script `run_tests_safely.sh` that compiles with restricted CPU cores and runs tests sequentially by module to prevent memory exhaustion and laptop crashes on developer machines.
+    *   Cleaned up corrupted Cargo dependency directory caches.
+    *   Bumped framework version to `v0.0.36` across Cargo, README, and `onpkg.json`.
+
+### v0.0.35 (Previous Release)
 *   **Feature: Real-Time Configuration Dynamic Reloading & Management (HIGH)**:
     *   Dynamic reload of configuration (`config.json`) at the start of each turn loop iteration inside `AgentLoop::run_inner` synced via `TurnContext`.
     *   Implemented `ManageConfigTool` (`manage_config`) to view the active configuration with recursive secret key redaction (`api_key`, `bot_token`, `verify_token`, `password`, `secret`) and update agent hyper-parameters (`model`, `provider`, `max_tokens`, `temperature`, `caveman_mode`, `tool_timeout_secs`, `streaming`, `max_tool_iterations`).
