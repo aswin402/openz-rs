@@ -181,7 +181,7 @@ pub fn clean_tool_args_msg(name: &str, formatted_args: &str) -> String {
     let clean = get_tool_clean_name(name).to_lowercase().replace(" ", "").replace("_", "");
     let norm_args = trimmed.to_lowercase().replace(" ", "").replace("_", "");
     
-    if clean == norm_args {
+    if clean == norm_args || (norm_args.len() >= 3 && (clean.contains(&norm_args) || norm_args.contains(&clean))) {
         String::new()
     } else {
         trimmed.to_string()
