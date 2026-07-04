@@ -84,3 +84,70 @@ OpenZ natively integrates the `searchxyz` search suite for advanced keyless web 
 - `searchxyz_delete_source`: Evict documents by URL or prefix.
 - `searchxyz_clear_index`: Clear all documents and Graph data.
 
+---
+
+## 5. GitHub Integrated Tools 🦊
+
+OpenZ natively integrates GitHub repository, issue, and pull request management tools under the `github_` prefix:
+
+- `github_create_pull_request`: Create pull requests in any GitHub repository.
+- `github_search_issues`: Search GitHub issues and pull requests using advanced search queries.
+- `github_get_issue_comments`: Retrieve comments for specific issues/PRs.
+
+---
+
+## 6. Local and Crates Documentation Tools 📚
+
+OpenZ natively integrates documentation set downloader, indexing, crates.io query, and docs.rs scraper tools under the `docs_` prefix:
+
+- `docs_list_docsets`: List all locally installed docsets in the SQLite store.
+- `docs_install_docset`: Download and cache documentation sets from DevDocs.io.
+- `docs_search_docs`: Search entries (articles, methods, classes) in locally installed docsets.
+- `docs_read_doc_page`: Fetch and render specific documentation pages in clean Markdown format.
+- `docs_search_rust_crate`: Search crates.io for package descriptions and versions.
+- `docs_read_rust_docs`: Fetch and parse HTML documentation pages from docs.rs dynamically.
+
+---
+
+## 7. OpenDoc Integrated Document Intelligence Tools 📄
+
+OpenZ natively integrates document rendering, text extraction, visual and text diffs, templates, and office document generation (DOCX, XLSX, PPTX, PDF) under the `opendoc_` prefix:
+
+- `opendoc_open_document`: Resolve and load documents from disk or URL.
+- `opendoc_read_document_text`: Retrieve full plaintext from PDF/DOCX/XLSX/PPTX.
+- `opendoc_search_document`: Run substring/regex searches over document text.
+- `opendoc_replace_text`: Run search-and-replace queries over document text.
+- `opendoc_diff_documents`: Generate unified diff blocks comparing two document structures.
+- `opendoc_diff_documents_visual`: Compare visual changes between two PDF documents.
+- `opendoc_chunk_for_embedding`: Extract text segments optimized for vector embeddings.
+- `opendoc_fill_template`: Substitute templated fields in structured documents.
+- `opendoc_validate_document`: Assert schema constraints on document metadata/content.
+- `opendoc_validate_pdf_a_compliance`: Verify PDF/A archive quality standards.
+- `opendoc_extract_structured_metadata`: Retrieve properties, authors, and keywords from office documents.
+- `opendoc_convert`: Convert documents between file formats (e.g. DOCX -> HTML, PDF -> MD).
+- `opendoc_extract_images`: Extract image attachments from document archives.
+- `opendoc_split_pdf`: Split PDF archives by page indices.
+- `opendoc_create_html`: Generate custom HTML pages.
+- `opendoc_batch_convert`: Run batch conversions on list of documents.
+- `opendoc_create_docx`: Scaffold empty DOCX document.
+- `opendoc_docx_add_paragraph`: Add paragraphs to DOCX files.
+- `opendoc_docx_add_table`: Add tables to DOCX files.
+- `opendoc_docx_add_image`: Embed images into DOCX files.
+- `opendoc_create_pptx`: Scaffold empty PPTX presentation.
+- `opendoc_pptx_add_slide`: Add slide layouts to PPTX presentations.
+- `opendoc_create_xlsx`: Scaffold empty XLSX sheet.
+- `opendoc_edit_xlsx`: Modify cell values and formats in XLSX sheets.
+- `opendoc_create_pdf`: Scaffold empty PDF document.
+- `opendoc_create_formatted_pdf`: Compile PDFs with custom layouts, fonts, and images.
+- `opendoc_merge_pdfs`: Combine multiple PDFs into one unified file.
+- `opendoc_extract_pdf_text`: Extract plaintext from PDF documents.
+- `opendoc_list_pdf_fields`: List interactive form fields in PDFs.
+- `opendoc_fill_pdf_form`: Populate form fields in interactive PDFs.
+- `opendoc_find_tables`: Locate and extract data tables from PDF documents.
+- `opendoc_analyze_document_complexity`: Analyze document page count, word count, and element densities.
+- `opendoc_ocr_document`: Run OCR engine to extract text from scanned images/PDFs.
+- `opendoc_check_ocr_available`: Check if OCR engine is available locally.
+- `opendoc_render_document_pages`: Render document pages to high-resolution images.
+- `opendoc_extract_archive_digest`: Get metadata summary digest of a ZIP/tar archive.
+
+
