@@ -858,7 +858,7 @@ impl SearchXyzServer {
     #[tool(description = "Wipe all documents and graph relationships from the local index.")]
     pub async fn clear_index(
         &self,
-        req: Parameters<ClearIndexRequest>,
+        _req: Parameters<ClearIndexRequest>,
     ) -> Result<String, rmcp::ErrorData> {
         let mut writer = self.index.writer.lock().await;
         writer

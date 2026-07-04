@@ -1,7 +1,7 @@
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::schemars::JsonSchema;
-use rmcp::{tool, tool_router, transport::stdio, ServiceExt};
+use rmcp::{tool, tool_router};
 use serde::Deserialize;
 
 pub use octocrab;
