@@ -162,6 +162,7 @@ OpenZ natively integrates tools that allow the agent to test, debug, and optimiz
 - `manage_config`: View active configuration (with automatic secret key redaction) or update agent hyper-parameters (such as model, provider, temperature, max_tokens, caveman_mode, tool_timeout_secs, streaming, max_tool_iterations) in real-time.
 - `diagnose_system`: Retrieve comprehensive OpenZ system diagnostics including directory file sizes (sessions, traces, outputs) and SQLite database health checks.
 - `manage_sessions`: List active session files, archive session histories, delete sessions, or prune temporary tool outputs to prevent disk space exhaustion.
+- `manage_backups`: Create, list, restore, or delete backups of the agent configurations, custom subagent profiles, and database markdown skills.
 
 
 
