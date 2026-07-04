@@ -258,12 +258,14 @@ impl Tool for DelegateProfileTool {
                 let child_agent_ref = &child_agent;
                 let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
                     DELEGATION_DEPTH.scope(current_depth + 1, async {
-                        tokio::select! {
-                            res = child_agent_ref.run(p_ref, c_ref) => res,
-                            _ = self.cancellation_token.wait_for_cancellation() => {
-                                Err(anyhow!("Subagent task cancelled"))
+                        crate::tools::subagent::ACTIVE_SUBAGENT.scope(self.profile.name.clone(), async {
+                            tokio::select! {
+                                res = child_agent_ref.run(p_ref, c_ref) => res,
+                                _ = self.cancellation_token.wait_for_cancellation() => {
+                                    Err(anyhow!("Subagent task cancelled"))
+                                }
                             }
-                        }
+                        }).await
                     }).await
                 });
                 let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
@@ -554,6 +556,9 @@ pub fn filter_tools_for_subagent(subagent_name: &str, all_tools: &[Arc<dyn Tool>
         ]),
         "mcps_manager" => Some(&[
             "read_file", "write_file", "list_dir", "manage_mcp", "exec_command"
+        ]),
+        "vision_agent" => Some(&[
+            "read_file", "list_dir", "find_files", "generate_image", "doc_reader"
         ]),
         _ => None,
     };

@@ -4,6 +4,7 @@ use crate::config::schema::Config;
 
 tokio::task_local! {
     pub static DELEGATION_DEPTH: usize;
+    pub static ACTIVE_SUBAGENT: String;
 }
 
 pub mod cancellation_token;

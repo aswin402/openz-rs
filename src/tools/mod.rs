@@ -132,6 +132,10 @@ impl ToolRegistry {
 
         // 3. If not found, check if it matches a custom subagent profile dynamically
         let (config, provider, session_manager) = self.context.as_ref()?;
+        let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT.try_with(|s| s.clone()).unwrap_or_default();
+        if !active_subagent.is_empty() && name == active_subagent {
+            return None;
+        }
         let profiles = crate::subagents::load_profiles().ok()?;
         let profile = profiles.into_iter().find(|p| p.name == name)?;
 
@@ -195,7 +199,11 @@ impl ToolRegistry {
         // Add custom subagents from subagents.json dynamically
         if let Some((_, _, _)) = &self.context {
             if let Ok(profiles) = crate::subagents::load_profiles() {
+                let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT.try_with(|s| s.clone()).unwrap_or_default();
                 for profile in profiles {
+                    if !active_subagent.is_empty() && profile.name == active_subagent {
+                        continue;
+                    }
                     if let Some(ref prefixes) = filter {
                         if !prefixes.iter().any(|prefix| profile.name.starts_with(prefix) || prefix == "subagent") {
                             continue;
