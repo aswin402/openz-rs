@@ -156,6 +156,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     registry.register(std::sync::Arc::new(crate::tools::self_management::CurateSkillTool));
     registry.register(std::sync::Arc::new(crate::tools::self_management::OptimizeToolScopeTool::new(registry.clone())));
     registry.register(std::sync::Arc::new(crate::tools::self_management::ManageConfigTool));
+    registry.register(std::sync::Arc::new(crate::tools::self_management::DiagnoseSystemTool));
     registry.register(std::sync::Arc::new(crate::tools::image_generator::GenerateImageTool));
     registry.register(std::sync::Arc::new(crate::tools::crawl::CrawlSiteTool::new()));
     registry.register(std::sync::Arc::new(crate::tools::obscura::ObscuraBrowserTool::new()));

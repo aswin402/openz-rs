@@ -398,6 +398,233 @@ impl Tool for ManageConfigTool {
     }
 }
 
+fn dir_size_and_count(path: &std::path::Path) -> (u64, usize) {
+    let mut total_size = 0;
+    let mut file_count = 0;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_dir() {
+                    let (size, count) = dir_size_and_count(&entry.path());
+                    total_size += size;
+                    file_count += count;
+                } else {
+                    total_size += meta.len();
+                    file_count += 1;
+                }
+            }
+        }
+    }
+    (total_size, file_count)
+}
+
+async fn check_endpoint_latency(client: &reqwest::Client, url: &str) -> (Option<u128>, String) {
+    let start = std::time::Instant::now();
+    match client.get(url).timeout(std::time::Duration::from_secs(3)).send().await {
+        Ok(resp) => {
+            let elapsed = start.elapsed().as_millis();
+            let status = if resp.status().is_success() || resp.status().as_u16() == 401 || resp.status().as_u16() == 404 || resp.status().as_u16() == 400 {
+                "reachable".to_string()
+            } else {
+                format!("status {}", resp.status())
+            };
+            (Some(elapsed), status)
+        }
+        Err(e) => (None, format!("error: {}", e)),
+    }
+}
+
+fn check_db(path: &std::path::Path, run_integrity: bool) -> Value {
+    let exists = path.exists();
+    if !exists {
+        return serde_json::json!({
+            "exists": false,
+            "connectable": false,
+            "size_bytes": 0,
+            "integrity": "N/A"
+        });
+    }
+
+    let size_bytes = path.metadata().map(|m| m.len()).unwrap_or(0);
+    match rusqlite::Connection::open(path) {
+        Ok(conn) => {
+            let integrity = if run_integrity {
+                match conn.query_row("PRAGMA integrity_check;", [], |row| row.get::<_, String>(0)) {
+                    Ok(s) => s,
+                    Err(e) => format!("check error: {}", e),
+                }
+            } else {
+                "skipped".to_string()
+            };
+            serde_json::json!({
+                "exists": true,
+                "connectable": true,
+                "size_bytes": size_bytes,
+                "integrity": integrity
+            })
+        }
+        Err(e) => {
+            serde_json::json!({
+                "exists": true,
+                "connectable": false,
+                "size_bytes": size_bytes,
+                "integrity": format!("connection error: {}", e)
+            })
+        }
+    }
+}
+
+pub struct DiagnoseSystemTool;
+
+#[async_trait::async_trait]
+impl Tool for DiagnoseSystemTool {
+    fn name(&self) -> &str {
+        "diagnose_system"
+    }
+
+    fn description(&self) -> &str {
+        "Retrieve system diagnostics for OpenZ, including storage directory sizes, internal database health checks, and active LLM endpoint latencies."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "check_latency": {
+                    "type": "boolean",
+                    "description": "If true, tests HTTP ping round-trip times to active provider endpoints. Default is true."
+                },
+                "check_db_integrity": {
+                    "type": "boolean",
+                    "description": "If true, executes 'PRAGMA integrity_check;' on SQLite files. Can take longer. Default is false."
+                }
+            }
+        })
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let check_latency = arguments.get("check_latency").and_then(|v| v.as_bool()).unwrap_or(true);
+        let check_db_integrity = arguments.get("check_db_integrity").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        let os_type = std::env::consts::OS.to_string();
+        let arch = std::env::consts::ARCH.to_string();
+        let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+
+        let openz_dir = crate::config::resolve_path("~/.openz");
+        let sessions_dir = openz_dir.join("sessions");
+        let outputs_dir = openz_dir.join("tool_outputs");
+        let traces_dir = openz_dir.join("traces");
+        let skills_dir = openz_dir.join("skills");
+
+        let (sessions_sz, sessions_ct) = dir_size_and_count(&sessions_dir);
+        let (outputs_sz, outputs_ct) = dir_size_and_count(&outputs_dir);
+        let (traces_sz, traces_ct) = dir_size_and_count(&traces_dir);
+        let (skills_sz, skills_ct) = dir_size_and_count(&skills_dir);
+
+        let directories = serde_json::json!({
+            "sessions": {
+                "path": sessions_dir.to_string_lossy(),
+                "size_bytes": sessions_sz,
+                "file_count": sessions_ct
+            },
+            "tool_outputs": {
+                "path": outputs_dir.to_string_lossy(),
+                "size_bytes": outputs_sz,
+                "file_count": outputs_ct
+            },
+            "traces": {
+                "path": traces_dir.to_string_lossy(),
+                "size_bytes": traces_sz,
+                "file_count": traces_ct
+            },
+            "skills": {
+                "path": skills_dir.to_string_lossy(),
+                "size_bytes": skills_sz,
+                "file_count": skills_ct
+            }
+        });
+
+        let db_memory = openz_dir.join("memory.db");
+        let db_docs = openz_dir.join("docs.db");
+        let db_graph = openz_dir.join("graph_memory.db");
+        let db_ccr = openz_dir.join("ccr_cache.db");
+        let db_thoughts = openz_dir.join("thoughts.db");
+
+        let databases = serde_json::json!({
+            "memory": check_db(&db_memory, check_db_integrity),
+            "docs": check_db(&db_docs, check_db_integrity),
+            "graph_memory": check_db(&db_graph, check_db_integrity),
+            "ccr_cache": check_db(&db_ccr, check_db_integrity),
+            "thoughts": check_db(&db_thoughts, check_db_integrity)
+        });
+
+        let mut network_status = serde_json::Map::new();
+        if check_latency {
+            if let Ok(config) = crate::config::loader::load_config() {
+                let client = reqwest::Client::new();
+                let mut endpoints = Vec::new();
+
+                if let Some(ref openai) = config.providers.openai {
+                    if let Some(ref api_key) = openai.api_key {
+                        if !api_key.is_empty() {
+                            let base = openai.api_base.as_deref().unwrap_or("https://api.openai.com/v1");
+                            endpoints.push(("openai", base.to_string()));
+                        }
+                    }
+                }
+                if let Some(ref anthropic) = config.providers.anthropic {
+                    if let Some(ref api_key) = anthropic.api_key {
+                        if !api_key.is_empty() {
+                            let base = anthropic.api_base.as_deref().unwrap_or("https://api.anthropic.com/v1");
+                            endpoints.push(("anthropic", base.to_string()));
+                        }
+                    }
+                }
+                if let Some(ref openrouter) = config.providers.openrouter {
+                    if let Some(ref api_key) = openrouter.api_key {
+                        if !api_key.is_empty() {
+                            let base = openrouter.api_base.as_deref().unwrap_or("https://openrouter.ai/api/v1");
+                            endpoints.push(("openrouter", base.to_string()));
+                        }
+                    }
+                }
+                if let Some(ref deepseek) = config.providers.deepseek {
+                    if let Some(ref api_key) = deepseek.api_key {
+                        if !api_key.is_empty() {
+                            let base = deepseek.api_base.as_deref().unwrap_or("https://api.deepseek.com");
+                            endpoints.push(("deepseek", base.to_string()));
+                        }
+                    }
+                }
+
+                for (name, url) in endpoints {
+                    let (latency, status) = check_endpoint_latency(&client, &url).await;
+                    network_status.insert(
+                        name.to_string(),
+                        serde_json::json!({
+                            "endpoint": url,
+                            "latency_ms": latency,
+                            "status": status
+                        })
+                    );
+                }
+            }
+        }
+
+        Ok(serde_json::json!({
+            "status": "success",
+            "system": {
+                "os": os_type,
+                "architecture": arch,
+                "cores": cores
+            },
+            "directories": directories,
+            "databases": databases,
+            "network": network_status
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -545,5 +772,35 @@ mod tests {
 
         // Restore original config
         crate::config::loader::save_config(&original_config).unwrap();
+    }
+
+    #[test]
+    fn test_diagnose_system() {
+        let tool = DiagnoseSystemTool;
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        // 1. Run diagnostic without latency checking to keep it fast
+        let res = rt.block_on(tool.call(&serde_json::json!({
+            "check_latency": false,
+            "check_db_integrity": false
+        }))).unwrap();
+
+        assert_eq!(res["status"].as_str().unwrap(), "success");
+        assert!(res["system"]["os"].as_str().is_some());
+        assert!(res["system"]["architecture"].as_str().is_some());
+        assert!(res["system"]["cores"].as_u64().unwrap() >= 1);
+
+        // Verify directory statistics keys exist
+        assert!(res["directories"]["sessions"].is_object());
+        assert!(res["directories"]["tool_outputs"].is_object());
+        assert!(res["directories"]["traces"].is_object());
+        assert!(res["directories"]["skills"].is_object());
+
+        // Verify databases status keys exist
+        assert!(res["databases"]["memory"].is_object());
+        assert!(res["databases"]["docs"].is_object());
+        assert!(res["databases"]["graph_memory"].is_object());
+        assert!(res["databases"]["ccr_cache"].is_object());
+        assert!(res["databases"]["thoughts"].is_object());
     }
 }
