@@ -721,10 +721,24 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                     "Tool call failed"
                                 );
                                 let hint = generate_self_healing_hint(&call.name, &error_str);
-                                serde_json::json!({
-                                    "error": error_str,
-                                    "self_healing_suggestion": hint
-                                })
+                                if let Ok(mut json_err) = serde_json::from_str::<serde_json::Value>(&error_str) {
+                                    if let serde_json::Value::Object(ref mut map) = json_err {
+                                        if !map.contains_key("self_healing_suggestion") && !map.contains_key("suggestion") {
+                                            map.insert("self_healing_suggestion".to_string(), serde_json::Value::String(hint));
+                                        }
+                                        json_err
+                                    } else {
+                                        serde_json::json!({
+                                            "error": error_str,
+                                            "self_healing_suggestion": hint
+                                        })
+                                    }
+                                } else {
+                                    serde_json::json!({
+                                        "error": error_str,
+                                        "self_healing_suggestion": hint
+                                    })
+                                }
                             }
                             Err(_) => {
                                 let timeout_msg = format!(
