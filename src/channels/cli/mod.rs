@@ -741,47 +741,24 @@ impl CliChannel {
             let runner = self.agent_loop.lock().await;
             
             let run_res = {
-                let _raw_mode = RawModeGuard::new().ok();
-                
                 let run_fut: std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<crate::agent::RunResult>> + Send>> = if let Some(ref sender) = remote_sender {
                     Box::pin(crate::agent::style::spinner::CURRENT_SESSION_KEY.scope(sender.clone(), runner.run(trimmed, session_key)))
                 } else {
                     Box::pin(runner.run(trimmed, session_key))
                 };
-                let shutdown_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                let flag_clone = shutdown_flag.clone();
-
-                let esc_fut = tokio::task::spawn_blocking(move || {
-                    use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-                    while !flag_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                        if let Ok(true) = event::poll(std::time::Duration::from_millis(50)) {
-                            if let Ok(Event::Key(key_event)) = event::read() {
-                                let is_esc = key_event.code == KeyCode::Esc;
-                                let is_ctrl_c = key_event.code == KeyCode::Char('c') && key_event.modifiers.contains(KeyModifiers::CONTROL);
-                                if is_esc || is_ctrl_c {
-                                    return true;
-                                }
-                            }
-                        }
-                        std::thread::sleep(std::time::Duration::from_millis(10));
-                    }
-                    false
-                });
+                
+                let ctrl_c_fut = tokio::signal::ctrl_c();
                 
                 tokio::pin!(run_fut);
-                tokio::pin!(esc_fut);
+                tokio::pin!(ctrl_c_fut);
                 
                 tokio::select! {
                     res = &mut run_fut => {
-                        shutdown_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                         Some(res)
                     }
-                    esc_res = &mut esc_fut => {
-                        if let Ok(true) = esc_res {
-                            None
-                        } else {
-                            None
-                        }
+                    _ = &mut ctrl_c_fut => {
+                        crate::tui_println!("\r\n{}▲ Execution cancelled by user (Ctrl+C).{}", AURA_GOLD, COLOR_RESET);
+                        None
                     }
                 }
             };

@@ -111,7 +111,7 @@ impl Tool for DelegateProfileTool {
         }
 
         let child_session_id = format!("subagent:{}:{}", self.profile.name, &uuid::Uuid::new_v4().to_string()[..8]);
-        let subagent_prompt = format!(
+        let mut subagent_prompt = format!(
             "You are a specialized subagent operating under the following profile guidelines:\n\n\
             {}\n\n\
             TASK:\n{}\n\n\
@@ -119,6 +119,43 @@ impl Tool for DelegateProfileTool {
             When finished, provide a clear, concise summary of what you did and found.",
             self.profile.system_prompt, clean_goal, clean_context
         );
+
+        // Automatically scan goal and context for image paths and append markdown image links
+        let mut image_paths = Vec::new();
+        if let Ok(path_regex) = regex::Regex::new(r"(?:file://)?(/[a-zA-Z0-9_\-\./]+|~/[a-zA-Z0-9_\-\./]+)") {
+            for cap in path_regex.captures_iter(&format!("{} {}", clean_goal, clean_context)) {
+                if let Some(mat) = cap.get(1) {
+                    let path_str = mat.as_str();
+                    let resolved_path = crate::config::resolve_path(path_str);
+                    
+                    let mut final_path = None;
+                    if resolved_path.exists() && resolved_path.is_file() {
+                        final_path = Some(resolved_path);
+                    } else {
+                        for ext in &["png", "jpg", "jpeg", "webp", "gif"] {
+                            let path_with_ext = resolved_path.with_extension(ext);
+                            if path_with_ext.exists() && path_with_ext.is_file() {
+                                final_path = Some(path_with_ext);
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if let Some(path) = final_path {
+                        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                        if ["png", "jpg", "jpeg", "webp", "gif"].contains(&ext.as_str()) {
+                            let canonical = path.to_string_lossy().to_string();
+                            if !image_paths.contains(&canonical) {
+                                image_paths.push(canonical);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for img in image_paths {
+            subagent_prompt.push_str(&format!(" ![](file://{})", img));
+        }
 
         let is_reviewer = self.profile.name == "reviewer";
         let is_vision = self.profile.name == "vision_agent";
