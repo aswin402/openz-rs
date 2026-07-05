@@ -409,6 +409,9 @@ Inside `openz agent`, the user can issue direct slash commands:
 *   **Feature: TUI Formatting, Casing, and Duplicate Redundant Suffix/Prefix Fixes (MEDIUM)**:
     *   Resolved argument casing parameter mismatches (`query`/`Query` and `path`/`Path`) across all native tools (`grep_search`, `read_file`, `view_file`, `write_file`, `list_dir`, and `doc_reader`) to ensure file names and query details print successfully in the terminal.
     *   Fixed TUI friendly name duplicate suffixing (e.g. `● Grep Search Search` deduplicated to `● Grep Search`).
+*   **Feature: Subagent Visual Image Delegation & Instant TUI Cancellation (HIGH)**:
+    *   Implemented standard, non-blocking **asynchronous SIGINT / Ctrl+C cancellation** inside [cli/mod.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/mod.rs#L741-L770), replacing the blocking background event polling thread and preventing lock contention over standard input.
+    *   Implemented **Automatic Image Path Scanning & Markdown Linking** in `DelegateTaskTool` and `DelegateProfileTool` to resolve subagent blindness. Subagents now automatically receive image attachments parsed from paths in their goal or context text, enabling seamless visual task delegation to vision models like Gemini 2.5 Flash on the very first turn.
 *   **Documentation & Guidelines (MEDIUM)**:
     *   Authored a workspace-level procedural tools selection, safety, and error recovery guide in [skills/tool_usage_guide.md](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/skills/tool_usage_guide.md) and [onpkg_docs/tool_usage_guide.md](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg_docs/tool_usage_guide.md).
     *   Bumped project and Cargo workspace package version to `v0.0.37`.
