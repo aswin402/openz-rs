@@ -113,9 +113,18 @@ impl crate::channels::Channel for CliChannel {
     }
 }
 
+struct CliActiveGuard;
+impl Drop for CliActiveGuard {
+    fn drop(&mut self) {
+        crate::shutdown::set_cli_active(false);
+    }
+}
+
 impl CliChannel {
     async fn start_inner(&self) -> anyhow::Result<()> {
         let session_key = "cli:direct";
+        crate::shutdown::set_cli_active(true);
+        let _guard = CliActiveGuard;
         
         let white = "\x1b[38;2;240;240;240m";
         let slate = "\x1b[38;2;107;122;153m";
@@ -747,16 +756,25 @@ impl CliChannel {
                     Box::pin(runner.run(trimmed, session_key))
                 };
                 
-                let ctrl_c_fut = tokio::signal::ctrl_c();
+                let tx = crate::shutdown::cli_cancel_tx();
+                let mut rx = tx.subscribe();
+                let initial_val = *rx.borrow();
+                let cancel_fut = async move {
+                    while *rx.borrow() == initial_val {
+                        if rx.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                };
                 
                 tokio::pin!(run_fut);
-                tokio::pin!(ctrl_c_fut);
+                tokio::pin!(cancel_fut);
                 
                 tokio::select! {
                     res = &mut run_fut => {
                         Some(res)
                     }
-                    _ = &mut ctrl_c_fut => {
+                    _ = &mut cancel_fut => {
                         crate::tui_println!("\r\n{}▲ Execution cancelled by user (Ctrl+C).{}", AURA_GOLD, COLOR_RESET);
                         None
                     }

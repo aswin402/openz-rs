@@ -4,6 +4,31 @@ use std::sync::Mutex;
 
 static SHUTDOWN_TX: OnceLock<watch::Sender<bool>> = OnceLock::new();
 static SPAWNED_CHILDREN: OnceLock<Mutex<Vec<std::process::Child>>> = OnceLock::new();
+static IS_CLI_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static CLI_CANCEL_TX: OnceLock<watch::Sender<u64>> = OnceLock::new();
+
+pub fn set_cli_active(active: bool) {
+    IS_CLI_ACTIVE.store(active, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub fn is_cli_active() -> bool {
+    IS_CLI_ACTIVE.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+pub fn trigger_cli_cancel() {
+    let tx = CLI_CANCEL_TX.get_or_init(|| {
+        let (tx, _) = watch::channel(0);
+        tx
+    });
+    let _ = tx.send_modify(|val| *val += 1);
+}
+
+pub fn cli_cancel_tx() -> watch::Sender<u64> {
+    CLI_CANCEL_TX.get_or_init(|| {
+        let (tx, _) = watch::channel(0);
+        tx
+    }).clone()
+}
 
 pub fn init() -> watch::Receiver<bool> {
     let (tx, rx) = watch::channel(false);

@@ -72,19 +72,34 @@ async fn main() -> anyhow::Result<()> {
                 .expect("Failed to register SIGTERM handler");
             let mut sigint = signal(SignalKind::interrupt())
                 .expect("Failed to register SIGINT handler");
-            tokio::select! {
-                _ = sigint.recv() => {
-                    tracing::info!("Received SIGINT/Ctrl+C");
-                },
-                _ = sigterm.recv() => {
-                    tracing::info!("Received SIGTERM");
-                },
+            loop {
+                tokio::select! {
+                    _ = sigint.recv() => {
+                        tracing::info!("Received SIGINT/Ctrl+C");
+                        if openz::shutdown::is_cli_active() {
+                            openz::shutdown::trigger_cli_cancel();
+                        } else {
+                            break;
+                        }
+                    },
+                    _ = sigterm.recv() => {
+                        tracing::info!("Received SIGTERM");
+                        break;
+                    },
+                }
             }
         }
         #[cfg(not(unix))]
         {
-            tokio::signal::ctrl_c().await.ok();
-            tracing::info!("Received Ctrl+C/SIGINT");
+            loop {
+                tokio::signal::ctrl_c().await.ok();
+                tracing::info!("Received Ctrl+C/SIGINT");
+                if openz::shutdown::is_cli_active() {
+                    openz::shutdown::trigger_cli_cancel();
+                } else {
+                    break;
+                }
+            }
         }
 
         tracing::info!("Shutdown signal received — initiating graceful exit");

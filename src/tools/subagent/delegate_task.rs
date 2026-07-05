@@ -164,6 +164,17 @@ impl Tool for DelegateTaskTool {
                 }
             }
         }
+        // Fallback to default clipboard image if no specific path was found but task mentions an image
+        if image_paths.is_empty() {
+            let default_clip = crate::config::resolve_path("~/.openz/clipboard_image_0.png");
+            if default_clip.exists() && default_clip.is_file() {
+                let text_lower = format!("{} {}", clean_goal, clean_context).to_lowercase();
+                if text_lower.contains("image") || text_lower.contains("picture") || text_lower.contains("screenshot") {
+                    image_paths.push(default_clip.to_string_lossy().to_string());
+                }
+            }
+        }
+
         for img in image_paths {
             subagent_prompt.push_str(&format!(" ![](file://{})", img));
         }
@@ -214,6 +225,22 @@ impl Tool for DelegateTaskTool {
         }
         let spinner_msg = crate::agent::style::get_tree_spinner_msg("subagent", "");
 
+        struct CancelOnDrop {
+            token: CancellationToken,
+            completed: bool,
+        }
+        impl Drop for CancelOnDrop {
+            fn drop(&mut self) {
+                if !self.completed {
+                    self.token.cancel();
+                }
+            }
+        }
+        let mut cancel_guard = CancelOnDrop {
+            token: self.cancellation_token.clone(),
+            completed: false,
+        };
+
         let mut run_res = {
             let p_ref = &subagent_prompt;
             let c_ref = &child_session_id;
@@ -234,6 +261,7 @@ impl Tool for DelegateTaskTool {
                 Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
             }
         };
+        cancel_guard.completed = true;
 
         if let Some(ref schema) = json_schema {
             let mut attempts = 0;
