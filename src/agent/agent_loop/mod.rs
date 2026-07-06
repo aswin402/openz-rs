@@ -239,7 +239,7 @@ impl AgentLoop {
             _ => session_key.to_string(),
         };
 
-        let is_cli = target_key == "cli:direct" && !session_key.starts_with("subagent:");
+        let is_cli = target_key.starts_with("cli:") && (!session_key.starts_with("subagent:") || crate::shutdown::is_cli_active());
         let silent = !is_cli;
 
         crate::agent::style::spinner::IS_SILENT.scope(silent, async move {

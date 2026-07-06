@@ -11,7 +11,31 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     let mut loop_blocked_count = 0;
     let max_iterations = ctx.config.agents.defaults.max_tool_iterations;
 
+    // Build a turn-level cancellation token from the current CLI context.
+    // This provides early cancellation detection even before the CLI select! drops run_fut.
+    let turn_cancel = crate::tools::subagent::CancellationToken::new();
+    let turn_cancel_clone = turn_cancel.clone();
+
     loop {
+        // Check for turn-level cancellation at the start of each iteration.
+        // Without this, a subagent cancellation error is fed back to the LLM
+        // which may continue iterating instead of stopping.
+        if turn_cancel.is_cancelled() {
+            let msg = "Turn cancelled by user.".to_string();
+            ctx.final_content = msg.clone();
+            send_progress_update(ctx.session_key, &msg).await;
+            if !crate::agent::style::spinner::is_silent() {
+                print!("{}▲ {}{}\r\n", AURA_GOLD, msg, COLOR_RESET);
+                let _ = std::io::stdout().flush();
+            }
+            ctx.messages.push(Message {
+                role: "assistant".to_string(),
+                content: msg,
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                extra: serde_json::Map::new(),
+            });
+            break;
+        }
         let config = ctx.config.clone();
         let settings = GenerationSettings {
             temperature: config.agents.defaults.temperature,
@@ -78,12 +102,17 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                    start_time: std::time::Instant| {
                 if !*reasoning_printed && !full_reasoning.is_empty() {
                     let depth = crate::tools::subagent::DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
-                    if !silent && depth == 0 {
+                    if !silent {
                         let elapsed = start_time.elapsed().as_secs_f32();
                         print!("\r\x1b[2K");
+                        let prefix = if depth > 0 {
+                            crate::agent::style::get_tree_prefix(false)
+                        } else {
+                            "".to_string()
+                        };
                         print!(
-                            "{}● {}{}{}Thought for {:.1}s{}\r\n",
-                            RED_ORANGE, COLOR_RESET, COLOR_BOLD, RED_ORANGE, elapsed, COLOR_RESET
+                            "{}{}● {}{}{}Thought for {:.1}s{}\r\n",
+                            prefix, RED_ORANGE, COLOR_RESET, COLOR_BOLD, RED_ORANGE, elapsed, COLOR_RESET
                         );
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                         crate::agent::style::print_tree_monologue(&leaf_prefix, full_reasoning);
@@ -405,7 +434,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
             let silent = crate::agent::style::spinner::is_silent();
             let depth = crate::tools::subagent::DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
-            if !silent && depth == 0 {
+            if !silent {
+                let prefix = if depth > 0 {
+                    crate::agent::style::get_tree_prefix(false)
+                } else {
+                    "".to_string()
+                };
                 if ctx.streamed {
                     // During streaming, the reasoning spinner was already shown and
                     // the "Thought for Xs" badge was already printed when content
@@ -415,16 +449,16 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     if !content_streaming_started && !reasoning_printed {
                         print!("\r\x1b[2K");
                         print!(
-                            "{}● {}{}{}Thought for {:.1}s{}\r\n",
-                            RED_ORANGE, COLOR_RESET, COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET
+                            "{}{}● {}{}{}Thought for {:.1}s{}\r\n",
+                            prefix, RED_ORANGE, COLOR_RESET, COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET
                         );
                         let _ = std::io::stdout().flush();
                     }
                 } else {
                     // Non-streaming path: print the badge and thinking summary
                     print!(
-                        "{}● {}{}{}Thought for {:.1}s{}\r\n",
-                        RED_ORANGE, COLOR_RESET, COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET
+                        "{}{}● {}{}{}Thought for {:.1}s{}\r\n",
+                        prefix, RED_ORANGE, COLOR_RESET, COLOR_BOLD, RED_ORANGE, duration_secs, COLOR_RESET
                     );
                     let full_reasoning = if has_reasoning {
                         resp.reasoning_content.clone().unwrap_or_default()
@@ -696,6 +730,11 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             }
                             Ok(Err(e)) => {
                                 let error_str = e.to_string();
+                                // If the tool was cancelled by user, propagate to turn-level cancellation
+                                // so the next iteration breaks immediately instead of re-prompting the LLM.
+                                if error_str.contains("cancelled") || error_str.contains("Cancelled") {
+                                    turn_cancel_clone.cancel();
+                                }
                                 ctx.turn_errors
                                     .push(format!("Tool {} failed: {}", call.name, error_str));
                                 let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, error_str);

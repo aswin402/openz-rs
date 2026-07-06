@@ -122,7 +122,9 @@ impl Drop for CliActiveGuard {
 
 impl CliChannel {
     async fn start_inner(&self) -> anyhow::Result<()> {
-        let session_key = "cli:direct";
+        // Derive a unique session key per workspace directory so multiple
+        // `openz agent` instances can run in different directories.
+        let session_key = crate::config::loader::get_cli_session_key();
         crate::shutdown::set_cli_active(true);
         let _guard = CliActiveGuard;
         
@@ -163,7 +165,7 @@ impl CliChannel {
             let agent_loop = self.agent_loop.lock().await;
             agent_loop.session_manager.clone()
         };
-        if let Ok(session) = session_manager.load(session_key) {
+        if let Ok(session) = session_manager.load(&session_key) {
             render::print_session_history(&session);
         }
 
@@ -178,7 +180,7 @@ impl CliChannel {
                 &model,
                 &provider,
                 &session_manager,
-                session_key,
+                &session_key,
             ) {
                 Ok(inp) => inp,
                 Err(e) => {
@@ -596,14 +598,14 @@ impl CliChannel {
                     let agent_loop = self.agent_loop.lock().await;
                     agent_loop.session_manager.clone()
                 };
-                if let Ok(mut current_session) = session_manager.load(session_key) {
+                if let Ok(mut current_session) = session_manager.load(&session_key) {
                     if !current_session.messages.is_empty() {
                         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
                         let archive_key = format!("cli:history_{}", timestamp);
                         current_session.key = archive_key;
                         let _ = session_manager.save(&current_session).await;
                         
-                        let empty_session = crate::session::Session::new(session_key);
+                        let empty_session = crate::session::Session::new(&session_key);
                         let _ = session_manager.save(&empty_session).await;
                     }
                 }
@@ -664,12 +666,12 @@ impl CliChannel {
                             match select_menu_with_history("Select a session to load:", &history) {
                                 Ok(selected) => {
                                     if selected == 0 {
-                                        let _ = crate::cli::archive_current_session(&session_manager).await;
+                                        let _ = crate::cli::archive_current_session(&session_manager, &session_key).await;
                                         println!("{}✓ Started new session.{}", EMERALD_GREEN, COLOR_RESET);
                                     } else {
                                         let selected_item = &history[selected - 1];
                                         if selected_item.key != session_key {
-                                            let _ = crate::cli::archive_current_session(&session_manager).await;
+                                            let _ = crate::cli::archive_current_session(&session_manager, &session_key).await;
                                             if let Ok(mut session) = session_manager.load(&selected_item.key) {
                                                 session.key = session_key.to_string();
                                                 let _ = session_manager.save(&session).await;
@@ -700,7 +702,7 @@ impl CliChannel {
                     let agent_loop = self.agent_loop.lock().await;
                     agent_loop.session_manager.clone()
                 };
-                if let Ok(session) = session_manager.load(session_key) {
+                if let Ok(session) = session_manager.load(&session_key) {
                     println!("{}Session Metadata & Memory:{}", COLOR_BOLD, COLOR_RESET);
                     if session.metadata.is_empty() {
                         println!("  No memory or metadata recorded for this session.");
@@ -727,7 +729,7 @@ impl CliChannel {
                         let combined_query = format!("{} ![](file://{})", query.trim(), img_path.to_string_lossy());
                         
                         let agent_loop = self.agent_loop.lock().await;
-                        match agent_loop.run(&combined_query, session_key).await {
+                        match agent_loop.run(&combined_query, &session_key).await {
                             Ok(res) => {
                                 println!();
                                 render::print_colored_markdown(&res.content);
@@ -750,10 +752,11 @@ impl CliChannel {
             let runner = self.agent_loop.lock().await;
             
             let run_res = {
+                let _raw_mode = RawModeGuard::new().ok();
                 let run_fut: std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<crate::agent::RunResult>> + Send>> = if let Some(ref sender) = remote_sender {
-                    Box::pin(crate::agent::style::spinner::CURRENT_SESSION_KEY.scope(sender.clone(), runner.run(trimmed, session_key)))
+                    Box::pin(crate::agent::style::spinner::CURRENT_SESSION_KEY.scope(sender.clone(), runner.run(trimmed, &session_key)))
                 } else {
-                    Box::pin(runner.run(trimmed, session_key))
+                    Box::pin(runner.run(trimmed, &session_key))
                 };
                 
                 let tx = crate::shutdown::cli_cancel_tx();
@@ -767,15 +770,38 @@ impl CliChannel {
                     }
                 };
                 
+                let keyboard_cancel_tx = tx.clone();
+                let keyboard_listener = tokio::task::spawn(async move {
+                    loop {
+                        if let Ok(true) = crossterm::event::poll(std::time::Duration::from_millis(50)) {
+                            if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read() {
+                                if key.kind == crossterm::event::KeyEventKind::Press {
+                                    if key.code == crossterm::event::KeyCode::Esc {
+                                        let _ = keyboard_cancel_tx.send_modify(|val| *val += 1);
+                                        break;
+                                    }
+                                    if key.code == crossterm::event::KeyCode::Char('c') && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+                                        let _ = keyboard_cancel_tx.send_modify(|val| *val += 1);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                    }
+                });
+                
                 tokio::pin!(run_fut);
                 tokio::pin!(cancel_fut);
                 
                 tokio::select! {
                     res = &mut run_fut => {
+                        keyboard_listener.abort();
                         Some(res)
                     }
                     _ = &mut cancel_fut => {
-                        crate::tui_println!("\r\n{}▲ Execution cancelled by user (Ctrl+C).{}", AURA_GOLD, COLOR_RESET);
+                        keyboard_listener.abort();
+                        crate::tui_println!("\r\n{}▲ Execution cancelled by user (Ctrl+C / Esc).{}", AURA_GOLD, COLOR_RESET);
                         None
                     }
                 }

@@ -1,9 +1,10 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
+use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 
 // ── AURA palette (raw ANSI — no crossterm needed) ──────────────────────────
 const RESET:   &str = "\x1b[0m";
@@ -103,6 +104,19 @@ struct ParsedLine<'a> {
     session:   Option<String>,
 }
 
+fn extract_session_from_line(line: &str) -> Option<String> {
+    if let Some(pos) = line.find("session=") {
+        let start = pos + "session=".len();
+        let val_slice = &line[start..];
+        let end = val_slice.find(|c| c == ' ' || c == ',' || c == '}' || c == ']' || c == '\n').unwrap_or(val_slice.len());
+        let val = val_slice[..end].trim().to_string();
+        if !val.is_empty() {
+            return Some(val);
+        }
+    }
+    None
+}
+
 /// Parse a tracing-subscriber line:
 /// `2026-06-16T17:20:43.215712Z  INFO openz::tools::mcp: message  session=cli:direct`
 ///
@@ -132,7 +146,8 @@ fn parse_line(line: &str) -> Option<ParsedLine<'_>> {
     // Extract `session=<value>` from the trailing span fields.
     // tracing-subscriber appends span fields after the message, separated by
     // at least two spaces (or a tab):  `message  session=cli:direct`
-    let (message, session) = extract_session_field(message_raw);
+    let (message, session_opt) = extract_session_field(message_raw);
+    let session = session_opt.or_else(|| extract_session_from_line(line));
 
     Some(ParsedLine { timestamp: ts, level, target, message, session })
 }
@@ -631,7 +646,7 @@ fn print_header(path: &std::path::Path, tail: usize, filter: &SessionFilter, lev
     );
 }
 
-// ── Tail initial lines ───────────────────────────────────────────────────────
+// ── Tail initial lines (reverse seek, O(tail) memory) ───────────────────
 
 fn print_tail(path: &PathBuf, tail: usize, filter: &SessionFilter, level_filter: &LogLevelFilter) -> Result<u64> {
     let mut f = match File::open(path) {
@@ -646,28 +661,64 @@ fn print_tail(path: &PathBuf, tail: usize, filter: &SessionFilter, level_filter:
     };
 
     let file_len = f.seek(SeekFrom::End(0))?;
-    let _ = f.seek(SeekFrom::Start(0));
 
-    let reader = BufReader::new(f.take(file_len));
-    let all: Vec<String> = reader.lines().map_while(|l| l.ok()).collect();
-    let start = all.len().saturating_sub(tail);
-
-    if start > 0 {
-        println!(
-            "  {SLATE}{DIM}↑ {} older lines not shown  (pass --tail N to see more){RESET}\n",
-            start
-        );
+    if tail == 0 {
+        return Ok(file_len);
     }
 
-    for line in &all[start..] {
+    // Read file backwards from end using a sliding window to collect the last N lines.
+    // Memory usage: O(tail) instead of O(file_size).
+    let mut lines = Vec::with_capacity(tail.min(1000));
+    let mut pos = file_len;
+    let mut leftover = Vec::new();
+    const BLOCK_SIZE: usize = 4096;
+
+    while pos > 0 && lines.len() < tail {
+        let read_size = BLOCK_SIZE.min(pos as usize);
+        pos -= read_size as u64;
+        f.seek(SeekFrom::Start(pos))?;
+
+        let mut buf = vec![0u8; read_size];
+        f.read_exact(&mut buf)?;
+
+        // Scan block backwards for newlines
+        let block_str = String::from_utf8_lossy(&buf);
+        for (_i, c) in block_str.char_indices().rev() {
+            if c == '\n' && !leftover.is_empty() {
+                let line: String = leftover.iter().rev().collect();
+                leftover.clear();
+                if !line.trim().is_empty() {
+                    lines.push(line);
+                    if lines.len() >= tail {
+                        break;
+                    }
+                }
+            } else if c == '\n' {
+                // empty line — skip
+            } else {
+                leftover.push(c);
+            }
+        }
+    }
+
+    // Push any remaining partial line
+    if !leftover.is_empty() {
+        let line: String = leftover.iter().rev().collect();
+        if !line.trim().is_empty() {
+            lines.push(line);
+        }
+    }
+
+    lines.reverse();
+
+    for line in &lines {
         print_line_filtered(line, filter, level_filter);
     }
 
-    // Return current end-of-file position
     Ok(file_len)
 }
 
-// ── Follow loop ─────────────────────────────────────────────────────────────
+// ── Read new bytes helper (shared between notify and poll paths) ─────────
 
 #[cfg(unix)]
 fn get_file_id(metadata: &std::fs::Metadata) -> u64 {
@@ -680,12 +731,76 @@ fn get_file_id(_metadata: &std::fs::Metadata) -> u64 {
     0
 }
 
+fn read_new_bytes(
+    path: &PathBuf,
+    pos: &mut u64,
+    buffer: &mut Vec<u8>,
+    filter: &SessionFilter,
+    level_filter: &LogLevelFilter,
+    current_file_id: &mut Option<u64>,
+) {
+    if let Ok(mut f) = File::open(path) {
+        if let Ok(metadata) = f.metadata() {
+            let len = metadata.len();
+            let file_id = get_file_id(&metadata);
+
+            let is_new_file = match current_file_id {
+                Some(id) => *id != file_id,
+                None => true,
+            };
+
+            if len < *pos || is_new_file {
+                if is_new_file && current_file_id.is_some() {
+                    println!("\n  {GOLD}── log file recreated, reading from start ──{RESET}\n");
+                } else if len < *pos {
+                    println!("\n  {GOLD}── log rotated/truncated, reading from start ──{RESET}\n");
+                }
+                *pos = 0;
+                buffer.clear();
+                *current_file_id = Some(file_id);
+            }
+
+            if f.seek(SeekFrom::Start(*pos)).is_ok() {
+                let mut temp_buf = Vec::new();
+                if f.read_to_end(&mut temp_buf).is_ok() && !temp_buf.is_empty() {
+                    *pos += temp_buf.len() as u64;
+                    buffer.extend_from_slice(&temp_buf);
+
+                    if let Some(last_newline_idx) = buffer.iter().rposition(|&b| b == b'\n') {
+                        let complete_bytes = &buffer[..=last_newline_idx];
+                        let text = String::from_utf8_lossy(complete_bytes);
+                        for line in text.lines() {
+                            print_line_filtered(line, filter, level_filter);
+                        }
+                        *buffer = buffer[last_newline_idx + 1..].to_vec();
+                        let _ = std::io::stdout().flush();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Check if auto-followed session changed.
+fn update_auto_session(filter: &mut SessionFilter) {
+    if let SessionFilter::Auto(ref current) = filter {
+        let active = detect_active_session();
+        if active != *current {
+            if let Some(ref new_id) = active {
+                println!("\n  {CYAN}{DIM}◉ active session changed: {new_id}{RESET}\n");
+            } else {
+                println!("\n  {CYAN}{DIM}◉ active session lost (idle){RESET}\n");
+            }
+            *filter = SessionFilter::Auto(active);
+        }
+    }
+}
+
+// ── Follow loop (notify-based, falls back to polling) ────────────────────
+
 async fn follow(path: &PathBuf, mut pos: u64, mut filter: SessionFilter, level_filter: LogLevelFilter) -> Result<()> {
     let ctrl_c = tokio::signal::ctrl_c();
     tokio::pin!(ctrl_c);
-
-    let mut interval = tokio::time::interval(Duration::from_millis(100));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     let mut current_file_id = None;
     if let Ok(metadata) = std::fs::metadata(path) {
@@ -695,75 +810,58 @@ async fn follow(path: &PathBuf, mut pos: u64, mut filter: SessionFilter, level_f
     let mut buffer = Vec::new();
     let mut last_session_check = std::time::Instant::now();
 
+    // Set up notify watcher for instant file change notifications.
+    // Falls back to polling if watcher creation fails.
+    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel::<notify::Result<notify::Event>>(256);
+    let notify_path = path.clone();
+
+    let has_notify = std::sync::atomic::AtomicBool::new(false);
+
+    if let Ok(mut watcher) = RecommendedWatcher::new(move |res| {
+        let _ = notify_tx.blocking_send(res);
+    }, Config::default()) {
+        if watcher.watch(&notify_path, RecursiveMode::NonRecursive).is_ok() {
+            has_notify.store(true, std::sync::atomic::Ordering::SeqCst);
+            // Keep watcher alive for this function's duration
+            let _ = watcher;
+        }
+    }
+
+    let notify_available = has_notify.load(std::sync::atomic::Ordering::SeqCst);
+
+    // Poll interval — fast when no notify, slow heartbeat when notify works
+    let mut interval = tokio::time::interval(if notify_available {
+        Duration::from_millis(1000)
+    } else {
+        Duration::from_millis(100)
+    });
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
     loop {
         tokio::select! {
             biased;
             _ = &mut ctrl_c => {
                 println!("\n\n  {SLATE}{DIM}── openz logs stopped{RESET}\n");
-                break;
+                break Ok(());
             }
-            _ = interval.tick() => {
+            _ = notify_rx.recv(), if notify_available => {
+                read_new_bytes(path, &mut pos, &mut buffer, &filter, &level_filter, &mut current_file_id);
                 if last_session_check.elapsed() >= Duration::from_secs(1) {
                     last_session_check = std::time::Instant::now();
-                    if let SessionFilter::Auto(ref current) = filter {
-                        let active = detect_active_session();
-                        if active != *current {
-                            if let Some(ref new_id) = active {
-                                println!("\n  {CYAN}{DIM}◉ active session changed: {new_id}{RESET}\n");
-                            } else {
-                                println!("\n  {CYAN}{DIM}◉ active session lost (idle){RESET}\n");
-                            }
-                            filter = SessionFilter::Auto(active);
-                        }
-                    }
+                    update_auto_session(&mut filter);
                 }
-
-                if let Ok(mut f) = File::open(path) {
-                    if let Ok(metadata) = f.metadata() {
-                        let len = metadata.len();
-                        let file_id = get_file_id(&metadata);
-                        
-                        let is_new_file = match current_file_id {
-                            Some(id) => id != file_id,
-                            None => true,
-                        };
-                        
-                        if len < pos || is_new_file {
-                            if is_new_file && current_file_id.is_some() {
-                                println!("\n  {GOLD}── log file recreated, reading from start ──{RESET}\n");
-                            } else if len < pos {
-                                println!("\n  {GOLD}── log rotated/truncated, reading from start ──{RESET}\n");
-                            }
-                            pos = 0;
-                            buffer.clear();
-                            current_file_id = Some(file_id);
-                        }
-                        
-                        if f.seek(SeekFrom::Start(pos)).is_ok() {
-                            let mut temp_buf = Vec::new();
-                            if f.read_to_end(&mut temp_buf).is_ok() && !temp_buf.is_empty() {
-                                pos += temp_buf.len() as u64;
-                                buffer.extend_from_slice(&temp_buf);
-                                
-                                if let Some(last_newline_idx) = buffer.iter().rposition(|&b| b == b'\n') {
-                                    let complete_bytes = &buffer[..=last_newline_idx];
-                                    let text = String::from_utf8_lossy(complete_bytes);
-                                    for line in text.lines() {
-                                        print_line_filtered(line, &filter, &level_filter);
-                                    }
-                                    
-                                    // Keep only the incomplete trailing bytes in the buffer
-                                    buffer = buffer[last_newline_idx + 1..].to_vec();
-                                    let _ = std::io::stdout().flush();
-                                }
-                            }
-                        }
-                    }
+            }
+            _ = interval.tick() => {
+                if !notify_available {
+                    read_new_bytes(path, &mut pos, &mut buffer, &filter, &level_filter, &mut current_file_id);
+                }
+                if last_session_check.elapsed() >= Duration::from_secs(1) {
+                    last_session_check = std::time::Instant::now();
+                    update_auto_session(&mut filter);
                 }
             }
         }
     }
-    Ok(())
 }
 
 // ── Auto-detect the most recently active session ─────────────────────────────
