@@ -191,13 +191,23 @@ impl Tool for DelegateProfileTool {
         let workspace_dir = if !needs_workspace {
             parent_dir.clone()
         } else {
-            match create_isolated_workspace(&parent_dir) {
-                Ok(dir) => {
+            let parent_dir_clone = parent_dir.clone();
+            let workspace_res = tokio::task::spawn_blocking(move || {
+                create_isolated_workspace(&parent_dir_clone)
+            })
+            .await;
+
+            match workspace_res {
+                Ok(Ok(dir)) => {
                     crate::tui_println!("{}  ✓ Isolated workspace worktree created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
                     dir
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     crate::tui_println!("{}⚠️  Failed to create isolated workspace ({:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
+                    parent_dir.clone()
+                }
+                Err(e) => {
+                    crate::tui_println!("{}⚠️  Failed to create isolated workspace (join error: {:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
                     parent_dir.clone()
                 }
             }
@@ -206,6 +216,10 @@ impl Tool for DelegateProfileTool {
         let _worktree_guard = WorktreeGuard::new(parent_dir.clone(), workspace_dir.clone());
 
         for (idx, model_name) in models_to_try.iter().enumerate() {
+            if self.cancellation_token.is_cancelled() {
+                return Err(anyhow::anyhow!("Subagent task cancelled"));
+            }
+
             // For vision_agent, skip models that don't support vision to avoid wasting fallbacks
             if is_vision_profile && !crate::providers::model_supports_vision(model_name) {
                 crate::tui_println!("{}▲ Skipping non-vision model '{}' for vision task{}", AURA_GOLD, model_name, COLOR_RESET);

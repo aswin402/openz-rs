@@ -214,13 +214,23 @@ impl Tool for DelegateTaskTool {
         }
 
         let parent_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let workspace_dir = match create_isolated_workspace(&parent_dir) {
-            Ok(dir) => {
+        let parent_dir_clone = parent_dir.clone();
+        let workspace_res = tokio::task::spawn_blocking(move || {
+            create_isolated_workspace(&parent_dir_clone)
+        })
+        .await;
+
+        let workspace_dir = match workspace_res {
+            Ok(Ok(dir)) => {
                 crate::tui_println!("{}  ✓ Isolated workspace worktree created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
                 dir
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 crate::tui_println!("{}⚠️  Failed to create isolated workspace ({:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
+                parent_dir.clone()
+            }
+            Err(e) => {
+                crate::tui_println!("{}⚠️  Failed to create isolated workspace (join error: {:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
                 parent_dir.clone()
             }
         };
@@ -496,31 +506,9 @@ impl Drop for WorktreeGuard {
     }
 }
 
-fn dir_size(path: &std::path::Path) -> u64 {
-    if !path.exists() {
-        return 0;
-    }
-    if path.is_file() {
-        return path.metadata().map(|m| m.len()).unwrap_or(0);
-    }
-    let mut size = 0;
-    if let Ok(entries) = std::fs::read_dir(path) {
-        for entry in entries.flatten() {
-            size += dir_size(&entry.path());
-        }
-    }
-    size
-}
-
 fn enforce_disk_quota() {
     let worktrees_dir = crate::config::resolve_path("~/.openz/worktrees");
     if !worktrees_dir.exists() || !worktrees_dir.is_dir() {
-        return;
-    }
-
-    let quota: u64 = 5 * 1024 * 1024 * 1024; // 5 GB
-    let mut total_size = dir_size(&worktrees_dir);
-    if total_size <= quota {
         return;
     }
 
@@ -541,18 +529,21 @@ fn enforce_disk_quota() {
         }
     }
 
-    worktrees.sort_by(|a, b| a.1.cmp(&b.1));
+    // Keep at most 3 most recent worktrees (to save space)
+    const MAX_WORKTREES: usize = 3;
+    if worktrees.len() <= MAX_WORKTREES {
+        return;
+    }
 
-    for (path, _) in worktrees {
-        if total_size <= quota {
-            break;
-        }
-        let size = dir_size(&path);
-        if std::fs::remove_dir_all(&path).is_ok() {
-            total_size = total_size.saturating_sub(size);
-        }
+    worktrees.sort_by(|a, b| a.1.cmp(&b.1)); // Sort oldest to newest
+
+    let delete_count = worktrees.len() - MAX_WORKTREES;
+    for i in 0..delete_count {
+        let (path, _) = &worktrees[i];
+        let _ = std::fs::remove_dir_all(path);
     }
 }
+
 
 pub fn cleanup_stale_resources() {
     // 1. Run git worktree prune in current directory if it's a git repo

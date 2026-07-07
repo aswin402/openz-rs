@@ -979,7 +979,6 @@ impl CliChannel {
                                                 .contains(crossterm::event::KeyModifiers::CONTROL))
                                     {
                                         crate::shutdown::trigger_cli_cancel();
-                                        break;
                                     }
                                 }
                             }
