@@ -418,6 +418,9 @@ impl Tool for DelegateTaskTool {
                 }))
             }
             Err(e) => {
+                if self.cancellation_token.is_cancelled() {
+                    return Err(e);
+                }
                 if !crate::agent::style::is_silent() {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                     crate::tui_println!("{}{}{}✗{} Subagent execution failed: {}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, ERROR_RED, e, COLOR_RESET);
