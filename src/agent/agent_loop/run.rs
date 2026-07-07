@@ -32,8 +32,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             ctx.final_content = msg.clone();
             super::tool_execution::send_progress_update(ctx.session_key, &msg).await;
             if !crate::agent::style::spinner::is_silent() {
-                print!("{}▲ {}{}\r\n", AURA_GOLD, msg, COLOR_RESET);
-                let _ = std::io::stdout().flush();
+                crate::tui_println!("{}▲ {}{}", AURA_GOLD, msg, COLOR_RESET);
             }
             ctx.messages.push(Message {
                 role: "assistant".to_string(),
@@ -64,8 +63,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             ctx.final_content = msg.clone();
             super::tool_execution::send_progress_update(ctx.session_key, &msg).await;
             if !crate::agent::style::spinner::is_silent() {
-                print!("{}⚠️ {}{}\r\n", AURA_GOLD, msg, COLOR_RESET);
-                let _ = std::io::stdout().flush();
+                crate::tui_println!("{}⚠️ {}{}", AURA_GOLD, msg, COLOR_RESET);
             }
             ctx.messages.push(Message {
                 role: "assistant".to_string(),
@@ -539,8 +537,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 ctx.final_content = loop_msg.to_string();
                 super::tool_execution::send_progress_update(ctx.session_key, loop_msg).await;
                 if !crate::agent::style::spinner::is_silent() {
-                    print!("{}⚠️ {}{}\r\n", AURA_GOLD, loop_msg, COLOR_RESET);
-                    let _ = std::io::stdout().flush();
+                    crate::tui_println!("{}⚠️ {}{}", AURA_GOLD, loop_msg, COLOR_RESET);
                 }
                 ctx.messages.push(Message {
                     role: "assistant".to_string(),
@@ -826,8 +823,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             ctx.final_content = halt_msg.to_string();
             super::tool_execution::send_progress_update(ctx.session_key, halt_msg).await;
             if !crate::agent::style::spinner::is_silent() {
-                print!("{}⚠️ {}{}\r\n", AURA_GOLD, halt_msg, COLOR_RESET);
-                let _ = std::io::stdout().flush();
+                crate::tui_println!("{}⚠️ {}{}", AURA_GOLD, halt_msg, COLOR_RESET);
             }
             ctx.messages.push(Message {
                 role: "assistant".to_string(),

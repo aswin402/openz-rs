@@ -29,6 +29,27 @@ pub struct ActiveSpinner {
     pub msg: String,
 }
 
+struct SpinnerGuard {
+    id: uuid::Uuid,
+}
+
+impl Drop for SpinnerGuard {
+    fn drop(&mut self) {
+        let mut active = ACTIVE_SPINNERS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .unwrap();
+        active.retain(|s| s.id != self.id);
+
+        // If there's another spinner on the stack, restore it immediately
+        if let Some(parent) = active.last() {
+            let _stdout_guard = stdout_lock();
+            print!("\r\x1b[2K{}{} ⠋", parent.prefix, parent.msg);
+            let _ = std::io::stdout().flush();
+        }
+    }
+}
+
 static STDOUT_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 static ACTIVE_SPINNERS: OnceLock<Mutex<Vec<ActiveSpinner>>> = OnceLock::new();
 
@@ -81,6 +102,9 @@ where
         });
     }
 
+    // Create the drop guard to ensure the spinner is popped even if dropped/cancelled
+    let _guard = SpinnerGuard { id: spinner_id };
+
     // Print initial frame immediately to avoid delay
     {
         let _stdout_guard = stdout_lock();
@@ -128,22 +152,6 @@ where
     let result = future.await;
     let _ = tx.send(());
     let _ = spinner_task.await;
-
-    // Pop from the stack when done
-    {
-        let mut active = ACTIVE_SPINNERS
-            .get_or_init(|| Mutex::new(Vec::new()))
-            .lock()
-            .unwrap();
-        active.retain(|s| s.id != spinner_id);
-
-        // If there's another spinner on the stack, restore it immediately
-        if let Some(parent) = active.last() {
-            let _stdout_guard = stdout_lock();
-            print!("\r\x1b[2K{}{} ⠋", parent.prefix, parent.msg);
-            let _ = std::io::stdout().flush();
-        }
-    }
 
     result
 }
