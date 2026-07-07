@@ -36,6 +36,11 @@ pub fn tui_println_fn<T: AsRef<str>>(msg: T) {
     }
     let s = msg.as_ref();
     let replaced = s.replace("\r\n", "\n").replace("\n", "\r\n");
+
+    let _guard = stdout_lock();
+    if is_spinner_active() {
+        print!("\r\x1b[2K");
+    }
     print!("{}\r\n", replaced);
     let _ = std::io::stdout().flush();
 }
@@ -46,6 +51,11 @@ pub fn tui_print_fn<T: AsRef<str>>(msg: T) {
     }
     let s = msg.as_ref();
     let replaced = s.replace("\r\n", "\n").replace("\n", "\r\n");
+
+    let _guard = stdout_lock();
+    if is_spinner_active() {
+        print!("\r\x1b[2K");
+    }
     print!("{}", replaced);
     let _ = std::io::stdout().flush();
 }
@@ -105,6 +115,11 @@ pub fn tui_eprintln_fn<T: AsRef<str>>(msg: T) {
     }
     let s = msg.as_ref();
     let replaced = s.replace("\r\n", "\n").replace("\n", "\r\n");
+
+    let _guard = stdout_lock();
+    if is_spinner_active() {
+        print!("\r\x1b[2K");
+    }
     eprint!("{}\r\n", replaced);
     let _ = std::io::stderr().flush();
 }
@@ -115,6 +130,11 @@ pub fn tui_eprint_fn<T: AsRef<str>>(msg: T) {
     }
     let s = msg.as_ref();
     let replaced = s.replace("\r\n", "\n").replace("\n", "\r\n");
+
+    let _guard = stdout_lock();
+    if is_spinner_active() {
+        print!("\r\x1b[2K");
+    }
     eprint!("{}", replaced);
     let _ = std::io::stderr().flush();
 }
