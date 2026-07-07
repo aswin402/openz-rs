@@ -474,6 +474,9 @@ impl Tool for DelegateProfileTool {
                     if has_branch {
                         let _ = crate::tools::graph_memory::RollbackDatabaseBranchTool.call(&serde_json::json!({})).await;
                     }
+                    if self.cancellation_token.is_cancelled() {
+                        return Err(e);
+                    }
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                         crate::tui_println!("{}{}{}✕ Error: {}{}", AURA_SLATE, leaf_prefix, AURA_ROSE, e, COLOR_RESET);

@@ -418,3 +418,60 @@ async fn test_delegate_task_cancellation_propagation() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_delegate_profile_cancellation_propagation() -> Result<()> {
+    let _guard = cancel_test_guard().await;
+    let temp_dir = std::env::temp_dir().join(format!("openz_delegate_profile_cancel_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    std::env::set_var("ANTHROPIC_API_KEY", "dummy");
+    std::env::set_var("OPENAI_API_KEY", "dummy");
+    std::env::set_var("OPENZ_USE_MOCK_PROVIDER", "true");
+
+    let provider = Arc::new(LoopMockProvider {
+        call_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    });
+
+    let cancellation_token = CancellationToken::new();
+    cancellation_token.cancel(); // Cancel it immediately!
+
+    let profile = crate::subagents::SubagentProfile {
+        name: "test_subagent".to_string(),
+        description: "test subagent description".to_string(),
+        system_prompt: "you are a test subagent".to_string(),
+        model: Some("gpt-4o-mini".to_string()),
+        fallbacks: None,
+        extra: serde_json::Map::new(),
+    };
+
+    let tool = DelegateProfileTool {
+        config: Config::default(),
+        parent_provider: provider.clone(),
+        session_manager: SessionManager::new(temp_dir.clone()),
+        profile,
+        parent_tools: Vec::new(),
+        cancellation_token,
+    };
+
+    let res = crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async move {
+            tool.call(&serde_json::json!({
+                "goal": "Write a hello world program in Rust",
+                "context": "Keep it simple"
+            }))
+            .await
+        })
+        .await;
+
+    // Check that it returned an Err, not Ok
+    assert!(res.is_err(), "Expected an error because the profile tool was cancelled, got: {:?}", res);
+
+    // Cleanup env vars
+    std::env::remove_var("ANTHROPIC_API_KEY");
+    std::env::remove_var("OPENAI_API_KEY");
+    std::env::remove_var("OPENZ_USE_MOCK_PROVIDER");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+
+
