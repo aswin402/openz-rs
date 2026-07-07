@@ -398,7 +398,17 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.39 (Latest Release)
+### v0.0.40 (Latest Release)
+*   **Fix: Subagent cancellation caused invisible input / frozen prompt text (CRITICAL)**:
+    *   **Root cause:** When a user cancelled a turn (using `Esc` or `Ctrl+C`), the outer future (`run_fut`) was aborted immediately. However, because the future wrapping the subagent spinner (`with_spinner`) was dropped mid-execution, the clean-up block that popped the spinner from the `ACTIVE_SPINNERS` stack was bypassed. This left the spinner on the stack indefinitely.
+    *   **Consequence:** The TUI print shims (`tui_print_fn` and `tui_println_fn`) constantly saw an active spinner and printed `\r\x1b[2K` on every print, immediately clearing the prompt and the user's typed input characters as they typed them.
+    *   **Fix:** Introduced `SpinnerGuard`, a struct implementing the Rust `Drop` trait. Because `drop()` is guaranteed to execute when the guard goes out of scope (even if the future is dropped or cancelled), the spinner is now always reliably popped from the coordination stack.
+*   **Fix: TUI spinner overlapping/misaligned rendering during cancel and thinking states (HIGH)**:
+    *   **Root cause:** Direct raw `print!` statements were used to render the turn cancellation warning (`▲ Turn cancelled by user.`) and the model's thinking duration badges (`L ● Thought for Xs`). Because they bypassed the global `STDOUT_MUTEX` lock and active spinner checks, the background spinner thread wrote progress characters (e.g. `⠋`) side-by-side on the same line.
+    *   **Fix:** Converted all raw warning and thought-duration prints in `run.rs` to `crate::tui_println!`. They now correctly lock the stdout mutex and clear any active spinner line before rendering.
+*   **Chore:** Bumped version to `v0.0.40`.
+
+### v0.0.39 (Previous Release)
 *   **Fix: Esc / Ctrl+C cancellation was unreliable during subagent execution (CRITICAL)**:
     *   **Root cause:** Crossterm raw mode converts `Ctrl+C` from a signal (`SIGINT`) into a key event, bypassing the OS signal handler. The keyboard listener was running inside `tokio::task::spawn` with blocking `crossterm::event::poll/read` calls, starving the Tokio runtime and preventing the cancellation future from making progress.
     *   **Fix:** Moved keyboard input polling to a dedicated **OS thread** (`std::thread::spawn`) instead of a Tokio task. The OS thread polls crossterm events every 100ms without blocking the async runtime, and signals cancellation via the existing `CLI_CANCEL_TX` watch channel.
