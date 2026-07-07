@@ -111,14 +111,13 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             .unwrap_or(0);
                         if !silent {
                             let elapsed = start_time.elapsed().as_secs_f32();
-                            print!("\r\x1b[2K");
                             let prefix = if depth > 0 {
                                 crate::agent::style::get_tree_prefix(false)
                             } else {
                                 "".to_string()
                             };
-                            print!(
-                                "{}{}● {}{}{}Thought for {:.1}s{}\r\n",
+                            crate::tui_println!(
+                                "{}{}● {}{}{}Thought for {:.1}s{}",
                                 prefix,
                                 RED_ORANGE,
                                 COLOR_RESET,
@@ -129,8 +128,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             );
                             let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                             crate::agent::style::print_tree_monologue(&leaf_prefix, full_reasoning);
-                            print!("\r\n");
-                            let _ = std::io::stdout().flush();
+                            crate::tui_println!("");
                         }
                         *reasoning_printed = true;
                         *in_reasoning_phase = false;
@@ -485,9 +483,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     // arrived and no reasoning was printed (e.g. pure tool-call-only response),
                     // finalize the spinner and print the badge now.
                     if !content_streaming_started && !reasoning_printed {
-                        print!("\r\x1b[2K");
-                        print!(
-                            "{}{}● {}{}{}Thought for {:.1}s{}\r\n",
+                        crate::tui_println!(
+                            "{}{}● {}{}{}Thought for {:.1}s{}",
                             prefix,
                             RED_ORANGE,
                             COLOR_RESET,
@@ -496,12 +493,11 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             duration_secs,
                             COLOR_RESET
                         );
-                        let _ = std::io::stdout().flush();
                     }
                 } else {
                     // Non-streaming path: print the badge and thinking summary
-                    print!(
-                        "{}{}● {}{}{}Thought for {:.1}s{}\r\n",
+                    crate::tui_println!(
+                        "{}{}● {}{}{}Thought for {:.1}s{}",
                         prefix,
                         RED_ORANGE,
                         COLOR_RESET,
