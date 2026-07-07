@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::io::Write;
-use crate::error::{Result, OpenMediaError};
+use crate::error::{OpenMediaError, Result};
 use crate::hardware::HardwareInfo;
 use crate::progress::ProgressReporter;
+use serde::{Deserialize, Serialize};
+use std::io::Write;
+use std::path::PathBuf;
 
 /// Information about a single model file
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,9 +141,15 @@ impl ModelRegistry {
     }
 
     /// Download a model by its ID
-    pub async fn download_model(&self, id: &str, progress: &dyn ProgressReporter) -> Result<PathBuf> {
-        let model = self.get(id).ok_or_else(|| OpenMediaError::ModelNotFound(id.to_string()))?;
-        
+    pub async fn download_model(
+        &self,
+        id: &str,
+        progress: &dyn ProgressReporter,
+    ) -> Result<PathBuf> {
+        let model = self
+            .get(id)
+            .ok_or_else(|| OpenMediaError::ModelNotFound(id.to_string()))?;
+
         let url = match id {
             "clip-vit-b32-text" => "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/text_model.onnx",
             "clip-vit-b32-vision" => "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model.onnx",
@@ -157,12 +163,17 @@ impl ModelRegistry {
         }
 
         let tmp_path = dest_path.with_extension("download");
-        
+
         let client = reqwest::Client::new();
-        let mut response = client.get(url)
-            .send()
-            .await
-            .map_err(|e| OpenMediaError::ModelLoadFailed { model: id.to_string(), reason: e.to_string() })?;
+        let mut response =
+            client
+                .get(url)
+                .send()
+                .await
+                .map_err(|e| OpenMediaError::ModelLoadFailed {
+                    model: id.to_string(),
+                    reason: e.to_string(),
+                })?;
 
         if !response.status().is_success() {
             return Err(OpenMediaError::ModelLoadFailed {
@@ -175,10 +186,22 @@ impl ModelRegistry {
         let mut downloaded: u64 = 0;
         let mut file = std::fs::File::create(&tmp_path)?;
 
-        while let Some(chunk) = response.chunk().await.map_err(|e| OpenMediaError::ModelLoadFailed { model: id.to_string(), reason: e.to_string() })? {
+        while let Some(chunk) =
+            response
+                .chunk()
+                .await
+                .map_err(|e| OpenMediaError::ModelLoadFailed {
+                    model: id.to_string(),
+                    reason: e.to_string(),
+                })?
+        {
             file.write_all(&chunk)?;
             downloaded += chunk.len() as u64;
-            progress.report(downloaded, total_size, &format!("Downloading {}...", model.name));
+            progress.report(
+                downloaded,
+                total_size,
+                &format!("Downloading {}...", model.name),
+            );
         }
 
         file.flush()?;
@@ -193,7 +216,9 @@ impl ModelRegistry {
 
     /// Verify a model's checksum
     pub async fn verify_model(&self, id: &str) -> Result<bool> {
-        let model = self.get(id).ok_or_else(|| OpenMediaError::ModelNotFound(id.to_string()))?;
+        let model = self
+            .get(id)
+            .ok_or_else(|| OpenMediaError::ModelNotFound(id.to_string()))?;
         Ok(model.path.exists())
     }
 }

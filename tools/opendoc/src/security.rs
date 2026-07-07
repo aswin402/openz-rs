@@ -12,18 +12,18 @@ pub fn validate_path(file_path: &str) -> Result<PathBuf, String> {
     }
 
     let path = Path::new(file_path);
-    
+
     // Standard validation: check if the path can be canonicalized if it exists.
     // If the path doesn't exist, we can validate its parent directory.
     let absolute_path = if path.exists() {
-        std::fs::canonicalize(path)
-            .map_err(|e| format!("Invalid path: {e}"))?
+        std::fs::canonicalize(path).map_err(|e| format!("Invalid path: {e}"))?
     } else {
         // Resolve parent directories to prevent traversal in path creation
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
-        let canonical_parent = std::fs::canonicalize(parent)
-            .map_err(|e| format!("Invalid parent path: {e}"))?;
-        let file_name = path.file_name()
+        let canonical_parent =
+            std::fs::canonicalize(parent).map_err(|e| format!("Invalid parent path: {e}"))?;
+        let file_name = path
+            .file_name()
             .ok_or_else(|| "Path has no filename".to_string())?;
         canonical_parent.join(file_name)
     };
@@ -44,7 +44,10 @@ pub fn validate_path(file_path: &str) -> Result<PathBuf, String> {
             }
         }
         if !allowed {
-            return Err("Access to the path is not allowed under current security sandbox policy".to_string());
+            return Err(
+                "Access to the path is not allowed under current security sandbox policy"
+                    .to_string(),
+            );
         }
     }
 

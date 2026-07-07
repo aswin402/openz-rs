@@ -1,13 +1,15 @@
 use anyhow::Result;
 use rusqlite::params;
 
-use super::db::{get_db_mutex, with_db};
-use super::embeddings::{get_embedding, cosine_similarity};
 use super::cognitive::CognitiveMemoryEntry;
+use super::db::{get_db_mutex, with_db};
+use super::embeddings::{cosine_similarity, get_embedding};
 
-pub async fn consolidate_shared_memory(provider: &std::sync::Arc<dyn crate::providers::LLMProvider>) -> Result<()> {
+pub async fn consolidate_shared_memory(
+    provider: &std::sync::Arc<dyn crate::providers::LLMProvider>,
+) -> Result<()> {
     let _lock = get_db_mutex().lock().await;
-    
+
     let mut entries: Vec<CognitiveMemoryEntry> = with_db(|conn| {
         let mut stmt = conn.prepare("SELECT id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate FROM cognitive_memory")?;
         let mapped = stmt.query_map([], |row| {
@@ -15,7 +17,7 @@ pub async fn consolidate_shared_memory(provider: &std::sync::Arc<dyn crate::prov
             let tags_str: String = row.get(5)?;
             let embedding: Vec<f32> = serde_json::from_str(&embedding_str).unwrap_or_default();
             let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-            
+
             Ok(CognitiveMemoryEntry {
                 id: row.get(0)?,
                 text: row.get(1)?,
@@ -54,7 +56,7 @@ pub async fn consolidate_shared_memory(provider: &std::sync::Arc<dyn crate::prov
     }
 
     let mut consolidated_count = 0;
-    
+
     for _ in 0..3 {
         let n = entries.len();
         if n < 2 {
@@ -78,7 +80,7 @@ pub async fn consolidate_shared_memory(provider: &std::sync::Arc<dyn crate::prov
             if max_sim >= 0.82 {
                 let entry_a = &entries[i];
                 let entry_b = &entries[j];
-                
+
                 let merge_prompt = format!(
                     "Fact A: {}\nFact B: {}\n\nPlease consolidate these two facts into a single, concise, and complete statement. Do not lose any technical guidelines, details, or specific values. Return ONLY the consolidated statement, with no conversational filler.",
                     entry_a.text, entry_b.text
@@ -98,12 +100,14 @@ pub async fn consolidate_shared_memory(provider: &std::sync::Arc<dyn crate::prov
                     reasoning_effort: None,
                 };
 
-                let resp = provider.chat(system_prompt, &messages, &[], &settings).await?;
+                let resp = provider
+                    .chat(system_prompt, &messages, &[], &settings)
+                    .await?;
                 if let Some(merged_text) = resp.content {
                     let clean_text = merged_text.trim().to_string();
                     if !clean_text.is_empty() {
                         let new_embed = get_embedding(&clean_text, false).await?;
-                        
+
                         let mut merged_tags = entry_a.tags.clone();
                         for t in &entry_b.tags {
                             if !merged_tags.contains(t) {
@@ -114,9 +118,10 @@ pub async fn consolidate_shared_memory(provider: &std::sync::Arc<dyn crate::prov
                         let workspace = entry_a.workspace.clone();
                         let new_id = uuid::Uuid::new_v4().to_string();
                         let now_str = chrono::Utc::now().to_rfc3339();
-                        
+
                         // Calculate merged importance (average of two, scaled up slightly for consolidation reinforcement)
-                        let new_importance = ((entry_a.importance + entry_b.importance) / 2.0 + 0.1).min(1.0);
+                        let new_importance =
+                            ((entry_a.importance + entry_b.importance) / 2.0 + 0.1).min(1.0);
 
                         let new_entry = CognitiveMemoryEntry {
                             id: new_id.clone(),
@@ -134,8 +139,11 @@ pub async fn consolidate_shared_memory(provider: &std::sync::Arc<dyn crate::prov
                         // Remove from database and insert new merged entry inside a short-lived block
                         with_db(|conn| {
                             let tx = conn.transaction()?;
-                            tx.execute("DELETE FROM cognitive_memory WHERE id IN (?1, ?2)", params![entry_a.id, entry_b.id])?;
-                            
+                            tx.execute(
+                                "DELETE FROM cognitive_memory WHERE id IN (?1, ?2)",
+                                params![entry_a.id, entry_b.id],
+                            )?;
+
                             let embedding_json = serde_json::to_string(&new_entry.embedding)?;
                             let tags_json = serde_json::to_string(&new_entry.tags)?;
                             tx.execute(

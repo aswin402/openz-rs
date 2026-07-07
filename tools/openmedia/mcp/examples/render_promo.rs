@@ -1,13 +1,13 @@
 use openmedia_video::{
-    VideoScene, Scene, SceneElement, Position, DimensionValue,
-    CustomFontSpec, SceneTransition, TransitionType, Keyframe, ElementTimeline, Size
+    CustomFontSpec, DimensionValue, ElementTimeline, Keyframe, Position, Scene, SceneElement,
+    SceneTransition, Size, TransitionType, VideoScene,
 };
 use std::path::Path;
 
 #[tokio::main]
 async fn main() {
     let output_path = Path::new("openmedia_promo.mp4");
-    
+
     // Construct Custom Font Spec
     let fonts = vec![CustomFontSpec {
         family: "RobotoRegular".to_string(),
@@ -16,7 +16,8 @@ async fn main() {
 
     // Read and base64 encode logo.svg
     let logo_svg_bytes = std::fs::read("assets/logo.svg").expect("Failed to read assets/logo.svg");
-    let logo_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, logo_svg_bytes);
+    let logo_base64 =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, logo_svg_bytes);
 
     // Render Mermaid Graph for Slide 3
     let mermaid_code = "graph TD\n  Agent[LLM Agent] --> Engine[openmedia-rs]\n  Engine --> Vector[Vector Engine]\n  Engine --> Audio[Rayon Mixer]\n  Vector --> Render[MP4 Output]\n  Audio --> Render";
@@ -44,7 +45,8 @@ async fn main() {
   }
 </style>
 <div class="background-container"></div>
-"#.to_string(),
+"#
+        .to_string(),
         position: Position {
             x: DimensionValue::Pixels(0.0),
             y: DimensionValue::Pixels(0.0),
@@ -189,7 +191,8 @@ async fn main() {
   }
 </style>
 <div class="card-right"></div>
-"#.to_string(),
+"#
+        .to_string(),
         position: Position {
             x: DimensionValue::Pixels(710.0),
             y: DimensionValue::Pixels(80.0),
@@ -359,7 +362,8 @@ async fn main() {
   }
 </style>
 <div class="card-right-pink"></div>
-"#.to_string(),
+"#
+        .to_string(),
         position: Position {
             x: DimensionValue::Pixels(710.0),
             y: DimensionValue::Pixels(80.0),
@@ -529,7 +533,8 @@ async fn main() {
   }
 </style>
 <div class="card-right-violet"></div>
-"#.to_string(),
+"#
+        .to_string(),
         position: Position {
             x: DimensionValue::Pixels(710.0),
             y: DimensionValue::Pixels(80.0),
@@ -1000,6 +1005,8 @@ async fn main() {
     };
 
     println!("Starting render of openmedia_promo.mp4 (30s, 15fps, 1280x720)...");
-    let spec = openmedia_video::render_video_scene(&scene, output_path).await.unwrap();
+    let spec = openmedia_video::render_video_scene(&scene, output_path)
+        .await
+        .unwrap();
     println!("SUCCESS: Video generated at {:?}", spec.path);
 }

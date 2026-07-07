@@ -1,9 +1,12 @@
-use serde_json::{json, Value};
-use anyhow::Result;
-use crate::tools::Tool;
-use searchxyz::tools::{RecallRequest, ListSourcesRequest, IndexContentRequest, ExportResearchRequest, ImportResearchRequest, DeleteSourceRequest, ClearIndexRequest};
-use rmcp::handler::server::wrapper::Parameters;
 use super::{get_server, map_mcp_err};
+use crate::tools::Tool;
+use anyhow::Result;
+use rmcp::handler::server::wrapper::Parameters;
+use searchxyz::tools::{
+    ClearIndexRequest, DeleteSourceRequest, ExportResearchRequest, ImportResearchRequest,
+    IndexContentRequest, ListSourcesRequest, RecallRequest,
+};
+use serde_json::{json, Value};
 
 // ── 4. Recall ─────────────────────────────────────────────────
 pub struct SearchXyzRecallTool;
@@ -41,7 +44,10 @@ impl Tool for SearchXyzRecallTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: RecallRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server().recall(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .recall(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }
@@ -81,7 +87,10 @@ impl Tool for SearchXyzListSourcesTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: ListSourcesRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server().list_sources(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .list_sources(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }
@@ -122,7 +131,10 @@ impl Tool for SearchXyzIndexContentTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: IndexContentRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server().index_content(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .index_content(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }
@@ -158,7 +170,10 @@ impl Tool for SearchXyzExportResearchTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: ExportResearchRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server().export_research(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .export_research(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }
@@ -191,7 +206,10 @@ impl Tool for SearchXyzImportResearchTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: ImportResearchRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server().import_research(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .import_research(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }
@@ -224,7 +242,10 @@ impl Tool for SearchXyzDeleteSourceTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: DeleteSourceRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server().delete_source(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .delete_source(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }
@@ -251,7 +272,10 @@ impl Tool for SearchXyzClearIndexTool {
 
     async fn call(&self, _arguments: &Value) -> Result<Value> {
         let req = ClearIndexRequest {};
-        let res = get_server().clear_index(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .clear_index(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }

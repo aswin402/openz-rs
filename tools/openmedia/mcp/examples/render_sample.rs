@@ -1,13 +1,13 @@
 use openmedia_video::{
-    VideoScene, Scene, SceneElement, Position, DimensionValue,
-    CustomFontSpec, SceneTransition, TransitionType, Keyframe, ElementTimeline, Size
+    CustomFontSpec, DimensionValue, ElementTimeline, Keyframe, Position, Scene, SceneElement,
+    SceneTransition, Size, TransitionType, VideoScene,
 };
 use std::path::Path;
 
 #[tokio::main]
 async fn main() {
     let output_path = Path::new("openmedia_sample.mp4");
-    
+
     // Construct Custom Font Spec
     let fonts = vec![CustomFontSpec {
         family: "RobotoRegular".to_string(),
@@ -16,7 +16,8 @@ async fn main() {
 
     // Read and base64 encode logo.svg
     let logo_svg_bytes = std::fs::read("assets/logo.svg").expect("Failed to read assets/logo.svg");
-    let logo_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, logo_svg_bytes);
+    let logo_base64 =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, logo_svg_bytes);
 
     // Global Floating Glow Matte Black Background
     let animated_background = SceneElement::Html {
@@ -67,7 +68,8 @@ async fn main() {
   <div class="glow-spot glow-spot-1"></div>
   <div class="glow-spot glow-spot-2"></div>
 </div>
-"#.to_string(),
+"#
+        .to_string(),
         position: Position {
             x: DimensionValue::Pixels(0.0),
             y: DimensionValue::Pixels(0.0),
@@ -186,7 +188,8 @@ async fn main() {
     <span class="text-red">Too Slow.</span>
   </div>
 </div>
-"#.to_string(),
+"#
+                .to_string(),
                 position: Position {
                     x: DimensionValue::Pixels(140.0),
                     y: DimensionValue::Pixels(80.0),
@@ -434,7 +437,8 @@ async fn main() {
     diagram_generate_mermaid
   </div>
 </div>
-"#.to_string(),
+"#
+                .to_string(),
                 position: Position {
                     x: DimensionValue::Pixels(80.0),
                     y: DimensionValue::Pixels(80.0),
@@ -512,7 +516,8 @@ async fn main() {
   <div class="label">Interactive Output Preview</div>
   <div class="preview-box"></div>
 </div>
-"#.to_string(),
+"#
+                .to_string(),
                 position: Position {
                     x: DimensionValue::Pixels(620.0),
                     y: DimensionValue::Pixels(80.0),
@@ -901,7 +906,8 @@ async fn main() {
     Built in Rust. Offline. Lightweight.
   </div>
 </div>
-"#.to_string(),
+"#
+                .to_string(),
                 position: Position {
                     x: DimensionValue::Pixels(140.0),
                     y: DimensionValue::Pixels(80.0),
@@ -1134,6 +1140,8 @@ async fn main() {
     };
 
     println!("Starting render of openmedia_sample.mp4 (30s, 15fps, 1280x720)...");
-    let spec = openmedia_video::render_video_scene(&scene, output_path).await.unwrap();
+    let spec = openmedia_video::render_video_scene(&scene, output_path)
+        .await
+        .unwrap();
     println!("SUCCESS: Video generated at {:?}", spec.path);
 }

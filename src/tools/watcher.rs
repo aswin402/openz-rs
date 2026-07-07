@@ -50,19 +50,24 @@ impl Tool for FileWatcherTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments.get("action").and_then(|v| v.as_str())
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
 
         match action {
             "start" => {
-                let path_str = arguments.get("path")
+                let path_str = arguments
+                    .get("path")
                     .or(arguments.get("TargetFile"))
                     .or(arguments.get("filepath"))
                     .or(arguments.get("file"))
                     .or(arguments.get("Path"))
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'path' parameter for 'start' action"))?;
-                let command = arguments.get("command").and_then(|v| v.as_str())
+                let command = arguments
+                    .get("command")
+                    .and_then(|v| v.as_str())
                     .unwrap_or("cargo check")
                     .to_string();
 
@@ -94,7 +99,11 @@ impl Tool for FileWatcherTool {
                             let has_valid_file = event.paths.iter().any(|p| {
                                 if let Some(ext) = p.extension() {
                                     let ext_str = ext.to_string_lossy();
-                                    (ext_str == "rs" || ext_str == "toml" || ext_str == "py" || ext_str == "js" || ext_str == "ts")
+                                    (ext_str == "rs"
+                                        || ext_str == "toml"
+                                        || ext_str == "py"
+                                        || ext_str == "js"
+                                        || ext_str == "ts")
                                         && !p.to_string_lossy().contains("/target/")
                                         && !p.to_string_lossy().contains("/.git/")
                                 } else {
@@ -115,11 +124,11 @@ impl Tool for FileWatcherTool {
                 // Spawn background task to handle events with debouncing
                 let path_clone = resolved_path.clone();
                 let cmd_clone = command.clone();
-                
+
                 tokio::spawn(async move {
                     // Keep watcher alive in this scope
                     let _watcher = watcher;
-                    
+
                     let mut last_trigger = Instant::now() - Duration::from_secs(10);
                     let debounce_duration = Duration::from_millis(800);
 
@@ -134,7 +143,7 @@ impl Tool for FileWatcherTool {
                                 if now.duration_since(last_trigger) > debounce_duration {
                                     last_trigger = now;
                                     crate::channels::cli::send_notification(&format!("File watcher triggered: running '{}' in {:?}", cmd_clone, path_clone));
-                                    
+
                                     // Run command
                                     let cmd_parts: Vec<&str> = cmd_clone.split_whitespace().collect();
                                     if !cmd_parts.is_empty() {
@@ -143,14 +152,14 @@ impl Tool for FileWatcherTool {
                                             cmd.args(&cmd_parts[1..]);
                                         }
                                         cmd.current_dir(&path_clone);
-                                        
+
                                         match cmd.output().await {
                                             Ok(output) => {
                                                 if !output.status.success() {
                                                     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
                                                     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                                                     let error_msg = if stderr.trim().is_empty() { stdout } else { stderr };
-                                                    
+
                                                     crate::channels::cli::send_notification("File watcher command failed! Sending to OpenZ session...");
                                                     let notification = format!(
                                                         "⚠️ [File Watcher] Command '{}' failed after file modification in {:?}:\n\n```\n{}\n```\n\nPlease fix the errors above.",
@@ -230,9 +239,11 @@ mod tests {
     #[tokio::test]
     async fn test_file_watcher_status() -> Result<()> {
         let tool = FileWatcherTool;
-        let res = tool.call(&json!({
-            "action": "status"
-        })).await?;
+        let res = tool
+            .call(&json!({
+                "action": "status"
+            }))
+            .await?;
 
         assert_eq!(res["status"], "inactive");
         Ok(())

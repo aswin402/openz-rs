@@ -1,12 +1,12 @@
 pub mod colors;
 pub mod icons;
-pub mod spinner;
 pub mod menu;
+pub mod spinner;
 
 pub use colors::*;
 pub use icons::*;
-pub use spinner::*;
 pub use menu::*;
+pub use spinner::*;
 
 use std::io::Write;
 
@@ -70,6 +70,35 @@ macro_rules! tui_eprint {
     };
 }
 
+// ── TUI-safe println!/print!/eprintln! shims ────────────────────────────────
+// These shadow the standard macros in CLI modules so that output is routed
+// through tui_println!/tui_print! which handle raw-mode line endings.
+// Import them with: use crate::{println, print, eprintln};
+
+#[macro_export]
+macro_rules! println {
+    () => { $crate::tui_println!() };
+    ($($arg:tt)*) => { $crate::tui_println!($($arg)*) };
+}
+
+#[macro_export]
+macro_rules! print {
+    () => { $crate::tui_print!() };
+    ($($arg:tt)*) => { $crate::tui_print!($($arg)*) };
+}
+
+#[macro_export]
+macro_rules! eprintln {
+    () => { $crate::tui_println!() };
+    ($($arg:tt)*) => { $crate::tui_println!($($arg)*) };
+}
+
+#[macro_export]
+macro_rules! eprint {
+    () => { $crate::tui_print!() };
+    ($($arg:tt)*) => { $crate::tui_print!($($arg)*) };
+}
+
 pub fn tui_eprintln_fn<T: AsRef<str>>(msg: T) {
     if is_silent() {
         return;
@@ -107,7 +136,9 @@ pub fn get_tree_prefix_for_depth(is_leaf: bool, depth: usize) -> String {
 
 /// Returns the prefix string for a tree trace line at the current delegation depth.
 pub fn get_tree_prefix(is_leaf: bool) -> String {
-    let depth = crate::tools::subagent::DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
+    let depth = crate::tools::subagent::DELEGATION_DEPTH
+        .try_with(|d| *d)
+        .unwrap_or(0);
     get_tree_prefix_for_depth(is_leaf, depth)
 }
 
@@ -138,7 +169,13 @@ pub fn get_tool_clean_name(name: &str) -> String {
 /// Generates a styled spinner message indicating a tool is running under the tree bullet.
 pub fn get_tree_spinner_msg(_name: &str, _formatted_args: &str) -> String {
     let prefix = get_tree_prefix(true);
-    format!("{}{}{}Running...{}", colors::AURA_SLATE, prefix, colors::AURA_SLATE, colors::COLOR_RESET)
+    format!(
+        "{}{}{}Running...{}",
+        colors::AURA_SLATE,
+        prefix,
+        colors::AURA_SLATE,
+        colors::COLOR_RESET
+    )
 }
 
 /// Strips standard graphic SGR ANSI escape sequences (\x1b[...m) from a string.
@@ -146,7 +183,7 @@ pub fn strip_ansi_escapes(s: &str) -> String {
     let mut result = String::new();
     let mut in_escape = false;
     let chars = s.chars();
-    
+
     for c in chars {
         if c == '\x1b' {
             in_escape = true;
@@ -168,7 +205,7 @@ pub fn clean_tool_args_msg(name: &str, formatted_args: &str) -> String {
     if trimmed.is_empty() {
         return String::new();
     }
-    
+
     // Check if it ends with ')' and contains '('
     if trimmed.ends_with(')') {
         if let Some(open_idx) = trimmed.find('(') {
@@ -176,12 +213,17 @@ pub fn clean_tool_args_msg(name: &str, formatted_args: &str) -> String {
             return details.trim().to_string();
         }
     }
-    
+
     // If it doesn't have parentheses, check if it is just a friendly name variant of the tool.
-    let clean = get_tool_clean_name(name).to_lowercase().replace(" ", "").replace("_", "");
+    let clean = get_tool_clean_name(name)
+        .to_lowercase()
+        .replace(" ", "")
+        .replace("_", "");
     let norm_args = trimmed.to_lowercase().replace(" ", "").replace("_", "");
-    
-    if clean == norm_args || (norm_args.len() >= 3 && (clean.contains(&norm_args) || norm_args.contains(&clean))) {
+
+    if clean == norm_args
+        || (norm_args.len() >= 3 && (clean.contains(&norm_args) || norm_args.contains(&clean)))
+    {
         String::new()
     } else {
         trimmed.to_string()
@@ -196,19 +238,31 @@ pub fn get_tree_tool_start_msg(name: &str, formatted_args: &str) -> String {
     if details.is_empty() {
         format!(
             "{}{}{}{}● {}{}{}{}{}",
-            colors::AURA_SLATE, prefix, colors::COLOR_RESET,
+            colors::AURA_SLATE,
+            prefix,
+            colors::COLOR_RESET,
             colors::RED_ORANGE,
             colors::COLOR_RESET,
-            colors::COLOR_BOLD, colors::LIGHT_WHITE, clean_name, colors::COLOR_RESET
+            colors::COLOR_BOLD,
+            colors::LIGHT_WHITE,
+            clean_name,
+            colors::COLOR_RESET
         )
     } else {
         format!(
             "{}{}{}{}● {}{}{}{}{} {}{}{}",
-            colors::AURA_SLATE, prefix, colors::COLOR_RESET,
+            colors::AURA_SLATE,
+            prefix,
+            colors::COLOR_RESET,
             colors::RED_ORANGE,
             colors::COLOR_RESET,
-            colors::COLOR_BOLD, colors::LIGHT_WHITE, clean_name, colors::COLOR_RESET,
-            colors::AURA_SLATE, details, colors::COLOR_RESET
+            colors::COLOR_BOLD,
+            colors::LIGHT_WHITE,
+            clean_name,
+            colors::COLOR_RESET,
+            colors::AURA_SLATE,
+            details,
+            colors::COLOR_RESET
         )
     }
 }
@@ -284,7 +338,7 @@ pub fn format_subagent_summary(content: &str) -> String {
                 final_line = &final_line[pos + 2..];
             }
         }
-        
+
         let final_line = final_line.trim_matches('*').trim();
         if !final_line.is_empty() {
             let summary = replace_with_em_dash(final_line);
@@ -323,14 +377,19 @@ pub fn format_reasoning_summary(reasoning: &str) -> String {
 
 fn replace_with_em_dash(s: &str) -> String {
     s.replace(" - ", " \u{2014} ")
-     .replace(" -- ", " \u{2014} ")
-     .replace(" \u{2013} ", " \u{2014} ")
+        .replace(" -- ", " \u{2014} ")
+        .replace(" \u{2013} ", " \u{2014} ")
 }
 
-pub fn format_tool_outcome_summary(name: &str, arguments: &serde_json::Value, res: &serde_json::Value) -> String {
+pub fn format_tool_outcome_summary(
+    name: &str,
+    arguments: &serde_json::Value,
+    res: &serde_json::Value,
+) -> String {
     match name {
         "write_file" => {
-            let content = arguments.get("content")
+            let content = arguments
+                .get("content")
                 .or(arguments.get("code"))
                 .or(arguments.get("text"))
                 .and_then(|v| v.as_str())
@@ -339,7 +398,8 @@ pub fn format_tool_outcome_summary(name: &str, arguments: &serde_json::Value, re
             format!("{} lines", line_count)
         }
         "patch_file" => {
-            let patch_str = arguments.get("patch")
+            let patch_str = arguments
+                .get("patch")
                 .or(arguments.get("content"))
                 .or(arguments.get("diff"))
                 .and_then(|v| v.as_str())
@@ -347,7 +407,10 @@ pub fn format_tool_outcome_summary(name: &str, arguments: &serde_json::Value, re
             summarize_patch(patch_str)
         }
         "replace_lines" => {
-            let replacement = arguments.get("replacement").and_then(|v| v.as_str()).unwrap_or("");
+            let replacement = arguments
+                .get("replacement")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let trimmed = replacement.trim();
             if trimmed.is_empty() {
                 "removed lines".to_string()
@@ -362,7 +425,10 @@ pub fn format_tool_outcome_summary(name: &str, arguments: &serde_json::Value, re
         }
         "exec_command" => {
             let status_code = res.get("status_code").and_then(|v| v.as_i64()).unwrap_or(0);
-            let command_str = arguments.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            let command_str = arguments
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if status_code == 0 {
                 let summary = if command_str.contains("build") {
                     "build succeeded"
@@ -373,19 +439,44 @@ pub fn format_tool_outcome_summary(name: &str, arguments: &serde_json::Value, re
                 } else {
                     "command succeeded"
                 };
-                format!("{}\u{2713} {}{}", colors::AURA_GREEN, summary, colors::COLOR_RESET)
+                format!(
+                    "{}\u{2713} {}{}",
+                    colors::AURA_GREEN,
+                    summary,
+                    colors::COLOR_RESET
+                )
             } else {
-                let stdout = res.get("stdout").and_then(|v| v.as_str()).unwrap_or_default();
-                let stderr = res.get("stderr").and_then(|v| v.as_str()).unwrap_or_default();
+                let stdout = res
+                    .get("stdout")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let stderr = res
+                    .get("stderr")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
                 let err_summary = get_command_error_summary(stdout, stderr);
-                format!("{}\u{2715} {}{}", colors::AURA_ROSE, err_summary, colors::COLOR_RESET)
+                format!(
+                    "{}\u{2715} {}{}",
+                    colors::AURA_ROSE,
+                    err_summary,
+                    colors::COLOR_RESET
+                )
             }
         }
         _ => {
             if let Some(err) = res.get("error").and_then(|v| v.as_str()) {
-                format!("{}\u{2715} Failed: {}{}", colors::AURA_ROSE, err, colors::COLOR_RESET)
+                format!(
+                    "{}\u{2715} Failed: {}{}",
+                    colors::AURA_ROSE,
+                    err,
+                    colors::COLOR_RESET
+                )
             } else {
-                format!("{}\u{2713} completed{}", colors::AURA_GREEN, colors::COLOR_RESET)
+                format!(
+                    "{}\u{2713} completed{}",
+                    colors::AURA_GREEN,
+                    colors::COLOR_RESET
+                )
             }
         }
     }
@@ -430,7 +521,7 @@ pub fn wrap_line(line: &str, max_width: usize) -> Vec<String> {
     }
     let mut lines = Vec::new();
     let mut current_line = String::new();
-    
+
     for word in line.split_whitespace() {
         if current_line.is_empty() {
             if word.len() <= max_width {
@@ -481,21 +572,38 @@ pub fn print_tree_monologue(leaf_prefix: &str, text: &str) {
     let terminal_width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80) as usize;
     let prefix_len = leaf_prefix.chars().count();
     let max_width = terminal_width.saturating_sub(prefix_len);
-    
+
     let mut is_first_line = true;
     for line in text.trim().lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
-            crate::tui_println!("{}{}{}", colors::AURA_SLATE, " ".repeat(prefix_len), colors::COLOR_RESET);
+            crate::tui_println!(
+                "{}{}{}",
+                colors::AURA_SLATE,
+                " ".repeat(prefix_len),
+                colors::COLOR_RESET
+            );
             continue;
         }
         let wrapped = wrap_line(trimmed, max_width);
         for sub_line in wrapped {
             if is_first_line {
-                crate::tui_println!("{}{}{}{}", colors::AURA_SLATE, leaf_prefix, sub_line, colors::COLOR_RESET);
+                crate::tui_println!(
+                    "{}{}{}{}",
+                    colors::AURA_SLATE,
+                    leaf_prefix,
+                    sub_line,
+                    colors::COLOR_RESET
+                );
                 is_first_line = false;
             } else {
-                crate::tui_println!("{}{}{}{}", colors::AURA_SLATE, " ".repeat(prefix_len), sub_line, colors::COLOR_RESET);
+                crate::tui_println!(
+                    "{}{}{}{}",
+                    colors::AURA_SLATE,
+                    " ".repeat(prefix_len),
+                    sub_line,
+                    colors::COLOR_RESET
+                );
             }
         }
     }
@@ -504,7 +612,6 @@ pub fn print_tree_monologue(leaf_prefix: &str, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[test]
     fn test_clean_names() {
@@ -523,7 +630,7 @@ mod tests {
         // Without scoping, DELEGATION_DEPTH should default to 0
         assert_eq!(get_tree_prefix(true), "  L ");
         assert_eq!(get_tree_prefix(false), "");
-        
+
         let spinner = get_tree_spinner_msg("test", "");
         assert!(spinner.contains("  L "));
         assert!(spinner.contains("Running..."));
@@ -532,32 +639,38 @@ mod tests {
 
     #[tokio::test]
     async fn test_tree_prefix_nested() {
-        crate::tools::subagent::DELEGATION_DEPTH.scope(1, async {
-            assert_eq!(get_tree_prefix(true), "  L ");
-            assert_eq!(get_tree_prefix(false), "  L ");
-            
-            let spinner = get_tree_spinner_msg("test", "");
-            assert!(spinner.contains("  L "));
-            assert!(spinner.contains("Running..."));
-        }).await;
+        crate::tools::subagent::DELEGATION_DEPTH
+            .scope(1, async {
+                assert_eq!(get_tree_prefix(true), "  L ");
+                assert_eq!(get_tree_prefix(false), "  L ");
 
-        crate::tools::subagent::DELEGATION_DEPTH.scope(2, async {
-            assert_eq!(get_tree_prefix(true), "    L ");
-            assert_eq!(get_tree_prefix(false), "    L ");
-            
-            let spinner = get_tree_spinner_msg("test", "");
-            assert!(spinner.contains("    L "));
-            assert!(spinner.contains("Running..."));
-        }).await;
+                let spinner = get_tree_spinner_msg("test", "");
+                assert!(spinner.contains("  L "));
+                assert!(spinner.contains("Running..."));
+            })
+            .await;
 
-        crate::tools::subagent::DELEGATION_DEPTH.scope(3, async {
-            assert_eq!(get_tree_prefix(true), "      L ");
-            assert_eq!(get_tree_prefix(false), "      L ");
-            
-            let spinner = get_tree_spinner_msg("test", "");
-            assert!(spinner.contains("      L "));
-            assert!(spinner.contains("Running..."));
-        }).await;
+        crate::tools::subagent::DELEGATION_DEPTH
+            .scope(2, async {
+                assert_eq!(get_tree_prefix(true), "    L ");
+                assert_eq!(get_tree_prefix(false), "    L ");
+
+                let spinner = get_tree_spinner_msg("test", "");
+                assert!(spinner.contains("    L "));
+                assert!(spinner.contains("Running..."));
+            })
+            .await;
+
+        crate::tools::subagent::DELEGATION_DEPTH
+            .scope(3, async {
+                assert_eq!(get_tree_prefix(true), "      L ");
+                assert_eq!(get_tree_prefix(false), "      L ");
+
+                let spinner = get_tree_spinner_msg("test", "");
+                assert!(spinner.contains("      L "));
+                assert!(spinner.contains("Running..."));
+            })
+            .await;
     }
 
     #[test]
@@ -566,7 +679,7 @@ mod tests {
         let msg = get_tree_tool_start_msg("exec_command", "");
         assert!(msg.contains("Bash"));
         assert!(msg.contains('●'));
-        
+
         let bullet_idx = msg.find('●').unwrap();
         // RED_ORANGE should precede bullet
         assert!(msg[..bullet_idx].ends_with(colors::RED_ORANGE));
@@ -580,7 +693,7 @@ mod tests {
         assert!(msg_args.contains("Write"));
         assert!(msg_args.contains("--force"));
         assert!(msg_args.contains('●'));
-        
+
         let bullet_idx_args = msg_args.find('●').unwrap();
         assert!(msg_args[..bullet_idx_args].ends_with(colors::RED_ORANGE));
         let after_bullet_args = &msg_args[bullet_idx_args + '●'.len_utf8()..];
@@ -592,7 +705,10 @@ mod tests {
     fn test_wrap_line() {
         let line = "hello world this is a test of wrapping";
         let wrapped = wrap_line(line, 10);
-        assert_eq!(wrapped, vec!["hello", "world this", "is a test", "of", "wrapping"]);
+        assert_eq!(
+            wrapped,
+            vec!["hello", "world this", "is a test", "of", "wrapping"]
+        );
 
         let long_word = "supercalifragilistic";
         let wrapped_long = wrap_line(long_word, 10);
@@ -601,17 +717,30 @@ mod tests {
 
     #[test]
     fn test_clean_tool_args_msg() {
-        assert_eq!(clean_tool_args_msg("web_search", "\x1b[1mWebSearch\x1b[0m"), "");
-        assert_eq!(clean_tool_args_msg("web_search", "\x1b[1mWebSearch\x1b[0m(\x1b[38;2;107;122;153mquery: \"ZeroClaw\"\x1b[0m)"), "query: \"ZeroClaw\"");
-        assert_eq!(clean_tool_args_msg("exec_command", "\x1b[1mBash\x1b[0m(cargo build)"), "cargo build");
+        assert_eq!(
+            clean_tool_args_msg("web_search", "\x1b[1mWebSearch\x1b[0m"),
+            ""
+        );
+        assert_eq!(
+            clean_tool_args_msg(
+                "web_search",
+                "\x1b[1mWebSearch\x1b[0m(\x1b[38;2;107;122;153mquery: \"ZeroClaw\"\x1b[0m)"
+            ),
+            "query: \"ZeroClaw\""
+        );
+        assert_eq!(
+            clean_tool_args_msg("exec_command", "\x1b[1mBash\x1b[0m(cargo build)"),
+            "cargo build"
+        );
         assert_eq!(clean_tool_args_msg("write_file", "--force"), "--force");
     }
 
     #[test]
     fn test_strip_ansi_escapes() {
         assert_eq!(strip_ansi_escapes("\x1b[1mRead\x1b[0m"), "Read");
-        assert_eq!(strip_ansi_escapes("\x1b[38;2;255;0;0mError\x1b[0m details"), "Error details");
+        assert_eq!(
+            strip_ansi_escapes("\x1b[38;2;255;0;0mError\x1b[0m details"),
+            "Error details"
+        );
     }
 }
-
-

@@ -1,48 +1,9 @@
-use anyhow::{Result, anyhow};
-use inquire::{Text, Password, Confirm, PasswordDisplayMode};
+use crate::agent::style::*;
 use crate::config::loader::{load_config, save_config};
 use crate::config::schema::{Config, ProviderConfig};
-use crate::agent::style::*;
-
-#[allow(unused_macros)]
-macro_rules! println {
-    () => {
-        crate::tui_println!()
-    };
-    ($($arg:tt)*) => {
-        crate::tui_println!($($arg)*)
-    };
-}
-
-#[allow(unused_macros)]
-macro_rules! print {
-    () => {
-        crate::tui_print!()
-    };
-    ($($arg:tt)*) => {
-        crate::tui_print!($($arg)*)
-    };
-}
-
-#[allow(unused_macros)]
-macro_rules! eprintln {
-    () => {
-        crate::tui_println!()
-    };
-    ($($arg:tt)*) => {
-        crate::tui_println!($($arg)*)
-    };
-}
-
-#[allow(unused_macros)]
-macro_rules! eprint {
-    () => {
-        crate::tui_print!()
-    };
-    ($($arg:tt)*) => {
-        crate::tui_print!($($arg)*)
-    };
-}
+use crate::println;
+use anyhow::{anyhow, Result};
+use inquire::{Confirm, Password, PasswordDisplayMode, Text};
 
 pub fn update_provider_key(config: &mut Config, provider_name: &str, api_key: String) {
     let mut p_config = match provider_name {
@@ -64,13 +25,14 @@ pub fn update_provider_key(config: &mut Config, provider_name: &str, api_key: St
         "sambanova" => config.providers.sambanova.clone(),
         "huggingface" => config.providers.huggingface.clone(),
         _ => return,
-    }.unwrap_or_else(|| ProviderConfig {
+    }
+    .unwrap_or_else(|| ProviderConfig {
         api_key: None,
         api_base: None,
         extra: std::collections::HashMap::new(),
     });
     p_config.api_key = Some(api_key);
-    
+
     if p_config.api_base.is_none() {
         let default_base = match provider_name {
             "anthropic" => "https://api.anthropic.com",
@@ -141,10 +103,8 @@ pub async fn handle_configure() -> Result<()> {
 
     loop {
         let mut config = load_config()?;
-        
-        let mut configure_options = vec![
-            "Providers".to_string(),
-        ];
+
+        let mut configure_options = vec!["Providers".to_string()];
 
         if let Some(ref ws) = config.channels.websocket {
             if ws.enabled {
@@ -155,7 +115,7 @@ pub async fn handle_configure() -> Result<()> {
         } else {
             configure_options.push("Gateway (WebSocket)".to_string());
         }
-        
+
         if is_telegram_configured(&config) {
             configure_options.push("Telegram (configured)".to_string());
         } else {
@@ -241,11 +201,14 @@ pub async fn handle_configure() -> Result<()> {
                 break;
             }
         }
-        
+
         save_config(&config)?;
     }
-    
-    println!("{}✓ Configuration saved successfully!{}", EMERALD_GREEN, COLOR_RESET);
+
+    println!(
+        "{}✓ Configuration saved successfully!{}",
+        EMERALD_GREEN, COLOR_RESET
+    );
     Ok(())
 }
 
@@ -255,33 +218,87 @@ async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Resu
         display: &'static str,
     }
     let provider_list = vec![
-        ProviderInfo { name: "anthropic", display: "Anthropic (Claude)" },
-        ProviderInfo { name: "openai", display: "OpenAI" },
-        ProviderInfo { name: "openrouter", display: "OpenRouter" },
-        ProviderInfo { name: "deepseek", display: "DeepSeek" },
-        ProviderInfo { name: "groq", display: "Groq" },
-        ProviderInfo { name: "ollama", display: "Ollama" },
-        ProviderInfo { name: "minimax", display: "MiniMax" },
-        ProviderInfo { name: "mistral", display: "Mistral AI" },
-        ProviderInfo { name: "z.ai", display: "z.ai (Zhipu GLM)" },
-        ProviderInfo { name: "nvidia", display: "NVIDIA NIM" },
-        ProviderInfo { name: "opencode_zen", display: "OpenCode Zen" },
-        ProviderInfo { name: "cerebras", display: "Cerebras" },
-        ProviderInfo { name: "google_ai_studio", display: "Google AI Studio (Gemini)" },
-        ProviderInfo { name: "cohere", display: "Cohere" },
-        ProviderInfo { name: "llm7", display: "LLM7 (token.llm7.io)" },
-        ProviderInfo { name: "sambanova", display: "SambaNova" },
-        ProviderInfo { name: "huggingface", display: "Hugging Face Inference" },
+        ProviderInfo {
+            name: "anthropic",
+            display: "Anthropic (Claude)",
+        },
+        ProviderInfo {
+            name: "openai",
+            display: "OpenAI",
+        },
+        ProviderInfo {
+            name: "openrouter",
+            display: "OpenRouter",
+        },
+        ProviderInfo {
+            name: "deepseek",
+            display: "DeepSeek",
+        },
+        ProviderInfo {
+            name: "groq",
+            display: "Groq",
+        },
+        ProviderInfo {
+            name: "ollama",
+            display: "Ollama",
+        },
+        ProviderInfo {
+            name: "minimax",
+            display: "MiniMax",
+        },
+        ProviderInfo {
+            name: "mistral",
+            display: "Mistral AI",
+        },
+        ProviderInfo {
+            name: "z.ai",
+            display: "z.ai (Zhipu GLM)",
+        },
+        ProviderInfo {
+            name: "nvidia",
+            display: "NVIDIA NIM",
+        },
+        ProviderInfo {
+            name: "opencode_zen",
+            display: "OpenCode Zen",
+        },
+        ProviderInfo {
+            name: "cerebras",
+            display: "Cerebras",
+        },
+        ProviderInfo {
+            name: "google_ai_studio",
+            display: "Google AI Studio (Gemini)",
+        },
+        ProviderInfo {
+            name: "cohere",
+            display: "Cohere",
+        },
+        ProviderInfo {
+            name: "llm7",
+            display: "LLM7 (token.llm7.io)",
+        },
+        ProviderInfo {
+            name: "sambanova",
+            display: "SambaNova",
+        },
+        ProviderInfo {
+            name: "huggingface",
+            display: "Hugging Face Inference",
+        },
     ];
 
     loop {
-        let mut prov_options: Vec<String> = provider_list.iter().map(|p| {
-            if config.is_provider_configured(p.name) {
-                format!("{} (configured)", p.display)
-            } else {
-                p.display.to_string()
-            }
-        }).collect();
+        let mut prov_options: Vec<String> = provider_list
+            .iter()
+            .map(|p| {
+                if config.is_provider_configured(p.name) {
+                    format!("{} (configured)", p.display)
+                } else {
+                    p.display.to_string()
+                }
+            })
+            .collect();
         prov_options.push("Back".to_string());
 
         let choice_idx = match select_menu_custom(
@@ -300,11 +317,14 @@ async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Resu
         }
 
         let prov_info = &provider_list[choice_idx];
-        
+
         if config.is_provider_configured(prov_info.name) {
-            let reconfigure = Confirm::new(&format!("{} is already configured. Reconfigure?", prov_info.display))
-                .with_default(false)
-                .prompt()?;
+            let reconfigure = Confirm::new(&format!(
+                "{} is already configured. Reconfigure?",
+                prov_info.display
+            ))
+            .with_default(false)
+            .prompt()?;
             if !reconfigure {
                 continue;
             }
@@ -317,7 +337,10 @@ async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Resu
         if !key.trim().is_empty() {
             update_provider_key(config, prov_info.name, key.trim().to_string());
             save_config(config)?;
-            println!("{}✓ API Key updated for {}!{}", EMERALD_GREEN, prov_info.display, COLOR_RESET);
+            println!(
+                "{}✓ API Key updated for {}!{}",
+                EMERALD_GREEN, prov_info.display, COLOR_RESET
+            );
         } else {
             println!("{}⚠️ API Key unchanged.{}", AURA_GOLD, COLOR_RESET);
         }
@@ -326,10 +349,22 @@ async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Resu
 }
 
 async fn handle_telegram_submenu(config: &mut Config) -> Result<()> {
-    println!("\n{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
-    println!("{}--- Telegram Bot Setup Guide ---{}", COLOR_BOLD, COLOR_RESET);
-    println!("  1. Open Telegram and search for {}@BotFather{}.", HEADING_BLUE, COLOR_RESET);
-    println!("  2. Start a chat and send the command {}/newbot{}.", EMERALD_GREEN, COLOR_RESET);
+    println!(
+        "\n{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
+    println!(
+        "{}--- Telegram Bot Setup Guide ---{}",
+        COLOR_BOLD, COLOR_RESET
+    );
+    println!(
+        "  1. Open Telegram and search for {}@BotFather{}.",
+        HEADING_BLUE, COLOR_RESET
+    );
+    println!(
+        "  2. Start a chat and send the command {}/newbot{}.",
+        EMERALD_GREEN, COLOR_RESET
+    );
     println!("  3. Choose a name and a username for your bot.");
     println!("  4. Copy the HTTP API token provided by BotFather.\n");
 
@@ -343,11 +378,17 @@ async fn handle_telegram_submenu(config: &mut Config) -> Result<()> {
         tg.bot_token = token.trim().to_string();
         config.channels.telegram = Some(tg);
         save_config(config)?;
-        println!("{}✓ Telegram bot configured successfully!{}", EMERALD_GREEN, COLOR_RESET);
+        println!(
+            "{}✓ Telegram bot configured successfully!{}",
+            EMERALD_GREEN, COLOR_RESET
+        );
     } else {
         println!("{}⚠️ Token unchanged.{}", AURA_GOLD, COLOR_RESET);
     }
-    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    println!(
+        "{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
     Ok(())
 }
 
@@ -355,11 +396,12 @@ fn setup_systemd_service() -> Result<()> {
     let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not locate home directory"))?;
     let service_dir = home.join(".config").join("systemd").join("user");
     std::fs::create_dir_all(&service_dir)?;
-    
-    let exe_path = std::env::current_exe().unwrap_or_else(|_| home.join(".cargo").join("bin").join("openz"));
-    
+
+    let exe_path =
+        std::env::current_exe().unwrap_or_else(|_| home.join(".cargo").join("bin").join("openz"));
+
     let service_content = format!(
-r#"[Unit]
+        r#"[Unit]
 Description=OpenZ WebSocket Gateway Daemon
 After=network.target
 
@@ -372,22 +414,22 @@ WantedBy=default.target
 "#,
         exe_path.to_string_lossy()
     );
-    
+
     let service_file = service_dir.join("openz-gateway.service");
     std::fs::write(&service_file, service_content)?;
-    
+
     let _ = std::process::Command::new("systemctl")
         .args(["--user", "daemon-reload"])
         .output();
-        
+
     let _ = std::process::Command::new("systemctl")
         .args(["--user", "enable", "openz-gateway.service"])
         .output();
-        
+
     let _ = std::process::Command::new("systemctl")
         .args(["--user", "restart", "openz-gateway.service"])
         .output();
-        
+
     Ok(())
 }
 
@@ -402,9 +444,15 @@ fn disable_systemd_service() -> Result<()> {
 }
 
 async fn handle_gateway_submenu(config: &mut Config) -> Result<()> {
-    println!("\n{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
-    println!("{}--- Gateway (WebSocket) Configuration ---{}", COLOR_BOLD, COLOR_RESET);
-    
+    println!(
+        "\n{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
+    println!(
+        "{}--- Gateway (WebSocket) Configuration ---{}",
+        COLOR_BOLD, COLOR_RESET
+    );
+
     let mut ws = config.channels.websocket.clone().unwrap_or_else(|| {
         crate::config::schema::WebSocketChannelConfig {
             enabled: true,
@@ -453,7 +501,10 @@ async fn handle_gateway_submenu(config: &mut Config) -> Result<()> {
                 ws.start_on_tui = false;
                 println!("Installing and enabling systemd user service...");
                 if let Err(e) = setup_systemd_service() {
-                    eprintln!("{}✕ Failed to setup systemd service: {}{}", ERROR_RED, e, COLOR_RESET);
+                    eprintln!(
+                        "{}✕ Failed to setup systemd service: {}{}",
+                        ERROR_RED, e, COLOR_RESET
+                    );
                 } else {
                     println!("{}✓ systemd service openz-gateway.service installed and enabled successfully!{}", EMERALD_GREEN, COLOR_RESET);
                 }
@@ -477,17 +528,29 @@ async fn handle_gateway_submenu(config: &mut Config) -> Result<()> {
 
     config.channels.websocket = Some(ws);
     save_config(config)?;
-    println!("{}✓ Gateway configured successfully!{}", EMERALD_GREEN, COLOR_RESET);
-    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    println!(
+        "{}✓ Gateway configured successfully!{}",
+        EMERALD_GREEN, COLOR_RESET
+    );
+    println!(
+        "{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
     Ok(())
 }
 
 async fn handle_discord_submenu(config: &mut Config) -> Result<()> {
-    println!("\n{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
-    println!("{}--- Discord Bot Configuration ---{}", COLOR_BOLD, COLOR_RESET);
-    
+    println!(
+        "\n{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
+    println!(
+        "{}--- Discord Bot Configuration ---{}",
+        COLOR_BOLD, COLOR_RESET
+    );
+
     let mut dc = config.channels.discord.clone().unwrap_or_default();
-    
+
     let enabled = Confirm::new("Enable Discord Bot channel?")
         .with_default(dc.enabled)
         .prompt()?;
@@ -505,17 +568,29 @@ async fn handle_discord_submenu(config: &mut Config) -> Result<()> {
 
     config.channels.discord = Some(dc);
     save_config(config)?;
-    println!("{}✓ Discord channel configured successfully!{}", EMERALD_GREEN, COLOR_RESET);
-    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    println!(
+        "{}✓ Discord channel configured successfully!{}",
+        EMERALD_GREEN, COLOR_RESET
+    );
+    println!(
+        "{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
     Ok(())
 }
 
 async fn handle_whatsapp_submenu(config: &mut Config) -> Result<()> {
-    println!("\n{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
-    println!("{}--- WhatsApp Channel Configuration ---{}", COLOR_BOLD, COLOR_RESET);
-    
+    println!(
+        "\n{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
+    println!(
+        "{}--- WhatsApp Channel Configuration ---{}",
+        COLOR_BOLD, COLOR_RESET
+    );
+
     let mut wa = config.channels.whatsapp.clone().unwrap_or_default();
-    
+
     let enabled = Confirm::new("Enable WhatsApp channel?")
         .with_default(wa.enabled)
         .prompt()?;
@@ -552,17 +627,29 @@ async fn handle_whatsapp_submenu(config: &mut Config) -> Result<()> {
 
     config.channels.whatsapp = Some(wa);
     save_config(config)?;
-    println!("{}✓ WhatsApp channel configured successfully!{}", EMERALD_GREEN, COLOR_RESET);
-    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    println!(
+        "{}✓ WhatsApp channel configured successfully!{}",
+        EMERALD_GREEN, COLOR_RESET
+    );
+    println!(
+        "{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
     Ok(())
 }
 
 async fn handle_email_submenu(config: &mut Config) -> Result<()> {
-    println!("\n{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
-    println!("{}--- Email Channel Configuration ---{}", COLOR_BOLD, COLOR_RESET);
-    
+    println!(
+        "\n{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
+    println!(
+        "{}--- Email Channel Configuration ---{}",
+        COLOR_BOLD, COLOR_RESET
+    );
+
     let mut em = config.channels.email.clone().unwrap_or_default();
-    
+
     let enabled = Confirm::new("Enable Email channel?")
         .with_default(em.enabled)
         .prompt()?;
@@ -622,36 +709,54 @@ async fn handle_email_submenu(config: &mut Config) -> Result<()> {
 
     config.channels.email = Some(em);
     save_config(config)?;
-    println!("{}✓ Email channel configured successfully!{}", EMERALD_GREEN, COLOR_RESET);
-    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    println!(
+        "{}✓ Email channel configured successfully!{}",
+        EMERALD_GREEN, COLOR_RESET
+    );
+    println!(
+        "{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
     Ok(())
 }
 
 async fn handle_sandbox_submenu(config: &mut Config) -> Result<()> {
-    println!("\n{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
-    println!("{}--- Sandbox (seccomp) Configuration ---{}", COLOR_BOLD, COLOR_RESET);
+    println!(
+        "\n{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
+    println!(
+        "{}--- Sandbox (seccomp) Configuration ---{}",
+        COLOR_BOLD, COLOR_RESET
+    );
     println!("The process sandbox (seccomp) restricts system calls (network, browser, tools like ps/which) inside the command execution sandbox.");
     println!("Disabling it allows browser automation tools (gsd_browser, chromewright) and local compiler tools to run without seccomp blocking.");
     println!("Security is still enforced via openz's internal SecurityGuard prompt confirmations.");
     println!();
-    
+
     let current = config.agents.defaults.enable_sandbox;
     let enable = Confirm::new("Enable process seccomp sandbox?")
         .with_default(current)
         .prompt()?;
-        
+
     config.agents.defaults.enable_sandbox = enable;
     save_config(config)?;
-    
+
     if enable {
-        println!("{}✓ Sandbox enabled successfully!{}", EMERALD_GREEN, COLOR_RESET);
+        println!(
+            "{}✓ Sandbox enabled successfully!{}",
+            EMERALD_GREEN, COLOR_RESET
+        );
     } else {
         println!("{}✓ Sandbox disabled successfully! (Highly recommended for browser tools and developer shells){}", EMERALD_GREEN, COLOR_RESET);
     }
-    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
-    
+    println!(
+        "{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
+
     // Give the user a moment to see the success message
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-    
+
     Ok(())
 }

@@ -1,4 +1,4 @@
-use crate::ir::{Document, Chunk, Paragraph};
+use crate::ir::{Chunk, Document, Paragraph};
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -189,7 +189,13 @@ pub fn chunk_document(
             for p in &doc.paragraphs {
                 if p.is_heading {
                     if !current_section.is_empty() {
-                        recursive_split(&current_section, max_tokens, overlap, &current_heading, &mut chunks);
+                        recursive_split(
+                            &current_section,
+                            max_tokens,
+                            overlap,
+                            &current_heading,
+                            &mut chunks,
+                        );
                         current_section.clear();
                     }
                     current_heading = p.text.clone();
@@ -199,7 +205,13 @@ pub fn chunk_document(
             }
 
             if !current_section.is_empty() {
-                recursive_split(&current_section, max_tokens, overlap, &current_heading, &mut chunks);
+                recursive_split(
+                    &current_section,
+                    max_tokens,
+                    overlap,
+                    &current_heading,
+                    &mut chunks,
+                );
             }
         }
         ChunkingStrategy::Recursive => {
@@ -246,9 +258,12 @@ mod tests {
     #[test]
     fn test_chunk_fixed_strategy() {
         let mut doc = Document::new("txt");
-        doc.paragraphs.push(Paragraph::new("Paragraph 1. Hello world."));
-        doc.paragraphs.push(Paragraph::new("Paragraph 2. Rust is awesome."));
-        doc.paragraphs.push(Paragraph::new("Paragraph 3. MCP servers are neat."));
+        doc.paragraphs
+            .push(Paragraph::new("Paragraph 1. Hello world."));
+        doc.paragraphs
+            .push(Paragraph::new("Paragraph 2. Rust is awesome."));
+        doc.paragraphs
+            .push(Paragraph::new("Paragraph 3. MCP servers are neat."));
 
         // Fixed size strategy, 10 tokens max, no overlap
         let chunks = chunk_document(&doc, ChunkingStrategy::Fixed, 10, 0);
@@ -261,12 +276,14 @@ mod tests {
         let mut p1 = Paragraph::new("Introduction");
         p1.is_heading = true;
         doc.paragraphs.push(p1);
-        doc.paragraphs.push(Paragraph::new("This is the intro section context."));
+        doc.paragraphs
+            .push(Paragraph::new("This is the intro section context."));
 
         let mut p2 = Paragraph::new("Conclusion");
         p2.is_heading = true;
         doc.paragraphs.push(p2);
-        doc.paragraphs.push(Paragraph::new("This is the conclusion context."));
+        doc.paragraphs
+            .push(Paragraph::new("This is the conclusion context."));
 
         let chunks = chunk_document(&doc, ChunkingStrategy::Heading, 20, 0);
         assert_eq!(chunks.len(), 2);

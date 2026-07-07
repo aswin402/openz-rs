@@ -1,10 +1,12 @@
+use crate::tools::browser_common::{
+    connect_to_tab, ensure_browser_running, kill_browser_on_port_9222, send_cdp_cmd,
+};
+use crate::tools::web::is_safe_ip;
 use crate::tools::Tool;
-use crate::tools::browser_common::{connect_to_tab, ensure_browser_running, kill_browser_on_port_9222, send_cdp_cmd};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use crate::tools::web::is_safe_ip;
 
 pub struct ObscuraBrowserTool;
 
@@ -33,53 +35,99 @@ impl ObscuraBrowserTool {
         let (mut write, mut read) = connect_to_tab(ws_url).await?;
         let mut message_id = 0;
 
-        send_cdp_cmd(&mut write, &mut read, &mut message_id, "Page.enable", json!({})).await?;
-        send_cdp_cmd(&mut write, &mut read, &mut message_id, "Page.navigate", json!({ "url": navigate_url })).await?;
+        send_cdp_cmd(
+            &mut write,
+            &mut read,
+            &mut message_id,
+            "Page.enable",
+            json!({}),
+        )
+        .await?;
+        send_cdp_cmd(
+            &mut write,
+            &mut read,
+            &mut message_id,
+            "Page.navigate",
+            json!({ "url": navigate_url }),
+        )
+        .await?;
 
         let start_time = Instant::now();
         let max_duration = Duration::from_secs(timeout_secs);
 
         while start_time.elapsed() < max_duration {
             sleep(Duration::from_millis(300)).await;
-            let eval_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({
-                "expression": "document.readyState",
-                "returnByValue": true
-            })).await?;
+            let eval_res = send_cdp_cmd(
+                &mut write,
+                &mut read,
+                &mut message_id,
+                "Runtime.evaluate",
+                json!({
+                    "expression": "document.readyState",
+                    "returnByValue": true
+                }),
+            )
+            .await?;
 
             if let Some(state) = eval_res
-                .get("result").and_then(|r| r.get("result"))
+                .get("result")
+                .and_then(|r| r.get("result"))
                 .and_then(|res| res.get("value"))
                 .and_then(|v| v.as_str())
             {
-                if state == "complete" { break; }
+                if state == "complete" {
+                    break;
+                }
             }
         }
 
         if action == "eval_js" {
-            let script_expr = script_str.ok_or_else(|| anyhow!("Missing 'script' parameter for eval_js action"))?;
-            let eval_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({
-                "expression": script_expr,
-                "returnByValue": true
-            })).await?;
+            let script_expr = script_str
+                .ok_or_else(|| anyhow!("Missing 'script' parameter for eval_js action"))?;
+            let eval_res = send_cdp_cmd(
+                &mut write,
+                &mut read,
+                &mut message_id,
+                "Runtime.evaluate",
+                json!({
+                    "expression": script_expr,
+                    "returnByValue": true
+                }),
+            )
+            .await?;
 
-            let val = eval_res.get("result").and_then(|r| r.get("result")).and_then(|res| res.get("value"));
+            let val = eval_res
+                .get("result")
+                .and_then(|r| r.get("result"))
+                .and_then(|res| res.get("value"));
             match val {
                 Some(v) => Ok(v.to_string()),
                 None => {
-                    if let Some(exception) = eval_res.get("result").and_then(|r| r.get("exceptionDetails")) {
+                    if let Some(exception) = eval_res
+                        .get("result")
+                        .and_then(|r| r.get("exceptionDetails"))
+                    {
                         return Err(anyhow!("JavaScript exception: {}", exception));
                     }
                     Ok("null".to_string())
                 }
             }
         } else {
-            let eval_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({
-                "expression": "document.documentElement.outerHTML",
-                "returnByValue": true
-            })).await?;
+            let eval_res = send_cdp_cmd(
+                &mut write,
+                &mut read,
+                &mut message_id,
+                "Runtime.evaluate",
+                json!({
+                    "expression": "document.documentElement.outerHTML",
+                    "returnByValue": true
+                }),
+            )
+            .await?;
 
             let html_str = eval_res
-                .get("result").and_then(|r| r.get("result"))
+                .get("result")
+                .and_then(|r| r.get("result"))
                 .and_then(|res| res.get("value"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Failed to retrieve document.documentElement.outerHTML"))?;
@@ -126,59 +174,75 @@ impl Tool for ObscuraBrowserTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let url_str = arguments.get("url").and_then(|v| v.as_str())
+        let url_str = arguments
+            .get("url")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'url' parameter"))?;
-        
+
         validate_url(url_str).await?;
-        
-        let action = arguments.get("action").and_then(|v| v.as_str()).unwrap_or("render");
+
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("render");
         let script_str = arguments.get("script").and_then(|v| v.as_str());
-        let timeout_secs = arguments.get("timeout").and_then(|v| v.as_u64()).unwrap_or(15);
+        let timeout_secs = arguments
+            .get("timeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(15);
 
         // Ensure browser is running
         ensure_browser_running().await?;
 
         let client = reqwest::Client::new();
-        
+
         // Open a new tab
-        let mut res = client.put("http://127.0.0.1:9222/json/new")
-            .send()
-            .await;
-        
+        let mut res = client.put("http://127.0.0.1:9222/json/new").send().await;
+
         if !matches!(&res, Ok(r) if r.status().is_success()) {
-            res = client.get("http://127.0.0.1:9222/json/new")
-                .send()
-                .await;
+            res = client.get("http://127.0.0.1:9222/json/new").send().await;
         }
-        
+
         if !matches!(&res, Ok(r) if r.status().is_success()) {
             tracing::warn!("CDP HTTP API failed, attempting browser restart...");
             kill_browser_on_port_9222();
             sleep(Duration::from_millis(500)).await;
             ensure_browser_running().await?;
-            res = client.put("http://127.0.0.1:9222/json/new")
-                .send()
-                .await;
+            res = client.put("http://127.0.0.1:9222/json/new").send().await;
             if !matches!(&res, Ok(r) if r.status().is_success()) {
-                res = client.get("http://127.0.0.1:9222/json/new")
-                    .send()
-                    .await;
+                res = client.get("http://127.0.0.1:9222/json/new").send().await;
             }
         }
 
         let res = res?;
         if !res.status().is_success() {
-            return Err(anyhow!("Failed to create a new tab via CDP HTTP API after restart"));
+            return Err(anyhow!(
+                "Failed to create a new tab via CDP HTTP API after restart"
+            ));
         }
 
         let tab_info: Value = res.json().await?;
-        let tab_id = tab_info.get("id").and_then(|v| v.as_str())
+        let tab_id = tab_info
+            .get("id")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("No tab ID returned from /json/new"))?;
-        let ws_url = tab_info.get("webSocketDebuggerUrl").and_then(|v| v.as_str())
+        let ws_url = tab_info
+            .get("webSocketDebuggerUrl")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("No webSocketDebuggerUrl returned from /json/new"))?;
 
         let tab_id = tab_id.to_string();
-        let result = self.execute_in_tab(&client, ws_url, &tab_id, action, script_str, url_str, timeout_secs).await;
+        let result = self
+            .execute_in_tab(
+                &client,
+                ws_url,
+                &tab_id,
+                action,
+                script_str,
+                url_str,
+                timeout_secs,
+            )
+            .await;
 
         // Always close the tab, even on error
         let close_url = format!("http://127.0.0.1:9222/json/close/{}", tab_id);
@@ -192,22 +256,31 @@ impl Tool for ObscuraBrowserTool {
     }
 }
 
-
 async fn validate_url(url: &str) -> Result<()> {
     let parsed = reqwest::Url::parse(url).map_err(|e| anyhow::anyhow!("Invalid URL: {}", e))?;
-    let host = parsed.host_str().ok_or_else(|| anyhow::anyhow!("URL has no host"))?.to_lowercase();
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("URL has no host"))?
+        .to_lowercase();
 
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return Err(anyhow::anyhow!("SSRF blocked: only http/https URLs are allowed (got '{}')", parsed.scheme()));
+        return Err(anyhow::anyhow!(
+            "SSRF blocked: only http/https URLs are allowed (got '{}')",
+            parsed.scheme()
+        ));
     }
 
     if host == "169.254.169.254" || host == "metadata.google.internal" {
-        return Err(anyhow::anyhow!("SSRF blocked: cloud metadata endpoints are not allowed"));
+        return Err(anyhow::anyhow!(
+            "SSRF blocked: cloud metadata endpoints are not allowed"
+        ));
     }
 
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         if !is_safe_ip(&ip) {
-            return Err(anyhow::anyhow!("SSRF blocked: private/reserved IP addresses are not allowed"));
+            return Err(anyhow::anyhow!(
+                "SSRF blocked: private/reserved IP addresses are not allowed"
+            ));
         }
     }
 
@@ -218,12 +291,19 @@ async fn validate_url(url: &str) -> Result<()> {
 
     for ip in &resolved {
         if !is_safe_ip(ip) {
-            return Err(anyhow::anyhow!("SSRF blocked: hostname '{}' resolved to private/reserved IP {}", host, ip));
+            return Err(anyhow::anyhow!(
+                "SSRF blocked: hostname '{}' resolved to private/reserved IP {}",
+                host,
+                ip
+            ));
         }
     }
 
     if resolved.is_empty() {
-        return Err(anyhow::anyhow!("SSRF blocked: hostname '{}' could not be resolved", host));
+        return Err(anyhow::anyhow!(
+            "SSRF blocked: hostname '{}' could not be resolved",
+            host
+        ));
     }
 
     Ok(())

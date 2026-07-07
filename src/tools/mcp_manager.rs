@@ -1,8 +1,8 @@
+use crate::config::schema::McpServerConfig;
+use crate::config::{load_config, save_config};
+use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use crate::config::{load_config, save_config};
-use crate::config::schema::McpServerConfig;
-use crate::tools::Tool;
 
 pub struct ManageMcpTool;
 
@@ -54,7 +54,9 @@ impl Tool for ManageMcpTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments.get("action").and_then(|v| v.as_str())
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
 
         let mut config = load_config()?;
@@ -68,11 +70,19 @@ impl Tool for ManageMcpTool {
                 }))
             }
             "add" => {
-                let name = arguments.get("name").and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'name' parameter for action 'add'"))?.trim().to_string();
-                let command = arguments.get("command").and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'command' parameter for action 'add'"))?.trim().to_string();
-                
+                let name = arguments
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing 'name' parameter for action 'add'"))?
+                    .trim()
+                    .to_string();
+                let command = arguments
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing 'command' parameter for action 'add'"))?
+                    .trim()
+                    .to_string();
+
                 let mut args = Vec::new();
                 if let Some(arr) = arguments.get("args").and_then(|v| v.as_array()) {
                     for arg in arr {
@@ -82,7 +92,10 @@ impl Tool for ManageMcpTool {
                     }
                 }
 
-                let enabled = arguments.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+                let enabled = arguments
+                    .get("enabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
 
                 let server_config = McpServerConfig {
                     command,
@@ -99,14 +112,21 @@ impl Tool for ManageMcpTool {
                 }))
             }
             "remove" => {
-                let name = arguments.get("name").and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'name' parameter for action 'remove'"))?.trim().to_string();
+                let name = arguments
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing 'name' parameter for action 'remove'"))?
+                    .trim()
+                    .to_string();
 
                 if !config.mcp_servers.contains_key(&name) {
                     return Err(anyhow!("MCP server '{}' not found in configuration", name));
                 }
 
-                let confirm = arguments.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false);
+                let confirm = arguments
+                    .get("confirm")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 if !confirm {
                     return Ok(json!({
                         "status": "requires_confirmation",
@@ -122,8 +142,12 @@ impl Tool for ManageMcpTool {
                 }))
             }
             "enable" => {
-                let name = arguments.get("name").and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'name' parameter for action 'enable'"))?.trim().to_string();
+                let name = arguments
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing 'name' parameter for action 'enable'"))?
+                    .trim()
+                    .to_string();
 
                 if let Some(server) = config.mcp_servers.get_mut(&name) {
                     server.enabled = true;
@@ -137,8 +161,12 @@ impl Tool for ManageMcpTool {
                 }
             }
             "disable" => {
-                let name = arguments.get("name").and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'name' parameter for action 'disable'"))?.trim().to_string();
+                let name = arguments
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing 'name' parameter for action 'disable'"))?
+                    .trim()
+                    .to_string();
 
                 if let Some(server) = config.mcp_servers.get_mut(&name) {
                     server.enabled = false;
@@ -151,7 +179,7 @@ impl Tool for ManageMcpTool {
                     Err(anyhow!("MCP server '{}' not found in configuration", name))
                 }
             }
-            _ => Err(anyhow!("Invalid action '{}'", action))
+            _ => Err(anyhow!("Invalid action '{}'", action)),
         }
     }
 }
@@ -167,77 +195,82 @@ mod tests {
 
         let tool = ManageMcpTool;
 
-        crate::config::loader::CONFIG_DIR_OVERRIDE.scope(temp_dir.clone(), async move {
-            // Test action: add
-            let add_args = json!({
-                "action": "add",
-                "name": "test-mcp",
-                "command": "node",
-                "args": ["test-server.js"],
-                "enabled": true
-            });
-            let res = tool.call(&add_args).await?;
-            assert_eq!(res["status"], "success");
+        crate::config::loader::CONFIG_DIR_OVERRIDE
+            .scope(temp_dir.clone(), async move {
+                // Test action: add
+                let add_args = json!({
+                    "action": "add",
+                    "name": "test-mcp",
+                    "command": "node",
+                    "args": ["test-server.js"],
+                    "enabled": true
+                });
+                let res = tool.call(&add_args).await?;
+                assert_eq!(res["status"], "success");
 
-            // Test action: list
-            let list_args = json!({
-                "action": "list"
-            });
-            let res = tool.call(&list_args).await?;
-            assert_eq!(res["status"], "success");
-            assert!(res["mcp_servers"]["test-mcp"].is_object());
-            assert_eq!(res["mcp_servers"]["test-mcp"]["command"], "node");
-            assert_eq!(res["mcp_servers"]["test-mcp"]["enabled"], true);
+                // Test action: list
+                let list_args = json!({
+                    "action": "list"
+                });
+                let res = tool.call(&list_args).await?;
+                assert_eq!(res["status"], "success");
+                assert!(res["mcp_servers"]["test-mcp"].is_object());
+                assert_eq!(res["mcp_servers"]["test-mcp"]["command"], "node");
+                assert_eq!(res["mcp_servers"]["test-mcp"]["enabled"], true);
 
-            // Test action: disable
-            let disable_args = json!({
-                "action": "disable",
-                "name": "test-mcp"
-            });
-            let res = tool.call(&disable_args).await?;
-            assert_eq!(res["status"], "success");
+                // Test action: disable
+                let disable_args = json!({
+                    "action": "disable",
+                    "name": "test-mcp"
+                });
+                let res = tool.call(&disable_args).await?;
+                assert_eq!(res["status"], "success");
 
-            // Verify disabled state via list
-            let res = tool.call(&list_args).await?;
-            assert_eq!(res["mcp_servers"]["test-mcp"]["enabled"], false);
+                // Verify disabled state via list
+                let res = tool.call(&list_args).await?;
+                assert_eq!(res["mcp_servers"]["test-mcp"]["enabled"], false);
 
-            // Test action: enable
-            let enable_args = json!({
-                "action": "enable",
-                "name": "test-mcp"
-            });
-            let res = tool.call(&enable_args).await?;
-            assert_eq!(res["status"], "success");
+                // Test action: enable
+                let enable_args = json!({
+                    "action": "enable",
+                    "name": "test-mcp"
+                });
+                let res = tool.call(&enable_args).await?;
+                assert_eq!(res["status"], "success");
 
-            // Verify enabled state via list
-            let res = tool.call(&list_args).await?;
-            assert_eq!(res["mcp_servers"]["test-mcp"]["enabled"], true);
+                // Verify enabled state via list
+                let res = tool.call(&list_args).await?;
+                assert_eq!(res["mcp_servers"]["test-mcp"]["enabled"], true);
 
-            // Test action: remove (requires confirmation)
-            let remove_args = json!({
-                "action": "remove",
-                "name": "test-mcp"
-            });
-            let res = tool.call(&remove_args).await?;
-            assert_eq!(res["status"], "requires_confirmation");
+                // Test action: remove (requires confirmation)
+                let remove_args = json!({
+                    "action": "remove",
+                    "name": "test-mcp"
+                });
+                let res = tool.call(&remove_args).await?;
+                assert_eq!(res["status"], "requires_confirmation");
 
-            // Test action: remove without confirm param should fail
-            let remove_args = json!({
-                "action": "remove",
-                "name": "test-mcp",
-                "confirm": true
-            });
-            let res = tool.call(&remove_args).await?;
-            assert_eq!(res["status"], "success");
+                // Test action: remove without confirm param should fail
+                let remove_args = json!({
+                    "action": "remove",
+                    "name": "test-mcp",
+                    "confirm": true
+                });
+                let res = tool.call(&remove_args).await?;
+                assert_eq!(res["status"], "success");
 
-            // Verify removed state via list
-            let res = tool.call(&list_args).await?;
-            assert!(!res["mcp_servers"].as_object().unwrap().contains_key("test-mcp"));
+                // Verify removed state via list
+                let res = tool.call(&list_args).await?;
+                assert!(!res["mcp_servers"]
+                    .as_object()
+                    .unwrap()
+                    .contains_key("test-mcp"));
 
-            // Clean up
-            let _ = std::fs::remove_dir_all(&temp_dir);
+                // Clean up
+                let _ = std::fs::remove_dir_all(&temp_dir);
 
-            Ok(())
-        }).await
+                Ok(())
+            })
+            .await
     }
 }

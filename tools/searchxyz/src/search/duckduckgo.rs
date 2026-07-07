@@ -3,8 +3,8 @@ use reqwest::Client;
 use scraper::{Html, Selector};
 
 use super::{SearchBackend, SearchQuery, SearchResult};
-use crate::error::SearchXyzError;
 use crate::crawler::headless::HeadlessBrowser;
+use crate::error::SearchXyzError;
 
 /// DuckDuckGo Lite — scrapes the lightweight HTML interface.
 /// No API key required. This is the default/fallback backend.
@@ -36,9 +36,8 @@ impl DuckDuckGoBackend {
     fn parse_results(html_body: &str, max_results: usize) -> Vec<SearchResult> {
         let document = Html::parse_document(html_body);
 
-        let link_sel = Selector::parse("a.result-link").unwrap_or_else(|_| {
-            Selector::parse("table tr td a[href]").unwrap()
-        });
+        let link_sel = Selector::parse("a.result-link")
+            .unwrap_or_else(|_| Selector::parse("table tr td a[href]").unwrap());
         let snippet_sel = Selector::parse("td.result-snippet")
             .unwrap_or_else(|_| Selector::parse("table tr.result-snippet td").unwrap());
 

@@ -1,8 +1,8 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
+use scraper::{Html, Selector};
 use serde_json::{json, Value};
 use spider::website::Website;
-use scraper::{Html, Selector};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -11,19 +11,29 @@ use crate::tools::web::is_safe_ip;
 /// Validate URL to prevent SSRF — resolves DNS to catch rebinding attacks.
 async fn validate_url(url: &str) -> Result<()> {
     let parsed = reqwest::Url::parse(url).map_err(|e| anyhow!("Invalid URL: {}", e))?;
-    let host = parsed.host_str().ok_or_else(|| anyhow!("URL has no host"))?.to_lowercase();
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow!("URL has no host"))?
+        .to_lowercase();
 
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return Err(anyhow!("SSRF blocked: only http/https URLs are allowed (got '{}')", parsed.scheme()));
+        return Err(anyhow!(
+            "SSRF blocked: only http/https URLs are allowed (got '{}')",
+            parsed.scheme()
+        ));
     }
 
     if host == "169.254.169.254" || host == "metadata.google.internal" {
-        return Err(anyhow!("SSRF blocked: cloud metadata endpoints are not allowed"));
+        return Err(anyhow!(
+            "SSRF blocked: cloud metadata endpoints are not allowed"
+        ));
     }
 
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         if !is_safe_ip(&ip) {
-            return Err(anyhow!("SSRF blocked: private/reserved IP addresses are not allowed"));
+            return Err(anyhow!(
+                "SSRF blocked: private/reserved IP addresses are not allowed"
+            ));
         }
     }
 
@@ -35,12 +45,19 @@ async fn validate_url(url: &str) -> Result<()> {
 
     for ip in &resolved {
         if !is_safe_ip(ip) {
-            return Err(anyhow!("SSRF blocked: hostname '{}' resolved to private/reserved IP {}", host, ip));
+            return Err(anyhow!(
+                "SSRF blocked: hostname '{}' resolved to private/reserved IP {}",
+                host,
+                ip
+            ));
         }
     }
 
     if resolved.is_empty() {
-        return Err(anyhow!("SSRF blocked: hostname '{}' could not be resolved", host));
+        return Err(anyhow!(
+            "SSRF blocked: hostname '{}' could not be resolved",
+            host
+        ));
     }
 
     Ok(())
@@ -100,15 +117,32 @@ impl Tool for CrawlSiteTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let url_str = arguments.get("url").and_then(|v| v.as_str())
+        let url_str = arguments
+            .get("url")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'url' parameter"))?;
 
         validate_url(url_str).await?;
-        
-        let limit = arguments.get("limit").and_then(|v| v.as_u64()).unwrap_or(10).min(1000) as u32;
-        let depth = arguments.get("depth").and_then(|v| v.as_u64()).unwrap_or(3).min(10) as usize;
-        let respect = arguments.get("respect_robots_txt").and_then(|v| v.as_bool()).unwrap_or(true);
-        let delay = arguments.get("delay").and_then(|v| v.as_u64()).unwrap_or(250).max(50);
+
+        let limit = arguments
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10)
+            .min(1000) as u32;
+        let depth = arguments
+            .get("depth")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3)
+            .min(10) as usize;
+        let respect = arguments
+            .get("respect_robots_txt")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let delay = arguments
+            .get("delay")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(250)
+            .max(50);
 
         let mut website = Website::new(url_str)
             .with_limit(limit)
@@ -116,12 +150,12 @@ impl Tool for CrawlSiteTool {
             .with_delay(delay)
             .with_respect_robots_txt(respect)
             .build()?;
-        
+
         let mut rx = website.subscribe((limit.max(16)) as usize);
-        
+
         let pages = Arc::new(Mutex::new(Vec::new()));
         let pages_clone = pages.clone();
-        
+
         let handle = tokio::spawn(async move {
             let title_selector = Selector::parse("title").unwrap();
             let body_selector = Selector::parse("body").unwrap();
@@ -133,19 +167,21 @@ impl Tool for CrawlSiteTool {
                 let html_str = page.get_html();
                 let (title, snippet) = {
                     let doc = Html::parse_document(&html_str);
-                    
-                    let title = doc.select(&title_selector)
+
+                    let title = doc
+                        .select(&title_selector)
                         .next()
                         .map(|el| el.text().collect::<Vec<_>>().join(" "))
                         .unwrap_or_default()
                         .trim()
                         .to_string();
-                    
-                    let body_text = doc.select(&body_selector)
+
+                    let body_text = doc
+                        .select(&body_selector)
                         .next()
                         .map(|el| el.text().collect::<Vec<_>>().join(" "))
                         .unwrap_or_else(|| html_str.clone());
-                    
+
                     let snippet = if body_text.chars().count() > 300 {
                         let mut snippet_str: String = body_text.chars().take(300).collect();
                         snippet_str.push_str("...");
@@ -173,7 +209,9 @@ impl Tool for CrawlSiteTool {
 
         let results = pages.lock().await.clone();
         if results.is_empty() {
-            Err(anyhow!("Crawl returned no results. The site may be unreachable or block automated access."))
+            Err(anyhow!(
+                "Crawl returned no results. The site may be unreachable or block automated access."
+            ))
         } else {
             Ok(Value::Array(results))
         }

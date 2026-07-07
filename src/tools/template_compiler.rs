@@ -13,7 +13,10 @@ fn render_template_string(template: &str, data: &Value) -> String {
 
 fn render_template_string_inner(template: &str, data: &Value, depth: usize) -> String {
     if depth > MAX_TEMPLATE_DEPTH {
-        tracing::warn!("Template rendering exceeded max depth of {}", MAX_TEMPLATE_DEPTH);
+        tracing::warn!(
+            "Template rendering exceeded max depth of {}",
+            MAX_TEMPLATE_DEPTH
+        );
         return template.to_string();
     }
 
@@ -23,28 +26,32 @@ fn render_template_string_inner(template: &str, data: &Value, depth: usize) -> S
     loop {
         let loop_start_tag = "<!-- loop:";
         let loop_end_tag = "<!-- endloop -->";
-        
+
         if let Some(start_idx) = result.find(loop_start_tag) {
             let start_tag_end = result[start_idx..].find("-->");
             if start_tag_end.is_none() {
                 break;
             }
             let start_tag_end_idx = start_idx + start_tag_end.unwrap() + 3;
-            
+
             // Extract the key name from <!-- loop: key -->
             let key_str = result[start_idx + loop_start_tag.len()..start_tag_end_idx - 3].trim();
-            
+
             if let Some(end_idx) = result[start_tag_end_idx..].find(loop_end_tag) {
                 let actual_end_idx = start_tag_end_idx + end_idx;
                 let inner_template = &result[start_tag_end_idx..actual_end_idx];
-                
+
                 let mut loop_replacement = String::new();
                 if let Some(arr) = data.get(key_str).and_then(|v| v.as_array()) {
                     for item in arr {
-                        loop_replacement.push_str(&render_template_string_inner(inner_template, item, depth + 1));
+                        loop_replacement.push_str(&render_template_string_inner(
+                            inner_template,
+                            item,
+                            depth + 1,
+                        ));
                     }
                 }
-                
+
                 let full_end_idx = actual_end_idx + loop_end_tag.len();
                 result.replace_range(start_idx..full_end_idx, &loop_replacement);
             } else {
@@ -111,11 +118,16 @@ impl Tool for CompileTemplateTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let template_path_str = arguments.get("template_path").and_then(|v| v.as_str())
+        let template_path_str = arguments
+            .get("template_path")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'template_path' parameter"))?;
-        let data = arguments.get("data")
+        let data = arguments
+            .get("data")
             .ok_or_else(|| anyhow!("Missing 'data' parameter"))?;
-        let output_path_str = arguments.get("output_path").and_then(|v| v.as_str())
+        let output_path_str = arguments
+            .get("output_path")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'output_path' parameter"))?;
 
         let template_path = crate::config::resolve_path(template_path_str);
@@ -130,14 +142,16 @@ impl Tool for CompileTemplateTool {
 
         let rendered = render_template_string(&template_content, data);
 
-        let output_format = if let Some(fmt) = arguments.get("output_format").and_then(|v| v.as_str()) {
-            fmt.to_lowercase()
-        } else {
-            output_path.extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or("html")
-                .to_lowercase()
-        };
+        let output_format =
+            if let Some(fmt) = arguments.get("output_format").and_then(|v| v.as_str()) {
+                fmt.to_lowercase()
+            } else {
+                output_path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .unwrap_or("html")
+                    .to_lowercase()
+            };
 
         if output_format == "pdf" {
             // Write to a temporary HTML file in output directory
@@ -148,23 +162,30 @@ impl Tool for CompileTemplateTool {
             // Navigate and print to PDF using gsd_browser
             let gsd_browser = crate::tools::gsd_browser::GsdBrowserTool;
             let temp_url = format!("file://{}", temp_html_path.to_string_lossy());
-            
+
             // Navigate
-            let nav_res = gsd_browser.call(&json!({
-                "action": "navigate",
-                "url": temp_url
-            })).await;
+            let nav_res = gsd_browser
+                .call(&json!({
+                    "action": "navigate",
+                    "url": temp_url
+                }))
+                .await;
 
             if let Err(e) = nav_res {
                 let _ = fs::remove_file(&temp_html_path);
-                return Err(anyhow!("Failed to navigate browser to temporary page: {}", e));
+                return Err(anyhow!(
+                    "Failed to navigate browser to temporary page: {}",
+                    e
+                ));
             }
 
             // Save PDF
-            let save_res = gsd_browser.call(&json!({
-                "action": "save_pdf",
-                "path": output_path.to_string_lossy()
-            })).await;
+            let save_res = gsd_browser
+                .call(&json!({
+                    "action": "save_pdf",
+                    "path": output_path.to_string_lossy()
+                }))
+                .await;
 
             // Cleanup temp file
             let _ = fs::remove_file(&temp_html_path);
@@ -223,7 +244,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_compile_template_tool_html() -> Result<()> {
-        let temp_dir = std::env::temp_dir().join(format!("openz_temp_compiler_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_temp_compiler_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&temp_dir)?;
 
         let template_path = temp_dir.join("template.html");

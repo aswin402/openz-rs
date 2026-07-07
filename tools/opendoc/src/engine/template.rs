@@ -1,6 +1,6 @@
 use crate::ir::Document;
-use serde_json::Value;
 use regex::Regex;
+use serde_json::Value;
 
 /// Simple template engine: replace `{{key}}` placeholders with values
 pub fn fill_template(doc: &mut Document, vars: &[(String, String)]) -> usize {
@@ -9,7 +9,10 @@ pub fn fill_template(doc: &mut Document, vars: &[(String, String)]) -> usize {
     for (key, value) in vars {
         let placeholder = format!("{{{{{}}}}}", key);
         let pattern = regex::escape(&placeholder);
-        let re = match regex::RegexBuilder::new(&pattern).size_limit(1_000_000).build() {
+        let re = match regex::RegexBuilder::new(&pattern)
+            .size_limit(1_000_000)
+            .build()
+        {
             Ok(r) => r,
             Err(_) => continue,
         };
@@ -189,7 +192,12 @@ fn format_value(val: &Value) -> String {
 }
 
 /// Find matching closing tag, handling nesting.
-fn find_matching_close_in(template: &str, block_type: &str, name: &str, start: usize) -> Option<usize> {
+fn find_matching_close_in(
+    template: &str,
+    block_type: &str,
+    name: &str,
+    start: usize,
+) -> Option<usize> {
     let mut depth = 1u32;
     let mut pos = start;
 
@@ -275,7 +283,9 @@ fn process_all_blocks(template: &str, vars: &Value, count: &mut usize) -> String
             let start = cap.start();
             let after_open = start + full_match.len();
 
-            if let Some(close_pos) = find_matching_close_in(&current, block_type, block_name_clean, after_open) {
+            if let Some(close_pos) =
+                find_matching_close_in(&current, block_type, block_name_clean, after_open)
+            {
                 let content = &current[after_open..close_pos];
                 let close_len = match block_type {
                     "if" => "{{/if}}".len(),
@@ -290,7 +300,8 @@ fn process_all_blocks(template: &str, vars: &Value, count: &mut usize) -> String
                     _ => expand_section(block_name_clean, content, vars, count),
                 };
 
-                let new_result = format!("{}{}{}", &current[..start], expanded, &current[end_pos..]);
+                let new_result =
+                    format!("{}{}{}", &current[..start], expanded, &current[end_pos..]);
                 result = new_result;
                 found = true;
             }
@@ -503,7 +514,8 @@ mod tests {
     #[test]
     fn test_fill_multiple_vars() {
         let mut doc = Document::new("txt");
-        doc.paragraphs.push(Paragraph::new("{{greeting}} {{name}}!"));
+        doc.paragraphs
+            .push(Paragraph::new("{{greeting}} {{name}}!"));
         let vars = vec![
             ("greeting".to_string(), "Hi".to_string()),
             ("name".to_string(), "Alice".to_string()),
@@ -581,7 +593,10 @@ mod tests {
         let count = fill_template(&mut doc, &vars);
         assert_eq!(count, 2);
         assert_eq!(doc.tables[0].headers[0], "Header Alpha");
-        assert_eq!(doc.tables[0].caption.as_ref().unwrap(), "Table Caption Omega");
+        assert_eq!(
+            doc.tables[0].caption.as_ref().unwrap(),
+            "Table Caption Omega"
+        );
     }
 
     // ═══════════════════════════════════════
@@ -676,9 +691,8 @@ mod tests {
     #[test]
     fn test_enhanced_each_loop() {
         let mut doc = Document::new("txt");
-        doc.paragraphs.push(Paragraph::new(
-            "{{#each users}}User: {{name}}, {{/each}}",
-        ));
+        doc.paragraphs
+            .push(Paragraph::new("{{#each users}}User: {{name}}, {{/each}}"));
         let vars = serde_json::json!({
             "users": [
                 {"name": "Alice"},
@@ -726,10 +740,7 @@ mod tests {
         assert_eq!(count, 3);
         assert_eq!(doc.tables[0].headers[0], "Name");
         assert_eq!(doc.tables[0].rows[0][0], "Alice");
-        assert_eq!(
-            doc.tables[0].caption.as_ref().unwrap(),
-            "Table: Users"
-        );
+        assert_eq!(doc.tables[0].caption.as_ref().unwrap(), "Table: Users");
     }
 
     #[test]
@@ -767,18 +778,14 @@ mod tests {
     #[test]
     fn test_enhanced_mixed_simple_and_nested() {
         let mut doc = Document::new("txt");
-        doc.paragraphs.push(Paragraph::new(
-            "Report: {{title}}, Author: {{author.name}}",
-        ));
+        doc.paragraphs
+            .push(Paragraph::new("Report: {{title}}, Author: {{author.name}}"));
         let vars = serde_json::json!({
             "title": "Q4 Summary",
             "author": {"name": "Alice"}
         });
         let count = fill_template_enhanced(&mut doc, &vars);
         assert_eq!(count, 2);
-        assert_eq!(
-            doc.paragraphs[0].text,
-            "Report: Q4 Summary, Author: Alice"
-        );
+        assert_eq!(doc.paragraphs[0].text, "Report: Q4 Summary, Author: Alice");
     }
 }

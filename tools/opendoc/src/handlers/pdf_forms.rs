@@ -9,38 +9,38 @@ use std::collections::HashMap;
 /// A single PDF form field
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FormField {
-    pub name: String,           // Fully qualified field name
-    pub partial_name: String,   // /T of this field
-    pub field_type: String,     // Tx, Btn, Ch, Sig
+    pub name: String,            // Fully qualified field name
+    pub partial_name: String,    // /T of this field
+    pub field_type: String,      // Tx, Btn, Ch, Sig
     pub field_type_name: String, // Text, Button, Choice, Signature
     pub value: Option<String>,
     pub default_value: Option<String>,
     pub page: Option<u32>,
     pub is_readonly: bool,
     pub is_required: bool,
-    pub options: Vec<String>,   // For Choice fields
+    pub options: Vec<String>, // For Choice fields
 }
 
 /// List all form fields in a PDF
 pub fn list_form_fields(file_path: &str) -> Result<Vec<FormField>, String> {
-    let doc = Document::load(file_path)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let doc = Document::load(file_path).map_err(|e| format!("Failed to load PDF: {e}"))?;
     get_acroform_fields(&doc)
 }
 
 /// Fill form fields in a PDF with given values
 pub fn fill_form_fields(file_path: &str, values: &[(String, String)]) -> Result<usize, String> {
-    let mut doc = Document::load(file_path)
-        .map_err(|e| format!("Failed to load PDF: {e}"))?;
+    let mut doc = Document::load(file_path).map_err(|e| format!("Failed to load PDF: {e}"))?;
 
     let mut filled_count = 0;
 
     // Get AcroForm dictionary
     let acroform_id = get_acroform_id(&doc)?;
-    let acroform = doc.get_dictionary(acroform_id)
+    let acroform = doc
+        .get_dictionary(acroform_id)
         .map_err(|e| format!("Failed to get AcroForm dict: {e}"))?;
 
-    let fields_array = acroform.get(b"Fields")
+    let fields_array = acroform
+        .get(b"Fields")
         .map_err(|_| "No Fields array in AcroForm".to_string())?
         .as_array()
         .map_err(|e| format!("Fields is not an array: {e}"))?;
@@ -63,10 +63,12 @@ pub fn fill_form_fields(file_path: &str, values: &[(String, String)]) -> Result<
 
 /// Get the AcroForm dictionary ObjectId from the catalog
 fn get_acroform_id(doc: &Document) -> Result<ObjectId, String> {
-    let catalog = doc.catalog()
+    let catalog = doc
+        .catalog()
         .map_err(|e| format!("Failed to get catalog: {e}"))?;
 
-    let acroform_obj = catalog.get(b"AcroForm")
+    let acroform_obj = catalog
+        .get(b"AcroForm")
         .map_err(|_| "No AcroForm dictionary found".to_string())?;
 
     match acroform_obj {
@@ -84,13 +86,17 @@ fn build_field_map(
     let mut map = HashMap::new();
 
     for field_ref in fields_array {
-        let obj_id = field_ref.as_reference()
+        let obj_id = field_ref
+            .as_reference()
             .map_err(|_| "Expected reference in Fields array".to_string())?;
 
-        let field_dict = doc.get_dictionary(obj_id)
+        let field_dict = doc
+            .get_dictionary(obj_id)
             .map_err(|e| format!("Field dict not found: {e}"))?;
 
-        let partial_name = field_dict.get(b"T").ok()
+        let partial_name = field_dict
+            .get(b"T")
+            .ok()
             .and_then(|o| o.as_string().ok())
             .map(|s| s.to_string())
             .unwrap_or_default();
@@ -123,10 +129,12 @@ fn build_field_map(
 /// Get all form fields as structured data
 fn get_acroform_fields(doc: &Document) -> Result<Vec<FormField>, String> {
     let acroform_id = get_acroform_id(doc)?;
-    let acroform = doc.get_dictionary(acroform_id)
+    let acroform = doc
+        .get_dictionary(acroform_id)
         .map_err(|e| format!("Failed to get AcroForm dict: {e}"))?;
 
-    let fields_array = acroform.get(b"Fields")
+    let fields_array = acroform
+        .get(b"Fields")
         .map_err(|_| "No Fields array in AcroForm".to_string())?
         .as_array()
         .map_err(|e| format!("Fields is not an array: {e}"))?;
@@ -144,13 +152,17 @@ fn collect_fields(
     result: &mut Vec<FormField>,
 ) -> Result<(), String> {
     for field_ref in fields_array {
-        let obj_id = field_ref.as_reference()
+        let obj_id = field_ref
+            .as_reference()
             .map_err(|_| "Expected reference".to_string())?;
 
-        let field_dict = doc.get_dictionary(obj_id)
+        let field_dict = doc
+            .get_dictionary(obj_id)
             .map_err(|e| format!("Field not found: {e}"))?;
 
-        let partial_name = field_dict.get(b"T").ok()
+        let partial_name = field_dict
+            .get(b"T")
+            .ok()
             .and_then(|o| o.as_string().ok())
             .map(|s| s.to_string())
             .unwrap_or_default();
@@ -162,7 +174,9 @@ fn collect_fields(
         };
 
         // Get field type
-        let field_type = field_dict.get(b"FT").ok()
+        let field_type = field_dict
+            .get(b"FT")
+            .ok()
             .and_then(|o| o.as_name().ok())
             .and_then(|n| std::str::from_utf8(n).ok())
             .unwrap_or("")
@@ -174,7 +188,8 @@ fn collect_fields(
             "Ch" => "Choice",
             "Sig" => "Signature",
             _ => "Unknown",
-        }.to_string();
+        }
+        .to_string();
 
         // Get value
         let value = field_dict.get(b"V").ok().and_then(|o| match o {
@@ -191,7 +206,9 @@ fn collect_fields(
         });
 
         // Check flags: /Ff
-        let flags = field_dict.get(b"Ff").ok()
+        let flags = field_dict
+            .get(b"Ff")
+            .ok()
             .and_then(|o| o.as_i64().ok())
             .unwrap_or(0);
         let is_readonly = (flags & 1) != 0;
@@ -199,14 +216,18 @@ fn collect_fields(
 
         // Get options for Choice fields
         let options = if field_type == "Ch" {
-            field_dict.get(b"Opt").ok()
+            field_dict
+                .get(b"Opt")
+                .ok()
                 .and_then(|o| o.as_array().ok())
                 .map(|arr| {
-                    arr.iter().filter_map(|o| match o {
-                        Object::String(s, _) => String::from_utf8(s.clone()).ok(),
-                        Object::Name(n) => std::str::from_utf8(n).ok().map(|s| s.to_string()),
-                        _ => None,
-                    }).collect()
+                    arr.iter()
+                        .filter_map(|o| match o {
+                            Object::String(s, _) => String::from_utf8(s.clone()).ok(),
+                            Object::Name(n) => std::str::from_utf8(n).ok().map(|s| s.to_string()),
+                            _ => None,
+                        })
+                        .collect()
                 })
                 .unwrap_or_default()
         } else {
@@ -242,9 +263,12 @@ fn collect_fields(
 fn set_field_value(doc: &mut Document, field_id: ObjectId, value: &str) -> Result<(), String> {
     // Read field type first (owned copy to avoid borrow conflict)
     let field_type = {
-        let field_dict = doc.get_dictionary(field_id)
+        let field_dict = doc
+            .get_dictionary(field_id)
             .map_err(|e| format!("Field not found: {e}"))?;
-        field_dict.get(b"FT").ok()
+        field_dict
+            .get(b"FT")
+            .ok()
             .and_then(|o| o.as_name().ok())
             .map(|n| n.to_vec())
             .unwrap_or_default()
@@ -253,7 +277,8 @@ fn set_field_value(doc: &mut Document, field_id: ObjectId, value: &str) -> Resul
     let pdf_string = Object::String(value.as_bytes().to_vec(), lopdf::StringFormat::Literal);
 
     // Set /V (value)
-    let obj = doc.get_object_mut(field_id)
+    let obj = doc
+        .get_object_mut(field_id)
         .map_err(|e| format!("Cannot modify field: {e}"))?;
 
     if let Object::Dictionary(ref mut dict) = obj {

@@ -55,7 +55,11 @@ fn bench_pdf_text_extraction(c: &mut Criterion) {
     let path = dir.join("bench_pdf_extract.pdf");
     let p = path.to_str().unwrap();
 
-    let _ = opendoc_mcp::handlers::pdf::create_pdf(p, "Page 1 content\x0cPage 2 content\x0cPage 3 content", None);
+    let _ = opendoc_mcp::handlers::pdf::create_pdf(
+        p,
+        "Page 1 content\x0cPage 2 content\x0cPage 3 content",
+        None,
+    );
 
     c.bench_function("pdf_text_extraction", |b| {
         b.iter(|| {
@@ -85,15 +89,19 @@ fn bench_template_rendering(c: &mut Criterion) {
         b.iter_with_setup(
             || {
                 let mut doc = Document::new("txt");
-                doc.paragraphs.push(opendoc_mcp::ir::Paragraph::new("Hello {{user.name}}! Welcome to {{site_name}}."));
+                doc.paragraphs.push(opendoc_mcp::ir::Paragraph::new(
+                    "Hello {{user.name}}! Welcome to {{site_name}}.",
+                ));
                 for _ in 0..5 {
-                    doc.paragraphs.push(opendoc_mcp::ir::Paragraph::new("Item: {{#items}}{{this}} {{/items}}"));
+                    doc.paragraphs.push(opendoc_mcp::ir::Paragraph::new(
+                        "Item: {{#items}}{{this}} {{/items}}",
+                    ));
                 }
                 doc
             },
             |mut doc| {
                 let _ = fill_template_enhanced(&mut doc, &data);
-            }
+            },
         )
     });
 }
@@ -127,7 +135,8 @@ fn bench_docx_image_extraction(c: &mut Criterion) {
 
     c.bench_function("docx_image_extraction", |b| {
         b.iter(|| {
-            let _ = opendoc_mcp::handlers::extract_images_from_zip(black_box(p_docx), black_box(p_out));
+            let _ =
+                opendoc_mcp::handlers::extract_images_from_zip(black_box(p_docx), black_box(p_out));
         })
     });
 

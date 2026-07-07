@@ -1,12 +1,14 @@
 use anyhow::{anyhow, Result};
-use futures_util::{SinkExt, StreamExt};
 use futures_util::stream::{SplitSink, SplitStream};
+use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use std::process::Command;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::time::sleep;
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::{
+    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
+};
 
 pub type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
 pub type WsStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
@@ -26,7 +28,9 @@ pub fn kill_browser_on_port_9222() {
     {
         let _ = Command::new("cmd")
             .arg("/C")
-            .arg("for /f \"tokens=5\" %a in ('netstat -aon ^| findstr 9222') do taskkill /F /PID %a")
+            .arg(
+                "for /f \"tokens=5\" %a in ('netstat -aon ^| findstr 9222') do taskkill /F /PID %a",
+            )
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -39,11 +43,22 @@ pub async fn ensure_browser_running() -> Result<()> {
         .timeout(Duration::from_millis(500))
         .build()?;
 
-    if client.get("http://127.0.0.1:9222/json/list").send().await.is_ok() {
+    if client
+        .get("http://127.0.0.1:9222/json/list")
+        .send()
+        .await
+        .is_ok()
+    {
         return Ok(());
     }
 
-    let chrome_paths = ["obscura", "google-chrome", "chrome", "chromium", "chromium-browser"];
+    let chrome_paths = [
+        "obscura",
+        "google-chrome",
+        "chrome",
+        "chromium",
+        "chromium-browser",
+    ];
     for path in chrome_paths {
         let args = if path == "obscura" {
             vec!["serve", "--port", "9222"]
@@ -61,11 +76,17 @@ pub async fn ensure_browser_running() -> Result<()> {
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .spawn() {
+            .spawn()
+        {
             crate::shutdown::register_child(child_handle);
             for _ in 0..25 {
                 sleep(Duration::from_millis(200)).await;
-                if client.get("http://127.0.0.1:9222/json/list").send().await.is_ok() {
+                if client
+                    .get("http://127.0.0.1:9222/json/list")
+                    .send()
+                    .await
+                    .is_ok()
+                {
                     return Ok(());
                 }
             }
@@ -73,10 +94,17 @@ pub async fn ensure_browser_running() -> Result<()> {
         }
     }
 
-    if client.get("http://127.0.0.1:9222/json/list").send().await.is_ok() {
+    if client
+        .get("http://127.0.0.1:9222/json/list")
+        .send()
+        .await
+        .is_ok()
+    {
         Ok(())
     } else {
-        Err(anyhow!("Failed to start any headless browser (obscura, chrome, chromium) on port 9222"))
+        Err(anyhow!(
+            "Failed to start any headless browser (obscura, chrome, chromium) on port 9222"
+        ))
     }
 }
 
@@ -109,8 +137,19 @@ pub async fn send_cdp_cmd(
                 }
             }
         }
-        Err(anyhow!("Connection closed before receiving response for ID {}", id))
-    }).await.map_err(|_| anyhow!("CDP command '{}' timed out after {}s", method, timeout.as_secs()))?
+        Err(anyhow!(
+            "Connection closed before receiving response for ID {}",
+            id
+        ))
+    })
+    .await
+    .map_err(|_| {
+        anyhow!(
+            "CDP command '{}' timed out after {}s",
+            method,
+            timeout.as_secs()
+        )
+    })?
 }
 
 pub async fn connect_to_tab(ws_url: &str) -> Result<(WsSink, WsStream)> {

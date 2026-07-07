@@ -33,10 +33,17 @@ impl Tool for CheckPortTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let port = arguments.get("port").and_then(|v| v.as_u64())
+        let port = arguments
+            .get("port")
+            .and_then(|v| v.as_u64())
             .ok_or_else(|| anyhow!("Missing 'port' parameter"))?;
-        let host = arguments.get("host").and_then(|v| v.as_str()).unwrap_or("127.0.0.1");
-        let action = arguments.get("action").and_then(|v| v.as_str())
+        let host = arguments
+            .get("host")
+            .and_then(|v| v.as_str())
+            .unwrap_or("127.0.0.1");
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
 
         // Restrict to localhost to prevent internal network enumeration
@@ -49,12 +56,16 @@ impl Tool for CheckPortTool {
                 use std::net::ToSocketAddrs;
                 format!("{}:0", host_clone)
                     .to_socket_addrs()
-                    .map(|mut iter| iter.any(|addr| {
-                        let ip = addr.ip();
-                        ip.is_loopback() || ip == "127.0.0.1".parse::<std::net::IpAddr>().unwrap()
-                    }))
+                    .map(|mut iter| {
+                        iter.any(|addr| {
+                            let ip = addr.ip();
+                            ip.is_loopback()
+                                || ip == "127.0.0.1".parse::<std::net::IpAddr>().unwrap()
+                        })
+                    })
                     .unwrap_or(false)
-            }).await?;
+            })
+            .await?;
             if !resolves_to_localhost {
                 return Err(anyhow!("Security: check_port only allows localhost targets to prevent internal network enumeration. Got host: {}", host));
             }
@@ -65,9 +76,9 @@ impl Tool for CheckPortTool {
         match action {
             "check_free" => {
                 let address_clone = address.clone();
-                let available = tokio::task::spawn_blocking(move || {
-                    TcpListener::bind(&address_clone).is_ok()
-                }).await?;
+                let available =
+                    tokio::task::spawn_blocking(move || TcpListener::bind(&address_clone).is_ok())
+                        .await?;
 
                 if available {
                     Ok(json!({
@@ -92,11 +103,16 @@ impl Tool for CheckPortTool {
                 let listening = tokio::task::spawn_blocking(move || {
                     if let Ok(mut addrs) = address_clone.to_socket_addrs() {
                         if let Some(socket_addr) = addrs.next() {
-                            return TcpStream::connect_timeout(&socket_addr, Duration::from_millis(1000)).is_ok();
+                            return TcpStream::connect_timeout(
+                                &socket_addr,
+                                Duration::from_millis(1000),
+                            )
+                            .is_ok();
                         }
                     }
                     false
-                }).await?;
+                })
+                .await?;
 
                 if listening {
                     Ok(json!({
@@ -128,10 +144,12 @@ mod tests {
     #[tokio::test]
     async fn test_check_port() -> Result<()> {
         let tool = CheckPortTool;
-        let res = tool.call(&json!({
-            "port": 58291,
-            "action": "check_free"
-        })).await?;
+        let res = tool
+            .call(&json!({
+                "port": 58291,
+                "action": "check_free"
+            }))
+            .await?;
         assert_eq!(res["status"], "success");
         assert!(res["available"].as_bool().is_some());
         Ok(())

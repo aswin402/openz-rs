@@ -1,5 +1,5 @@
-use image::DynamicImage;
 use crate::ResizeMethod;
+use image::DynamicImage;
 
 pub fn resize_image(img: &DynamicImage, w: u32, h: u32, method: ResizeMethod) -> DynamicImage {
     let filter = match method {

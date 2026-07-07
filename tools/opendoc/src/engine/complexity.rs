@@ -13,7 +13,7 @@ use crate::ir::Document;
 pub struct ComplexityReport {
     pub needs_ocr: bool,
     pub reasons: Vec<String>,
-    pub text_density: f64,              // chars per page (0 if no pages)
+    pub text_density: f64, // chars per page (0 if no pages)
     pub estimated_complexity: Complexity,
     pub page_count: u32,
     pub has_tables: bool,
@@ -25,10 +25,10 @@ pub struct ComplexityReport {
 /// Complexity level
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum Complexity {
-    Simple,     // Plain text, single column
-    Moderate,   // Tables, lists, some formatting
-    Complex,    // Multi-column, dense tables, mixed content
-    Scanned,    // Image-based, needs OCR
+    Simple,   // Plain text, single column
+    Moderate, // Tables, lists, some formatting
+    Complex,  // Multi-column, dense tables, mixed content
+    Scanned,  // Image-based, needs OCR
 }
 
 impl Complexity {

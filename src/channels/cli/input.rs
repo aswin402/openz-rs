@@ -1,29 +1,10 @@
+use crate::agent::style::*;
+use crate::print;
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers, KeyEventKind};
-use std::io::{Write, stdout};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use std::io::{stdout, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use crate::agent::style::*;
-
-#[allow(unused_macros)]
-macro_rules! println {
-    () => {
-        crate::tui_println!()
-    };
-    ($($arg:tt)*) => {
-        crate::tui_println!($($arg)*)
-    };
-}
-
-#[allow(unused_macros)]
-macro_rules! print {
-    () => {
-        crate::tui_print!()
-    };
-    ($($arg:tt)*) => {
-        crate::tui_print!($($arg)*)
-    };
-}
 
 pub static IS_RAW_INPUT_ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -39,12 +20,12 @@ pub(super) fn handle_clipboard_paste(index: usize) -> Result<PathBuf> {
     use arboard::Clipboard;
     let mut clipboard = Clipboard::new()?;
     let image = clipboard.get_image()?;
-    
+
     let path = crate::config::resolve_path(&format!("~/.openz/clipboard_image_{}.png", index));
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    
+
     image::save_buffer(
         &path,
         &image.bytes,
@@ -52,7 +33,7 @@ pub(super) fn handle_clipboard_paste(index: usize) -> Result<PathBuf> {
         image.height as u32,
         image::ColorType::Rgba8,
     )?;
-    
+
     Ok(path)
 }
 
@@ -153,10 +134,15 @@ pub fn read_line_raw(
             )?;
         }
 
-        if let Some(inbox_msg) = crate::agent::activity::pop_inbox_message("cli:direct") {
+        if let Some(inbox_msg) = crate::agent::activity::pop_inbox_message(session_key)
+            .or_else(|| crate::agent::activity::pop_inbox_message("cli:direct"))
+        {
             let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
             let _ = disable_raw_mode();
-            println!("\r\n{}🔌 [Remote Control] Received prompt: {}{}", AURA_BLUE, inbox_msg.message, COLOR_RESET);
+            println!(
+                "\r\n{}🔌 [Remote Control] Received prompt: {}{}",
+                AURA_BLUE, inbox_msg.message, COLOR_RESET
+            );
             return Ok((inbox_msg.message, Some(inbox_msg.sender)));
         }
 
@@ -186,7 +172,7 @@ pub fn read_line_raw(
             continue;
         }
         let ev = event::read()?;
-            
+
         // Handle bracketed paste event
         if let Event::Paste(text) = &ev {
             let cleaned_text = text.replace('\r', "").replace('\n', " ");
@@ -226,7 +212,9 @@ pub fn read_line_raw(
             let shift = key_event.modifiers.contains(KeyModifiers::SHIFT);
 
             // Ctrl+C or Ctrl+D to exit
-            if ctrl && (key_event.code == KeyCode::Char('c') || key_event.code == KeyCode::Char('d')) {
+            if ctrl
+                && (key_event.code == KeyCode::Char('c') || key_event.code == KeyCode::Char('d'))
+            {
                 if lines_printed > 1 {
                     for _ in 0..(lines_printed - 1) {
                         print!("\r\n\x1b[2K");
@@ -240,12 +228,18 @@ pub fn read_line_raw(
             }
 
             // Ctrl+V or Alt+V to paste image (ONLY if shift is not pressed)
-            let is_paste_image = (ctrl && !shift && (key_event.code == KeyCode::Char('v') || key_event.code == KeyCode::Char('V')))
-                || (alt && !shift && (key_event.code == KeyCode::Char('v') || key_event.code == KeyCode::Char('V')));
+            let is_paste_image = (ctrl
+                && !shift
+                && (key_event.code == KeyCode::Char('v') || key_event.code == KeyCode::Char('V')))
+                || (alt
+                    && !shift
+                    && (key_event.code == KeyCode::Char('v')
+                        || key_event.code == KeyCode::Char('V')));
             if is_paste_image {
                 if let Some(idx) = selected_index {
                     let typed_input_str: String = typed_input.iter().collect();
-                    let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS.iter()
+                    let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS
+                        .iter()
                         .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
                         .copied()
                         .collect();
@@ -256,7 +250,7 @@ pub fn read_line_raw(
                     selected_index = None;
                 }
                 history_index = None;
-                
+
                 let next_index = pasted_images.len();
                 match handle_clipboard_paste(next_index) {
                     Ok(img_path) => {
@@ -276,7 +270,19 @@ pub fn read_line_raw(
                             width_usize = w as usize;
                         }
                         let typed_input_str: String = typed_input.iter().collect();
-                        super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                        super::render::render_box(
+                            model,
+                            provider,
+                            session_manager,
+                            session_key,
+                            &typed_input_str,
+                            cursor_idx,
+                            &mut viewport_start,
+                            selected_index,
+                            autocomplete_visible,
+                            width_usize,
+                            &mut lines_printed,
+                        )?;
                     }
                     Err(e) => {
                         if lines_printed > 1 {
@@ -285,13 +291,28 @@ pub fn read_line_raw(
                             }
                             print!("\x1b[{}A\r", lines_printed - 1);
                         }
-                        print!("\r\n\x1b[2K{}✕ Error: No image found in clipboard: {}{}\r\n", ERROR_RED, e, COLOR_RESET);
+                        print!(
+                            "\r\n\x1b[2K{}✕ Error: No image found in clipboard: {}{}\r\n",
+                            ERROR_RED, e, COLOR_RESET
+                        );
                         lines_printed = 1;
                         if let Ok((w, _)) = crossterm::terminal::size() {
                             width_usize = w as usize;
                         }
                         let typed_input_str: String = typed_input.iter().collect();
-                        super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                        super::render::render_box(
+                            model,
+                            provider,
+                            session_manager,
+                            session_key,
+                            &typed_input_str,
+                            cursor_idx,
+                            &mut viewport_start,
+                            selected_index,
+                            autocomplete_visible,
+                            width_usize,
+                            &mut lines_printed,
+                        )?;
                     }
                 }
                 continue;
@@ -307,7 +328,8 @@ pub fn read_line_raw(
                     let mut autocomplete_active = false;
                     let typed_input_str: String = typed_input.iter().collect();
                     if typed_input_str.starts_with('/') && !typed_input_str.contains(' ') {
-                        let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS.iter()
+                        let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS
+                            .iter()
                             .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
                             .copied()
                             .collect();
@@ -317,13 +339,27 @@ pub fn read_line_raw(
                                 None => Some(matches.len() - 1),
                                 Some(idx) => Some((idx + matches.len() - 1) % matches.len()),
                             };
-                            super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                            super::render::render_box(
+                                model,
+                                provider,
+                                session_manager,
+                                session_key,
+                                &typed_input_str,
+                                cursor_idx,
+                                &mut viewport_start,
+                                selected_index,
+                                autocomplete_visible,
+                                width_usize,
+                                &mut lines_printed,
+                            )?;
                         }
                     }
 
                     if !autocomplete_active {
                         let session = session_manager.get_or_create(session_key);
-                        let history_prompts: Vec<String> = session.messages.iter()
+                        let history_prompts: Vec<String> = session
+                            .messages
+                            .iter()
                             .filter(|m| m.role == "user")
                             .map(|m| m.content.clone())
                             .collect();
@@ -341,7 +377,19 @@ pub fn read_line_raw(
                                 cursor_idx = typed_input.len();
                                 selected_index = None;
                                 let typed_input_str: String = typed_input.iter().collect();
-                                super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                                super::render::render_box(
+                                    model,
+                                    provider,
+                                    session_manager,
+                                    session_key,
+                                    &typed_input_str,
+                                    cursor_idx,
+                                    &mut viewport_start,
+                                    selected_index,
+                                    autocomplete_visible,
+                                    width_usize,
+                                    &mut lines_printed,
+                                )?;
                             }
                         }
                     }
@@ -351,7 +399,8 @@ pub fn read_line_raw(
                     let mut autocomplete_active = false;
                     let typed_input_str: String = typed_input.iter().collect();
                     if typed_input_str.starts_with('/') && !typed_input_str.contains(' ') {
-                        let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS.iter()
+                        let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS
+                            .iter()
                             .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
                             .copied()
                             .collect();
@@ -361,13 +410,27 @@ pub fn read_line_raw(
                                 None => Some(0),
                                 Some(idx) => Some((idx + 1) % matches.len()),
                             };
-                            super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                            super::render::render_box(
+                                model,
+                                provider,
+                                session_manager,
+                                session_key,
+                                &typed_input_str,
+                                cursor_idx,
+                                &mut viewport_start,
+                                selected_index,
+                                autocomplete_visible,
+                                width_usize,
+                                &mut lines_printed,
+                            )?;
                         }
                     }
 
                     if !autocomplete_active {
                         let session = session_manager.get_or_create(session_key);
-                        let history_prompts: Vec<String> = session.messages.iter()
+                        let history_prompts: Vec<String> = session
+                            .messages
+                            .iter()
                             .filter(|m| m.role == "user")
                             .map(|m| m.content.clone())
                             .collect();
@@ -384,7 +447,19 @@ pub fn read_line_raw(
                                 }
                                 selected_index = None;
                                 let typed_input_str: String = typed_input.iter().collect();
-                                super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                                super::render::render_box(
+                                    model,
+                                    provider,
+                                    session_manager,
+                                    session_key,
+                                    &typed_input_str,
+                                    cursor_idx,
+                                    &mut viewport_start,
+                                    selected_index,
+                                    autocomplete_visible,
+                                    width_usize,
+                                    &mut lines_printed,
+                                )?;
                             }
                         }
                     }
@@ -393,25 +468,73 @@ pub fn read_line_raw(
                     if cursor_idx > 0 {
                         cursor_idx -= 1;
                         let typed_input_str: String = typed_input.iter().collect();
-                        super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                        super::render::render_box(
+                            model,
+                            provider,
+                            session_manager,
+                            session_key,
+                            &typed_input_str,
+                            cursor_idx,
+                            &mut viewport_start,
+                            selected_index,
+                            autocomplete_visible,
+                            width_usize,
+                            &mut lines_printed,
+                        )?;
                     }
                 }
                 KeyCode::Right => {
                     if cursor_idx < typed_input.len() {
                         cursor_idx += 1;
                         let typed_input_str: String = typed_input.iter().collect();
-                        super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                        super::render::render_box(
+                            model,
+                            provider,
+                            session_manager,
+                            session_key,
+                            &typed_input_str,
+                            cursor_idx,
+                            &mut viewport_start,
+                            selected_index,
+                            autocomplete_visible,
+                            width_usize,
+                            &mut lines_printed,
+                        )?;
                     }
                 }
                 KeyCode::Home => {
                     cursor_idx = 0;
                     let typed_input_str: String = typed_input.iter().collect();
-                    super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                    super::render::render_box(
+                        model,
+                        provider,
+                        session_manager,
+                        session_key,
+                        &typed_input_str,
+                        cursor_idx,
+                        &mut viewport_start,
+                        selected_index,
+                        autocomplete_visible,
+                        width_usize,
+                        &mut lines_printed,
+                    )?;
                 }
                 KeyCode::End => {
                     cursor_idx = typed_input.len();
                     let typed_input_str: String = typed_input.iter().collect();
-                    super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                    super::render::render_box(
+                        model,
+                        provider,
+                        session_manager,
+                        session_key,
+                        &typed_input_str,
+                        cursor_idx,
+                        &mut viewport_start,
+                        selected_index,
+                        autocomplete_visible,
+                        width_usize,
+                        &mut lines_printed,
+                    )?;
                 }
                 KeyCode::Delete => {
                     if cursor_idx < typed_input.len() {
@@ -419,7 +542,19 @@ pub fn read_line_raw(
                         selected_index = None;
                         history_index = None;
                         let typed_input_str: String = typed_input.iter().collect();
-                        super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                        super::render::render_box(
+                            model,
+                            provider,
+                            session_manager,
+                            session_key,
+                            &typed_input_str,
+                            cursor_idx,
+                            &mut viewport_start,
+                            selected_index,
+                            autocomplete_visible,
+                            width_usize,
+                            &mut lines_printed,
+                        )?;
                     }
                 }
                 KeyCode::Char(c) => {
@@ -429,7 +564,19 @@ pub fn read_line_raw(
                     typed_input.insert(cursor_idx, c);
                     cursor_idx += 1;
                     let typed_input_str: String = typed_input.iter().collect();
-                    super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                    super::render::render_box(
+                        model,
+                        provider,
+                        session_manager,
+                        session_key,
+                        &typed_input_str,
+                        cursor_idx,
+                        &mut viewport_start,
+                        selected_index,
+                        autocomplete_visible,
+                        width_usize,
+                        &mut lines_printed,
+                    )?;
                 }
                 KeyCode::Backspace => {
                     autocomplete_visible = true;
@@ -439,14 +586,27 @@ pub fn read_line_raw(
                         typed_input.remove(cursor_idx - 1);
                         cursor_idx -= 1;
                         let typed_input_str: String = typed_input.iter().collect();
-                        super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                        super::render::render_box(
+                            model,
+                            provider,
+                            session_manager,
+                            session_key,
+                            &typed_input_str,
+                            cursor_idx,
+                            &mut viewport_start,
+                            selected_index,
+                            autocomplete_visible,
+                            width_usize,
+                            &mut lines_printed,
+                        )?;
                     }
                 }
                 KeyCode::Tab => {
                     autocomplete_visible = true;
                     let typed_input_str: String = typed_input.iter().collect();
                     if typed_input_str.starts_with('/') && !typed_input_str.contains(' ') {
-                        let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS.iter()
+                        let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS
+                            .iter()
                             .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
                             .copied()
                             .collect();
@@ -461,7 +621,19 @@ pub fn read_line_raw(
                             selected_index = None;
                             history_index = None;
                             let typed_input_str: String = typed_input.iter().collect();
-                            super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                            super::render::render_box(
+                                model,
+                                provider,
+                                session_manager,
+                                session_key,
+                                &typed_input_str,
+                                cursor_idx,
+                                &mut viewport_start,
+                                selected_index,
+                                autocomplete_visible,
+                                width_usize,
+                                &mut lines_printed,
+                            )?;
                         }
                     }
                 }
@@ -469,13 +641,26 @@ pub fn read_line_raw(
                     autocomplete_visible = false;
                     selected_index = None;
                     let typed_input_str: String = typed_input.iter().collect();
-                    super::render::render_box(model, provider, session_manager, session_key, &typed_input_str, cursor_idx, &mut viewport_start, selected_index, autocomplete_visible, width_usize, &mut lines_printed)?;
+                    super::render::render_box(
+                        model,
+                        provider,
+                        session_manager,
+                        session_key,
+                        &typed_input_str,
+                        cursor_idx,
+                        &mut viewport_start,
+                        selected_index,
+                        autocomplete_visible,
+                        width_usize,
+                        &mut lines_printed,
+                    )?;
                 }
                 KeyCode::Enter => {
                     let typed_input_str: String = typed_input.iter().collect();
                     let mut final_cmd = typed_input_str.clone();
                     if let Some(idx) = selected_index {
-                        let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS.iter()
+                        let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS
+                            .iter()
                             .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
                             .copied()
                             .collect();
@@ -492,7 +677,10 @@ pub fn read_line_raw(
                     }
                     print!("\r\x1b[2K");
                     let final_cmd_str: String = typed_input.iter().collect();
-                    print!("{}{}> {}{}", COLOR_BOLD, AURA_SLATE, final_cmd_str, COLOR_RESET);
+                    print!(
+                        "{}{}> {}{}",
+                        COLOR_BOLD, AURA_SLATE, final_cmd_str, COLOR_RESET
+                    );
                     let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
                     let _ = disable_raw_mode();
                     print!("\r\n");

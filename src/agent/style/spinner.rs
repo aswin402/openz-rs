@@ -12,9 +12,9 @@ tokio::task_local! {
 }
 
 pub fn is_silent() -> bool {
-    IS_SILENT.try_with(|s| *s).unwrap_or_else(|_| {
-        std::env::var("OPENZ_SILENT").is_ok()
-    })
+    IS_SILENT
+        .try_with(|s| *s)
+        .unwrap_or_else(|_| std::env::var("OPENZ_SILENT").is_ok())
 }
 
 pub fn get_current_session_key() -> Option<String> {
@@ -27,13 +27,20 @@ pub async fn with_spinner<F, T>(msg: &str, future: F) -> T
 where
     F: Future<Output = T>,
 {
-    let depth = crate::tools::subagent::DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
-    if is_silent() || depth > 0 {
+    let depth = crate::tools::subagent::DELEGATION_DEPTH
+        .try_with(|d| *d)
+        .unwrap_or(0);
+    if is_silent() {
         return future.await;
     }
+    let prefix = if depth > 0 {
+        crate::agent::style::get_tree_prefix(true)
+    } else {
+        "".to_string()
+    };
     let msg = msg.to_string();
     let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
-    
+
     let spinner_task = tokio::spawn(async move {
         let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let mut idx = 0;
@@ -41,7 +48,7 @@ where
             tokio::select! {
                 _ = &mut rx => break,
                 _ = sleep(Duration::from_millis(85)) => {
-                    print!("\r{} {}", msg, frames[idx]);
+                    print!("\r\x1b[2K{}{} {}", prefix, msg, frames[idx]);
                     let _ = std::io::stdout().flush();
                     idx = (idx + 1) % frames.len();
                 }

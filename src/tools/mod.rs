@@ -1,10 +1,10 @@
-use anyhow::Result;
-use std::collections::HashMap;
-use std::sync::Arc;
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
 use crate::tools::subagent::CancellationToken;
+use anyhow::Result;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
@@ -36,7 +36,11 @@ impl ToolRegistry {
         }
     }
 
-    pub fn new_with_context(config: Config, provider: Arc<dyn LLMProvider>, session_manager: SessionManager) -> Self {
+    pub fn new_with_context(
+        config: Config,
+        provider: Arc<dyn LLMProvider>,
+        session_manager: SessionManager,
+    ) -> Self {
         ToolRegistry {
             static_tools: Arc::new(std::sync::RwLock::new(HashMap::new())),
             context: Some((config, provider, session_manager)),
@@ -62,11 +66,24 @@ impl ToolRegistry {
         self.write_tools().insert(tool.name().to_string(), tool);
     }
 
+    pub fn tool_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.read_tools().keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    pub fn tool_count(&self) -> usize {
+        self.read_tools().len()
+    }
+
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
         let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
         if let Some(ref prefixes) = filter {
-            if name != "delegate_task" && name != "send_remote_input" && name != "optimize_tool_scope" &&
-               !prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+            if name != "delegate_task"
+                && name != "send_remote_input"
+                && name != "optimize_tool_scope"
+                && !prefixes.iter().any(|prefix| name.starts_with(prefix))
+            {
                 return None;
             }
         }
@@ -76,7 +93,10 @@ impl ToolRegistry {
             let (config, provider, session_manager) = self.context.as_ref()?;
             let mut parent_tools = Vec::new();
             for tool in self.read_tools().values() {
-                if tool.name() != "delegate_task" && tool.name() != "parallel_research" && tool.name() != "send_remote_input" {
+                if tool.name() != "delegate_task"
+                    && tool.name() != "parallel_research"
+                    && tool.name() != "send_remote_input"
+                {
                     parent_tools.push(tool.clone());
                 }
             }
@@ -94,7 +114,10 @@ impl ToolRegistry {
             let (config, provider, session_manager) = self.context.as_ref()?;
             let mut parent_tools = Vec::new();
             for tool in self.read_tools().values() {
-                if tool.name() != "delegate_task" && tool.name() != "parallel_research" && tool.name() != "send_remote_input" {
+                if tool.name() != "delegate_task"
+                    && tool.name() != "parallel_research"
+                    && tool.name() != "send_remote_input"
+                {
                     parent_tools.push(tool.clone());
                 }
             }
@@ -112,17 +135,23 @@ impl ToolRegistry {
             let (config, provider, session_manager) = self.context.as_ref()?;
             let mut parent_tools = Vec::new();
             for tool in self.read_tools().values() {
-                if tool.name() != "delegate_task" && tool.name() != "parallel_research" && tool.name() != "evaluator_optimizer_loop" && tool.name() != "send_remote_input" {
+                if tool.name() != "delegate_task"
+                    && tool.name() != "parallel_research"
+                    && tool.name() != "evaluator_optimizer_loop"
+                    && tool.name() != "send_remote_input"
+                {
                     parent_tools.push(tool.clone());
                 }
             }
-            return Some(Arc::new(crate::tools::subagent::EvaluatorOptimizerLoopTool {
-                config: config.clone(),
-                parent_provider: provider.clone(),
-                session_manager: session_manager.clone(),
-                parent_tools,
-                cancellation_token: CancellationToken::new(),
-            }));
+            return Some(Arc::new(
+                crate::tools::subagent::EvaluatorOptimizerLoopTool {
+                    config: config.clone(),
+                    parent_provider: provider.clone(),
+                    session_manager: session_manager.clone(),
+                    parent_tools,
+                    cancellation_token: CancellationToken::new(),
+                },
+            ));
         }
 
         // 2. Check static tools
@@ -132,7 +161,9 @@ impl ToolRegistry {
 
         // 3. If not found, check if it matches a custom subagent profile dynamically
         let (config, provider, session_manager) = self.context.as_ref()?;
-        let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT.try_with(|s| s.clone()).unwrap_or_default();
+        let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT
+            .try_with(|s| s.clone())
+            .unwrap_or_default();
         if !active_subagent.is_empty() && name == active_subagent {
             return None;
         }
@@ -141,7 +172,10 @@ impl ToolRegistry {
 
         let mut parent_tools = Vec::new();
         for tool in self.read_tools().values() {
-            if tool.name() != "delegate_task" && tool.name() != "parallel_research" && tool.name() != "send_remote_input" {
+            if tool.name() != "delegate_task"
+                && tool.name() != "parallel_research"
+                && tool.name() != "send_remote_input"
+            {
                 parent_tools.push(tool.clone());
             }
         }
@@ -158,15 +192,21 @@ impl ToolRegistry {
 
     pub fn get_static_tools(&self) -> Vec<Arc<dyn Tool>> {
         let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
-        self.read_tools().values().filter(|t| {
-            if let Some(ref prefixes) = filter {
-                let name = t.name();
-                name == "delegate_task" || name == "send_remote_input" || name == "optimize_tool_scope" ||
-                prefixes.iter().any(|prefix| name.starts_with(prefix))
-            } else {
-                true
-            }
-        }).cloned().collect()
+        self.read_tools()
+            .values()
+            .filter(|t| {
+                if let Some(ref prefixes) = filter {
+                    let name = t.name();
+                    name == "delegate_task"
+                        || name == "send_remote_input"
+                        || name == "optimize_tool_scope"
+                        || prefixes.iter().any(|prefix| name.starts_with(prefix))
+                } else {
+                    true
+                }
+            })
+            .cloned()
+            .collect()
     }
 
     pub fn set_filter_scope(&self, prefixes: Option<Vec<String>>) {
@@ -177,40 +217,53 @@ impl ToolRegistry {
 
     pub fn to_openai_format(&self) -> Vec<serde_json::Value> {
         let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
-        let mut tools_list: Vec<serde_json::Value> = self.read_tools().values().filter(|t| {
-            if let Some(ref prefixes) = filter {
-                let name = t.name();
-                name == "delegate_task" || name == "send_remote_input" || name == "optimize_tool_scope" ||
-                prefixes.iter().any(|prefix| name.starts_with(prefix))
-            } else {
-                true
-            }
-        }).map(|t| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": t.name(),
-                    "description": t.description(),
-                    "parameters": t.parameters(),
+        let mut tools_list: Vec<serde_json::Value> = self
+            .read_tools()
+            .values()
+            .filter(|t| {
+                if let Some(ref prefixes) = filter {
+                    let name = t.name();
+                    name == "delegate_task"
+                        || name == "send_remote_input"
+                        || name == "optimize_tool_scope"
+                        || prefixes.iter().any(|prefix| name.starts_with(prefix))
+                } else {
+                    true
                 }
             })
-        }).collect();
+            .map(|t| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name(),
+                        "description": t.description(),
+                        "parameters": t.parameters(),
+                    }
+                })
+            })
+            .collect();
+        let mut subagent_tools: Vec<serde_json::Value> = Vec::new();
 
         // Add custom subagents from subagents.json dynamically
         if let Some((_, _, _)) = &self.context {
             if let Ok(profiles) = crate::subagents::load_profiles() {
-                let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT.try_with(|s| s.clone()).unwrap_or_default();
+                let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT
+                    .try_with(|s| s.clone())
+                    .unwrap_or_default();
                 for profile in profiles {
                     if !active_subagent.is_empty() && profile.name == active_subagent {
                         continue;
                     }
                     if let Some(ref prefixes) = filter {
-                        if !prefixes.iter().any(|prefix| profile.name.starts_with(prefix) || prefix == "subagent") {
+                        if !prefixes
+                            .iter()
+                            .any(|prefix| profile.name.starts_with(prefix) || prefix == "subagent")
+                        {
                             continue;
                         }
                     }
                     if !self.read_tools().contains_key(&profile.name) {
-                        tools_list.push(serde_json::json!({
+                        subagent_tools.push(serde_json::json!({
                             "type": "function",
                             "function": {
                                 "name": profile.name,
@@ -236,75 +289,86 @@ impl ToolRegistry {
             }
         }
 
-        // Sort tools list alphabetically by function name for determinism
+        // Sort tool lists alphabetically by function name for determinism.
         tools_list.sort_by(|a, b| {
             let name_a = a["function"]["name"].as_str().unwrap_or("");
             let name_b = b["function"]["name"].as_str().unwrap_or("");
             name_a.cmp(name_b)
         });
+        subagent_tools.sort_by(|a, b| {
+            let name_a = a["function"]["name"].as_str().unwrap_or("");
+            let name_b = b["function"]["name"].as_str().unwrap_or("");
+            name_a.cmp(name_b)
+        });
 
-        if tools_list.len() > 128 {
-            tracing::warn!("Too many tools registered ({}); truncating to 128 to satisfy API limits.", tools_list.len());
-            tools_list.truncate(128);
+        let total_tools = tools_list.len() + subagent_tools.len();
+        if total_tools > 128 {
+            tracing::warn!(
+                "Too many tools registered ({}); truncating to 128 to satisfy API limits.",
+                total_tools
+            );
+            let reserved_subagents = subagent_tools.len().min(128);
+            let static_limit = 128usize.saturating_sub(reserved_subagents);
+            tools_list.truncate(static_limit);
+            subagent_tools.truncate(reserved_subagents);
         }
 
+        tools_list.extend(subagent_tools);
         tools_list
     }
 }
 
-pub mod filesystem;
-pub mod shell;
-pub mod web;
-pub mod mcp;
-pub mod subagent;
-pub mod cron;
-pub mod remote;
-pub mod mcp_manager;
-pub mod grep;
-pub mod git_manager;
-pub mod outline;
-pub mod db_inspector;
+pub mod ast_grep;
+pub mod browser_common;
 pub mod cargo_manager;
 pub mod clipboard;
-pub mod open;
-pub mod watcher;
-pub mod ast_grep;
-pub mod gsd_browser;
-pub mod web_search;
-pub mod onpkg;
-pub mod doc_reader;
-pub mod wasm_sandbox;
-pub mod js_format;
-pub mod semantic_search;
-pub mod rust_docs;
-pub mod image_generator;
-pub mod system_info;
-pub mod network;
-pub mod browser_common;
-pub mod crawl;
-pub mod obscura;
-pub mod shared_memory;
-pub mod firefox;
-pub mod notes;
-pub mod social_search;
-pub mod template_compiler;
-pub mod mermaid;
-pub mod video;
-pub mod sop;
-pub mod svg_animator;
 pub mod compiler_auto_heal;
-pub mod html_video;
+pub mod crawl;
+pub mod cron;
+pub mod db_inspector;
+pub mod doc_reader;
+pub mod docs_mcp;
+pub mod filesystem;
+pub mod firefox;
+pub mod git_manager;
 pub mod github;
-pub mod sequential_thinking;
-pub mod headroom;
+pub mod github_mcp;
 pub mod graph_memory;
+pub mod grep;
+pub mod gsd_browser;
+pub mod headroom;
+pub mod html_video;
+pub mod image_generator;
+pub mod js_format;
+pub mod mcp;
+pub mod mcp_manager;
 pub mod memory_extra;
+pub mod mermaid;
+pub mod network;
+pub mod notes;
+pub mod obscura;
+pub mod onpkg;
+pub mod open;
+pub mod opendoc;
+pub mod openmedia;
+pub mod outline;
+pub mod remote;
+pub mod rust_docs;
 #[path = "searchxyz/mod.rs"]
 pub mod searchxyz;
-pub mod openmedia;
-pub mod opendoc;
-pub mod github_mcp;
-pub mod docs_mcp;
 pub mod self_management;
-
-
+pub mod semantic_search;
+pub mod sequential_thinking;
+pub mod shared_memory;
+pub mod shell;
+pub mod social_search;
+pub mod sop;
+pub mod subagent;
+pub mod svg_animator;
+pub mod system_info;
+pub mod template_compiler;
+pub mod video;
+pub mod wasm_sandbox;
+pub mod watcher;
+pub mod web;
+pub mod web_search;

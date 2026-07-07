@@ -1,7 +1,7 @@
-use std::sync::Mutex;
+use crate::{Feedback, GenerationRecord, HistoryFilter, HistoryStats};
+use openmedia_core::{OpenMediaError, Result};
 use rusqlite::{params, Connection, OptionalExtension};
-use openmedia_core::{Result, OpenMediaError};
-use crate::{GenerationRecord, HistoryFilter, HistoryStats, Feedback};
+use std::sync::Mutex;
 
 pub struct GenerationHistory {
     conn: Mutex<Connection>,
@@ -14,13 +14,15 @@ impl GenerationHistory {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        let conn = Connection::open(db_path)
-            .map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
+        let conn =
+            Connection::open(db_path).map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
 
         conn.execute_batch(include_str!("../sql/schema.sql"))
             .map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
 
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     pub fn record(&self, entry: &GenerationRecord) -> Result<()> {
@@ -64,57 +66,63 @@ impl GenerationHistory {
 
     pub fn get(&self, id: &str) -> Result<Option<GenerationRecord>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, created_at, tool_name, request_params, output_path, output_format,
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, created_at, tool_name, request_params, output_path, output_format,
                     output_size, width, height, duration, model_used, backend_used,
                     generation_time, clip_score, aesthetic_score, refined_from,
                     refinement_round, metadata
-             FROM generations WHERE id = ?"
-        ).map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
+             FROM generations WHERE id = ?",
+            )
+            .map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
 
-        let record = stmt.query_row(params![id], |row| {
-            let request_params_str: String = row.get(3)?;
-            let metadata_str: Option<String> = row.get(17)?;
+        let record = stmt
+            .query_row(params![id], |row| {
+                let request_params_str: String = row.get(3)?;
+                let metadata_str: Option<String> = row.get(17)?;
 
-            let request_params = serde_json::from_str(&request_params_str).unwrap_or(serde_json::Value::Null);
-            let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
+                let request_params =
+                    serde_json::from_str(&request_params_str).unwrap_or(serde_json::Value::Null);
+                let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
 
-            let output_size_i64: i64 = row.get(6)?;
+                let output_size_i64: i64 = row.get(6)?;
 
-            Ok(GenerationRecord {
-                id: row.get(0)?,
-                created_at: row.get(1)?,
-                tool_name: row.get(2)?,
-                request_params,
-                output_path: row.get(4)?,
-                output_format: row.get(5)?,
-                output_size: output_size_i64 as u64,
-                width: row.get(7)?,
-                height: row.get(8)?,
-                duration: row.get(9)?,
-                model_used: row.get(10)?,
-                backend_used: row.get(11)?,
-                generation_time: row.get(12)?,
-                clip_score: row.get(13)?,
-                aesthetic_score: row.get(14)?,
-                refined_from: row.get(15)?,
-                refinement_round: row.get(16)?,
-                metadata,
+                Ok(GenerationRecord {
+                    id: row.get(0)?,
+                    created_at: row.get(1)?,
+                    tool_name: row.get(2)?,
+                    request_params,
+                    output_path: row.get(4)?,
+                    output_format: row.get(5)?,
+                    output_size: output_size_i64 as u64,
+                    width: row.get(7)?,
+                    height: row.get(8)?,
+                    duration: row.get(9)?,
+                    model_used: row.get(10)?,
+                    backend_used: row.get(11)?,
+                    generation_time: row.get(12)?,
+                    clip_score: row.get(13)?,
+                    aesthetic_score: row.get(14)?,
+                    refined_from: row.get(15)?,
+                    refinement_round: row.get(16)?,
+                    metadata,
+                })
             })
-        }).optional().map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
+            .optional()
+            .map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
 
         Ok(record)
     }
 
     pub fn query(&self, filter: &HistoryFilter) -> Result<Vec<GenerationRecord>> {
         let conn = self.conn.lock().unwrap();
-        
+
         let mut query_str = String::from(
             "SELECT id, created_at, tool_name, request_params, output_path, output_format,
                     output_size, width, height, duration, model_used, backend_used,
                     generation_time, clip_score, aesthetic_score, refined_from,
                     refinement_round, metadata
-             FROM generations WHERE 1=1"
+             FROM generations WHERE 1=1",
         );
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -153,41 +161,47 @@ impl GenerationHistory {
         params_vec.push(Box::new(filter.limit as i64));
         params_vec.push(Box::new(filter.offset as i64));
 
-        let mut stmt = conn.prepare(&query_str).map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(&query_str)
+            .map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
 
         // Borrow elements as &dyn ToSql
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
 
-        let rows = stmt.query_map(&params_refs[..], |row| {
-            let request_params_str: String = row.get(3)?;
-            let metadata_str: Option<String> = row.get(17)?;
+        let rows = stmt
+            .query_map(&params_refs[..], |row| {
+                let request_params_str: String = row.get(3)?;
+                let metadata_str: Option<String> = row.get(17)?;
 
-            let request_params = serde_json::from_str(&request_params_str).unwrap_or(serde_json::Value::Null);
-            let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
+                let request_params =
+                    serde_json::from_str(&request_params_str).unwrap_or(serde_json::Value::Null);
+                let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
 
-            let output_size_i64: i64 = row.get(6)?;
+                let output_size_i64: i64 = row.get(6)?;
 
-            Ok(GenerationRecord {
-                id: row.get(0)?,
-                created_at: row.get(1)?,
-                tool_name: row.get(2)?,
-                request_params,
-                output_path: row.get(4)?,
-                output_format: row.get(5)?,
-                output_size: output_size_i64 as u64,
-                width: row.get(7)?,
-                height: row.get(8)?,
-                duration: row.get(9)?,
-                model_used: row.get(10)?,
-                backend_used: row.get(11)?,
-                generation_time: row.get(12)?,
-                clip_score: row.get(13)?,
-                aesthetic_score: row.get(14)?,
-                refined_from: row.get(15)?,
-                refinement_round: row.get(16)?,
-                metadata,
+                Ok(GenerationRecord {
+                    id: row.get(0)?,
+                    created_at: row.get(1)?,
+                    tool_name: row.get(2)?,
+                    request_params,
+                    output_path: row.get(4)?,
+                    output_format: row.get(5)?,
+                    output_size: output_size_i64 as u64,
+                    width: row.get(7)?,
+                    height: row.get(8)?,
+                    duration: row.get(9)?,
+                    model_used: row.get(10)?,
+                    backend_used: row.get(11)?,
+                    generation_time: row.get(12)?,
+                    clip_score: row.get(13)?,
+                    aesthetic_score: row.get(14)?,
+                    refined_from: row.get(15)?,
+                    refinement_round: row.get(16)?,
+                    metadata,
+                })
             })
-        }).map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
+            .map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
 
         let mut results = Vec::new();
         for r in rows {
@@ -218,36 +232,38 @@ impl GenerationHistory {
     pub fn stats(&self) -> Result<HistoryStats> {
         let conn = self.conn.lock().unwrap();
 
-        let total_generations: u64 = conn.query_row(
-            "SELECT COUNT(*) FROM generations",
-            [],
-            |row| row.get(0),
-        ).map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
+        let total_generations: u64 = conn
+            .query_row("SELECT COUNT(*) FROM generations", [], |row| row.get(0))
+            .map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
 
-        let total_size_bytes: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(output_size), 0) FROM generations",
-            [],
-            |row| row.get(0),
-        ).map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
+        let total_size_bytes: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(output_size), 0) FROM generations",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
 
-        let avg_clip_score: Option<f32> = conn.query_row(
-            "SELECT AVG(clip_score) FROM generations",
-            [],
-            |row| row.get(0),
-        ).map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
+        let avg_clip_score: Option<f32> = conn
+            .query_row("SELECT AVG(clip_score) FROM generations", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
 
-        let avg_aesthetic_score: Option<f32> = conn.query_row(
-            "SELECT AVG(aesthetic_score) FROM generations",
-            [],
-            |row| row.get(0),
-        ).map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
+        let avg_aesthetic_score: Option<f32> = conn
+            .query_row("SELECT AVG(aesthetic_score) FROM generations", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
 
         // Simple approximate DB file size from metadata or PRAGMA page_count * page_size
-        let db_size_bytes: i64 = conn.query_row(
-            "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
-            [],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let db_size_bytes: i64 = conn
+            .query_row(
+                "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
         Ok(HistoryStats {
             total_generations,

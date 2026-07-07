@@ -1,5 +1,5 @@
-use opendoc_mcp::handlers::{docx, pptx, pdf};
 use opendoc_mcp::handlers::load_to_ir;
+use opendoc_mcp::handlers::{docx, pdf, pptx};
 use std::path::Path;
 
 struct Topic {
@@ -107,8 +107,11 @@ fn main() {
     // 1. GENERATE DOCX (10 Pages)
     // ==========================================
     println!("Building DOCX...");
-    docx::create_document(docx_path.to_str().unwrap(), Some("Bitcoin & Cryptocurrency Guide"));
-    
+    docx::create_document(
+        docx_path.to_str().unwrap(),
+        Some("Bitcoin & Cryptocurrency Guide"),
+    );
+
     // Page 1: Title Cover
     docx::add_paragraph(
         docx_path.to_str().unwrap(),
@@ -224,11 +227,31 @@ fn main() {
             );
             docx::add_table(
                 docx_path.to_str().unwrap(),
-                &["Market Type".to_string(), "Ownership".to_string(), "Leverage".to_string(), "Settlement".to_string()],
                 &[
-                    vec!["Spot Market".to_string(), "Immediate Asset Delivery".to_string(), "None (1x)".to_string(), "Instant (T+0)".to_string()],
-                    vec!["Futures Market".to_string(), "Contract Representation".to_string(), "Up to 100x".to_string(), "Expiry/Daily".to_string()],
-                    vec!["Options Market".to_string(), "Right, Not Obligation".to_string(), "Premium Only".to_string(), "Expiry".to_string()]
+                    "Market Type".to_string(),
+                    "Ownership".to_string(),
+                    "Leverage".to_string(),
+                    "Settlement".to_string(),
+                ],
+                &[
+                    vec![
+                        "Spot Market".to_string(),
+                        "Immediate Asset Delivery".to_string(),
+                        "None (1x)".to_string(),
+                        "Instant (T+0)".to_string(),
+                    ],
+                    vec![
+                        "Futures Market".to_string(),
+                        "Contract Representation".to_string(),
+                        "Up to 100x".to_string(),
+                        "Expiry/Daily".to_string(),
+                    ],
+                    vec![
+                        "Options Market".to_string(),
+                        "Right, Not Obligation".to_string(),
+                        "Premium Only".to_string(),
+                        "Expiry".to_string(),
+                    ],
                 ],
                 Some(100.0),
                 Some("center".to_string()),
@@ -246,8 +269,11 @@ fn main() {
     // 2. GENERATE PPTX (10 Slides)
     // ==========================================
     println!("Building PPTX...");
-    pptx::create_presentation(pptx_path.to_str().unwrap(), Some("Bitcoin & Cryptocurrencies"));
-    
+    pptx::create_presentation(
+        pptx_path.to_str().unwrap(),
+        Some("Bitcoin & Cryptocurrencies"),
+    );
+
     // Slide 1 is created automatically. Add 9 slides (Slides 2 to 10)
     for (i, topic) in TOPICS.iter().enumerate() {
         let body_items: Vec<String> = topic.points.iter().map(|p| p.to_string()).collect();
@@ -268,16 +294,21 @@ fn main() {
     // ==========================================
     println!("Building PDF...");
     let mut pdf_text = String::new();
-    
+
     // Page 1: Cover
     pdf_text.push_str("THE CRYPTOCURRENCY HANDBOOK\n");
-    pdf_text.push_str("A Comprehensive Guide to Bitcoin, Blockchain, DeFi, and Trading Strategies\n");
+    pdf_text
+        .push_str("A Comprehensive Guide to Bitcoin, Blockchain, DeFi, and Trading Strategies\n");
     pdf_text.push_str("Published by Opendoc Engine • 2026 Edition\n");
 
     // Pages 2 to 10: Topics
     for (i, topic) in TOPICS.iter().enumerate() {
         pdf_text.push('\x0c'); // Explicit page break
-        pdf_text.push_str(&format!("TOPIC {}: {}\n\n", i + 2, topic.title.to_uppercase()));
+        pdf_text.push_str(&format!(
+            "TOPIC {}: {}\n\n",
+            i + 2,
+            topic.title.to_uppercase()
+        ));
         for point in topic.points {
             pdf_text.push_str(&format!("• {}\n\n", point));
         }
@@ -298,18 +329,30 @@ fn main() {
 
     // Verify DOCX
     let docx_ir = load_to_ir(docx_path.to_str().unwrap()).unwrap();
-    println!("✔ DOCX successfully parsed. Format: {}, Paragraphs: {}", docx_ir.format, docx_ir.paragraphs.len());
+    println!(
+        "✔ DOCX successfully parsed. Format: {}, Paragraphs: {}",
+        docx_ir.format,
+        docx_ir.paragraphs.len()
+    );
     // 3 initial + (9 topics * 4 paragraphs/topic) + headings/table titles = should be > 40
     assert!(docx_ir.paragraphs.len() > 30);
 
     // Verify PPTX
     let pptx_ir = load_to_ir(pptx_path.to_str().unwrap()).unwrap();
-    println!("✔ PPTX successfully parsed. Format: {}, Slides: {}", pptx_ir.format, pptx_ir.metadata.page_count.unwrap());
+    println!(
+        "✔ PPTX successfully parsed. Format: {}, Slides: {}",
+        pptx_ir.format,
+        pptx_ir.metadata.page_count.unwrap()
+    );
     assert_eq!(pptx_ir.metadata.page_count.unwrap(), 10);
 
     // Verify PDF
     let pdf_ir = load_to_ir(pdf_path.to_str().unwrap()).unwrap();
-    println!("✔ PDF successfully parsed. Format: {}, Pages: {}", pdf_ir.format, pdf_ir.metadata.page_count.unwrap());
+    println!(
+        "✔ PDF successfully parsed. Format: {}, Pages: {}",
+        pdf_ir.format,
+        pdf_ir.metadata.page_count.unwrap()
+    );
     assert_eq!(pdf_ir.metadata.page_count.unwrap(), 10);
 
     println!("\n==================================================");

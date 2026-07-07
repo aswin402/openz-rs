@@ -1,8 +1,8 @@
+use super::db::*;
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use rusqlite::params;
 use serde_json::{json, Value};
-use super::db::*;
 
 // ─── Tool 1: CreateEntitiesTool ─────────────────────────────────
 
@@ -10,7 +10,9 @@ pub struct CreateEntitiesTool;
 
 #[async_trait::async_trait]
 impl Tool for CreateEntitiesTool {
-    fn name(&self) -> &str { "create_entities" }
+    fn name(&self) -> &str {
+        "create_entities"
+    }
 
     fn description(&self) -> &str {
         "Create multiple new entities in the knowledge graph. Each entity must have a name and entity_type."
@@ -52,11 +54,20 @@ impl Tool for CreateEntitiesTool {
         with_db(|conn| {
             let tx = conn.unchecked_transaction()?;
             for entity in &entities {
-                let name = entity["name"].as_str().ok_or_else(|| anyhow!("Entity missing 'name'"))?;
-                let entity_type = entity["entityType"].as_str().ok_or_else(|| anyhow!("Entity missing 'entityType'"))?;
-                let obs = entity["observations"].as_array().map(|a| {
-                    a.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>()
-                }).unwrap_or_default();
+                let name = entity["name"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Entity missing 'name'"))?;
+                let entity_type = entity["entityType"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Entity missing 'entityType'"))?;
+                let obs = entity["observations"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
                 let obs_json = serde_json::to_string(&obs)?;
 
                 let exists: bool = tx.query_row(
@@ -87,7 +98,9 @@ pub struct CreateRelationsTool;
 
 #[async_trait::async_trait]
 impl Tool for CreateRelationsTool {
-    fn name(&self) -> &str { "create_relations" }
+    fn name(&self) -> &str {
+        "create_relations"
+    }
 
     fn description(&self) -> &str {
         "Create multiple new relations between entities in the knowledge graph. Relations should be in active voice."
@@ -128,9 +141,15 @@ impl Tool for CreateRelationsTool {
         with_db(|conn| {
             let tx = conn.unchecked_transaction()?;
             for rel in &relations {
-                let from = rel["from"].as_str().ok_or_else(|| anyhow!("Relation missing 'from'"))?;
-                let to = rel["to"].as_str().ok_or_else(|| anyhow!("Relation missing 'to'"))?;
-                let rel_type = rel["relationType"].as_str().ok_or_else(|| anyhow!("Relation missing 'relationType'"))?;
+                let from = rel["from"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Relation missing 'from'"))?;
+                let to = rel["to"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Relation missing 'to'"))?;
+                let rel_type = rel["relationType"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Relation missing 'relationType'"))?;
 
                 let exists: bool = tx.query_row(
                     "SELECT EXISTS(SELECT 1 FROM graph_edges WHERE from_name = ?1 AND to_name = ?2 AND relation_type = ?3 AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6 AND valid_until IS NULL)",
@@ -160,7 +179,9 @@ pub struct AddObservationsTool;
 
 #[async_trait::async_trait]
 impl Tool for AddObservationsTool {
-    fn name(&self) -> &str { "add_observations" }
+    fn name(&self) -> &str {
+        "add_observations"
+    }
 
     fn description(&self) -> &str {
         "Add new observations to existing entities in the knowledge graph."
@@ -200,9 +221,16 @@ impl Tool for AddObservationsTool {
         with_db(|conn| {
             let tx = conn.unchecked_transaction()?;
             for obs in &observations {
-                let entity_name = obs["entityName"].as_str().ok_or_else(|| anyhow!("Missing 'entityName'"))?;
-                let contents: Vec<String> = obs["contents"].as_array()
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                let entity_name = obs["entityName"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing 'entityName'"))?;
+                let contents: Vec<String> = obs["contents"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 let current_obs_str: Option<String> = tx
@@ -228,7 +256,8 @@ impl Tool for AddObservationsTool {
                             "UPDATE graph_nodes SET observations = ?1 WHERE name = ?2 AND user_id = ?3 AND session_id = ?4 AND agent_id = ?5",
                             params![new_obs_json, entity_name, user_id, session_id, agent_id],
                         )?;
-                        results.push(json!({ "entityName": entity_name, "addedObservations": added }));
+                        results
+                            .push(json!({ "entityName": entity_name, "addedObservations": added }));
                     }
                     None => {
                         return Err(anyhow!("Entity '{}' not found in scope", entity_name));
@@ -249,7 +278,9 @@ pub struct DeleteEntitiesTool;
 
 #[async_trait::async_trait]
 impl Tool for DeleteEntitiesTool {
-    fn name(&self) -> &str { "delete_entities" }
+    fn name(&self) -> &str {
+        "delete_entities"
+    }
 
     fn description(&self) -> &str {
         "Delete multiple entities and their associated relations from the knowledge graph."
@@ -273,8 +304,13 @@ impl Tool for DeleteEntitiesTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let names: Vec<String> = arguments["entityNames"].as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        let names: Vec<String> = arguments["entityNames"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .ok_or_else(|| anyhow!("Missing 'entityNames' array"))?;
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
 
@@ -304,7 +340,9 @@ pub struct DeleteObservationsTool;
 
 #[async_trait::async_trait]
 impl Tool for DeleteObservationsTool {
-    fn name(&self) -> &str { "delete_observations" }
+    fn name(&self) -> &str {
+        "delete_observations"
+    }
 
     fn description(&self) -> &str {
         "Delete specific observations from entities in the knowledge graph."
@@ -343,9 +381,16 @@ impl Tool for DeleteObservationsTool {
         with_db(|conn| {
             let tx = conn.unchecked_transaction()?;
             for del in &deletions {
-                let entity_name = del["entityName"].as_str().ok_or_else(|| anyhow!("Missing 'entityName'"))?;
-                let to_remove: Vec<String> = del["observations"].as_array()
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                let entity_name = del["entityName"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing 'entityName'"))?;
+                let to_remove: Vec<String> = del["observations"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 let current_obs_str: Option<String> = tx
@@ -358,7 +403,8 @@ impl Tool for DeleteObservationsTool {
 
                 if let Some(obs_json) = current_obs_str {
                     let current_obs: Vec<String> = serde_json::from_str(&obs_json)?;
-                    let filtered: Vec<String> = current_obs.into_iter()
+                    let filtered: Vec<String> = current_obs
+                        .into_iter()
                         .filter(|o| !to_remove.contains(o))
                         .collect();
                     let new_obs_json = serde_json::to_string(&filtered)?;
@@ -382,7 +428,9 @@ pub struct DeleteRelationsTool;
 
 #[async_trait::async_trait]
 impl Tool for DeleteRelationsTool {
-    fn name(&self) -> &str { "delete_relations" }
+    fn name(&self) -> &str {
+        "delete_relations"
+    }
 
     fn description(&self) -> &str {
         "Delete multiple relations from the knowledge graph."
@@ -422,9 +470,13 @@ impl Tool for DeleteRelationsTool {
         with_db(|conn| {
             let tx = conn.unchecked_transaction()?;
             for rel in &relations {
-                let from = rel["from"].as_str().ok_or_else(|| anyhow!("Missing 'from'"))?;
+                let from = rel["from"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing 'from'"))?;
                 let to = rel["to"].as_str().ok_or_else(|| anyhow!("Missing 'to'"))?;
-                let rel_type = rel["relationType"].as_str().ok_or_else(|| anyhow!("Missing 'relationType'"))?;
+                let rel_type = rel["relationType"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing 'relationType'"))?;
                 tx.execute(
                     "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE from_name = ?1 AND to_name = ?2 AND relation_type = ?3 AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6 AND valid_until IS NULL",
                     params![from, to, rel_type, user_id, session_id, agent_id],
@@ -444,7 +496,9 @@ pub struct ReadGraphTool;
 
 #[async_trait::async_trait]
 impl Tool for ReadGraphTool {
-    fn name(&self) -> &str { "read_graph" }
+    fn name(&self) -> &str {
+        "read_graph"
+    }
 
     fn description(&self) -> &str {
         "Read the entire knowledge graph."
@@ -498,7 +552,9 @@ pub struct SearchNodesTool;
 
 #[async_trait::async_trait]
 impl Tool for SearchNodesTool {
-    fn name(&self) -> &str { "search_nodes" }
+    fn name(&self) -> &str {
+        "search_nodes"
+    }
 
     fn description(&self) -> &str {
         "Search for nodes in the knowledge graph based on a query."
@@ -518,7 +574,9 @@ impl Tool for SearchNodesTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments["query"].as_str().ok_or_else(|| anyhow!("Missing 'query'"))?;
+        let query = arguments["query"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'query'"))?;
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
         let query_pattern = format!("%{}%", query.to_lowercase());
 
@@ -526,7 +584,8 @@ impl Tool for SearchNodesTool {
             let mut stmt_nodes = conn.prepare(
                 "SELECT name, entity_type, observations FROM graph_nodes WHERE (LOWER(name) LIKE ?1 OR LOWER(entity_type) LIKE ?1 OR LOWER(observations) LIKE ?1) AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')"
             )?;
-            let mut node_rows = stmt_nodes.query(params![query_pattern, user_id, session_id, agent_id])?;
+            let mut node_rows =
+                stmt_nodes.query(params![query_pattern, user_id, session_id, agent_id])?;
             let mut entities = Vec::new();
             while let Some(row) = node_rows.next()? {
                 let name: String = row.get(0)?;
@@ -539,7 +598,8 @@ impl Tool for SearchNodesTool {
             let mut stmt_edges = conn.prepare(
                 "SELECT DISTINCT from_name, to_name, relation_type FROM graph_edges WHERE (from_name IN (SELECT name FROM graph_nodes WHERE (LOWER(name) LIKE ?1 OR LOWER(entity_type) LIKE ?1 OR LOWER(observations) LIKE ?1)) OR to_name IN (SELECT name FROM graph_nodes WHERE (LOWER(name) LIKE ?1 OR LOWER(entity_type) LIKE ?1 OR LOWER(observations) LIKE ?1))) AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*') AND valid_until IS NULL"
             )?;
-            let mut edge_rows = stmt_edges.query(params![query_pattern, user_id, session_id, agent_id])?;
+            let mut edge_rows =
+                stmt_edges.query(params![query_pattern, user_id, session_id, agent_id])?;
             let mut relations = Vec::new();
             while let Some(row) = edge_rows.next()? {
                 relations.push(json!({ "from": row.get::<_, String>(0)?, "to": row.get::<_, String>(1)?, "relationType": row.get::<_, String>(2)? }));
@@ -556,7 +616,9 @@ pub struct OpenNodesTool;
 
 #[async_trait::async_trait]
 impl Tool for OpenNodesTool {
-    fn name(&self) -> &str { "open_nodes" }
+    fn name(&self) -> &str {
+        "open_nodes"
+    }
 
     fn description(&self) -> &str {
         "Open specific nodes in the knowledge graph by their names."
@@ -580,8 +642,13 @@ impl Tool for OpenNodesTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let names: Vec<String> = arguments["names"].as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        let names: Vec<String> = arguments["names"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .ok_or_else(|| anyhow!("Missing 'names' array"))?;
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
 
@@ -595,32 +662,32 @@ impl Tool for OpenNodesTool {
                 if let Some(row) = rows.next()? {
                     let entity_type: String = row.get(0)?;
                     let obs_json: String = row.get(1)?;
-                    let observations: Vec<String> = serde_json::from_str(&obs_json).unwrap_or_default();
+                    let observations: Vec<String> =
+                        serde_json::from_str(&obs_json).unwrap_or_default();
                     entities.push(json!({ "name": name, "entityType": entity_type, "observations": observations }));
                 }
             }
 
             let mut relations = Vec::new();
             if !names.is_empty() {
-                let placeholders: Vec<String> = (0..names.len()).map(|i| format!("?{}", i + 5)).collect();
+                let placeholders: Vec<String> =
+                    (0..names.len()).map(|i| format!("?{}", i + 5)).collect();
                 let placeholders_str = placeholders.join(", ");
                 let sql = format!(
                     "SELECT DISTINCT from_name, to_name, relation_type FROM graph_edges WHERE (from_name IN ({0}) OR to_name IN ({0})) AND (?1 IS NULL OR user_id = ?1 OR user_id = '*') AND (?2 IS NULL OR session_id = ?2 OR session_id = '*') AND (?3 IS NULL OR agent_id = ?3 OR agent_id = '*') AND valid_until IS NULL",
                     placeholders_str
                 );
                 let mut stmt_edges = conn.prepare(&sql)?;
-                let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
-                    Box::new(user_id),
-                    Box::new(session_id),
-                    Box::new(agent_id),
-                ];
+                let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+                    vec![Box::new(user_id), Box::new(session_id), Box::new(agent_id)];
                 for name in &names {
                     param_values.push(Box::new(name.clone()));
                 }
                 for name in &names {
                     param_values.push(Box::new(name.clone()));
                 }
-                let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+                let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+                    param_values.iter().map(|p| p.as_ref()).collect();
                 let mut edge_rows = stmt_edges.query(params_refs.as_slice())?;
                 while let Some(row) = edge_rows.next()? {
                     relations.push(json!({ "from": row.get::<_, String>(0)?, "to": row.get::<_, String>(1)?, "relationType": row.get::<_, String>(2)? }));

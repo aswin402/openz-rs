@@ -1,8 +1,8 @@
 use crate::agent::AgentLoop;
-use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use lettre::transport::smtp::authentication::Credentials;
-use lettre::{Message, Tokio1Executor, AsyncSmtpTransport, AsyncTransport};
+use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 pub struct EmailChannel {
@@ -38,7 +38,9 @@ fn fetch_unseen_emails(
     // Use TLS by default for IMAP (port 993 = implicit TLS, port 143 = STARTTLS)
     // The imap crate with rustls-tls feature handles TLS automatically
     let client = imap::ClientBuilder::new(imap_server, imap_port).connect()?;
-    let mut session = client.login(username, password).map_err(|e| anyhow!("{:?}", e))?;
+    let mut session = client
+        .login(username, password)
+        .map_err(|e| anyhow!("{:?}", e))?;
     session.select("INBOX")?;
 
     let uids = session.uid_search("UNSEEN")?;
@@ -49,13 +51,16 @@ fn fetch_unseen_emails(
         if let Some(msg) = fetch_results.iter().next() {
             if let Some(body_bytes) = msg.body() {
                 if let Ok(parsed) = mailparse::parse_mail(body_bytes) {
-                    let from_header = parsed.headers.iter()
+                    let from_header = parsed
+                        .headers
+                        .iter()
                         .find(|h| h.get_key().eq_ignore_ascii_case("from"))
                         .map(|h| h.get_value())
                         .unwrap_or_default();
 
                     let clean_from = if from_header.contains('<') {
-                        from_header.split('<')
+                        from_header
+                            .split('<')
                             .nth(1)
                             .and_then(|s| s.split('>').next())
                             .unwrap_or(&from_header)
@@ -65,7 +70,9 @@ fn fetch_unseen_emails(
                         from_header.trim().to_string()
                     };
 
-                    let subject = parsed.headers.iter()
+                    let subject = parsed
+                        .headers
+                        .iter()
                         .find(|h| h.get_key().eq_ignore_ascii_case("subject"))
                         .map(|h| h.get_value())
                         .unwrap_or_default()
@@ -93,8 +100,7 @@ async fn send_reply_email(
     subject: &str,
     body: &str,
 ) -> Result<()> {
-    let mut builder = AsyncSmtpTransport::<Tokio1Executor>::relay(smtp_server)?
-        .port(smtp_port);
+    let mut builder = AsyncSmtpTransport::<Tokio1Executor>::relay(smtp_server)?.port(smtp_port);
 
     if !password.is_empty() {
         let creds = Credentials::new(username.to_string(), password.to_string());
@@ -139,7 +145,10 @@ impl super::Channel for EmailChannel {
         }
 
         if !silent {
-            println!("🤖 Email Channel listening started (polling every {}s)...", email_config.poll_interval_secs);
+            println!(
+                "🤖 Email Channel listening started (polling every {}s)...",
+                email_config.poll_interval_secs
+            );
         }
 
         let agent = self.agent_loop.clone();
@@ -168,7 +177,8 @@ impl super::Channel for EmailChannel {
 
                 let fetched = tokio::task::spawn_blocking(move || {
                     fetch_unseen_emails(&imap_server, imap_port, &username, &password)
-                }).await;
+                })
+                .await;
 
                 match fetched {
                     Ok(Ok(emails)) => {
@@ -200,24 +210,33 @@ impl super::Channel for EmailChannel {
                                             &from,
                                             &reply_subject,
                                             &res.content,
-                                        ).await;
+                                        )
+                                        .await;
 
                                         if let Err(e) = reply_res {
-                                            eprintln!("Failed to send reply email to {}: {:?}", from, e);
+                                            tracing::error!(
+                                                "Failed to send reply email to {}: {:?}",
+                                                from,
+                                                e
+                                            );
                                         }
                                     }
                                     Err(e) => {
-                                        eprintln!("Agent failed for email from {}: {:?}", from, e);
+                                        tracing::error!(
+                                            "Agent failed for email from {}: {:?}",
+                                            from,
+                                            e
+                                        );
                                     }
                                 }
                             });
                         }
                     }
                     Ok(Err(e)) => {
-                        eprintln!("Error fetching emails: {:?}", e);
+                        tracing::error!("Error fetching emails: {:?}", e);
                     }
                     Err(e) => {
-                        eprintln!("Join error during email fetch: {:?}", e);
+                        tracing::error!("Join error during email fetch: {:?}", e);
                     }
                 }
 

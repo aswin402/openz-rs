@@ -1,5 +1,5 @@
+use openmedia_core::{OpenMediaError, Result};
 use serde::{Deserialize, Serialize};
-use openmedia_core::{Result, OpenMediaError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SmilAnimation {
@@ -332,7 +332,11 @@ pub enum Easing {
     EaseOutBack,
     EaseInElastic,
     EaseOutElastic,
-    Spring { stiffness: f64, damping: f64, mass: f64 },
+    Spring {
+        stiffness: f64,
+        damping: f64,
+        mass: f64,
+    },
     CubicBezier(f64, f64, f64, f64),
 }
 
@@ -345,8 +349,11 @@ impl Easing {
             Self::EaseInQuad => t * t,
             Self::EaseOutQuad => t * (2.0 - t),
             Self::EaseInOutQuad => {
-                if t < 0.5 { 2.0 * t * t }
-                else { -1.0 + (4.0 - 2.0 * t) * t }
+                if t < 0.5 {
+                    2.0 * t * t
+                } else {
+                    -1.0 + (4.0 - 2.0 * t) * t
+                }
             }
             Self::EaseInCubic => t * t * t,
             Self::EaseOutCubic => {
@@ -354,21 +361,34 @@ impl Easing {
                 t * t * t + 1.0
             }
             Self::EaseInOutCubic => {
-                if t < 0.5 { 4.0 * t * t * t }
-                else {
+                if t < 0.5 {
+                    4.0 * t * t * t
+                } else {
                     let t = 2.0 * t - 2.0;
                     0.5 * t * t * t + 1.0
                 }
             }
             Self::EaseInExpo => {
-                if t == 0.0 { 0.0 } else { (2.0_f64).powf(10.0 * (t - 1.0)) }
+                if t == 0.0 {
+                    0.0
+                } else {
+                    (2.0_f64).powf(10.0 * (t - 1.0))
+                }
             }
             Self::EaseOutExpo => {
-                if t == 1.0 { 1.0 } else { 1.0 - (2.0_f64).powf(-10.0 * t) }
+                if t == 1.0 {
+                    1.0
+                } else {
+                    1.0 - (2.0_f64).powf(-10.0 * t)
+                }
             }
             Self::EaseInOutExpo => {
-                if t == 0.0 { return 0.0; }
-                if t == 1.0 { return 1.0; }
+                if t == 0.0 {
+                    return 0.0;
+                }
+                if t == 1.0 {
+                    return 1.0;
+                }
                 if t < 0.5 {
                     0.5 * (2.0_f64).powf(20.0 * t - 10.0)
                 } else {
@@ -386,21 +406,26 @@ impl Easing {
                 t * t * ((s + 1.0) * t + s) + 1.0
             }
             Self::EaseInElastic => {
-                if t == 0.0 || t == 1.0 { return t; }
+                if t == 0.0 || t == 1.0 {
+                    return t;
+                }
                 let p = 0.3;
-                -(2.0_f64.powf(10.0 * (t - 1.0)) * ((t - 1.0 - p / 4.0) * std::f64::consts::TAU / p).sin())
+                -(2.0_f64.powf(10.0 * (t - 1.0))
+                    * ((t - 1.0 - p / 4.0) * std::f64::consts::TAU / p).sin())
             }
             Self::EaseOutElastic => {
-                if t == 0.0 || t == 1.0 { return t; }
+                if t == 0.0 || t == 1.0 {
+                    return t;
+                }
                 let p = 0.3;
                 2.0_f64.powf(-10.0 * t) * ((t - p / 4.0) * std::f64::consts::TAU / p).sin() + 1.0
             }
-            Self::Spring { stiffness, damping, mass } => {
-                spring_evaluate(t, *stiffness, *damping, *mass)
-            }
-            Self::CubicBezier(x1, y1, x2, y2) => {
-                cubic_bezier_evaluate(t, *x1, *y1, *x2, *y2)
-            }
+            Self::Spring {
+                stiffness,
+                damping,
+                mass,
+            } => spring_evaluate(t, *stiffness, *damping, *mass),
+            Self::CubicBezier(x1, y1, x2, y2) => cubic_bezier_evaluate(t, *x1, *y1, *x2, *y2),
         }
     }
 
@@ -430,19 +455,53 @@ impl Easing {
         match self {
             Self::Linear => "".to_string(),
             Self::CubicBezier(x1, y1, x2, y2) => {
-                format!("calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"{} {} {} {}\"", x1, y1, x2, y2)
+                format!(
+                    "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"{} {} {} {}\"",
+                    x1, y1, x2, y2
+                )
             }
-            Self::EaseInQuad => "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.55 0.085 0.68 0.53\"".to_string(),
-            Self::EaseOutQuad => "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.25 0.46 0.45 0.94\"".to_string(),
-            Self::EaseInOutQuad => "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.455 0.03 0.515 0.955\"".to_string(),
-            Self::EaseInCubic => "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.55 0.055 0.675 0.19\"".to_string(),
-            Self::EaseOutCubic => "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.215 0.61 0.355 1\"".to_string(),
-            Self::EaseInOutCubic => "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.645 0.045 0.355 1\"".to_string(),
-            Self::EaseInExpo => "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.95 0.05 0.795 0.035\"".to_string(),
-            Self::EaseOutExpo => "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.19 1 0.22 1\"".to_string(),
-            Self::EaseInOutExpo => "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"1 0 0 1\"".to_string(),
-            Self::EaseInBack => "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.6 -0.28 0.735 0.045\"".to_string(),
-            Self::EaseOutBack => "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.175 0.885 0.32 1.275\"".to_string(),
+            Self::EaseInQuad => {
+                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.55 0.085 0.68 0.53\""
+                    .to_string()
+            }
+            Self::EaseOutQuad => {
+                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.25 0.46 0.45 0.94\""
+                    .to_string()
+            }
+            Self::EaseInOutQuad => {
+                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.455 0.03 0.515 0.955\""
+                    .to_string()
+            }
+            Self::EaseInCubic => {
+                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.55 0.055 0.675 0.19\""
+                    .to_string()
+            }
+            Self::EaseOutCubic => {
+                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.215 0.61 0.355 1\""
+                    .to_string()
+            }
+            Self::EaseInOutCubic => {
+                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.645 0.045 0.355 1\""
+                    .to_string()
+            }
+            Self::EaseInExpo => {
+                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.95 0.05 0.795 0.035\""
+                    .to_string()
+            }
+            Self::EaseOutExpo => {
+                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.19 1 0.22 1\"".to_string()
+            }
+            Self::EaseInOutExpo => {
+                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"1 0 0 1\"".to_string()
+            }
+            Self::EaseInBack => {
+                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.6 -0.28 0.735 0.045\""
+                    .to_string()
+            }
+            Self::EaseOutBack => {
+                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.175 0.885 0.32 1.275\""
+                    .to_string()
+            }
             _ => "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.42 0 0.58 1\"".to_string(),
         }
     }
@@ -468,7 +527,8 @@ fn spring_evaluate(t: f64, stiffness: f64, damping: f64, mass: f64) -> f64 {
     let zeta = damping / (2.0 * (stiffness * mass).sqrt());
     if zeta < 1.0 {
         let omega_d = omega * (1.0 - zeta * zeta).sqrt();
-        1.0 - (-zeta * omega * t).exp() * ((zeta * omega * t / omega_d).sin() * zeta * omega / omega_d + (omega_d * t).cos())
+        1.0 - (-zeta * omega * t).exp()
+            * ((zeta * omega * t / omega_d).sin() * zeta * omega / omega_d + (omega_d * t).cos())
     } else {
         1.0 - (1.0 + omega * t) * (-omega * t).exp()
     }
@@ -479,7 +539,9 @@ fn cubic_bezier_evaluate(t: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
     for _ in 0..8 {
         let x = cubic_bezier_x(guess, x1, x2) - t;
         let dx = cubic_bezier_dx(guess, x1, x2);
-        if dx.abs() < 1e-7 { break; }
+        if dx.abs() < 1e-7 {
+            break;
+        }
         guess -= x / dx;
     }
     cubic_bezier_y(guess, y1, y2)
@@ -654,11 +716,7 @@ pub fn parse_path_commands(d: &str) -> Vec<PathCommand> {
     commands
 }
 
-pub fn interpolate_commands(
-    from: &[PathCommand],
-    to: &[PathCommand],
-    t: f64,
-) -> String {
+pub fn interpolate_commands(from: &[PathCommand], to: &[PathCommand], t: f64) -> String {
     let len = from.len().max(to.len());
     let mut result = String::new();
 
@@ -671,23 +729,31 @@ pub fn interpolate_commands(
 
         let (cmd_char, from_coords, to_coords) = match (from_cmd, to_cmd) {
             (Some(f), Some(o)) => {
-                if !f.coords.is_empty() { last_from_coord = f.coords.clone(); }
-                if !o.coords.is_empty() { last_to_coord = o.coords.clone(); }
+                if !f.coords.is_empty() {
+                    last_from_coord = f.coords.clone();
+                }
+                if !o.coords.is_empty() {
+                    last_to_coord = o.coords.clone();
+                }
                 (f.cmd, &f.coords, &o.coords)
             }
             (Some(f), None) => {
-                if !f.coords.is_empty() { last_from_coord = f.coords.clone(); }
+                if !f.coords.is_empty() {
+                    last_from_coord = f.coords.clone();
+                }
                 (f.cmd, &f.coords, &last_to_coord)
             }
             (None, Some(o)) => {
-                if !o.coords.is_empty() { last_to_coord = o.coords.clone(); }
+                if !o.coords.is_empty() {
+                    last_to_coord = o.coords.clone();
+                }
                 (o.cmd, &last_from_coord, &o.coords)
             }
             (None, None) => break,
         };
 
         result.push(cmd_char);
-        
+
         let coord_len = from_coords.len().max(to_coords.len());
         for j in 0..coord_len {
             let f_val = *from_coords.get(j).unwrap_or(&0.0);
@@ -700,15 +766,10 @@ pub fn interpolate_commands(
 }
 
 /// Morph between two SVG paths
-pub fn morph_paths(
-    from_d: &str,
-    to_d: &str,
-    steps: u32,
-    easing: &Easing,
-) -> Result<Vec<String>> {
+pub fn morph_paths(from_d: &str, to_d: &str, steps: u32, easing: &Easing) -> Result<Vec<String>> {
     let from_cmds = parse_path_commands(from_d);
     let to_cmds = parse_path_commands(to_d);
-    
+
     let mut frames = Vec::new();
     for step in 0..=steps {
         let t_ratio = step as f64 / steps as f64;
@@ -796,18 +857,36 @@ impl AnimationPreset {
                 let cx = params.get("cx").and_then(|v| v.as_f64()).unwrap_or(150.0);
                 let cy = params.get("cy").and_then(|v| v.as_f64()).unwrap_or(150.0);
                 let mut properties_0 = std::collections::HashMap::new();
-                properties_0.insert("transform".to_string(), format!("scale(1) translate({}, {})", cx * -0.0, cy * -0.0));
-                
+                properties_0.insert(
+                    "transform".to_string(),
+                    format!("scale(1) translate({}, {})", cx * -0.0, cy * -0.0),
+                );
+
                 let mut properties_50 = std::collections::HashMap::new();
-                properties_50.insert("transform".to_string(), format!("scale(1.1) translate({}, {})", cx * -0.05, cy * -0.05));
-                
+                properties_50.insert(
+                    "transform".to_string(),
+                    format!("scale(1.1) translate({}, {})", cx * -0.05, cy * -0.05),
+                );
+
                 let mut properties_100 = std::collections::HashMap::new();
-                properties_100.insert("transform".to_string(), format!("scale(1) translate({}, {})", cx * -0.0, cy * -0.0));
+                properties_100.insert(
+                    "transform".to_string(),
+                    format!("scale(1) translate({}, {})", cx * -0.0, cy * -0.0),
+                );
 
                 let steps = vec![
-                    CssKeyframeStep { percentage: 0.0, properties: properties_0 },
-                    CssKeyframeStep { percentage: 50.0, properties: properties_50 },
-                    CssKeyframeStep { percentage: 100.0, properties: properties_100 },
+                    CssKeyframeStep {
+                        percentage: 0.0,
+                        properties: properties_0,
+                    },
+                    CssKeyframeStep {
+                        percentage: 50.0,
+                        properties: properties_50,
+                    },
+                    CssKeyframeStep {
+                        percentage: 100.0,
+                        properties: properties_100,
+                    },
                 ];
 
                 Ok(AnimationOutput::Css(CssKeyframes {
@@ -822,20 +901,35 @@ impl AnimationPreset {
                 }))
             }
             Self::Bounce => {
-                let amount = params.get("amount").and_then(|v| v.as_f64()).unwrap_or(30.0);
+                let amount = params
+                    .get("amount")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(30.0);
                 let mut properties_0 = std::collections::HashMap::new();
                 properties_0.insert("transform".to_string(), "translateY(0)".to_string());
-                
+
                 let mut properties_50 = std::collections::HashMap::new();
-                properties_50.insert("transform".to_string(), format!("translateY(-{}px)", amount));
-                
+                properties_50.insert(
+                    "transform".to_string(),
+                    format!("translateY(-{}px)", amount),
+                );
+
                 let mut properties_100 = std::collections::HashMap::new();
                 properties_100.insert("transform".to_string(), "translateY(0)".to_string());
 
                 let steps = vec![
-                    CssKeyframeStep { percentage: 0.0, properties: properties_0 },
-                    CssKeyframeStep { percentage: 50.0, properties: properties_50 },
-                    CssKeyframeStep { percentage: 100.0, properties: properties_100 },
+                    CssKeyframeStep {
+                        percentage: 0.0,
+                        properties: properties_0,
+                    },
+                    CssKeyframeStep {
+                        percentage: 50.0,
+                        properties: properties_50,
+                    },
+                    CssKeyframeStep {
+                        percentage: 100.0,
+                        properties: properties_100,
+                    },
                 ];
 
                 Ok(AnimationOutput::Css(CssKeyframes {
@@ -850,19 +944,45 @@ impl AnimationPreset {
                 }))
             }
             Self::Shake => {
-                let amount = params.get("amount").and_then(|v| v.as_f64()).unwrap_or(10.0);
-                let mut p0 = std::collections::HashMap::new(); p0.insert("transform".to_string(), "translateX(0)".to_string());
-                let mut p25 = std::collections::HashMap::new(); p25.insert("transform".to_string(), format!("translateX(-{}px)", amount));
-                let mut p50 = std::collections::HashMap::new(); p50.insert("transform".to_string(), "translateX(0)".to_string());
-                let mut p75 = std::collections::HashMap::new(); p75.insert("transform".to_string(), format!("translateX({}px)", amount));
-                let mut p100 = std::collections::HashMap::new(); p100.insert("transform".to_string(), "translateX(0)".to_string());
+                let amount = params
+                    .get("amount")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(10.0);
+                let mut p0 = std::collections::HashMap::new();
+                p0.insert("transform".to_string(), "translateX(0)".to_string());
+                let mut p25 = std::collections::HashMap::new();
+                p25.insert(
+                    "transform".to_string(),
+                    format!("translateX(-{}px)", amount),
+                );
+                let mut p50 = std::collections::HashMap::new();
+                p50.insert("transform".to_string(), "translateX(0)".to_string());
+                let mut p75 = std::collections::HashMap::new();
+                p75.insert("transform".to_string(), format!("translateX({}px)", amount));
+                let mut p100 = std::collections::HashMap::new();
+                p100.insert("transform".to_string(), "translateX(0)".to_string());
 
                 let steps = vec![
-                    CssKeyframeStep { percentage: 0.0, properties: p0 },
-                    CssKeyframeStep { percentage: 25.0, properties: p25 },
-                    CssKeyframeStep { percentage: 50.0, properties: p50 },
-                    CssKeyframeStep { percentage: 75.0, properties: p75 },
-                    CssKeyframeStep { percentage: 100.0, properties: p100 },
+                    CssKeyframeStep {
+                        percentage: 0.0,
+                        properties: p0,
+                    },
+                    CssKeyframeStep {
+                        percentage: 25.0,
+                        properties: p25,
+                    },
+                    CssKeyframeStep {
+                        percentage: 50.0,
+                        properties: p50,
+                    },
+                    CssKeyframeStep {
+                        percentage: 75.0,
+                        properties: p75,
+                    },
+                    CssKeyframeStep {
+                        percentage: 100.0,
+                        properties: p100,
+                    },
                 ];
 
                 Ok(AnimationOutput::Css(CssKeyframes {
@@ -877,7 +997,10 @@ impl AnimationPreset {
                 }))
             }
             Self::DrawPath => {
-                let length = params.get("length").and_then(|v| v.as_f64()).unwrap_or(1000.0);
+                let length = params
+                    .get("length")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(1000.0);
                 let anim = SmilAnimation::Animate {
                     attribute_name: "stroke-dashoffset".to_string(),
                     from: length.to_string(),
@@ -891,7 +1014,10 @@ impl AnimationPreset {
                 Ok(AnimationOutput::Smil(vec![anim]))
             }
             Self::Morph => {
-                let from_path = params.get("from_path").and_then(|v| v.as_str()).unwrap_or("");
+                let from_path = params
+                    .get("from_path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let to_path = params.get("to_path").and_then(|v| v.as_str()).unwrap_or("");
                 let anim = SmilAnimation::Animate {
                     attribute_name: "d".to_string(),
@@ -988,7 +1114,7 @@ pub struct LottieShape {
 pub fn lottie_to_svg(lottie_json: &str) -> Result<String> {
     let lottie: LottieAnimation = serde_json::from_str(lottie_json)
         .map_err(|e| OpenMediaError::Internal(format!("Failed to parse Lottie JSON: {}", e)))?;
-        
+
     let mut svg = format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {} {}\">\n",
         lottie.w, lottie.h, lottie.w, lottie.h
@@ -997,15 +1123,17 @@ pub fn lottie_to_svg(lottie_json: &str) -> Result<String> {
     for layer in lottie.layers {
         if layer.ty == 4 {
             let mut g_element = format!("  <g id=\"layer_{}\" name=\"{}\">\n", layer.ind, layer.nm);
-            
+
             if let LottieValue::Static { k } = &layer.ks.o {
                 if *k < 100.0 {
-                    g_element = g_element.replace("<g ", &format!("<g opacity=\"{:.2}\" ", *k / 100.0));
+                    g_element =
+                        g_element.replace("<g ", &format!("<g opacity=\"{:.2}\" ", *k / 100.0));
                 }
             } else if let LottieValue::Animated { k } = &layer.ks.o {
                 if let Some(first) = k.first() {
                     let from_val = first.s.first().copied().unwrap_or(100.0) / 100.0;
-                    let to_val = k.last().and_then(|x| x.s.first().copied()).unwrap_or(100.0) / 100.0;
+                    let to_val =
+                        k.last().and_then(|x| x.s.first().copied()).unwrap_or(100.0) / 100.0;
                     let duration = (lottie.op - lottie.ip) / lottie.fr;
                     let anim = SmilAnimation::Animate {
                         attribute_name: "opacity".to_string(),
@@ -1025,9 +1153,11 @@ pub fn lottie_to_svg(lottie_json: &str) -> Result<String> {
 
             for shape in &layer.shapes {
                 if shape.ty == "rc" {
-                    g_element.push_str("    <rect width=\"100\" height=\"100\" fill=\"#8b5cf6\" />\n");
+                    g_element
+                        .push_str("    <rect width=\"100\" height=\"100\" fill=\"#8b5cf6\" />\n");
                 } else if shape.ty == "el" {
-                    g_element.push_str("    <circle cx=\"50\" cy=\"50\" r=\"50\" fill=\"#3b82f6\" />\n");
+                    g_element
+                        .push_str("    <circle cx=\"50\" cy=\"50\" r=\"50\" fill=\"#3b82f6\" />\n");
                 } else if shape.ty == "gr" {
                     g_element.push_str("    <!-- Group shape items -->\n");
                 }
@@ -1051,8 +1181,7 @@ pub fn svg_to_lottie(_svg_content: &str) -> Result<String> {
         op: 90.0,
         layers: vec![],
     };
-    serde_json::to_string(&lottie)
-        .map_err(|e| OpenMediaError::Internal(e.to_string()))
+    serde_json::to_string(&lottie).map_err(|e| OpenMediaError::Internal(e.to_string()))
 }
 
 #[cfg(test)]
@@ -1111,8 +1240,14 @@ mod tests {
         p0.insert("opacity".to_string(), "0".to_string());
         let mut p100 = std::collections::HashMap::new();
         p100.insert("opacity".to_string(), "1".to_string());
-        steps.push(CssKeyframeStep { percentage: 0.0, properties: p0 });
-        steps.push(CssKeyframeStep { percentage: 100.0, properties: p100 });
+        steps.push(CssKeyframeStep {
+            percentage: 0.0,
+            properties: p0,
+        });
+        steps.push(CssKeyframeStep {
+            percentage: 100.0,
+            properties: p100,
+        });
 
         let keyframes = CssKeyframes {
             name: "fade_in_custom".to_string(),

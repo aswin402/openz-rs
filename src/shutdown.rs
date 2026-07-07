@@ -1,6 +1,6 @@
-use tokio::sync::watch;
-use std::sync::OnceLock;
 use std::sync::Mutex;
+use std::sync::OnceLock;
+use tokio::sync::watch;
 
 static SHUTDOWN_TX: OnceLock<watch::Sender<bool>> = OnceLock::new();
 static SPAWNED_CHILDREN: OnceLock<Mutex<Vec<std::process::Child>>> = OnceLock::new();
@@ -20,14 +20,20 @@ pub fn trigger_cli_cancel() {
         let (tx, _) = watch::channel(0);
         tx
     });
-    let _ = tx.send_modify(|val| *val += 1);
+    let next = {
+        let current = *tx.borrow();
+        current.wrapping_add(1)
+    };
+    let _ = tx.send(next);
 }
 
 pub fn cli_cancel_tx() -> watch::Sender<u64> {
-    CLI_CANCEL_TX.get_or_init(|| {
-        let (tx, _) = watch::channel(0);
-        tx
-    }).clone()
+    CLI_CANCEL_TX
+        .get_or_init(|| {
+            let (tx, _) = watch::channel(0);
+            tx
+        })
+        .clone()
 }
 
 pub fn init() -> watch::Receiver<bool> {
@@ -60,7 +66,7 @@ pub fn trigger() {
         let _ = tx.send(true);
     }
     kill_all_registered_children();
-    
+
     tokio::spawn(async {
         crate::tools::mcp::terminate_all_mcp_clients().await;
     });

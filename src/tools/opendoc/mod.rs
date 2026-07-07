@@ -1,8 +1,8 @@
 use anyhow::Result;
-use serde::Deserialize;
-use schemars::JsonSchema;
-use serde_json::{json, Value};
 use opendoc_mcp::server::OpendocServer;
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::{json, Value};
 
 pub fn get_server() -> &'static OpendocServer {
     static SERVER: std::sync::OnceLock<OpendocServer> = std::sync::OnceLock::new();
@@ -67,9 +67,13 @@ pub struct ReadDocumentTextParams {
     #[schemars(description = "Optional password for encrypted documents")]
     pub password: Option<String>,
 }
-define_opendoc_tool!(OpendocReadDocumentTextTool, "opendoc_read_document_text", "Read the full text content of any document (plain text extraction).", ReadDocumentTextParams, |p: ReadDocumentTextParams| {
-    get_server().read_document_text(p.file_path, p.password)
-});
+define_opendoc_tool!(
+    OpendocReadDocumentTextTool,
+    "opendoc_read_document_text",
+    "Read the full text content of any document (plain text extraction).",
+    ReadDocumentTextParams,
+    |p: ReadDocumentTextParams| { get_server().read_document_text(p.file_path, p.password) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct SearchDocumentParams {
@@ -82,9 +86,15 @@ pub struct SearchDocumentParams {
     #[schemars(description = "Optional password for encrypted documents")]
     pub password: Option<String>,
 }
-define_opendoc_tool!(OpendocSearchDocumentTool, "opendoc_search_document", "Search for text or regex pattern matches inside a document.", SearchDocumentParams, |p: SearchDocumentParams| {
-    get_server().search_document(p.file_path, p.query, p.use_regex, p.password)
-});
+define_opendoc_tool!(
+    OpendocSearchDocumentTool,
+    "opendoc_search_document",
+    "Search for text or regex pattern matches inside a document.",
+    SearchDocumentParams,
+    |p: SearchDocumentParams| {
+        get_server().search_document(p.file_path, p.query, p.use_regex, p.password)
+    }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ReplaceTextParams {
@@ -97,9 +107,15 @@ pub struct ReplaceTextParams {
     #[schemars(description = "Optional password for encrypted documents")]
     pub password: Option<String>,
 }
-define_opendoc_tool!(OpendocReplaceTextTool, "opendoc_replace_text", "Search and replace text in a document (works on DOCX, XLSX, MD, CSV, HTML, TXT).", ReplaceTextParams, |p: ReplaceTextParams| {
-    get_server().replace_text(p.file_path, p.find, p.replace, p.password)
-});
+define_opendoc_tool!(
+    OpendocReplaceTextTool,
+    "opendoc_replace_text",
+    "Search and replace text in a document (works on DOCX, XLSX, MD, CSV, HTML, TXT).",
+    ReplaceTextParams,
+    |p: ReplaceTextParams| {
+        get_server().replace_text(p.file_path, p.find, p.replace, p.password)
+    }
+);
 
 // ────────────────────────────────────────────────────────────────
 //  2. Diff & Templating & Chunking Tools
@@ -112,9 +128,13 @@ pub struct DiffDocumentsParams {
     #[schemars(description = "Second document path")]
     pub file_b: String,
 }
-define_opendoc_tool!(OpendocDiffDocumentsTool, "opendoc_diff_documents", "Compare two documents and return a structured JSON diff of paragraphs, tables, and sections.", DiffDocumentsParams, |p: DiffDocumentsParams| {
-    get_server().diff_documents(p.file_a, p.file_b)
-});
+define_opendoc_tool!(
+    OpendocDiffDocumentsTool,
+    "opendoc_diff_documents",
+    "Compare two documents and return a structured JSON diff of paragraphs, tables, and sections.",
+    DiffDocumentsParams,
+    |p: DiffDocumentsParams| { get_server().diff_documents(p.file_a, p.file_b) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct DiffDocumentsVisualParams {
@@ -177,9 +197,13 @@ pub struct ValidatePdfAComplianceParams {
     #[schemars(description = "File path to the PDF document")]
     pub file_path: String,
 }
-define_opendoc_tool!(OpendocValidatePdfAComplianceTool, "opendoc_validate_pdf_a_compliance", "Validate a PDF file for PDF/A standard compliance (long-term preservation).", ValidatePdfAComplianceParams, |p: ValidatePdfAComplianceParams| {
-    get_server().validate_pdf_a_compliance(p.file_path)
-});
+define_opendoc_tool!(
+    OpendocValidatePdfAComplianceTool,
+    "opendoc_validate_pdf_a_compliance",
+    "Validate a PDF file for PDF/A standard compliance (long-term preservation).",
+    ValidatePdfAComplianceParams,
+    |p: ValidatePdfAComplianceParams| { get_server().validate_pdf_a_compliance(p.file_path) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ExtractStructuredMetadataParams {
@@ -188,9 +212,15 @@ pub struct ExtractStructuredMetadataParams {
     #[schemars(description = "The target domain template: 'legal', 'financial', or 'timeline'")]
     pub template_type: String,
 }
-define_opendoc_tool!(OpendocExtractStructuredMetadataTool, "opendoc_extract_structured_metadata", "Extract structured domain metadata (legal, financial, timeline) using rule-based parsing.", ExtractStructuredMetadataParams, |p: ExtractStructuredMetadataParams| {
-    get_server().extract_structured_metadata(p.file_path, p.template_type)
-});
+define_opendoc_tool!(
+    OpendocExtractStructuredMetadataTool,
+    "opendoc_extract_structured_metadata",
+    "Extract structured domain metadata (legal, financial, timeline) using rule-based parsing.",
+    ExtractStructuredMetadataParams,
+    |p: ExtractStructuredMetadataParams| {
+        get_server().extract_structured_metadata(p.file_path, p.template_type)
+    }
+);
 
 // ────────────────────────────────────────────────────────────────
 //  4. Conversion & Split & Image Extraction Tools
@@ -218,9 +248,13 @@ pub struct ExtractImagesParams {
     #[schemars(description = "Directory where the extracted images should be saved")]
     pub output_dir: String,
 }
-define_opendoc_tool!(OpendocExtractImagesTool, "opendoc_extract_images", "Extract embedded images from office files (DOCX, PPTX).", ExtractImagesParams, |p: ExtractImagesParams| {
-    get_server().extract_images(p.file_path, p.output_dir)
-});
+define_opendoc_tool!(
+    OpendocExtractImagesTool,
+    "opendoc_extract_images",
+    "Extract embedded images from office files (DOCX, PPTX).",
+    ExtractImagesParams,
+    |p: ExtractImagesParams| { get_server().extract_images(p.file_path, p.output_dir) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct SplitPdfParams {
@@ -248,9 +282,13 @@ pub struct CreateHtmlParams {
     #[schemars(description = "Optional HTML title")]
     pub title: Option<String>,
 }
-define_opendoc_tool!(OpendocCreateHtmlTool, "opendoc_create_html", "Create a basic HTML document with paragraphs.", CreateHtmlParams, |p: CreateHtmlParams| {
-    get_server().create_html(p.file_path, p.body, p.title)
-});
+define_opendoc_tool!(
+    OpendocCreateHtmlTool,
+    "opendoc_create_html",
+    "Create a basic HTML document with paragraphs.",
+    CreateHtmlParams,
+    |p: CreateHtmlParams| { get_server().create_html(p.file_path, p.body, p.title) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct BatchConvertParams {
@@ -269,9 +307,23 @@ pub struct BatchConvertParams {
     #[schemars(description = "Optional concurrency thread limit")]
     pub concurrency: Option<usize>,
 }
-define_opendoc_tool!(OpendocBatchConvertTool, "opendoc_batch_convert", "Batch convert all document files in a directory using parallel processing.", BatchConvertParams, |p: BatchConvertParams| {
-    get_server().batch_convert(p.input_dir, p.pattern, p.target_format, p.output_dir, p.recursive, p.password, p.concurrency)
-});
+define_opendoc_tool!(
+    OpendocBatchConvertTool,
+    "opendoc_batch_convert",
+    "Batch convert all document files in a directory using parallel processing.",
+    BatchConvertParams,
+    |p: BatchConvertParams| {
+        get_server().batch_convert(
+            p.input_dir,
+            p.pattern,
+            p.target_format,
+            p.output_dir,
+            p.recursive,
+            p.password,
+            p.concurrency,
+        )
+    }
+);
 
 // ────────────────────────────────────────────────────────────────
 //  5. Office Creation & Formatting Tools
@@ -284,15 +336,21 @@ pub struct CreateDocxParams {
     #[schemars(description = "Document main header/title")]
     pub title: Option<String>,
 }
-define_opendoc_tool!(OpendocCreateDocxTool, "opendoc_create_docx", "Create a new empty DOCX document with an optional title.", CreateDocxParams, |p: CreateDocxParams| {
-    get_server().create_docx(p.file_path, p.title)
-});
+define_opendoc_tool!(
+    OpendocCreateDocxTool,
+    "opendoc_create_docx",
+    "Create a new empty DOCX document with an optional title.",
+    CreateDocxParams,
+    |p: CreateDocxParams| { get_server().create_docx(p.file_path, p.title) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct DocxAddParagraphParams {
     #[schemars(description = "File path to the document")]
     pub file_path: String,
-    #[schemars(description = "Text content. Never insert manual bullet character lists; use standard paragraph lines.")]
+    #[schemars(
+        description = "Text content. Never insert manual bullet character lists; use standard paragraph lines."
+    )]
     pub text: String,
     #[schemars(description = "Optional bold. Use for titles and table headers.")]
     pub bold: Option<bool>,
@@ -321,33 +379,43 @@ pub struct DocxAddParagraphParams {
     #[schemars(description = "Optional page break before paragraph.")]
     pub page_break_before: Option<bool>,
 }
-define_opendoc_tool!(OpendocDocxAddParagraphTool, "opendoc_docx_add_paragraph", "Append or insert a styled paragraph to a DOCX document.", DocxAddParagraphParams, |p: DocxAddParagraphParams| {
-    get_server().docx_add_paragraph(
-        p.file_path,
-        p.text,
-        p.bold,
-        p.italic,
-        p.underline,
-        p.font_size,
-        p.font_family,
-        p.color,
-        p.highlight,
-        p.alignment,
-        p.shading,
-        p.line_spacing,
-        p.keep_with_next,
-        p.keep_together,
-        p.page_break_before
-    )
-});
+define_opendoc_tool!(
+    OpendocDocxAddParagraphTool,
+    "opendoc_docx_add_paragraph",
+    "Append or insert a styled paragraph to a DOCX document.",
+    DocxAddParagraphParams,
+    |p: DocxAddParagraphParams| {
+        get_server().docx_add_paragraph(
+            p.file_path,
+            p.text,
+            p.bold,
+            p.italic,
+            p.underline,
+            p.font_size,
+            p.font_family,
+            p.color,
+            p.highlight,
+            p.alignment,
+            p.shading,
+            p.line_spacing,
+            p.keep_with_next,
+            p.keep_together,
+            p.page_break_before,
+        )
+    }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct DocxAddTableParams {
     #[schemars(description = "File path to the document")]
     pub file_path: String,
-    #[schemars(description = "Headers (JSON array of strings). E.g. ['Item', 'Quantity', 'Cost'].")]
+    #[schemars(
+        description = "Headers (JSON array of strings). E.g. ['Item', 'Quantity', 'Cost']."
+    )]
     pub headers: Vec<String>,
-    #[schemars(description = "Data rows (JSON array of arrays of strings). Must match header length.")]
+    #[schemars(
+        description = "Data rows (JSON array of arrays of strings). Must match header length."
+    )]
     pub data: Vec<Vec<String>>,
     #[schemars(description = "Optional table width percentage (0 to 100).")]
     pub width_pct: Option<f64>,
@@ -366,21 +434,27 @@ pub struct DocxAddTableParams {
     #[schemars(description = "Optional prevent page breaks inside rows.")]
     pub cant_split: Option<bool>,
 }
-define_opendoc_tool!(OpendocDocxAddTableTool, "opendoc_docx_add_table", "Append or insert a table structure in a DOCX document.", DocxAddTableParams, |p: DocxAddTableParams| {
-    get_server().docx_add_table(
-        p.file_path,
-        p.headers,
-        p.data,
-        p.width_pct,
-        p.alignment,
-        p.border_style,
-        p.border_size,
-        p.border_color,
-        p.shading_header,
-        p.shading_data,
-        p.cant_split
-    )
-});
+define_opendoc_tool!(
+    OpendocDocxAddTableTool,
+    "opendoc_docx_add_table",
+    "Append or insert a table structure in a DOCX document.",
+    DocxAddTableParams,
+    |p: DocxAddTableParams| {
+        get_server().docx_add_table(
+            p.file_path,
+            p.headers,
+            p.data,
+            p.width_pct,
+            p.alignment,
+            p.border_style,
+            p.border_size,
+            p.border_color,
+            p.shading_header,
+            p.shading_data,
+            p.cant_split,
+        )
+    }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct DocxAddImageParams {
@@ -393,9 +467,15 @@ pub struct DocxAddImageParams {
     #[schemars(description = "Optional image height in inches (default: 1.5)")]
     pub height_inches: Option<f64>,
 }
-define_opendoc_tool!(OpendocDocxAddImageTool, "opendoc_docx_add_image", "Append or insert an image file structure in a DOCX document.", DocxAddImageParams, |p: DocxAddImageParams| {
-    get_server().docx_add_image(p.file_path, p.image_path, p.width_inches, p.height_inches)
-});
+define_opendoc_tool!(
+    OpendocDocxAddImageTool,
+    "opendoc_docx_add_image",
+    "Append or insert an image file structure in a DOCX document.",
+    DocxAddImageParams,
+    |p: DocxAddImageParams| {
+        get_server().docx_add_image(p.file_path, p.image_path, p.width_inches, p.height_inches)
+    }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct CreatePptxParams {
@@ -404,9 +484,13 @@ pub struct CreatePptxParams {
     #[schemars(description = "Presentation main title")]
     pub title: Option<String>,
 }
-define_opendoc_tool!(OpendocCreatePptxTool, "opendoc_create_pptx", "Create a new empty PPTX presentation file.", CreatePptxParams, |p: CreatePptxParams| {
-    get_server().create_pptx(p.file_path, p.title)
-});
+define_opendoc_tool!(
+    OpendocCreatePptxTool,
+    "opendoc_create_pptx",
+    "Create a new empty PPTX presentation file.",
+    CreatePptxParams,
+    |p: CreatePptxParams| { get_server().create_pptx(p.file_path, p.title) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct PptxAddSlideParams {
@@ -427,20 +511,41 @@ pub struct PptxAddSlideParams {
     #[schemars(description = "Optional alignment: left, center, right, justify.")]
     pub alignment: Option<String>,
 }
-define_opendoc_tool!(OpendocPptxAddSlideTool, "opendoc_pptx_add_slide", "Append a new slide to a PPTX presentation with custom layout and styles.", PptxAddSlideParams, |p: PptxAddSlideParams| {
-    get_server().pptx_add_slide(p.file_path, p.title, p.body, p.bg_color, p.font_size, p.font_color, p.font_family, p.alignment)
-});
+define_opendoc_tool!(
+    OpendocPptxAddSlideTool,
+    "opendoc_pptx_add_slide",
+    "Append a new slide to a PPTX presentation with custom layout and styles.",
+    PptxAddSlideParams,
+    |p: PptxAddSlideParams| {
+        get_server().pptx_add_slide(
+            p.file_path,
+            p.title,
+            p.body,
+            p.bg_color,
+            p.font_size,
+            p.font_color,
+            p.font_family,
+            p.alignment,
+        )
+    }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct CreateXlsxParams {
     #[schemars(description = "File path to save the XLSX")]
     pub file_path: String,
-    #[schemars(description = "JSON array of sheets: [{\"name\": \"Sheet1\", \"headers\": [\"A\",\"B\"], \"data\": [[\"1\",\"2\"]]}]")]
+    #[schemars(
+        description = "JSON array of sheets: [{\"name\": \"Sheet1\", \"headers\": [\"A\",\"B\"], \"data\": [[\"1\",\"2\"]]}]"
+    )]
     pub sheets: serde_json::Value,
 }
-define_opendoc_tool!(OpendocCreateXlsxTool, "opendoc_create_xlsx", "Create a new Excel XLSX spreadsheet file.", CreateXlsxParams, |p: CreateXlsxParams| {
-    get_server().create_xlsx(p.file_path, p.sheets)
-});
+define_opendoc_tool!(
+    OpendocCreateXlsxTool,
+    "opendoc_create_xlsx",
+    "Create a new Excel XLSX spreadsheet file.",
+    CreateXlsxParams,
+    |p: CreateXlsxParams| { get_server().create_xlsx(p.file_path, p.sheets) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct EditXlsxParams {
@@ -448,12 +553,18 @@ pub struct EditXlsxParams {
     pub file_path: String,
     #[schemars(description = "Optional JSON array of sheet names to add: [\"Summary\"]")]
     pub add_sheets: Option<serde_json::Value>,
-    #[schemars(description = "Optional JSON array of cell updates: [{\"sheet_name\": \"Sheet1\", \"row\": 1, \"col\": 1, \"value\": \"31\"}]")]
+    #[schemars(
+        description = "Optional JSON array of cell updates: [{\"sheet_name\": \"Sheet1\", \"row\": 1, \"col\": 1, \"value\": \"31\"}]"
+    )]
     pub cell_updates: Option<serde_json::Value>,
 }
-define_opendoc_tool!(OpendocEditXlsxTool, "opendoc_edit_xlsx", "Write or edit a cell coordinate value and formatting in an Excel sheet.", EditXlsxParams, |p: EditXlsxParams| {
-    get_server().edit_xlsx(p.file_path, p.add_sheets, p.cell_updates)
-});
+define_opendoc_tool!(
+    OpendocEditXlsxTool,
+    "opendoc_edit_xlsx",
+    "Write or edit a cell coordinate value and formatting in an Excel sheet.",
+    EditXlsxParams,
+    |p: EditXlsxParams| { get_server().edit_xlsx(p.file_path, p.add_sheets, p.cell_updates) }
+);
 
 // ────────────────────────────────────────────────────────────────
 //  6. PDF Creation & PDF Form Tools
@@ -468,15 +579,21 @@ pub struct CreatePdfParams {
     #[schemars(description = "Optional author name")]
     pub author: Option<String>,
 }
-define_opendoc_tool!(OpendocCreatePdfTool, "opendoc_create_pdf", "Create a basic plain text PDF document.", CreatePdfParams, |p: CreatePdfParams| {
-    get_server().create_pdf(p.file_path, p.text, p.author)
-});
+define_opendoc_tool!(
+    OpendocCreatePdfTool,
+    "opendoc_create_pdf",
+    "Create a basic plain text PDF document.",
+    CreatePdfParams,
+    |p: CreatePdfParams| { get_server().create_pdf(p.file_path, p.text, p.author) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct CreateFormattedPdfParams {
     #[schemars(description = "File path to save the PDF")]
     pub file_path: String,
-    #[schemars(description = "Text content. Separate chapters/pages using Form Feed '\\x0c' or '\\f' characters.")]
+    #[schemars(
+        description = "Text content. Separate chapters/pages using Form Feed '\\x0c' or '\\f' characters."
+    )]
     pub text: String,
     #[schemars(description = "Optional document title (rendered centered on page 1).")]
     pub title: Option<String>,
@@ -517,9 +634,13 @@ pub struct MergePdfsParams {
     #[schemars(description = "Output PDF file path")]
     pub output_path: String,
 }
-define_opendoc_tool!(OpendocMergePdfsTool, "opendoc_merge_pdfs", "Merge multiple PDF documents together in sequence.", MergePdfsParams, |p: MergePdfsParams| {
-    get_server().merge_pdfs(p.sources, p.output_path)
-});
+define_opendoc_tool!(
+    OpendocMergePdfsTool,
+    "opendoc_merge_pdfs",
+    "Merge multiple PDF documents together in sequence.",
+    MergePdfsParams,
+    |p: MergePdfsParams| { get_server().merge_pdfs(p.sources, p.output_path) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ExtractPdfTextParams {
@@ -528,18 +649,26 @@ pub struct ExtractPdfTextParams {
     #[schemars(description = "Optional page number (0-based)")]
     pub page: Option<u32>,
 }
-define_opendoc_tool!(OpendocExtractPdfTextTool, "opendoc_extract_pdf_text", "Extract plain text content from a PDF document.", ExtractPdfTextParams, |p: ExtractPdfTextParams| {
-    get_server().extract_pdf_text(p.file_path, p.page)
-});
+define_opendoc_tool!(
+    OpendocExtractPdfTextTool,
+    "opendoc_extract_pdf_text",
+    "Extract plain text content from a PDF document.",
+    ExtractPdfTextParams,
+    |p: ExtractPdfTextParams| { get_server().extract_pdf_text(p.file_path, p.page) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ListPdfFieldsParams {
     #[schemars(description = "File path to the PDF")]
     pub file_path: String,
 }
-define_opendoc_tool!(OpendocListPdfFieldsTool, "opendoc_list_pdf_fields", "List all interactive form fields (AcroForm) and types in a PDF file.", ListPdfFieldsParams, |p: ListPdfFieldsParams| {
-    get_server().list_pdf_fields(p.file_path)
-});
+define_opendoc_tool!(
+    OpendocListPdfFieldsTool,
+    "opendoc_list_pdf_fields",
+    "List all interactive form fields (AcroForm) and types in a PDF file.",
+    ListPdfFieldsParams,
+    |p: ListPdfFieldsParams| { get_server().list_pdf_fields(p.file_path) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct FillPdfFormParams {
@@ -548,9 +677,13 @@ pub struct FillPdfFormParams {
     #[schemars(description = "JSON object mapping field names to values")]
     pub values: serde_json::Value,
 }
-define_opendoc_tool!(OpendocFillPdfFormTool, "opendoc_fill_pdf_form", "Fill interactive form fields in a PDF using a JSON fields mapping context.", FillPdfFormParams, |p: FillPdfFormParams| {
-    get_server().fill_pdf_form(p.file_path, p.values)
-});
+define_opendoc_tool!(
+    OpendocFillPdfFormTool,
+    "opendoc_fill_pdf_form",
+    "Fill interactive form fields in a PDF using a JSON fields mapping context.",
+    FillPdfFormParams,
+    |p: FillPdfFormParams| { get_server().fill_pdf_form(p.file_path, p.values) }
+);
 
 // ────────────────────────────────────────────────────────────────
 //  7. Advanced Tables & OCR & Vision & Archive Tools
@@ -561,9 +694,13 @@ pub struct FindTablesParams {
     #[schemars(description = "File path to the document")]
     pub file_path: String,
 }
-define_opendoc_tool!(OpendocFindTablesTool, "opendoc_find_tables", "Locate and extract all table structures from any document type.", FindTablesParams, |p: FindTablesParams| {
-    get_server().find_tables(p.file_path)
-});
+define_opendoc_tool!(
+    OpendocFindTablesTool,
+    "opendoc_find_tables",
+    "Locate and extract all table structures from any document type.",
+    FindTablesParams,
+    |p: FindTablesParams| { get_server().find_tables(p.file_path) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct AnalyzeDocumentComplexityParams {
@@ -581,9 +718,13 @@ pub struct OcrDocumentParams {
     #[schemars(description = "Language code (default: eng)")]
     pub language: Option<String>,
 }
-define_opendoc_tool!(OpendocOcrDocumentTool, "opendoc_ocr_document", "Run scanned image OCR text recognition on document pages (requires Tesseract CLI).", OcrDocumentParams, |p: OcrDocumentParams| {
-    get_server().ocr_document(p.file_path, p.language)
-});
+define_opendoc_tool!(
+    OpendocOcrDocumentTool,
+    "opendoc_ocr_document",
+    "Run scanned image OCR text recognition on document pages (requires Tesseract CLI).",
+    OcrDocumentParams,
+    |p: OcrDocumentParams| { get_server().ocr_document(p.file_path, p.language) }
+);
 
 pub struct OpendocCheckOcrAvailableTool;
 #[async_trait::async_trait]
@@ -602,10 +743,12 @@ impl crate::tools::Tool for OpendocCheckOcrAvailableTool {
     }
     async fn call(&self, _arguments: &Value) -> Result<Value> {
         let res_str = get_server().check_ocr_available();
-        let res_val: Value = serde_json::from_str(&res_str).unwrap_or_else(|_| json!({
-            "success": false,
-            "raw": res_str
-        }));
+        let res_val: Value = serde_json::from_str(&res_str).unwrap_or_else(|_| {
+            json!({
+                "success": false,
+                "raw": res_str
+            })
+        });
         Ok(res_val)
     }
 }
@@ -629,12 +772,20 @@ define_opendoc_tool!(OpendocRenderDocumentPagesTool, "opendoc_render_document_pa
 pub struct ExtractArchiveDigestParams {
     #[schemars(description = "Absolute path to the ZIP archive")]
     pub archive_path: String,
-    #[schemars(description = "Optional destination directory. If not specified, a temporary directory will be created.")]
+    #[schemars(
+        description = "Optional destination directory. If not specified, a temporary directory will be created."
+    )]
     pub output_dir: Option<String>,
 }
-define_opendoc_tool!(OpendocExtractArchiveDigestTool, "opendoc_extract_archive_digest", "Recursively unpack and extract text digests from all documents inside a ZIP archive.", ExtractArchiveDigestParams, |p: ExtractArchiveDigestParams| {
-    get_server().extract_archive_digest(p.archive_path, p.output_dir)
-});
+define_opendoc_tool!(
+    OpendocExtractArchiveDigestTool,
+    "opendoc_extract_archive_digest",
+    "Recursively unpack and extract text digests from all documents inside a ZIP archive.",
+    ExtractArchiveDigestParams,
+    |p: ExtractArchiveDigestParams| {
+        get_server().extract_archive_digest(p.archive_path, p.output_dir)
+    }
+);
 
 #[cfg(test)]
 mod tests {
@@ -658,4 +809,3 @@ mod tests {
         assert!(!res.is_empty());
     }
 }
-

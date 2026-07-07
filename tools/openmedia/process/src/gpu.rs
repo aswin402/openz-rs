@@ -1,28 +1,37 @@
-use image::{DynamicImage, ImageBuffer};
-use wgpu::util::DeviceExt;
 use crate::ProcessOperation;
-use openmedia_core::{Result, OpenMediaError};
+use image::{DynamicImage, ImageBuffer};
+use openmedia_core::{OpenMediaError, Result};
+use wgpu::util::DeviceExt;
 
 pub fn apply_gpu_operation(img: &DynamicImage, op: &ProcessOperation) -> Result<DynamicImage> {
     pollster::block_on(apply_gpu_operation_async(img, op))
 }
 
-async fn apply_gpu_operation_async(img: &DynamicImage, op: &ProcessOperation) -> Result<DynamicImage> {
+async fn apply_gpu_operation_async(
+    img: &DynamicImage,
+    op: &ProcessOperation,
+) -> Result<DynamicImage> {
     let instance = wgpu::Instance::default();
-    let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }).await.ok_or_else(|| OpenMediaError::GpuError("No GPU adapter found".to_string()))?;
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            ..Default::default()
+        })
+        .await
+        .ok_or_else(|| OpenMediaError::GpuError("No GPU adapter found".to_string()))?;
 
-    let (device, queue) = adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("OpenMedia GPU Device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            memory_hints: Default::default(),
-        },
-        None,
-    ).await.map_err(|e| OpenMediaError::GpuError(e.to_string()))?;
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("OpenMedia GPU Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: Default::default(),
+            },
+            None,
+        )
+        .await
+        .map_err(|e| OpenMediaError::GpuError(e.to_string()))?;
 
     match op {
         ProcessOperation::Invert => {
@@ -31,14 +40,17 @@ async fn apply_gpu_operation_async(img: &DynamicImage, op: &ProcessOperation) ->
             let rgba = img.to_rgba8();
 
             // Extract pixels into u32 with native endianness to guarantee alignment
-            let raw_pixels: Vec<u32> = rgba.chunks_exact(4)
+            let raw_pixels: Vec<u32> = rgba
+                .chunks_exact(4)
                 .map(|c| u32::from_ne_bytes([c[0], c[1], c[2], c[3]]))
                 .collect();
 
             let pixel_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Pixel Buffer"),
                 contents: bytemuck::cast_slice(&raw_pixels),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
             });
 
             // Dimensions: x: width, y: height, z: padding, w: padding (total 16 bytes for vec4 alignment)
@@ -55,38 +67,45 @@ async fn apply_gpu_operation_async(img: &DynamicImage, op: &ProcessOperation) ->
                 source: wgpu::ShaderSource::Wgsl(shader_src.into()),
             });
 
-            let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Bind Group Layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+            let bind_group_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Bind Group Layout"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
                         },
-                        count: None,
-                    },
-                ],
-            });
+                    ],
+                });
 
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Bind Group"),
                 layout: &bind_group_layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: pixel_buffer.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: dim_buffer.as_entire_binding() },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: pixel_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: dim_buffer.as_entire_binding(),
+                    },
                 ],
             });
 
@@ -105,9 +124,13 @@ async fn apply_gpu_operation_async(img: &DynamicImage, op: &ProcessOperation) ->
                 cache: None,
             });
 
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
             {
-                let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
+                let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: None,
+                    timestamp_writes: None,
+                });
                 compute_pass.set_pipeline(&pipeline);
                 compute_pass.set_bind_group(0, &bind_group, &[]);
                 compute_pass.dispatch_workgroups(width.div_ceil(16), height.div_ceil(16), 1);
@@ -152,6 +175,8 @@ async fn apply_gpu_operation_async(img: &DynamicImage, op: &ProcessOperation) ->
 
             Ok(DynamicImage::ImageRgba8(output_rgba))
         }
-        _ => Err(OpenMediaError::Internal("Operation not supported on GPU".to_string())),
+        _ => Err(OpenMediaError::Internal(
+            "Operation not supported on GPU".to_string(),
+        )),
     }
 }

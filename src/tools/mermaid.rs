@@ -33,10 +33,15 @@ impl Tool for MermaidRendererTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let chart = arguments.get("chart").and_then(|v| v.as_str())
+        let chart = arguments
+            .get("chart")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'chart' parameter"))?;
-        
-        let output_path_str = arguments.get("output_path").and_then(|v| v.as_str()).unwrap_or("diagram.svg");
+
+        let output_path_str = arguments
+            .get("output_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("diagram.svg");
         let output_path = crate::config::resolve_path(output_path_str);
 
         // Run rendering using the pure Rust mermaid-rs-renderer
@@ -63,7 +68,8 @@ mod tests {
     #[tokio::test]
     async fn test_render_mermaid() -> Result<()> {
         let tool = MermaidRendererTool;
-        let temp_dir = std::env::temp_dir().join(format!("openz_mermaid_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_mermaid_test_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&temp_dir)?;
         let output_file = temp_dir.join("test_chart.svg");
 

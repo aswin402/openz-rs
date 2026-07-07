@@ -1,8 +1,4 @@
 use crate::agent::AgentLoop;
-use std::sync::Arc;
-use reqwest::Client;
-use std::sync::OnceLock;
-use std::collections::HashMap;
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
@@ -10,6 +6,10 @@ use axum::{
     routing::get,
     Router,
 };
+use reqwest::Client;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::OnceLock;
 use tokio::net::TcpListener;
 
 static WHATSAPP_BOT_INFO: OnceLock<(String, String, Client)> = OnceLock::new();
@@ -60,22 +60,31 @@ impl super::Channel for WhatsAppChannel {
     }
 
     async fn start(&self) -> anyhow::Result<()> {
-        let _ = WHATSAPP_BOT_INFO.set((self.api_key.clone(), self.phone_number_id.clone(), self.client.clone()));
+        let _ = WHATSAPP_BOT_INFO.set((
+            self.api_key.clone(),
+            self.phone_number_id.clone(),
+            self.client.clone(),
+        ));
         let silent = std::env::var("OPENZ_SILENT").is_ok();
         if self.api_key.is_empty() || self.phone_number_id.is_empty() {
             if !silent {
-                println!("⚠️ WhatsApp configurations are incomplete. WhatsApp channel deactivated.");
+                println!(
+                    "⚠️ WhatsApp configurations are incomplete. WhatsApp channel deactivated."
+                );
             }
             return Ok(());
         }
 
         let session_dir = self.agent_loop.session_manager.dir.clone();
-        
+
         // Send Active message to all active targets at startup
         let targets = crate::channels::get_active_session_targets(&session_dir, "whatsapp_");
         let active_msg = crate::channels::select_random_message(crate::channels::ACTIVE_MESSAGES);
         for phone_number in &targets {
-            let send_url = format!("https://graph.facebook.com/v18.0/{}/messages", self.phone_number_id);
+            let send_url = format!(
+                "https://graph.facebook.com/v18.0/{}/messages",
+                self.phone_number_id
+            );
             let payload = serde_json::json!({
                 "messaging_product": "whatsapp",
                 "recipient_type": "individual",
@@ -85,7 +94,9 @@ impl super::Channel for WhatsAppChannel {
                     "body": active_msg
                 }
             });
-            let _ = self.client.post(&send_url)
+            let _ = self
+                .client
+                .post(&send_url)
                 .bearer_auth(&self.api_key)
                 .json(&payload)
                 .send()
@@ -93,20 +104,19 @@ impl super::Channel for WhatsAppChannel {
         }
 
         // Expose Axum webhook receiver on webhook_port (defaulting to 8090)
-        let (port, verify_token) = if let Some(ref wa_cfg) = self.agent_loop.config.channels.whatsapp {
-            (wa_cfg.webhook_port, wa_cfg.verify_token.clone())
-        } else {
-            (8090, "openz".to_string())
-        };
+        let (port, verify_token) =
+            if let Some(ref wa_cfg) = self.agent_loop.config.channels.whatsapp {
+                (wa_cfg.webhook_port, wa_cfg.verify_token.clone())
+            } else {
+                (8090, "openz".to_string())
+            };
 
         let port = std::env::var("WHATSAPP_WEBHOOK_PORT")
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(port);
-        let verify_token = std::env::var("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
-            .unwrap_or(verify_token);
-        let app_secret = std::env::var("WHATSAPP_APP_SECRET")
-            .unwrap_or_default();
+        let verify_token = std::env::var("WHATSAPP_WEBHOOK_VERIFY_TOKEN").unwrap_or(verify_token);
+        let app_secret = std::env::var("WHATSAPP_APP_SECRET").unwrap_or_default();
 
         let state = WhatsAppState {
             agent_loop: self.agent_loop.clone(),
@@ -119,12 +129,18 @@ impl super::Channel for WhatsAppChannel {
         };
 
         let app = Router::new()
-            .route("/webhook/whatsapp", get(verify_webhook).post(receive_webhook))
+            .route(
+                "/webhook/whatsapp",
+                get(verify_webhook).post(receive_webhook),
+            )
             .with_state(state);
 
         let addr = format!("127.0.0.1:{}", port);
         if !silent {
-            println!("🤖 WhatsApp Channel webhook server started on http://{}/webhook/whatsapp", addr);
+            println!(
+                "🤖 WhatsApp Channel webhook server started on http://{}/webhook/whatsapp",
+                addr
+            );
         }
 
         let mut shutdown_rx = match crate::shutdown::receiver() {
@@ -206,13 +222,25 @@ async fn receive_webhook(
         }
     };
 
-    if let Some(entry) = payload.get("entry").and_then(|e| e.as_array()).and_then(|a| a.first()) {
-        if let Some(change) = entry.get("changes").and_then(|c| c.as_array()).and_then(|a| a.first()) {
+    if let Some(entry) = payload
+        .get("entry")
+        .and_then(|e| e.as_array())
+        .and_then(|a| a.first())
+    {
+        if let Some(change) = entry
+            .get("changes")
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.first())
+        {
             if let Some(val) = change.get("value") {
                 if let Some(messages) = val.get("messages").and_then(|m| m.as_array()) {
                     for msg in messages {
                         if let Some(from) = msg.get("from").and_then(|f| f.as_str()) {
-                            if let Some(body) = msg.get("text").and_then(|t| t.get("body")).and_then(|b| b.as_str()) {
+                            if let Some(body) = msg
+                                .get("text")
+                                .and_then(|t| t.get("body"))
+                                .and_then(|b| b.as_str())
+                            {
                                 let agent = state.agent_loop.clone();
                                 let api_key = state.api_key.clone();
                                 let phone_number_id = state.phone_number_id.clone();
@@ -228,13 +256,16 @@ async fn receive_webhook(
                                     };
                                     let session_key = format!("whatsapp:{}", from_str);
                                     let run_res = agent.run(&text, &session_key).await;
-                                    
+
                                     let body_text = match run_res {
                                         Ok(res) => res.content,
                                         Err(e) => format!("Error processing request: {}", e),
                                     };
 
-                                    let send_url = format!("https://graph.facebook.com/v18.0/{}/messages", phone_number_id);
+                                    let send_url = format!(
+                                        "https://graph.facebook.com/v18.0/{}/messages",
+                                        phone_number_id
+                                    );
                                     for chunk in chunk_message(&body_text, 65536) {
                                         let reply_payload = serde_json::json!({
                                             "messaging_product": "whatsapp",
@@ -245,7 +276,8 @@ async fn receive_webhook(
                                                 "body": chunk
                                             }
                                         });
-                                        let _ = client.post(&send_url)
+                                        let _ = client
+                                            .post(&send_url)
                                             .bearer_auth(&api_key)
                                             .json(&reply_payload)
                                             .send()
@@ -289,10 +321,14 @@ mod tests {
             concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
         };
 
-        let response = verify_webhook(Query(params), State(state)).await.into_response();
+        let response = verify_webhook(Query(params), State(state))
+            .await
+            .into_response();
         assert_eq!(response.status(), StatusCode::OK);
-        
-        let body_bytes = axum::body::to_bytes(response.into_body(), 1000).await.unwrap();
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1000)
+            .await
+            .unwrap();
         let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
         assert_eq!(body_str, "12345");
     }
@@ -319,7 +355,9 @@ mod tests {
             concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
         };
 
-        let response = verify_webhook(Query(params), State(state)).await.into_response();
+        let response = verify_webhook(Query(params), State(state))
+            .await
+            .into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }
@@ -335,7 +373,7 @@ fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
             chunks.push(remaining.to_string());
             break;
         }
-        
+
         let mut split_at = max_len;
         while split_at > 0 && !remaining.is_char_boundary(split_at) {
             split_at -= 1;
@@ -346,7 +384,7 @@ fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
                 split_at += 1;
             }
         }
-        
+
         let candidate = &remaining[..split_at];
         let final_split = if let Some(idx) = candidate.rfind('\n') {
             if idx > 0 {
@@ -357,7 +395,7 @@ fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
         } else {
             split_at
         };
-        
+
         chunks.push(remaining[..final_split].to_string());
         remaining = remaining[final_split..].trim_start_matches('\n');
     }

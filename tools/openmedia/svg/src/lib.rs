@@ -1,14 +1,13 @@
+use openmedia_core::{ImageOutput, OpenMediaError, Result, SvgOutput};
 use serde::{Deserialize, Serialize};
-use openmedia_core::{Result, SvgOutput, ImageOutput, OpenMediaError};
 use std::collections::HashMap;
 
-pub mod schema;
 pub mod chart;
 pub mod icons;
+pub mod schema;
 
 pub use chart::{create_chart, ChartPoint};
 pub use icons::get_icon_svg;
-
 
 #[derive(Debug, Clone)]
 pub struct SvgBuilder {
@@ -22,26 +21,103 @@ pub struct SvgBuilder {
 
 #[derive(Debug, Clone)]
 pub enum SvgElement {
-    Rect { x: f64, y: f64, width: f64, height: f64, rx: Option<f64>, ry: Option<f64>, attrs: Attributes },
-    Circle { cx: f64, cy: f64, r: f64, attrs: Attributes },
-    Ellipse { cx: f64, cy: f64, rx: f64, ry: f64, attrs: Attributes },
-    Line { x1: f64, y1: f64, x2: f64, y2: f64, attrs: Attributes },
-    Polyline { points: Vec<(f64, f64)>, attrs: Attributes },
-    Polygon { points: Vec<(f64, f64)>, attrs: Attributes },
-    Path { d: String, attrs: Attributes },
-    Text { x: f64, y: f64, content: String, attrs: Attributes },
-    Group { elements: Vec<SvgElement>, attrs: Attributes },
-    Use { href: String, x: f64, y: f64, attrs: Attributes },
-    Image { href: String, x: f64, y: f64, width: f64, height: f64, attrs: Attributes },
+    Rect {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        rx: Option<f64>,
+        ry: Option<f64>,
+        attrs: Attributes,
+    },
+    Circle {
+        cx: f64,
+        cy: f64,
+        r: f64,
+        attrs: Attributes,
+    },
+    Ellipse {
+        cx: f64,
+        cy: f64,
+        rx: f64,
+        ry: f64,
+        attrs: Attributes,
+    },
+    Line {
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+        attrs: Attributes,
+    },
+    Polyline {
+        points: Vec<(f64, f64)>,
+        attrs: Attributes,
+    },
+    Polygon {
+        points: Vec<(f64, f64)>,
+        attrs: Attributes,
+    },
+    Path {
+        d: String,
+        attrs: Attributes,
+    },
+    Text {
+        x: f64,
+        y: f64,
+        content: String,
+        attrs: Attributes,
+    },
+    Group {
+        elements: Vec<SvgElement>,
+        attrs: Attributes,
+    },
+    Use {
+        href: String,
+        x: f64,
+        y: f64,
+        attrs: Attributes,
+    },
+    Image {
+        href: String,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        attrs: Attributes,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum SvgDef {
-    LinearGradient { id: String, x1: String, y1: String, x2: String, y2: String, stops: Vec<GradientStop> },
-    RadialGradient { id: String, cx: String, cy: String, r: String, stops: Vec<GradientStop> },
-    ClipPath { id: String, elements: Vec<SvgElement> },
-    Filter { id: String, primitives: Vec<FilterPrimitive> },
-    Symbol { id: String, viewbox: String, elements: Vec<SvgElement> },
+    LinearGradient {
+        id: String,
+        x1: String,
+        y1: String,
+        x2: String,
+        y2: String,
+        stops: Vec<GradientStop>,
+    },
+    RadialGradient {
+        id: String,
+        cx: String,
+        cy: String,
+        r: String,
+        stops: Vec<GradientStop>,
+    },
+    ClipPath {
+        id: String,
+        elements: Vec<SvgElement>,
+    },
+    Filter {
+        id: String,
+        primitives: Vec<FilterPrimitive>,
+    },
+    Symbol {
+        id: String,
+        viewbox: String,
+        elements: Vec<SvgElement>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -82,7 +158,8 @@ impl<'a> RectBuilder<'a> {
     }
 
     pub fn stroke_width(mut self, width: f64) -> Self {
-        self.attrs.insert("stroke-width".to_string(), width.to_string());
+        self.attrs
+            .insert("stroke-width".to_string(), width.to_string());
         self
     }
 
@@ -130,7 +207,8 @@ impl<'a> CircleBuilder<'a> {
     }
 
     pub fn stroke_width(mut self, width: f64) -> Self {
-        self.attrs.insert("stroke-width".to_string(), width.to_string());
+        self.attrs
+            .insert("stroke-width".to_string(), width.to_string());
         self
     }
 
@@ -165,7 +243,8 @@ impl<'a> TextBuilder<'a> {
     }
 
     pub fn font_family(mut self, family: &str) -> Self {
-        self.attrs.insert("font-family".to_string(), family.to_string());
+        self.attrs
+            .insert("font-family".to_string(), family.to_string());
         self
     }
 
@@ -198,12 +277,14 @@ impl<'a> PathBuilder<'a> {
     }
 
     pub fn stroke_width(mut self, width: f64) -> Self {
-        self.attrs.insert("stroke-width".to_string(), width.to_string());
+        self.attrs
+            .insert("stroke-width".to_string(), width.to_string());
         self
     }
 
     pub fn opacity(mut self, opacity: f64) -> Self {
-        self.attrs.insert("opacity".to_string(), opacity.to_string());
+        self.attrs
+            .insert("opacity".to_string(), opacity.to_string());
         self
     }
 
@@ -373,7 +454,10 @@ impl SvgBuilder {
 
     /// Build the final SVG string
     pub fn build(self) -> String {
-        let mut svg = format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\"", self.width, self.height);
+        let mut svg = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\"",
+            self.width, self.height
+        );
         if let Some(vb) = &self.viewbox {
             svg.push_str(&format!(" viewBox=\"{}\"", vb));
         }
@@ -391,19 +475,47 @@ impl SvgBuilder {
             svg.push_str("  <defs>\n");
             for def in &self.defs {
                 match def {
-                    SvgDef::LinearGradient { id, x1, y1, x2, y2, stops } => {
+                    SvgDef::LinearGradient {
+                        id,
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        stops,
+                    } => {
                         svg.push_str(&format!("    <linearGradient id=\"{}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\">\n", id, x1, y1, x2, y2));
                         for stop in stops {
-                            let opacity_attr = stop.opacity.map(|o| format!(" stop-opacity=\"{}\"", o)).unwrap_or_default();
-                            svg.push_str(&format!("      <stop offset=\"{}\" stop-color=\"{}\"{} />\n", stop.offset, stop.color, opacity_attr));
+                            let opacity_attr = stop
+                                .opacity
+                                .map(|o| format!(" stop-opacity=\"{}\"", o))
+                                .unwrap_or_default();
+                            svg.push_str(&format!(
+                                "      <stop offset=\"{}\" stop-color=\"{}\"{} />\n",
+                                stop.offset, stop.color, opacity_attr
+                            ));
                         }
                         svg.push_str("    </linearGradient>\n");
                     }
-                    SvgDef::RadialGradient { id, cx, cy, r, stops } => {
-                        svg.push_str(&format!("    <radialGradient id=\"{}\" cx=\"{}\" cy=\"{}\" r=\"{}\">\n", id, cx, cy, r));
+                    SvgDef::RadialGradient {
+                        id,
+                        cx,
+                        cy,
+                        r,
+                        stops,
+                    } => {
+                        svg.push_str(&format!(
+                            "    <radialGradient id=\"{}\" cx=\"{}\" cy=\"{}\" r=\"{}\">\n",
+                            id, cx, cy, r
+                        ));
                         for stop in stops {
-                            let opacity_attr = stop.opacity.map(|o| format!(" stop-opacity=\"{}\"", o)).unwrap_or_default();
-                            svg.push_str(&format!("      <stop offset=\"{}\" stop-color=\"{}\"{} />\n", stop.offset, stop.color, opacity_attr));
+                            let opacity_attr = stop
+                                .opacity
+                                .map(|o| format!(" stop-opacity=\"{}\"", o))
+                                .unwrap_or_default();
+                            svg.push_str(&format!(
+                                "      <stop offset=\"{}\" stop-color=\"{}\"{} />\n",
+                                stop.offset, stop.color, opacity_attr
+                            ));
                         }
                         svg.push_str("    </radialGradient>\n");
                     }
@@ -416,42 +528,98 @@ impl SvgBuilder {
         fn serialize_element(elem: &SvgElement, indent: usize) -> String {
             let ind = " ".repeat(indent);
             match elem {
-                SvgElement::Rect { x, y, width, height, rx, ry, attrs } => {
+                SvgElement::Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                    rx,
+                    ry,
+                    attrs,
+                } => {
                     let mut extra = String::new();
-                    if let Some(r) = rx { extra.push_str(&format!(" rx=\"{}\"", r)); }
-                    if let Some(r) = ry { extra.push_str(&format!(" ry=\"{}\"", r)); }
+                    if let Some(r) = rx {
+                        extra.push_str(&format!(" rx=\"{}\"", r));
+                    }
+                    if let Some(r) = ry {
+                        extra.push_str(&format!(" ry=\"{}\"", r));
+                    }
                     let attrs_str = serialize_attrs(attrs);
-                    format!("{}<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{}{} />\n", ind, x, y, width, height, extra, attrs_str)
+                    format!(
+                        "{}<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{}{} />\n",
+                        ind, x, y, width, height, extra, attrs_str
+                    )
                 }
                 SvgElement::Circle { cx, cy, r, attrs } => {
                     let attrs_str = serialize_attrs(attrs);
-                    format!("{}<circle cx=\"{}\" cy=\"{}\" r=\"{}\"{} />\n", ind, cx, cy, r, attrs_str)
+                    format!(
+                        "{}<circle cx=\"{}\" cy=\"{}\" r=\"{}\"{} />\n",
+                        ind, cx, cy, r, attrs_str
+                    )
                 }
-                SvgElement::Ellipse { cx, cy, rx, ry, attrs } => {
+                SvgElement::Ellipse {
+                    cx,
+                    cy,
+                    rx,
+                    ry,
+                    attrs,
+                } => {
                     let attrs_str = serialize_attrs(attrs);
-                    format!("{}<ellipse cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\"{} />\n", ind, cx, cy, rx, ry, attrs_str)
+                    format!(
+                        "{}<ellipse cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\"{} />\n",
+                        ind, cx, cy, rx, ry, attrs_str
+                    )
                 }
-                SvgElement::Line { x1, y1, x2, y2, attrs } => {
+                SvgElement::Line {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    attrs,
+                } => {
                     let attrs_str = serialize_attrs(attrs);
-                    format!("{}<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"{} />\n", ind, x1, y1, x2, y2, attrs_str)
+                    format!(
+                        "{}<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\"{} />\n",
+                        ind, x1, y1, x2, y2, attrs_str
+                    )
                 }
                 SvgElement::Polyline { points, attrs } => {
-                    let pts: Vec<String> = points.iter().map(|(x, y)| format!("{},{}", x, y)).collect();
+                    let pts: Vec<String> =
+                        points.iter().map(|(x, y)| format!("{},{}", x, y)).collect();
                     let attrs_str = serialize_attrs(attrs);
-                    format!("{}<polyline points=\"{}\"{} />\n", ind, pts.join(" "), attrs_str)
+                    format!(
+                        "{}<polyline points=\"{}\"{} />\n",
+                        ind,
+                        pts.join(" "),
+                        attrs_str
+                    )
                 }
                 SvgElement::Polygon { points, attrs } => {
-                    let pts: Vec<String> = points.iter().map(|(x, y)| format!("{},{}", x, y)).collect();
+                    let pts: Vec<String> =
+                        points.iter().map(|(x, y)| format!("{},{}", x, y)).collect();
                     let attrs_str = serialize_attrs(attrs);
-                    format!("{}<polygon points=\"{}\"{} />\n", ind, pts.join(" "), attrs_str)
+                    format!(
+                        "{}<polygon points=\"{}\"{} />\n",
+                        ind,
+                        pts.join(" "),
+                        attrs_str
+                    )
                 }
                 SvgElement::Path { d, attrs } => {
                     let attrs_str = serialize_attrs(attrs);
                     format!("{}<path d=\"{}\"{} />\n", ind, d, attrs_str)
                 }
-                SvgElement::Text { x, y, content, attrs } => {
+                SvgElement::Text {
+                    x,
+                    y,
+                    content,
+                    attrs,
+                } => {
                     let attrs_str = serialize_attrs(attrs);
-                    format!("{}<text x=\"{}\" y=\"{}\"{}>{}</text>\n", ind, x, y, attrs_str, content)
+                    format!(
+                        "{}<text x=\"{}\" y=\"{}\"{}>{}</text>\n",
+                        ind, x, y, attrs_str, content
+                    )
                 }
                 SvgElement::Group { elements, attrs } => {
                     let attrs_str = serialize_attrs(attrs);
@@ -464,11 +632,24 @@ impl SvgBuilder {
                 }
                 SvgElement::Use { href, x, y, attrs } => {
                     let attrs_str = serialize_attrs(attrs);
-                    format!("{}<use href=\"{}\" x=\"{}\" y=\"{}\"{} />\n", ind, href, x, y, attrs_str)
+                    format!(
+                        "{}<use href=\"{}\" x=\"{}\" y=\"{}\"{} />\n",
+                        ind, href, x, y, attrs_str
+                    )
                 }
-                SvgElement::Image { href, x, y, width, height, attrs } => {
+                SvgElement::Image {
+                    href,
+                    x,
+                    y,
+                    width,
+                    height,
+                    attrs,
+                } => {
                     let attrs_str = serialize_attrs(attrs);
-                    format!("{}<image href=\"{}\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{} />\n", ind, href, x, y, width, height, attrs_str)
+                    format!(
+                        "{}<image href=\"{}\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{} />\n",
+                        ind, href, x, y, width, height, attrs_str
+                    )
                 }
             }
         }
@@ -557,9 +738,14 @@ impl ChartTheme {
             grid_color: "#333355".into(),
             axis_color: "#555577".into(),
             palette: vec![
-                "#e94560".into(), "#0f3460".into(), "#16213e".into(),
-                "#533483".into(), "#e94560".into(), "#f5b461".into(),
-                "#61c0bf".into(), "#bbbbbb".into(),
+                "#e94560".into(),
+                "#0f3460".into(),
+                "#16213e".into(),
+                "#533483".into(),
+                "#e94560".into(),
+                "#f5b461".into(),
+                "#61c0bf".into(),
+                "#bbbbbb".into(),
             ],
             font_family: "Inter, sans-serif".into(),
             font_size: 14.0,
@@ -573,9 +759,14 @@ impl ChartTheme {
             grid_color: "#e0e0e0".into(),
             axis_color: "#999999".into(),
             palette: vec![
-                "#2563eb".into(), "#dc2626".into(), "#16a34a".into(),
-                "#9333ea".into(), "#ea580c".into(), "#0891b2".into(),
-                "#4f46e5".into(), "#64748b".into(),
+                "#2563eb".into(),
+                "#dc2626".into(),
+                "#16a34a".into(),
+                "#9333ea".into(),
+                "#ea580c".into(),
+                "#0891b2".into(),
+                "#4f46e5".into(),
+                "#64748b".into(),
             ],
             font_family: "Inter, sans-serif".into(),
             font_size: 14.0,
@@ -592,7 +783,10 @@ pub struct LegendConfig {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LegendPosition {
-    Top, Bottom, Left, Right,
+    Top,
+    Bottom,
+    Left,
+    Right,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -629,10 +823,12 @@ pub fn generate_chart(config: &ChartConfig) -> Result<String> {
         ChartType::Radar => "radar",
         _ => "bar",
     };
-    let chart_points: Vec<ChartPoint> = serde_json::from_value(config.data.clone())
-        .map_err(|e| OpenMediaError::InvalidParameter {
-            param: "data".to_string(),
-            reason: format!("Failed to parse chart data as ChartPoint array: {}", e),
+    let chart_points: Vec<ChartPoint> =
+        serde_json::from_value(config.data.clone()).map_err(|e| {
+            OpenMediaError::InvalidParameter {
+                param: "data".to_string(),
+                reason: format!("Failed to parse chart data as ChartPoint array: {}", e),
+            }
         })?;
     create_chart(
         chart_type_str,
@@ -644,7 +840,11 @@ pub fn generate_chart(config: &ChartConfig) -> Result<String> {
 }
 
 /// Build SVG XML string from JSON elements
-pub fn build_svg_from_json(width: u32, height: u32, elements: &serde_json::Value) -> Result<String> {
+pub fn build_svg_from_json(
+    width: u32,
+    height: u32,
+    elements: &serde_json::Value,
+) -> Result<String> {
     let json_elements: Vec<schema::JsonElement> = serde_json::from_value(elements.clone())
         .map_err(|e| OpenMediaError::InvalidParameter {
             param: "elements".to_string(),
@@ -654,33 +854,71 @@ pub fn build_svg_from_json(width: u32, height: u32, elements: &serde_json::Value
     let mut builder = SvgBuilder::new(width, height);
     for elem in json_elements {
         match elem {
-            schema::JsonElement::Rect { x, y, width, height, rx, ry, fill, stroke } => {
+            schema::JsonElement::Rect {
+                x,
+                y,
+                width,
+                height,
+                rx,
+                ry,
+                fill,
+                stroke,
+            } => {
                 let mut rect = builder.rect(x, y, width, height);
-                if let Some(f) = fill { rect = rect.fill(&f); }
-                if let Some(s) = stroke { rect = rect.stroke(&s); }
-                if let Some(rx_val) = rx { rect = rect.rx(rx_val); }
-                if let Some(ry_val) = ry { rect = rect.ry(ry_val); }
+                if let Some(f) = fill {
+                    rect = rect.fill(&f);
+                }
+                if let Some(s) = stroke {
+                    rect = rect.stroke(&s);
+                }
+                if let Some(rx_val) = rx {
+                    rect = rect.rx(rx_val);
+                }
+                if let Some(ry_val) = ry {
+                    rect = rect.ry(ry_val);
+                }
                 rect.finish();
             }
-            schema::JsonElement::Circle { cx, cy, r, fill, stroke } => {
+            schema::JsonElement::Circle {
+                cx,
+                cy,
+                r,
+                fill,
+                stroke,
+            } => {
                 let mut circle = builder.circle(cx, cy, r);
-                if let Some(f) = fill { circle = circle.fill(&f); }
-                if let Some(s) = stroke { circle = circle.stroke(&s); }
+                if let Some(f) = fill {
+                    circle = circle.fill(&f);
+                }
+                if let Some(s) = stroke {
+                    circle = circle.stroke(&s);
+                }
                 circle.finish();
             }
-            schema::JsonElement::Text { x, y, content, fill, font_size, font_family } => {
+            schema::JsonElement::Text {
+                x,
+                y,
+                content,
+                fill,
+                font_size,
+                font_family,
+            } => {
                 let mut text = builder.text(x, y, &content);
-                if let Some(f) = fill { text = text.fill(&f); }
-                if let Some(sz) = font_size { text = text.font_size(sz); }
-                if let Some(fam) = font_family { text = text.font_family(&fam); }
+                if let Some(f) = fill {
+                    text = text.fill(&f);
+                }
+                if let Some(sz) = font_size {
+                    text = text.font_size(sz);
+                }
+                if let Some(fam) = font_family {
+                    text = text.font_family(&fam);
+                }
                 text.finish();
             }
         }
     }
     Ok(builder.build())
 }
-
-
 
 /// Rasterize an SVG string into an ImageOutput with specified dimensions and background color.
 pub fn rasterize(
@@ -691,8 +929,8 @@ pub fn rasterize(
     format: &str,
     output_path: &std::path::Path,
 ) -> Result<ImageOutput> {
-    use std::time::Instant;
     use resvg::usvg;
+    use std::time::Instant;
     let start_time = Instant::now();
 
     // Parse the SVG
@@ -724,8 +962,8 @@ pub fn rasterize(
         ),
     };
 
-    let mut pixmap = tiny_skia::Pixmap::new(w, h)
-        .ok_or_else(|| OpenMediaError::InvalidDimensions {
+    let mut pixmap =
+        tiny_skia::Pixmap::new(w, h).ok_or_else(|| OpenMediaError::InvalidDimensions {
             width: w,
             height: h,
             reason: "Failed to allocate pixmap".to_string(),
@@ -769,7 +1007,8 @@ pub fn rasterize(
     let clean_format = format.to_lowercase();
     match clean_format.as_str() {
         "png" => {
-            pixmap.save_png(output_path)
+            pixmap
+                .save_png(output_path)
                 .map_err(|e| OpenMediaError::ImageEncodeError {
                     format: "png".to_string(),
                     reason: e.to_string(),
@@ -785,7 +1024,8 @@ pub fn rasterize(
                     rgb_pixels.push(chunk[2]);
                 }
                 rgb_pixels
-            }).ok_or_else(|| OpenMediaError::ImageEncodeError {
+            })
+            .ok_or_else(|| OpenMediaError::ImageEncodeError {
                 format: "jpeg".to_string(),
                 reason: "Failed to create RGB image buffer".to_string(),
             })?;
@@ -796,11 +1036,12 @@ pub fn rasterize(
                 })?;
         }
         "webp" => {
-            let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(w, h, pixels)
-                .ok_or_else(|| OpenMediaError::ImageEncodeError {
+            let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(w, h, pixels).ok_or_else(
+                || OpenMediaError::ImageEncodeError {
                     format: "webp".to_string(),
                     reason: "Failed to create RGBA image buffer".to_string(),
-                })?;
+                },
+            )?;
             img.save(output_path)
                 .map_err(|e| OpenMediaError::ImageEncodeError {
                     format: "webp".to_string(),
@@ -884,7 +1125,8 @@ mod tests {
     #[test]
     fn test_svg_builder() {
         let mut builder = SvgBuilder::new(500, 500);
-        builder.viewbox("0 0 100 100")
+        builder
+            .viewbox("0 0 100 100")
             .rect(10.0, 20.0, 30.0, 40.0)
             .fill("red")
             .stroke("black")
@@ -898,9 +1140,11 @@ mod tests {
 
         let output = builder.build();
         assert!(output.contains("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"500\" height=\"500\" viewBox=\"0 0 100 100\">"));
-        assert!(output.contains("<rect x=\"10\" y=\"20\" width=\"30\" height=\"40\" rx=\"5\" ry=\"5\""));
+        assert!(
+            output.contains("<rect x=\"10\" y=\"20\" width=\"30\" height=\"40\" rx=\"5\" ry=\"5\"")
+        );
         assert!(output.contains("<circle cx=\"50\" cy=\"50\" r=\"15\""));
-        
+
         // Check attributes are present
         assert!(output.contains("fill=\"red\"") || output.contains("stroke=\"black\""));
         assert!(output.contains("fill=\"blue\""));
@@ -937,5 +1181,3 @@ mod tests {
         assert!(matches!(radar, ChartType::Radar));
     }
 }
-
-

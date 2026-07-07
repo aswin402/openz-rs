@@ -1,12 +1,14 @@
-use crate::tools::Tool;
 use crate::config::resolve_path;
-use crate::tools::browser_common::{connect_to_tab, ensure_browser_running, kill_browser_on_port_9222, send_cdp_cmd};
+use crate::tools::browser_common::{
+    connect_to_tab, ensure_browser_running, kill_browser_on_port_9222, send_cdp_cmd,
+};
+use crate::tools::Tool;
 use anyhow::{anyhow, Result};
+use base64::prelude::*;
 use serde_json::{json, Value};
 use std::fs;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
-use base64::prelude::*;
 
 pub struct GenerateImageTool;
 
@@ -140,25 +142,48 @@ impl Tool for GenerateImageTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let width = arguments.get("width").and_then(|v| v.as_i64()).unwrap_or(800);
-        let height = arguments.get("height").and_then(|v| v.as_i64()).unwrap_or(800);
-        let device_scale_factor = arguments.get("device_scale_factor").and_then(|v| v.as_f64()).unwrap_or(2.0);
-        let bg_color_str = arguments.get("background_color").and_then(|v| v.as_str()).unwrap_or("#ffffff");
-        let output_path_str = arguments.get("output_path").and_then(|v| v.as_str()).unwrap_or("output.png");
+        let width = arguments
+            .get("width")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(800);
+        let height = arguments
+            .get("height")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(800);
+        let device_scale_factor = arguments
+            .get("device_scale_factor")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(2.0);
+        let bg_color_str = arguments
+            .get("background_color")
+            .and_then(|v| v.as_str())
+            .unwrap_or("#ffffff");
+        let output_path_str = arguments
+            .get("output_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("output.png");
         let output_path = resolve_path(output_path_str);
         let selector = arguments.get("selector").and_then(|v| v.as_str());
-        let settle_ms = arguments.get("settle_ms").and_then(|v| v.as_i64()).unwrap_or(300);
+        let settle_ms = arguments
+            .get("settle_ms")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(300);
 
         let mut temp_file_path = None;
 
         // Resolve target URL to load
-        let target_url = if let Some(html_content) = arguments.get("html").and_then(|v| v.as_str()) {
-            let temp_html_path = std::env::temp_dir().join(format!("openz_img_{}.html", uuid::Uuid::new_v4()));
+        let target_url = if let Some(html_content) = arguments.get("html").and_then(|v| v.as_str())
+        {
+            let temp_html_path =
+                std::env::temp_dir().join(format!("openz_img_{}.html", uuid::Uuid::new_v4()));
             fs::write(&temp_html_path, html_content)?;
             temp_file_path = Some(temp_html_path.clone());
             format!("file://{}", temp_html_path.to_string_lossy())
         } else if let Some(html_path_str) = arguments.get("html_path").and_then(|v| v.as_str()) {
-            if html_path_str.starts_with("http://") || html_path_str.starts_with("https://") || html_path_str.starts_with("file://") {
+            if html_path_str.starts_with("http://")
+                || html_path_str.starts_with("https://")
+                || html_path_str.starts_with("file://")
+            {
                 html_path_str.to_string()
             } else {
                 let path = resolve_path(html_path_str);
@@ -171,7 +196,10 @@ impl Tool for GenerateImageTool {
             let mut svg_elements = String::new();
             for shape in shapes_val {
                 let shape_type = shape.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                let color_str = shape.get("color").and_then(|v| v.as_str()).unwrap_or("#000000");
+                let color_str = shape
+                    .get("color")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("#000000");
                 let fill = shape.get("fill").and_then(|v| v.as_bool()).unwrap_or(true);
                 match shape_type {
                     "rect" => {
@@ -250,14 +278,17 @@ impl Tool for GenerateImageTool {
                 </html>"#,
                 width, height, bg_color_str, width, height, width, height, svg_elements
             );
-            let temp_html_path = std::env::temp_dir().join(format!("openz_img_{}.html", uuid::Uuid::new_v4()));
+            let temp_html_path =
+                std::env::temp_dir().join(format!("openz_img_{}.html", uuid::Uuid::new_v4()));
             fs::write(&temp_html_path, html_content)?;
             temp_file_path = Some(temp_html_path.clone());
             format!("file://{}", temp_html_path.to_string_lossy())
         } else {
             // Default blank white page if nothing specified
-            let default_html = r#"<!DOCTYPE html><html><body style="margin:0; background:white;"></body></html>"#;
-            let temp_html_path = std::env::temp_dir().join(format!("openz_img_{}.html", uuid::Uuid::new_v4()));
+            let default_html =
+                r#"<!DOCTYPE html><html><body style="margin:0; background:white;"></body></html>"#;
+            let temp_html_path =
+                std::env::temp_dir().join(format!("openz_img_{}.html", uuid::Uuid::new_v4()));
             fs::write(&temp_html_path, default_html)?;
             temp_file_path = Some(temp_html_path.clone());
             format!("file://{}", temp_html_path.to_string_lossy())
@@ -272,7 +303,11 @@ impl Tool for GenerateImageTool {
                 }
             }
             let parent_dir = raw_path.parent().unwrap_or(&raw_path).to_path_buf();
-            let filename = raw_path.file_name().and_then(|n| n.to_str()).unwrap_or("index.html").to_string();
+            let filename = raw_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("index.html")
+                .to_string();
 
             match tokio::net::TcpListener::bind("127.0.0.1:0").await {
                 Ok(listener) => {
@@ -290,9 +325,7 @@ impl Tool for GenerateImageTool {
                         target_url
                     }
                 }
-                Err(_) => {
-                    target_url
-                }
+                Err(_) => target_url,
             }
         } else {
             target_url
@@ -302,27 +335,19 @@ impl Tool for GenerateImageTool {
         ensure_browser_running().await?;
 
         let client = reqwest::Client::new();
-        let mut res = client.put("http://127.0.0.1:9222/json/new")
-            .send()
-            .await;
-        
+        let mut res = client.put("http://127.0.0.1:9222/json/new").send().await;
+
         if !matches!(&res, Ok(r) if r.status().is_success()) {
-            res = client.get("http://127.0.0.1:9222/json/new")
-                .send()
-                .await;
+            res = client.get("http://127.0.0.1:9222/json/new").send().await;
         }
-        
+
         if !matches!(&res, Ok(r) if r.status().is_success()) {
             kill_browser_on_port_9222();
             sleep(Duration::from_millis(500)).await;
             ensure_browser_running().await?;
-            res = client.put("http://127.0.0.1:9222/json/new")
-                .send()
-                .await;
+            res = client.put("http://127.0.0.1:9222/json/new").send().await;
             if !matches!(&res, Ok(r) if r.status().is_success()) {
-                res = client.get("http://127.0.0.1:9222/json/new")
-                    .send()
-                    .await;
+                res = client.get("http://127.0.0.1:9222/json/new").send().await;
             }
         }
 
@@ -335,9 +360,13 @@ impl Tool for GenerateImageTool {
         }
 
         let tab_info: Value = res.json().await?;
-        let tab_id = tab_info.get("id").and_then(|v| v.as_str())
+        let tab_id = tab_info
+            .get("id")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("No tab ID returned from /json/new"))?;
-        let ws_url = tab_info.get("webSocketDebuggerUrl").and_then(|v| v.as_str())
+        let ws_url = tab_info
+            .get("webSocketDebuggerUrl")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("No webSocketDebuggerUrl returned from /json/new"))?;
 
         // Connect to WebSocket
@@ -345,19 +374,47 @@ impl Tool for GenerateImageTool {
         let mut message_id = 0u64;
 
         // Enable Page and Runtime domains
-        let _ = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Page.enable", json!({})).await?;
-        let _ = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.enable", json!({})).await?;
+        let _ = send_cdp_cmd(
+            &mut write,
+            &mut read,
+            &mut message_id,
+            "Page.enable",
+            json!({}),
+        )
+        .await?;
+        let _ = send_cdp_cmd(
+            &mut write,
+            &mut read,
+            &mut message_id,
+            "Runtime.enable",
+            json!({}),
+        )
+        .await?;
 
         // Set device metrics
-        let _ = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Emulation.setDeviceMetricsOverride", json!({
-            "width": width,
-            "height": height,
-            "deviceScaleFactor": device_scale_factor,
-            "mobile": false
-        })).await?;
+        let _ = send_cdp_cmd(
+            &mut write,
+            &mut read,
+            &mut message_id,
+            "Emulation.setDeviceMetricsOverride",
+            json!({
+                "width": width,
+                "height": height,
+                "deviceScaleFactor": device_scale_factor,
+                "mobile": false
+            }),
+        )
+        .await?;
 
         // Navigate to target URL
-        let _ = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Page.navigate", json!({ "url": target_url })).await?;
+        let _ = send_cdp_cmd(
+            &mut write,
+            &mut read,
+            &mut message_id,
+            "Page.navigate",
+            json!({ "url": target_url }),
+        )
+        .await?;
 
         // Poll document.readyState until complete or timeout (max 10 seconds)
         let start_time = Instant::now();
@@ -366,17 +423,24 @@ impl Tool for GenerateImageTool {
 
         while start_time.elapsed() < max_duration {
             sleep(Duration::from_millis(200)).await;
-            
-            let eval_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({
-                "expression": "document.readyState",
-                "returnByValue": true
-            })).await?;
+
+            let eval_res = send_cdp_cmd(
+                &mut write,
+                &mut read,
+                &mut message_id,
+                "Runtime.evaluate",
+                json!({
+                    "expression": "document.readyState",
+                    "returnByValue": true
+                }),
+            )
+            .await?;
 
             if let Some(state) = eval_res
                 .get("result")
                 .and_then(|r| r.get("result"))
                 .and_then(|res| res.get("value"))
-                .and_then(|v| v.as_str()) 
+                .and_then(|v| v.as_str())
             {
                 if state == "complete" {
                     is_complete = true;
@@ -393,12 +457,22 @@ impl Tool for GenerateImageTool {
                     style.textContent = `{}`;
                     document.head.appendChild(style);
                 }})()"#,
-                css_str.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${")
+                css_str
+                    .replace('\\', "\\\\")
+                    .replace('`', "\\`")
+                    .replace("${", "\\${")
             );
-            let _ = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({
-                "expression": inject_css_js,
-                "returnByValue": true
-            })).await?;
+            let _ = send_cdp_cmd(
+                &mut write,
+                &mut read,
+                &mut message_id,
+                "Runtime.evaluate",
+                json!({
+                    "expression": inject_css_js,
+                    "returnByValue": true
+                }),
+            )
+            .await?;
         }
 
         // Settle delay
@@ -413,7 +487,12 @@ impl Tool for GenerateImageTool {
 
         if let Some(sel) = selector {
             // Properly escape the selector for safe JS injection
-            let escaped_sel = sel.replace('\\', "\\\\").replace('"', "\\\"").replace('\'', "\\'").replace('\n', "\\n").replace('\r', "\\r");
+            let escaped_sel = sel
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\'', "\\'")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r");
             let js_expr = format!(
                 r#"((sel) => {{
                     const el = document.querySelector(sel);
@@ -430,10 +509,17 @@ impl Tool for GenerateImageTool {
                 escaped_sel
             );
 
-            let eval_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({
-                "expression": js_expr,
-                "returnByValue": true
-            })).await?;
+            let eval_res = send_cdp_cmd(
+                &mut write,
+                &mut read,
+                &mut message_id,
+                "Runtime.evaluate",
+                json!({
+                    "expression": js_expr,
+                    "returnByValue": true
+                }),
+            )
+            .await?;
 
             if let Some(rect_val) = eval_res
                 .get("result")
@@ -447,9 +533,17 @@ impl Tool for GenerateImageTool {
         }
 
         // Capture screenshot
-        let screenshot_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Page.captureScreenshot", screenshot_params).await?;
+        let screenshot_res = send_cdp_cmd(
+            &mut write,
+            &mut read,
+            &mut message_id,
+            "Page.captureScreenshot",
+            screenshot_params,
+        )
+        .await?;
 
-        let base64_data = screenshot_res.pointer("/result/data")
+        let base64_data = screenshot_res
+            .pointer("/result/data")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Failed to capture screenshot data"))?;
 
@@ -489,8 +583,12 @@ async fn force_utf8(
     if let Some(content_type) = response.headers().get(axum::http::header::CONTENT_TYPE) {
         if let Ok(content_type_str) = content_type.to_str() {
             if content_type_str.starts_with("text/html") && !content_type_str.contains("charset") {
-                if let Ok(new_val) = axum::http::header::HeaderValue::from_str("text/html; charset=utf-8") {
-                    response.headers_mut().insert(axum::http::header::CONTENT_TYPE, new_val);
+                if let Ok(new_val) =
+                    axum::http::header::HeaderValue::from_str("text/html; charset=utf-8")
+                {
+                    response
+                        .headers_mut()
+                        .insert(axum::http::header::CONTENT_TYPE, new_val);
                 }
             }
         }
@@ -527,16 +625,21 @@ mod tests {
 
         // Skip execution if browser is not available/runnable in the sandbox context
         if let Err(e) = ensure_browser_running().await {
-            eprintln!("Skipping execution test as headless browser is unavailable: {}", e);
+            tracing::warn!(
+                "Skipping execution test as headless browser is unavailable: {}",
+                e
+            );
             return Ok(());
         }
 
         let result = tool.call(&args).await?;
-        assert_eq!(result.get("status").and_then(|v| v.as_str()), Some("success"));
+        assert_eq!(
+            result.get("status").and_then(|v| v.as_str()),
+            Some("success")
+        );
         assert!(temp_png.exists());
 
         let _ = std::fs::remove_file(&temp_png);
         Ok(())
     }
 }
-

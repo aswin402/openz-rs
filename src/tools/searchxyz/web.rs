@@ -1,9 +1,11 @@
-use serde_json::{json, Value};
-use anyhow::Result;
-use crate::tools::Tool;
-use searchxyz::tools::{SearchWebRequest, ReadUrlRequest, SearchAndReadRequest, DeepResearchRequest, SiteMapRequest};
-use rmcp::handler::server::wrapper::Parameters;
 use super::{get_server, map_mcp_err};
+use crate::tools::Tool;
+use anyhow::Result;
+use rmcp::handler::server::wrapper::Parameters;
+use searchxyz::tools::{
+    DeepResearchRequest, ReadUrlRequest, SearchAndReadRequest, SearchWebRequest, SiteMapRequest,
+};
+use serde_json::{json, Value};
 
 // ── 1. Search Web ─────────────────────────────────────────────
 pub struct SearchXyzSearchWebTool;
@@ -37,7 +39,10 @@ impl Tool for SearchXyzSearchWebTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: SearchWebRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server().search_web(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .search_web(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }
@@ -78,7 +83,10 @@ impl Tool for SearchXyzReadUrlTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: ReadUrlRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server().read_url(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .read_url(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }
@@ -119,7 +127,10 @@ impl Tool for SearchXyzSearchAndReadTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: SearchAndReadRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server().search_and_read(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .search_and_read(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }
@@ -164,7 +175,10 @@ impl Tool for SearchXyzDeepResearchTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: DeepResearchRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server().deep_research(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .deep_research(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }
@@ -209,7 +223,10 @@ impl Tool for SearchXyzSiteMapTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: SiteMapRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server().site_map(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .site_map(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }

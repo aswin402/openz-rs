@@ -1,21 +1,24 @@
 use crate::agent::AgentLoop;
 use crate::config::schema::WebSocketChannelConfig;
 use axum::{
-    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State, Path as AxumPath},
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Path as AxumPath, State,
+    },
+    http::StatusCode,
     response::IntoResponse,
     routing::get,
-    Router, Json,
-    http::StatusCode,
+    Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
+use serde_json::Value;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use serde_json::Value;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
-use tower_http::cors::{CorsLayer, Any};
 
 pub struct WsGateway {
     config: WebSocketChannelConfig,
@@ -47,7 +50,7 @@ impl super::Channel for WsGateway {
     async fn start(&self) -> anyhow::Result<()> {
         let addr_str = format!("{}:{}", self.config.host, self.config.port);
         let addr: SocketAddr = addr_str.parse()?;
-        
+
         let state = WsState {
             config: self.config.clone(),
             agent_loop: self.agent_loop.clone(),
@@ -62,14 +65,27 @@ impl super::Channel for WsGateway {
                 "http://localhost:8765".parse().unwrap(),
                 "http://127.0.0.1:8765".parse().unwrap(),
             ])
-            .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::OPTIONS])
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::OPTIONS,
+            ])
             .allow_headers(Any);
 
         let mut app = Router::new()
             .route("/ws", get(ws_handler))
-            .route("/v1/chat/completions", axum::routing::post(openai_chat_completions))
-            .route("/webhook/sop/trigger/:sop_id", axum::routing::post(trigger_sop_handler))
-            .route("/webhook/sop/instances/:instance_id/resume", axum::routing::post(resume_sop_handler))
+            .route(
+                "/v1/chat/completions",
+                axum::routing::post(openai_chat_completions),
+            )
+            .route(
+                "/webhook/sop/trigger/:sop_id",
+                axum::routing::post(trigger_sop_handler),
+            )
+            .route(
+                "/webhook/sop/instances/:instance_id/resume",
+                axum::routing::post(resume_sop_handler),
+            )
             .layer(cors)
             .with_state(state);
 
@@ -96,7 +112,10 @@ impl super::Channel for WsGateway {
 
         if !silent {
             println!("⚡ OpenZ Gateway running on http://{}", addr);
-            if std::env::var("OPENZ_GATEWAY_TOKEN").map(|t| t.is_empty()).unwrap_or(true) {
+            if std::env::var("OPENZ_GATEWAY_TOKEN")
+                .map(|t| t.is_empty())
+                .unwrap_or(true)
+            {
                 println!("⚠️ WARNING: OPENZ_GATEWAY_TOKEN is not set or is empty. All gateway requests will be rejected for security!");
             }
         }
@@ -117,7 +136,7 @@ impl super::Channel for WsGateway {
                 let _ = shutdown_rx.changed().await;
             })
             .await?;
-        
+
         Ok(())
     }
 }
@@ -135,8 +154,8 @@ async fn ws_handler(
         return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
     }
     ws.max_message_size(MAX_WS_MESSAGE_SIZE)
-      .max_frame_size(MAX_WS_MESSAGE_SIZE)
-      .on_upgrade(|socket| handle_socket(socket, state))
+        .max_frame_size(MAX_WS_MESSAGE_SIZE)
+        .on_upgrade(|socket| handle_socket(socket, state))
 }
 
 async fn handle_socket(socket: WebSocket, state: WsState) {
@@ -179,8 +198,12 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
             let parsed: Result<Value, _> = serde_json::from_str(&text);
             if let Ok(envelope) = parsed {
                 let msg_type = envelope.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                let chat_id = envelope.get("chat_id").and_then(|v| v.as_str()).unwrap_or(&default_chat_id).to_string();
-                
+                let chat_id = envelope
+                    .get("chat_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&default_chat_id)
+                    .to_string();
+
                 match msg_type {
                     "new_chat" => {
                         let new_id = uuid::Uuid::new_v4().to_string();
@@ -202,14 +225,17 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         }
                     }
                     "message" => {
-                        let content = envelope.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                        
+                        let content = envelope
+                            .get("content")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
                         let agent = state.agent_loop.clone();
                         let tx_clone = tx.clone();
                         let chat_id_clone = chat_id.clone();
                         let content_str = content.to_string();
                         let sem_clone = semaphore.clone();
-                        
+
                         tokio::spawn(async move {
                             let _permit = match sem_clone.try_acquire() {
                                 Ok(p) => p,
@@ -225,8 +251,11 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                     return;
                                 }
                             };
-                            
-                            match agent.run(&content_str, &format!("ws:{}", chat_id_clone)).await {
+
+                            match agent
+                                .run(&content_str, &format!("ws:{}", chat_id_clone))
+                                .await
+                            {
                                 Ok(res) => {
                                     let delta_evt = serde_json::json!({
                                         "event": "delta",
@@ -236,7 +265,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                     if let Ok(evt_str) = serde_json::to_string(&delta_evt) {
                                         let _ = tx_clone.send(Message::Text(evt_str)).await;
                                     }
-                                    
+
                                     let turn_end_evt = serde_json::json!({
                                         "event": "turn_end",
                                         "chat_id": chat_id_clone
@@ -280,7 +309,8 @@ async fn trigger_sop_handler(
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "error": "Unauthorized" })),
-        ).into_response();
+        )
+            .into_response();
     }
     let config = state.agent_loop.config.clone();
     match crate::sop::engine::trigger_sop(config, sop_id, payload).await {
@@ -290,13 +320,15 @@ async fn trigger_sop_handler(
                 "status": "triggered",
                 "instance_id": instance_id
             })),
-        ).into_response(),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
                 "error": e.to_string()
             })),
-        ).into_response(),
+        )
+            .into_response(),
     }
 }
 
@@ -309,7 +341,8 @@ async fn resume_sop_handler(
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "error": "Unauthorized" })),
-        ).into_response();
+        )
+            .into_response();
     }
     let config = state.agent_loop.config.clone();
     match crate::sop::engine::resume_sop(config, instance_id).await {
@@ -318,13 +351,15 @@ async fn resume_sop_handler(
             Json(serde_json::json!({
                 "status": "resumed"
             })),
-        ).into_response(),
+        )
+            .into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
                 "error": e.to_string()
             })),
-        ).into_response(),
+        )
+            .into_response(),
     }
 }
 
@@ -380,7 +415,10 @@ fn determine_routed_model(
         || prompt.len() > 300;
 
     if is_complex {
-        if request_model.contains('/') || request_model.starts_with("gpt-") || request_model.starts_with("claude-") {
+        if request_model.contains('/')
+            || request_model.starts_with("gpt-")
+            || request_model.starts_with("claude-")
+        {
             request_model.to_string()
         } else {
             config.agents.defaults.model.clone()
@@ -388,10 +426,42 @@ fn determine_routed_model(
     } else {
         let has_key = |prov: &str| -> bool {
             match prov {
-                "deepseek" => config.providers.deepseek.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("DEEPSEEK_API_KEY").is_ok(),
-                "groq" => config.providers.groq.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("GROQ_API_KEY").is_ok(),
-                "openrouter" => config.providers.openrouter.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENROUTER_API_KEY").is_ok(),
-                "openai" => config.providers.openai.as_ref().and_then(|p| p.api_key.as_ref()).is_some() || std::env::var("OPENAI_API_KEY").is_ok(),
+                "deepseek" => {
+                    config
+                        .providers
+                        .deepseek
+                        .as_ref()
+                        .and_then(|p| p.api_key.as_ref())
+                        .is_some()
+                        || std::env::var("DEEPSEEK_API_KEY").is_ok()
+                }
+                "groq" => {
+                    config
+                        .providers
+                        .groq
+                        .as_ref()
+                        .and_then(|p| p.api_key.as_ref())
+                        .is_some()
+                        || std::env::var("GROQ_API_KEY").is_ok()
+                }
+                "openrouter" => {
+                    config
+                        .providers
+                        .openrouter
+                        .as_ref()
+                        .and_then(|p| p.api_key.as_ref())
+                        .is_some()
+                        || std::env::var("OPENROUTER_API_KEY").is_ok()
+                }
+                "openai" => {
+                    config
+                        .providers
+                        .openai
+                        .as_ref()
+                        .and_then(|p| p.api_key.as_ref())
+                        .is_some()
+                        || std::env::var("OPENAI_API_KEY").is_ok()
+                }
                 _ => false,
             }
         };
@@ -426,7 +496,10 @@ async fn openai_chat_completions(
         });
         return (StatusCode::UNAUTHORIZED, Json(err_json)).into_response();
     }
-    let last_user_content = payload.messages.iter().rfind(|m| m.role == "user")
+    let last_user_content = payload
+        .messages
+        .iter()
+        .rfind(|m| m.role == "user")
         .map(|m| {
             if let Some(s) = m.content.as_str() {
                 s.to_string()
@@ -447,7 +520,7 @@ async fn openai_chat_completions(
     let mut config = state.agent_loop.config.clone();
     let req_model = normalize_model_name(&payload.model);
     let routed_model = determine_routed_model(&config, &req_model, &last_user_content);
-    
+
     config.agents.defaults.model = routed_model.clone();
 
     let agent_loop = match crate::cli::build_agent_loop(config).await {
@@ -465,7 +538,9 @@ async fn openai_chat_completions(
         }
     };
 
-    let session_key = payload.user.unwrap_or_else(|| "openai_proxy_default".to_string());
+    let session_key = payload
+        .user
+        .unwrap_or_else(|| "openai_proxy_default".to_string());
 
     match agent_loop.run(&last_user_content, &session_key).await {
         Ok(res) => {
@@ -517,8 +592,14 @@ mod tests {
     #[test]
     fn test_normalize_model_name() {
         assert_eq!(normalize_model_name("gpt-4o"), "openai/gpt-4o");
-        assert_eq!(normalize_model_name("claude-3-5-sonnet"), "anthropic/claude-3-5-sonnet");
-        assert_eq!(normalize_model_name("deepseek-chat"), "deepseek/deepseek-chat");
+        assert_eq!(
+            normalize_model_name("claude-3-5-sonnet"),
+            "anthropic/claude-3-5-sonnet"
+        );
+        assert_eq!(
+            normalize_model_name("deepseek-chat"),
+            "deepseek/deepseek-chat"
+        );
         assert_eq!(normalize_model_name("custom/my-model"), "custom/my-model");
     }
 
@@ -528,10 +609,15 @@ mod tests {
         config.agents.defaults.model = "anthropic/claude-3-5-sonnet".to_string();
 
         // Complex prompts should use requested or default premium
-        let model = determine_routed_model(&config, "gpt-4o", "Please fix this error in my rust code");
+        let model =
+            determine_routed_model(&config, "gpt-4o", "Please fix this error in my rust code");
         assert_eq!(model, "gpt-4o");
 
-        let model_fallback = determine_routed_model(&config, "some-random-model", "Please design a new database schema for a blog");
+        let model_fallback = determine_routed_model(
+            &config,
+            "some-random-model",
+            "Please design a new database schema for a blog",
+        );
         assert_eq!(model_fallback, "anthropic/claude-3-5-sonnet");
     }
 

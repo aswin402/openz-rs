@@ -1,15 +1,15 @@
-use crate::tools::Tool;
-use crate::tools::ToolRegistry;
+use super::evaluator_optimizer::validate_schema;
+use super::{build_provider_for_model, CancellationToken, DELEGATION_DEPTH};
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
-use anyhow::{Result, anyhow};
-use std::sync::Arc;
+use crate::tools::Tool;
+use crate::tools::ToolRegistry;
+use anyhow::{anyhow, Result};
 use serde_json::Value;
-use super::{CancellationToken, DELEGATION_DEPTH, build_provider_for_model};
-use super::evaluator_optimizer::validate_schema;
+use std::sync::Arc;
 
 pub struct DelegateTaskTool {
     pub config: Config,
@@ -74,9 +74,14 @@ impl Tool for DelegateTaskTool {
         let has_images = crate::providers::parse_multimodal_content(&clean_goal).await.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }))
             || crate::providers::parse_multimodal_content(&clean_context).await.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
 
+        let mut selected_model = self.config.agents.defaults.model.clone();
+        let mut selected_fallback_models: Vec<String> = Vec::new();
         let provider = if let Some(m) = model_override {
             match build_provider_for_model(&self.config, m) {
-                Ok(p) => p,
+                Ok(p) => {
+                    selected_model = m.to_string();
+                    p
+                }
                 Err(e) => {
                     crate::tui_println!("{}⚠️ Failed to configure subagent model '{}' ({}). Falling back to parent model.{}", AURA_GOLD, m, e, COLOR_RESET);
                     self.parent_provider.clone()
@@ -84,14 +89,19 @@ impl Tool for DelegateTaskTool {
             }
         } else if has_images && !crate::providers::model_supports_vision(&self.config.agents.defaults.model) {
             let mut resolved_provider = None;
-            let dynamic_fallbacks = self.config.get_dynamic_fallbacks("vision_agent");
-            for fallback_model in dynamic_fallbacks {
-                if crate::providers::model_supports_vision(&fallback_model) {
-                    if let Ok(p) = build_provider_for_model(&self.config, &fallback_model) {
-                        crate::tui_println!("{}  ✓ Auto-routed vision task to subagent model '{}'{}", EMERALD_GREEN, fallback_model, COLOR_RESET);
-                        resolved_provider = Some(p);
-                        break;
-                    }
+            let dynamic_fallbacks: Vec<String> = self
+                .config
+                .get_dynamic_fallbacks("vision_agent")
+                .into_iter()
+                .filter(|model| crate::providers::model_supports_vision(model))
+                .collect();
+            for (idx, fallback_model) in dynamic_fallbacks.iter().enumerate() {
+                if let Ok(p) = build_provider_for_model(&self.config, fallback_model) {
+                    crate::tui_println!("{}  ✓ Auto-routed vision task to subagent model '{}'{}", EMERALD_GREEN, fallback_model, COLOR_RESET);
+                    selected_model = fallback_model.clone();
+                    selected_fallback_models = dynamic_fallbacks[idx + 1..].to_vec();
+                    resolved_provider = Some(p);
+                    break;
                 }
             }
             resolved_provider.unwrap_or_else(|| self.parent_provider.clone())
@@ -99,25 +109,27 @@ impl Tool for DelegateTaskTool {
             self.parent_provider.clone()
         };
 
+        let mut child_config = self.config.clone();
+        child_config.agents.defaults.model = selected_model.clone();
+        child_config.agents.defaults.fallback_models = selected_fallback_models
+            .iter()
+            .map(|model| serde_json::json!(model))
+            .collect();
         let child_registry = ToolRegistry::new_with_context(
-            self.config.clone(),
+            child_config.clone(),
             provider.clone(),
             self.session_manager.clone(),
         );
         for tool in &self.parent_tools {
-            child_registry.register(tool.clone());
+            let name = tool.name();
+            if name != "delegate_task" && name != "parallel_research" && name != "evaluator_optimizer_loop" {
+                child_registry.register(tool.clone());
+            }
         }
-        child_registry.register(std::sync::Arc::new(DelegateTaskTool {
-            config: self.config.clone(),
-            parent_provider: provider.clone(),
-            session_manager: self.session_manager.clone(),
-            parent_tools: self.parent_tools.clone(),
-            cancellation_token: self.cancellation_token.clone(),
-        }));
 
         let child_session_id = format!("subagent:{}", &uuid::Uuid::new_v4().to_string()[..8]);
         let child_agent = AgentLoop::new(
-            self.config.clone(),
+            child_config,
             provider,
             child_registry,
             self.session_manager.clone(),
@@ -138,7 +150,7 @@ impl Tool for DelegateTaskTool {
                 if let Some(mat) = cap.get(1) {
                     let path_str = mat.as_str();
                     let resolved_path = crate::config::resolve_path(path_str);
-                    
+
                     let mut final_path = None;
                     if resolved_path.exists() && resolved_path.is_file() {
                         final_path = Some(resolved_path);
@@ -151,7 +163,7 @@ impl Tool for DelegateTaskTool {
                             }
                         }
                     }
-                    
+
                     if let Some(path) = final_path {
                         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
                         if ["png", "jpg", "jpeg", "webp", "gif"].contains(&ext.as_str()) {
@@ -218,9 +230,10 @@ impl Tool for DelegateTaskTool {
         if !crate::agent::style::is_silent() {
             let prefix = crate::agent::style::get_tree_prefix(false);
             crate::tui_println!(
-                "{}{}{}● {}{}Subagent{}",
+                "{}{}{}● {}{}Subagent{} {}using {}{}",
                 AURA_SLATE, prefix, COLOR_RESET,
-                RED_ORANGE, COLOR_BOLD, COLOR_RESET
+                RED_ORANGE, COLOR_BOLD, COLOR_RESET,
+                AURA_SLATE, selected_model, COLOR_RESET
             );
         }
         let spinner_msg = crate::agent::style::get_tree_spinner_msg("subagent", "");
@@ -248,10 +261,11 @@ impl Tool for DelegateTaskTool {
             let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
                 DELEGATION_DEPTH.scope(current_depth + 1, async {
                     tokio::select! {
-                        res = child_agent_ref.run(p_ref, c_ref) => res,
+                        biased;
                         _ = self.cancellation_token.wait_for_cancellation() => {
                             Err(anyhow!("Subagent task cancelled"))
                         }
+                        res = child_agent_ref.run(p_ref, c_ref) => res,
                     }
                 }).await
             });
@@ -304,10 +318,11 @@ impl Tool for DelegateTaskTool {
                                     let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
                                         DELEGATION_DEPTH.scope(current_depth + 1, async {
                                             tokio::select! {
-                                                res = child_agent_ref.run(p_ref, c_ref) => res,
+                                                biased;
                                                 _ = self.cancellation_token.wait_for_cancellation() => {
                                                     Err(anyhow!("Subagent task cancelled"))
                                                 }
+                                                res = child_agent_ref.run(p_ref, c_ref) => res,
                                             }
                                         }).await
                                     });
@@ -340,10 +355,11 @@ impl Tool for DelegateTaskTool {
                             let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
                                 DELEGATION_DEPTH.scope(current_depth + 1, async {
                                     tokio::select! {
-                                        res = child_agent_ref.run(p_ref, c_ref) => res,
+                                        biased;
                                         _ = self.cancellation_token.wait_for_cancellation() => {
                                             Err(anyhow!("Subagent task cancelled"))
                                         }
+                                        res = child_agent_ref.run(p_ref, c_ref) => res,
                                     }
                                 }).await
                             });
@@ -391,7 +407,7 @@ impl Tool for DelegateTaskTool {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                     crate::tui_println!("{}{}{}✓ Complete{}", AURA_SLATE, leaf_prefix, AURA_GREEN, COLOR_RESET);
                 }
-                
+
                 // Run evolution review
                 let _ = run_evolution_review(&self.parent_provider, "subagent", &clean_goal, &clean_context, &res.content).await;
 
@@ -417,20 +433,22 @@ impl Tool for DelegateTaskTool {
 }
 
 pub fn ensure_markdown_images(text: &str) -> String {
-    let re = match regex::Regex::new(r"(?i)(file://[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif)|https?://[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif)|/[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif))") {
+    let re = match regex::Regex::new(
+        r"(?i)(file://[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif)|https?://[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif)|/[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif))",
+    ) {
         Ok(r) => r,
         Err(_) => return text.to_string(),
     };
-    
+
     let mut result = text.to_string();
     let mut matches: Vec<_> = re.find_iter(text).collect();
     matches.reverse();
-    
+
     for mat in matches {
         let start = mat.start();
         let end = mat.end();
         let matched_str = mat.as_str();
-        
+
         let mut already_formatted = false;
         if start > 0 {
             let before = &text[..start];
@@ -438,7 +456,7 @@ pub fn ensure_markdown_images(text: &str) -> String {
                 already_formatted = true;
             }
         }
-        
+
         if !already_formatted {
             let replacement = format!("![]({})", matched_str);
             result.replace_range(start..end, &replacement);
@@ -562,10 +580,9 @@ pub fn cleanup_stale_resources() {
                 let path = entry.path();
                 if path.is_dir() {
                     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if name.starts_with("openz_worktree_")
-                        && is_older_than(&path, ttl_seconds) {
-                            let _ = std::fs::remove_dir_all(&path);
-                        }
+                    if name.starts_with("openz_worktree_") && is_older_than(&path, ttl_seconds) {
+                        let _ = std::fs::remove_dir_all(&path);
+                    }
                 }
             }
         }
@@ -578,10 +595,9 @@ pub fn cleanup_stale_resources() {
             let path = entry.path();
             if path.is_dir() {
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if name.starts_with("openz_worktree_")
-                    && is_older_than(&path, ttl_seconds) {
-                        let _ = std::fs::remove_dir_all(&path);
-                      }
+                if name.starts_with("openz_worktree_") && is_older_than(&path, ttl_seconds) {
+                    let _ = std::fs::remove_dir_all(&path);
+                }
             }
         }
     }
@@ -594,10 +610,9 @@ pub fn cleanup_stale_resources() {
         if let Ok(entries) = std::fs::read_dir(&tool_outputs_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_file()
-                    && is_older_than(&path, seven_days_in_seconds) {
-                        let _ = std::fs::remove_file(&path);
-                    }
+                if path.is_file() && is_older_than(&path, seven_days_in_seconds) {
+                    let _ = std::fs::remove_file(&path);
+                }
             }
         }
     }
@@ -608,10 +623,9 @@ pub fn cleanup_stale_resources() {
         if let Ok(entries) = std::fs::read_dir(&traces_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_file()
-                    && is_older_than(&path, seven_days_in_seconds) {
-                        let _ = std::fs::remove_file(&path);
-                    }
+                if path.is_file() && is_older_than(&path, seven_days_in_seconds) {
+                    let _ = std::fs::remove_file(&path);
+                }
             }
         }
     }
@@ -622,10 +636,9 @@ pub fn cleanup_stale_resources() {
         if let Ok(entries) = std::fs::read_dir(&cron_logs_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_file()
-                    && is_older_than(&path, seven_days_in_seconds) {
-                        let _ = std::fs::remove_file(&path);
-                    }
+                if path.is_file() && is_older_than(&path, seven_days_in_seconds) {
+                    let _ = std::fs::remove_file(&path);
+                }
             }
         }
     }
@@ -649,7 +662,10 @@ pub fn create_isolated_workspace(parent_dir: &std::path::Path) -> Result<std::pa
     if !worktrees_dir.exists() {
         let _ = std::fs::create_dir_all(&worktrees_dir);
     }
-    let temp_dir = worktrees_dir.join(format!("openz_worktree_{}", &uuid::Uuid::new_v4().to_string()[..8]));
+    let temp_dir = worktrees_dir.join(format!(
+        "openz_worktree_{}",
+        &uuid::Uuid::new_v4().to_string()[..8]
+    ));
 
     // 1. Check if parent_dir is a git repository
     let git_check = std::process::Command::new("git")
@@ -687,7 +703,7 @@ pub fn create_isolated_workspace(parent_dir: &std::path::Path) -> Result<std::pa
                         }
                         let status_code = &line[..2];
                         let file_path_str = &line[3..];
-                        
+
                         let file_path = if status_code.starts_with('R') {
                             if let Some(pos) = file_path_str.find(" -> ") {
                                 &file_path_str[pos + 4..]
@@ -734,7 +750,13 @@ pub fn copy_dir_recursive_filtered(src: &std::path::Path, dst: &std::path::Path)
 
     if src.is_dir() {
         let name = src.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if name == "target" || name == "node_modules" || name == ".git" || name == ".fastembed_cache" || name == ".sediment" || name == "logs" {
+        if name == "target"
+            || name == "node_modules"
+            || name == ".git"
+            || name == ".fastembed_cache"
+            || name == ".sediment"
+            || name == "logs"
+        {
             return Ok(());
         }
 
@@ -771,13 +793,18 @@ pub fn cleanup_isolated_workspace(parent_dir: &std::path::Path, worktree_dir: &s
 
     if is_worktree {
         let _ = std::process::Command::new("git")
-            .args(["worktree", "remove", "--force", worktree_dir.to_str().unwrap()])
+            .args([
+                "worktree",
+                "remove",
+                "--force",
+                worktree_dir.to_str().unwrap(),
+            ])
             .current_dir(parent_dir)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
-        
+
         let _ = std::process::Command::new("git")
             .args(["worktree", "prune"])
             .current_dir(parent_dir)
@@ -804,7 +831,7 @@ pub fn sync_changes_back(src_dir: &std::path::Path, dst_dir: &std::path::Path) -
             }
             let status_code = &line[..2];
             let file_path_str = &line[3..];
-            
+
             let file_path = if status_code.starts_with('R') {
                 if let Some(pos) = file_path_str.find(" -> ") {
                     &file_path_str[pos + 4..]
@@ -862,7 +889,7 @@ pub async fn run_evolution_review(
          Context: {}\n\
          Subagent Summary of Work:\n{}\n\n\
          Please review the above execution, evaluate success, and extract any reusable skills.",
-         profile_name, goal, context, summary
+        profile_name, goal, context, summary
     );
 
     let messages = vec![crate::session::Message {
@@ -878,9 +905,18 @@ pub async fn run_evolution_review(
         reasoning_effort: None,
     };
 
-    let spinner_msg = format!("{}◇ [Evolution] Evaluating subagent success & extracting skills...{}", AURA_PURPLE, COLOR_RESET);
-    let resp = with_spinner(&spinner_msg, provider.chat(system_prompt, &messages, &[], &settings)).await?;
-    let content = resp.content.ok_or_else(|| anyhow!("No content returned from AI"))?;
+    let spinner_msg = format!(
+        "{}◇ [Evolution] Evaluating subagent success & extracting skills...{}",
+        AURA_PURPLE, COLOR_RESET
+    );
+    let resp = with_spinner(
+        &spinner_msg,
+        provider.chat(system_prompt, &messages, &[], &settings),
+    )
+    .await?;
+    let content = resp
+        .content
+        .ok_or_else(|| anyhow!("No content returned from AI"))?;
 
     // Parse JSON
     let mut clean_json = content.trim();
@@ -909,13 +945,17 @@ pub async fn run_evolution_review(
                 crate::agent::skills::save_subagent_skill(profile_name, &s_name, s_content)?;
                 crate::tui_println!(
                     "{}✓ [Evolution] Extracted and saved skill '{}' for subagent '{}'{}",
-                    EMERALD_GREEN, s_name, profile_name, COLOR_RESET
+                    EMERALD_GREEN,
+                    s_name,
+                    profile_name,
+                    COLOR_RESET
                 );
             }
         } else {
             crate::tui_println!(
                 "{}▲ [Evolution] Subagent task evaluation: Unsuccessful. No skill files updated.{}",
-                AURA_GOLD, COLOR_RESET
+                AURA_GOLD,
+                COLOR_RESET
             );
         }
     }

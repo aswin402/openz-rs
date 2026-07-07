@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
 use crate::ir::elements::*;
 use crate::ir::metadata::Metadata;
+use serde::{Deserialize, Serialize};
 
 /// The universal document representation.
 ///
@@ -84,7 +84,12 @@ impl Document {
 
     /// Chunk document for RAG pipelines using default fixed strategy
     pub fn chunk_for_embedding(&self, max_tokens: usize) -> Vec<Chunk> {
-        crate::engine::chunk::chunk_document(self, crate::engine::chunk::ChunkingStrategy::Fixed, max_tokens, 0)
+        crate::engine::chunk::chunk_document(
+            self,
+            crate::engine::chunk::ChunkingStrategy::Fixed,
+            max_tokens,
+            0,
+        )
     }
 
     /// Chunk document for RAG pipelines with configurable strategy and overlap
@@ -141,7 +146,7 @@ impl Document {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Section {
     pub title: String,
-    pub level: u32,       // 0 = root, 1 = heading 1, 2 = heading 2, etc.
+    pub level: u32, // 0 = root, 1 = heading 1, 2 = heading 2, etc.
     pub index: usize,
     pub content: Vec<Paragraph>,
 }

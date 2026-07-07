@@ -1,13 +1,13 @@
-use crate::tools::Tool;
+use super::delegate_profile::DelegateProfileTool;
+use super::CancellationToken;
 use crate::agent::style::*;
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
-use anyhow::{Result, anyhow};
-use std::sync::Arc;
+use crate::tools::Tool;
+use anyhow::{anyhow, Result};
 use serde_json::Value;
-use super::CancellationToken;
-use super::delegate_profile::DelegateProfileTool;
+use std::sync::Arc;
 
 pub struct EvaluatorOptimizerLoopTool {
     pub config: Config,
@@ -220,7 +220,9 @@ impl Tool for EvaluatorOptimizerLoopTool {
 
 pub fn validate_schema(value: &Value, schema: &Value) -> Result<(), String> {
     // 1. Get type field
-    let type_str = schema.get("type").and_then(|v| v.as_str())
+    let type_str = schema
+        .get("type")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| "Schema missing 'type' field".to_string())?;
 
     match type_str {
@@ -273,12 +275,17 @@ pub fn validate_schema(value: &Value, schema: &Value) -> Result<(), String> {
             // Check enum constraint
             if let Some(enum_val) = schema.get("enum").and_then(|v| v.as_array()) {
                 let val_str = value.as_str().unwrap();
-                let matches = enum_val.iter().any(|allowed| allowed.as_str() == Some(val_str));
+                let matches = enum_val
+                    .iter()
+                    .any(|allowed| allowed.as_str() == Some(val_str));
                 if !matches {
                     return Err(format!(
                         "Value '{}' not in allowed enum: {:?}",
                         val_str,
-                        enum_val.iter().map(|v| v.as_str().unwrap_or("")).collect::<Vec<_>>()
+                        enum_val
+                            .iter()
+                            .map(|v| v.as_str().unwrap_or(""))
+                            .collect::<Vec<_>>()
                     ));
                 }
             }

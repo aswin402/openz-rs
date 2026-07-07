@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedFileResult {
@@ -22,13 +22,13 @@ pub struct ArchiveDigestResult {
 
 /// Extract all files in a zip archive into a target directory.
 fn extract_zip_to_dir(zip_path: &Path, target_dir: &Path) -> Result<(), String> {
-    let file = fs::File::open(zip_path)
-        .map_err(|e| format!("Failed to open archive: {e}"))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| format!("Failed to read zip archive: {e}"))?;
+    let file = fs::File::open(zip_path).map_err(|e| format!("Failed to open archive: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("Failed to read zip archive: {e}"))?;
 
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i)
+        let mut file = archive
+            .by_index(i)
             .map_err(|e| format!("Failed to read file from zip: {e}"))?;
         let outpath = match file.enclosed_name() {
             Some(path) => target_dir.join(path),
@@ -36,13 +36,11 @@ fn extract_zip_to_dir(zip_path: &Path, target_dir: &Path) -> Result<(), String> 
         };
 
         if file.is_dir() {
-            fs::create_dir_all(&outpath)
-                .map_err(|e| format!("Failed to create folder: {e}"))?;
+            fs::create_dir_all(&outpath).map_err(|e| format!("Failed to create folder: {e}"))?;
         } else {
             if let Some(p) = outpath.parent() {
                 if !p.exists() {
-                    fs::create_dir_all(p)
-                        .map_err(|e| format!("Failed to create folder: {e}"))?;
+                    fs::create_dir_all(p).map_err(|e| format!("Failed to create folder: {e}"))?;
                 }
             }
             let mut outfile = fs::File::create(&outpath)
@@ -73,7 +71,12 @@ fn extract_recursive(zip_path: &Path, target_dir: &Path) -> Result<(), String> {
                     let path = entry.path();
                     if path.is_dir() {
                         find_zips(&path, list);
-                    } else if path.extension().and_then(|s| s.to_str()).map(|s| s.eq_ignore_ascii_case("zip")).unwrap_or(false) {
+                    } else if path
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.eq_ignore_ascii_case("zip"))
+                        .unwrap_or(false)
+                    {
                         list.push(path);
                     }
                 }
@@ -127,22 +130,40 @@ fn generate_digest_report(
 ) -> String {
     let mut report = String::new();
     report.push_str(&format!("# Archive Extract Digest: {}\n\n", archive_name));
-    
+
     report.push_str("## Extraction Summary\n");
-    report.push_str(&format!("- **Total Extracted & Processed Files**: {}\n", parsed_files.len()));
-    let success_count = parsed_files.iter().filter(|f| f.status == "success").count();
-    report.push_str(&format!("- **Successfully Parsed Documents**: {}\n\n", success_count));
+    report.push_str(&format!(
+        "- **Total Extracted & Processed Files**: {}\n",
+        parsed_files.len()
+    ));
+    let success_count = parsed_files
+        .iter()
+        .filter(|f| f.status == "success")
+        .count();
+    report.push_str(&format!(
+        "- **Successfully Parsed Documents**: {}\n\n",
+        success_count
+    ));
 
     report.push_str("### File List & Status\n\n");
     report.push_str("| File Path | Format | Status | Details |\n");
     report.push_str("|---|---|---|---|\n");
     for f in parsed_files {
-        let size_str = f.size_bytes.map(|s| format!("{} bytes", s)).unwrap_or_else(|| "-".to_string());
+        let size_str = f
+            .size_bytes
+            .map(|s| format!("{} bytes", s))
+            .unwrap_or_else(|| "-".to_string());
         if f.status == "success" {
-            report.push_str(&format!("| `{}` | `{}` | ✅ Success | {} |\n", f.path, f.format, size_str));
+            report.push_str(&format!(
+                "| `{}` | `{}` | ✅ Success | {} |\n",
+                f.path, f.format, size_str
+            ));
         } else {
             let err_msg = f.error.as_deref().unwrap_or("Unknown error");
-            report.push_str(&format!("| `{}` | `{}` | ❌ Failed | {} |\n", f.path, f.format, err_msg));
+            report.push_str(&format!(
+                "| `{}` | `{}` | ❌ Failed | {} |\n",
+                f.path, f.format, err_msg
+            ));
         }
     }
     report.push_str("\n---\n\n");
@@ -176,7 +197,10 @@ pub fn process_archive_digest(
         return Err(format!("Archive file not found: {}", archive_path));
     }
 
-    let archive_name = archive_file_path.file_name().unwrap_or_default().to_string_lossy();
+    let archive_name = archive_file_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy();
 
     // Determine target output directory
     let target_dir = match output_dir {
@@ -185,7 +209,11 @@ pub fn process_archive_digest(
             let sys_temp = std::env::temp_dir();
             static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
             let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            sys_temp.join(format!("opendoc_archive_extract_{}_{}", id, std::process::id()))
+            sys_temp.join(format!(
+                "opendoc_archive_extract_{}_{}",
+                id,
+                std::process::id()
+            ))
         }
     };
 
@@ -206,8 +234,12 @@ pub fn process_archive_digest(
 
     // 3. Process each file
     for file_path in &files {
-        let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-        
+        let ext = file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
         // Skip hidden files, system files, or markdown digests/directories
         let filename = file_path.file_name().unwrap_or_default().to_string_lossy();
         if filename.starts_with('.') || filename == "digest.md" {
@@ -217,7 +249,20 @@ pub fn process_archive_digest(
         // Supported document formats
         let is_doc = matches!(
             ext.as_str(),
-            "docx" | "doc" | "pptx" | "ppt" | "pdf" | "xlsx" | "xls" | "html" | "htm" | "md" | "markdown" | "csv" | "txt" | "text"
+            "docx"
+                | "doc"
+                | "pptx"
+                | "ppt"
+                | "pdf"
+                | "xlsx"
+                | "xls"
+                | "html"
+                | "htm"
+                | "md"
+                | "markdown"
+                | "csv"
+                | "txt"
+                | "text"
         );
 
         if !is_doc {
@@ -296,20 +341,20 @@ mod tests {
 
         // Add a folder and document
         zip.start_file("folder/doc2.md", options).unwrap();
-        zip.write_all(b"# MD Header\nSome markdown text content").unwrap();
+        zip.write_all(b"# MD Header\nSome markdown text content")
+            .unwrap();
 
         zip.finish().unwrap();
 
         // 2. Process digest
         let out_dir = test_root.join("extracted");
-        let result = process_archive_digest(
-            zip_path.to_str().unwrap(),
-            Some(out_dir.to_str().unwrap()),
-        ).unwrap();
+        let result =
+            process_archive_digest(zip_path.to_str().unwrap(), Some(out_dir.to_str().unwrap()))
+                .unwrap();
 
         assert!(result.success);
         assert_eq!(result.extracted_count, 2);
-        
+
         let digest_path = Path::new(&result.digest_path);
         assert!(digest_path.exists());
 

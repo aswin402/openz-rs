@@ -1,10 +1,10 @@
 pub mod scheduler;
 
-use serde::{Serialize, Deserialize};
+use crate::config::resolve_path;
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use anyhow::{Result, Context};
-use crate::config::resolve_path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CronJob {
@@ -27,7 +27,11 @@ pub struct FileLock {
 impl FileLock {
     pub fn acquire(lock_path: PathBuf) -> Self {
         loop {
-            match fs::OpenOptions::new().write(true).create_new(true).open(&lock_path) {
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
                 Ok(_) => {
                     return FileLock { lock_path };
                 }
@@ -112,7 +116,9 @@ where
 
 pub fn parse_schedule(s: &str) -> Option<chrono::Duration> {
     let s = s.trim();
-    if s.len() < 2 { return None; }
+    if s.len() < 2 {
+        return None;
+    }
     let (num_str, unit) = s.split_at(s.len() - 1);
     let num: i64 = num_str.parse().ok()?;
     match unit {
@@ -124,10 +130,13 @@ pub fn parse_schedule(s: &str) -> Option<chrono::Duration> {
     }
 }
 
-use std::str::FromStr;
 use chrono::Utc;
+use std::str::FromStr;
 
-pub fn calculate_next_run(s: &str, last_run: Option<chrono::DateTime<Utc>>) -> Option<chrono::DateTime<Utc>> {
+pub fn calculate_next_run(
+    s: &str,
+    last_run: Option<chrono::DateTime<Utc>>,
+) -> Option<chrono::DateTime<Utc>> {
     let now = Utc::now();
     let base_time = last_run.unwrap_or(now);
 

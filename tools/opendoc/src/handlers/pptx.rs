@@ -1,7 +1,13 @@
 use pptx::Presentation;
-use std::io::{Read, Write, Cursor};
+use std::io::{Cursor, Read, Write};
 
-fn get_rpr_xml(font_size: Option<f32>, font_color: Option<&str>, font_family: Option<&str>, bold: bool, italic: bool) -> String {
+fn get_rpr_xml(
+    font_size: Option<f32>,
+    font_color: Option<&str>,
+    font_family: Option<&str>,
+    bold: bool,
+    italic: bool,
+) -> String {
     let mut attrs = Vec::new();
     if let Some(sz) = font_size {
         attrs.push(format!("sz=\"{}\"", (sz * 100.0) as u32));
@@ -12,7 +18,7 @@ fn get_rpr_xml(font_size: Option<f32>, font_color: Option<&str>, font_family: Op
     if italic {
         attrs.push("i=\"1\"".to_string());
     }
-    
+
     let attrs_str = if attrs.is_empty() {
         String::new()
     } else {
@@ -21,10 +27,16 @@ fn get_rpr_xml(font_size: Option<f32>, font_color: Option<&str>, font_family: Op
 
     let mut children = String::new();
     if let Some(color) = font_color {
-        children.push_str(&format!("<a:solidFill><a:srgbClr val=\"{}\"/></a:solidFill>", color));
+        children.push_str(&format!(
+            "<a:solidFill><a:srgbClr val=\"{}\"/></a:solidFill>",
+            color
+        ));
     }
     if let Some(family) = font_family {
-        children.push_str(&format!("<a:latin typeface=\"{}\"/><a:cs typeface=\"{}\"/>", family, family));
+        children.push_str(&format!(
+            "<a:latin typeface=\"{}\"/><a:cs typeface=\"{}\"/>",
+            family, family
+        ));
     }
 
     if children.is_empty() {
@@ -118,7 +130,8 @@ fn create_title_slide_xml(
         bg_xml = bg_xml,
         ppr = ppr,
         rpr = rpr
-    ).into_bytes()
+    )
+    .into_bytes()
 }
 
 /// Create a content slide with title and body text
@@ -141,15 +154,24 @@ fn create_content_slide_xml(
     let ppr = get_ppr_xml(alignment);
     let title_rpr = get_rpr_xml(Some(44.0), font_color, font_family, true, false);
 
-    let body_rpr = get_rpr_xml(font_size.or(Some(28.0)), font_color, font_family, false, false);
-    let body_xml: String = body_items.iter().map(|item| {
-        format!(
-            r#"<a:p>{}<a:r>{}<a:t>{}</a:t></a:r></a:p>"#,
-            ppr,
-            body_rpr,
-            escape_xml(item)
-        )
-    }).collect();
+    let body_rpr = get_rpr_xml(
+        font_size.or(Some(28.0)),
+        font_color,
+        font_family,
+        false,
+        false,
+    );
+    let body_xml: String = body_items
+        .iter()
+        .map(|item| {
+            format!(
+                r#"<a:p>{}<a:r>{}<a:t>{}</a:t></a:r></a:p>"#,
+                ppr,
+                body_rpr,
+                escape_xml(item)
+            )
+        })
+        .collect();
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -224,7 +246,8 @@ fn create_content_slide_xml(
         ppr = ppr,
         title_rpr = title_rpr,
         body_xml = body_xml
-    ).into_bytes()
+    )
+    .into_bytes()
 }
 
 fn escape_xml(s: &str) -> String {
@@ -250,7 +273,8 @@ pub fn create_presentation(file_path: &str, _title: Option<&str>) -> String {
                     "success": true,
                     "path": file_path,
                     "format": "pptx"
-                }).to_string(),
+                })
+                .to_string(),
                 Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
             }
         }
@@ -349,7 +373,8 @@ pub fn add_slide(
                     "success": true,
                     "slide_number": slide_idx + 1,
                     "title": title
-                }).to_string(),
+                })
+                .to_string(),
                 Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
             }
         }
@@ -363,16 +388,20 @@ pub fn add_slide_image(file_path: &str, slide_number: u32, image_path: &str) -> 
     // Read source image
     let img_data = match std::fs::read(image_path) {
         Ok(d) => d,
-        Err(e) => return serde_json::json!({
-            "error": format!("Cannot read image file '{}': {}", image_path, e),
-            "error_code": "FILE_READ_ERROR",
-            "category": "io",
-            "suggestion": "Check that the image path exists and is readable."
-        }).to_string(),
+        Err(e) => {
+            return serde_json::json!({
+                "error": format!("Cannot read image file '{}': {}", image_path, e),
+                "error_code": "FILE_READ_ERROR",
+                "category": "io",
+                "suggestion": "Check that the image path exists and is readable."
+            })
+            .to_string()
+        }
     };
 
     let path = std::path::Path::new(image_path);
-    let img_ext = path.extension()
+    let img_ext = path
+        .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("png")
         .to_lowercase();
@@ -395,24 +424,30 @@ pub fn add_slide_image(file_path: &str, slide_number: u32, image_path: &str) -> 
     // Read the existing PPTX into memory
     let pptx_data = match std::fs::read(file_path) {
         Ok(d) => d,
-        Err(e) => return serde_json::json!({
-            "error": format!("Cannot read PPTX file '{}': {}", file_path, e),
-            "error_code": "FILE_READ_ERROR",
-            "category": "io",
-            "suggestion": "Check that the file exists and is a valid .pptx file."
-        }).to_string(),
+        Err(e) => {
+            return serde_json::json!({
+                "error": format!("Cannot read PPTX file '{}': {}", file_path, e),
+                "error_code": "FILE_READ_ERROR",
+                "category": "io",
+                "suggestion": "Check that the file exists and is a valid .pptx file."
+            })
+            .to_string()
+        }
     };
 
     // Open as ZIP using the zip crate (v2)
     let cursor = Cursor::new(pptx_data);
     let mut archive = match zip::ZipArchive::new(cursor) {
         Ok(a) => a,
-        Err(e) => return serde_json::json!({
-            "error": format!("Cannot open PPTX as ZIP archive: {}", e),
-            "error_code": "ZIP_ERROR",
-            "category": "parse",
-            "suggestion": "The file may be corrupted. Try re-saving it from PowerPoint."
-        }).to_string(),
+        Err(e) => {
+            return serde_json::json!({
+                "error": format!("Cannot open PPTX as ZIP archive: {}", e),
+                "error_code": "ZIP_ERROR",
+                "category": "parse",
+                "suggestion": "The file may be corrupted. Try re-saving it from PowerPoint."
+            })
+            .to_string()
+        }
     };
 
     let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
@@ -451,11 +486,13 @@ pub fn add_slide_image(file_path: &str, slide_number: u32, image_path: &str) -> 
             "error_code": "SLIDE_NOT_FOUND",
             "category": "validation",
             "suggestion": format!("Slide numbers start at 1. Check the slide count first.")
-        }).to_string();
+        })
+        .to_string();
     }
 
     // Find max existing image number in media folder
-    let max_img_num = entries.iter()
+    let max_img_num = entries
+        .iter()
         .filter(|(name, _)| name.starts_with("ppt/media/image"))
         .filter_map(|(name, _)| {
             let rest = name.strip_prefix("ppt/media/image")?;
@@ -496,7 +533,8 @@ pub fn add_slide_image(file_path: &str, slide_number: u32, image_path: &str) -> 
         // Create minimal rels file
         r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-</Relationships>"#.to_string()
+</Relationships>"#
+            .to_string()
     };
 
     // Insert image relationship before </Relationships>
@@ -506,7 +544,10 @@ pub fn add_slide_image(file_path: &str, slide_number: u32, image_path: &str) -> 
             rel_id, new_img_num, storage_ext
         ));
     }
-    entries.push((format!("ppt/slides/_rels/slide{}.xml.rels", slide_number), new_slide_rels.into_bytes()));
+    entries.push((
+        format!("ppt/slides/_rels/slide{}.xml.rels", slide_number),
+        new_slide_rels.into_bytes(),
+    ));
 
     // Generate picture XML for the slide
     let pic_xml = format!(
@@ -534,7 +575,8 @@ pub fn add_slide_image(file_path: &str, slide_number: u32, image_path: &str) -> 
     </a:prstGeom>
   </p:spPr>
 </p:pic>"#,
-        new_img_num + 100, rel_id
+        new_img_num + 100,
+        rel_id
     );
 
     // Insert picture into slide XML (inside spTree but before </p:spTree>)
@@ -550,12 +592,15 @@ pub fn add_slide_image(file_path: &str, slide_number: u32, image_path: &str) -> 
     let temp_path = format!("{}.tmp.pptx", file_path);
     let temp_file = match std::fs::File::create(&temp_path) {
         Ok(f) => f,
-        Err(e) => return serde_json::json!({
-            "error": format!("Cannot create temp file: {}", e),
-            "error_code": "FILE_WRITE_ERROR",
-            "category": "io",
-            "suggestion": "Check disk space and permissions."
-        }).to_string(),
+        Err(e) => {
+            return serde_json::json!({
+                "error": format!("Cannot create temp file: {}", e),
+                "error_code": "FILE_WRITE_ERROR",
+                "category": "io",
+                "suggestion": "Check disk space and permissions."
+            })
+            .to_string()
+        }
     };
 
     {
@@ -582,7 +627,8 @@ pub fn add_slide_image(file_path: &str, slide_number: u32, image_path: &str) -> 
         "slide": slide_number,
         "image": image_path,
         "image_number": new_img_num
-    }).to_string()
+    })
+    .to_string()
 }
 
 /// Convert a PPTX presentation to PDF by delegating to the converter module.
@@ -594,13 +640,15 @@ pub fn to_pdf(source: &str, output: &str) -> String {
             "source": result.source,
             "output": result.output,
             "size_bytes": result.size_bytes
-        }).to_string(),
+        })
+        .to_string(),
         Err(e) => serde_json::json!({
             "error": format!("PPTX to PDF conversion failed: {}", e),
             "error_code": "CONVERSION_FAILED",
             "category": "conversion",
             "suggestion": "Try converting to Markdown first, or check that the file is valid."
-        }).to_string(),
+        })
+        .to_string(),
     }
 }
 
@@ -608,12 +656,12 @@ fn html_to_markdown_pptx(html_str: &str) -> String {
     use scraper::{Html, Selector};
     let document = Html::parse_document(html_str);
     let mut parts = Vec::new();
-    
+
     let selector = match Selector::parse("h1, h2, h3, h4, h5, h6, p, div, li, br") {
         Ok(s) => s,
         Err(_) => return html_str.to_string(),
     };
-    
+
     for el in document.select(&selector) {
         let tag = el.value().name();
         let text = el.text().collect::<String>().trim().to_string();
@@ -669,7 +717,8 @@ pub fn to_ir(file_path: &str) -> Result<crate::ir::Document, crate::handlers::Lo
     for line in text.lines() {
         let trimmed = line.trim();
         if !trimmed.is_empty() && trimmed.len() > 2 {
-            ir.paragraphs.push(crate::ir::elements::Paragraph::new(trimmed));
+            ir.paragraphs
+                .push(crate::ir::elements::Paragraph::new(trimmed));
         }
     }
 

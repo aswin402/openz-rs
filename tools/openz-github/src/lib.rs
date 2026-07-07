@@ -6,7 +6,6 @@ use serde::Deserialize;
 
 pub use octocrab;
 
-
 #[derive(Clone)]
 pub struct GithubMcpServer {
     #[allow(dead_code)]
@@ -148,4 +147,3 @@ pub struct GetIssueCommentsRequest {
     #[schemars(description = "The issue or pull request number.")]
     pub issue_number: u64,
 }
-

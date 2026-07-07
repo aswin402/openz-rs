@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.36`
+# OpenZ 🦊 `v0.0.39`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">

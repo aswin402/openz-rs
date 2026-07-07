@@ -1,10 +1,10 @@
+use super::{AgentLoop, TurnContext, TurnState};
+use crate::agent::style::{AURA_GOLD, COLOR_RESET, RED_ORANGE};
+use crate::providers::GenerationSettings;
+use crate::session::Message;
 use anyhow::Result;
 use chrono::Utc;
 use serde_json::{Map, Value};
-use crate::providers::GenerationSettings;
-use crate::session::Message;
-use crate::agent::style::{RED_ORANGE, COLOR_RESET, AURA_GOLD};
-use super::{AgentLoop, TurnContext, TurnState};
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
     let config = &ctx.config;
@@ -13,7 +13,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     if len > max_msgs {
         let keep_msgs = max_msgs.saturating_sub(10).max(5);
         let mut k = len.saturating_sub(keep_msgs);
-        
+
         // Find the nearest "user" message by scanning backwards.
         // This ensures the kept history slice always starts with a "user" message,
         // and prevents orphaned "tool" messages from causing API errors.
@@ -25,13 +25,16 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             tracing::warn!(session = %ctx.session_key, "No user message found to split on. Forcing truncation at half the messages (k = {}).", len / 2);
             k = len / 2;
         }
-        
+
         if k > 0 && k < len {
             let messages_to_summarize = ctx.session.messages[0..k].to_vec();
-            let existing_summary = ctx.session.metadata.get("summary")
+            let existing_summary = ctx
+                .session
+                .metadata
+                .get("summary")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-                
+
             let system_prompt_sum = "You are a helpful assistant. Generate a consolidated summary of the conversation history. Keep it concise, clear, and focused on key facts, decisions, and files created/modified.";
             let mut prompt_content = String::new();
             if !existing_summary.is_empty() {
@@ -41,41 +44,62 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             for msg in &messages_to_summarize {
                 prompt_content.push_str(&format!("[{}]: {}\n", msg.role, msg.content));
             }
-            
+
             let settings = GenerationSettings {
                 temperature: 0.1,
                 max_tokens: 1024,
                 reasoning_effort: None,
             };
-            
+
             let summary_msgs = vec![Message {
                 role: "user".to_string(),
                 content: prompt_content,
                 timestamp: Some(Utc::now().to_rfc3339()),
                 extra: Map::new(),
             }];
-            
+
             let spinner_msg = format!(
                 "{}▸ Consolidating conversation context...{}",
-                RED_ORANGE,
-                COLOR_RESET
+                RED_ORANGE, COLOR_RESET
             );
             tracing::info!(session = %ctx.session_key, "Compacting history ({} messages > {} limit)...", len, max_msgs);
-            match loop_ref.chat_with_fallback(&mut ctx.active_provider, system_prompt_sum, &summary_msgs, &[], &settings, &spinner_msg).await {
+            match loop_ref
+                .chat_with_fallback(
+                    &mut ctx.active_provider,
+                    system_prompt_sum,
+                    &summary_msgs,
+                    &[],
+                    &settings,
+                    &spinner_msg,
+                )
+                .await
+            {
                 Ok(resp) => {
                     if let Some(new_summary) = resp.content {
                         tracing::info!(session = %ctx.session_key, "Compacted summary length: {} chars", new_summary.len());
-                        ctx.session.metadata.insert("summary".to_string(), Value::String(new_summary));
+                        ctx.session
+                            .metadata
+                            .insert("summary".to_string(), Value::String(new_summary));
                     }
                 }
                 Err(e) => {
                     tracing::error!(session = %ctx.session_key, "Failed to compact conversation history: {}", e);
-                    eprintln!("{}▲ Failed to summarize conversation history: {}{}", AURA_GOLD, e, COLOR_RESET);
+                    if !crate::agent::style::spinner::is_silent() {
+                        crate::tui_println!(
+                            "{}▲ Failed to summarize conversation history: {}{}",
+                            AURA_GOLD,
+                            e,
+                            COLOR_RESET
+                        );
+                    }
                 }
             }
 
             // Consolidate long-term memory
-            let existing_memory = ctx.session.metadata.get("memory")
+            let existing_memory = ctx
+                .session
+                .metadata
+                .get("memory")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
@@ -84,7 +108,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             if !existing_memory.is_empty() {
                 mem_prompt_content.push_str(&format!("Existing memory:\n{}\n\n", existing_memory));
             }
-            mem_prompt_content.push_str("New conversation history to extract facts/decisions from:\n");
+            mem_prompt_content
+                .push_str("New conversation history to extract facts/decisions from:\n");
             for msg in &messages_to_summarize {
                 mem_prompt_content.push_str(&format!("[{}]: {}\n", msg.role, msg.content));
             }
@@ -98,21 +123,37 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
             let spinner_msg = format!(
                 "{}▸ Consolidating long-term memory...{}",
-                RED_ORANGE,
-                COLOR_RESET
+                RED_ORANGE, COLOR_RESET
             );
-            match loop_ref.chat_with_fallback(&mut ctx.active_provider, system_prompt_mem, &mem_msgs, &[], &settings, &spinner_msg).await {
+            match loop_ref
+                .chat_with_fallback(
+                    &mut ctx.active_provider,
+                    system_prompt_mem,
+                    &mem_msgs,
+                    &[],
+                    &settings,
+                    &spinner_msg,
+                )
+                .await
+            {
                 Ok(resp) => {
                     if let Some(new_memory) = resp.content {
                         tracing::info!(session = %ctx.session_key, "Consolidated long-term memory. Memory size: {} chars", new_memory.len());
-                        ctx.session.metadata.insert("memory".to_string(), Value::String(new_memory));
+                        ctx.session
+                            .metadata
+                            .insert("memory".to_string(), Value::String(new_memory));
                     }
                 }
                 Err(e) => {
                     let silent = crate::agent::style::spinner::is_silent();
                     tracing::error!(session = %ctx.session_key, "Failed to consolidate long-term memory: {}", e);
                     if !silent {
-                        eprintln!("{}▲ Failed to update long-term memory: {}{}", AURA_GOLD, e, COLOR_RESET);
+                        crate::tui_println!(
+                            "{}▲ Failed to update long-term memory: {}{}",
+                            AURA_GOLD,
+                            e,
+                            COLOR_RESET
+                        );
                     }
                 }
             }

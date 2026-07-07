@@ -1,8 +1,8 @@
-use openmedia_mcp::{
-    OpenMediaServer, Parameters, ImproveScoreImageRequest, ImproveRefinePromptRequest,
-    ImproveAutoRefineRequest, ImproveFeedbackRequest, ImproveQualityReportRequest,
-};
 use openmedia_core::Config;
+use openmedia_mcp::{
+    ImproveAutoRefineRequest, ImproveFeedbackRequest, ImproveQualityReportRequest,
+    ImproveRefinePromptRequest, ImproveScoreImageRequest, OpenMediaServer, Parameters,
+};
 
 #[tokio::test]
 async fn test_mcp_self_improvement_tools() {
@@ -16,9 +16,17 @@ async fn test_mcp_self_improvement_tools() {
 
     // Create a dummy image to score
     let image_path = temp_dir.path().join("test_image.png");
-    let img = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(64, 64, image::Rgba([200, 200, 200, 255])));
+    let img = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        64,
+        64,
+        image::Rgba([200, 200, 200, 255]),
+    ));
     let mut bytes = Vec::new();
-    img.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+    img.write_to(
+        &mut std::io::Cursor::new(&mut bytes),
+        image::ImageFormat::Png,
+    )
+    .unwrap();
     std::fs::write(&image_path, &bytes).unwrap();
 
     // Test 1: improve_score_image
@@ -43,7 +51,12 @@ async fn test_mcp_self_improvement_tools() {
     let res = server.improve_refine_prompt(refine_params).await.unwrap();
     let val = res.0;
     assert!(val.get("prompt").unwrap().as_str().unwrap().contains("cat"));
-    assert!(val.get("prompt").unwrap().as_str().unwrap().contains("detailed"));
+    assert!(val
+        .get("prompt")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .contains("detailed"));
     assert!(val.get("suggested_steps").is_some());
 
     // Test 3: improve_auto_refine
@@ -54,7 +67,10 @@ async fn test_mcp_self_improvement_tools() {
         height: Some(128),
         max_iterations: Some(2),
     });
-    let res = server.improve_auto_refine(auto_refine_params).await.unwrap();
+    let res = server
+        .improve_auto_refine(auto_refine_params)
+        .await
+        .unwrap();
     let val = res.0;
     let out: openmedia_improve::GenerationRecord = serde_json::from_value(val.into()).unwrap();
     assert_eq!(out.tool_name, "improve_auto_refine");
@@ -82,5 +98,10 @@ async fn test_mcp_self_improvement_tools() {
     assert_eq!(val.get("total_generations").unwrap().as_u64().unwrap(), 2); // 2 iterations run in auto_refine
     assert!(val.get("avg_clip_score").is_some());
     assert!(val.get("avg_aesthetic_score").is_some());
-    assert!(!val.get("recent_records").unwrap().as_array().unwrap().is_empty());
+    assert!(!val
+        .get("recent_records")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .is_empty());
 }

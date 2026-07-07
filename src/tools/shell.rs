@@ -1,5 +1,5 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use std::process::Command;
 
 #[cfg(unix)]
@@ -16,7 +16,14 @@ unsafe fn apply_seccomp_guard() -> Result<(), std::io::Error> {
     }
 
     // Kill child if parent dies (no orphaned processes)
-    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong, 0, 0, 0) != 0 {
+    if libc::prctl(
+        libc::PR_SET_PDEATHSIG,
+        libc::SIGKILL as libc::c_ulong,
+        0,
+        0,
+        0,
+    ) != 0
+    {
         return Err(std::io::Error::last_os_error());
     }
 
@@ -58,6 +65,14 @@ unsafe fn apply_seccomp_guard() -> Result<(), std::io::Error> {
 /// while allowing normal file I/O, memory, and process operations.
 #[cfg(target_os = "linux")]
 unsafe fn allowlist_seccomp_filter() -> Result<(), std::io::Error> {
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        tracing::warn!(
+            "seccomp sandbox disabled on this CPU architecture until architecture-specific syscall tables are implemented"
+        );
+        return Ok(());
+    }
+
     // x86_64 syscall numbers to allow
     const ALLOWED_SYSCALLS: &[u32] = &[
         0,   // read
@@ -175,38 +190,21 @@ unsafe fn allowlist_seccomp_filter() -> Result<(), std::io::Error> {
 
     // Build BPF program:
     // 1. Load architecture from seccomp_data (offset 4)
-    // 2. Check if x86_64 (0xC000003E) or aarch64 (0xC00000B7)
-    // 3. If neither, KILL
+    // 2. Check if x86_64 (0xC000003E)
+    // 3. If not, KILL
     // 4. Load syscall number
     // 5. Check against allowlist
     // 6. If not found, KILL
     // 7. If found, ALLOW
 
-    // AUDIT_ARCH_X86_64   = 0xC000003E (little-endian)
-    // AUDIT_ARCH_AARCH64  = 0xC00000B7 (little-endian)
+    // AUDIT_ARCH_X86_64 = 0xC000003E (little-endian)
     const AUDIT_ARCH_X86_64: u32 = 0xC000003E;
-    const AUDIT_ARCH_AARCH64: u32 = 0xC00000B7;
 
-    // Number of instructions:
-    // 1 (load arch) + 2 (arch checks) + 1 (jump to allow) = 4 overhead
-    // + 4 clean-up + N allowlist entries + 1 deny (RET KILL)
-    // But we need jumps to the ALLOW instruction for matches
     let n_allowed = ALLOWED_SYSCALLS.len();
-    // Layout:
-    // 0: LD W ABS 4                    (load arch)
-    // 1: JEQ #AUDIT_ARCH_X86_64, +X    (if x86_64, jump to syscall check)
-    // 2: JEQ #AUDIT_ARCH_AARCH64, +Y   (if aarch64, jump to syscall check)
-    // 3: RET #SECCOMP_RET_KILL         (unsupported arch → kill)
-    // 4..4+N-1: JEQ #syscall, ..       (for each allowed syscall)
-    // 4+N: RET #SECCOMP_RET_KILL       (default: kill)
-    // 4+N+1: LD W ABS 0                (load syscall number - entry point for syscall check)
-    // 4+N+2..4+N+2+N-1: JEQ #syscall, +K, +1 (for each: allow on match, continue on miss)
-    // 4+N+2+N: RET #SECCOMP_RET_KILL   (not in allowlist)
-    // 4+N+2+N+1: RET #SECCOMP_RET_ALLOW (match found)
 
-    // Actually, let me use a simpler layout:
+    // BPF layout:
     // 0: LD W ABS 4                    → load arch
-    // 1: JEQ #AUDIT_ARCH_X86_64, +2, +1  → if x86_64, skip next kill
+    // 1: JEQ #AUDIT_ARCH_X86_64, +1, +0  -> if x86_64, skip next kill
     // 2: RET #SECCOMP_RET_KILL         → wrong arch
     // 3: LD W ABS 0                    → load syscall num
     // 4..4+N-1: for each syscall in allowlist:
@@ -224,19 +222,12 @@ unsafe fn allowlist_seccomp_filter() -> Result<(), std::io::Error> {
         jf: 0,
         k: 4, // offset of arch in seccomp_data
     });
-    // If arch == AUDIT_ARCH_X86_64, skip 2 (to LD W ABS 0)
-    filter.push(libc::sock_filter {
-        code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
-        jt: 2,
-        jf: 0,
-        k: AUDIT_ARCH_X86_64,
-    });
-    // Also check aarch64
+    // If arch == AUDIT_ARCH_X86_64, skip the kill instruction and load syscall number.
     filter.push(libc::sock_filter {
         code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
         jt: 1,
         jf: 0,
-        k: AUDIT_ARCH_AARCH64,
+        k: AUDIT_ARCH_X86_64,
     });
     // Unsupported arch
     filter.push(libc::sock_filter {
@@ -356,7 +347,9 @@ impl Tool for ExecCommandTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let command_str = arguments.get("command").and_then(|v| v.as_str())
+        let command_str = arguments
+            .get("command")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'command' argument"))?;
 
         // 1. Try to parse command line to see if it targets a WASM script or skill
@@ -365,17 +358,27 @@ impl Tool for ExecCommandTool {
             if let Some(wasm_file) = find_wasm_file(&parsed_args[0]) {
                 let path = wasm_file.clone();
                 let wasm_args = parsed_args[1..].to_vec();
-                
+
                 // Execute in spawn_blocking to avoid blocking tokio executor thread
                 let wasm_res = tokio::task::spawn_blocking(move || {
                     crate::tools::wasm_sandbox::execute_wasm(&path, wasm_args)
-                }).await?;
+                })
+                .await?;
 
                 match wasm_res {
                     Ok(val) => {
-                        let stdout = val.get("stdout").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let stderr = val.get("stderr").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let status_code = val.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                        let stdout = val
+                            .get("stdout")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let stderr = val
+                            .get("stderr")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let status_code =
+                            val.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
                         return Ok(serde_json::json!({
                             "status_code": status_code,
                             "stdout": stdout,
@@ -418,8 +421,9 @@ impl Tool for ExecCommandTool {
 
         let output_res = tokio::time::timeout(
             std::time::Duration::from_secs(timeout_secs),
-            tokio_cmd.output()
-        ).await;
+            tokio_cmd.output(),
+        )
+        .await;
 
         let output = match output_res {
             Ok(Ok(o)) => o,
@@ -479,12 +483,12 @@ fn parse_command_line(cmd: &str) -> Vec<String> {
 
 fn find_wasm_file(program: &str) -> Option<std::path::PathBuf> {
     let path = crate::config::resolve_path(program);
-    
+
     // Check if the path exists and is a WASM file
-    if path.exists() && path.is_file()
-        && path.extension().and_then(|s| s.to_str()) == Some("wasm") {
-            return Some(path);
-        }
+    if path.exists() && path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("wasm")
+    {
+        return Some(path);
+    }
 
     // Try appending .wasm if not already present
     if path.extension().and_then(|s| s.to_str()) != Some("wasm") {
@@ -499,10 +503,12 @@ fn find_wasm_file(program: &str) -> Option<std::path::PathBuf> {
     let skills_dir = crate::agent::skills::get_skills_dir();
     if let Some(file_name) = std::path::Path::new(program).file_name() {
         let skill_path = skills_dir.join(file_name);
-        if skill_path.exists() && skill_path.is_file()
-            && skill_path.extension().and_then(|s| s.to_str()) == Some("wasm") {
-                return Some(skill_path);
-            }
+        if skill_path.exists()
+            && skill_path.is_file()
+            && skill_path.extension().and_then(|s| s.to_str()) == Some("wasm")
+        {
+            return Some(skill_path);
+        }
         if skill_path.extension().and_then(|s| s.to_str()) != Some("wasm") {
             let mut skill_wasm_path = skill_path.clone();
             skill_wasm_path.set_extension("wasm");
@@ -515,10 +521,12 @@ fn find_wasm_file(program: &str) -> Option<std::path::PathBuf> {
         let local_skills_dir = std::path::Path::new("skills");
         if local_skills_dir.exists() && local_skills_dir.is_dir() {
             let local_skill_path = local_skills_dir.join(file_name);
-            if local_skill_path.exists() && local_skill_path.is_file()
-                && local_skill_path.extension().and_then(|s| s.to_str()) == Some("wasm") {
-                    return Some(local_skill_path);
-                }
+            if local_skill_path.exists()
+                && local_skill_path.is_file()
+                && local_skill_path.extension().and_then(|s| s.to_str()) == Some("wasm")
+            {
+                return Some(local_skill_path);
+            }
             if local_skill_path.extension().and_then(|s| s.to_str()) != Some("wasm") {
                 let mut local_skill_wasm_path = local_skill_path.clone();
                 local_skill_wasm_path.set_extension("wasm");
@@ -558,7 +566,9 @@ impl Tool for PythonSandboxTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let code = arguments.get("code").and_then(|v| v.as_str())
+        let code = arguments
+            .get("code")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'code' parameter"))?;
 
         let temp_dir = std::env::temp_dir();
@@ -570,7 +580,7 @@ impl Tool for PythonSandboxTool {
         let mut std_cmd = std::process::Command::new("python3");
         crate::config::loader::set_command_cwd(&mut std_cmd);
         std_cmd.arg(&temp_path);
-        
+
         let enable_sandbox = crate::config::loader::load_config()
             .map(|c| c.agents.defaults.enable_sandbox)
             .unwrap_or(false);
@@ -578,10 +588,8 @@ impl Tool for PythonSandboxTool {
 
         let mut tokio_cmd = tokio::process::Command::from(std_cmd);
         tokio_cmd.kill_on_drop(true);
-        let output_res = tokio::time::timeout(
-            std::time::Duration::from_secs(60),
-            tokio_cmd.output()
-        ).await;
+        let output_res =
+            tokio::time::timeout(std::time::Duration::from_secs(60), tokio_cmd.output()).await;
         let _ = std::fs::remove_file(&temp_path);
 
         let output = match output_res {
@@ -646,28 +654,25 @@ mod tests {
     async fn test_exec_command_wasm() {
         let temp_dir = std::env::temp_dir();
         let wasm_path = temp_dir.join("test_exec_command_wasm_temp_file_12345.wasm");
-        
+
         let wasm_bytes: &[u8] = &[
-            0x00, 0x61, 0x73, 0x6d,
-            0x01, 0x00, 0x00, 0x00,
-            0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
-            0x03, 0x02, 0x01, 0x00,
-            0x07, 0x0a, 0x01, 0x06, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74, 0x00, 0x00,
-            0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b,
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+            0x03, 0x02, 0x01, 0x00, 0x07, 0x0a, 0x01, 0x06, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74,
+            0x00, 0x00, 0x0a, 0x04, 0x01, 0x02, 0x00, 0x0b,
         ];
-        
+
         std::fs::write(&wasm_path, wasm_bytes).unwrap();
-        
+
         let tool = ExecCommandTool;
         let args = serde_json::json!({
             "command": format!("{} arg1 arg2", wasm_path.to_string_lossy())
         });
-        
+
         let res = tool.call(&args).await.unwrap();
-        
+
         // Clean up
         let _ = std::fs::remove_file(wasm_path);
-        
+
         assert_eq!(res["status_code"].as_i64().unwrap(), 0);
         assert!(res.get("stdout").is_some());
         assert!(res.get("stderr").is_some());

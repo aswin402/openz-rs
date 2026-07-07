@@ -1,8 +1,8 @@
+use crate::agent::style::colors::{AURA_GOLD, COLOR_RESET, EMERALD_GREEN};
+use crate::providers::{GenerationSettings, LLMProvider};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use crate::providers::{LLMProvider, GenerationSettings};
-use crate::agent::style::colors::{AURA_GOLD, EMERALD_GREEN, COLOR_RESET};
 use std::sync::Arc;
 
 pub struct CargoManagerTool {
@@ -79,10 +79,18 @@ impl Tool for CargoManagerTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments.get("action").and_then(|v| v.as_str())
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
-        let cwd = arguments.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let self_heal = arguments.get("self_heal").and_then(|v| v.as_bool()).unwrap_or(true);
+        let cwd = arguments
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let self_heal = arguments
+            .get("self_heal")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
         let mut output = run_cargo_cmd(action, &cwd).await?;
         let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -124,7 +132,9 @@ impl Tool for CargoManagerTool {
                 let resolved_path = if let Some(ref cwd_str) = cwd {
                     crate::config::loader::resolve_path(cwd_str).join(target_file)
                 } else {
-                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join(target_file)
+                    std::env::current_dir()
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                        .join(target_file)
                 };
 
                 if resolved_path.exists() {
@@ -134,7 +144,9 @@ impl Tool for CargoManagerTool {
                         let mut collect = false;
                         let mut error_lines_count = 0;
                         for line in stderr.lines() {
-                            if line.contains(target_file) && line.contains(&format!(":{}", line_num)) {
+                            if line.contains(target_file)
+                                && line.contains(&format!(":{}", line_num))
+                            {
                                 collect = true;
                                 error_lines_count = 0;
                             }
@@ -142,7 +154,9 @@ impl Tool for CargoManagerTool {
                                 error_context.push_str(line);
                                 error_context.push('\n');
                                 error_lines_count += 1;
-                                if error_lines_count > 12 || (line.trim().is_empty() && error_lines_count > 4) {
+                                if error_lines_count > 12
+                                    || (line.trim().is_empty() && error_lines_count > 4)
+                                {
                                     collect = false;
                                 }
                             }
@@ -172,17 +186,22 @@ impl Tool for CargoManagerTool {
                             reasoning_effort: None,
                         };
 
-                        match self.provider.chat(system_prompt, &messages, &[], &settings).await {
+                        match self
+                            .provider
+                            .chat(system_prompt, &messages, &[], &settings)
+                            .await
+                        {
                             Ok(resp) => {
                                 if let Some(content) = resp.content {
                                     let mut corrected_code = content.trim();
                                     if corrected_code.starts_with("```") {
                                         if let Some(pos) = corrected_code.find('\n') {
-                                            corrected_code = &corrected_code[pos+1..];
+                                            corrected_code = &corrected_code[pos + 1..];
                                         }
                                     }
                                     if corrected_code.ends_with("```") {
-                                        corrected_code = corrected_code[..corrected_code.len() - 3].trim();
+                                        corrected_code =
+                                            corrected_code[..corrected_code.len() - 3].trim();
                                     }
                                     let corrected_code = corrected_code.trim().to_string();
 
@@ -197,9 +216,11 @@ impl Tool for CargoManagerTool {
                                             );
                                             // Re-run cargo build
                                             output = run_cargo_cmd(action, &cwd).await?;
-                                            stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                                            stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                                            
+                                            stdout =
+                                                String::from_utf8_lossy(&output.stdout).to_string();
+                                            stderr =
+                                                String::from_utf8_lossy(&output.stderr).to_string();
+
                                             // Clean up backup file
                                             let _ = std::fs::remove_file(&backup_path);
                                         } else {
@@ -228,18 +249,31 @@ impl Tool for CargoManagerTool {
                     if let Some(reason) = msg.get("reason").and_then(|v| v.as_str()) {
                         if reason == "compiler-message" {
                             if let Some(message) = msg.get("message") {
-                                let level = message.get("level").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                let msg_text = message.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                                let level = message
+                                    .get("level")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown");
+                                let msg_text = message
+                                    .get("message")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
                                 let spans = message.get("spans").and_then(|v| v.as_array());
-                                
+
                                 let mut file_path = String::new();
                                 let mut line_num = 0;
 
                                 if let Some(spans_arr) = spans {
                                     if !spans_arr.is_empty() {
                                         let first_span = &spans_arr[0];
-                                        file_path = first_span.get("file_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                        line_num = first_span.get("line_start").and_then(|v| v.as_u64()).unwrap_or(0);
+                                        file_path = first_span
+                                            .get("file_name")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        line_num = first_span
+                                            .get("line_start")
+                                            .and_then(|v| v.as_u64())
+                                            .unwrap_or(0);
                                     }
                                 }
 
@@ -283,14 +317,16 @@ mod tests {
             "".to_string(),
         ));
         let tool = CargoManagerTool::new(provider);
-        let res = tool.call(&json!({
-            "action": "clippy",
-            "self_heal": false
-        })).await?;
+        let res = tool
+            .call(&json!({
+                "action": "clippy",
+                "self_heal": false
+            }))
+            .await?;
 
         assert_eq!(res["status"], "success");
         assert!(res["diagnostics"].is_array());
-        
+
         Ok(())
     }
 }

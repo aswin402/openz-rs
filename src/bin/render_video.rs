@@ -1,12 +1,12 @@
 use anyhow::Result;
-use serde_json::json;
-use openz::tools::Tool;
 use openz::tools::html_video::HtmlToVideoTool;
+use openz::tools::Tool;
+use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
-    
+
     let tool = HtmlToVideoTool;
     let args = json!({
         "html_path": "/home/aswin/openz_intro_video.html",
@@ -19,10 +19,10 @@ async fn main() -> Result<()> {
         "settle_ms": 30,
         "load_delay_ms": 1500
     });
-    
+
     println!("Rendering HTML animation timeline to video '/home/aswin/openz_intro.mp4' (duration: 35s, 30fps)...");
     let res = tool.call(&args).await?;
     println!("Render completed! Result: {:?}", res);
-    
+
     Ok(())
 }

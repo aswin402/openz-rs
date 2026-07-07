@@ -6,9 +6,7 @@
 #![allow(clippy::double_ended_iterator_last)]
 #![allow(clippy::useless_vec)]
 
-use searchxyz::{
-    cache, config, crawler, extractor, graph, index, search, tools,
-};
+use searchxyz::{cache, config, crawler, extractor, graph, index, search, tools};
 
 use std::sync::Arc;
 

@@ -1,13 +1,12 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
+use calamine::Reader;
+use docx_rs::{
+    read_docx, DocumentChild, ParagraphChild, RunChild, TableCellContent, TableChild, TableRowChild,
+};
 use serde_json::{json, Value};
 use std::fs::File;
 use std::io::Read;
-use calamine::Reader;
-use docx_rs::{
-    read_docx, DocumentChild, ParagraphChild, RunChild,
-    TableChild, TableRowChild, TableCellContent
-};
 
 pub struct DocReaderTool;
 
@@ -115,9 +114,11 @@ impl Tool for DocReaderTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let path_str = arguments.get("path").and_then(|v| v.as_str())
+        let path_str = arguments
+            .get("path")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' parameter"))?;
-        
+
         let resolved_path = crate::config::loader::resolve_path(path_str);
         if !resolved_path.exists() {
             return Err(anyhow!("File does not exist: {}", path_str));
@@ -127,17 +128,20 @@ impl Tool for DocReaderTool {
         let metadata = std::fs::metadata(&resolved_path)?;
         const MAX_DOC_SIZE: u64 = 50 * 1024 * 1024;
         if metadata.len() > MAX_DOC_SIZE {
-            return Err(anyhow!("Document file too large ({} bytes, max {} bytes)", metadata.len(), MAX_DOC_SIZE));
+            return Err(anyhow!(
+                "Document file too large ({} bytes, max {} bytes)",
+                metadata.len(),
+                MAX_DOC_SIZE
+            ));
         }
 
-        let extension = resolved_path.extension()
+        let extension = resolved_path
+            .extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.to_lowercase());
 
         let content = match extension.as_deref() {
-            Some("pdf") => {
-                pdf_extract::extract_text(&resolved_path)?
-            }
+            Some("pdf") => pdf_extract::extract_text(&resolved_path)?,
             Some("xlsx") | Some("xls") | Some("ods") => {
                 let mut sheets = calamine::open_workbook_auto(&resolved_path)?;
                 let mut text = String::new();
@@ -145,9 +149,8 @@ impl Tool for DocReaderTool {
                     if let Ok(range) = sheets.worksheet_range(&sheet_name) {
                         text.push_str(&format!("--- Sheet: {} ---\n", sheet_name));
                         for row in range.rows() {
-                            let row_strs: Vec<String> = row.iter()
-                                .map(|cell| cell.to_string())
-                                .collect();
+                            let row_strs: Vec<String> =
+                                row.iter().map(|cell| cell.to_string()).collect();
                             text.push_str(&row_strs.join("\t"));
                             text.push('\n');
                         }
@@ -163,11 +166,18 @@ impl Tool for DocReaderTool {
                 extract_docx_text(&buf)?
             }
             _ => {
-                return Err(anyhow!("Unsupported file extension. Supported formats: .pdf, .xlsx, .xls, .ods, .docx"));
+                return Err(anyhow!(
+                    "Unsupported file extension. Supported formats: .pdf, .xlsx, .xls, .ods, .docx"
+                ));
             }
         };
 
-        let _ = crate::tools::shared_memory::archive_research_entry(path_str, &content, &format!("doc_reader: {}", path_str)).await;
+        let _ = crate::tools::shared_memory::archive_research_entry(
+            path_str,
+            &content,
+            &format!("doc_reader: {}", path_str),
+        )
+        .await;
 
         Ok(json!({
             "status": "success",
@@ -185,7 +195,7 @@ mod tests {
         let tool = DocReaderTool;
         assert_eq!(tool.name(), "read_doc");
         assert!(tool.description().contains("PDF"));
-        
+
         let args = json!({
             "path": "nonexistent.pdf"
         });

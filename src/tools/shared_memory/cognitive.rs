@@ -1,10 +1,10 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
+use rusqlite::{params, Connection};
 use serde_json::{json, Value};
-use rusqlite::{Connection, params};
 
-use super::db::{get_db_mutex, with_db, get_current_workspace};
-use super::embeddings::{get_embedding, cosine_similarity};
+use super::db::{get_current_workspace, get_db_mutex, with_db};
+use super::embeddings::{cosine_similarity, get_embedding};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CognitiveMemoryEntry {
@@ -21,7 +21,8 @@ pub struct CognitiveMemoryEntry {
 }
 
 pub fn prune_decayed_memories(conn: &Connection) -> Result<usize> {
-    let mut stmt = conn.prepare("SELECT id, importance, last_accessed, decay_rate FROM cognitive_memory")?;
+    let mut stmt =
+        conn.prepare("SELECT id, importance, last_accessed, decay_rate FROM cognitive_memory")?;
     let now = chrono::Utc::now();
     let rows = stmt.query_map([], |row| {
         Ok((
@@ -40,10 +41,10 @@ pub fn prune_decayed_memories(conn: &Connection) -> Result<usize> {
             .unwrap_or(now);
         let duration = now.signed_duration_since(last_acc_date);
         let days_elapsed = duration.num_seconds() as f64 / 86400.0;
-        
+
         let decay_factor = (-decay_rate * days_elapsed).exp();
         let decayed_importance = importance * decay_factor;
-        
+
         if decayed_importance < 0.15 {
             to_delete.push(id);
         }
@@ -98,17 +99,27 @@ impl Tool for StoreMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let text = arguments.get("text").and_then(|v| v.as_str())
+        let text = arguments
+            .get("text")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'text' parameter"))?;
-        
+
         let tags = if let Some(arr) = arguments.get("tags").and_then(|v| v.as_array()) {
-            arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
         } else {
             Vec::new()
         };
 
-        let importance = arguments.get("importance").and_then(|v| v.as_f64()).unwrap_or(0.8) as f32;
-        let decay_rate = arguments.get("decay_rate").and_then(|v| v.as_f64()).unwrap_or(0.05) as f32;
+        let importance = arguments
+            .get("importance")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.8) as f32;
+        let decay_rate = arguments
+            .get("decay_rate")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.05) as f32;
 
         let embedding = get_embedding(text, false).await?;
         let workspace = get_current_workspace();
@@ -182,17 +193,25 @@ impl Tool for RecallMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments.get("query").and_then(|v| v.as_str())
+        let query = arguments
+            .get("query")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
-        
+
         let top_k = arguments.get("top_k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
-        let scope = arguments.get("scope").and_then(|v| v.as_str()).unwrap_or("workspace");
-        
-        let filter_tags: Vec<String> = if let Some(arr) = arguments.get("tags").and_then(|v| v.as_array()) {
-            arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
-        } else {
-            Vec::new()
-        };
+        let scope = arguments
+            .get("scope")
+            .and_then(|v| v.as_str())
+            .unwrap_or("workspace");
+
+        let filter_tags: Vec<String> =
+            if let Some(arr) = arguments.get("tags").and_then(|v| v.as_array()) {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
         let query_embed = get_embedding(query, true).await?;
         let current_ws = get_current_workspace();
@@ -205,7 +224,7 @@ impl Tool for RecallMemoryTool {
                 let tags_str: String = row.get(5)?;
                 let embedding: Vec<f32> = serde_json::from_str(&embedding_str).unwrap_or_default();
                 let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-                
+
                 Ok(CognitiveMemoryEntry {
                     id: row.get(0)?,
                     text: row.get(1)?,
@@ -250,12 +269,12 @@ impl Tool for RecallMemoryTool {
                 .unwrap_or(now);
             let duration = now.signed_duration_since(last_acc_date);
             let days_elapsed = duration.num_seconds() as f32 / 86400.0;
-            
+
             let decay_factor = (-entry.decay_rate * days_elapsed).exp();
             let decayed_importance = entry.importance * decay_factor;
 
             let sim = cosine_similarity(&query_embed, &entry.embedding);
-            
+
             // Combine similarity (70% weight) and decayed importance (30% weight)
             let cognitive_score = sim * 0.7 + decayed_importance * 0.3;
 
@@ -265,9 +284,8 @@ impl Tool for RecallMemoryTool {
         // Sort descending by cognitive score
         scored_results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        let selected_matches: Vec<(f32, CognitiveMemoryEntry)> = scored_results.into_iter()
-            .take(top_k)
-            .collect();
+        let selected_matches: Vec<(f32, CognitiveMemoryEntry)> =
+            scored_results.into_iter().take(top_k).collect();
 
         // Update last_accessed and access_count for returned matches
         let now_str = now.to_rfc3339();
@@ -281,7 +299,8 @@ impl Tool for RecallMemoryTool {
             Ok(())
         });
 
-        let matches_val: Vec<Value> = selected_matches.into_iter()
+        let matches_val: Vec<Value> = selected_matches
+            .into_iter()
             .map(|(score, entry)| {
                 json!({
                     "id": entry.id,
@@ -328,8 +347,11 @@ impl Tool for ClearMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let scope = arguments.get("scope").and_then(|v| v.as_str()).unwrap_or("workspace");
-        
+        let scope = arguments
+            .get("scope")
+            .and_then(|v| v.as_str())
+            .unwrap_or("workspace");
+
         let _lock = get_db_mutex().lock().await;
         with_db(|conn| {
             if scope == "all" {
@@ -346,7 +368,10 @@ impl Tool for ClearMemoryTool {
                 }))
             } else {
                 let current_ws = get_current_workspace();
-                let count = conn.execute("DELETE FROM cognitive_memory WHERE workspace = ?", params![current_ws])?;
+                let count = conn.execute(
+                    "DELETE FROM cognitive_memory WHERE workspace = ?",
+                    params![current_ws],
+                )?;
                 Ok(json!({
                     "status": "success",
                     "message": format!("Cleared {} memories associated with the current workspace.", count)
@@ -383,12 +408,15 @@ impl Tool for DeleteMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let id = arguments.get("id").and_then(|v| v.as_str())
+        let id = arguments
+            .get("id")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'id' parameter"))?;
 
         let _lock = get_db_mutex().lock().await;
         with_db(|conn| {
-            let deleted = conn.execute("DELETE FROM cognitive_memory WHERE id = ?1", params![id])?;
+            let deleted =
+                conn.execute("DELETE FROM cognitive_memory WHERE id = ?1", params![id])?;
 
             if deleted == 0 {
                 Ok(json!({
@@ -440,11 +468,18 @@ impl Tool for UpdateMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let id = arguments.get("id").and_then(|v| v.as_str())
+        let id = arguments
+            .get("id")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'id' parameter"))?;
-        let text = arguments.get("text").and_then(|v| v.as_str())
+        let text = arguments
+            .get("text")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'text' parameter"))?;
-        let importance = arguments.get("importance").and_then(|v| v.as_f64()).map(|v| v as f32);
+        let importance = arguments
+            .get("importance")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32);
 
         let new_embedding = get_embedding(text, false).await?;
         let embedding_json = serde_json::to_string(&new_embedding)?;
@@ -457,7 +492,9 @@ impl Tool for UpdateMemoryTool {
                     params![text, embedding_json, imp, id],
                 )?;
                 if updated == 0 {
-                    Ok(json!({"status": "not_found", "message": format!("No memory found with ID '{}'", id)}))
+                    Ok(
+                        json!({"status": "not_found", "message": format!("No memory found with ID '{}'", id)}),
+                    )
                 } else {
                     Ok(json!({"status": "success", "message": "Memory updated successfully."}))
                 }
@@ -467,7 +504,9 @@ impl Tool for UpdateMemoryTool {
                     params![text, embedding_json, id],
                 )?;
                 if updated == 0 {
-                    Ok(json!({"status": "not_found", "message": format!("No memory found with ID '{}'", id)}))
+                    Ok(
+                        json!({"status": "not_found", "message": format!("No memory found with ID '{}'", id)}),
+                    )
                 } else {
                     Ok(json!({"status": "success", "message": "Memory updated successfully."}))
                 }

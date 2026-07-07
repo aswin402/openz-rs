@@ -1,7 +1,7 @@
 use crate::tools::graph_memory::{scope_from_args, with_db};
-use crate::tools::Tool;
-use crate::tools::memory_extra::working::store_semantic_fact;
 use crate::tools::memory_extra::search::{query_fts5, text_similarity};
+use crate::tools::memory_extra::working::store_semantic_fact;
+use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use rusqlite::params;
@@ -13,7 +13,9 @@ pub struct InvalidateFactTool;
 
 #[async_trait::async_trait]
 impl Tool for InvalidateFactTool {
-    fn name(&self) -> &str { "invalidate_fact" }
+    fn name(&self) -> &str {
+        "invalidate_fact"
+    }
 
     fn description(&self) -> &str {
         "Invalidate a graph relation (via from/to/relationType) or a semantic fact (via factId)."
@@ -50,9 +52,15 @@ impl Tool for InvalidateFactTool {
                 Ok(rows > 0)
             })?;
             if updated {
-                messages.push(format!("Semantic fact '{}' invalidated successfully", fact_id));
+                messages.push(format!(
+                    "Semantic fact '{}' invalidated successfully",
+                    fact_id
+                ));
             } else {
-                messages.push(format!("Semantic fact '{}' not found or already invalidated", fact_id));
+                messages.push(format!(
+                    "Semantic fact '{}' not found or already invalidated",
+                    fact_id
+                ));
             }
         }
 
@@ -74,14 +82,19 @@ impl Tool for InvalidateFactTool {
                 Ok(rows > 0)
             })?;
             if updated {
-                messages.push(format!("Graph relation '{}->{} ({})' invalidated", from, to, rel_type));
+                messages.push(format!(
+                    "Graph relation '{}->{} ({})' invalidated",
+                    from, to, rel_type
+                ));
             } else {
                 messages.push("Graph relation not found or already invalidated".to_string());
             }
         }
 
         if !parameter_provided {
-            return Err(anyhow!("Either factId or all of (from, to, relationType) must be provided"));
+            return Err(anyhow!(
+                "Either factId or all of (from, to, relationType) must be provided"
+            ));
         }
 
         Ok(json!({ "status": messages.join("\n") }))
@@ -94,7 +107,9 @@ pub struct QueryFactHistoryTool;
 
 #[async_trait::async_trait]
 impl Tool for QueryFactHistoryTool {
-    fn name(&self) -> &str { "query_fact_history" }
+    fn name(&self) -> &str {
+        "query_fact_history"
+    }
 
     fn description(&self) -> &str {
         "Query the chronological history of relations/facts involving a specific entity."
@@ -115,7 +130,9 @@ impl Tool for QueryFactHistoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let entity_name = arguments["entityName"].as_str().ok_or_else(|| anyhow!("Missing 'entityName'"))?;
+        let entity_name = arguments["entityName"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'entityName'"))?;
         let relation_type = arguments.get("relationType").and_then(|v| v.as_str());
         let (uid, sid, aid) = scope_from_args(arguments);
 
@@ -167,7 +184,9 @@ pub struct QueryAsOfTool;
 
 #[async_trait::async_trait]
 impl Tool for QueryAsOfTool {
-    fn name(&self) -> &str { "query_as_of" }
+    fn name(&self) -> &str {
+        "query_as_of"
+    }
 
     fn description(&self) -> &str {
         "Query both Graph and Semantic memory states as of a specific point in time (ISO 8601 datetime)."
@@ -187,18 +206,25 @@ impl Tool for QueryAsOfTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let as_of = arguments["asOf"].as_str().ok_or_else(|| anyhow!("Missing 'asOf'"))?;
+        let as_of = arguments["asOf"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'asOf'"))?;
         let (uid, sid, aid) = scope_from_args(arguments);
 
         // Normalize timestamp
         let normalized = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(as_of) {
-            dt.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string()
+            dt.with_timezone(&Utc)
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string()
         } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(as_of, "%Y-%m-%dT%H:%M:%SZ") {
             dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
         } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(as_of, "%Y-%m-%d %H:%M:%S") {
             dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
         } else {
-            return Err(anyhow!("Invalid datetime format: '{}'. Expected RFC3339.", as_of));
+            return Err(anyhow!(
+                "Invalid datetime format: '{}'. Expected RFC3339.",
+                as_of
+            ));
         };
 
         let graph_snapshot = with_db(|conn| {
@@ -209,7 +235,7 @@ impl Tool for QueryAsOfTool {
                  WHERE created_at <= ?1
                    AND (?2 IS NULL OR user_id = ?2 OR user_id = '*')
                    AND (?3 IS NULL OR session_id = ?3 OR session_id = '*')
-                   AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')"
+                   AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')",
             )?;
             let mut node_rows = stmt_nodes.query(params![normalized, uid, sid, aid])?;
             while let Some(row) = node_rows.next()? {
@@ -231,7 +257,7 @@ impl Tool for QueryAsOfTool {
                    AND (valid_until IS NULL OR valid_until > ?1)
                    AND (?2 IS NULL OR user_id = ?2 OR user_id = '*')
                    AND (?3 IS NULL OR session_id = ?3 OR session_id = '*')
-                   AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')"
+                   AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')",
             )?;
             let mut edge_rows = stmt_edges.query(params![normalized, uid, sid, aid])?;
             while let Some(row) = edge_rows.next()? {
@@ -254,7 +280,7 @@ impl Tool for QueryAsOfTool {
                    AND (valid_until IS NULL OR valid_until > ?1)
                    AND (?2 IS NULL OR user_id = ?2 OR user_id = '*')
                    AND (?3 IS NULL OR session_id = ?3 OR session_id = '*')
-                   AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')"
+                   AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')",
             )?;
             let mut rows = stmt.query(params![normalized, uid, sid, aid])?;
             let mut facts = Vec::new();
@@ -282,7 +308,9 @@ pub struct SmartStoreTool;
 
 #[async_trait::async_trait]
 impl Tool for SmartStoreTool {
-    fn name(&self) -> &str { "smart_store" }
+    fn name(&self) -> &str {
+        "smart_store"
+    }
 
     fn description(&self) -> &str {
         "Intelligently store or merge memories in Semantic and Graph layers using deduplication and decision logic."
@@ -316,11 +344,24 @@ impl Tool for SmartStoreTool {
 
         // Handle relation input (Graph Layer)
         if let Some(rel) = relation {
-            let from = rel["from"].as_str().ok_or_else(|| anyhow!("Relation missing 'from'"))?;
-            let to = rel["to"].as_str().ok_or_else(|| anyhow!("Relation missing 'to'"))?;
-            let rel_type = rel["relationType"].as_str().ok_or_else(|| anyhow!("Relation missing 'relationType'"))?;
+            let from = rel["from"]
+                .as_str()
+                .ok_or_else(|| anyhow!("Relation missing 'from'"))?;
+            let to = rel["to"]
+                .as_str()
+                .ok_or_else(|| anyhow!("Relation missing 'to'"))?;
+            let rel_type = rel["relationType"]
+                .as_str()
+                .ok_or_else(|| anyhow!("Relation missing 'relationType'"))?;
 
-            let exclusive_relations = ["lives_in", "current_job", "spouse", "has_status", "is_born_in", "located_in"];
+            let exclusive_relations = [
+                "lives_in",
+                "current_job",
+                "spouse",
+                "has_status",
+                "is_born_in",
+                "located_in",
+            ];
 
             if exclusive_relations.contains(&rel_type) {
                 // Check for existing relation and supersede if needed
@@ -330,7 +371,7 @@ impl Tool for SmartStoreTool {
                          WHERE from_name = ?1 AND relation_type = ?2 AND valid_until IS NULL
                            AND (user_id = ?3 OR user_id = '*')
                            AND (session_id = ?4 OR session_id = '*')
-                           AND (agent_id = ?5 OR agent_id = '*')"
+                           AND (agent_id = ?5 OR agent_id = '*')",
                     )?;
                     let mut rows = stmt.query(params![from, rel_type, uid, sid, aid])?;
                     if let Some(row) = rows.next()? {
@@ -401,7 +442,9 @@ impl Tool for SmartStoreTool {
             let best_match = fts_matches.into_iter().max_by(|a, b| {
                 let sim_a = text_similarity(t, a["rawText"].as_str().unwrap_or(""));
                 let sim_b = text_similarity(t, b["rawText"].as_str().unwrap_or(""));
-                sim_a.partial_cmp(&sim_b).unwrap_or(std::cmp::Ordering::Equal)
+                sim_a
+                    .partial_cmp(&sim_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
 
             if let Some(matched) = best_match {
@@ -418,7 +461,11 @@ impl Tool for SmartStoreTool {
                     }));
                 } else if similarity >= 0.85 {
                     // Merge: keep the longer text
-                    let merged = if t.len() >= existing_text.len() { t.to_string() } else { existing_text.to_string() };
+                    let merged = if t.len() >= existing_text.len() {
+                        t.to_string()
+                    } else {
+                        existing_text.to_string()
+                    };
                     with_db(|conn| {
                         conn.execute(
                             "UPDATE semantic_metadata SET raw_text = ?1 WHERE node_id = ?2 AND user_id = ?3 AND session_id = ?4 AND agent_id = ?5",
@@ -462,7 +509,9 @@ pub struct ExtractAndStoreFactsTool;
 
 #[async_trait::async_trait]
 impl Tool for ExtractAndStoreFactsTool {
-    fn name(&self) -> &str { "extract_and_store_facts" }
+    fn name(&self) -> &str {
+        "extract_and_store_facts"
+    }
 
     fn description(&self) -> &str {
         "Extract facts from text using regular expressions and store them in the graph memory."
@@ -482,7 +531,9 @@ impl Tool for ExtractAndStoreFactsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let text = arguments["text"].as_str().ok_or_else(|| anyhow!("Missing 'text'"))?;
+        let text = arguments["text"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'text'"))?;
         let (uid, sid, aid) = scope_from_args(arguments);
 
         let facts = extract_facts(text);
@@ -567,12 +618,18 @@ pub(crate) fn extract_facts(text: &str) -> Vec<ExtractedFact> {
     // Simple sentence splitting by punctuation
     for sentence in text.split(['.', '!', '?']) {
         let sentence = sentence.trim();
-        if sentence.is_empty() { continue; }
+        if sentence.is_empty() {
+            continue;
+        }
         for (pattern, rel_type) in &patterns {
             for caps in pattern.captures_iter(sentence) {
                 let from = caps.get(1).map(|m| m.as_str()).unwrap_or("");
                 let to = caps.get(2).map(|m| m.as_str()).unwrap_or("");
-                if !from.is_empty() && !to.is_empty() && is_valid_entity(from) && is_valid_entity(to) {
+                if !from.is_empty()
+                    && !to.is_empty()
+                    && is_valid_entity(from)
+                    && is_valid_entity(to)
+                {
                     facts.push(ExtractedFact {
                         from: from.to_string(),
                         relation: rel_type.to_string(),
@@ -586,31 +643,172 @@ pub(crate) fn extract_facts(text: &str) -> Vec<ExtractedFact> {
 }
 
 const STOP_WORDS: &[&str] = &[
-    "a", "about", "after", "again", "all", "am", "an", "and", "any", "are", "as", "at",
-    "be", "been", "before", "being", "below", "between", "both", "but", "by",
-    "can", "did", "do", "does", "doing", "down", "during",
-    "each", "few", "for", "from", "further",
-    "had", "has", "have", "having", "he", "her", "here", "hers", "herself", "him", "himself", "his", "how",
-    "i", "if", "in", "into", "is", "it", "its", "itself",
-    "just", "me", "more", "most", "my", "myself",
-    "no", "nor", "not", "now",
-    "of", "off", "on", "once", "only", "or", "other", "our", "ours", "ourselves", "out", "over", "own",
-    "same", "she", "should", "so", "some", "someone", "something", "than", "that", "the", "their", "theirs", "them", "themselves", "then", "there", "these", "they", "this", "those", "through", "to", "too",
-    "under", "until", "up",
+    "a",
+    "about",
+    "after",
+    "again",
+    "all",
+    "am",
+    "an",
+    "and",
+    "any",
+    "are",
+    "as",
+    "at",
+    "be",
+    "been",
+    "before",
+    "being",
+    "below",
+    "between",
+    "both",
+    "but",
+    "by",
+    "can",
+    "did",
+    "do",
+    "does",
+    "doing",
+    "down",
+    "during",
+    "each",
+    "few",
+    "for",
+    "from",
+    "further",
+    "had",
+    "has",
+    "have",
+    "having",
+    "he",
+    "her",
+    "here",
+    "hers",
+    "herself",
+    "him",
+    "himself",
+    "his",
+    "how",
+    "i",
+    "if",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "itself",
+    "just",
+    "me",
+    "more",
+    "most",
+    "my",
+    "myself",
+    "no",
+    "nor",
+    "not",
+    "now",
+    "of",
+    "off",
+    "on",
+    "once",
+    "only",
+    "or",
+    "other",
+    "our",
+    "ours",
+    "ourselves",
+    "out",
+    "over",
+    "own",
+    "same",
+    "she",
+    "should",
+    "so",
+    "some",
+    "someone",
+    "something",
+    "than",
+    "that",
+    "the",
+    "their",
+    "theirs",
+    "them",
+    "themselves",
+    "then",
+    "there",
+    "these",
+    "they",
+    "this",
+    "those",
+    "through",
+    "to",
+    "too",
+    "under",
+    "until",
+    "up",
     "very",
-    "was", "we", "were", "what", "when", "where", "which", "who", "whom", "why", "will", "with",
-    "you", "your", "yours", "yourself", "yourselves",
+    "was",
+    "we",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "whom",
+    "why",
+    "will",
+    "with",
+    "you",
+    "your",
+    "yours",
+    "yourself",
+    "yourselves",
 ];
 
 const COMMON_NOUNS: &[&str] = &[
-    "app", "application", "code", "compiler", "computer", "database", "db", "developer", "engine", "engineer", "file", "framework", "hardware", "interpreter", "job", "language", "library", "machine", "program", "programmer", "project", "server", "software", "system", "thing", "things", "tool", "user", "work",
+    "app",
+    "application",
+    "code",
+    "compiler",
+    "computer",
+    "database",
+    "db",
+    "developer",
+    "engine",
+    "engineer",
+    "file",
+    "framework",
+    "hardware",
+    "interpreter",
+    "job",
+    "language",
+    "library",
+    "machine",
+    "program",
+    "programmer",
+    "project",
+    "server",
+    "software",
+    "system",
+    "thing",
+    "things",
+    "tool",
+    "user",
+    "work",
 ];
 
 fn is_valid_entity(word: &str) -> bool {
     let lower = word.to_lowercase();
-    if lower.is_empty() { return false; }
-    if STOP_WORDS.binary_search(&lower.as_str()).is_ok() { return false; }
-    if word == lower && COMMON_NOUNS.binary_search(&lower.as_str()).is_ok() { return false; }
+    if lower.is_empty() {
+        return false;
+    }
+    if STOP_WORDS.binary_search(&lower.as_str()).is_ok() {
+        return false;
+    }
+    if word == lower && COMMON_NOUNS.binary_search(&lower.as_str()).is_ok() {
+        return false;
+    }
     true
 }
 
@@ -620,7 +818,9 @@ pub struct ProactiveRecallTool;
 
 #[async_trait::async_trait]
 impl Tool for ProactiveRecallTool {
-    fn name(&self) -> &str { "proactive_recall" }
+    fn name(&self) -> &str {
+        "proactive_recall"
+    }
 
     fn description(&self) -> &str {
         "Recall contextually relevant memories across semantic, graph, and episodic layers given a query context."
@@ -641,13 +841,25 @@ impl Tool for ProactiveRecallTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments["query"].as_str().ok_or_else(|| anyhow!("Missing 'query'"))?;
-        let max_results = arguments.get("maxResults").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+        let query = arguments["query"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'query'"))?;
+        let max_results = arguments
+            .get("maxResults")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10) as usize;
         let (uid, sid, aid) = scope_from_args(arguments);
 
         // Extract keywords
-        let keywords: Vec<String> = query.chars()
-            .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { ' ' })
+        let keywords: Vec<String> = query
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c.is_whitespace() {
+                    c
+                } else {
+                    ' '
+                }
+            })
             .collect::<String>()
             .split_whitespace()
             .map(|w| w.to_lowercase())
@@ -660,7 +872,9 @@ impl Tool for ProactiveRecallTool {
 
         // 1. Semantic memory via FTS5
         if !query.trim().is_empty() {
-            if let Ok(fts_results) = with_db(|conn| query_fts5(conn, query, max_results, &uid, &sid, &aid)) {
+            if let Ok(fts_results) =
+                with_db(|conn| query_fts5(conn, query, max_results, &uid, &sid, &aid))
+            {
                 for fact in fts_results {
                     let mut item = json!({
                         "layer": "semantic",
@@ -697,7 +911,11 @@ impl Tool for ProactiveRecallTool {
                 let entity_type: String = row.get(1)?;
                 let obs_json: String = row.get(2)?;
                 let observations: Vec<String> = serde_json::from_str(&obs_json).unwrap_or_default();
-                let obs_str = if observations.is_empty() { String::new() } else { format!(" - Observations: {}", observations.join(", ")) };
+                let obs_str = if observations.is_empty() {
+                    String::new()
+                } else {
+                    format!(" - Observations: {}", observations.join(", "))
+                };
                 entities.push(json!({
                     "name": name,
                     "entityType": entity_type,
@@ -709,16 +927,29 @@ impl Tool for ProactiveRecallTool {
         })?;
 
         for entity in graph_results {
-            let confidence = if keywords.is_empty() { 0.6 } else {
+            let confidence = if keywords.is_empty() {
+                0.6
+            } else {
                 let lower_name = entity["name"].as_str().unwrap_or("").to_lowercase();
                 let lower_type = entity["entityType"].as_str().unwrap_or("").to_lowercase();
-                let obs_text: String = entity["observations"].as_array()
-                    .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(" "))
+                let obs_text: String = entity["observations"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
                     .unwrap_or_default()
                     .to_lowercase();
-                let match_count = keywords.iter().filter(|kw| {
-                    lower_name.contains(kw.as_str()) || lower_type.contains(kw.as_str()) || obs_text.contains(kw.as_str())
-                }).count();
+                let match_count = keywords
+                    .iter()
+                    .filter(|kw| {
+                        lower_name.contains(kw.as_str())
+                            || lower_type.contains(kw.as_str())
+                            || obs_text.contains(kw.as_str())
+                    })
+                    .count();
                 (0.6 + 0.1 * match_count as f64).min(1.0)
             };
             items.push(json!({
@@ -764,15 +995,21 @@ impl Tool for ProactiveRecallTool {
             })?;
 
             for r in reflections {
-                let confidence = if keywords.is_empty() { 0.6 } else {
+                let confidence = if keywords.is_empty() {
+                    0.6
+                } else {
                     let text_to_check = format!(
                         "{} {} {} {}",
                         r["taskDescription"].as_str().unwrap_or(""),
                         r["reflection"].as_str().unwrap_or(""),
                         r["rootCause"].as_str().unwrap_or(""),
                         r["solutionApplied"].as_str().unwrap_or(""),
-                    ).to_lowercase();
-                    let match_count = keywords.iter().filter(|kw| text_to_check.contains(kw.as_str())).count();
+                    )
+                    .to_lowercase();
+                    let match_count = keywords
+                        .iter()
+                        .filter(|kw| text_to_check.contains(kw.as_str()))
+                        .count();
                     (0.6 + 0.1 * match_count as f64).min(1.0)
                 };
                 items.push(json!({

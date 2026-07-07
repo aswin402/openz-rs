@@ -1,7 +1,7 @@
-use crate::tools::Tool;
-use anyhow::{Result, anyhow};
-use serde_json::{json, Value};
 use crate::config::schema::Config;
+use crate::tools::Tool;
+use anyhow::{anyhow, Result};
+use serde_json::{json, Value};
 
 pub struct TriggerSopTool {
     pub config: Config,
@@ -35,12 +35,16 @@ impl Tool for TriggerSopTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let sop_id = arguments.get("sop_id").and_then(|v| v.as_str())
+        let sop_id = arguments
+            .get("sop_id")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'sop_id' parameter"))?;
-        
+
         let payload = arguments.get("payload").cloned().unwrap_or(json!({}));
 
-        let instance_id = crate::sop::engine::trigger_sop(self.config.clone(), sop_id.to_string(), payload).await?;
+        let instance_id =
+            crate::sop::engine::trigger_sop(self.config.clone(), sop_id.to_string(), payload)
+                .await?;
 
         Ok(json!({
             "status": "success",
@@ -61,7 +65,7 @@ mod tests {
         let tool = TriggerSopTool { config };
         assert_eq!(tool.name(), "trigger_sop");
         assert!(tool.description().contains("Trigger a stateful"));
-        
+
         let params = tool.parameters();
         assert_eq!(params["type"], "object");
         assert!(params["properties"]["sop_id"].is_object());

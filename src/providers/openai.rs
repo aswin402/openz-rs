@@ -1,6 +1,6 @@
-use crate::providers::{LLMProvider, LLMResponse, GenerationSettings, ToolCallRequest};
+use crate::providers::circuit_breaker::{retry_with_backoff, CircuitBreaker};
+use crate::providers::{GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest};
 use crate::session::Message;
-use crate::providers::circuit_breaker::{CircuitBreaker, retry_with_backoff};
 use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -106,7 +106,7 @@ impl OpenAIProvider {
         // field in assistant messages. Other OpenAI-compatible providers (OpenRouter,
         // Groq, etc.) don't accept that field, so we fall back to <think> tags for them.
         let is_deepseek = api_base.contains("deepseek.com") || model.starts_with("deepseek");
-        
+
         let mut sanitized_messages: Vec<Message> = Vec::new();
         for msg in messages {
             if msg.role == "tool" {
@@ -116,11 +116,17 @@ impl OpenAIProvider {
                     let mut tool_name = None;
                     for prev in sanitized_messages.iter().rev() {
                         if prev.role == "assistant" {
-                            if let Some(calls) = prev.extra.get("tool_calls").and_then(|v| v.as_array()) {
+                            if let Some(calls) =
+                                prev.extra.get("tool_calls").and_then(|v| v.as_array())
+                            {
                                 for call in calls {
                                     if call.get("id").and_then(|v| v.as_str()) == Some(id) {
                                         found = true;
-                                        tool_name = call.get("function").and_then(|f| f.get("name")).and_then(|v| v.as_str()).map(|s| s.to_string());
+                                        tool_name = call
+                                            .get("function")
+                                            .and_then(|f| f.get("name"))
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string());
                                         break;
                                     }
                                 }
@@ -135,9 +141,15 @@ impl OpenAIProvider {
                         let current_name = sanitized_msg.extra.get("name").and_then(|v| v.as_str());
                         if current_name.is_none() || current_name.unwrap().trim().is_empty() {
                             if let Some(name_str) = tool_name {
-                                sanitized_msg.extra.insert("name".to_string(), serde_json::Value::String(name_str));
+                                sanitized_msg.extra.insert(
+                                    "name".to_string(),
+                                    serde_json::Value::String(name_str),
+                                );
                             } else {
-                                sanitized_msg.extra.insert("name".to_string(), serde_json::Value::String("tool".to_string()));
+                                sanitized_msg.extra.insert(
+                                    "name".to_string(),
+                                    serde_json::Value::String("tool".to_string()),
+                                );
                             }
                         }
                         sanitized_messages.push(sanitized_msg);
@@ -167,9 +179,12 @@ impl OpenAIProvider {
             let mut tool_call_id = None;
             let mut name = None;
             let role = msg.role.clone();
-            
+
             if role == "tool" {
-                tool_call_id = msg.extra.get("tool_call_id").and_then(|v| v.as_str().map(|s| s.to_string()));
+                tool_call_id = msg
+                    .extra
+                    .get("tool_call_id")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()));
             }
 
             if let Some(n) = msg.extra.get("name").and_then(|v| v.as_str()) {
@@ -182,14 +197,16 @@ impl OpenAIProvider {
             let reasoning_field: Option<String>;
             let mut text_content = msg.content.clone();
             if role == "assistant" {
-                if let Some(reasoning) = msg.extra.get("reasoning_content").and_then(|v| v.as_str()) {
+                if let Some(reasoning) = msg.extra.get("reasoning_content").and_then(|v| v.as_str())
+                {
                     if !reasoning.is_empty() {
                         if is_deepseek {
                             // Pass as a separate field — DeepSeek API requirement
                             reasoning_field = Some(reasoning.to_string());
                         } else {
                             // Embed in content for other OpenAI-compatible providers
-                            text_content = format!("<think>\n{}\n</think>\n\n{}", reasoning, text_content);
+                            text_content =
+                                format!("<think>\n{}\n</think>\n\n{}", reasoning, text_content);
                             reasoning_field = None;
                         }
                     } else {
@@ -203,7 +220,9 @@ impl OpenAIProvider {
             }
 
             let parts = crate::providers::parse_multimodal_content(&text_content).await;
-            let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
+            let has_images = parts
+                .iter()
+                .any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
             let supports_vision = crate::providers::model_supports_vision(model);
 
             let content_value = if !supports_vision || !has_images {
@@ -211,7 +230,10 @@ impl OpenAIProvider {
             } else if parts.len() == 1 {
                 match &parts[0] {
                     crate::providers::ContentPart::Text(t) => serde_json::Value::String(t.clone()),
-                    crate::providers::ContentPart::Image { mime_type, base64_data } => {
+                    crate::providers::ContentPart::Image {
+                        mime_type,
+                        base64_data,
+                    } => {
                         serde_json::json!([
                             {
                                 "type": "image_url",
@@ -232,7 +254,10 @@ impl OpenAIProvider {
                                 "text": t
                             }));
                         }
-                        crate::providers::ContentPart::Image { mime_type, base64_data } => {
+                        crate::providers::ContentPart::Image {
+                            mime_type,
+                            base64_data,
+                        } => {
                             arr.push(serde_json::json!({
                                 "type": "image_url",
                                 "image_url": {
@@ -249,7 +274,11 @@ impl OpenAIProvider {
                 role,
                 content: content_value,
                 name,
-                tool_calls: msg.extra.get("tool_calls").cloned().and_then(|v| v.as_array().cloned()),
+                tool_calls: msg
+                    .extra
+                    .get("tool_calls")
+                    .cloned()
+                    .and_then(|v| v.as_array().cloned()),
                 tool_call_id,
                 reasoning_content: reasoning_field,
             });
@@ -267,20 +296,34 @@ impl LLMProvider for OpenAIProvider {
         tools: &[serde_json::Value],
         settings: &GenerationSettings,
     ) -> Result<LLMResponse> {
-        let api_messages = Self::serialize_messages(&self.model, &self.api_base, system_prompt, messages).await;
+        let api_messages =
+            Self::serialize_messages(&self.model, &self.api_base, system_prompt, messages).await;
 
         let is_reasoning = is_reasoning_model(&self.model);
         let body = OpenAIRequest {
             model: self.model.clone(),
             messages: api_messages,
-            temperature: if is_reasoning { None } else { Some(settings.temperature) },
-            max_tokens: if is_reasoning { None } else { Some(settings.max_tokens) },
-            max_completion_tokens: if is_reasoning { Some(settings.max_tokens) } else { None },
+            temperature: if is_reasoning {
+                None
+            } else {
+                Some(settings.temperature)
+            },
+            max_tokens: if is_reasoning {
+                None
+            } else {
+                Some(settings.max_tokens)
+            },
+            max_completion_tokens: if is_reasoning {
+                Some(settings.max_tokens)
+            } else {
+                None
+            },
             tools: tools.to_vec(),
             stream: None,
         };
 
-        let is_azure = self.api_base.contains("/openai/deployments") || self.api_base.contains("azure");
+        let is_azure =
+            self.api_base.contains("/openai/deployments") || self.api_base.contains("azure");
         let url = if is_azure {
             self.api_base.clone()
         } else {
@@ -292,7 +335,8 @@ impl LLMProvider for OpenAIProvider {
         let client = self.client.clone();
         let api_key = self.api_key.clone();
         let url_for_retry = url.clone();
-        let body_for_retry = serde_json::to_value(&body).map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
+        let body_for_retry =
+            serde_json::to_value(&body).map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
 
         let response = retry_with_backoff(
             &self.breaker,
@@ -326,11 +370,15 @@ impl LLMProvider for OpenAIProvider {
                     }
                 }
             },
-        ).await?;
+        )
+        .await?;
 
         let response: OpenAIResponse = response.json().await?;
-        let choice = response.choices.first().ok_or_else(|| anyhow::anyhow!("openai provider error: No choices returned"))?;
-        
+        let choice = response
+            .choices
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("openai provider error: No choices returned"))?;
+
         let mut tool_calls: Vec<ToolCallRequest> = choice.message.tool_calls.as_ref().map(|calls| {
             calls.iter().map(|call| {
                 let args_str = &call.function.arguments;
@@ -375,7 +423,10 @@ impl LLMProvider for OpenAIProvider {
         Ok(LLMResponse {
             content,
             tool_calls,
-            finish_reason: choice.finish_reason.clone().unwrap_or_else(|| "stop".to_string()),
+            finish_reason: choice
+                .finish_reason
+                .clone()
+                .unwrap_or_else(|| "stop".to_string()),
             reasoning_content: choice.message.reasoning_content.clone(),
         })
     }
@@ -386,21 +437,39 @@ impl LLMProvider for OpenAIProvider {
         messages: &[Message],
         tools: &[serde_json::Value],
         settings: &GenerationSettings,
-    ) -> Result<std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<crate::providers::ChatStreamChunk>> + Send>>> {
-        let api_messages = Self::serialize_messages(&self.model, &self.api_base, system_prompt, messages).await;
+    ) -> Result<
+        std::pin::Pin<
+            Box<dyn futures_util::Stream<Item = Result<crate::providers::ChatStreamChunk>> + Send>,
+        >,
+    > {
+        let api_messages =
+            Self::serialize_messages(&self.model, &self.api_base, system_prompt, messages).await;
 
         let is_reasoning = is_reasoning_model(&self.model);
         let body = OpenAIRequest {
             model: self.model.clone(),
             messages: api_messages,
-            temperature: if is_reasoning { None } else { Some(settings.temperature) },
-            max_tokens: if is_reasoning { None } else { Some(settings.max_tokens) },
-            max_completion_tokens: if is_reasoning { Some(settings.max_tokens) } else { None },
+            temperature: if is_reasoning {
+                None
+            } else {
+                Some(settings.temperature)
+            },
+            max_tokens: if is_reasoning {
+                None
+            } else {
+                Some(settings.max_tokens)
+            },
+            max_completion_tokens: if is_reasoning {
+                Some(settings.max_tokens)
+            } else {
+                None
+            },
             tools: tools.to_vec(),
             stream: Some(true),
         };
 
-        let is_azure = self.api_base.contains("/openai/deployments") || self.api_base.contains("azure");
+        let is_azure =
+            self.api_base.contains("/openai/deployments") || self.api_base.contains("azure");
         let url = if is_azure {
             self.api_base.clone()
         } else {
@@ -412,7 +481,8 @@ impl LLMProvider for OpenAIProvider {
         let client = self.client.clone();
         let api_key = self.api_key.clone();
         let url_for_retry = url.clone();
-        let body_for_retry = serde_json::to_value(&body).map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
+        let body_for_retry =
+            serde_json::to_value(&body).map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
 
         let res = retry_with_backoff(
             &self.breaker,
@@ -446,100 +516,178 @@ impl LLMProvider for OpenAIProvider {
                     }
                 }
             },
-        ).await?;
+        )
+        .await?;
 
         let byte_stream = res.bytes_stream();
         use futures_util::StreamExt;
 
-        let stream = futures_util::stream::unfold((byte_stream, String::new(), false), |(mut stream, mut buffer, mut done)| async move {
-            if done {
-                return None;
-            }
-            loop {
-                if let Some(pos) = buffer.find('\n') {
-                    let line = buffer[..pos].trim().to_string();
-                    buffer = buffer[pos + 1..].to_string();
-                    if line.starts_with("data: ") {
-                        let data = line["data: ".len()..].trim();
-                        if data == "[DONE]" {
-                            done = true;
-                            return Some((Ok(crate::providers::ChatStreamChunk::Done { finish_reason: None }), (stream, buffer, done)));
-                        }
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
-                            if let Some(choices) = val.get("choices").and_then(|v| v.as_array()) {
-                                if let Some(choice) = choices.first() {
-                                    // 1. Check for content
-                                    if let Some(content) = choice.pointer("/delta/content").and_then(|v| v.as_str()) {
-                                        if !content.is_empty() {
-                                            return Some((Ok(crate::providers::ChatStreamChunk::Content(content.to_string())), (stream, buffer, done)));
+        let stream = futures_util::stream::unfold(
+            (byte_stream, String::new(), false),
+            |(mut stream, mut buffer, mut done)| async move {
+                if done {
+                    return None;
+                }
+                loop {
+                    if let Some(pos) = buffer.find('\n') {
+                        let line = buffer[..pos].trim().to_string();
+                        buffer = buffer[pos + 1..].to_string();
+                        if line.starts_with("data: ") {
+                            let data = line["data: ".len()..].trim();
+                            if data == "[DONE]" {
+                                done = true;
+                                return Some((
+                                    Ok(crate::providers::ChatStreamChunk::Done {
+                                        finish_reason: None,
+                                    }),
+                                    (stream, buffer, done),
+                                ));
+                            }
+                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                                if let Some(choices) = val.get("choices").and_then(|v| v.as_array())
+                                {
+                                    if let Some(choice) = choices.first() {
+                                        // 1. Check for content
+                                        if let Some(content) = choice
+                                            .pointer("/delta/content")
+                                            .and_then(|v| v.as_str())
+                                        {
+                                            if !content.is_empty() {
+                                                return Some((
+                                                    Ok(crate::providers::ChatStreamChunk::Content(
+                                                        content.to_string(),
+                                                    )),
+                                                    (stream, buffer, done),
+                                                ));
+                                            }
                                         }
-                                    }
-                                    // 2. Check for reasoning_content
-                                    if let Some(reasoning) = choice.pointer("/delta/reasoning_content").and_then(|v| v.as_str()) {
-                                        if !reasoning.is_empty() {
-                                            return Some((Ok(crate::providers::ChatStreamChunk::Reasoning(reasoning.to_string())), (stream, buffer, done)));
+                                        // 2. Check for reasoning_content
+                                        if let Some(reasoning) = choice
+                                            .pointer("/delta/reasoning_content")
+                                            .and_then(|v| v.as_str())
+                                        {
+                                            if !reasoning.is_empty() {
+                                                return Some((Ok(crate::providers::ChatStreamChunk::Reasoning(reasoning.to_string())), (stream, buffer, done)));
+                                            }
                                         }
-                                    }
-                                    // 3. Check for tool_calls
-                                    if let Some(tool_calls) = choice.pointer("/delta/tool_calls").and_then(|v| v.as_array()) {
-                                        if let Some(tc) = tool_calls.first() {
-                                            let index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                                            let id = tc.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                                            let name = tc.pointer("/function/name").and_then(|v| v.as_str()).map(|s| s.to_string());
-                                            let arguments = tc.pointer("/function/arguments").and_then(|v| v.as_str()).map(|s| s.to_string());
-                                            return Some((Ok(crate::providers::ChatStreamChunk::ToolCall { index, id, name, arguments }), (stream, buffer, done)));
+                                        // 3. Check for tool_calls
+                                        if let Some(tool_calls) = choice
+                                            .pointer("/delta/tool_calls")
+                                            .and_then(|v| v.as_array())
+                                        {
+                                            if let Some(tc) = tool_calls.first() {
+                                                let index = tc
+                                                    .get("index")
+                                                    .and_then(|v| v.as_u64())
+                                                    .unwrap_or(0)
+                                                    as usize;
+                                                let id = tc
+                                                    .get("id")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(|s| s.to_string());
+                                                let name = tc
+                                                    .pointer("/function/name")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(|s| s.to_string());
+                                                let arguments = tc
+                                                    .pointer("/function/arguments")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(|s| s.to_string());
+                                                return Some((Ok(crate::providers::ChatStreamChunk::ToolCall { index, id, name, arguments }), (stream, buffer, done)));
+                                            }
                                         }
-                                    }
-                                    // 4. Check for finish_reason
-                                    if let Some(finish_reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
-                                        done = true;
-                                        return Some((Ok(crate::providers::ChatStreamChunk::Done { finish_reason: Some(finish_reason.to_string()) }), (stream, buffer, done)));
+                                        // 4. Check for finish_reason
+                                        if let Some(finish_reason) =
+                                            choice.get("finish_reason").and_then(|v| v.as_str())
+                                        {
+                                            done = true;
+                                            return Some((
+                                                Ok(crate::providers::ChatStreamChunk::Done {
+                                                    finish_reason: Some(finish_reason.to_string()),
+                                                }),
+                                                (stream, buffer, done),
+                                            ));
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                match stream.next().await {
-                    Some(Ok(bytes)) => {
-                        buffer.push_str(&String::from_utf8_lossy(&bytes));
-                    }
-                    Some(Err(e)) => {
-                        done = true;
-                        return Some((Err(anyhow::anyhow!("Stream error: {e}")), (stream, buffer, done)));
-                    }
-                    None => {
-                        if buffer.is_empty() {
+                    match stream.next().await {
+                        Some(Ok(bytes)) => {
+                            buffer.push_str(&String::from_utf8_lossy(&bytes));
+                        }
+                        Some(Err(e)) => {
                             done = true;
-                            return Some((Ok(crate::providers::ChatStreamChunk::Done { finish_reason: None }), (stream, buffer, done)));
-                        } else {
-                            let line = buffer.trim().to_string();
-                            buffer.clear();
-                            if line.starts_with("data: ") {
-                                let data = line["data: ".len()..].trim();
-                                if data == "[DONE]" {
-                                    done = true;
-                                    return Some((Ok(crate::providers::ChatStreamChunk::Done { finish_reason: None }), (stream, buffer, done)));
-                                }
-                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
-                                    if let Some(choice) = val.get("choices").and_then(|v| v.as_array()).and_then(|a| a.first()) {
-                                        if let Some(content) = choice.pointer("/delta/content").and_then(|v| v.as_str()) {
-                                            return Some((Ok(crate::providers::ChatStreamChunk::Content(content.to_string())), (stream, buffer, true)));
-                                        }
-                                        if let Some(reasoning) = choice.pointer("/delta/reasoning_content").and_then(|v| v.as_str()) {
-                                            return Some((Ok(crate::providers::ChatStreamChunk::Reasoning(reasoning.to_string())), (stream, buffer, true)));
+                            return Some((
+                                Err(anyhow::anyhow!("Stream error: {e}")),
+                                (stream, buffer, done),
+                            ));
+                        }
+                        None => {
+                            if buffer.is_empty() {
+                                done = true;
+                                return Some((
+                                    Ok(crate::providers::ChatStreamChunk::Done {
+                                        finish_reason: None,
+                                    }),
+                                    (stream, buffer, done),
+                                ));
+                            } else {
+                                let line = buffer.trim().to_string();
+                                buffer.clear();
+                                if line.starts_with("data: ") {
+                                    let data = line["data: ".len()..].trim();
+                                    if data == "[DONE]" {
+                                        done = true;
+                                        return Some((
+                                            Ok(crate::providers::ChatStreamChunk::Done {
+                                                finish_reason: None,
+                                            }),
+                                            (stream, buffer, done),
+                                        ));
+                                    }
+                                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
+                                    {
+                                        if let Some(choice) = val
+                                            .get("choices")
+                                            .and_then(|v| v.as_array())
+                                            .and_then(|a| a.first())
+                                        {
+                                            if let Some(content) = choice
+                                                .pointer("/delta/content")
+                                                .and_then(|v| v.as_str())
+                                            {
+                                                return Some((
+                                                    Ok(crate::providers::ChatStreamChunk::Content(
+                                                        content.to_string(),
+                                                    )),
+                                                    (stream, buffer, true),
+                                                ));
+                                            }
+                                            if let Some(reasoning) = choice
+                                                .pointer("/delta/reasoning_content")
+                                                .and_then(|v| v.as_str())
+                                            {
+                                                return Some((Ok(crate::providers::ChatStreamChunk::Reasoning(reasoning.to_string())), (stream, buffer, true)));
+                                            }
                                         }
                                     }
                                 }
+                                done = true;
+                                return Some((
+                                    Ok(crate::providers::ChatStreamChunk::Done {
+                                        finish_reason: None,
+                                    }),
+                                    (stream, buffer, done),
+                                ));
                             }
-                            done = true;
-                            return Some((Ok(crate::providers::ChatStreamChunk::Done { finish_reason: None }), (stream, buffer, done)));
                         }
                     }
                 }
-            }
-        });
+            },
+        );
 
         Ok(Box::pin(stream))
     }
@@ -584,7 +732,9 @@ pub fn parse_fallback_tool_calls(content: &str) -> Vec<ToolCallRequest> {
 }
 
 fn extract_tool_call(val: &serde_json::Value) -> Option<ToolCallRequest> {
-    let name = val.get("name").and_then(|v| v.as_str())
+    let name = val
+        .get("name")
+        .and_then(|v| v.as_str())
         .or_else(|| val.get("function").and_then(|v| v.as_str()));
 
     if let Some(name_str) = name {
@@ -615,14 +765,14 @@ mod tests {
     #[tokio::test]
     async fn test_serialize_messages_vision_fallback() {
         let system_prompt = "system instructions";
-        
+
         let temp_dir = std::env::temp_dir();
         let test_img_path = temp_dir.join("test_img.png");
         std::fs::write(&test_img_path, vec![0; 100]).unwrap();
-        
+
         let image_tag = format!("![](file://{})", test_img_path.to_string_lossy());
         let msg_content = format!("{} check this image", image_tag);
-        
+
         let messages = vec![Message {
             role: "user".to_string(),
             content: msg_content.clone(),
@@ -636,12 +786,13 @@ mod tests {
             "https://api.openai.com/v1",
             system_prompt,
             &messages,
-        ).await;
-        
+        )
+        .await;
+
         assert_eq!(serialized_non_vision.len(), 2);
         assert_eq!(serialized_non_vision[0].role, "system");
         assert_eq!(serialized_non_vision[1].role, "user");
-        
+
         // It must be serialized as String, keeping the original content (including the tag)
         let content_str = serialized_non_vision[1].content.as_str().unwrap();
         assert_eq!(content_str, msg_content);
@@ -652,18 +803,22 @@ mod tests {
             "https://api.openai.com/v1",
             system_prompt,
             &messages,
-        ).await;
-        
+        )
+        .await;
+
         assert_eq!(serialized_vision.len(), 2);
         assert_eq!(serialized_vision[1].role, "user");
-        
+
         // It must be serialized as Array containing text and image_url parts
         let content_array = serialized_vision[1].content.as_array().unwrap();
         assert_eq!(content_array.len(), 2);
-        
+
         assert_eq!(content_array[0]["type"], "image_url");
-        assert!(content_array[0]["image_url"]["url"].as_str().unwrap().starts_with("data:image/png;base64,"));
-        
+        assert!(content_array[0]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+
         assert_eq!(content_array[1]["type"], "text");
         assert_eq!(content_array[1]["text"], " check this image");
 

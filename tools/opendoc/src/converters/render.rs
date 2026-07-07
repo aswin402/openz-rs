@@ -1,6 +1,6 @@
-use std::process::Command;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 /// Render pages of a PDF, image, or office document (DOCX, PPTX, XLSX, HTML) into PNG screenshots.
 /// For Office/HTML documents, it first converts to a temporary PDF via LibreOffice headless.
@@ -23,7 +23,8 @@ pub fn render_document_pages(
 
     let target_dir = Path::new(output_dir);
     if !target_dir.exists() {
-        fs::create_dir_all(target_dir).map_err(|e| format!("Failed to create output directory: {}", e))?;
+        fs::create_dir_all(target_dir)
+            .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
 
     let dpi_val = dpi.unwrap_or(150);
@@ -48,9 +49,18 @@ pub fn render_document_pages(
 
     let pdf_path = if ext == "pdf" {
         source_path.to_path_buf()
-    } else if ext == "docx" || ext == "doc" || ext == "pptx" || ext == "ppt" || ext == "xlsx" || ext == "xls" || ext == "html" || ext == "htm" {
+    } else if ext == "docx"
+        || ext == "doc"
+        || ext == "pptx"
+        || ext == "ppt"
+        || ext == "xlsx"
+        || ext == "xls"
+        || ext == "html"
+        || ext == "htm"
+    {
         // Convert to PDF via LibreOffice headless
-        fs::create_dir_all(&temp_pdf_dir).map_err(|e| format!("Failed to create temp PDF directory: {}", e))?;
+        fs::create_dir_all(&temp_pdf_dir)
+            .map_err(|e| format!("Failed to create temp PDF directory: {}", e))?;
 
         let output = Command::new("soffice")
             .arg("--headless")
@@ -73,7 +83,10 @@ pub fn render_document_pages(
             }
             Ok(out) => {
                 let _ = fs::remove_dir_all(&temp_pdf_dir);
-                return Err(format!("LibreOffice conversion failed: {}", String::from_utf8_lossy(&out.stderr)));
+                return Err(format!(
+                    "LibreOffice conversion failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                ));
             }
             Err(e) => {
                 let _ = fs::remove_dir_all(&temp_pdf_dir);
@@ -89,9 +102,7 @@ pub fn render_document_pages(
     let img_prefix = target_dir.join(format!("{}_page", file_stem));
 
     let mut cmd = Command::new("pdftoppm");
-    cmd.arg("-png")
-       .arg("-r")
-       .arg(dpi_val.to_string());
+    cmd.arg("-png").arg("-r").arg(dpi_val.to_string());
 
     let mut rendered_files = Vec::new();
 
@@ -117,7 +128,9 @@ pub fn render_document_pages(
                             let path = entry.path();
                             if path.is_file() {
                                 if let Some(fname) = path.file_name().and_then(|f| f.to_str()) {
-                                    if fname.starts_with(&format!("{}_page_{}-", file_stem, p)) && fname.ends_with(".png") {
+                                    if fname.starts_with(&format!("{}_page_{}-", file_stem, p))
+                                        && fname.ends_with(".png")
+                                    {
                                         rendered_files.push(path.to_string_lossy().to_string());
                                     }
                                 }
@@ -129,7 +142,11 @@ pub fn render_document_pages(
                     if ext != "pdf" {
                         let _ = fs::remove_dir_all(&temp_pdf_dir);
                     }
-                    return Err(format!("pdftoppm failed on page {}: {}", p, String::from_utf8_lossy(&out.stderr)));
+                    return Err(format!(
+                        "pdftoppm failed on page {}: {}",
+                        p,
+                        String::from_utf8_lossy(&out.stderr)
+                    ));
                 }
                 Err(e) => {
                     if ext != "pdf" {
@@ -141,9 +158,7 @@ pub fn render_document_pages(
         }
     } else {
         // Render all pages
-        let output = cmd.arg(&pdf_path)
-                        .arg(&img_prefix)
-                        .output();
+        let output = cmd.arg(&pdf_path).arg(&img_prefix).output();
 
         match output {
             Ok(out) if out.status.success() => {
@@ -165,7 +180,10 @@ pub fn render_document_pages(
                 if ext != "pdf" {
                     let _ = fs::remove_dir_all(&temp_pdf_dir);
                 }
-                return Err(format!("pdftoppm failed: {}", String::from_utf8_lossy(&out.stderr)));
+                return Err(format!(
+                    "pdftoppm failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                ));
             }
             Err(e) => {
                 if ext != "pdf" {
@@ -183,7 +201,10 @@ pub fn render_document_pages(
 
     // Sort files numerically to guarantee correct page order in response
     rendered_files.sort_by_key(|f| {
-        let fname = Path::new(f).file_name().and_then(|x| x.to_str()).unwrap_or("");
+        let fname = Path::new(f)
+            .file_name()
+            .and_then(|x| x.to_str())
+            .unwrap_or("");
         let num_str: String = fname.chars().filter(|c| c.is_ascii_digit()).collect();
         num_str.parse::<u32>().unwrap_or(0)
     });
@@ -203,13 +224,10 @@ mod tests {
 
         // 1x1 uncompressed BMP white pixel image
         let bmp_data: Vec<u8> = vec![
-            0x42, 0x4D, 0x3A, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x36, 0x00, 0x00, 0x00, 0x28, 0x00,
-            0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
-            0x00, 0x00, 0x01, 0x00, 0x18, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x13, 0x0B,
-            0x00, 0x00, 0x13, 0x0B, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF,
+            0x42, 0x4D, 0x3A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x36, 0x00, 0x00, 0x00,
+            0x28, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+            0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x13, 0x0B, 0x00, 0x00,
+            0x13, 0x0B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF,
             0xFF, 0x00,
         ];
         std::fs::write(p, &bmp_data).unwrap();

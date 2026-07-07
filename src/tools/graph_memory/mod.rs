@@ -1,21 +1,18 @@
+pub mod branch;
 pub mod db;
 pub mod graph;
-pub mod branch;
 
 #[cfg(test)]
 pub mod tests;
 
-pub(crate) use db::{with_db, scope_from_args};
+pub(crate) use db::{scope_from_args, with_db};
 
 pub use graph::{
-    CreateEntitiesTool, CreateRelationsTool, AddObservationsTool,
-    DeleteEntitiesTool, DeleteObservationsTool, DeleteRelationsTool,
-    ReadGraphTool, SearchNodesTool, OpenNodesTool,
+    AddObservationsTool, CreateEntitiesTool, CreateRelationsTool, DeleteEntitiesTool,
+    DeleteObservationsTool, DeleteRelationsTool, OpenNodesTool, ReadGraphTool, SearchNodesTool,
 };
 
-pub use branch::{
-    CreateDatabaseBranchTool, CommitDatabaseBranchTool, RollbackDatabaseBranchTool,
-};
+pub use branch::{CommitDatabaseBranchTool, CreateDatabaseBranchTool, RollbackDatabaseBranchTool};
 
 #[cfg(test)]
 pub(crate) fn test_lock() -> &'static tokio::sync::Mutex<()> {

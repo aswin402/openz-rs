@@ -1,6 +1,7 @@
 use crate::config::schema::Config;
 use anyhow::{Context, Result};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 tokio::task_local! {
@@ -10,7 +11,7 @@ tokio::task_local! {
 
 pub fn resolve_path(path_str: &str) -> PathBuf {
     let base = ACTIVE_WORKSPACE.try_with(|w| w.clone()).ok();
-    
+
     let path = if path_str.starts_with("~/") || path_str == "~" {
         if let Some(home) = dirs::home_dir() {
             if path_str == "~" {
@@ -60,11 +61,33 @@ pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }
 
+/// Generate a unique CLI session key based on the current working directory.
+/// This allows multiple `openz agent` instances in different directories
+/// to each have their own session, lock, and inbox.
+pub fn get_cli_session_key() -> String {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let path_str = cwd.to_string_lossy().to_string();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    path_str.hash(&mut hasher);
+    format!("cli:{:016x}", hasher.finish())
+}
+
 pub fn migrate_config(config: &mut Config) -> bool {
     let mut modified = false;
     let remove_names = [
-        "sequential-thinking", "fetch", "memory", "puppeteer", "context7",
-        "office", "spreadsheet", "just", "docs", "github", "database", "browser", "sediment"
+        "sequential-thinking",
+        "fetch",
+        "memory",
+        "puppeteer",
+        "context7",
+        "office",
+        "spreadsheet",
+        "just",
+        "docs",
+        "github",
+        "database",
+        "browser",
+        "sediment",
     ];
     for name in &remove_names {
         if config.mcp_servers.remove(*name).is_some() {
@@ -85,15 +108,17 @@ pub fn load_config() -> Result<Config> {
 
     let content = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read config file at {:?}", path))?;
-    
+
     let mut config: Config = match serde_json::from_str(&content) {
         Ok(c) => c,
         Err(e) => {
-            let backup_path = path.with_extension(format!("corrupt.{}", chrono::Utc::now().timestamp()));
+            let backup_path =
+                path.with_extension(format!("corrupt.{}", chrono::Utc::now().timestamp()));
             let _ = fs::copy(&path, &backup_path);
-            eprintln!(
-                "⚠️ Warning: Failed to parse config.json ({:?}). A backup was created at {:?}. Reverting to defaults.",
-                e, backup_path
+            tracing::error!(
+                "Failed to parse config.json ({:?}). A backup was created at {:?}. Reverting to defaults.",
+                e,
+                backup_path
             );
             let default_config = Config::default();
             let _ = save_config(&default_config);
@@ -117,16 +142,19 @@ pub fn save_config(config: &Config) -> Result<()> {
 
     let path = config_path();
     let content = serde_json::to_string_pretty(config)?;
-    
+
     // Write atomically: write to a temporary file first, then rename it
     let temp_name = format!("config.json.tmp.{}", uuid::Uuid::new_v4());
     let temp_path = dir.join(temp_name);
     fs::write(&temp_path, content)
         .with_context(|| format!("Failed to write temporary config file to {:?}", temp_path))?;
-        
+
     if let Err(e) = fs::rename(&temp_path, &path) {
         let _ = fs::remove_file(&temp_path);
-        return Err(e).context(format!("Failed to rename temporary config file to {:?}", path));
+        return Err(e).context(format!(
+            "Failed to rename temporary config file to {:?}",
+            path
+        ));
     }
 
     #[cfg(unix)]
@@ -136,4 +164,31 @@ pub fn save_config(config: &Config) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cli_session_key_changes_with_current_directory() {
+        let original = std::env::current_dir().unwrap();
+        let first =
+            std::env::temp_dir().join(format!("openz_session_key_a_{}", uuid::Uuid::new_v4()));
+        let second =
+            std::env::temp_dir().join(format!("openz_session_key_b_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+
+        std::env::set_current_dir(&first).unwrap();
+        let first_key = super::get_cli_session_key();
+        std::env::set_current_dir(&second).unwrap();
+        let second_key = super::get_cli_session_key();
+        std::env::set_current_dir(original).unwrap();
+
+        let _ = std::fs::remove_dir_all(first);
+        let _ = std::fs::remove_dir_all(second);
+
+        assert_ne!(first_key, second_key);
+        assert!(first_key.starts_with("cli:"));
+        assert!(second_key.starts_with("cli:"));
+    }
 }

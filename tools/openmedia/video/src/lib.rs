@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
-use openmedia_core::{Result, OpenMediaError, ImageOutput};
-use std::path::Path;
-use futures::StreamExt;
 use chromiumoxide::browser::{Browser, BrowserConfig};
 use chromiumoxide::handler::viewport::Viewport;
+use futures::StreamExt;
+use openmedia_core::{ImageOutput, OpenMediaError, Result};
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,7 +119,7 @@ pub struct Position {
 #[serde(untagged)]
 pub enum DimensionValue {
     Pixels(f64),
-    Percentage(String),  // e.g., "50%"
+    Percentage(String), // e.g., "50%"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,21 +131,35 @@ pub struct Size {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Anchor {
-    TopLeft, TopCenter, TopRight,
-    CenterLeft, Center, CenterRight,
-    BottomLeft, BottomCenter, BottomRight,
+    TopLeft,
+    TopCenter,
+    TopRight,
+    CenterLeft,
+    Center,
+    CenterRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ObjectFit {
-    Cover, Contain, Fill, ScaleDown,
+    Cover,
+    Contain,
+    Fill,
+    ScaleDown,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ShapeType {
-    Rect, RoundedRect, Circle, Ellipse, Polygon, Line,
+    Rect,
+    RoundedRect,
+    Circle,
+    Ellipse,
+    Polygon,
+    Line,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -296,7 +310,9 @@ impl FrameRenderer for DummyFrameRenderer {
         _width: u32,
         _height: u32,
     ) -> Result<image::RgbaImage> {
-        Err(OpenMediaError::BackendUnavailable("Dummy frame renderer".into()))
+        Err(OpenMediaError::BackendUnavailable(
+            "Dummy frame renderer".into(),
+        ))
     }
 
     fn name(&self) -> &str {
@@ -334,29 +350,45 @@ impl FrameRenderer for SvgFrameRenderer {
             let progress = if trans.duration <= 0.0 {
                 1.0
             } else {
-                apply_transition_easing((time - trans_start) / trans.duration, trans.easing.as_deref())
+                apply_transition_easing(
+                    (time - trans_start) / trans.duration,
+                    trans.easing.as_deref(),
+                )
             };
-            
+
             let mut from_scene = scene.clone();
             from_scene.scenes = vec![from_s.clone()];
             from_scene.transitions = vec![];
             let img_from = self.render_frame(&from_scene, time, width, height).await?;
-            
+
             let mut to_scene = scene.clone();
             to_scene.scenes = vec![to_s.clone()];
             to_scene.transitions = vec![];
             let img_to = self.render_frame(&to_scene, time, width, height).await?;
-            
-            return Ok(blend_frames(&img_from, &img_to, progress, &trans.transition_type));
+
+            return Ok(blend_frames(
+                &img_from,
+                &img_to,
+                progress,
+                &trans.transition_type,
+            ));
         }
 
         let svg_str = compile_scene_to_svg(scene, time, width, height)?;
-        
-        static USVG_FONTDB_CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<Vec<CustomFontSpec>, std::sync::Arc<resvg::usvg::fontdb::Database>>>> = std::sync::OnceLock::new();
-        let cache = USVG_FONTDB_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-        
+
+        static USVG_FONTDB_CACHE: std::sync::OnceLock<
+            std::sync::Mutex<
+                std::collections::HashMap<
+                    Vec<CustomFontSpec>,
+                    std::sync::Arc<resvg::usvg::fontdb::Database>,
+                >,
+            >,
+        > = std::sync::OnceLock::new();
+        let cache = USVG_FONTDB_CACHE
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
         let custom_fonts = scene.custom_fonts.clone().unwrap_or_default();
-        
+
         let fontdb_arc = {
             let mut found = None;
             if let Ok(guard) = cache.lock() {
@@ -367,7 +399,8 @@ impl FrameRenderer for SvgFrameRenderer {
             if let Some(db) = found {
                 db
             } else {
-                static BASE_SYSTEM_FONTS: std::sync::OnceLock<resvg::usvg::fontdb::Database> = std::sync::OnceLock::new();
+                static BASE_SYSTEM_FONTS: std::sync::OnceLock<resvg::usvg::fontdb::Database> =
+                    std::sync::OnceLock::new();
                 let base_db = BASE_SYSTEM_FONTS.get_or_init(|| {
                     let mut db = resvg::usvg::fontdb::Database::new();
                     db.load_system_fonts();
@@ -392,17 +425,18 @@ impl FrameRenderer for SvgFrameRenderer {
         opt.fontdb = fontdb_arc;
         let tree = resvg::usvg::Tree::from_str(&svg_str, &opt)
             .map_err(|e| OpenMediaError::InvalidSvgInput(e.to_string()))?;
-            
-        let mut pixmap = tiny_skia::Pixmap::new(width, height)
-            .ok_or_else(|| OpenMediaError::InvalidDimensions {
+
+        let mut pixmap = tiny_skia::Pixmap::new(width, height).ok_or_else(|| {
+            OpenMediaError::InvalidDimensions {
                 width,
                 height,
                 reason: "Failed to allocate pixmap".to_string(),
-            })?;
-            
+            }
+        })?;
+
         let transform = tiny_skia::Transform::default();
         resvg::render(&tree, transform, &mut pixmap.as_mut());
-        
+
         let mut pixels = pixmap.data().to_vec();
         for chunk in pixels.chunks_exact_mut(4) {
             let a = chunk[3];
@@ -416,7 +450,7 @@ impl FrameRenderer for SvgFrameRenderer {
 
         let buffer = image::ImageBuffer::from_raw(width, height, pixels)
             .ok_or_else(|| OpenMediaError::Internal("Failed to build RgbaImage".to_string()))?;
-            
+
         Ok(buffer)
     }
 
@@ -439,21 +473,26 @@ fn resolve_dimension(val: &DimensionValue, total: f64) -> f64 {
     }
 }
 
-fn interpolate_f64(t: f64, keyframes: &[Keyframe], get_val: impl Fn(&Keyframe) -> Option<f64>, default: f64) -> f64 {
+fn interpolate_f64(
+    t: f64,
+    keyframes: &[Keyframe],
+    get_val: impl Fn(&Keyframe) -> Option<f64>,
+    default: f64,
+) -> f64 {
     if keyframes.is_empty() {
         return default;
     }
-    
+
     let mut sorted = keyframes.to_vec();
     sorted.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
-    
+
     if t <= sorted[0].time {
         return get_val(&sorted[0]).unwrap_or(default);
     }
     if t >= sorted[sorted.len() - 1].time {
         return get_val(&sorted[sorted.len() - 1]).unwrap_or(default);
     }
-    
+
     for window in sorted.windows(2) {
         let k1 = &window[0];
         let k2 = &window[1];
@@ -504,23 +543,27 @@ fn interpolate_string_dimension(
             s.parse::<f64>().unwrap_or(0.0)
         }
     };
-    
+
     if keyframes.is_empty() {
         return parse_dim(default_str);
     }
-    
+
     let mut sorted = keyframes.to_vec();
     sorted.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
-    
+
     if t <= sorted[0].time {
-        let s = get_str(&sorted[0]).map(|x| x.as_str()).unwrap_or(default_str);
+        let s = get_str(&sorted[0])
+            .map(|x| x.as_str())
+            .unwrap_or(default_str);
         return parse_dim(s);
     }
     if t >= sorted[sorted.len() - 1].time {
-        let s = get_str(&sorted[sorted.len() - 1]).map(|x| x.as_str()).unwrap_or(default_str);
+        let s = get_str(&sorted[sorted.len() - 1])
+            .map(|x| x.as_str())
+            .unwrap_or(default_str);
         return parse_dim(s);
     }
-    
+
     for window in sorted.windows(2) {
         let k1 = &window[0];
         let k2 = &window[1];
@@ -586,11 +629,21 @@ fn compile_scene_to_svg(scene: &VideoScene, time: f64, width: u32, height: u32) 
 
 fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) -> Result<String> {
     match el {
-        SceneElement::Shape { shape, size, position, style, timeline } => {
-            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) = timeline {
+        SceneElement::Shape {
+            shape,
+            size,
+            position,
+            style,
+            timeline,
+        } => {
+            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) =
+                timeline
+            {
                 let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                let x = interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                let y = interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
+                let x =
+                    interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
+                let y =
+                    interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
                 let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
                 let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
                 let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
@@ -616,31 +669,56 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
                     let rx = style.border_radius.unwrap_or(0.0);
                     Ok(format!(
                         r#"<rect x="0" y="0" width="{}" height="{}" rx="{}" fill="{}" stroke="{}" stroke-width="{}" opacity="{}" transform="translate({}, {}) rotate({}) scale({}, {}) translate({}, {})"/>"#,
-                        w, h, rx, fill_str, stroke_str, stroke_w, opacity,
-                        final_x + w / 2.0, final_y + h / 2.0,
+                        w,
+                        h,
+                        rx,
+                        fill_str,
+                        stroke_str,
+                        stroke_w,
+                        opacity,
+                        final_x + w / 2.0,
+                        final_y + h / 2.0,
                         rotation,
-                        scale_x, scale_y,
-                        -w / 2.0, -h / 2.0
+                        scale_x,
+                        scale_y,
+                        -w / 2.0,
+                        -h / 2.0
                     ))
                 }
                 ShapeType::Circle => {
                     let r = w / 2.0;
                     Ok(format!(
                         r#"<circle cx="0" cy="0" r="{}" fill="{}" stroke="{}" stroke-width="{}" opacity="{}" transform="translate({}, {}) rotate({}) scale({}, {})"/>"#,
-                        r, fill_str, stroke_str, stroke_w, opacity,
-                        final_x + r, final_y + r,
+                        r,
+                        fill_str,
+                        stroke_str,
+                        stroke_w,
+                        opacity,
+                        final_x + r,
+                        final_y + r,
                         rotation,
-                        scale_x, scale_y
+                        scale_x,
+                        scale_y
                     ))
                 }
                 _ => Ok(String::new()),
             }
         }
-        SceneElement::Text { content, style, position, anchor, timeline } => {
-            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) = timeline {
+        SceneElement::Text {
+            content,
+            style,
+            position,
+            anchor,
+            timeline,
+        } => {
+            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) =
+                timeline
+            {
                 let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                let x = interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                let y = interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
+                let x =
+                    interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
+                let y =
+                    interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
                 let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
                 let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
                 let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
@@ -661,22 +739,42 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
                 Anchor::TopRight | Anchor::CenterRight | Anchor::BottomRight => "end",
             };
 
-            let escaped = content.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+            let escaped = content
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
 
             Ok(format!(
                 r#"<text x="0" y="0" fill="{}" font-family="{}" font-size="{}" font-weight="{}" text-anchor="{}" opacity="{}" transform="translate({}, {}) rotate({}) scale({}, {})">{}</text>"#,
-                style.color, style.font_family, style.font_size, style.font_weight, text_anchor, opacity,
-                final_x, final_y + style.font_size as f64,
+                style.color,
+                style.font_family,
+                style.font_size,
+                style.font_weight,
+                text_anchor,
+                opacity,
+                final_x,
+                final_y + style.font_size as f64,
                 rotation,
-                scale_x, scale_y,
+                scale_x,
+                scale_y,
                 escaped
             ))
         }
-        SceneElement::Image { src, position, size, timeline, .. } => {
-            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) = timeline {
+        SceneElement::Image {
+            src,
+            position,
+            size,
+            timeline,
+            ..
+        } => {
+            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) =
+                timeline
+            {
                 let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                let x = interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                let y = interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
+                let x =
+                    interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
+                let y =
+                    interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
                 let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
                 let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
                 let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
@@ -696,18 +794,33 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
 
             Ok(format!(
                 r#"<image href="{}" x="0" y="0" width="{}" height="{}" opacity="{}" transform="translate({}, {}) rotate({}) scale({}, {}) translate({}, {})"/>"#,
-                src, w, h, opacity,
-                final_x + w / 2.0, final_y + h / 2.0,
+                src,
+                w,
+                h,
+                opacity,
+                final_x + w / 2.0,
+                final_y + h / 2.0,
                 rotation,
-                scale_x, scale_y,
-                -w / 2.0, -h / 2.0
+                scale_x,
+                scale_y,
+                -w / 2.0,
+                -h / 2.0
             ))
         }
-        SceneElement::Svg { content, position, size, timeline } => {
-            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) = timeline {
+        SceneElement::Svg {
+            content,
+            position,
+            size,
+            timeline,
+        } => {
+            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) =
+                timeline
+            {
                 let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                let x = interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                let y = interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
+                let x =
+                    interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
+                let y =
+                    interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
                 let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
                 let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
                 let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
@@ -722,24 +835,44 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
             let final_x = base_x + x_offset;
             let final_y = base_y + y_offset;
 
-            let w = size.as_ref().map(|s| resolve_dimension(&s.width, total_w)).unwrap_or(100.0);
-            let h = size.as_ref().map(|s| resolve_dimension(&s.height, total_h)).unwrap_or(100.0);
+            let w = size
+                .as_ref()
+                .map(|s| resolve_dimension(&s.width, total_w))
+                .unwrap_or(100.0);
+            let h = size
+                .as_ref()
+                .map(|s| resolve_dimension(&s.height, total_h))
+                .unwrap_or(100.0);
 
             Ok(format!(
                 r#"<g opacity="{}" transform="translate({}, {}) rotate({}) scale({}, {}) translate({}, {})">{}</g>"#,
                 opacity,
-                final_x + w / 2.0, final_y + h / 2.0,
+                final_x + w / 2.0,
+                final_y + h / 2.0,
                 rotation,
-                scale_x, scale_y,
-                -w / 2.0, -h / 2.0,
+                scale_x,
+                scale_y,
+                -w / 2.0,
+                -h / 2.0,
                 content
             ))
         }
-        SceneElement::Chart { chart_type, data, position, size, theme: _, timeline } => {
-            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) = timeline {
+        SceneElement::Chart {
+            chart_type,
+            data,
+            position,
+            size,
+            theme: _,
+            timeline,
+        } => {
+            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) =
+                timeline
+            {
                 let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                let x = interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                let y = interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
+                let x =
+                    interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
+                let y =
+                    interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
                 let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
                 let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
                 let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
@@ -771,10 +904,18 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
                 width: w as u32,
                 height: h as u32,
                 theme: chart_theme,
-                legend: openmedia_svg::LegendConfig { show: false, position: openmedia_svg::LegendPosition::Bottom },
+                legend: openmedia_svg::LegendConfig {
+                    show: false,
+                    position: openmedia_svg::LegendPosition::Bottom,
+                },
                 grid: true,
                 animate: false,
-                padding: openmedia_svg::Padding { top: 10.0, right: 10.0, bottom: 10.0, left: 10.0 },
+                padding: openmedia_svg::Padding {
+                    top: 10.0,
+                    right: 10.0,
+                    bottom: 10.0,
+                    left: 10.0,
+                },
             };
 
             let chart_xml = openmedia_svg::generate_chart(&chart_cfg)
@@ -783,10 +924,13 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
             Ok(format!(
                 r#"<g opacity="{}" transform="translate({}, {}) rotate({}) scale({}, {}) translate({}, {})">{}</g>"#,
                 opacity,
-                final_x + w / 2.0, final_y + h / 2.0,
+                final_x + w / 2.0,
+                final_y + h / 2.0,
                 rotation,
-                scale_x, scale_y,
-                -w / 2.0, -h / 2.0,
+                scale_x,
+                scale_y,
+                -w / 2.0,
+                -h / 2.0,
                 chart_xml
             ))
         }
@@ -802,13 +946,15 @@ pub struct BrowserFrameRenderer {
 
 impl BrowserFrameRenderer {
     pub async fn launch() -> Result<Self> {
-        let profile_dir = std::env::temp_dir().join(format!("chrome-profile-{}", uuid::Uuid::new_v4()));
+        let profile_dir =
+            std::env::temp_dir().join(format!("chrome-profile-{}", uuid::Uuid::new_v4()));
         let config = BrowserConfig::builder()
             .no_sandbox()
             .user_data_dir(profile_dir)
             .build()
             .map_err(|e| OpenMediaError::ConfigError(e.to_string()))?;
-        let (browser, mut handler) = Browser::launch(config).await
+        let (browser, mut handler) = Browser::launch(config)
+            .await
             .map_err(|_| OpenMediaError::ChromeNotFound)?;
 
         tokio::spawn(async move {
@@ -819,7 +965,9 @@ impl BrowserFrameRenderer {
             }
         });
 
-        let page = browser.new_page("about:blank").await
+        let page = browser
+            .new_page("about:blank")
+            .await
             .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
 
         Ok(Self {
@@ -843,9 +991,9 @@ impl FrameRenderer for BrowserFrameRenderer {
         height: u32,
     ) -> Result<image::RgbaImage> {
         let html_content = compile_scene_to_html(scene, time, width, height).await?;
-        
+
         let page = self.page.lock().await;
-            
+
         let params = chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams::builder()
             .width(width as i64)
             .height(height as i64)
@@ -853,10 +1001,12 @@ impl FrameRenderer for BrowserFrameRenderer {
             .mobile(false)
             .build()
             .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
-        page.execute(params).await
+        page.execute(params)
+            .await
             .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
 
-        page.set_content(html_content).await
+        page.set_content(html_content)
+            .await
             .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
 
         // Give headless Chrome a short delay (50ms) to parse HTML, run scripts, load fonts,
@@ -866,10 +1016,12 @@ impl FrameRenderer for BrowserFrameRenderer {
         let params = chromiumoxide::page::ScreenshotParams::builder()
             .format(chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat::Png)
             .build();
-            
-        let screenshot_bytes = page.screenshot(params).await
+
+        let screenshot_bytes = page
+            .screenshot(params)
+            .await
             .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
-            
+
         let img = image::load_from_memory(&screenshot_bytes)
             .map_err(|e| OpenMediaError::ImageDecodeError(e.to_string()))?
             .to_rgba8();
@@ -883,9 +1035,11 @@ impl FrameRenderer for BrowserFrameRenderer {
 }
 
 pub async fn get_html_font_css(custom_fonts: &[CustomFontSpec]) -> String {
-    static CSS_CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<Vec<CustomFontSpec>, String>>> = std::sync::OnceLock::new();
+    static CSS_CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<Vec<CustomFontSpec>, String>>,
+    > = std::sync::OnceLock::new();
     let cache = CSS_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    
+
     if let Ok(guard) = cache.lock() {
         if let Some(cached_css) = guard.get(custom_fonts) {
             return cached_css.clone();
@@ -914,7 +1068,12 @@ pub async fn get_html_font_css(custom_fonts: &[CustomFontSpec]) -> String {
     font_css
 }
 
-async fn compile_scene_to_html(scene: &VideoScene, time: f64, width: u32, height: u32) -> Result<String> {
+async fn compile_scene_to_html(
+    scene: &VideoScene,
+    time: f64,
+    width: u32,
+    height: u32,
+) -> Result<String> {
     let mut active_scene = None;
     let mut active_scene_to = None;
     let mut transition_progress = 0.0;
@@ -926,7 +1085,7 @@ async fn compile_scene_to_html(scene: &VideoScene, time: f64, width: u32, height
             break;
         }
     }
-    
+
     for trans in &scene.transitions {
         if let Some(from_s) = scene.scenes.iter().find(|s| s.id == trans.from) {
             let trans_start = from_s.end - trans.duration;
@@ -936,7 +1095,10 @@ async fn compile_scene_to_html(scene: &VideoScene, time: f64, width: u32, height
                 transition_progress = if trans.duration <= 0.0 {
                     1.0
                 } else {
-                    apply_transition_easing((time - trans_start) / trans.duration, trans.easing.as_deref())
+                    apply_transition_easing(
+                        (time - trans_start) / trans.duration,
+                        trans.easing.as_deref(),
+                    )
                 };
                 active_transition = Some(trans);
                 break;
@@ -975,42 +1137,66 @@ async fn compile_scene_to_html(scene: &VideoScene, time: f64, width: u32, height
 </style>
 </head>
 <body>"#,
-        font_css,
-        width, height, bg_color
+        font_css, width, height, bg_color
     );
 
     if let Some(trans) = active_transition {
         if let (Some(s_from), Some(s_to)) = (active_scene, active_scene_to) {
-            let from_html = render_scene_elements_to_html(s_from, time - s_from.start, width, height)?;
+            let from_html =
+                render_scene_elements_to_html(s_from, time - s_from.start, width, height)?;
             let to_html = render_scene_elements_to_html(s_to, time - s_to.start, width, height)?;
-            
+
             let (from_style, to_style) = match trans.transition_type {
                 TransitionType::Crossfade => (
                     format!("opacity: {};", 1.0 - transition_progress),
                     format!("opacity: {};", transition_progress),
                 ),
                 TransitionType::SlideLeft => (
-                    format!("transform: translateX(-{}px);", transition_progress * width as f64),
-                    format!("transform: translateX({}px);", (1.0 - transition_progress) * width as f64),
+                    format!(
+                        "transform: translateX(-{}px);",
+                        transition_progress * width as f64
+                    ),
+                    format!(
+                        "transform: translateX({}px);",
+                        (1.0 - transition_progress) * width as f64
+                    ),
                 ),
                 TransitionType::SlideRight => (
-                    format!("transform: translateX({}px);", transition_progress * width as f64),
-                    format!("transform: translateX(-{}px);", (1.0 - transition_progress) * width as f64),
+                    format!(
+                        "transform: translateX({}px);",
+                        transition_progress * width as f64
+                    ),
+                    format!(
+                        "transform: translateX(-{}px);",
+                        (1.0 - transition_progress) * width as f64
+                    ),
                 ),
                 TransitionType::SlideUp => (
-                    format!("transform: translateY(-{}px);", transition_progress * height as f64),
-                    format!("transform: translateY({}px);", (1.0 - transition_progress) * height as f64),
+                    format!(
+                        "transform: translateY(-{}px);",
+                        transition_progress * height as f64
+                    ),
+                    format!(
+                        "transform: translateY({}px);",
+                        (1.0 - transition_progress) * height as f64
+                    ),
                 ),
                 TransitionType::SlideDown => (
-                    format!("transform: translateY({}px);", transition_progress * height as f64),
-                    format!("transform: translateY(-{}px);", (1.0 - transition_progress) * height as f64),
+                    format!(
+                        "transform: translateY({}px);",
+                        transition_progress * height as f64
+                    ),
+                    format!(
+                        "transform: translateY(-{}px);",
+                        (1.0 - transition_progress) * height as f64
+                    ),
                 ),
                 _ => (
                     format!("opacity: {};", 1.0 - transition_progress),
                     format!("opacity: {};", transition_progress),
                 ),
             };
-            
+
             html.push_str(&format!(
                 r#"<div data-scene-time="{}" style="position: absolute; width: 100%; height: 100%; {}">{}</div>"#,
                 time - s_from.start, from_style, from_html
@@ -1074,19 +1260,38 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
 
     for el in &s.elements {
         match el {
-            SceneElement::Text { content, style, position, anchor, timeline } => {
-                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) = timeline {
-                    let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                    let x = interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                    let y = interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
-                    let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                    let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                    let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                    let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                    (op, x, y, sx, sy, rot)
-                } else {
-                    (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-                };
+            SceneElement::Text {
+                content,
+                style,
+                position,
+                anchor,
+                timeline,
+            } => {
+                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) =
+                    if let Some(tl) = timeline {
+                        let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
+                        let x = interpolate_string_dimension(
+                            t,
+                            &tl.keyframes,
+                            |k| k.x.as_ref(),
+                            "0",
+                            total_w,
+                        );
+                        let y = interpolate_string_dimension(
+                            t,
+                            &tl.keyframes,
+                            |k| k.y.as_ref(),
+                            "0",
+                            total_h,
+                        );
+                        let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
+                        let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
+                        let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
+                        let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
+                        (op, x, y, sx, sy, rot)
+                    } else {
+                        (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
+                    };
 
                 let base_x = resolve_dimension(&position.x, total_w);
                 let base_y = resolve_dimension(&position.y, total_h);
@@ -1104,19 +1309,38 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
                     final_x, final_y, opacity, rotation, scale_x, scale_y, style.font_family, style.font_size, style.color, style.font_weight, text_align, content
                 ));
             }
-            SceneElement::Image { src, position, size, timeline, .. } => {
-                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) = timeline {
-                    let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                    let x = interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                    let y = interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
-                    let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                    let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                    let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                    let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                    (op, x, y, sx, sy, rot)
-                } else {
-                    (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-                };
+            SceneElement::Image {
+                src,
+                position,
+                size,
+                timeline,
+                ..
+            } => {
+                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) =
+                    if let Some(tl) = timeline {
+                        let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
+                        let x = interpolate_string_dimension(
+                            t,
+                            &tl.keyframes,
+                            |k| k.x.as_ref(),
+                            "0",
+                            total_w,
+                        );
+                        let y = interpolate_string_dimension(
+                            t,
+                            &tl.keyframes,
+                            |k| k.y.as_ref(),
+                            "0",
+                            total_h,
+                        );
+                        let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
+                        let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
+                        let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
+                        let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
+                        (op, x, y, sx, sy, rot)
+                    } else {
+                        (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
+                    };
 
                 let base_x = resolve_dimension(&position.x, total_w);
                 let base_y = resolve_dimension(&position.y, total_h);
@@ -1131,19 +1355,38 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
                     src, final_x, final_y, w, h, opacity, rotation, scale_x, scale_y
                 ));
             }
-            SceneElement::Shape { shape, size, position, style, timeline } => {
-                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) = timeline {
-                    let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                    let x = interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                    let y = interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
-                    let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                    let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                    let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                    let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                    (op, x, y, sx, sy, rot)
-                } else {
-                    (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-                };
+            SceneElement::Shape {
+                shape,
+                size,
+                position,
+                style,
+                timeline,
+            } => {
+                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) =
+                    if let Some(tl) = timeline {
+                        let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
+                        let x = interpolate_string_dimension(
+                            t,
+                            &tl.keyframes,
+                            |k| k.x.as_ref(),
+                            "0",
+                            total_w,
+                        );
+                        let y = interpolate_string_dimension(
+                            t,
+                            &tl.keyframes,
+                            |k| k.y.as_ref(),
+                            "0",
+                            total_h,
+                        );
+                        let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
+                        let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
+                        let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
+                        let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
+                        (op, x, y, sx, sy, rot)
+                    } else {
+                        (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
+                    };
 
                 let base_x = resolve_dimension(&position.x, total_w);
                 let base_y = resolve_dimension(&position.y, total_h);
@@ -1158,7 +1401,9 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
 
                 let radius_str = match shape {
                     ShapeType::Circle => "border-radius: 50%;".to_string(),
-                    ShapeType::RoundedRect => format!("border-radius: {}px;", style.border_radius.unwrap_or(4.0)),
+                    ShapeType::RoundedRect => {
+                        format!("border-radius: {}px;", style.border_radius.unwrap_or(4.0))
+                    }
                     _ => String::new(),
                 };
 
@@ -1167,46 +1412,88 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
                     final_x, final_y, w, h, opacity, rotation, scale_x, scale_y, fill_str, stroke_w, stroke_str, radius_str
                 ));
             }
-            SceneElement::Svg { content, position, size, timeline } => {
-                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) = timeline {
-                    let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                    let x = interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                    let y = interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
-                    let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                    let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                    let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                    let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                    (op, x, y, sx, sy, rot)
-                } else {
-                    (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-                };
+            SceneElement::Svg {
+                content,
+                position,
+                size,
+                timeline,
+            } => {
+                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) =
+                    if let Some(tl) = timeline {
+                        let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
+                        let x = interpolate_string_dimension(
+                            t,
+                            &tl.keyframes,
+                            |k| k.x.as_ref(),
+                            "0",
+                            total_w,
+                        );
+                        let y = interpolate_string_dimension(
+                            t,
+                            &tl.keyframes,
+                            |k| k.y.as_ref(),
+                            "0",
+                            total_h,
+                        );
+                        let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
+                        let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
+                        let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
+                        let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
+                        (op, x, y, sx, sy, rot)
+                    } else {
+                        (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
+                    };
 
                 let base_x = resolve_dimension(&position.x, total_w);
                 let base_y = resolve_dimension(&position.y, total_h);
                 let final_x = base_x + x_offset;
                 let final_y = base_y + y_offset;
 
-                let w_str = size.as_ref().map(|s| format!("width: {}px;", resolve_dimension(&s.width, total_w))).unwrap_or_default();
-                let h_str = size.as_ref().map(|s| format!("height: {}px;", resolve_dimension(&s.height, total_h))).unwrap_or_default();
+                let w_str = size
+                    .as_ref()
+                    .map(|s| format!("width: {}px;", resolve_dimension(&s.width, total_w)))
+                    .unwrap_or_default();
+                let h_str = size
+                    .as_ref()
+                    .map(|s| format!("height: {}px;", resolve_dimension(&s.height, total_h)))
+                    .unwrap_or_default();
 
                 elements_html.push_str(&format!(
                     r#"<div class="element" style="left: {}px; top: {}px; {} {} opacity: {}; transform: rotate({}deg) scale({}, {});">{}</div>"#,
                     final_x, final_y, w_str, h_str, opacity, rotation, scale_x, scale_y, content
                 ));
             }
-            SceneElement::Html { content, position, size, timeline } => {
-                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) = timeline {
-                    let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                    let x = interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                    let y = interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
-                    let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                    let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                    let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                    let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                    (op, x, y, sx, sy, rot)
-                } else {
-                    (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-                };
+            SceneElement::Html {
+                content,
+                position,
+                size,
+                timeline,
+            } => {
+                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) =
+                    if let Some(tl) = timeline {
+                        let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
+                        let x = interpolate_string_dimension(
+                            t,
+                            &tl.keyframes,
+                            |k| k.x.as_ref(),
+                            "0",
+                            total_w,
+                        );
+                        let y = interpolate_string_dimension(
+                            t,
+                            &tl.keyframes,
+                            |k| k.y.as_ref(),
+                            "0",
+                            total_h,
+                        );
+                        let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
+                        let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
+                        let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
+                        let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
+                        (op, x, y, sx, sy, rot)
+                    } else {
+                        (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
+                    };
 
                 let base_x = resolve_dimension(&position.x, total_w);
                 let base_y = resolve_dimension(&position.y, total_h);
@@ -1221,19 +1508,40 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
                     final_x, final_y, w, h, opacity, rotation, scale_x, scale_y, content
                 ));
             }
-            SceneElement::Code { content, language: _, theme: _, position, size, font_size, timeline } => {
-                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) = timeline {
-                    let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                    let x = interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                    let y = interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
-                    let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                    let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                    let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                    let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                    (op, x, y, sx, sy, rot)
-                } else {
-                    (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-                };
+            SceneElement::Code {
+                content,
+                language: _,
+                theme: _,
+                position,
+                size,
+                font_size,
+                timeline,
+            } => {
+                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) =
+                    if let Some(tl) = timeline {
+                        let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
+                        let x = interpolate_string_dimension(
+                            t,
+                            &tl.keyframes,
+                            |k| k.x.as_ref(),
+                            "0",
+                            total_w,
+                        );
+                        let y = interpolate_string_dimension(
+                            t,
+                            &tl.keyframes,
+                            |k| k.y.as_ref(),
+                            "0",
+                            total_h,
+                        );
+                        let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
+                        let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
+                        let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
+                        let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
+                        (op, x, y, sx, sy, rot)
+                    } else {
+                        (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
+                    };
 
                 let base_x = resolve_dimension(&position.x, total_w);
                 let base_y = resolve_dimension(&position.y, total_h);
@@ -1248,19 +1556,39 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
                     final_x, final_y, w, h, opacity, rotation, scale_x, scale_y, font_size, content
                 ));
             }
-            SceneElement::Chart { chart_type, data, position, size, theme: _, timeline } => {
-                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) = timeline {
-                    let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                    let x = interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                    let y = interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
-                    let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                    let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                    let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                    let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                    (op, x, y, sx, sy, rot)
-                } else {
-                    (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-                };
+            SceneElement::Chart {
+                chart_type,
+                data,
+                position,
+                size,
+                theme: _,
+                timeline,
+            } => {
+                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) =
+                    if let Some(tl) = timeline {
+                        let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
+                        let x = interpolate_string_dimension(
+                            t,
+                            &tl.keyframes,
+                            |k| k.x.as_ref(),
+                            "0",
+                            total_w,
+                        );
+                        let y = interpolate_string_dimension(
+                            t,
+                            &tl.keyframes,
+                            |k| k.y.as_ref(),
+                            "0",
+                            total_h,
+                        );
+                        let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
+                        let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
+                        let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
+                        let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
+                        (op, x, y, sx, sy, rot)
+                    } else {
+                        (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
+                    };
 
                 let base_x = resolve_dimension(&position.x, total_w);
                 let base_y = resolve_dimension(&position.y, total_h);
@@ -1284,10 +1612,18 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
                     width: w as u32,
                     height: h as u32,
                     theme: chart_theme,
-                    legend: openmedia_svg::LegendConfig { show: false, position: openmedia_svg::LegendPosition::Bottom },
+                    legend: openmedia_svg::LegendConfig {
+                        show: false,
+                        position: openmedia_svg::LegendPosition::Bottom,
+                    },
                     grid: true,
                     animate: false,
-                    padding: openmedia_svg::Padding { top: 10.0, right: 10.0, bottom: 10.0, left: 10.0 },
+                    padding: openmedia_svg::Padding {
+                        top: 10.0,
+                        right: 10.0,
+                        bottom: 10.0,
+                        left: 10.0,
+                    },
                 };
 
                 let chart_xml = openmedia_svg::generate_chart(&chart_cfg)
@@ -1312,7 +1648,8 @@ pub fn apply_transition_easing(progress: f64, easing: Option<&str>) -> f64 {
             progress * progress
         } else if eas.eq_ignore_ascii_case("ease_out") || eas.eq_ignore_ascii_case("ease-out") {
             progress * (2.0 - progress)
-        } else if eas.eq_ignore_ascii_case("ease_in_out") || eas.eq_ignore_ascii_case("ease-in-out") {
+        } else if eas.eq_ignore_ascii_case("ease_in_out") || eas.eq_ignore_ascii_case("ease-in-out")
+        {
             if progress < 0.5 {
                 2.0 * progress * progress
             } else {
@@ -1331,7 +1668,7 @@ fn box_blur(img: &image::RgbaImage, radius: usize) -> image::RgbaImage {
     let h = img.height();
     let mut temp = image::RgbaImage::new(w, h);
     let mut out = image::RgbaImage::new(w, h);
-    
+
     // Pass 1: Horizontal
     for y in 0..h {
         for x in 0..w {
@@ -1340,10 +1677,14 @@ fn box_blur(img: &image::RgbaImage, radius: usize) -> image::RgbaImage {
             let mut b_sum = 0u32;
             let mut a_sum = 0u32;
             let mut count = 0u32;
-            
-            let start = if x as usize >= radius { x as usize - radius } else { 0 };
+
+            let start = if x as usize >= radius {
+                x as usize - radius
+            } else {
+                0
+            };
             let end = std::cmp::min(x as usize + radius, w as usize - 1);
-            
+
             for k in start..=end {
                 let p = img.get_pixel(k as u32, y);
                 r_sum += p[0] as u32;
@@ -1352,15 +1693,19 @@ fn box_blur(img: &image::RgbaImage, radius: usize) -> image::RgbaImage {
                 a_sum += p[3] as u32;
                 count += 1;
             }
-            temp.put_pixel(x, y, image::Rgba([
-                (r_sum / count) as u8,
-                (g_sum / count) as u8,
-                (b_sum / count) as u8,
-                (a_sum / count) as u8,
-            ]));
+            temp.put_pixel(
+                x,
+                y,
+                image::Rgba([
+                    (r_sum / count) as u8,
+                    (g_sum / count) as u8,
+                    (b_sum / count) as u8,
+                    (a_sum / count) as u8,
+                ]),
+            );
         }
     }
-    
+
     // Pass 2: Vertical
     for x in 0..w {
         for y in 0..h {
@@ -1369,10 +1714,14 @@ fn box_blur(img: &image::RgbaImage, radius: usize) -> image::RgbaImage {
             let mut b_sum = 0u32;
             let mut a_sum = 0u32;
             let mut count = 0u32;
-            
-            let start = if y as usize >= radius { y as usize - radius } else { 0 };
+
+            let start = if y as usize >= radius {
+                y as usize - radius
+            } else {
+                0
+            };
             let end = std::cmp::min(y as usize + radius, h as usize - 1);
-            
+
             for k in start..=end {
                 let p = temp.get_pixel(x, k as u32);
                 r_sum += p[0] as u32;
@@ -1381,12 +1730,16 @@ fn box_blur(img: &image::RgbaImage, radius: usize) -> image::RgbaImage {
                 a_sum += p[3] as u32;
                 count += 1;
             }
-            out.put_pixel(x, y, image::Rgba([
-                (r_sum / count) as u8,
-                (g_sum / count) as u8,
-                (b_sum / count) as u8,
-                (a_sum / count) as u8,
-            ]));
+            out.put_pixel(
+                x,
+                y,
+                image::Rgba([
+                    (r_sum / count) as u8,
+                    (g_sum / count) as u8,
+                    (b_sum / count) as u8,
+                    (a_sum / count) as u8,
+                ]),
+            );
         }
     }
     out
@@ -1402,7 +1755,7 @@ pub fn blend_frames(
     let w = from.width();
     let h = from.height();
     let mut out = image::RgbaImage::new(w, h);
-    
+
     match trans_type {
         TransitionType::Crossfade => {
             for y in 0..h {
@@ -1531,14 +1884,14 @@ pub fn blend_frames(
         TransitionType::Glitch => {
             let intensity = 1.0 - (progress - 0.5).abs() * 2.0;
             let disp_max = (intensity * 15.0) as i32;
-            
+
             for y in 0..h {
                 // scanline row displacement
                 let mut seed = y as u32 + (progress * 1000.0) as u32;
                 seed ^= seed << 13;
                 seed ^= seed >> 17;
                 seed ^= seed << 5;
-                
+
                 let offset_x = if seed % 100 < (intensity * 40.0) as u32 {
                     ((seed % 31) as i32 - 15) * disp_max / 15
                 } else {
@@ -1547,7 +1900,8 @@ pub fn blend_frames(
 
                 for x in 0..w {
                     let get_chan = |img: &image::RgbaImage, channel: usize, dx: i32| -> u8 {
-                        let target_x = std::cmp::max(0, std::cmp::min(w as i32 - 1, x as i32 + dx)) as u32;
+                        let target_x =
+                            std::cmp::max(0, std::cmp::min(w as i32 - 1, x as i32 + dx)) as u32;
                         img.get_pixel(target_x, y)[channel]
                     };
 
@@ -1624,9 +1978,12 @@ enum CacheEntry {
 pub async fn resolve_custom_fonts(
     custom_fonts: &[CustomFontSpec],
 ) -> std::collections::HashMap<String, Vec<u8>> {
-    static MEMORY_CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, CacheEntry>>> = std::sync::OnceLock::new();
-    let cache = MEMORY_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    
+    static MEMORY_CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, CacheEntry>>,
+    > = std::sync::OnceLock::new();
+    let cache =
+        MEMORY_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
     static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     let client = HTTP_CLIENT.get_or_init(|| {
         reqwest::Client::builder()
@@ -1635,7 +1992,7 @@ pub async fn resolve_custom_fonts(
             .build()
             .unwrap_or_default()
     });
-    
+
     let mut resolved = std::collections::HashMap::new();
     let cache_dir = std::env::temp_dir().join("openmedia_fonts_cache");
     let _ = tokio::fs::create_dir_all(&cache_dir).await;
@@ -1644,7 +2001,7 @@ pub async fn resolve_custom_fonts(
         // Check memory cache first
         let mut cached_bytes = None;
         let mut is_cached_failure = false;
-        
+
         if let Ok(guard) = cache.lock() {
             if let Some(entry) = guard.get(&font.src) {
                 match entry {
@@ -1730,9 +2087,9 @@ pub async fn render_video_scene(
     let total_frames = (duration * fps as f64).round() as u32;
 
     let use_browser = scene.scenes.iter().any(|s| {
-        s.elements.iter().any(|el| {
-            matches!(el, SceneElement::Html { .. } | SceneElement::Code { .. })
-        })
+        s.elements
+            .iter()
+            .any(|el| matches!(el, SceneElement::Html { .. } | SceneElement::Code { .. }))
     });
 
     let renderer_name = if use_browser { "browser" } else { "svg" };
@@ -1742,23 +2099,34 @@ pub async fn render_video_scene(
     let mut cmd = tokio::process::Command::new("ffmpeg");
     cmd.args([
         "-y",
-        "-f", "image2pipe",
-        "-vcodec", "mjpeg",
-        "-r", &fps.to_string(),
-        "-i", "-",
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-crf", "23",
-        "-preset", "medium",
+        "-f",
+        "image2pipe",
+        "-vcodec",
+        "mjpeg",
+        "-r",
+        &fps.to_string(),
+        "-i",
+        "-",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-crf",
+        "23",
+        "-preset",
+        "medium",
     ])
     .arg(&temp_silent);
 
     cmd.stdin(std::process::Stdio::piped())
-       .stdout(std::process::Stdio::null())
-       .stderr(std::process::Stdio::null());
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
 
     let mut child = cmd.spawn().map_err(OpenMediaError::IoError)?;
-    let mut stdin = child.stdin.take().ok_or_else(|| OpenMediaError::Internal("Failed to open FFmpeg stdin".into()))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| OpenMediaError::Internal("Failed to open FFmpeg stdin".into()))?;
 
     if use_browser {
         let renderer = BrowserFrameRenderer::launch().await?;
@@ -1768,8 +2136,16 @@ pub async fn render_video_scene(
             let rgb_frame = image::DynamicImage::ImageRgba8(frame).into_rgb8();
             let mut bytes = Vec::new();
             let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 95);
-            rgb_frame.write_with_encoder(encoder).map_err(|e| OpenMediaError::ImageEncodeError { format: "jpeg".to_string(), reason: e.to_string() })?;
-            stdin.write_all(&bytes).await.map_err(OpenMediaError::IoError)?;
+            rgb_frame.write_with_encoder(encoder).map_err(|e| {
+                OpenMediaError::ImageEncodeError {
+                    format: "jpeg".to_string(),
+                    reason: e.to_string(),
+                }
+            })?;
+            stdin
+                .write_all(&bytes)
+                .await
+                .map_err(OpenMediaError::IoError)?;
         }
         renderer.close().await;
     } else {
@@ -1780,22 +2156,33 @@ pub async fn render_video_scene(
             let rgb_frame = image::DynamicImage::ImageRgba8(frame).into_rgb8();
             let mut bytes = Vec::new();
             let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 95);
-            rgb_frame.write_with_encoder(encoder).map_err(|e| OpenMediaError::ImageEncodeError { format: "jpeg".to_string(), reason: e.to_string() })?;
-            stdin.write_all(&bytes).await.map_err(OpenMediaError::IoError)?;
+            rgb_frame.write_with_encoder(encoder).map_err(|e| {
+                OpenMediaError::ImageEncodeError {
+                    format: "jpeg".to_string(),
+                    reason: e.to_string(),
+                }
+            })?;
+            stdin
+                .write_all(&bytes)
+                .await
+                .map_err(OpenMediaError::IoError)?;
         }
     }
 
     drop(stdin);
     let status = child.wait().await.map_err(OpenMediaError::IoError)?;
     if !status.success() {
-        return Err(OpenMediaError::Internal(format!("FFmpeg frame rendering failed with exit status {:?}", status.code())));
+        return Err(OpenMediaError::Internal(format!(
+            "FFmpeg frame rendering failed with exit status {:?}",
+            status.code()
+        )));
     }
 
     // Mix audio if present
     if let Some(audio_cfg) = &scene.audio {
         let mut audio_cmd = tokio::process::Command::new("ffmpeg");
         audio_cmd.arg("-y").arg("-i").arg(&temp_silent);
-        
+
         for track in &audio_cfg.tracks {
             audio_cmd.arg("-i").arg(&track.src);
         }
@@ -1814,32 +2201,47 @@ pub async fn render_video_scene(
         for i in 0..audio_cfg.tracks.len() {
             filter_complex.push_str(&format!("[a{}]", i + 1));
         }
-        filter_complex.push_str(&format!("amix=inputs={}:duration=first[out_a]", audio_cfg.tracks.len()));
+        filter_complex.push_str(&format!(
+            "amix=inputs={}:duration=first[out_a]",
+            audio_cfg.tracks.len()
+        ));
 
-        audio_cmd.args([
-            "-filter_complex", &filter_complex,
-            "-map", "0:v",
-            "-map", "[out_a]",
-            "-c:v", "copy",
-            "-c:a", "aac",
-        ])
-        .arg(output_path);
+        audio_cmd
+            .args([
+                "-filter_complex",
+                &filter_complex,
+                "-map",
+                "0:v",
+                "-map",
+                "[out_a]",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+            ])
+            .arg(output_path);
 
-        audio_cmd.stdout(std::process::Stdio::piped())
-                 .stderr(std::process::Stdio::piped());
+        audio_cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
 
         let mix_child = audio_cmd.spawn().map_err(OpenMediaError::IoError)?;
-        let output = mix_child.wait_with_output().await.map_err(OpenMediaError::IoError)?;
-        
+        let output = mix_child
+            .wait_with_output()
+            .await
+            .map_err(OpenMediaError::IoError)?;
+
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
             return Err(OpenMediaError::EncodingError(format!(
                 "FFmpeg audio mixing failed with status {:?}.\nStdout: {}\nStderr: {}",
-                output.status.code(), stdout, stderr
+                output.status.code(),
+                stdout,
+                stderr
             )));
         }
-        
+
         let _ = std::fs::remove_file(temp_silent);
     } else {
         std::fs::rename(temp_silent, output_path).map_err(OpenMediaError::IoError)?;
@@ -1872,9 +2274,9 @@ pub async fn html_to_image(
     format: &str,
     output_path: &Path,
 ) -> Result<ImageOutput> {
-    use std::time::Instant;
     use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
     use chromiumoxide::page::ScreenshotParams;
+    use std::time::Instant;
 
     let start_time = Instant::now();
 
@@ -1897,7 +2299,8 @@ pub async fn html_to_image(
         .build()
         .map_err(|e| OpenMediaError::ConfigError(e.to_string()))?;
 
-    let (mut browser, mut handler) = Browser::launch(config).await
+    let (mut browser, mut handler) = Browser::launch(config)
+        .await
         .map_err(|_| OpenMediaError::ChromeNotFound)?;
 
     tokio::spawn(async move {
@@ -1908,18 +2311,21 @@ pub async fn html_to_image(
         }
     });
 
-    let page = browser.new_page("about:blank").await
+    let page = browser
+        .new_page("about:blank")
+        .await
         .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
 
     let html_path = Path::new(html_content);
     if html_path.exists() && html_path.is_file() {
-        let abs_path = html_path.canonicalize()
-            .map_err(OpenMediaError::IoError)?;
+        let abs_path = html_path.canonicalize().map_err(OpenMediaError::IoError)?;
         let url = format!("file://{}", abs_path.to_string_lossy());
-        page.goto(&url).await
+        page.goto(&url)
+            .await
             .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
     } else {
-        page.set_content(html_content).await
+        page.set_content(html_content)
+            .await
             .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
     }
 
@@ -1939,11 +2345,10 @@ pub async fn html_to_image(
         }
     };
 
-    let params = ScreenshotParams::builder()
-        .format(cdp_format)
-        .build();
+    let params = ScreenshotParams::builder().format(cdp_format).build();
 
-    page.save_screenshot(params, output_path).await
+    page.save_screenshot(params, output_path)
+        .await
         .map_err(|e| OpenMediaError::ImageEncodeError {
             format: clean_format.clone(),
             reason: e.to_string(),

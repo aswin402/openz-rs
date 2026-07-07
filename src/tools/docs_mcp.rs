@@ -1,10 +1,10 @@
 use anyhow::Result;
-use serde_json::{json, Value};
 use openz_docs_mcp::{
-    DocsMcpServer, ListDocsetsRequest, InstallDocsetRequest, SearchDocsRequest,
-    ReadDocPageRequest, SearchRustCrateRequest, ReadRustDocsRequest, init_db
+    init_db, DocsMcpServer, InstallDocsetRequest, ListDocsetsRequest, ReadDocPageRequest,
+    ReadRustDocsRequest, SearchDocsRequest, SearchRustCrateRequest,
 };
 use rmcp::handler::server::wrapper::Parameters;
+use serde_json::{json, Value};
 
 pub fn get_server() -> &'static DocsMcpServer {
     static SERVER: std::sync::OnceLock<DocsMcpServer> = std::sync::OnceLock::new();
@@ -40,8 +40,8 @@ impl crate::tools::Tool for DocsListDocsetsTool {
             Ok(res_str) => {
                 let val: Value = serde_json::from_str(&res_str).unwrap_or_else(|_| json!(res_str));
                 Ok(json!({ "success": true, "result": val }))
-            },
-            Err(e) => Ok(json!({ "success": false, "error": e.message }))
+            }
+            Err(e) => Ok(json!({ "success": false, "error": e.message })),
         }
     }
 }
@@ -66,7 +66,7 @@ impl crate::tools::Tool for DocsInstallDocsetTool {
         let p: InstallDocsetRequest = serde_json::from_value(arguments.clone())?;
         match get_server().install_docset(Parameters(p)).await {
             Ok(res_str) => Ok(json!({ "success": true, "result": res_str })),
-            Err(e) => Ok(json!({ "success": false, "error": e.message }))
+            Err(e) => Ok(json!({ "success": false, "error": e.message })),
         }
     }
 }
@@ -93,8 +93,8 @@ impl crate::tools::Tool for DocsSearchDocsTool {
             Ok(res_str) => {
                 let val: Value = serde_json::from_str(&res_str).unwrap_or_else(|_| json!(res_str));
                 Ok(json!({ "success": true, "result": val }))
-            },
-            Err(e) => Ok(json!({ "success": false, "error": e.message }))
+            }
+            Err(e) => Ok(json!({ "success": false, "error": e.message })),
         }
     }
 }
@@ -119,7 +119,7 @@ impl crate::tools::Tool for DocsReadDocPageTool {
         let p: ReadDocPageRequest = serde_json::from_value(arguments.clone())?;
         match get_server().read_doc_page(Parameters(p)).await {
             Ok(res_str) => Ok(json!({ "success": true, "result": res_str })),
-            Err(e) => Ok(json!({ "success": false, "error": e.message }))
+            Err(e) => Ok(json!({ "success": false, "error": e.message })),
         }
     }
 }
@@ -146,8 +146,8 @@ impl crate::tools::Tool for DocsSearchRustCrateTool {
             Ok(res_str) => {
                 let val: Value = serde_json::from_str(&res_str).unwrap_or_else(|_| json!(res_str));
                 Ok(json!({ "success": true, "result": val }))
-            },
-            Err(e) => Ok(json!({ "success": false, "error": e.message }))
+            }
+            Err(e) => Ok(json!({ "success": false, "error": e.message })),
         }
     }
 }
@@ -172,7 +172,7 @@ impl crate::tools::Tool for DocsReadRustDocsTool {
         let p: ReadRustDocsRequest = serde_json::from_value(arguments.clone())?;
         match get_server().read_rust_docs(Parameters(p)).await {
             Ok(res_str) => Ok(json!({ "success": true, "result": res_str })),
-            Err(e) => Ok(json!({ "success": false, "error": e.message }))
+            Err(e) => Ok(json!({ "success": false, "error": e.message })),
         }
     }
 }

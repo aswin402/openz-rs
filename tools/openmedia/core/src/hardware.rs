@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::config::ComputeBackend;
+use serde::{Deserialize, Serialize};
 
 /// Comprehensive hardware information for backend selection
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,7 +36,7 @@ pub struct CpuFeatures {
     pub sse4_1: bool,
     pub sse4_2: bool,
     pub fma: bool,
-    pub neon: bool,  // ARM
+    pub neon: bool, // ARM
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,11 +87,13 @@ impl HardwareInfo {
     /// Detect current hardware capabilities
     pub async fn detect() -> Self {
         // Detect CPU characteristics
-        let logical_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let logical_cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
         let physical_cores = logical_cores / 2; // Simplistic approximation
-        
+
         let arch = std::env::consts::ARCH.to_string();
-        
+
         // Detect CPU instruction set features
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         let features = CpuFeatures {
@@ -124,8 +126,8 @@ impl HardwareInfo {
 
         // Detect RAM (simplified defaults, since querying OS ram is platform-specific and requires extra dependencies)
         let ram = RamInfo {
-            total: 16 * 1024 * 1024 * 1024,      // 16 GB default
-            available: 8 * 1024 * 1024 * 1024,  // 8 GB default
+            total: 16 * 1024 * 1024 * 1024,    // 16 GB default
+            available: 8 * 1024 * 1024 * 1024, // 8 GB default
         };
 
         // Simple default backends (CPU fallback always available)
@@ -161,11 +163,7 @@ impl HardwareInfo {
     }
 
     /// Select the best compute backend for a given model and operation
-    pub fn select_backend(
-        &self,
-        _model_format: &str,
-        preferred: ComputeBackend,
-    ) -> ComputeBackend {
+    pub fn select_backend(&self, _model_format: &str, preferred: ComputeBackend) -> ComputeBackend {
         if preferred == ComputeBackend::Auto {
             ComputeBackend::CpuOnly
         } else {

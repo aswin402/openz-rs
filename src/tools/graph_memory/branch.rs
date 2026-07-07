@@ -1,10 +1,10 @@
+use super::db::*;
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
-use async_trait::async_trait;
-use super::db::*;
 
 static BRANCH_MUTEX: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
@@ -24,7 +24,9 @@ pub struct CreateDatabaseBranchTool;
 
 #[async_trait]
 impl Tool for CreateDatabaseBranchTool {
-    fn name(&self) -> &str { "create_database_branch" }
+    fn name(&self) -> &str {
+        "create_database_branch"
+    }
 
     fn description(&self) -> &str {
         "Create an isolated database branch for subagent/task execution. Branch ID must be unique."
@@ -47,13 +49,18 @@ impl Tool for CreateDatabaseBranchTool {
         let branch_id = arguments["branchId"].as_str().unwrap();
 
         // Lock static db connection first
-        let db_mutex = db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()));
+        let db_mutex =
+            db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()));
         let mut db_guard = db_mutex.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
 
         // Then lock active branch state
-        let mut active = get_active_branch().lock().map_err(|e| anyhow!("Branch lock error: {}", e))?;
+        let mut active = get_active_branch()
+            .lock()
+            .map_err(|e| anyhow!("Branch lock error: {}", e))?;
         if active.is_some() {
-            return Err(anyhow!("A database branch is already active. Commit or rollback first."));
+            return Err(anyhow!(
+                "A database branch is already active. Commit or rollback first."
+            ));
         }
 
         let src = get_db_path();
@@ -91,7 +98,9 @@ pub struct CommitDatabaseBranchTool;
 
 #[async_trait]
 impl Tool for CommitDatabaseBranchTool {
-    fn name(&self) -> &str { "commit_database_branch" }
+    fn name(&self) -> &str {
+        "commit_database_branch"
+    }
 
     fn description(&self) -> &str {
         "Commit changes from the active database branch to the main database and delete the branch."
@@ -103,12 +112,16 @@ impl Tool for CommitDatabaseBranchTool {
 
     async fn call(&self, _arguments: &Value) -> Result<Value> {
         // Lock static db connection first
-        let db_mutex = db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()));
+        let db_mutex =
+            db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()));
         let mut db_guard = db_mutex.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
 
         // Then lock active branch state
-        let mut active = get_active_branch().lock().map_err(|e| anyhow!("Branch lock error: {}", e))?;
-        let branch_id = active.as_ref()
+        let mut active = get_active_branch()
+            .lock()
+            .map_err(|e| anyhow!("Branch lock error: {}", e))?;
+        let branch_id = active
+            .as_ref()
             .ok_or_else(|| anyhow!("No active branch to commit."))?
             .clone();
 
@@ -145,7 +158,9 @@ pub struct RollbackDatabaseBranchTool;
 
 #[async_trait]
 impl Tool for RollbackDatabaseBranchTool {
-    fn name(&self) -> &str { "rollback_database_branch" }
+    fn name(&self) -> &str {
+        "rollback_database_branch"
+    }
 
     fn description(&self) -> &str {
         "Roll back changes from the active database branch, restoring the main database state and deleting the branch."
@@ -157,12 +172,16 @@ impl Tool for RollbackDatabaseBranchTool {
 
     async fn call(&self, _arguments: &Value) -> Result<Value> {
         // Lock static db connection first
-        let db_mutex = db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()));
+        let db_mutex =
+            db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()));
         let mut db_guard = db_mutex.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
 
         // Then lock active branch state
-        let mut active = get_active_branch().lock().map_err(|e| anyhow!("Branch lock error: {}", e))?;
-        let branch_id = active.as_ref()
+        let mut active = get_active_branch()
+            .lock()
+            .map_err(|e| anyhow!("Branch lock error: {}", e))?;
+        let branch_id = active
+            .as_ref()
             .ok_or_else(|| anyhow!("No active branch to rollback."))?
             .clone();
 

@@ -1,7 +1,7 @@
 use crate::config::schema::Config;
 use crate::sop::{
-    load_instance, save_instance, get_definition, substitute_template,
-    SopInstance, SopStatus, StepExecutionState,
+    get_definition, load_instance, save_instance, substitute_template, SopInstance, SopStatus,
+    StepExecutionState,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -10,7 +10,11 @@ pub async fn run_sop_instance(config: Config, instance_id: String) -> Result<()>
     run_sop_instance_inner(config, instance_id, false).await
 }
 
-pub async fn run_sop_instance_inner(config: Config, instance_id: String, simulate: bool) -> Result<()> {
+pub async fn run_sop_instance_inner(
+    config: Config,
+    instance_id: String,
+    simulate: bool,
+) -> Result<()> {
     let mut inst = load_instance(&instance_id)?;
     if inst.status == SopStatus::Completed {
         return Ok(());
@@ -23,7 +27,8 @@ pub async fn run_sop_instance_inner(config: Config, instance_id: String, simulat
         .ok_or_else(|| anyhow::anyhow!("SOP definition '{}' not found", inst.sop_id))?;
 
     let mut any_failed = false;
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<(usize, Result<crate::agent::RunResult, String>)>(100);
+    let (tx, mut rx) =
+        tokio::sync::mpsc::channel::<(usize, Result<crate::agent::RunResult, String>)>(100);
     let mut active_tasks = 0;
 
     loop {
@@ -42,7 +47,10 @@ pub async fn run_sop_instance_inner(config: Config, instance_id: String, simulat
                                 break;
                             }
                         } else {
-                            eprintln!("⚠️ SOP Step '{}' depends on non-existent step '{}'", def_step.name, dep_name);
+                            eprintln!(
+                                "⚠️ SOP Step '{}' depends on non-existent step '{}'",
+                                def_step.name, dep_name
+                            );
                         }
                     }
                     if deps_satisfied {
@@ -64,7 +72,10 @@ pub async fn run_sop_instance_inner(config: Config, instance_id: String, simulat
 
             crate::channels::cli::send_notification(&format!(
                 "📋 [SOP: {}] Spawning Step {}/{} - '{}' in parallel...",
-                inst.id, idx + 1, def.steps.len(), def_step.name
+                inst.id,
+                idx + 1,
+                def.steps.len(),
+                def_step.name
             ));
 
             let tx = tx.clone();
@@ -93,7 +104,9 @@ pub async fn run_sop_instance_inner(config: Config, instance_id: String, simulat
                     })
                 } else {
                     match prepare_agent_and_prompt(&config_clone, &def_step_clone, &prompt).await {
-                        Ok((agent_loop, final_prompt)) => agent_loop.run(&final_prompt, &session_key).await,
+                        Ok((agent_loop, final_prompt)) => {
+                            agent_loop.run(&final_prompt, &session_key).await
+                        }
                         Err(e) => Err(e),
                     }
                 };
@@ -120,9 +133,13 @@ pub async fn run_sop_instance_inner(config: Config, instance_id: String, simulat
                         step.output = Some(run_res.content.clone());
 
                         // Update context
-                        let steps_obj = inst.context.get_mut("steps")
+                        let steps_obj = inst
+                            .context
+                            .get_mut("steps")
                             .and_then(|s| s.as_object_mut())
-                            .ok_or_else(|| anyhow::anyhow!("Context 'steps' field is missing or not an object"))?;
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("Context 'steps' field is missing or not an object")
+                            })?;
                         steps_obj.insert(
                             def_step.name.clone(),
                             serde_json::json!({ "output": run_res.content }),
@@ -188,14 +205,18 @@ pub async fn trigger_sop(
 
     let instance_id = format!("inst-{}", &uuid::Uuid::new_v4().to_string()[..8]);
 
-    let steps = def.steps.iter().map(|step| StepExecutionState {
-        name: step.name.clone(),
-        status: "Pending".to_string(),
-        started_at: None,
-        completed_at: None,
-        output: None,
-        error: None,
-    }).collect();
+    let steps = def
+        .steps
+        .iter()
+        .map(|step| StepExecutionState {
+            name: step.name.clone(),
+            status: "Pending".to_string(),
+            started_at: None,
+            completed_at: None,
+            output: None,
+            error: None,
+        })
+        .collect();
 
     let now = Utc::now().to_rfc3339();
     let inst = SopInstance {
@@ -237,14 +258,18 @@ pub async fn trigger_sop_simulation(
 
     let instance_id = format!("sim-{}", &uuid::Uuid::new_v4().to_string()[..8]);
 
-    let steps = def.steps.iter().map(|step| StepExecutionState {
-        name: step.name.clone(),
-        status: "Pending".to_string(),
-        started_at: None,
-        completed_at: None,
-        output: None,
-        error: None,
-    }).collect();
+    let steps = def
+        .steps
+        .iter()
+        .map(|step| StepExecutionState {
+            name: step.name.clone(),
+            status: "Pending".to_string(),
+            started_at: None,
+            completed_at: None,
+            output: None,
+            error: None,
+        })
+        .collect();
 
     let now = Utc::now().to_rfc3339();
     let inst = SopInstance {
@@ -313,7 +338,7 @@ async fn prepare_agent_and_prompt(
                 if let Some(ref m) = profile.model {
                     config_override.agents.defaults.model = m.clone();
                 }
-                
+
                 let agent_loop = crate::cli::build_agent_loop(config_override).await?;
                 let subagent_prompt = format!(
                     "You are a specialized subagent operating under the following profile guidelines:\n\n\
@@ -326,7 +351,7 @@ async fn prepare_agent_and_prompt(
             }
         }
     }
-    
+
     let agent_loop = crate::cli::build_agent_loop(config.clone()).await?;
     Ok((agent_loop, prompt.to_string()))
 }

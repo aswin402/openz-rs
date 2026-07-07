@@ -1,11 +1,11 @@
-use crate::tools::Tool;
 use crate::agent::style::*;
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::subagents::SubagentProfile;
-use anyhow::{Result, anyhow};
-use std::sync::Arc;
+use crate::tools::Tool;
+use anyhow::{anyhow, Result};
 use serde_json::Value;
+use std::sync::Arc;
 
 pub struct OptimizeSubagentTool {
     pub config: Config,
@@ -40,13 +40,19 @@ impl Tool for OptimizeSubagentTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let subagent_name = arguments.get("subagent_name").and_then(|v| v.as_str())
+        let subagent_name = arguments
+            .get("subagent_name")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'subagent_name' argument"))?;
-        let feedback = arguments.get("feedback").and_then(|v| v.as_str())
+        let feedback = arguments
+            .get("feedback")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'feedback' argument"))?;
 
         let mut profiles = crate::subagents::load_profiles()?;
-        let pos = profiles.iter().position(|p| p.name == subagent_name)
+        let pos = profiles
+            .iter()
+            .position(|p| p.name == subagent_name)
             .ok_or_else(|| anyhow!("Subagent '{}' not found", subagent_name))?;
 
         let profile = &profiles[pos];
@@ -78,13 +84,15 @@ impl Tool for OptimizeSubagentTool {
 
         let spinner_msg = format!(
             "{}▸ [Prompt-Optimize] Asking OpenZ to optimize subagent prompt for '{}'...{}",
-            AURA_PURPLE,
-            subagent_name,
-            COLOR_RESET
+            AURA_PURPLE, subagent_name, COLOR_RESET
         );
-        let chat_fut = self.parent_provider.chat(system_prompt_sum, &messages, &[], &settings);
+        let chat_fut = self
+            .parent_provider
+            .chat(system_prompt_sum, &messages, &[], &settings);
         let resp = with_spinner(&spinner_msg, chat_fut).await?;
-        let content = resp.content.ok_or_else(|| anyhow!("Failed to generate optimized prompt from AI"))?;
+        let content = resp
+            .content
+            .ok_or_else(|| anyhow!("Failed to generate optimized prompt from AI"))?;
 
         let clean_prompt = content.trim().to_string();
         if clean_prompt.is_empty() {
@@ -94,7 +102,12 @@ impl Tool for OptimizeSubagentTool {
         profiles[pos].system_prompt = clean_prompt.clone();
         crate::subagents::save_profiles(&profiles)?;
 
-        crate::tui_println!("{}✓ [Prompt-Optimize] Optimized prompt for '{}' saved successfully.{}", EMERALD_GREEN, subagent_name, COLOR_RESET);
+        crate::tui_println!(
+            "{}✓ [Prompt-Optimize] Optimized prompt for '{}' saved successfully.{}",
+            EMERALD_GREEN,
+            subagent_name,
+            COLOR_RESET
+        );
 
         Ok(serde_json::json!({
             "status": "success",
@@ -151,13 +164,28 @@ impl Tool for CreateSubagentTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let name = arguments.get("name").and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'name' argument"))?.trim().to_string();
-        let description = arguments.get("description").and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'description' argument"))?.trim().to_string();
-        let system_prompt = arguments.get("system_prompt").and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'system_prompt' argument"))?.trim().to_string();
-        let model = arguments.get("model").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
+        let name = arguments
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'name' argument"))?
+            .trim()
+            .to_string();
+        let description = arguments
+            .get("description")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'description' argument"))?
+            .trim()
+            .to_string();
+        let system_prompt = arguments
+            .get("system_prompt")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'system_prompt' argument"))?
+            .trim()
+            .to_string();
+        let model = arguments
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string());
 
         let mut fallbacks = Vec::new();
         if let Some(arr) = arguments.get("fallbacks").and_then(|v| v.as_array()) {
@@ -177,22 +205,53 @@ impl Tool for CreateSubagentTool {
         };
 
         // Validate name format: starts with a letter, lowercase alphanumeric and underscore only
-        if name.is_empty() || !name.chars().next().unwrap().is_ascii_alphabetic() || name.chars().any(|c| !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '_') {
+        if name.is_empty()
+            || !name.chars().next().unwrap().is_ascii_alphabetic()
+            || name
+                .chars()
+                .any(|c| !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '_')
+        {
             return Err(anyhow!("Subagent name must start with a letter and contain only lowercase alphanumeric characters and underscores."));
         }
 
         // Do not allow overwriting default subagents
         let defaults = [
-            "planner", "researcher", "architect", "skill_creator", "reviewer",
-            "code_auditor", "debugger", "test_engineer", "devops_agent",
-            "refactor_agent", "memory_manager", "vision_agent", "documentation_agent",
-            "self_improvement", "skill_improvement", "openz_maintainer", "mcps_manager",
-            "git_ops_agent", "ast_searcher", "database_specialist", "browser_operator",
-            "dependency_manager", "frontend_architect", "docs_lookup_agent",
-            "document_compiler", "presentation_designer", "code_synthesizer",
-            "summarizer_agent", "media_designer", "openz_coordinator",
-            "sop_designer", "api_integrator", "performance_tuner", "communication_manager",
-            "automation_agent", "coding_agent"
+            "planner",
+            "researcher",
+            "architect",
+            "skill_creator",
+            "reviewer",
+            "code_auditor",
+            "debugger",
+            "test_engineer",
+            "devops_agent",
+            "refactor_agent",
+            "memory_manager",
+            "vision_agent",
+            "documentation_agent",
+            "self_improvement",
+            "skill_improvement",
+            "openz_maintainer",
+            "mcps_manager",
+            "git_ops_agent",
+            "ast_searcher",
+            "database_specialist",
+            "browser_operator",
+            "dependency_manager",
+            "frontend_architect",
+            "docs_lookup_agent",
+            "document_compiler",
+            "presentation_designer",
+            "code_synthesizer",
+            "summarizer_agent",
+            "media_designer",
+            "openz_coordinator",
+            "sop_designer",
+            "api_integrator",
+            "performance_tuner",
+            "communication_manager",
+            "automation_agent",
+            "coding_agent",
         ];
         if defaults.contains(&name.as_str()) {
             return Err(anyhow!("Cannot overwrite default subagent '{}'", name));
@@ -216,7 +275,12 @@ impl Tool for CreateSubagentTool {
 
         crate::subagents::save_profiles(&profiles)?;
 
-        crate::tui_println!("{}✓ Custom subagent '{}' created and saved.{}", EMERALD_GREEN, name, COLOR_RESET);
+        crate::tui_println!(
+            "{}✓ Custom subagent '{}' created and saved.{}",
+            EMERALD_GREEN,
+            name,
+            COLOR_RESET
+        );
 
         Ok(serde_json::json!({
             "status": "success",
@@ -251,33 +315,70 @@ impl Tool for DeleteSubagentTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let name = arguments.get("name").and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'name' argument"))?.trim().to_string();
+        let name = arguments
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'name' argument"))?
+            .trim()
+            .to_string();
 
         let defaults = [
-            "planner", "researcher", "architect", "skill_creator", "reviewer",
-            "code_auditor", "debugger", "test_engineer", "devops_agent",
-            "refactor_agent", "memory_manager", "vision_agent", "documentation_agent",
-            "self_improvement", "skill_improvement", "openz_maintainer", "mcps_manager",
-            "git_ops_agent", "ast_searcher", "database_specialist", "browser_operator",
-            "dependency_manager", "frontend_architect", "docs_lookup_agent",
-            "document_compiler", "presentation_designer", "code_synthesizer",
-            "summarizer_agent", "media_designer", "openz_coordinator",
-            "sop_designer", "api_integrator", "performance_tuner", "communication_manager",
-            "automation_agent", "coding_agent"
+            "planner",
+            "researcher",
+            "architect",
+            "skill_creator",
+            "reviewer",
+            "code_auditor",
+            "debugger",
+            "test_engineer",
+            "devops_agent",
+            "refactor_agent",
+            "memory_manager",
+            "vision_agent",
+            "documentation_agent",
+            "self_improvement",
+            "skill_improvement",
+            "openz_maintainer",
+            "mcps_manager",
+            "git_ops_agent",
+            "ast_searcher",
+            "database_specialist",
+            "browser_operator",
+            "dependency_manager",
+            "frontend_architect",
+            "docs_lookup_agent",
+            "document_compiler",
+            "presentation_designer",
+            "code_synthesizer",
+            "summarizer_agent",
+            "media_designer",
+            "openz_coordinator",
+            "sop_designer",
+            "api_integrator",
+            "performance_tuner",
+            "communication_manager",
+            "automation_agent",
+            "coding_agent",
         ];
         if defaults.contains(&name.as_str()) {
             return Err(anyhow!("Cannot delete default subagent '{}'", name));
         }
 
         let mut profiles = crate::subagents::load_profiles()?;
-        let pos = profiles.iter().position(|p| p.name == name)
+        let pos = profiles
+            .iter()
+            .position(|p| p.name == name)
             .ok_or_else(|| anyhow!("Custom subagent '{}' not found", name))?;
 
         profiles.remove(pos);
         crate::subagents::save_profiles(&profiles)?;
 
-        crate::tui_println!("{}✓ Custom subagent '{}' deleted.{}", EMERALD_GREEN, name, COLOR_RESET);
+        crate::tui_println!(
+            "{}✓ Custom subagent '{}' deleted.{}",
+            EMERALD_GREEN,
+            name,
+            COLOR_RESET
+        );
 
         Ok(serde_json::json!({
             "status": "success",

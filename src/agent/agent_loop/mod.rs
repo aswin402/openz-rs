@@ -1,17 +1,22 @@
-use crate::config::schema::Config;
-use crate::providers::{LLMProvider, GenerationSettings};
-use crate::tools::ToolRegistry;
-use crate::session::{Session, SessionManager, Message};
 use crate::agent::style::*;
+use crate::config::schema::Config;
+use crate::providers::{GenerationSettings, LLMProvider};
+use crate::session::{Message, Session, SessionManager};
+use crate::tools::ToolRegistry;
 use anyhow::Result;
 use std::sync::Arc;
 
-pub mod restore;
-pub mod compact;
-pub mod command;
 pub mod build;
+pub mod command;
+pub mod compact;
+pub mod loop_control;
+pub mod restore;
 pub mod run;
 pub mod save;
+pub mod security_approval;
+pub mod streaming;
+pub mod tool_execution;
+pub mod transcript;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnState {
@@ -63,7 +68,23 @@ impl<'a> Drop for ActivityGuard<'a> {
     }
 }
 
-static SESSION_LOCKS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>> = std::sync::OnceLock::new();
+static SESSION_LOCKS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
+> = std::sync::OnceLock::new();
+
+fn merge_latest_config_for_runtime(
+    runtime_config: &Config,
+    mut latest_config: Config,
+    session_key: &str,
+) -> Config {
+    if session_key.starts_with("subagent:") {
+        latest_config.agents.defaults.model = runtime_config.agents.defaults.model.clone();
+        latest_config.agents.defaults.provider = runtime_config.agents.defaults.provider.clone();
+        latest_config.agents.defaults.fallback_models =
+            runtime_config.agents.defaults.fallback_models.clone();
+    }
+    latest_config
+}
 
 fn get_session_lock(session_key: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
     let map = SESSION_LOCKS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
@@ -71,9 +92,34 @@ fn get_session_lock(session_key: &str) -> std::sync::Arc<tokio::sync::Mutex<()>>
     if guard.len() > 100 {
         guard.retain(|_, arc| std::sync::Arc::strong_count(arc) > 1);
     }
-    guard.entry(session_key.to_string())
+    guard
+        .entry(session_key.to_string())
         .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
         .clone()
+}
+
+async fn wait_for_cli_cancel_since(initial: u64) {
+    let mut rx = crate::shutdown::cli_cancel_tx().subscribe();
+    while *rx.borrow() == initial {
+        if rx.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
+async fn cancel_aware_with_spinner<F, T>(
+    activity_msg: &str,
+    initial_cancel: u64,
+    future: F,
+) -> Result<T>
+where
+    F: std::future::Future<Output = Result<T>>,
+{
+    tokio::select! {
+        biased;
+        _ = wait_for_cli_cancel_since(initial_cancel) => Err(anyhow::anyhow!("Cancelled by user")),
+        result = with_spinner(activity_msg, future) => result,
+    }
 }
 
 impl AgentLoop {
@@ -101,7 +147,7 @@ impl AgentLoop {
     }
 
     fn cleanup_old_files() {
-        use std::time::{SystemTime, Duration};
+        use std::time::{Duration, SystemTime};
 
         let max_age = Duration::from_secs(7 * 24 * 60 * 60); // 7 days
         let now = SystemTime::now();
@@ -136,10 +182,20 @@ impl AgentLoop {
         settings: &GenerationSettings,
         activity_msg: &str,
     ) -> Result<crate::providers::LLMResponse> {
+        // Helper: check if CLI cancel was fired since we started
+        let cwf_cancel_tx = crate::shutdown::cli_cancel_tx();
+        let cwf_cancel_initial = *cwf_cancel_tx.subscribe().borrow();
+        let is_cancelled = || -> bool { *cwf_cancel_tx.subscribe().borrow() != cwf_cancel_initial };
+
         let chat_fut = active_provider.chat(system_prompt, messages, tools, settings);
-        let mut chat_result = with_spinner(activity_msg, chat_fut).await;
+        let mut chat_result =
+            cancel_aware_with_spinner(activity_msg, cwf_cancel_initial, chat_fut).await;
 
         if chat_result.is_err() {
+            if is_cancelled() {
+                return Err(anyhow::anyhow!("Cancelled by user"));
+            }
+
             let mut fallbacks = Vec::new();
             for fallback in &self.config.agents.defaults.fallback_models {
                 if let Some(s) = fallback.as_str() {
@@ -151,16 +207,25 @@ impl AgentLoop {
 
             let mut resolved_fallback = false;
             for fallback_model in fallbacks {
+                // Check cancel before each fallback attempt
+                if is_cancelled() {
+                    return Err(anyhow::anyhow!("Cancelled by user"));
+                }
                 let silent = crate::agent::style::spinner::is_silent();
                 if !silent {
                     crate::tui_println!(
                         "{}▲ Primary provider failed. Attempting fallback model: {}{}",
-                        AURA_GOLD, fallback_model, COLOR_RESET
+                        AURA_GOLD,
+                        fallback_model,
+                        COLOR_RESET
                     );
                 }
-                if let Ok(fallback_provider) = crate::tools::subagent::build_provider_for_model(&self.config, &fallback_model) {
+                if let Ok(fallback_provider) =
+                    crate::tools::subagent::build_provider_for_model(&self.config, &fallback_model)
+                {
                     let chat_fut = fallback_provider.chat(system_prompt, messages, tools, settings);
-                    chat_result = with_spinner(activity_msg, chat_fut).await;
+                    chat_result =
+                        cancel_aware_with_spinner(activity_msg, cwf_cancel_initial, chat_fut).await;
                     if chat_result.is_ok() {
                         resolved_fallback = true;
                         *active_provider = fallback_provider;
@@ -170,8 +235,12 @@ impl AgentLoop {
             }
 
             if !resolved_fallback {
+                if is_cancelled() {
+                    return Err(anyhow::anyhow!("Cancelled by user"));
+                }
                 let chat_fut = active_provider.chat(system_prompt, messages, tools, settings);
-                chat_result = with_spinner(activity_msg, chat_fut).await;
+                chat_result =
+                    cancel_aware_with_spinner(activity_msg, cwf_cancel_initial, chat_fut).await;
             }
         }
 
@@ -186,9 +255,18 @@ impl AgentLoop {
         tools: &[serde_json::Value],
         settings: &GenerationSettings,
         activity_msg: &str,
-    ) -> Result<std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<crate::providers::ChatStreamChunk>> + Send>>> {
+    ) -> Result<
+        std::pin::Pin<
+            Box<dyn futures_util::Stream<Item = Result<crate::providers::ChatStreamChunk>> + Send>,
+        >,
+    > {
+        let csf_cancel_tx = crate::shutdown::cli_cancel_tx();
+        let csf_cancel_initial = *csf_cancel_tx.subscribe().borrow();
+        let is_cancelled = || -> bool { *csf_cancel_tx.subscribe().borrow() != csf_cancel_initial };
+
         let chat_fut = active_provider.chat_stream(system_prompt, messages, tools, settings);
-        let mut chat_result = with_spinner(activity_msg, chat_fut).await;
+        let mut chat_result =
+            cancel_aware_with_spinner(activity_msg, csf_cancel_initial, chat_fut).await;
 
         if chat_result.is_err() {
             let mut fallbacks = Vec::new();
@@ -202,16 +280,25 @@ impl AgentLoop {
 
             let mut resolved_fallback = false;
             for fallback_model in fallbacks {
+                if is_cancelled() {
+                    return Err(anyhow::anyhow!("Cancelled by user"));
+                }
                 let silent = crate::agent::style::spinner::is_silent();
                 if !silent {
                     crate::tui_println!(
                         "{}▲ Primary provider failed. Attempting fallback model: {}{}",
-                        AURA_GOLD, fallback_model, COLOR_RESET
+                        AURA_GOLD,
+                        fallback_model,
+                        COLOR_RESET
                     );
                 }
-                if let Ok(fallback_provider) = crate::tools::subagent::build_provider_for_model(&self.config, &fallback_model) {
-                    let chat_fut = fallback_provider.chat_stream(system_prompt, messages, tools, settings);
-                    chat_result = with_spinner(activity_msg, chat_fut).await;
+                if let Ok(fallback_provider) =
+                    crate::tools::subagent::build_provider_for_model(&self.config, &fallback_model)
+                {
+                    let chat_fut =
+                        fallback_provider.chat_stream(system_prompt, messages, tools, settings);
+                    chat_result =
+                        cancel_aware_with_spinner(activity_msg, csf_cancel_initial, chat_fut).await;
                     if chat_result.is_ok() {
                         resolved_fallback = true;
                         *active_provider = fallback_provider;
@@ -221,8 +308,13 @@ impl AgentLoop {
             }
 
             if !resolved_fallback {
-                let chat_fut = active_provider.chat_stream(system_prompt, messages, tools, settings);
-                chat_result = with_spinner(activity_msg, chat_fut).await;
+                if is_cancelled() {
+                    return Err(anyhow::anyhow!("Cancelled by user"));
+                }
+                let chat_fut =
+                    active_provider.chat_stream(system_prompt, messages, tools, settings);
+                chat_result =
+                    cancel_aware_with_spinner(activity_msg, csf_cancel_initial, chat_fut).await;
             }
         }
 
@@ -239,16 +331,21 @@ impl AgentLoop {
             _ => session_key.to_string(),
         };
 
-        let is_cli = target_key.starts_with("cli:") && (!session_key.starts_with("subagent:") || crate::shutdown::is_cli_active());
+        let is_cli = target_key.starts_with("cli:")
+            && (!session_key.starts_with("subagent:") || crate::shutdown::is_cli_active());
         let silent = !is_cli;
 
-        crate::agent::style::spinner::IS_SILENT.scope(silent, async move {
-            crate::agent::style::spinner::CURRENT_SESSION_KEY.scope(target_key, async move {
-                let span = tracing::info_span!("turn", session = %session_key);
-                let _enter = span.enter();
-                self.run_inner(user_content, session_key).await
-            }).await
-        }).await
+        crate::agent::style::spinner::IS_SILENT
+            .scope(silent, async move {
+                crate::agent::style::spinner::CURRENT_SESSION_KEY
+                    .scope(target_key, async move {
+                        let span = tracing::info_span!("turn", session = %session_key);
+                        let _enter = span.enter();
+                        self.run_inner(user_content, session_key).await
+                    })
+                    .await
+            })
+            .await
     }
 
     async fn run_inner(&self, user_content: &str, session_key: &str) -> Result<RunResult> {
@@ -280,7 +377,8 @@ impl AgentLoop {
         while state != TurnState::Done {
             // Reload configuration dynamically from disk at the start of each turn iteration
             if let Ok(latest_config) = crate::config::loader::load_config() {
-                ctx.config = latest_config;
+                ctx.config =
+                    merge_latest_config_for_runtime(&ctx.config, latest_config, session_key);
             }
 
             state = match state {
@@ -299,5 +397,74 @@ impl AgentLoop {
             tools_used: ctx.tools_used,
             streamed: ctx.streamed,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Result;
+
+    struct PendingProvider;
+
+    #[async_trait::async_trait]
+    impl LLMProvider for PendingProvider {
+        async fn chat(
+            &self,
+            _system_prompt: &str,
+            _messages: &[Message],
+            _tools: &[serde_json::Value],
+            _settings: &GenerationSettings,
+        ) -> Result<crate::providers::LLMResponse> {
+            std::future::pending::<Result<crate::providers::LLMResponse>>().await
+        }
+    }
+
+    #[test]
+    fn runtime_subagent_model_override_survives_config_reload() {
+        let mut runtime_config = Config::default();
+        runtime_config.agents.defaults.model = "google/gemma-4-31b-it:free".to_string();
+        let mut latest_config = Config::default();
+        latest_config.agents.defaults.model = "deepseek-v4-flash-free".to_string();
+
+        let merged = merge_latest_config_for_runtime(
+            &runtime_config,
+            latest_config,
+            "subagent:vision_agent:test",
+        );
+
+        assert_eq!(merged.agents.defaults.model, "google/gemma-4-31b-it:free");
+    }
+    #[tokio::test]
+    async fn chat_with_fallback_returns_when_cli_cancel_fires() {
+        let agent = AgentLoop::new(
+            Config::default(),
+            Arc::new(PendingProvider),
+            ToolRegistry::new(),
+            SessionManager::new(std::env::temp_dir()),
+        );
+        let mut provider: Arc<dyn LLMProvider> = Arc::new(PendingProvider);
+        let settings = GenerationSettings {
+            temperature: 0.0,
+            max_tokens: 1,
+            reasoning_effort: None,
+        };
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                crate::shutdown::trigger_cli_cancel();
+            });
+            agent
+                .chat_with_fallback(&mut provider, "", &[], &[], &settings, "test")
+                .await
+        })
+        .await
+        .expect("chat_with_fallback should not hang after CLI cancel");
+
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Cancelled by user"));
     }
 }

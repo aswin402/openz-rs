@@ -1,6 +1,6 @@
-use crate::providers::{LLMProvider, LLMResponse, GenerationSettings, ToolCallRequest};
+use crate::providers::circuit_breaker::{retry_with_backoff, CircuitBreaker};
+use crate::providers::{GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest};
 use crate::session::Message;
-use crate::providers::circuit_breaker::{CircuitBreaker, retry_with_backoff};
 use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -85,11 +85,17 @@ impl LLMProvider for AnthropicProvider {
                     let mut tool_name = None;
                     for prev in sanitized_messages.iter().rev() {
                         if prev.role == "assistant" {
-                            if let Some(calls) = prev.extra.get("tool_calls").and_then(|v| v.as_array()) {
+                            if let Some(calls) =
+                                prev.extra.get("tool_calls").and_then(|v| v.as_array())
+                            {
                                 for call in calls {
                                     if call.get("id").and_then(|v| v.as_str()) == Some(id) {
                                         found = true;
-                                        tool_name = call.get("function").and_then(|f| f.get("name")).and_then(|v| v.as_str()).map(|s| s.to_string());
+                                        tool_name = call
+                                            .get("function")
+                                            .and_then(|f| f.get("name"))
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string());
                                         break;
                                     }
                                 }
@@ -104,9 +110,15 @@ impl LLMProvider for AnthropicProvider {
                         let current_name = sanitized_msg.extra.get("name").and_then(|v| v.as_str());
                         if current_name.is_none() || current_name.unwrap().trim().is_empty() {
                             if let Some(name_str) = tool_name {
-                                sanitized_msg.extra.insert("name".to_string(), serde_json::Value::String(name_str));
+                                sanitized_msg.extra.insert(
+                                    "name".to_string(),
+                                    serde_json::Value::String(name_str),
+                                );
                             } else {
-                                sanitized_msg.extra.insert("name".to_string(), serde_json::Value::String("tool".to_string()));
+                                sanitized_msg.extra.insert(
+                                    "name".to_string(),
+                                    serde_json::Value::String("tool".to_string()),
+                                );
                             }
                         }
                         sanitized_messages.push(sanitized_msg);
@@ -130,7 +142,11 @@ impl LLMProvider for AnthropicProvider {
             };
 
             let content = if msg.role == "tool" {
-                let tool_call_id = msg.extra.get("tool_call_id").and_then(|v| v.as_str()).unwrap_or("");
+                let tool_call_id = msg
+                    .extra
+                    .get("tool_call_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 serde_json::json!([
                     {
                         "type": "tool_result",
@@ -138,7 +154,8 @@ impl LLMProvider for AnthropicProvider {
                         "content": msg.content
                     }
                 ])
-            } else if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
+            } else if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array())
+            {
                 let mut blocks = Vec::new();
                 if !msg.content.is_empty() {
                     let parts = crate::providers::parse_multimodal_content(&msg.content).await;
@@ -152,7 +169,10 @@ impl LLMProvider for AnthropicProvider {
                                     "text": t
                                 }));
                             }
-                            crate::providers::ContentPart::Image { mime_type, base64_data } => {
+                            crate::providers::ContentPart::Image {
+                                mime_type,
+                                base64_data,
+                            } => {
                                 if supports_vision {
                                     blocks.push(serde_json::json!({
                                         "type": "image",
@@ -171,9 +191,16 @@ impl LLMProvider for AnthropicProvider {
                     if let Some(call_obj) = call.as_object() {
                         let id = call_obj.get("id").and_then(|v| v.as_str()).unwrap_or("");
                         let func = call_obj.get("function").and_then(|v| v.as_object());
-                        let name = func.and_then(|f| f.get("name")).and_then(|v| v.as_str()).unwrap_or("");
-                        let args_str = func.and_then(|f| f.get("arguments")).and_then(|v| v.as_str()).unwrap_or("{}");
-                        let args: serde_json::Value = serde_json::from_str(args_str).unwrap_or(serde_json::Value::Null);
+                        let name = func
+                            .and_then(|f| f.get("name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let args_str = func
+                            .and_then(|f| f.get("arguments"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("{}");
+                        let args: serde_json::Value =
+                            serde_json::from_str(args_str).unwrap_or(serde_json::Value::Null);
                         blocks.push(serde_json::json!({
                             "type": "tool_use",
                             "id": id,
@@ -185,15 +212,22 @@ impl LLMProvider for AnthropicProvider {
                 serde_json::Value::Array(blocks)
             } else {
                 let parts = crate::providers::parse_multimodal_content(&msg.content).await;
-                let has_images = parts.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
+                let has_images = parts
+                    .iter()
+                    .any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
                 let supports_vision = crate::providers::model_supports_vision(&self.model);
 
                 if !supports_vision || !has_images {
                     serde_json::Value::String(msg.content.clone())
                 } else if parts.len() == 1 {
                     match &parts[0] {
-                        crate::providers::ContentPart::Text(t) => serde_json::Value::String(t.clone()),
-                        crate::providers::ContentPart::Image { mime_type, base64_data } => {
+                        crate::providers::ContentPart::Text(t) => {
+                            serde_json::Value::String(t.clone())
+                        }
+                        crate::providers::ContentPart::Image {
+                            mime_type,
+                            base64_data,
+                        } => {
                             serde_json::json!([
                                 {
                                     "type": "image",
@@ -216,7 +250,10 @@ impl LLMProvider for AnthropicProvider {
                                     "text": t
                                 }));
                             }
-                            crate::providers::ContentPart::Image { mime_type, base64_data } => {
+                            crate::providers::ContentPart::Image {
+                                mime_type,
+                                base64_data,
+                            } => {
                                 arr.push(serde_json::json!({
                                     "type": "image",
                                     "source": {
@@ -244,8 +281,14 @@ impl LLMProvider for AnthropicProvider {
                 let func = tool_obj.get("function").and_then(|v| v.as_object());
                 if let Some(f) = func {
                     let name = f.get("name").cloned().unwrap_or(serde_json::Value::Null);
-                    let desc = f.get("description").cloned().unwrap_or(serde_json::Value::Null);
-                    let schema = f.get("parameters").cloned().unwrap_or(serde_json::Value::Null);
+                    let desc = f
+                        .get("description")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    let schema = f
+                        .get("parameters")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
                     anthropic_tools.push(serde_json::json!({
                         "name": name,
                         "description": desc,
@@ -275,7 +318,8 @@ impl LLMProvider for AnthropicProvider {
         let client = self.client.clone();
         let api_key = self.api_key.clone();
         let api_base = self.api_base.clone();
-        let body_for_retry = serde_json::to_value(&body).map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
+        let body_for_retry =
+            serde_json::to_value(&body).map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
 
         let response = retry_with_backoff(
             &self.breaker,
@@ -308,10 +352,11 @@ impl LLMProvider for AnthropicProvider {
                     }
                 }
             },
-        ).await?;
+        )
+        .await?;
 
         let anthropic_resp: AnthropicResponse = response.json().await?;
-        
+
         let mut text_content = String::new();
         let mut tool_calls = Vec::new();
 
@@ -333,10 +378,16 @@ impl LLMProvider for AnthropicProvider {
         let finish_reason = if !tool_calls.is_empty() {
             "tool_calls".to_string()
         } else {
-            anthropic_resp.stop_reason.unwrap_or_else(|| "stop".to_string())
+            anthropic_resp
+                .stop_reason
+                .unwrap_or_else(|| "stop".to_string())
         };
 
-        let content = if text_content.is_empty() { None } else { Some(text_content) };
+        let content = if text_content.is_empty() {
+            None
+        } else {
+            Some(text_content)
+        };
 
         Ok(LLMResponse {
             content,

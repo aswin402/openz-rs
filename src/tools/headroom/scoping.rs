@@ -38,15 +38,33 @@ fn is_binary_file(path: &Path) -> bool {
 }
 
 pub fn detect_project_type(root: &Path) -> &'static str {
-    if root.join("Cargo.toml").exists() { return "Rust"; }
-    if root.join("package.json").exists() { return "Node.js"; }
-    if root.join("go.mod").exists() { return "Go"; }
-    if root.join("pom.xml").exists() || root.join("build.gradle").exists() { return "Java"; }
-    if root.join("pyproject.toml").exists() || root.join("setup.py").exists() { return "Python"; }
-    if root.join("Gemfile").exists() { return "Ruby"; }
-    if root.join("CMakeLists.txt").exists() { return "C/C++"; }
-    if root.join(".csproj").exists() { return "C#"; }
-    if root.join("Cargo.toml").exists() { return "Rust"; }
+    if root.join("Cargo.toml").exists() {
+        return "Rust";
+    }
+    if root.join("package.json").exists() {
+        return "Node.js";
+    }
+    if root.join("go.mod").exists() {
+        return "Go";
+    }
+    if root.join("pom.xml").exists() || root.join("build.gradle").exists() {
+        return "Java";
+    }
+    if root.join("pyproject.toml").exists() || root.join("setup.py").exists() {
+        return "Python";
+    }
+    if root.join("Gemfile").exists() {
+        return "Ruby";
+    }
+    if root.join("CMakeLists.txt").exists() {
+        return "C/C++";
+    }
+    if root.join(".csproj").exists() {
+        return "C#";
+    }
+    if root.join("Cargo.toml").exists() {
+        return "Rust";
+    }
     "Unknown"
 }
 
@@ -63,17 +81,33 @@ struct TreeNode {
 
 impl TreeNode {
     fn insert(&mut self, parts: &[String], is_dir: bool, line_count: usize) {
-        if parts.is_empty() { return; }
+        if parts.is_empty() {
+            return;
+        }
         if parts.len() == 1 {
-            let child = self.children.entry(parts[0].clone()).or_insert_with(|| TreeNode {
-                name: parts[0].clone(), is_dir, line_count: 0, files_count: 0, children: BTreeMap::new(),
-            });
+            let child = self
+                .children
+                .entry(parts[0].clone())
+                .or_insert_with(|| TreeNode {
+                    name: parts[0].clone(),
+                    is_dir,
+                    line_count: 0,
+                    files_count: 0,
+                    children: BTreeMap::new(),
+                });
             child.line_count = line_count;
             child.files_count = 1;
         } else {
-            let child = self.children.entry(parts[0].clone()).or_insert_with(|| TreeNode {
-                name: parts[0].clone(), is_dir: true, line_count: 0, files_count: 0, children: BTreeMap::new(),
-            });
+            let child = self
+                .children
+                .entry(parts[0].clone())
+                .or_insert_with(|| TreeNode {
+                    name: parts[0].clone(),
+                    is_dir: true,
+                    line_count: 0,
+                    files_count: 0,
+                    children: BTreeMap::new(),
+                });
             child.insert(&parts[1..], is_dir, line_count);
         }
     }
@@ -91,7 +125,10 @@ impl TreeNode {
     fn format_tree(&self, prefix: &str, is_last: bool, depth: usize, max_depth: usize) -> String {
         if depth > max_depth {
             if self.files_count > 0 {
-                return format!("{}└── {} ({} files, {} lines)\n", prefix, self.name, self.files_count, self.line_count);
+                return format!(
+                    "{}└── {} ({} files, {} lines)\n",
+                    prefix, self.name, self.files_count, self.line_count
+                );
             }
             return String::new();
         }
@@ -104,12 +141,21 @@ impl TreeNode {
         }
         result.push('\n');
 
-        let child_prefix = if is_last { format!("{}    ", prefix) } else { format!("{}│   ", prefix) };
+        let child_prefix = if is_last {
+            format!("{}    ", prefix)
+        } else {
+            format!("{}│   ", prefix)
+        };
         let children: Vec<&str> = self.children.keys().map(|k| k.as_str()).collect();
         for (i, child_name) in children.iter().enumerate() {
             if let Some(child) = self.children.get(*child_name) {
                 let is_last_child = i == children.len() - 1;
-                result.push_str(&child.format_tree(&child_prefix, is_last_child, depth + 1, max_depth));
+                result.push_str(&child.format_tree(
+                    &child_prefix,
+                    is_last_child,
+                    depth + 1,
+                    max_depth,
+                ));
             }
         }
         result
@@ -124,7 +170,9 @@ pub struct ScopeContextTool;
 
 #[async_trait::async_trait]
 impl Tool for ScopeContextTool {
-    fn name(&self) -> &str { "scope_context" }
+    fn name(&self) -> &str {
+        "scope_context"
+    }
 
     fn description(&self) -> &str {
         "Walks up the directory tree from the target path and retrieves all relevant context files (AGENTS.md, CLAUDE.md, CURSOR.md, .cursorrules) for the target file path."
@@ -156,13 +204,17 @@ impl Tool for ScopeContextTool {
             cwd.join(path)
         };
 
-        let resolved_path = absolute_path.canonicalize()
+        let resolved_path = absolute_path
+            .canonicalize()
             .map_err(|e| anyhow!("Failed to resolve path '{}': {}", target_path, e))?;
 
         let target_dir = if resolved_path.is_dir() {
             resolved_path.clone()
         } else {
-            resolved_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| cwd.clone())
+            resolved_path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| cwd.clone())
         };
 
         let mut found_files: Vec<PathBuf> = Vec::new();
@@ -194,7 +246,11 @@ impl Tool for ScopeContextTool {
         for fp in &found_files {
             if let Ok(content) = std::fs::read_to_string(fp) {
                 let relative = fp.strip_prefix(&cwd).unwrap_or(fp);
-                combined.push_str(&format!("### Context File: {}\n\n{}\n\n", relative.display(), content));
+                combined.push_str(&format!(
+                    "### Context File: {}\n\n{}\n\n",
+                    relative.display(),
+                    content
+                ));
             }
         }
 
@@ -206,7 +262,9 @@ impl Tool for ScopeContextTool {
             combined.push_str(YAGNI_DIRECTIVES);
         }
 
-        Ok(json!({ "status": "ok", "files": found_files.iter().filter_map(|f| f.to_str()).collect::<Vec<_>>(), "content": combined }))
+        Ok(
+            json!({ "status": "ok", "files": found_files.iter().filter_map(|f| f.to_str()).collect::<Vec<_>>(), "content": combined }),
+        )
     }
 }
 
@@ -218,8 +276,12 @@ pub struct SummarizeCodebaseTool;
 
 #[async_trait::async_trait]
 impl Tool for SummarizeCodebaseTool {
-    fn name(&self) -> &str { "summarize_codebase" }
-    fn description(&self) -> &str { "Analyzes the codebase and returns a summary of language usage, file sizes, and directory layout." }
+    fn name(&self) -> &str {
+        "summarize_codebase"
+    }
+    fn description(&self) -> &str {
+        "Analyzes the codebase and returns a summary of language usage, file sizes, and directory layout."
+    }
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
@@ -231,9 +293,15 @@ impl Tool for SummarizeCodebaseTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let root_path_str = arguments["root_path"].as_str().unwrap_or(".");
         let root = Path::new(root_path_str);
-        let resolved_root = if root.is_absolute() { root.to_path_buf() }
-            else { std::env::current_dir().map_err(|e| anyhow!("{}", e))?.join(root) };
-        let resolved_root = resolved_root.canonicalize()
+        let resolved_root = if root.is_absolute() {
+            root.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map_err(|e| anyhow!("{}", e))?
+                .join(root)
+        };
+        let resolved_root = resolved_root
+            .canonicalize()
             .map_err(|e| anyhow!("Failed to resolve path '{}': {}", root_path_str, e))?;
 
         if !resolved_root.is_dir() {
@@ -243,18 +311,30 @@ impl Tool for SummarizeCodebaseTool {
         let file_limit = 1000usize;
 
         let mut tree_root = TreeNode {
-            name: resolved_root.file_name().and_then(|n| n.to_str()).unwrap_or(".").to_string(),
-            is_dir: true, line_count: 0, files_count: 0, children: BTreeMap::new(),
+            name: resolved_root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(".")
+                .to_string(),
+            is_dir: true,
+            line_count: 0,
+            files_count: 0,
+            children: BTreeMap::new(),
         };
 
         let mut total_files = 0usize;
         let mut total_lines = 0usize;
-        let mut ext_counts: std::collections::HashMap<String, (usize, usize)> = std::collections::HashMap::new();
+        let mut ext_counts: std::collections::HashMap<String, (usize, usize)> =
+            std::collections::HashMap::new();
 
         let mut walk_dir = vec![(resolved_root.clone(), 0usize)];
         while let Some((dir_path, depth)) = walk_dir.pop() {
-            if depth > 10 { continue; }
-            if total_files >= file_limit { break; }
+            if depth > 10 {
+                continue;
+            }
+            if total_files >= file_limit {
+                break;
+            }
 
             let entries = match std::fs::read_dir(&dir_path) {
                 Ok(e) => e,
@@ -264,14 +344,18 @@ impl Tool for SummarizeCodebaseTool {
             let mut dirs = Vec::new();
             for entry in entries.filter_map(|e| e.ok()) {
                 let path = entry.path();
-                if path.components().any(|c| c.as_os_str() == ".git") { continue; }
+                if path.components().any(|c| c.as_os_str() == ".git") {
+                    continue;
+                }
 
                 if path.is_dir() {
                     dirs.push(path);
                     continue;
                 }
 
-                if is_binary_file(&path) { continue; }
+                if is_binary_file(&path) {
+                    continue;
+                }
 
                 let content = match std::fs::read_to_string(&path) {
                     Ok(c) => c,
@@ -282,17 +366,26 @@ impl Tool for SummarizeCodebaseTool {
                 total_files += 1;
                 total_lines += file_lines;
 
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("no_ext").to_lowercase();
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("no_ext")
+                    .to_lowercase();
                 let entry = ext_counts.entry(ext).or_insert((0, 0));
                 entry.0 += 1;
                 entry.1 += file_lines;
 
                 if let Ok(rel_path) = path.strip_prefix(&resolved_root) {
-                    let parts: Vec<String> = rel_path.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+                    let parts: Vec<String> = rel_path
+                        .components()
+                        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                        .collect();
                     tree_root.insert(&parts, false, file_lines);
                 }
 
-                if total_files >= file_limit { break; }
+                if total_files >= file_limit {
+                    break;
+                }
             }
 
             for d in dirs.into_iter().rev() {
@@ -304,14 +397,27 @@ impl Tool for SummarizeCodebaseTool {
         let tree_str = tree_root.format_tree("", true, 0, 3);
 
         let project_type = detect_project_type(&resolved_root);
-        let mut breakdown: Vec<Value> = ext_counts.into_iter()
-            .map(|(ext, (count, lines))| json!({ "extension": ext, "files": count, "lines": lines }))
+        let mut breakdown: Vec<Value> = ext_counts
+            .into_iter()
+            .map(
+                |(ext, (count, lines))| json!({ "extension": ext, "files": count, "lines": lines }),
+            )
             .collect();
-        breakdown.sort_by(|a, b| b["lines"].as_u64().unwrap_or(0).cmp(&a["lines"].as_u64().unwrap_or(0)));
+        breakdown.sort_by(|a, b| {
+            b["lines"]
+                .as_u64()
+                .unwrap_or(0)
+                .cmp(&a["lines"].as_u64().unwrap_or(0))
+        });
 
         let suffix = if total_files >= file_limit {
-            format!("\nWarning: Walk stopped early because file limit ({}) was reached.", file_limit)
-        } else { String::new() };
+            format!(
+                "\nWarning: Walk stopped early because file limit ({}) was reached.",
+                file_limit
+            )
+        } else {
+            String::new()
+        };
 
         Ok(json!({
             "project_name": tree_root.name,

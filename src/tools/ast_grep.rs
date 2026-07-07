@@ -37,14 +37,22 @@ impl Tool for AstGrepTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let pattern = arguments.get("pattern").and_then(|v| v.as_str())
+        let pattern = arguments
+            .get("pattern")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'pattern' parameter"))?;
-        let lang = arguments.get("lang").and_then(|v| v.as_str())
+        let lang = arguments
+            .get("lang")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'lang' parameter"))?;
 
         let bin_path = if let Some(home) = dirs::home_dir() {
             let p = home.join(".cargo").join("bin").join("ast-grep");
-            if p.exists() { p } else { std::path::PathBuf::from("ast-grep") }
+            if p.exists() {
+                p
+            } else {
+                std::path::PathBuf::from("ast-grep")
+            }
         } else {
             std::path::PathBuf::from("ast-grep")
         };
@@ -52,7 +60,8 @@ impl Tool for AstGrepTool {
         let bin_path_for_spawn = bin_path;
         let pattern_for_spawn = pattern.to_string();
         let lang_for_spawn = lang.to_string();
-        let path_arg = arguments.get("path")
+        let path_arg = arguments
+            .get("path")
             .or(arguments.get("TargetFile"))
             .or(arguments.get("filepath"))
             .or(arguments.get("file"))
@@ -118,12 +127,18 @@ impl Tool for AstGrepIndexCodebaseTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let lang = arguments.get("lang").and_then(|v| v.as_str())
+        let lang = arguments
+            .get("lang")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'lang' parameter"))?;
 
         let bin_path = if let Some(home) = dirs::home_dir() {
             let p = home.join(".cargo").join("bin").join("ast-grep");
-            if p.exists() { p } else { std::path::PathBuf::from("ast-grep") }
+            if p.exists() {
+                p
+            } else {
+                std::path::PathBuf::from("ast-grep")
+            }
         } else {
             std::path::PathBuf::from("ast-grep")
         };
@@ -133,28 +148,25 @@ impl Tool for AstGrepIndexCodebaseTool {
                 "fn $NAME($$$) { $$$ }",
                 "struct $NAME { $$$ }",
                 "enum $NAME { $$$ }",
-                "impl $$$ { $$$ }"
+                "impl $$$ { $$$ }",
             ],
             "python" => vec![
                 "def $NAME($$$): $$$",
                 "class $NAME($$$): $$$",
-                "class $NAME: $$$"
+                "class $NAME: $$$",
             ],
             "javascript" | "typescript" => vec![
                 "function $NAME($$$) { $$$ }",
                 "class $NAME { $$$ }",
                 "const $NAME = ($$$) => { $$$ }",
-                "let $NAME = ($$$) => { $$$ }"
+                "let $NAME = ($$$) => { $$$ }",
             ],
             "go" => vec![
                 "func $NAME($$$) { $$$ }",
                 "type $NAME struct { $$$ }",
-                "type $NAME interface { $$$ }"
+                "type $NAME interface { $$$ }",
             ],
-            _ => vec![
-                "class $NAME { $$$ }",
-                "function $NAME($$$) { $$$ }"
-            ]
+            _ => vec!["class $NAME { $$$ }", "function $NAME($$$) { $$$ }"],
         };
 
         let mut indexed_count = 0;
@@ -162,13 +174,14 @@ impl Tool for AstGrepIndexCodebaseTool {
 
         for pattern in patterns {
             let mut cmd = Command::new(&bin_path);
-        crate::config::loader::set_tokio_command_cwd(&mut cmd);
+            crate::config::loader::set_tokio_command_cwd(&mut cmd);
             cmd.arg("run");
             cmd.arg("--pattern").arg(pattern);
             cmd.arg("--lang").arg(lang);
             cmd.arg("--json");
 
-            if let Some(path_str) = arguments.get("path")
+            if let Some(path_str) = arguments
+                .get("path")
                 .or(arguments.get("TargetFile"))
                 .or(arguments.get("filepath"))
                 .or(arguments.get("file"))
@@ -188,11 +201,15 @@ impl Tool for AstGrepIndexCodebaseTool {
                         let text = item["text"].as_str().unwrap_or_default().to_string();
                         let file = item["file"].as_str().unwrap_or_default();
                         let start_line = item["range"]["start"]["line"].as_u64().unwrap_or(0);
-                        
-                        let symbol_name = item["metaVariables"]["single"]["NAME"]["text"].as_str()
+
+                        let symbol_name = item["metaVariables"]["single"]["NAME"]["text"]
+                            .as_str()
                             .unwrap_or("unknown_symbol");
 
-                        let query_str = format!("Symbol: {} | Language: {} | File: {}", symbol_name, lang, file);
+                        let query_str = format!(
+                            "Symbol: {} | Language: {} | File: {}",
+                            symbol_name, lang, file
+                        );
                         let source_str = format!("codebase_index: {}:{}", file, start_line + 1);
 
                         entries_to_archive.push((query_str, text, source_str));
@@ -225,7 +242,7 @@ mod tests {
             "pattern": "fn $X($$$)",
             "lang": "rust"
         });
-        
+
         let res = tool.call(&args).await?;
         assert!(res.is_array());
         assert_eq!(tool.name(), "ast_grep");

@@ -1,4 +1,4 @@
-use lopdf::{Document, Object, ObjectId, Stream, Dictionary};
+use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 
 /// Configuration for PDF layout and formatting.
 #[derive(Debug, Clone)]
@@ -356,7 +356,8 @@ pub fn create_formatted_pdf(file_path: &str, text: &str, config: &PdfLayoutConfi
             "path": file_path,
             "format": "pdf",
             "pages": page_ids.len()
-        }).to_string(),
+        })
+        .to_string(),
         Err(e) => serde_json::json!({"error": format!("io: {e}")}).to_string(),
     }
 }
@@ -374,7 +375,8 @@ pub fn open_pdf(file_path: &str) -> String {
                 "pages": page_count,
                 "encrypted": is_encrypted,
                 "version": doc.version,
-            }).to_string()
+            })
+            .to_string()
         }
         Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
     }
@@ -434,7 +436,9 @@ pub fn merge_pdfs(sources: &[String], output: &str) -> String {
         let page_count = result_doc.get_pages().len() as i64;
 
         // Update page count in pages dict - find it by type
-        let pages_to_update: Vec<ObjectId> = result_doc.objects.iter()
+        let pages_to_update: Vec<ObjectId> = result_doc
+            .objects
+            .iter()
             .filter(|(_, obj)| {
                 if let Object::Dictionary(dict) = obj {
                     matches!(dict.get(b"Type"), Ok(Object::Name(name)) if name == b"Pages")
@@ -459,7 +463,8 @@ pub fn merge_pdfs(sources: &[String], output: &str) -> String {
             "success": true,
             "sources": sources,
             "output": output
-        }).to_string(),
+        })
+        .to_string(),
         Err(e) => serde_json::json!({"error": format!("io: {e}")}).to_string(),
     }
 }
@@ -479,7 +484,10 @@ pub fn extract_text(file_path: &str, page: Option<u32>) -> String {
             };
 
             match doc.extract_text(&page_numbers) {
-                Ok(text) => serde_json::json!({"success": true, "text": text, "pages": page_numbers.len()}).to_string(),
+                Ok(text) => {
+                    serde_json::json!({"success": true, "text": text, "pages": page_numbers.len()})
+                        .to_string()
+                }
                 Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
             }
         }
@@ -493,7 +501,12 @@ pub fn replace_text(file_path: &str, find: &str, replace: &str) -> String {
 }
 
 /// Find and replace text in PDF content streams with password decryption. Writes changes in-place.
-pub fn replace_text_with_password(file_path: &str, find: &str, replace: &str, password: Option<&str>) -> String {
+pub fn replace_text_with_password(
+    file_path: &str,
+    find: &str,
+    replace: &str,
+    password: Option<&str>,
+) -> String {
     let mut doc = match Document::load(file_path) {
         Ok(d) => d,
         Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
@@ -502,7 +515,8 @@ pub fn replace_text_with_password(file_path: &str, find: &str, replace: &str, pa
     if doc.is_encrypted() {
         let pass = password.unwrap_or("");
         if let Err(e) = doc.decrypt(pass.as_bytes()) {
-            return serde_json::json!({"error": format!("Failed to decrypt PDF: {}", e)}).to_string();
+            return serde_json::json!({"error": format!("Failed to decrypt PDF: {}", e)})
+                .to_string();
         }
     }
 
@@ -519,7 +533,8 @@ pub fn replace_text_with_password(file_path: &str, find: &str, replace: &str, pa
             "pages_modified": total_replacements,
             "find": find,
             "replace": replace
-        }).to_string(),
+        })
+        .to_string(),
         Err(e) => serde_json::json!({"error": format!("io: {e}")}).to_string(),
     }
 }
@@ -530,15 +545,19 @@ pub fn to_ir(file_path: &str) -> Result<crate::ir::Document, crate::handlers::Lo
 }
 
 /// Load a PDF file into the Internal Representation (IR) with an optional password
-pub fn to_ir_with_password(file_path: &str, password: Option<&str>) -> Result<crate::ir::Document, crate::handlers::LoadError> {
+pub fn to_ir_with_password(
+    file_path: &str,
+    password: Option<&str>,
+) -> Result<crate::ir::Document, crate::handlers::LoadError> {
     let mut doc = lopdf::Document::load(file_path)
         .map_err(|e| crate::handlers::LoadError::ParseError(e.to_string()))?;
 
     let is_encrypted = doc.is_encrypted();
     if is_encrypted {
         let pass = password.unwrap_or("");
-        doc.decrypt(pass.as_bytes())
-            .map_err(|e| crate::handlers::LoadError::ParseError(format!("Failed to decrypt PDF: {}", e)))?;
+        doc.decrypt(pass.as_bytes()).map_err(|e| {
+            crate::handlers::LoadError::ParseError(format!("Failed to decrypt PDF: {}", e))
+        })?;
     }
 
     let mut ir = crate::ir::Document::new("pdf");
@@ -551,7 +570,8 @@ pub fn to_ir_with_password(file_path: &str, password: Option<&str>) -> Result<cr
         for line in text.lines() {
             let trimmed = line.trim();
             if !trimmed.is_empty() {
-                ir.paragraphs.push(crate::ir::elements::Paragraph::new(trimmed));
+                ir.paragraphs
+                    .push(crate::ir::elements::Paragraph::new(trimmed));
             }
         }
     }
@@ -560,7 +580,12 @@ pub fn to_ir_with_password(file_path: &str, password: Option<&str>) -> Result<cr
 }
 
 /// Split a PDF document keeping only the specified page range (1-based, inclusive).
-pub fn split_pdf(file_path: &str, output_path: &str, start_page: u32, end_page: u32) -> Result<(), String> {
+pub fn split_pdf(
+    file_path: &str,
+    output_path: &str,
+    start_page: u32,
+    end_page: u32,
+) -> Result<(), String> {
     split_pdf_with_password(file_path, output_path, start_page, end_page, None)
 }
 
@@ -572,8 +597,8 @@ pub fn split_pdf_with_password(
     end_page: u32,
     password: Option<&str>,
 ) -> Result<(), String> {
-    let mut doc = lopdf::Document::load(file_path)
-        .map_err(|e| format!("Failed to load PDF: {}", e))?;
+    let mut doc =
+        lopdf::Document::load(file_path).map_err(|e| format!("Failed to load PDF: {}", e))?;
 
     if doc.is_encrypted() {
         let pass = password.unwrap_or("");
@@ -583,11 +608,14 @@ pub fn split_pdf_with_password(
 
     let total_pages = doc.get_pages().len() as u32;
     if start_page == 0 || end_page == 0 || start_page > end_page || start_page > total_pages {
-        return Err(format!("Invalid page range {}-{} for a {} page document", start_page, end_page, total_pages));
+        return Err(format!(
+            "Invalid page range {}-{} for a {} page document",
+            start_page, end_page, total_pages
+        ));
     }
-    
+
     let end_page = std::cmp::min(end_page, total_pages);
-    
+
     // Find page numbers to delete
     let mut pages_to_delete = Vec::new();
     for p in 1..=total_pages {
@@ -598,7 +626,7 @@ pub fn split_pdf_with_password(
 
     doc.delete_pages(&pages_to_delete);
     doc.prune_objects();
-    
+
     doc.save(output_path)
         .map_err(|e| format!("Failed to save split PDF: {}", e))?;
 
@@ -774,13 +802,15 @@ mod tests {
     fn test_encrypted_pdf_detection() {
         let mut doc = lopdf::Document::new();
         doc.trailer.set("Encrypt", lopdf::Object::Reference((1, 0)));
-        doc.objects.insert((1, 0), lopdf::Object::Dictionary(lopdf::Dictionary::new()));
+        doc.objects
+            .insert((1, 0), lopdf::Object::Dictionary(lopdf::Dictionary::new()));
         assert!(doc.is_encrypted());
     }
 
     #[test]
     fn test_replace_text_invalid_password_error() {
-        let res_nonexistent = replace_text_with_password("nonexistent_file.pdf", "a", "b", Some("pass"));
+        let res_nonexistent =
+            replace_text_with_password("nonexistent_file.pdf", "a", "b", Some("pass"));
         assert!(res_nonexistent.contains("\"error\""));
     }
 
@@ -792,7 +822,11 @@ mod tests {
         let p_in = path_in.to_str().unwrap();
         let p_out = path_out.to_str().unwrap();
 
-        let _ = create_pdf(p_in, "Page 1 content\x0cPage 2 content\x0cPage 3 content", None);
+        let _ = create_pdf(
+            p_in,
+            "Page 1 content\x0cPage 2 content\x0cPage 3 content",
+            None,
+        );
 
         let doc_in = lopdf::Document::load(p_in).unwrap();
         assert_eq!(doc_in.get_pages().len(), 3);

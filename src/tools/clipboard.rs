@@ -34,7 +34,9 @@ impl Tool for ClipboardTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments.get("action").and_then(|v| v.as_str())
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
 
         let mut clipboard = Clipboard::new()
@@ -42,7 +44,8 @@ impl Tool for ClipboardTool {
 
         match action {
             "get" => {
-                let text = clipboard.get_text()
+                let text = clipboard
+                    .get_text()
                     .map_err(|e| anyhow!("Failed to read text from system clipboard: {}", e))?;
                 Ok(json!({
                     "status": "success",
@@ -50,9 +53,12 @@ impl Tool for ClipboardTool {
                 }))
             }
             "set" => {
-                let text = arguments.get("text").and_then(|v| v.as_str())
+                let text = arguments
+                    .get("text")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'text' parameter for 'set' action"))?;
-                clipboard.set_text(text.to_string())
+                clipboard
+                    .set_text(text.to_string())
                     .map_err(|e| anyhow!("Failed to write text to system clipboard: {}", e))?;
                 Ok(json!({
                     "status": "success",
@@ -71,18 +77,18 @@ mod tests {
     #[tokio::test]
     async fn test_clipboard_tool() {
         let tool = ClipboardTool;
-        
+
         // We test clipboard, but since test environment might be headless (e.g. running in CI/containers),
         // we handle clipboard initialization failure gracefully so the test suite doesn't fail.
         let test_val = json!({
             "action": "set",
             "text": "OpenZ is awesome!"
         });
-        
+
         match tool.call(&test_val).await {
             Ok(res) => {
                 assert_eq!(res["status"], "success");
-                
+
                 // Now test get
                 let get_val = json!({
                     "action": "get"
@@ -102,9 +108,9 @@ mod tests {
                 // We pass the test if it's due to headless environment
                 let err_msg = e.to_string();
                 assert!(
-                    err_msg.contains("Failed to initialize system clipboard") 
-                    || err_msg.contains("clipboard access may not be supported")
-                    || err_msg.contains("ClipboardNotSupported")
+                    err_msg.contains("Failed to initialize system clipboard")
+                        || err_msg.contains("clipboard access may not be supported")
+                        || err_msg.contains("ClipboardNotSupported")
                 );
             }
         }

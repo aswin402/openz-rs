@@ -4,29 +4,27 @@
 //! The first row of each sheet is treated as the table header.
 
 use crate::ir::{Document, Section, Table};
-use calamine::{open_workbook, Reader, Xlsx, Data};
+use calamine::{open_workbook, Data, Reader, Xlsx};
 use std::fs::File;
 use std::io::BufReader;
 
 /// Load an XLSX file into the Internal Representation
 pub fn to_ir(file_path: &str) -> Result<Document, String> {
-    let mut workbook: Xlsx<BufReader<File>> = open_workbook(file_path)
-        .map_err(|e| format!("Failed to open XLSX: {e}"))?;
+    let mut workbook: Xlsx<BufReader<File>> =
+        open_workbook(file_path).map_err(|e| format!("Failed to open XLSX: {e}"))?;
 
     let sheet_names = workbook.sheet_names().to_vec();
     let mut doc = Document::new("xlsx");
     doc.path = Some(file_path.to_string());
 
     for sheet_name in &sheet_names {
-        let range = workbook.worksheet_range(sheet_name)
+        let range = workbook
+            .worksheet_range(sheet_name)
             .map_err(|e| format!("Failed to read sheet '{sheet_name}': {e}"))?;
 
-        let rows: Vec<Vec<String>> = range.rows()
-            .map(|row| {
-                row.iter()
-                    .map(cell_to_string)
-                    .collect()
-            })
+        let rows: Vec<Vec<String>> = range
+            .rows()
+            .map(|row| row.iter().map(cell_to_string).collect())
             .collect();
 
         if rows.is_empty() {
@@ -64,7 +62,10 @@ pub fn to_ir(file_path: &str) -> Result<Document, String> {
             if !table.headers.is_empty() {
                 let rendered: Vec<&str> = table.headers.iter().map(|s| s.as_str()).collect();
                 text_parts.push(format!("  {} |", rendered.join(" | ")));
-                text_parts.push(format!("  {} |", vec!["---"; table.headers.len()].join(" | ")));
+                text_parts.push(format!(
+                    "  {} |",
+                    vec!["---"; table.headers.len()].join(" | ")
+                ));
             }
             // Data rows
             for row in &table.rows {
@@ -104,45 +105,47 @@ fn cell_to_string(cell: &Data) -> String {
 }
 
 /// Create an XLSX workbook from headers and row data
-pub fn create_xlsx(
-    file_path: &str,
-    sheets: &[XlsxSheet],
-) -> String {
+pub fn create_xlsx(file_path: &str, sheets: &[XlsxSheet]) -> String {
     use rust_xlsxwriter::*;
-    
+
     let mut workbook = Workbook::new();
-    
+
     for sheet_input in sheets {
         let sheet = workbook.add_worksheet();
         if let Some(name) = &sheet_input.name {
             sheet.set_name(name).unwrap();
         }
-        
+
         // Write headers
         for (col, header) in sheet_input.headers.iter().enumerate() {
             sheet.write_string(0, col as u16, header).unwrap();
         }
-        
+
         // Write data rows
         for (row_idx, row) in sheet_input.data.iter().enumerate() {
             for (col_idx, cell) in row.iter().enumerate() {
                 // Try number first, fall back to string
                 if let Ok(num) = cell.parse::<f64>() {
-                    sheet.write_number(row_idx as u32 + 1, col_idx as u16, num).unwrap();
+                    sheet
+                        .write_number(row_idx as u32 + 1, col_idx as u16, num)
+                        .unwrap();
                 } else {
-                    sheet.write_string(row_idx as u32 + 1, col_idx as u16, cell).unwrap();
+                    sheet
+                        .write_string(row_idx as u32 + 1, col_idx as u16, cell)
+                        .unwrap();
                 }
             }
         }
     }
-    
+
     match workbook.save(file_path) {
         Ok(_) => serde_json::json!({
             "success": true,
             "path": file_path,
             "format": "xlsx",
             "sheets": sheets.len(),
-        }).to_string(),
+        })
+        .to_string(),
         Err(e) => serde_json::json!({"error": format!("Failed to save XLSX: {e}")}).to_string(),
     }
 }
@@ -150,27 +153,36 @@ pub fn create_xlsx(
 /// Export an IR Document to XLSX
 pub fn from_ir(doc: &crate::ir::Document, file_path: &str) -> Result<(), String> {
     use rust_xlsxwriter::*;
-    
+
     let mut workbook = Workbook::new();
-    
+
     if !doc.tables.is_empty() {
         for (t_idx, table) in doc.tables.iter().enumerate() {
-            let sheet_name = table.caption.clone().unwrap_or_else(|| format!("Sheet{}", t_idx + 1));
+            let sheet_name = table
+                .caption
+                .clone()
+                .unwrap_or_else(|| format!("Sheet{}", t_idx + 1));
             let sheet = workbook.add_worksheet();
             sheet.set_name(&sheet_name).map_err(|e| e.to_string())?;
-            
+
             // Headers
             for (col, header) in table.headers.iter().enumerate() {
-                sheet.write_string(0, col as u16, header).map_err(|e| e.to_string())?;
+                sheet
+                    .write_string(0, col as u16, header)
+                    .map_err(|e| e.to_string())?;
             }
-            
+
             // Data rows
             for (row_idx, row) in table.rows.iter().enumerate() {
                 for (col_idx, cell) in row.iter().enumerate() {
                     if let Ok(num) = cell.parse::<f64>() {
-                        sheet.write_number(row_idx as u32 + 1, col_idx as u16, num).map_err(|e| e.to_string())?;
+                        sheet
+                            .write_number(row_idx as u32 + 1, col_idx as u16, num)
+                            .map_err(|e| e.to_string())?;
                     } else {
-                        sheet.write_string(row_idx as u32 + 1, col_idx as u16, cell).map_err(|e| e.to_string())?;
+                        sheet
+                            .write_string(row_idx as u32 + 1, col_idx as u16, cell)
+                            .map_err(|e| e.to_string())?;
                     }
                 }
             }
@@ -179,18 +191,22 @@ pub fn from_ir(doc: &crate::ir::Document, file_path: &str) -> Result<(), String>
         for section in doc.sections.iter() {
             let sheet = workbook.add_worksheet();
             sheet.set_name(&section.title).map_err(|e| e.to_string())?;
-            sheet.write_string(0, 0, &section.title).map_err(|e| e.to_string())?;
+            sheet
+                .write_string(0, 0, &section.title)
+                .map_err(|e| e.to_string())?;
         }
     } else {
         let sheet = workbook.add_worksheet();
         sheet.set_name("Sheet1").map_err(|e| e.to_string())?;
         if let Some(ref text) = doc.text {
             for (i, line) in text.lines().enumerate() {
-                sheet.write_string(i as u32, 0, line).map_err(|e| e.to_string())?;
+                sheet
+                    .write_string(i as u32, 0, line)
+                    .map_err(|e| e.to_string())?;
             }
         }
     }
-    
+
     workbook.save(file_path).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -232,7 +248,8 @@ pub fn edit_xlsx(request: &XlsxEditRequest) -> Result<String, String> {
 
     // 2. Read each existing sheet's grid of cells
     for sheet_name in &sheet_names {
-        let range = workbook.worksheet_range(sheet_name)
+        let range = workbook
+            .worksheet_range(sheet_name)
             .map_err(|e| format!("Failed to read sheet '{sheet_name}': {e}"))?;
 
         let (row_count, col_count) = range.get_size();
@@ -264,7 +281,10 @@ pub fn edit_xlsx(request: &XlsxEditRequest) -> Result<String, String> {
     if let Some(ref updates) = request.cell_updates {
         for update in updates {
             // Find sheet or create it if not exists
-            let sheet_idx = match sheets_data.iter().position(|(s, _)| s == &update.sheet_name) {
+            let sheet_idx = match sheets_data
+                .iter()
+                .position(|(s, _)| s == &update.sheet_name)
+            {
                 Some(idx) => idx,
                 None => {
                     sheets_data.push((update.sheet_name.clone(), vec![vec![String::new(); 1]; 1]));
@@ -273,7 +293,7 @@ pub fn edit_xlsx(request: &XlsxEditRequest) -> Result<String, String> {
             };
 
             let grid = &mut sheets_data[sheet_idx].1;
-            
+
             // Resize grid if row or col is out of bounds
             let target_rows = (update.row + 1) as usize;
             let target_cols = (update.col + 1) as usize;
@@ -282,7 +302,7 @@ pub fn edit_xlsx(request: &XlsxEditRequest) -> Result<String, String> {
                 let current_cols = if grid.is_empty() { 1 } else { grid[0].len() };
                 grid.resize(target_rows, vec![String::new(); current_cols]);
             }
-            
+
             let current_cols = grid[0].len();
             if target_cols > current_cols {
                 for r in grid.iter_mut() {
@@ -305,7 +325,7 @@ pub fn edit_xlsx(request: &XlsxEditRequest) -> Result<String, String> {
                 if cell_val.is_empty() {
                     continue;
                 }
-                
+
                 // Write formulas, numbers, booleans, or strings
                 if cell_val.starts_with('=') {
                     let _ = sheet.write_formula(r as u32, c as u16, cell_val.as_str());
@@ -320,14 +340,16 @@ pub fn edit_xlsx(request: &XlsxEditRequest) -> Result<String, String> {
         }
     }
 
-    out_workbook.save(&request.file_path)
+    out_workbook
+        .save(&request.file_path)
         .map_err(|e| format!("Failed to save edited XLSX: {e}"))?;
 
     Ok(serde_json::json!({
         "success": true,
         "path": request.file_path,
         "format": "xlsx",
-    }).to_string())
+    })
+    .to_string())
 }
 
 #[cfg(test)]

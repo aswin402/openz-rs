@@ -1,10 +1,10 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
 use oxc_allocator::Allocator;
+use oxc_codegen::{CodeGenerator, CodegenOptions};
 use oxc_parser::Parser;
 use oxc_span::SourceType;
-use oxc_codegen::{CodeGenerator, CodegenOptions};
+use serde_json::{json, Value};
 use std::path::Path;
 
 pub struct JsFormatTool;
@@ -37,14 +37,18 @@ impl Tool for JsFormatTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let code = arguments.get("code").and_then(|v| v.as_str())
+        let code = arguments
+            .get("code")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'code' parameter"))?;
-            
-        let file_path = arguments.get("file_path").and_then(|v| v.as_str()).unwrap_or("file.js");
-        
+
+        let file_path = arguments
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("file.js");
+
         let path = Path::new(file_path);
-        let source_type = SourceType::from_path(path)
-            .unwrap_or_else(|_| SourceType::default());
+        let source_type = SourceType::from_path(path).unwrap_or_else(|_| SourceType::default());
 
         let allocator = Allocator::default();
         let parser_res = Parser::new(&allocator, code, source_type).parse();
@@ -85,7 +89,7 @@ mod tests {
             "code": "const a:number=1;function foo(){return a;}",
             "file_path": "test.ts"
         });
-        
+
         let res = tool.call(&args).await.unwrap();
         assert_eq!(res["status"], "success");
         let formatted = res["formatted"].as_str().unwrap();
@@ -100,7 +104,7 @@ mod tests {
             "code": "const a = ;",
             "file_path": "test.js"
         });
-        
+
         let res = tool.call(&args).await.unwrap();
         assert_eq!(res["status"], "error");
         assert!(!res["errors"].as_str().unwrap().is_empty());

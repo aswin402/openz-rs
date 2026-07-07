@@ -1,11 +1,43 @@
-use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
-use std::fs::File;
-use fs2::FileExt;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use sha2::{Sha256, Digest};
+use fs2::FileExt;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::fs;
+use std::fs::File;
+use std::path::PathBuf;
+
+fn canonical_extra_without_hash(extra: &serde_json::Map<String, serde_json::Value>) -> String {
+    let mut filtered = serde_json::Map::new();
+    let mut keys: Vec<_> = extra.keys().filter(|key| key.as_str() != "hash").collect();
+    keys.sort();
+    for key in keys {
+        if let Some(value) = extra.get(key) {
+            filtered.insert(key.clone(), value.clone());
+        }
+    }
+    serde_json::to_string(&serde_json::Value::Object(filtered)).unwrap_or_else(|_| "{}".to_string())
+}
+
+fn legacy_message_hash(
+    role: &str,
+    content: &str,
+    timestamp: Option<&str>,
+    prev_hash: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(role.as_bytes());
+    hasher.update(content.as_bytes());
+    if let Some(ts) = timestamp {
+        hasher.update(ts.as_bytes());
+    }
+    hasher.update(prev_hash.as_bytes());
+    let result = hasher.finalize();
+    result
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -23,7 +55,8 @@ impl Message {
     }
 
     pub fn set_hash(&mut self, hash: String) {
-        self.extra.insert("hash".to_string(), serde_json::Value::String(hash));
+        self.extra
+            .insert("hash".to_string(), serde_json::Value::String(hash));
     }
 }
 
@@ -63,23 +96,40 @@ impl Session {
         self.updated_at = Utc::now();
     }
 
-    pub fn calculate_message_hash(role: &str, content: &str, timestamp: Option<&str>, prev_hash: &str) -> String {
+    pub fn calculate_message_hash(
+        role: &str,
+        content: &str,
+        timestamp: Option<&str>,
+        extra: &serde_json::Map<String, serde_json::Value>,
+        prev_hash: &str,
+    ) -> String {
         let mut hasher = Sha256::new();
         hasher.update(role.as_bytes());
         hasher.update(content.as_bytes());
         if let Some(ts) = timestamp {
             hasher.update(ts.as_bytes());
         }
+        let canonical_extra = canonical_extra_without_hash(extra);
+        hasher.update(canonical_extra.as_bytes());
         hasher.update(prev_hash.as_bytes());
         let result = hasher.finalize();
-        result.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+        result
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
     }
 
     pub fn populate_hashes(&mut self) {
         let mut prev_hash = String::new();
         for msg in &mut self.messages {
             let ts_ref = msg.timestamp.as_deref();
-            let calculated = Self::calculate_message_hash(&msg.role, &msg.content, ts_ref, &prev_hash);
+            let calculated = Self::calculate_message_hash(
+                &msg.role,
+                &msg.content,
+                ts_ref,
+                &msg.extra,
+                &prev_hash,
+            );
             msg.set_hash(calculated.clone());
             prev_hash = calculated;
         }
@@ -89,10 +139,21 @@ impl Session {
         let mut prev_hash = String::new();
         for (i, msg) in self.messages.iter().enumerate() {
             let ts_ref = msg.timestamp.as_deref();
-            let calculated = Self::calculate_message_hash(&msg.role, &msg.content, ts_ref, &prev_hash);
+            let calculated = Self::calculate_message_hash(
+                &msg.role,
+                &msg.content,
+                ts_ref,
+                &msg.extra,
+                &prev_hash,
+            );
             match msg.get_hash() {
                 Some(stored) => {
-                    if stored != calculated {
+                    let legacy = legacy_message_hash(&msg.role, &msg.content, ts_ref, &prev_hash);
+                    if stored == calculated {
+                        prev_hash = calculated;
+                    } else if stored == legacy {
+                        prev_hash = stored.to_string();
+                    } else {
                         anyhow::bail!(
                             "Cryptographic verification failed: message at index {} has been tampered with. Stored: {}, Calculated: {}",
                             i, stored, calculated
@@ -106,9 +167,54 @@ impl Session {
                     );
                 }
             }
-            prev_hash = calculated;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod hash_tests {
+    use super::*;
+
+    #[test]
+    fn hash_changes_when_extra_metadata_changes() {
+        let mut extra = serde_json::Map::new();
+        extra.insert("tool_call_id".to_string(), serde_json::json!("call_1"));
+
+        let h1 =
+            Session::calculate_message_hash("tool", "{}", Some("2026-07-06T00:00:00Z"), &extra, "");
+        extra.insert("tool_call_id".to_string(), serde_json::json!("call_2"));
+        let h2 =
+            Session::calculate_message_hash("tool", "{}", Some("2026-07-06T00:00:00Z"), &extra, "");
+
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn hash_ignores_hash_field_itself() {
+        let mut extra = serde_json::Map::new();
+        extra.insert("name".to_string(), serde_json::json!("read_file"));
+        let h1 = Session::calculate_message_hash("tool", "{}", None, &extra, "");
+
+        extra.insert("hash".to_string(), serde_json::json!("old"));
+        let h2 = Session::calculate_message_hash("tool", "{}", None, &extra, "");
+
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn legacy_hash_chain_still_verifies() {
+        let mut session = Session::new("test");
+        session.messages.push(Message {
+            role: "user".to_string(),
+            content: "hello".to_string(),
+            timestamp: Some("2026-07-06T00:00:00Z".to_string()),
+            extra: serde_json::Map::new(),
+        });
+        let legacy = legacy_message_hash("user", "hello", Some("2026-07-06T00:00:00Z"), "");
+        session.messages[0].set_hash(legacy);
+
+        assert!(session.verify_hash_chain().is_ok());
     }
 }
 
@@ -139,12 +245,13 @@ impl SessionManager {
         let path = self.lock_path(key);
         let file = File::create(&path)
             .with_context(|| format!("Failed to create lock file {:?}", path))?;
-        file.try_lock_exclusive()
-            .with_context(|| format!(
+        file.try_lock_exclusive().with_context(|| {
+            format!(
                 "Session '{}' is locked by another openz process. \
                  Only one agent can use a session at a time.",
                 key
-            ))?;
+            )
+        })?;
         Ok(file)
     }
 
@@ -158,14 +265,16 @@ impl SessionManager {
             }
             let file = File::create(&path)
                 .with_context(|| format!("Failed to create lock file {:?}", path))?;
-            file.try_lock_exclusive()
-                .with_context(|| format!(
+            file.try_lock_exclusive().with_context(|| {
+                format!(
                     "Session '{}' is locked by another openz process. \
                      Only one agent can use a session at a time.",
                     key_owned
-                ))?;
+                )
+            })?;
             Ok(file)
-        }).await?
+        })
+        .await?
     }
 
     pub fn get_or_create(&self, key: &str) -> Session {
@@ -198,25 +307,34 @@ impl SessionManager {
                 .with_context(|| format!("Failed to parse session file at {:?}", path))?;
             session.verify_hash_chain()?;
             Ok(session)
-        }).await?
+        })
+        .await?
     }
 
     pub async fn save(&self, session: &Session) -> Result<()> {
         if tokio::fs::metadata(&self.dir).await.is_err() {
-            tokio::fs::create_dir_all(&self.dir).await
+            tokio::fs::create_dir_all(&self.dir)
+                .await
                 .with_context(|| format!("Failed to create directory {:?}", self.dir))?;
         }
         let mut session_clone = session.clone();
         session_clone.populate_hashes();
         let path = self.file_path(&session_clone.key);
         let content = serde_json::to_string_pretty(&session_clone)?;
-        
+
         // Atomic write: write to temp file then rename to prevent corruption
         let temp_path = path.with_extension("json.tmp");
-        tokio::fs::write(&temp_path, &content).await
+        tokio::fs::write(&temp_path, &content)
+            .await
             .with_context(|| format!("Failed to write temp session file to {:?}", temp_path))?;
-        tokio::fs::rename(&temp_path, &path).await
-            .with_context(|| format!("Failed to rename temp session file {:?} to {:?}", temp_path, path))?;
+        tokio::fs::rename(&temp_path, &path)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to rename temp session file {:?} to {:?}",
+                    temp_path, path
+                )
+            })?;
         Ok(())
     }
 }

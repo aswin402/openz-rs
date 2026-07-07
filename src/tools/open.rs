@@ -28,25 +28,32 @@ impl Tool for OpenTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let target = arguments.get("target").and_then(|v| v.as_str())
+        let target = arguments
+            .get("target")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'target' parameter"))?;
 
         if !is_safe_target(target) {
-            return Err(anyhow!("Security: target contains unsafe characters or shell metacharacters"));
+            return Err(anyhow!(
+                "Security: target contains unsafe characters or shell metacharacters"
+            ));
         }
 
         // Validate URLs against SSRF
         if target.starts_with("http://") || target.starts_with("https://") {
             // Block shell metacharacters in URLs
-            if target.contains(';') || target.contains('|') || target.contains('&')
-                || target.contains('$') || target.contains('`') || target.contains('\n') {
+            if target.contains(';')
+                || target.contains('|')
+                || target.contains('&')
+                || target.contains('$')
+                || target.contains('`')
+                || target.contains('\n')
+            {
                 return Err(anyhow!("Security: URL contains shell metacharacters"));
             }
             let resolved = target.to_string();
             let resolved_clone = resolved.clone();
-            let status = tokio::task::spawn_blocking(move || {
-                open::that(resolved_clone)
-            }).await?;
+            let status = tokio::task::spawn_blocking(move || open::that(resolved_clone)).await?;
             match status {
                 Ok(_) => Ok(json!({
                     "status": "success",
@@ -56,11 +63,11 @@ impl Tool for OpenTool {
             }
         } else {
             // For file paths, resolve and validate
-            let resolved = crate::config::resolve_path(target).to_string_lossy().to_string();
+            let resolved = crate::config::resolve_path(target)
+                .to_string_lossy()
+                .to_string();
             let resolved_clone = resolved.clone();
-            let status = tokio::task::spawn_blocking(move || {
-                open::that(resolved_clone)
-            }).await?;
+            let status = tokio::task::spawn_blocking(move || open::that(resolved_clone)).await?;
             match status {
                 Ok(_) => Ok(json!({
                     "status": "success",
@@ -98,11 +105,11 @@ mod tests {
     #[tokio::test]
     async fn test_open_tool() {
         let tool = OpenTool;
-        
+
         let args = json!({
             "target": "https://example.com"
         });
-        
+
         // In headless CI/test environments, this might return an error due to missing display server or xdg-open defaults.
         // We ensure it parses and handles results/errors gracefully.
         let res = tool.call(&args).await;
@@ -111,7 +118,10 @@ mod tests {
                 assert_eq!(val["status"], "success");
             }
             Err(e) => {
-                println!("Open tool run finished with error (expected in headless CI/containers): {}", e);
+                println!(
+                    "Open tool run finished with error (expected in headless CI/containers): {}",
+                    e
+                );
             }
         }
     }

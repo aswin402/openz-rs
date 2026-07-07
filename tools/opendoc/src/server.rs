@@ -1,5 +1,5 @@
-use crate::engine::{search, replace, template, diff};
-use crate::handlers::{self, docx, pdf, pptx, pdf_forms, xlsx};
+use crate::engine::{diff, replace, search, template};
+use crate::handlers::{self, docx, pdf, pdf_forms, pptx, xlsx};
 use rmcp::{
     model::{ServerCapabilities, ServerInfo},
     serve_server, tool,
@@ -39,7 +39,9 @@ impl OpendocServer {
         #[schemars(description = "File path to the document")]
         file_path: String,
         #[tool(param)]
-        #[schemars(description = "Level of detail to return: 'summary' (metadata + outline + counts), 'metadata_only' (metadata only), or 'full' (all content including paragraphs and tables)")]
+        #[schemars(
+            description = "Level of detail to return: 'summary' (metadata + outline + counts), 'metadata_only' (metadata only), or 'full' (all content including paragraphs and tables)"
+        )]
         detail_level: Option<String>,
         #[tool(param)]
         #[schemars(description = "Optional password for encrypted documents")]
@@ -48,46 +50,41 @@ impl OpendocServer {
         let file_path = validate_path!(file_path);
         let detail = detail_level.unwrap_or_else(|| "full".to_string());
         match handlers::load_to_ir_with_password(&file_path, password.as_deref()) {
-            Ok(ir) => {
-                match detail.as_str() {
-                    "metadata_only" => {
-                        serde_json::to_string_pretty(&serde_json::json!({
-                            "success": true,
-                            "path": file_path,
-                            "format": ir.format,
-                            "metadata": ir.metadata,
-                        })).unwrap_or_default()
-                    }
-                    "summary" => {
-                        serde_json::to_string_pretty(&serde_json::json!({
-                            "success": true,
-                            "path": file_path,
-                            "format": ir.format,
-                            "paragraphs": ir.paragraphs.len(),
-                            "tables": ir.tables.len(),
-                            "images": ir.images.len(),
-                            "sections": ir.sections.len(),
-                            "estimated_tokens": ir.estimate_tokens(),
-                            "metadata": ir.metadata,
-                            "outline": ir.outline(),
-                        })).unwrap_or_default()
-                    }
-                    _ => {
-                        serde_json::to_string_pretty(&serde_json::json!({
-                            "success": true,
-                            "path": file_path,
-                            "format": ir.format,
-                            "paragraphs": ir.paragraphs,
-                            "tables": ir.tables,
-                            "images": ir.images,
-                            "sections": ir.sections,
-                            "estimated_tokens": ir.estimate_tokens(),
-                            "metadata": ir.metadata,
-                            "outline": ir.outline(),
-                        })).unwrap_or_default()
-                    }
-                }
-            }
+            Ok(ir) => match detail.as_str() {
+                "metadata_only" => serde_json::to_string_pretty(&serde_json::json!({
+                    "success": true,
+                    "path": file_path,
+                    "format": ir.format,
+                    "metadata": ir.metadata,
+                }))
+                .unwrap_or_default(),
+                "summary" => serde_json::to_string_pretty(&serde_json::json!({
+                    "success": true,
+                    "path": file_path,
+                    "format": ir.format,
+                    "paragraphs": ir.paragraphs.len(),
+                    "tables": ir.tables.len(),
+                    "images": ir.images.len(),
+                    "sections": ir.sections.len(),
+                    "estimated_tokens": ir.estimate_tokens(),
+                    "metadata": ir.metadata,
+                    "outline": ir.outline(),
+                }))
+                .unwrap_or_default(),
+                _ => serde_json::to_string_pretty(&serde_json::json!({
+                    "success": true,
+                    "path": file_path,
+                    "format": ir.format,
+                    "paragraphs": ir.paragraphs,
+                    "tables": ir.tables,
+                    "images": ir.images,
+                    "sections": ir.sections,
+                    "estimated_tokens": ir.estimate_tokens(),
+                    "metadata": ir.metadata,
+                    "outline": ir.outline(),
+                }))
+                .unwrap_or_default(),
+            },
             Err(e) => map_load_error(&e),
         }
     }
@@ -112,7 +109,8 @@ impl OpendocServer {
                     "text": content,
                     "char_count": content.len(),
                     "est_tokens": ir.estimate_tokens(),
-                }).to_string()
+                })
+                .to_string()
             }
             Err(e) => map_load_error(&e),
         }
@@ -143,7 +141,8 @@ impl OpendocServer {
                     "query": query,
                     "matches": results.len(),
                     "results": results,
-                }).to_string()
+                })
+                .to_string()
             }
             Err(e) => map_load_error(&e),
         }
@@ -180,36 +179,51 @@ impl OpendocServer {
                 }
                 handlers::docx::find_replace_text(&file_path, &find, &replace)
             }
-            "pdf" => {
-                handlers::pdf::replace_text_with_password(&file_path, &find, &replace, password.as_deref())
-            }
-            "txt" | "text" => {
-                match std::fs::read_to_string(&file_path) {
-                    Ok(content) => {
-                        let re = match regex::RegexBuilder::new(&find).size_limit(1_000_000).build() {
-                            Ok(r) => r,
-                            Err(e) => return serde_json::json!({"error": format!("invalid regex: {e}")}).to_string(),
-                        };
-                        let new_content = re.replace_all(&content, &replace).to_string();
-                        let count = re.find_iter(&content).count();
-                        match std::fs::write(&file_path, new_content) {
-                            Ok(_) => serde_json::json!({
-                                "success": true,
-                                "replacements": count,
-                                "persisted": true,
-                            }).to_string(),
-                            Err(e) => serde_json::json!({"error": format!("Failed to write file: {e}")}).to_string(),
+            "pdf" => handlers::pdf::replace_text_with_password(
+                &file_path,
+                &find,
+                &replace,
+                password.as_deref(),
+            ),
+            "txt" | "text" => match std::fs::read_to_string(&file_path) {
+                Ok(content) => {
+                    let re = match regex::RegexBuilder::new(&find)
+                        .size_limit(1_000_000)
+                        .build()
+                    {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return serde_json::json!({"error": format!("invalid regex: {e}")})
+                                .to_string()
+                        }
+                    };
+                    let new_content = re.replace_all(&content, &replace).to_string();
+                    let count = re.find_iter(&content).count();
+                    match std::fs::write(&file_path, new_content) {
+                        Ok(_) => serde_json::json!({
+                            "success": true,
+                            "replacements": count,
+                            "persisted": true,
+                        })
+                        .to_string(),
+                        Err(e) => {
+                            serde_json::json!({"error": format!("Failed to write file: {e}")})
+                                .to_string()
                         }
                     }
-                    Err(e) => serde_json::json!({"error": format!("Failed to read file: {e}")}).to_string(),
                 }
-            }
+                Err(e) => {
+                    serde_json::json!({"error": format!("Failed to read file: {e}")}).to_string()
+                }
+            },
             _ => {
                 match handlers::load_to_ir_with_password(&file_path, password.as_deref()) {
                     Ok(mut ir) => {
                         let count = replace::replace_text(&mut ir, &find, &replace);
                         // Try to persist via generic export for writable formats
-                        let writable = ["md", "markdown", "html", "csv", "txt", "text", "json", "docx"];
+                        let writable = [
+                            "md", "markdown", "html", "csv", "txt", "text", "json", "docx",
+                        ];
                         if writable.contains(&ext.as_str()) && count > 0 {
                             match crate::converters::export(&ir, &ext, &file_path) {
                                 Ok(result) => serde_json::json!({
@@ -217,13 +231,15 @@ impl OpendocServer {
                                     "replacements": count,
                                     "persisted": true,
                                     "output_size": result.size_bytes,
-                                }).to_string(),
+                                })
+                                .to_string(),
                                 Err(e) => serde_json::json!({
                                     "success": true,
                                     "replacements": count,
                                     "persisted": false,
                                     "note": format!("IR modified but failed to save: {e}"),
-                                }).to_string(),
+                                })
+                                .to_string(),
                             }
                         } else {
                             serde_json::json!({
@@ -252,19 +268,24 @@ impl OpendocServer {
     ) -> String {
         let file_a = validate_path!(file_a);
         let file_b = validate_path!(file_b);
-        let (doc_a, doc_b) = match (
-            handlers::load_to_ir(&file_a),
-            handlers::load_to_ir(&file_b),
-        ) {
+        let (doc_a, doc_b) = match (handlers::load_to_ir(&file_a), handlers::load_to_ir(&file_b)) {
             (Ok(a), Ok(b)) => (a, b),
-            (Err(e), _) => return serde_json::json!({"error": format!("Failed to load file_a: {e}")}).to_string(),
-            (_, Err(e)) => return serde_json::json!({"error": format!("Failed to load file_b: {e}")}).to_string(),
+            (Err(e), _) => {
+                return serde_json::json!({"error": format!("Failed to load file_a: {e}")})
+                    .to_string()
+            }
+            (_, Err(e)) => {
+                return serde_json::json!({"error": format!("Failed to load file_b: {e}")})
+                    .to_string()
+            }
         };
         let result = diff::diff_documents(&doc_a, &doc_b);
         serde_json::to_string_pretty(&result).unwrap_or_default()
     }
 
-    #[tool(description = "Compare two documents and return a visual difference report as HTML or Markdown")]
+    #[tool(
+        description = "Compare two documents and return a visual difference report as HTML or Markdown"
+    )]
     pub fn diff_documents_visual(
         &self,
         #[tool(param)]
@@ -279,13 +300,16 @@ impl OpendocServer {
     ) -> String {
         let file_a = validate_path!(file_a);
         let file_b = validate_path!(file_b);
-        let (doc_a, doc_b) = match (
-            handlers::load_to_ir(&file_a),
-            handlers::load_to_ir(&file_b),
-        ) {
+        let (doc_a, doc_b) = match (handlers::load_to_ir(&file_a), handlers::load_to_ir(&file_b)) {
             (Ok(a), Ok(b)) => (a, b),
-            (Err(e), _) => return serde_json::json!({"error": format!("Failed to load file_a: {e}")}).to_string(),
-            (_, Err(e)) => return serde_json::json!({"error": format!("Failed to load file_b: {e}")}).to_string(),
+            (Err(e), _) => {
+                return serde_json::json!({"error": format!("Failed to load file_a: {e}")})
+                    .to_string()
+            }
+            (_, Err(e)) => {
+                return serde_json::json!({"error": format!("Failed to load file_b: {e}")})
+                    .to_string()
+            }
         };
         let is_html = format.map(|f| f.to_lowercase() == "html").unwrap_or(true);
         diff::render_diff_visual(&doc_a, &doc_b, is_html)
@@ -319,14 +343,15 @@ impl OpendocServer {
                 };
                 let max_tok = max_tokens.unwrap_or(512);
                 let over = overlap.unwrap_or(50);
-                
+
                 let chunks = ir.chunk_with_strategy(chunking_strategy, max_tok, over);
                 serde_json::json!({
                     "success": true,
                     "strategy": format!("{:?}", chunking_strategy).to_lowercase(),
                     "chunk_count": chunks.len(),
                     "chunks": chunks,
-                }).to_string()
+                })
+                .to_string()
             }
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
@@ -374,50 +399,56 @@ impl OpendocServer {
                     Ok(d) => d,
                     Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
                 };
-                let map: std::collections::HashMap<&str, &str> = vars.iter()
-                    .map(|(k, v)| (k.as_str(), v.as_str()))
-                    .collect();
+                let map: std::collections::HashMap<&str, &str> =
+                    vars.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
                 let count = doc.replace_all(&map);
                 match doc.save(&file_path) {
                     Ok(_) => serde_json::json!({
                         "success": true,
                         "replacements": count,
                         "persisted": true,
-                    }).to_string(),
+                    })
+                    .to_string(),
                     Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
                 }
             }
-            "txt" | "text" => {
-                match std::fs::read_to_string(&file_path) {
-                    Ok(content) => {
-                        let mut new_content = content;
-                        let mut count = 0;
-                        for (key, value) in &vars {
-                            let placeholder = format!("{{{{{}}}}}", key);
-                            if new_content.contains(&placeholder) {
-                                let occurrences = new_content.matches(&placeholder).count();
-                                new_content = new_content.replace(&placeholder, value);
-                                count += occurrences;
-                            }
-                        }
-                        match std::fs::write(&file_path, new_content) {
-                            Ok(_) => serde_json::json!({
-                                "success": true,
-                                "replacements": count,
-                                "persisted": true,
-                            }).to_string(),
-                            Err(e) => serde_json::json!({"error": format!("Failed to write file: {e}")}).to_string(),
+            "txt" | "text" => match std::fs::read_to_string(&file_path) {
+                Ok(content) => {
+                    let mut new_content = content;
+                    let mut count = 0;
+                    for (key, value) in &vars {
+                        let placeholder = format!("{{{{{}}}}}", key);
+                        if new_content.contains(&placeholder) {
+                            let occurrences = new_content.matches(&placeholder).count();
+                            new_content = new_content.replace(&placeholder, value);
+                            count += occurrences;
                         }
                     }
-                    Err(e) => serde_json::json!({"error": format!("Failed to read file: {e}")}).to_string(),
+                    match std::fs::write(&file_path, new_content) {
+                        Ok(_) => serde_json::json!({
+                            "success": true,
+                            "replacements": count,
+                            "persisted": true,
+                        })
+                        .to_string(),
+                        Err(e) => {
+                            serde_json::json!({"error": format!("Failed to write file: {e}")})
+                                .to_string()
+                        }
+                    }
                 }
-            }
+                Err(e) => {
+                    serde_json::json!({"error": format!("Failed to read file: {e}")}).to_string()
+                }
+            },
             _ => {
                 match handlers::load_to_ir_with_password(&file_path, password.as_deref()) {
                     Ok(mut ir) => {
                         let count = template::fill_template(&mut ir, &vars);
                         // Try to persist via generic export for writable formats
-                        let writable = ["md", "markdown", "html", "csv", "txt", "text", "json", "docx"];
+                        let writable = [
+                            "md", "markdown", "html", "csv", "txt", "text", "json", "docx",
+                        ];
                         if writable.contains(&ext.as_str()) && count > 0 {
                             match crate::converters::export(&ir, &ext, &file_path) {
                                 Ok(result) => serde_json::json!({
@@ -425,13 +456,15 @@ impl OpendocServer {
                                     "replacements": count,
                                     "persisted": true,
                                     "output_size": result.size_bytes,
-                                }).to_string(),
+                                })
+                                .to_string(),
                                 Err(e) => serde_json::json!({
                                     "success": true,
                                     "replacements": count,
                                     "persisted": false,
                                     "note": format!("IR modified but failed to save: {e}"),
-                                }).to_string(),
+                                })
+                                .to_string(),
                             }
                         } else {
                             serde_json::json!({
@@ -468,7 +501,9 @@ impl OpendocServer {
         }
     }
 
-    #[tool(description = "Validate PDF/A standard compliance (encryption, embedded fonts, forbidden actions, XMP metadata)")]
+    #[tool(
+        description = "Validate PDF/A standard compliance (encryption, embedded fonts, forbidden actions, XMP metadata)"
+    )]
     pub fn validate_pdf_a_compliance(
         &self,
         #[tool(param)]
@@ -476,9 +511,14 @@ impl OpendocServer {
         file_path: String,
     ) -> String {
         let file_path = validate_path!(file_path);
-        
+
         let path = std::path::Path::new(&file_path);
-        if path.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_lowercase()) != Some("pdf".to_string()) {
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_lowercase())
+            != Some("pdf".to_string())
+        {
             return serde_json::json!({"error": "Only PDF files are supported for PDF/A validation"}).to_string();
         }
 
@@ -510,13 +550,20 @@ impl OpendocServer {
     ) -> String {
         let source = validate_path!(source);
         let output = validate_path!(output);
-        match crate::converters::convert_with_password(&source, &target_format, &output, password.as_deref()) {
+        match crate::converters::convert_with_password(
+            &source,
+            &target_format,
+            &output,
+            password.as_deref(),
+        ) {
             Ok(result) => serde_json::to_string_pretty(&result).unwrap_or_default(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
     }
 
-    #[tool(description = "Extract embedded images from a DOCX or PPTX document and save them to a directory")]
+    #[tool(
+        description = "Extract embedded images from a DOCX or PPTX document and save them to a directory"
+    )]
     pub fn extract_images(
         &self,
         #[tool(param)]
@@ -533,12 +580,15 @@ impl OpendocServer {
                 "success": true,
                 "extracted_count": images.len(),
                 "images": images
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => serde_json::json!({"error": e}).to_string(),
         }
     }
 
-    #[tool(description = "Split a PDF document into a subset of pages specified by a start and end page (1-based, inclusive)")]
+    #[tool(
+        description = "Split a PDF document into a subset of pages specified by a start and end page (1-based, inclusive)"
+    )]
     pub fn split_pdf(
         &self,
         #[tool(param)]
@@ -559,12 +609,19 @@ impl OpendocServer {
     ) -> String {
         let file_path = validate_path!(file_path);
         let output_path = validate_path!(output_path);
-        match handlers::pdf::split_pdf_with_password(&file_path, &output_path, start_page, end_page, password.as_deref()) {
+        match handlers::pdf::split_pdf_with_password(
+            &file_path,
+            &output_path,
+            start_page,
+            end_page,
+            password.as_deref(),
+        ) {
             Ok(_) => serde_json::json!({
                 "success": true,
                 "split_path": output_path,
                 "pages_kept": (end_page + 1 - start_page)
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => serde_json::json!({"error": e}).to_string(),
         }
     }
@@ -612,8 +669,11 @@ impl OpendocServer {
                 "path": file_path,
                 "format": "html",
                 "size_bytes": html.len(),
-            }).to_string(),
-            Err(e) => serde_json::json!({"error": format!("Failed to write HTML: {e}")}).to_string(),
+            })
+            .to_string(),
+            Err(e) => {
+                serde_json::json!({"error": format!("Failed to write HTML: {e}")}).to_string()
+            }
         }
     }
 
@@ -621,7 +681,9 @@ impl OpendocServer {
     //  BATCH TOOLS
     // ═══════════════════════════════════════════
 
-    #[tool(description = "Batch convert all files in a directory matching a pattern with advanced options")]
+    #[tool(
+        description = "Batch convert all files in a directory matching a pattern with advanced options"
+    )]
     pub fn batch_convert(
         &self,
         #[tool(param)]
@@ -664,7 +726,9 @@ impl OpendocServer {
     //  DOCX TOOLS
     // ═══════════════════════════════════════════
 
-    #[tool(description = "Create a new DOCX document. Professional layout: Page size must be US Letter (12240x15840 DXA) or A4, margins 1 inch (1440 DXA). Use Georgia/Cambria for headings, Calibri/Arial for body text. Left-align paragraphs; center only titles. Include a Table of Contents (TOC) using HeadingLevels.")]
+    #[tool(
+        description = "Create a new DOCX document. Professional layout: Page size must be US Letter (12240x15840 DXA) or A4, margins 1 inch (1440 DXA). Use Georgia/Cambria for headings, Calibri/Arial for body text. Left-align paragraphs; center only titles. Include a Table of Contents (TOC) using HeadingLevels."
+    )]
     pub fn create_docx(
         &self,
         #[tool(param)]
@@ -678,14 +742,18 @@ impl OpendocServer {
         docx::create_document(&file_path, title.as_deref())
     }
 
-    #[tool(description = "Add a paragraph with formatting and layout to a DOCX. Keep layout clean; use Georgia for headings and Calibri/Arial for body text. Never manually insert Unicode bullets.")]
+    #[tool(
+        description = "Add a paragraph with formatting and layout to a DOCX. Keep layout clean; use Georgia for headings and Calibri/Arial for body text. Never manually insert Unicode bullets."
+    )]
     pub fn docx_add_paragraph(
         &self,
         #[tool(param)]
         #[schemars(description = "File path to the document")]
         file_path: String,
         #[tool(param)]
-        #[schemars(description = "Text content. Never insert manual bullet character lists; use standard paragraph lines.")]
+        #[schemars(
+            description = "Text content. Never insert manual bullet character lists; use standard paragraph lines."
+        )]
         text: String,
         #[tool(param)]
         #[schemars(description = "Optional bold. Use for titles and table headers.")]
@@ -694,28 +762,44 @@ impl OpendocServer {
         #[schemars(description = "Optional italic. Use for captions, quotes, or sub-details.")]
         italic: Option<bool>,
         #[tool(param)]
-        #[schemars(description = "Optional underline. WARNING: Avoid underlining titles (use whitespace or color instead).")]
+        #[schemars(
+            description = "Optional underline. WARNING: Avoid underlining titles (use whitespace or color instead)."
+        )]
         underline: Option<bool>,
         #[tool(param)]
-        #[schemars(description = "Optional font size in points (e.g. 24-28 for titles, 14-16 for subheadings, 11-12 for body).")]
+        #[schemars(
+            description = "Optional font size in points (e.g. 24-28 for titles, 14-16 for subheadings, 11-12 for body)."
+        )]
         font_size: Option<f32>,
         #[tool(param)]
-        #[schemars(description = "Optional font family name. Pair Georgia/Cambria (headings) with Arial/Calibri (body).")]
+        #[schemars(
+            description = "Optional font family name. Pair Georgia/Cambria (headings) with Arial/Calibri (body)."
+        )]
         font_family: Option<String>,
         #[tool(param)]
-        #[schemars(description = "Optional font color (Hex RGB, e.g. F7931A for Bitcoin Gold, 1E2761 for Navy).")]
+        #[schemars(
+            description = "Optional font color (Hex RGB, e.g. F7931A for Bitcoin Gold, 1E2761 for Navy)."
+        )]
         color: Option<String>,
         #[tool(param)]
-        #[schemars(description = "Optional font highlight color (Hex RGB, e.g. FFFF00 for yellow).")]
+        #[schemars(
+            description = "Optional font highlight color (Hex RGB, e.g. FFFF00 for yellow)."
+        )]
         highlight: Option<String>,
         #[tool(param)]
-        #[schemars(description = "Optional alignment: left, center, right, justify. Left-align body paragraphs; center titles.")]
+        #[schemars(
+            description = "Optional alignment: left, center, right, justify. Left-align body paragraphs; center titles."
+        )]
         alignment: Option<String>,
         #[tool(param)]
-        #[schemars(description = "Optional shading fill color (Hex RGB) to highlight whole paragraph block.")]
+        #[schemars(
+            description = "Optional shading fill color (Hex RGB) to highlight whole paragraph block."
+        )]
         shading: Option<String>,
         #[tool(param)]
-        #[schemars(description = "Optional line spacing. Recommended: 1.15 to 1.3 for optimal readability.")]
+        #[schemars(
+            description = "Optional line spacing. Recommended: 1.15 to 1.3 for optimal readability."
+        )]
         line_spacing: Option<f64>,
         #[tool(param)]
         #[schemars(description = "Optional keep with next paragraph to prevent orphaned headers.")]
@@ -724,7 +808,9 @@ impl OpendocServer {
         #[schemars(description = "Optional keep lines together inside a single page.")]
         keep_together: Option<bool>,
         #[tool(param)]
-        #[schemars(description = "Optional page break before paragraph. Use to structure exactly 10-page chapters.")]
+        #[schemars(
+            description = "Optional page break before paragraph. Use to structure exactly 10-page chapters."
+        )]
         page_break_before: Option<bool>,
     ) -> String {
         let file_path = validate_path!(file_path);
@@ -747,41 +833,63 @@ impl OpendocServer {
         )
     }
 
-    #[tool(description = "Add a table to a DOCX document with premium styling. Tables must fit clean column boundaries; use alternating rows and clear header shading.")]
+    #[tool(
+        description = "Add a table to a DOCX document with premium styling. Tables must fit clean column boundaries; use alternating rows and clear header shading."
+    )]
     pub fn docx_add_table(
         &self,
         #[tool(param)]
         #[schemars(description = "File path to the document")]
         file_path: String,
         #[tool(param)]
-        #[schemars(description = "Headers (JSON array of strings). E.g. ['Item', 'Quantity', 'Cost'].")]
+        #[schemars(
+            description = "Headers (JSON array of strings). E.g. ['Item', 'Quantity', 'Cost']."
+        )]
         headers: Vec<String>,
         #[tool(param)]
-        #[schemars(description = "Data rows (JSON array of arrays of strings). Must match header length.")]
+        #[schemars(
+            description = "Data rows (JSON array of arrays of strings). Must match header length."
+        )]
         data: Vec<Vec<String>>,
         #[tool(param)]
-        #[schemars(description = "Optional table width percentage (0 to 100). Default is 100.0 (full width of text margins).")]
+        #[schemars(
+            description = "Optional table width percentage (0 to 100). Default is 100.0 (full width of text margins)."
+        )]
         width_pct: Option<f64>,
         #[tool(param)]
-        #[schemars(description = "Optional table alignment: left, center, right, justify. Center is highly recommended for structured reports.")]
+        #[schemars(
+            description = "Optional table alignment: left, center, right, justify. Center is highly recommended for structured reports."
+        )]
         alignment: Option<String>,
         #[tool(param)]
-        #[schemars(description = "Optional table border style. Recommended: 'single' for professional clean lines.")]
+        #[schemars(
+            description = "Optional table border style. Recommended: 'single' for professional clean lines."
+        )]
         border_style: Option<String>,
         #[tool(param)]
-        #[schemars(description = "Optional border size in eighths of a pt. Recommended: 4 to 8 for subtle borders.")]
+        #[schemars(
+            description = "Optional border size in eighths of a pt. Recommended: 4 to 8 for subtle borders."
+        )]
         border_size: Option<u32>,
         #[tool(param)]
-        #[schemars(description = "Optional border color (Hex RGB, e.g. CCCCCC for subtle light grey, avoid solid black).")]
+        #[schemars(
+            description = "Optional border color (Hex RGB, e.g. CCCCCC for subtle light grey, avoid solid black)."
+        )]
         border_color: Option<String>,
         #[tool(param)]
-        #[schemars(description = "Optional shading header color (Hex RGB, e.g. 1E2761 for deep navy, F7931A for gold).")]
+        #[schemars(
+            description = "Optional shading header color (Hex RGB, e.g. 1E2761 for deep navy, F7931A for gold)."
+        )]
         shading_header: Option<String>,
         #[tool(param)]
-        #[schemars(description = "Optional shading data cell color (Hex RGB, e.g. F5F5F5 for zebra alternating rows).")]
+        #[schemars(
+            description = "Optional shading data cell color (Hex RGB, e.g. F5F5F5 for zebra alternating rows)."
+        )]
         shading_data: Option<String>,
         #[tool(param)]
-        #[schemars(description = "Optional prevent page breaks inside rows (default: true). Ensures clean layout rendering.")]
+        #[schemars(
+            description = "Optional prevent page breaks inside rows (default: true). Ensures clean layout rendering."
+        )]
         cant_split: Option<bool>,
     ) -> String {
         let file_path = validate_path!(file_path);
@@ -825,7 +933,9 @@ impl OpendocServer {
     //  PPTX TOOLS
     // ═══════════════════════════════════════════
 
-    #[tool(description = "Create a new PowerPoint presentation. Design rules: Choose a bold, topic-informed color palette (e.g. Midnight Executive, Forest & Moss, Coral Energy). Maintain 60-30-10 dominance. Leave breathing room—don't fill every inch. Use Georgia/Calibri/Segoe UI. Left-align body text.")]
+    #[tool(
+        description = "Create a new PowerPoint presentation. Design rules: Choose a bold, topic-informed color palette (e.g. Midnight Executive, Forest & Moss, Coral Energy). Maintain 60-30-10 dominance. Leave breathing room—don't fill every inch. Use Georgia/Calibri/Segoe UI. Left-align body text."
+    )]
     pub fn create_pptx(
         &self,
         #[tool(param)]
@@ -839,7 +949,9 @@ impl OpendocServer {
         pptx::create_presentation(&file_path, title.as_deref())
     }
 
-    #[tool(description = "Add a slide with title, optional body bullet points, and custom layout styling. Enforce 60-30-10 color rule. Use dark/light sandwich structures. Never use accent lines under titles.")]
+    #[tool(
+        description = "Add a slide with title, optional body bullet points, and custom layout styling. Enforce 60-30-10 color rule. Use dark/light sandwich structures. Never use accent lines under titles."
+    )]
     pub fn pptx_add_slide(
         &self,
         #[tool(param)]
@@ -849,22 +961,34 @@ impl OpendocServer {
         #[schemars(description = "Slide title. Use concise, active titles (36-44pt).")]
         title: String,
         #[tool(param)]
-        #[schemars(description = "Optional bullet point content (JSON array of strings). E.g. ['Point 1', 'Point 2'].")]
+        #[schemars(
+            description = "Optional bullet point content (JSON array of strings). E.g. ['Point 1', 'Point 2']."
+        )]
         body: Option<Vec<String>>,
         #[tool(param)]
-        #[schemars(description = "Optional slide background color (Hex RGB, e.g. 1A1A2E for deep space navy dark-mode, FFFFFF for clean light mode).")]
+        #[schemars(
+            description = "Optional slide background color (Hex RGB, e.g. 1A1A2E for deep space navy dark-mode, FFFFFF for clean light mode)."
+        )]
         bg_color: Option<String>,
         #[tool(param)]
-        #[schemars(description = "Optional font size for body points. Recommended: 14-16pt for optimal visibility.")]
+        #[schemars(
+            description = "Optional font size for body points. Recommended: 14-16pt for optimal visibility."
+        )]
         font_size: Option<f32>,
         #[tool(param)]
-        #[schemars(description = "Optional font color (Hex RGB, e.g. FFFFFF for dark slides, 333333 for light slides. Ensure contrast!).")]
+        #[schemars(
+            description = "Optional font color (Hex RGB, e.g. FFFFFF for dark slides, 333333 for light slides. Ensure contrast!)."
+        )]
         font_color: Option<String>,
         #[tool(param)]
-        #[schemars(description = "Optional font family name. Pair Georgia/Cambria (title) with Arial/Calibri/Segoe UI (body).")]
+        #[schemars(
+            description = "Optional font family name. Pair Georgia/Cambria (title) with Arial/Calibri/Segoe UI (body)."
+        )]
         font_family: Option<String>,
         #[tool(param)]
-        #[schemars(description = "Optional alignment: left, center, right, justify. Left-align body bullet text; center title slides.")]
+        #[schemars(
+            description = "Optional alignment: left, center, right, justify. Left-align body bullet text; center title slides."
+        )]
         alignment: Option<String>,
     ) -> String {
         let file_path = validate_path!(file_path);
@@ -891,18 +1015,25 @@ impl OpendocServer {
         #[schemars(description = "File path to save the XLSX")]
         file_path: String,
         #[tool(param)]
-        #[schemars(description = "JSON array of sheets: [{\"name\": \"Sheet1\", \"headers\": [\"A\",\"B\"], \"data\": [[\"1\",\"2\"]]}]")]
+        #[schemars(
+            description = "JSON array of sheets: [{\"name\": \"Sheet1\", \"headers\": [\"A\",\"B\"], \"data\": [[\"1\",\"2\"]]}]"
+        )]
         sheets: serde_json::Value,
     ) -> String {
         let file_path = validate_path!(file_path);
         let sheets: Vec<xlsx::XlsxSheet> = match serde_json::from_value(sheets) {
             Ok(s) => s,
-            Err(e) => return serde_json::json!({"error": format!("Invalid JSON structure: {e}")}).to_string(),
+            Err(e) => {
+                return serde_json::json!({"error": format!("Invalid JSON structure: {e}")})
+                    .to_string()
+            }
         };
         xlsx::create_xlsx(&file_path, &sheets)
     }
 
-    #[tool(description = "Edit an existing XLSX spreadsheet by applying sheet additions and cell updates")]
+    #[tool(
+        description = "Edit an existing XLSX spreadsheet by applying sheet additions and cell updates"
+    )]
     pub fn edit_xlsx(
         &self,
         #[tool(param)]
@@ -912,13 +1043,17 @@ impl OpendocServer {
         #[schemars(description = "Optional JSON array of sheet names to add: [\"Summary\"]")]
         add_sheets: Option<serde_json::Value>,
         #[tool(param)]
-        #[schemars(description = "Optional JSON array of cell updates: [{\"sheet_name\": \"Sheet1\", \"row\": 1, \"col\": 1, \"value\": \"31\"}]")]
+        #[schemars(
+            description = "Optional JSON array of cell updates: [{\"sheet_name\": \"Sheet1\", \"row\": 1, \"col\": 1, \"value\": \"31\"}]"
+        )]
         cell_updates: Option<serde_json::Value>,
     ) -> String {
         let file_path = validate_path!(file_path);
-        
-        let parsed_add_sheets: Option<Vec<String>> = add_sheets.and_then(|v| serde_json::from_value(v).ok());
-        let parsed_cell_updates: Option<Vec<xlsx::XlsxCellOperation>> = cell_updates.and_then(|v| serde_json::from_value(v).ok());
+
+        let parsed_add_sheets: Option<Vec<String>> =
+            add_sheets.and_then(|v| serde_json::from_value(v).ok());
+        let parsed_cell_updates: Option<Vec<xlsx::XlsxCellOperation>> =
+            cell_updates.and_then(|v| serde_json::from_value(v).ok());
 
         let request = xlsx::XlsxEditRequest {
             file_path,
@@ -953,7 +1088,9 @@ impl OpendocServer {
         pdf::create_pdf(&file_path, &text, author.as_deref())
     }
 
-    #[tool(description = "Create a PDF with premium layout control: title page, page numbers, margins, font size. Use explicit Form Feed page breaks ('\\x0c' or '\\f') to split pages. Never use unicode subscript/superscripts.")]
+    #[tool(
+        description = "Create a PDF with premium layout control: title page, page numbers, margins, font size. Use explicit Form Feed page breaks ('\\x0c' or '\\f') to split pages. Never use unicode subscript/superscripts."
+    )]
     #[allow(clippy::too_many_arguments)]
     pub fn create_formatted_pdf(
         &self,
@@ -961,7 +1098,9 @@ impl OpendocServer {
         #[schemars(description = "File path to save the PDF")]
         file_path: String,
         #[tool(param)]
-        #[schemars(description = "Text content. Separate chapters/pages using Form Feed '\\x0c' or '\\f' characters.")]
+        #[schemars(
+            description = "Text content. Separate chapters/pages using Form Feed '\\x0c' or '\\f' characters."
+        )]
         text: String,
         #[tool(param)]
         #[schemars(description = "Optional document title (rendered centered on page 1).")]
@@ -1014,9 +1153,18 @@ impl OpendocServer {
         output: String,
     ) -> String {
         let output = validate_path!(output);
-        let sources: Vec<String> = match sources.iter().map(|s| crate::security::validate_path(s)).collect::<Result<Vec<_>, _>>() {
-            Ok(paths) => paths.into_iter().map(|p| p.to_string_lossy().into_owned()).collect(),
-            Err(e) => return serde_json::json!({"error": format!("Security error: {e}")}).to_string(),
+        let sources: Vec<String> = match sources
+            .iter()
+            .map(|s| crate::security::validate_path(s))
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(paths) => paths
+                .into_iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect(),
+            Err(e) => {
+                return serde_json::json!({"error": format!("Security error: {e}")}).to_string()
+            }
         };
         pdf::merge_pdfs(&sources, &output)
     }
@@ -1048,12 +1196,15 @@ impl OpendocServer {
                 "success": true,
                 "field_count": fields.len(),
                 "fields": fields,
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
     }
 
-    #[tool(description = "Fill PDF form fields with values (supports AcroForm text, checkbox, and choice fields)")]
+    #[tool(
+        description = "Fill PDF form fields with values (supports AcroForm text, checkbox, and choice fields)"
+    )]
     pub fn fill_pdf_form(
         &self,
         #[tool(param)]
@@ -1083,7 +1234,8 @@ impl OpendocServer {
             Ok(count) => serde_json::json!({
                 "success": true,
                 "filled": count,
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
     }
@@ -1105,12 +1257,15 @@ impl OpendocServer {
                 "success": true,
                 "table_count": ir.tables.len(),
                 "tables": ir.tables,
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
     }
 
-    #[tool(description = "Analyze document complexity: detect scanned PDFs, text density, OCR requirements")]
+    #[tool(
+        description = "Analyze document complexity: detect scanned PDFs, text density, OCR requirements"
+    )]
     pub fn analyze_document_complexity(
         &self,
         #[tool(param)]
@@ -1127,14 +1282,18 @@ impl OpendocServer {
         }
     }
 
-    #[tool(description = "Run OCR on a scanned PDF or image-based document (requires --features ocr)")]
+    #[tool(
+        description = "Run OCR on a scanned PDF or image-based document (requires --features ocr)"
+    )]
     pub fn ocr_document(
         &self,
         #[tool(param)]
         #[schemars(description = "File path to the document")]
         file_path: String,
         #[tool(param)]
-        #[schemars(description = "Language code (default: eng). See tesseract docs for supported languages.")]
+        #[schemars(
+            description = "Language code (default: eng). See tesseract docs for supported languages."
+        )]
         language: Option<String>,
     ) -> String {
         let file_path = validate_path!(file_path);
@@ -1144,7 +1303,8 @@ impl OpendocServer {
                 "format": ir.format,
                 "paragraphs": ir.paragraphs.len(),
                 "text": ir.text,
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
     }
@@ -1154,10 +1314,13 @@ impl OpendocServer {
         serde_json::json!({
             "available": crate::ocr::is_ocr_available(),
             "languages": crate::ocr::available_languages(),
-        }).to_string()
+        })
+        .to_string()
     }
 
-    #[tool(description = "Render pages of a PDF, image, or office document (DOCX, PPTX, XLSX) into PNG screenshots for visual reasoning")]
+    #[tool(
+        description = "Render pages of a PDF, image, or office document (DOCX, PPTX, XLSX) into PNG screenshots for visual reasoning"
+    )]
     pub fn render_document_pages(
         &self,
         #[tool(param)]
@@ -1170,34 +1333,42 @@ impl OpendocServer {
         #[schemars(description = "Optional resolution DPI (default: 150)")]
         dpi: Option<u32>,
         #[tool(param)]
-        #[schemars(description = "Optional list of 1-based page numbers to render (renders all pages if omitted)")]
+        #[schemars(
+            description = "Optional list of 1-based page numbers to render (renders all pages if omitted)"
+        )]
         pages: Option<Vec<u32>>,
     ) -> String {
         let file_path = validate_path!(file_path);
         let output_dir = validate_path!(output_dir);
-        
-        match crate::converters::render::render_document_pages(&file_path, &output_dir, dpi, pages) {
+
+        match crate::converters::render::render_document_pages(&file_path, &output_dir, dpi, pages)
+        {
             Ok(files) => serde_json::json!({
                 "success": true,
                 "rendered_files": files,
-            }).to_string(),
+            })
+            .to_string(),
             Err(e) => serde_json::json!({"error": e}).to_string(),
         }
     }
 
-    #[tool(description = "Recursively unpack a ZIP archive (including nested archives), parse all supported documents inside it, and compile a single structured Markdown digest report (digest.md)")]
+    #[tool(
+        description = "Recursively unpack a ZIP archive (including nested archives), parse all supported documents inside it, and compile a single structured Markdown digest report (digest.md)"
+    )]
     pub fn extract_archive_digest(
         &self,
         #[tool(param)]
         #[schemars(description = "Absolute path to the ZIP archive")]
         archive_path: String,
         #[tool(param)]
-        #[schemars(description = "Optional destination directory. If not specified, a temporary directory will be created.")]
+        #[schemars(
+            description = "Optional destination directory. If not specified, a temporary directory will be created."
+        )]
         output_dir: Option<String>,
     ) -> String {
         let archive_path = validate_path!(archive_path);
         let output_dir_val = output_dir.map(|p| validate_path!(p));
-        
+
         match crate::batch::archive::process_archive_digest(
             &archive_path,
             output_dir_val.as_deref(),
@@ -1207,18 +1378,22 @@ impl OpendocServer {
         }
     }
 
-    #[tool(description = "Extract structured domain entities (legal, financial, timeline) from a document using pre-defined rules and heuristics")]
+    #[tool(
+        description = "Extract structured domain entities (legal, financial, timeline) from a document using pre-defined rules and heuristics"
+    )]
     pub fn extract_structured_metadata(
         &self,
         #[tool(param)]
         #[schemars(description = "File path to the document")]
         file_path: String,
         #[tool(param)]
-        #[schemars(description = "The target domain template: 'legal', 'financial', or 'timeline'")]
+        #[schemars(
+            description = "The target domain template: 'legal', 'financial', or 'timeline'"
+        )]
         template_type: String,
     ) -> String {
         let file_path = validate_path!(file_path);
-        
+
         let doc = match crate::handlers::load_to_ir(&file_path) {
             Ok(d) => d,
             Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
@@ -1292,7 +1467,10 @@ impl ServerHandler for OpendocServer {
                 Use `list_capabilities` to see all available tools."
                     .into(),
             ),
-            capabilities: ServerCapabilities::builder().enable_tools().enable_resources().build(),
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
             ..Default::default()
         }
     }
@@ -1301,7 +1479,9 @@ impl ServerHandler for OpendocServer {
         &self,
         _request: rmcp::model::PaginatedRequestParam,
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> impl std::future::Future<Output = Result<rmcp::model::ListResourcesResult, rmcp::Error>> + Send + '_ {
+    ) -> impl std::future::Future<Output = Result<rmcp::model::ListResourcesResult, rmcp::Error>>
+           + Send
+           + '_ {
         std::future::ready(Ok(rmcp::model::ListResourcesResult::default()))
     }
 
@@ -1309,37 +1489,46 @@ impl ServerHandler for OpendocServer {
         &self,
         request: rmcp::model::ReadResourceRequestParam,
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> impl std::future::Future<Output = Result<rmcp::model::ReadResourceResult, rmcp::Error>> + Send + '_ {
+    ) -> impl std::future::Future<Output = Result<rmcp::model::ReadResourceResult, rmcp::Error>>
+           + Send
+           + '_ {
         let uri = request.uri.clone();
         let fut = async move {
             if !uri.starts_with("doc://") {
-                return Err(rmcp::Error::invalid_request(format!("Invalid resource URI protocol: {}", uri), None));
+                return Err(rmcp::Error::invalid_request(
+                    format!("Invalid resource URI protocol: {}", uri),
+                    None,
+                ));
             }
 
             let path_part = &uri["doc://".len()..];
-            let (file_path, is_outline) = if let Some(stripped) = path_part.strip_suffix("/outline") {
+            let (file_path, is_outline) = if let Some(stripped) = path_part.strip_suffix("/outline")
+            {
                 (stripped, true)
             } else {
                 (path_part, false)
             };
 
-            let validated_path = crate::security::validate_path(file_path)
-                .map_err(|e| rmcp::Error::invalid_request(format!("Security validation error: {}", e), None))?;
+            let validated_path = crate::security::validate_path(file_path).map_err(|e| {
+                rmcp::Error::invalid_request(format!("Security validation error: {}", e), None)
+            })?;
             let path_str = validated_path.to_string_lossy().into_owned();
 
             let ir = handlers::load_to_ir(&path_str)
                 .map_err(|e| rmcp::Error::resource_not_found(format!("Load error: {}", e), None))?;
 
             let text_content = if is_outline {
-                serde_json::to_string_pretty(&ir.outline())
-                    .unwrap_or_default()
+                serde_json::to_string_pretty(&ir.outline()).unwrap_or_default()
             } else {
                 let text: Vec<String> = ir.paragraphs.iter().map(|p| p.text.clone()).collect();
                 text.join("\n")
             };
 
             Ok(rmcp::model::ReadResourceResult {
-                contents: vec![rmcp::model::ResourceContents::text(text_content, request.uri.clone())],
+                contents: vec![rmcp::model::ResourceContents::text(
+                    text_content,
+                    request.uri.clone(),
+                )],
             })
         };
         fut
@@ -1364,7 +1553,8 @@ fn structured_error(code: &str, msg: &str, category: &str, suggestion: &str) -> 
         "error_code": code,
         "category": category,
         "suggestion": suggestion
-    }).to_string()
+    })
+    .to_string()
 }
 
 fn map_load_error(e: &handlers::LoadError) -> String {

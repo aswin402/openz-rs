@@ -1,7 +1,7 @@
-use image::{DynamicImage, ImageBuffer, Rgba};
-use rayon::prelude::*;
 use crate::{ProcessOperation, ResizeMethod};
-use openmedia_core::{Result, OpenMediaError};
+use image::{DynamicImage, ImageBuffer, Rgba};
+use openmedia_core::{OpenMediaError, Result};
+use rayon::prelude::*;
 
 pub fn apply_cpu_operation(img: &DynamicImage, op: &ProcessOperation) -> Result<DynamicImage> {
     match op {
@@ -53,12 +53,12 @@ pub fn apply_cpu_operation(img: &DynamicImage, op: &ProcessOperation) -> Result<
             }
             Ok(DynamicImage::ImageRgba8(blurred))
         }
-        ProcessOperation::Sharpen { radius, threshold, .. } => {
-            Ok(img.unsharpen(*radius, *threshold as i32))
-        }
-        ProcessOperation::UnsharpMask { radius, threshold, .. } => {
-            Ok(img.unsharpen(*radius, *threshold as i32))
-        }
+        ProcessOperation::Sharpen {
+            radius, threshold, ..
+        } => Ok(img.unsharpen(*radius, *threshold as i32)),
+        ProcessOperation::UnsharpMask {
+            radius, threshold, ..
+        } => Ok(img.unsharpen(*radius, *threshold as i32)),
         ProcessOperation::Brightness { value } => {
             let mut rgba = img.to_rgba8();
             rgba.par_chunks_mut(4).for_each(|pixel| {
@@ -92,9 +92,7 @@ pub fn apply_cpu_operation(img: &DynamicImage, op: &ProcessOperation) -> Result<
             });
             Ok(DynamicImage::ImageRgba8(rgba))
         }
-        ProcessOperation::HueRotate { degrees } => {
-            Ok(img.huerotate(*degrees as i32))
-        }
+        ProcessOperation::HueRotate { degrees } => Ok(img.huerotate(*degrees as i32)),
         ProcessOperation::Sepia { intensity } => {
             let mut rgba = img.to_rgba8();
             rgba.par_chunks_mut(4).for_each(|pixel| {
@@ -113,7 +111,9 @@ pub fn apply_cpu_operation(img: &DynamicImage, op: &ProcessOperation) -> Result<
         ProcessOperation::Threshold { value } => {
             let mut rgba = img.to_rgba8();
             rgba.par_chunks_mut(4).for_each(|pixel| {
-                let luma = (pixel[0] as f32 * 0.299 + pixel[1] as f32 * 0.587 + pixel[2] as f32 * 0.114) as u8;
+                let luma = (pixel[0] as f32 * 0.299
+                    + pixel[1] as f32 * 0.587
+                    + pixel[2] as f32 * 0.114) as u8;
                 let val = if luma >= *value { 255 } else { 0 };
                 pixel[0] = val;
                 pixel[1] = val;
@@ -128,12 +128,28 @@ pub fn apply_cpu_operation(img: &DynamicImage, op: &ProcessOperation) -> Result<
                 let g = pixel[1] as f32;
                 let b = pixel[2] as f32;
                 let a = pixel[3] as f32;
-                
-                let nr = r * matrix[0][0] + g * matrix[0][1] + b * matrix[0][2] + a * matrix[0][3] + matrix[0][4] * 255.0;
-                let ng = r * matrix[1][0] + g * matrix[1][1] + b * matrix[1][2] + a * matrix[1][3] + matrix[1][4] * 255.0;
-                let nb = r * matrix[2][0] + g * matrix[2][1] + b * matrix[2][2] + a * matrix[2][3] + matrix[2][4] * 255.0;
-                let na = r * matrix[3][0] + g * matrix[3][1] + b * matrix[3][2] + a * matrix[3][3] + matrix[3][4] * 255.0;
-                
+
+                let nr = r * matrix[0][0]
+                    + g * matrix[0][1]
+                    + b * matrix[0][2]
+                    + a * matrix[0][3]
+                    + matrix[0][4] * 255.0;
+                let ng = r * matrix[1][0]
+                    + g * matrix[1][1]
+                    + b * matrix[1][2]
+                    + a * matrix[1][3]
+                    + matrix[1][4] * 255.0;
+                let nb = r * matrix[2][0]
+                    + g * matrix[2][1]
+                    + b * matrix[2][2]
+                    + a * matrix[2][3]
+                    + matrix[2][4] * 255.0;
+                let na = r * matrix[3][0]
+                    + g * matrix[3][1]
+                    + b * matrix[3][2]
+                    + a * matrix[3][3]
+                    + matrix[3][4] * 255.0;
+
                 pixel[0] = nr.clamp(0.0, 255.0) as u8;
                 pixel[1] = ng.clamp(0.0, 255.0) as u8;
                 pixel[2] = nb.clamp(0.0, 255.0) as u8;
@@ -141,7 +157,11 @@ pub fn apply_cpu_operation(img: &DynamicImage, op: &ProcessOperation) -> Result<
             });
             Ok(DynamicImage::ImageRgba8(rgba))
         }
-        ProcessOperation::Resize { width, height, method } => {
+        ProcessOperation::Resize {
+            width,
+            height,
+            method,
+        } => {
             let filter = match method {
                 ResizeMethod::Nearest => image::imageops::FilterType::Nearest,
                 ResizeMethod::Bilinear => image::imageops::FilterType::Triangle,
@@ -149,7 +169,12 @@ pub fn apply_cpu_operation(img: &DynamicImage, op: &ProcessOperation) -> Result<
             };
             Ok(img.resize_exact(*width, *height, filter))
         }
-        ProcessOperation::Crop { x, y, width, height } => {
+        ProcessOperation::Crop {
+            x,
+            y,
+            width,
+            height,
+        } => {
             let rgba = img.to_rgba8();
             let cropped = image::imageops::crop_imm(&rgba, *x, *y, *width, *height).to_image();
             Ok(DynamicImage::ImageRgba8(cropped))
@@ -165,7 +190,13 @@ pub fn apply_cpu_operation(img: &DynamicImage, op: &ProcessOperation) -> Result<
         }
         ProcessOperation::FlipHorizontal => Ok(img.fliph()),
         ProcessOperation::FlipVertical => Ok(img.flipv()),
-        ProcessOperation::Pad { top, right, bottom, left, color } => {
+        ProcessOperation::Pad {
+            top,
+            right,
+            bottom,
+            left,
+            color,
+        } => {
             let w = img.width() + left + right;
             let h = img.height() + top + bottom;
             let mut padded = ImageBuffer::from_pixel(w, h, Rgba(*color));
@@ -173,8 +204,12 @@ pub fn apply_cpu_operation(img: &DynamicImage, op: &ProcessOperation) -> Result<
             Ok(DynamicImage::ImageRgba8(padded))
         }
         ProcessOperation::Composite { overlay, x, y, .. } => {
-            let overlay_img = image::open(overlay)
-                .map_err(|e| OpenMediaError::IoError(std::io::Error::new(std::io::ErrorKind::NotFound, e.to_string())))?;
+            let overlay_img = image::open(overlay).map_err(|e| {
+                OpenMediaError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    e.to_string(),
+                ))
+            })?;
             let mut base = img.to_rgba8();
             image::imageops::overlay(&mut base, &overlay_img, *x as i64, *y as i64);
             Ok(DynamicImage::ImageRgba8(base))

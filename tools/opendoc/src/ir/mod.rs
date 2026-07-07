@@ -16,8 +16,8 @@ pub mod document;
 pub mod elements;
 pub mod metadata;
 
+pub use document::Chunk;
 pub use document::Document;
 pub use document::Section;
-pub use document::Chunk;
 pub use elements::*;
 pub use metadata::*;

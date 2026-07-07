@@ -1,6 +1,6 @@
-use serde::{Serialize, Deserialize};
 use crate::ir::{Document, Paragraph};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LegalTemplate {
@@ -58,8 +58,11 @@ pub fn extract_legal(doc: &Document) -> LegalTemplate {
     // Compile regexes
     let re_date = Regex::new(r"(?i)(effective date|agreement date|entered into on|date of this agreement)[^\n.]{0,30}\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|[a-z]{3,10} \d{1,2},? \d{4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\b").ok();
     let re_gov_law = Regex::new(r"(?i)(governed by|laws of|governing law[^\n.]{0,20}be)\s+(?:the\s+)?(?:laws\s+of\s+)?(?:state\s+of\s+)?([A-Z][a-zA-Z\s]{2,20})").ok();
-    let re_jurisdiction = Regex::new(r"(?i)(courts of|jurisdiction in|venue in|courts located in)\s+([A-Z][a-zA-Z\s,]{2,30})").ok();
-    
+    let re_jurisdiction = Regex::new(
+        r"(?i)(courts of|jurisdiction in|venue in|courts located in)\s+([A-Z][a-zA-Z\s,]{2,30})",
+    )
+    .ok();
+
     // Scan paragraphs
     for p in get_effective_paragraphs(doc) {
         let text = &p.text;
@@ -94,7 +97,9 @@ pub fn extract_legal(doc: &Document) -> LegalTemplate {
         // 4. Parties (between X and Y)
         if text.contains("between") || text.contains("among") || text.contains("by and between") {
             // Look for 'between X and Y'
-            if let Ok(re_between) = Regex::new(r"(?i)between\s+([A-Z][A-Za-z0-9\s\.\-]{2,40}?)\s+and\s+([A-Z][A-Za-z0-9\s\.\-]{2,40})") {
+            if let Ok(re_between) = Regex::new(
+                r"(?i)between\s+([A-Z][A-Za-z0-9\s\.\-]{2,40}?)\s+and\s+([A-Z][A-Za-z0-9\s\.\-]{2,40})",
+            ) {
                 if let Some(cap) = re_between.captures(text) {
                     let p1 = cap.get(1).unwrap().as_str().trim().to_string();
                     let p2 = cap.get(2).unwrap().as_str().trim().to_string();
@@ -112,7 +117,10 @@ pub fn extract_legal(doc: &Document) -> LegalTemplate {
             if let Some(ref re) = re_party {
                 for cap in re.captures_iter(text) {
                     let party_name = cap.get(1).unwrap().as_str().trim().to_string();
-                    if !parties.contains(&party_name) && !party_name.contains("agreement") && !party_name.contains("between") {
+                    if !parties.contains(&party_name)
+                        && !party_name.contains("agreement")
+                        && !party_name.contains("between")
+                    {
                         parties.push(party_name);
                     }
                 }
@@ -120,7 +128,9 @@ pub fn extract_legal(doc: &Document) -> LegalTemplate {
         }
 
         // 5. Termination Clause
-        if termination_clause.is_none() && (text.contains("terminate") || text.contains("termination")) {
+        if termination_clause.is_none()
+            && (text.contains("terminate") || text.contains("termination"))
+        {
             termination_clause = Some(text.trim().to_string());
         }
     }
@@ -154,7 +164,8 @@ pub fn extract_legal(doc: &Document) -> LegalTemplate {
 
 /// Helper to parse a float number from cell or text.
 fn parse_number(s: &str) -> Option<f64> {
-    let clean = s.chars()
+    let clean = s
+        .chars()
         .filter(|c| c.is_numeric() || *c == '.' || *c == '-')
         .collect::<String>();
     clean.parse::<f64>().ok()
@@ -221,7 +232,10 @@ pub fn extract_financial(doc: &Document) -> FinancialTemplate {
             let label = row[0].to_lowercase();
             let val_str = &row[1];
 
-            if label.contains("revenue") || label.contains("total sales") || label.contains("turnover") {
+            if label.contains("revenue")
+                || label.contains("total sales")
+                || label.contains("turnover")
+            {
                 if revenue.is_none() {
                     revenue = parse_number(val_str);
                 }
@@ -229,7 +243,9 @@ pub fn extract_financial(doc: &Document) -> FinancialTemplate {
                 if net_income.is_none() {
                     net_income = parse_number(val_str);
                 }
-            } else if label.contains("total assets") || (label.contains("assets") && !label.contains("liabilities")) {
+            } else if label.contains("total assets")
+                || (label.contains("assets") && !label.contains("liabilities"))
+            {
                 if total_assets.is_none() {
                     total_assets = parse_number(val_str);
                 }
@@ -242,8 +258,10 @@ pub fn extract_financial(doc: &Document) -> FinancialTemplate {
     }
 
     // Fallback: regex search text
-    let re_rev = Regex::new(r"(?i)(revenue|sales|turnover)[^\d\n.]{0,20}\$?\s*([\d,]+(?:\.\d+)?)").ok();
-    let re_net = Regex::new(r"(?i)(net income|net profit)[^\d\n.]{0,20}\$?\s*([\d,]+(?:\.\d+)?)").ok();
+    let re_rev =
+        Regex::new(r"(?i)(revenue|sales|turnover)[^\d\n.]{0,20}\$?\s*([\d,]+(?:\.\d+)?)").ok();
+    let re_net =
+        Regex::new(r"(?i)(net income|net profit)[^\d\n.]{0,20}\$?\s*([\d,]+(?:\.\d+)?)").ok();
     let re_assets = Regex::new(r"(?i)(total assets)[^\d\n.]{0,20}\$?\s*([\d,]+(?:\.\d+)?)").ok();
     let re_liab = Regex::new(r"(?i)(total liabilities)[^\d\n.]{0,20}\$?\s*([\d,]+(?:\.\d+)?)").ok();
     let re_fy = Regex::new(r"(?i)\b(FY\d{4}|FY\s*\d{2}|fiscal year \d{4})\b").ok();
@@ -335,16 +353,23 @@ mod tests {
     fn test_extract_legal_lifecycle() {
         let mut doc = Document::new("txt");
         doc.paragraphs.push(Paragraph::new("This agreement is entered into on January 15, 2026 by and between Google Inc. and DeepMind LLC."));
-        doc.paragraphs.push(Paragraph::new("This Agreement shall be governed by the laws of California."));
+        doc.paragraphs.push(Paragraph::new(
+            "This Agreement shall be governed by the laws of California.",
+        ));
         doc.paragraphs.push(Paragraph::new("Any dispute shall be subject to the jurisdiction of the courts of San Francisco, California."));
-        doc.paragraphs.push(Paragraph::new("The term will terminate on breach of confidentiality."));
+        doc.paragraphs.push(Paragraph::new(
+            "The term will terminate on breach of confidentiality.",
+        ));
 
         let legal = extract_legal(&doc);
         assert_eq!(legal.effective_date.as_deref(), Some("January 15, 2026"));
         assert!(legal.parties.contains(&"Google Inc.".to_string()));
         assert!(legal.parties.contains(&"DeepMind LLC.".to_string()));
         assert_eq!(legal.governing_law.as_deref(), Some("California"));
-        assert_eq!(legal.jurisdiction.as_deref(), Some("San Francisco, California"));
+        assert_eq!(
+            legal.jurisdiction.as_deref(),
+            Some("San Francisco, California")
+        );
         assert!(legal.termination_clause.unwrap().contains("terminate"));
     }
 
@@ -361,7 +386,8 @@ mod tests {
         let table = Table::new(vec![], rows);
         doc.tables.push(table);
 
-        doc.paragraphs.push(Paragraph::new("In fiscal year 2026, the company grew."));
+        doc.paragraphs
+            .push(Paragraph::new("In fiscal year 2026, the company grew."));
 
         let fin = extract_financial(&doc);
         assert_eq!(fin.currency.as_deref(), Some("USD"));
@@ -374,8 +400,10 @@ mod tests {
     #[test]
     fn test_extract_timeline_lifecycle() {
         let mut doc = Document::new("txt");
-        doc.paragraphs.push(Paragraph::new("2026-01-01: Milestone A completed."));
-        doc.paragraphs.push(Paragraph::new("2026-02-15: Milestone B reached."));
+        doc.paragraphs
+            .push(Paragraph::new("2026-01-01: Milestone A completed."));
+        doc.paragraphs
+            .push(Paragraph::new("2026-02-15: Milestone B reached."));
 
         let timeline = extract_timeline(&doc);
         assert_eq!(timeline.events.len(), 2);

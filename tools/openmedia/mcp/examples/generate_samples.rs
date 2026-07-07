@@ -1,4 +1,4 @@
-use openmedia_svg::{ChartPoint, create_chart, render_mermaid, rasterize};
+use openmedia_svg::{create_chart, rasterize, render_mermaid, ChartPoint};
 use std::fs;
 use std::path::Path;
 
@@ -41,13 +41,35 @@ fn main() {
 
     // 3. Generate Sample Chart (Radar Chart)
     let chart_data = vec![
-        ChartPoint { label: "Images".to_string(), value: 85.0 },
-        ChartPoint { label: "Videos".to_string(), value: 90.0 },
-        ChartPoint { label: "Animations".to_string(), value: 95.0 },
-        ChartPoint { label: "Diagrams".to_string(), value: 80.0 },
-        ChartPoint { label: "Performance".to_string(), value: 99.0 },
+        ChartPoint {
+            label: "Images".to_string(),
+            value: 85.0,
+        },
+        ChartPoint {
+            label: "Videos".to_string(),
+            value: 90.0,
+        },
+        ChartPoint {
+            label: "Animations".to_string(),
+            value: 95.0,
+        },
+        ChartPoint {
+            label: "Diagrams".to_string(),
+            value: 80.0,
+        },
+        ChartPoint {
+            label: "Performance".to_string(),
+            value: 99.0,
+        },
     ];
-    let chart_svg = create_chart("radar", Some("Rendering Engines Performance"), &chart_data, 800, 600).unwrap();
+    let chart_svg = create_chart(
+        "radar",
+        Some("Rendering Engines Performance"),
+        &chart_data,
+        800,
+        600,
+    )
+    .unwrap();
     fs::write(assets_dir.join("sample_chart.svg"), chart_svg).unwrap();
     println!("Generated assets/sample_chart.svg");
 
@@ -65,7 +87,8 @@ fn main() {
         None,
         "png",
         &assets_dir.join("sample_image.png"),
-    ).unwrap();
+    )
+    .unwrap();
     println!("Generated assets/sample_image.png");
 
     println!("All sample assets generated successfully in assets/ folder!");

@@ -18,7 +18,10 @@ pub fn load_to_ir(file_path: &str) -> Result<Document, LoadError> {
 }
 
 /// Load any supported document into the Internal Representation (IR) with an optional password.
-pub fn load_to_ir_with_password(file_path: &str, password: Option<&str>) -> Result<Document, LoadError> {
+pub fn load_to_ir_with_password(
+    file_path: &str,
+    password: Option<&str>,
+) -> Result<Document, LoadError> {
     let path = Path::new(file_path);
     let ext = path
         .extension()
@@ -53,23 +56,19 @@ pub fn load_to_ir_with_password(file_path: &str, password: Option<&str>) -> Resu
             if password.is_some() {
                 return Err(LoadError::ParseError("Password decryption for Office documents (.xlsx) is not supported under offline mode due to missing office_crypto library. Encrypted PDFs are fully supported.".to_string()));
             }
-            let doc = xlsx::to_ir(file_path)
-                .map_err(LoadError::ParseError)?;
+            let doc = xlsx::to_ir(file_path).map_err(LoadError::ParseError)?;
             Ok(doc)
         }
         "md" | "markdown" => {
-            let doc = md::to_ir(file_path)
-                .map_err(LoadError::ParseError)?;
+            let doc = md::to_ir(file_path).map_err(LoadError::ParseError)?;
             Ok(doc)
         }
         "html" | "htm" => {
-            let doc = html::to_ir(file_path)
-                .map_err(LoadError::ParseError)?;
+            let doc = html::to_ir(file_path).map_err(LoadError::ParseError)?;
             Ok(doc)
         }
         "csv" => {
-            let doc = csv::to_ir(file_path)
-                .map_err(LoadError::ParseError)?;
+            let doc = csv::to_ir(file_path).map_err(LoadError::ParseError)?;
             Ok(doc)
         }
         "txt" | "text" => {
@@ -96,10 +95,9 @@ pub enum LoadError {
 
 /// Extract embedded images from a zip-based Office document (DOCX, PPTX).
 pub fn extract_images_from_zip(file_path: &str, output_dir: &str) -> Result<Vec<String>, String> {
-    let file = std::fs::File::open(file_path)
-        .map_err(|e| format!("Failed to open file: {e}"))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|e| format!("Failed to read zip archive: {e}"))?;
+    let file = std::fs::File::open(file_path).map_err(|e| format!("Failed to open file: {e}"))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("Failed to read zip archive: {e}"))?;
 
     let output_path = std::path::Path::new(output_dir);
     if !output_path.exists() {
@@ -110,10 +108,11 @@ pub fn extract_images_from_zip(file_path: &str, output_dir: &str) -> Result<Vec<
     let mut extracted = Vec::new();
 
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i)
+        let mut file = archive
+            .by_index(i)
             .map_err(|e| format!("Failed to read file from zip: {e}"))?;
         let name = file.name().to_string();
-        
+
         // We look for word/media/ or ppt/media/
         if name.starts_with("word/media/") || name.starts_with("ppt/media/") {
             if file.is_dir() {
@@ -132,7 +131,7 @@ pub fn extract_images_from_zip(file_path: &str, output_dir: &str) -> Result<Vec<
                 .map_err(|e| format!("Failed to create output image file {}: {}", file_name, e))?;
             std::io::copy(&mut file, &mut outfile)
                 .map_err(|e| format!("Failed to write output image file {}: {}", file_name, e))?;
-            
+
             extracted.push(target_file_path.to_string_lossy().to_string());
         }
     }

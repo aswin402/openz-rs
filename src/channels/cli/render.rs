@@ -1,27 +1,8 @@
 use crate::agent::style::*;
-use std::io::{Write, stdout};
+use crate::println;
+use std::io::{stdout, Write};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
-
-#[allow(unused_macros)]
-macro_rules! println {
-    () => {
-        crate::tui_println!()
-    };
-    ($($arg:tt)*) => {
-        crate::tui_println!($($arg)*)
-    };
-}
-
-#[allow(unused_macros)]
-macro_rules! print {
-    () => {
-        crate::tui_print!()
-    };
-    ($($arg:tt)*) => {
-        crate::tui_print!($($arg)*)
-    };
-}
 
 pub static CUSTOM_CONTEXT_LIMIT: Mutex<Option<usize>> = Mutex::new(None);
 static MCP_SPIN: AtomicU32 = AtomicU32::new(0);
@@ -101,7 +82,9 @@ fn is_divider_row(line: &str) -> bool {
     if trimmed.is_empty() || !trimmed.contains('|') {
         return false;
     }
-    trimmed.chars().all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace())
+    trimmed
+        .chars()
+        .all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace())
 }
 
 fn split_row(line: &str) -> Vec<String> {
@@ -145,10 +128,10 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     for paragraph in text.split('\n') {
         let mut current_line = String::new();
         let mut current_width = 0;
-        
+
         for word in paragraph.split_whitespace() {
             let word_width = text_display_width(word);
-            
+
             if current_line.is_empty() {
                 if word_width <= max_width {
                     current_line.push_str(word);
@@ -180,7 +163,7 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
                     lines.push(current_line);
                     current_line = String::new();
                     current_width = 0;
-                    
+
                     if word_width <= max_width {
                         current_line.push_str(word);
                         current_width = word_width;
@@ -216,7 +199,7 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
             lines.push(String::new());
         }
     }
-    
+
     if lines.is_empty() {
         lines.push(String::new());
     }
@@ -226,7 +209,7 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
 fn format_cell_text(text: &str) -> String {
     let light_blue = "\x1b[38;2;135;206;250m";
     let mut formatted = text.to_string();
-    
+
     formatted = formatted
         .replace("✔", &format!("{}{}{}", EMERALD_GREEN, "✔", COLOR_RESET))
         .replace("✅", &format!("{}{}{}", EMERALD_GREEN, "✅", COLOR_RESET))
@@ -234,11 +217,20 @@ fn format_cell_text(text: &str) -> String {
         .replace("✖", &format!("{}{}{}", ERROR_RED, "✖", COLOR_RESET))
         .replace("❌", &format!("{}{}{}", ERROR_RED, "❌", COLOR_RESET))
         .replace("✗", &format!("{}{}{}", ERROR_RED, "✗", COLOR_RESET));
-        
-    formatted = cli_re_bold().replace_all(&formatted, &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET)).to_string();
-    formatted = cli_re_code().replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
-    formatted = cli_re_italic().replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
-    
+
+    formatted = cli_re_bold()
+        .replace_all(
+            &formatted,
+            &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET),
+        )
+        .to_string();
+    formatted = cli_re_code()
+        .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
+        .to_string();
+    formatted = cli_re_italic()
+        .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
+        .to_string();
+
     formatted
 }
 
@@ -254,7 +246,7 @@ fn print_normal_line(line: &str) {
         println!("{}{}{}", HEADING_BLUE, line, COLOR_RESET);
     } else {
         let mut formatted = line.to_string();
-        
+
         formatted = formatted
             .replace("✔", &format!("{}{}{}", EMERALD_GREEN, "✔", COLOR_RESET))
             .replace("✅", &format!("{}{}{}", EMERALD_GREEN, "✅", COLOR_RESET))
@@ -262,11 +254,20 @@ fn print_normal_line(line: &str) {
             .replace("✖", &format!("{}{}{}", ERROR_RED, "✖", COLOR_RESET))
             .replace("❌", &format!("{}{}{}", ERROR_RED, "❌", COLOR_RESET))
             .replace("✗", &format!("{}{}{}", ERROR_RED, "✗", COLOR_RESET));
-            
-        formatted = cli_re_bold().replace_all(&formatted, &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET)).to_string();
-        formatted = cli_re_code().replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
-        formatted = cli_re_italic().replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET)).to_string();
-        
+
+        formatted = cli_re_bold()
+            .replace_all(
+                &formatted,
+                &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET),
+            )
+            .to_string();
+        formatted = cli_re_code()
+            .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
+            .to_string();
+        formatted = cli_re_italic()
+            .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
+            .to_string();
+
         println!("{}", formatted);
     }
 }
@@ -279,7 +280,10 @@ fn clean_cell_text(text: &str) -> String {
     while let Some(rest) = cleaned.strip_suffix('|') {
         cleaned = rest.trim();
     }
-    if let Some(inner) = cleaned.strip_prefix("**").and_then(|s| s.strip_suffix("**")) {
+    if let Some(inner) = cleaned
+        .strip_prefix("**")
+        .and_then(|s| s.strip_suffix("**"))
+    {
         cleaned = inner.trim();
     }
     if let Some(inner) = cleaned.strip_prefix('*').and_then(|s| s.strip_suffix('*')) {
@@ -295,7 +299,7 @@ fn render_table(table_lines: &[&str]) {
         }
         return;
     }
-    
+
     let headers: Vec<String> = split_row(table_lines[0])
         .into_iter()
         .map(|h| clean_cell_text(&h))
@@ -307,7 +311,7 @@ fn render_table(table_lines: &[&str]) {
         }
         return;
     }
-    
+
     let mut data_rows = Vec::new();
     for &line in &table_lines[2..] {
         let mut cells = split_row(line);
@@ -317,16 +321,18 @@ fn render_table(table_lines: &[&str]) {
         cells.truncate(num_cols);
         data_rows.push(cells);
     }
-    
+
     let term_width = if let Ok((w, _)) = crossterm::terminal::size() {
         w as usize
     } else {
         80
     };
-    
+
     let separator_overhead = 3 * (num_cols - 1);
-    let available_width = term_width.saturating_sub(separator_overhead).saturating_sub(2);
-    
+    let available_width = term_width
+        .saturating_sub(separator_overhead)
+        .saturating_sub(2);
+
     let mut max_content_widths = vec![0; num_cols];
     for col in 0..num_cols {
         let mut max_w = text_display_width(&headers[col]);
@@ -335,14 +341,14 @@ fn render_table(table_lines: &[&str]) {
         }
         max_content_widths[col] = max_w.max(3);
     }
-    
+
     let total_content_width: usize = max_content_widths.iter().sum();
     let mut col_widths = max_content_widths.clone();
-    
+
     if total_content_width > available_width {
         let mut remaining_width = available_width;
         let mut large_cols = Vec::new();
-        
+
         for col in 0..num_cols {
             if max_content_widths[col] <= 15 {
                 col_widths[col] = max_content_widths[col];
@@ -351,17 +357,23 @@ fn render_table(table_lines: &[&str]) {
                 large_cols.push(col);
             }
         }
-        
+
         if !large_cols.is_empty() {
             let equal_share = remaining_width / large_cols.len();
             let mut extra = remaining_width % large_cols.len();
             for &col in &large_cols {
-                let share = equal_share + if extra > 0 { extra -= 1; 1 } else { 0 };
+                let share = equal_share
+                    + if extra > 0 {
+                        extra -= 1;
+                        1
+                    } else {
+                        0
+                    };
                 col_widths[col] = share.max(10);
             }
         }
     }
-    
+
     let mut divider = String::new();
     for col in 0..num_cols {
         if col == 0 {
@@ -375,10 +387,10 @@ fn render_table(table_lines: &[&str]) {
             divider.push('┼');
         }
     }
-    
+
     let separator = format!(" {}│{} ", LIGHT_WHITE, COLOR_RESET);
     let divider_colored = format!("{}{}{}", LIGHT_WHITE, divider, COLOR_RESET);
-    
+
     let mut header_cell_lines = Vec::new();
     let mut max_header_lines = 1;
     for col in 0..num_cols {
@@ -386,22 +398,32 @@ fn render_table(table_lines: &[&str]) {
         max_header_lines = max_header_lines.max(lines.len());
         header_cell_lines.push(lines);
     }
-    
+
     for line_idx in 0..max_header_lines {
         let mut header_line_parts = Vec::new();
         for col in 0..num_cols {
-            let text = header_cell_lines[col].get(line_idx).cloned().unwrap_or_default();
+            let text = header_cell_lines[col]
+                .get(line_idx)
+                .cloned()
+                .unwrap_or_default();
             let visible_w = text_display_width(&text);
             let padding_len = col_widths[col].saturating_sub(visible_w);
             let formatted = format_cell_text(&text);
-            let colored = format!("{}{}{}{}{}", HEADING_BLUE, COLOR_BOLD, formatted, COLOR_RESET, " ".repeat(padding_len));
+            let colored = format!(
+                "{}{}{}{}{}",
+                HEADING_BLUE,
+                COLOR_BOLD,
+                formatted,
+                COLOR_RESET,
+                " ".repeat(padding_len)
+            );
             header_line_parts.push(colored);
         }
         println!("{}", header_line_parts.join(&separator));
     }
-    
+
     println!("{}", divider_colored);
-    
+
     for row in data_rows {
         let mut cell_lines = Vec::new();
         let mut max_lines = 1;
@@ -410,7 +432,7 @@ fn render_table(table_lines: &[&str]) {
             max_lines = max_lines.max(lines.len());
             cell_lines.push(lines);
         }
-        
+
         for line_idx in 0..max_lines {
             let mut row_line_parts = Vec::new();
             for col in 0..num_cols {
@@ -444,37 +466,54 @@ pub fn print_session_history(session: &crate::session::Session) {
             print_colored_markdown(content);
             println!();
         } else if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
-            let names: Vec<String> = tool_calls.iter()
-                .filter_map(|tc| tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()))
+            let names: Vec<String> = tool_calls
+                .iter()
+                .filter_map(|tc| {
+                    tc.get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|n| n.as_str())
+                })
                 .map(|n| n.to_string())
                 .collect();
             if !names.is_empty() {
-                println!("{} [Called tool(s): {}] {}", role_str, names.join(", "), COLOR_RESET);
+                println!(
+                    "{} [Called tool(s): {}] {}",
+                    role_str,
+                    names.join(", "),
+                    COLOR_RESET
+                );
             } else {
                 println!("{} [Called tool(s)] {}", role_str, COLOR_RESET);
             }
         }
     }
-    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+    println!(
+        "{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
 }
 
 pub fn print_colored_markdown(content: &str) {
     let lines: Vec<&str> = content.lines().collect();
     let mut i = 0;
     let mut in_code_block = false;
-    
+
     while i < lines.len() {
         let line = lines[i];
         let trimmed = line.trim_start();
-        
+
         if trimmed.starts_with("```") {
             in_code_block = !in_code_block;
             print_normal_line(line);
             i += 1;
             continue;
         }
-        
-        if !in_code_block && i + 1 < lines.len() && is_table_row(lines[i]) && is_divider_row(lines[i + 1]) {
+
+        if !in_code_block
+            && i + 1 < lines.len()
+            && is_table_row(lines[i])
+            && is_divider_row(lines[i + 1])
+        {
             let mut table_lines = Vec::new();
             table_lines.push(lines[i]);
             i += 1;
@@ -516,12 +555,12 @@ pub fn render_box(
     }
     // Clear the input line itself
     print!("\r\x1b[2K");
-    
+
     // 1. Calculate token usage
     let session = session_manager.get_or_create(session_key);
     let total_chars: usize = session.messages.iter().map(|m| m.content.len()).sum();
     let approx_tokens = total_chars / 4;
-    
+
     let model_lower = model.to_lowercase();
     let custom_limit = if let Ok(guard) = CUSTOM_CONTEXT_LIMIT.lock() {
         *guard
@@ -535,13 +574,28 @@ pub fn render_box(
         2_097_152
     } else if model_lower.contains("gemini") {
         1_048_576
-    } else if model_lower.contains("claude-3-5") || model_lower.contains("claude-3") || model_lower.contains("o1-") || model_lower.contains("o3-mini") {
+    } else if model_lower.contains("claude-3-5")
+        || model_lower.contains("claude-3")
+        || model_lower.contains("o1-")
+        || model_lower.contains("o3-mini")
+    {
         200_000
     } else if model_lower.contains("gpt-4") || model_lower.contains("gpt-4o") {
         128_000
     } else if model_lower.contains("deepseek-v4") {
         1_000_000
-    } else if model_lower.contains("deepseek-v3") || model_lower.contains("deepseek-r1") || model_lower.contains("deepseek-chat") || model_lower.contains("deepseek-reasoner") || model_lower.contains("deepseek") || model_lower.contains("llama-3.1") || model_lower.contains("llama-3.2") || model_lower.contains("llama-3.3") || model_lower.contains("llama3.1") || model_lower.contains("llama3.2") || model_lower.contains("llama3.3") {
+    } else if model_lower.contains("deepseek-v3")
+        || model_lower.contains("deepseek-r1")
+        || model_lower.contains("deepseek-chat")
+        || model_lower.contains("deepseek-reasoner")
+        || model_lower.contains("deepseek")
+        || model_lower.contains("llama-3.1")
+        || model_lower.contains("llama-3.2")
+        || model_lower.contains("llama-3.3")
+        || model_lower.contains("llama3.1")
+        || model_lower.contains("llama3.2")
+        || model_lower.contains("llama3.3")
+    {
         128_000
     } else if model_lower.contains("llama-3") || model_lower.contains("llama3") {
         8_192
@@ -552,19 +606,19 @@ pub fn render_box(
     } else {
         128_000
     };
-    
+
     let limit_str = if limit_tokens >= 1_000_000 {
         format!("{}M", limit_tokens / 1_000_000)
     } else {
         format!("{}K", limit_tokens / 1000)
     };
-    
+
     let approx_tokens_str = if approx_tokens >= 1000 {
         format!("{:.1}K", approx_tokens as f64 / 1000.0)
     } else {
         format!("{}", approx_tokens)
     };
-    
+
     let provider_lower = provider.to_lowercase();
     let display_provider = match provider_lower.as_str() {
         "openai" => "OpenAI",
@@ -590,7 +644,7 @@ pub fn render_box(
     };
 
     // ── MCP pill ──────────────────────────────────────────────────────────────
-    const SPIN_FRAMES: &[&str] = &["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+    const SPIN_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let mcp_done = super::mcp::is_mcp_done();
     let (mcp_loaded, mcp_failed, mcp_total) = super::mcp::get_mcp_stats();
 
@@ -604,8 +658,14 @@ pub fn render_box(
                 format!(" ◇ MCP {}/{} {}  │ ", processed, total, frame),
                 format!(
                     " {}◇ MCP {}{}/{} {}{}  {}│{} ",
-                    AURA_PURPLE, AURA_GOLD, processed, total, frame, COLOR_RESET,
-                    AURA_SLATE, COLOR_RESET
+                    AURA_PURPLE,
+                    AURA_GOLD,
+                    processed,
+                    total,
+                    frame,
+                    COLOR_RESET,
+                    AURA_SLATE,
+                    COLOR_RESET
                 ),
             )
         } else {
@@ -613,8 +673,7 @@ pub fn render_box(
                 format!(" ◇ MCP {}  │ ", frame),
                 format!(
                     " {}◇ MCP {}{}  {}│{} ",
-                    AURA_PURPLE, frame, COLOR_RESET,
-                    AURA_SLATE, COLOR_RESET
+                    AURA_PURPLE, frame, COLOR_RESET, AURA_SLATE, COLOR_RESET
                 ),
             )
         }
@@ -623,8 +682,13 @@ pub fn render_box(
             format!(" ◇ MCP {}✓  │ ", mcp_loaded),
             format!(
                 " {}◇ MCP {}{}{}✓{}  {}│{} ",
-                AURA_PURPLE, AURA_GREEN, mcp_loaded, AURA_GREEN, COLOR_RESET,
-                AURA_SLATE, COLOR_RESET
+                AURA_PURPLE,
+                AURA_GREEN,
+                mcp_loaded,
+                AURA_GREEN,
+                COLOR_RESET,
+                AURA_SLATE,
+                COLOR_RESET
             ),
         )
     } else {
@@ -633,9 +697,16 @@ pub fn render_box(
             format!(
                 " {}◇ MCP {}{}{}✓{} {}{}{}✗{}  {}│{} ",
                 AURA_PURPLE,
-                AURA_GREEN, mcp_loaded, AURA_GREEN, COLOR_RESET,
-                AURA_ROSE, mcp_failed, AURA_ROSE, COLOR_RESET,
-                AURA_SLATE, COLOR_RESET
+                AURA_GREEN,
+                mcp_loaded,
+                AURA_GREEN,
+                COLOR_RESET,
+                AURA_ROSE,
+                mcp_failed,
+                AURA_ROSE,
+                COLOR_RESET,
+                AURA_SLATE,
+                COLOR_RESET
             ),
         )
     };
@@ -655,10 +726,17 @@ pub fn render_box(
     let status_content = format!(
         "{} {}{}{} | {}{}{} | {}{}{}/{}{}",
         mcp_pill_colored,
-        RED_ORANGE, display_provider, LIGHT_WHITE,
-        RED_ORANGE, display_model, LIGHT_WHITE,
-        RED_ORANGE, approx_tokens_str, LIGHT_WHITE,
-        RED_ORANGE, limit_str
+        RED_ORANGE,
+        display_provider,
+        LIGHT_WHITE,
+        RED_ORANGE,
+        display_model,
+        LIGHT_WHITE,
+        RED_ORANGE,
+        approx_tokens_str,
+        LIGHT_WHITE,
+        RED_ORANGE,
+        limit_str
     );
 
     // Filter autocomplete dropdown suggestions
@@ -677,9 +755,7 @@ pub fn render_box(
     } else {
         format!(
             "{}{}{}[{}]{}{}",
-            LIGHT_WHITE, line_fill,
-            RED_ORANGE, status_content, LIGHT_WHITE,
-            COLOR_RESET
+            LIGHT_WHITE, line_fill, RED_ORANGE, status_content, LIGHT_WHITE, COLOR_RESET
         )
     };
 
@@ -722,7 +798,11 @@ pub fn render_box(
     }
 
     let mut total_width_from_v_start = cursor_offset_width;
-    for item in display_chars.iter().take(char_count).skip(active_cursor_idx) {
+    for item in display_chars
+        .iter()
+        .take(char_count)
+        .skip(active_cursor_idx)
+    {
         total_width_from_v_start += char_display_width(*item);
     }
     while v_start > 0 {
@@ -770,19 +850,25 @@ pub fn render_box(
             }
         }
         let end_idx = (start_idx + max_display).min(matches.len());
-        
+
         for (i, item) in matches.iter().enumerate().take(end_idx).skip(start_idx) {
             let (cmd, desc) = *item;
             let is_selected = selected_index == Some(i);
-            
+
             if is_selected {
-                print!("\r\n\x1b[2K> {}{:<30}{}{}{}", RED_ORANGE, cmd, AURA_SLATE, desc, COLOR_RESET);
+                print!(
+                    "\r\n\x1b[2K> {}{:<30}{}{}{}",
+                    RED_ORANGE, cmd, AURA_SLATE, desc, COLOR_RESET
+                );
             } else {
-                print!("\r\n\x1b[2K  {:<30}{}{}{}", cmd, AURA_SLATE, desc, COLOR_RESET);
+                print!(
+                    "\r\n\x1b[2K  {:<30}{}{}{}",
+                    cmd, AURA_SLATE, desc, COLOR_RESET
+                );
             }
             new_lines_printed += 1;
         }
-        
+
         let rem_below = matches.len() - end_idx;
         let rem_above = start_idx;
         if rem_below > 0 || rem_above > 0 {
@@ -793,7 +879,12 @@ pub fn render_box(
             if rem_below > 0 {
                 parts.push(format!("↓ {} more", rem_below));
             }
-            print!("\r\n\x1b[2K  {}{}{}", AURA_SLATE, parts.join(" / "), COLOR_RESET);
+            print!(
+                "\r\n\x1b[2K  {}{}{}",
+                AURA_SLATE,
+                parts.join(" / "),
+                COLOR_RESET
+            );
             new_lines_printed += 1;
         }
 
@@ -802,15 +893,18 @@ pub fn render_box(
         new_lines_printed += 1;
 
         // Print help/navigation instructions at the bottom
-        print!("\r\n\x1b[2K  {}↑/↓ Navigate · enter Select · tab Complete{}", AURA_SLATE, COLOR_RESET);
-        
+        print!(
+            "\r\n\x1b[2K  {}↑/↓ Navigate · enter Select · tab Complete{}",
+            AURA_SLATE, COLOR_RESET
+        );
+
         let cancel_text = format!("  {}esc to cancel{}", AURA_SLATE, COLOR_RESET);
         let cancel_width = 15;
         let model_display = format!("{}{}{}", AURA_SLATE, model, COLOR_RESET);
         let model_width = model.chars().count();
         let spacing = width.saturating_sub(cancel_width + model_width);
         let spaces: String = std::iter::repeat_n(' ', spacing).collect();
-        
+
         print!("\r\n\x1b[2K{}{}{}", cancel_text, spaces, model_display);
         new_lines_printed += 2;
     }
@@ -818,7 +912,7 @@ pub fn render_box(
     // Move cursor back up to the input line and place it at the active cursor position
     let cursor_col = 3 + cursor_col_offset;
     print!("\x1b[{}A\x1b[{}G", new_lines_printed - 1, cursor_col);
-    
+
     *lines_printed = new_lines_printed;
     stdout().flush()?;
     Ok(())
@@ -846,7 +940,7 @@ mod tests {
     fn test_split_row() {
         let cells = split_row("| A | B |");
         assert_eq!(cells, vec!["A", "B"]);
-        
+
         let cells_escaped = split_row("| A\\|B | C |");
         assert_eq!(cells_escaped, vec!["A|B", "C"]);
 
@@ -867,12 +961,12 @@ mod tests {
         let line3 = "  ---  ";
         let line4 = "--";
         let line5 = "-a-";
-        
+
         let is_hr = |l: &str| {
             let trimmed = l.trim();
             trimmed.chars().all(|c| c == '-') && trimmed.len() >= 3 && !trimmed.is_empty()
         };
-        
+
         assert!(is_hr(line1));
         assert!(is_hr(line2));
         assert!(is_hr(line3));

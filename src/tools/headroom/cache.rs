@@ -1,14 +1,14 @@
+use super::CACHE_CAPACITY;
+use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use rusqlite::{params, Connection};
-use std::path::PathBuf;
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::SystemTime;
 use serde_json::{json, Value};
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
-use crate::tools::Tool;
-use super::CACHE_CAPACITY;
+use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
+use std::time::SystemTime;
 
 // ─── Constants & Counter ─────────────────────────────────────────
 
@@ -33,9 +33,7 @@ pub fn get_cache_connection() -> Result<std::sync::MutexGuard<'static, Connectio
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let conn = Connection::open(&path).unwrap_or_else(|_| {
-        Connection::open_in_memory().unwrap()
-    });
+    let conn = Connection::open(&path).unwrap_or_else(|_| Connection::open_in_memory().unwrap());
     conn.execute_batch(
         "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
          CREATE TABLE IF NOT EXISTS cache_entries (
@@ -75,7 +73,9 @@ pub fn generate_ccr_id() -> String {
 
 pub fn evict_lru_if_needed() {
     if let Ok(conn) = get_cache_connection() {
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM cache_entries", [], |r| r.get(0)).unwrap_or(0);
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cache_entries", [], |r| r.get(0))
+            .unwrap_or(0);
         if count > CACHE_CAPACITY as i64 {
             let _ = conn.execute(
                 "DELETE FROM cache_entries WHERE ccr_id IN (
@@ -109,23 +109,40 @@ pub struct CacheStatsTool;
 
 #[async_trait::async_trait]
 impl Tool for CacheStatsTool {
-    fn name(&self) -> &str { "cache_stats" }
-    fn description(&self) -> &str { "Returns statistics about the context cache." }
+    fn name(&self) -> &str {
+        "cache_stats"
+    }
+    fn description(&self) -> &str {
+        "Returns statistics about the context cache."
+    }
     fn parameters(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
     async fn call(&self, _arguments: &Value) -> Result<Value> {
         let conn = get_cache_connection()?;
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM cache_entries", [], |r| r.get(0)).unwrap_or(0);
-        let total_bytes: i64 = conn.query_row("SELECT COALESCE(SUM(size_bytes), 0) FROM cache_entries", [], |r| r.get(0)).unwrap_or(0);
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cache_entries", [], |r| r.get(0))
+            .unwrap_or(0);
+        let total_bytes: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(size_bytes), 0) FROM cache_entries",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
 
-        let mut stmt = conn.prepare("SELECT ccr_id, size_bytes FROM cache_entries ORDER BY accessed_at DESC LIMIT 50")?;
-        let items: Vec<Value> = stmt.query_map([], |row| {
-            Ok(json!({
-                "ccr_id": row.get::<_, String>(0)?,
-                "size_bytes": row.get::<_, i64>(1)?,
-            }))
-        })?.filter_map(|r| r.ok()).collect();
+        let mut stmt = conn.prepare(
+            "SELECT ccr_id, size_bytes FROM cache_entries ORDER BY accessed_at DESC LIMIT 50",
+        )?;
+        let items: Vec<Value> = stmt
+            .query_map([], |row| {
+                Ok(json!({
+                    "ccr_id": row.get::<_, String>(0)?,
+                    "size_bytes": row.get::<_, i64>(1)?,
+                }))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
 
         Ok(json!({
             "total_items": count,
@@ -143,15 +160,27 @@ pub struct ClearCacheTool;
 
 #[async_trait::async_trait]
 impl Tool for ClearCacheTool {
-    fn name(&self) -> &str { "clear_cache" }
-    fn description(&self) -> &str { "Clears all cached context entries to free memory." }
+    fn name(&self) -> &str {
+        "clear_cache"
+    }
+    fn description(&self) -> &str {
+        "Clears all cached context entries to free memory."
+    }
     fn parameters(&self) -> Value {
         json!({ "type": "object", "properties": {} })
     }
     async fn call(&self, _arguments: &Value) -> Result<Value> {
         let conn = get_cache_connection()?;
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM cache_entries", [], |r| r.get(0)).unwrap_or(0);
-        let total_bytes: i64 = conn.query_row("SELECT COALESCE(SUM(size_bytes), 0) FROM cache_entries", [], |r| r.get(0)).unwrap_or(0);
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cache_entries", [], |r| r.get(0))
+            .unwrap_or(0);
+        let total_bytes: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(size_bytes), 0) FROM cache_entries",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
         conn.execute("DELETE FROM cache_entries", [])?;
         Ok(json!({
             "evicted": count,
@@ -169,8 +198,12 @@ pub struct SearchCacheTool;
 
 #[async_trait::async_trait]
 impl Tool for SearchCacheTool {
-    fn name(&self) -> &str { "search_cache" }
-    fn description(&self) -> &str { "Searches cached content by keyword. Returns matching CCR IDs and content snippets." }
+    fn name(&self) -> &str {
+        "search_cache"
+    }
+    fn description(&self) -> &str {
+        "Searches cached content by keyword. Returns matching CCR IDs and content snippets."
+    }
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
@@ -182,7 +215,9 @@ impl Tool for SearchCacheTool {
         })
     }
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments["query"].as_str().ok_or_else(|| anyhow!("Missing query parameter"))?;
+        let query = arguments["query"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing query parameter"))?;
         let max_results = arguments["max_results"].as_u64().unwrap_or(10) as usize;
         let conn = get_cache_connection()?;
 
@@ -191,19 +226,23 @@ impl Tool for SearchCacheTool {
             "SELECT ccr_id, content FROM cache_entries WHERE content LIKE ?1 ESCAPE '\\' ORDER BY accessed_at DESC LIMIT ?2"
         )?;
 
-        let results: Vec<Value> = stmt.query_map(params![search_pattern, max_results as i64], |row| {
-            let id: String = row.get(0)?;
-            let content: String = row.get(1)?;
-            let snippet = if let Some(idx) = content.to_lowercase().find(&query.to_lowercase()) {
-                let start = idx.saturating_sub(30);
-                let end = (idx + query.len() + 50).min(content.len());
-                let sub = &content[start..end];
-                format!("...{}...", sub.replace('\n', " "))
-            } else {
-                content.chars().take(80).collect::<String>()
-            };
-            Ok(json!({ "ccr_id": id, "snippet": snippet }))
-        })?.filter_map(|r| r.ok()).collect();
+        let results: Vec<Value> = stmt
+            .query_map(params![search_pattern, max_results as i64], |row| {
+                let id: String = row.get(0)?;
+                let content: String = row.get(1)?;
+                let snippet = if let Some(idx) = content.to_lowercase().find(&query.to_lowercase())
+                {
+                    let start = idx.saturating_sub(30);
+                    let end = (idx + query.len() + 50).min(content.len());
+                    let sub = &content[start..end];
+                    format!("...{}...", sub.replace('\n', " "))
+                } else {
+                    content.chars().take(80).collect::<String>()
+                };
+                Ok(json!({ "ccr_id": id, "snippet": snippet }))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
 
         Ok(json!({
             "query": query,
@@ -221,8 +260,12 @@ pub struct CacheAlignTool;
 
 #[async_trait::async_trait]
 impl Tool for CacheAlignTool {
-    fn name(&self) -> &str { "cache_align" }
-    fn description(&self) -> &str { "Aligns context chunks deterministically, padding and wrapping them to optimize KV cache hits for LLM providers." }
+    fn name(&self) -> &str {
+        "cache_align"
+    }
+    fn description(&self) -> &str {
+        "Aligns context chunks deterministically, padding and wrapping them to optimize KV cache hits for LLM providers."
+    }
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
@@ -264,7 +307,10 @@ impl Tool for CacheAlignTool {
             let pad = if rem == 0 { 0 } else { size - rem };
             let padded = format!("{}{}", trimmed, " ".repeat(pad));
 
-            aligned_output.push_str(&format!("<!-- chunk: {} -->\n{}\n<!-- endchunk -->\n", hash, padded));
+            aligned_output.push_str(&format!(
+                "<!-- chunk: {} -->\n{}\n<!-- endchunk -->\n",
+                hash, padded
+            ));
         }
 
         Ok(json!({ "aligned": aligned_output, "chunks": total_chunks, "padding_size": size }))
@@ -279,8 +325,12 @@ pub struct ExportCacheTool;
 
 #[async_trait::async_trait]
 impl Tool for ExportCacheTool {
-    fn name(&self) -> &str { "export_cache" }
-    fn description(&self) -> &str { "Exports the entire cache to a JSON file for session portability." }
+    fn name(&self) -> &str {
+        "export_cache"
+    }
+    fn description(&self) -> &str {
+        "Exports the entire cache to a JSON file for session portability."
+    }
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
@@ -291,20 +341,30 @@ impl Tool for ExportCacheTool {
         })
     }
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let path_str = arguments["file_path"].as_str().ok_or_else(|| anyhow!("Missing file_path parameter"))?;
+        let path_str = arguments["file_path"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing file_path parameter"))?;
         let path = std::path::Path::new(path_str);
-        let absolute = if path.is_absolute() { path.to_path_buf() }
-            else { std::env::current_dir().map_err(|e| anyhow!("{}", e))?.join(path) };
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map_err(|e| anyhow!("{}", e))?
+                .join(path)
+        };
 
         let conn = get_cache_connection()?;
         let mut stmt = conn.prepare("SELECT ccr_id, content, created_at FROM cache_entries")?;
-        let entries: Vec<Value> = stmt.query_map([], |row| {
-            Ok(json!({
-                "ccr_id": row.get::<_, String>(0)?,
-                "content": row.get::<_, String>(1)?,
-                "created_at": row.get::<_, String>(2)?,
-            }))
-        })?.filter_map(|r| r.ok()).collect();
+        let entries: Vec<Value> = stmt
+            .query_map([], |row| {
+                Ok(json!({
+                    "ccr_id": row.get::<_, String>(0)?,
+                    "content": row.get::<_, String>(1)?,
+                    "created_at": row.get::<_, String>(2)?,
+                }))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
 
         let json_str = serde_json::to_string_pretty(&entries)?;
         std::fs::write(&absolute, json_str)
@@ -322,8 +382,12 @@ pub struct ImportCacheTool;
 
 #[async_trait::async_trait]
 impl Tool for ImportCacheTool {
-    fn name(&self) -> &str { "import_cache" }
-    fn description(&self) -> &str { "Imports cached entries from a previously exported JSON file." }
+    fn name(&self) -> &str {
+        "import_cache"
+    }
+    fn description(&self) -> &str {
+        "Imports cached entries from a previously exported JSON file."
+    }
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
@@ -334,16 +398,23 @@ impl Tool for ImportCacheTool {
         })
     }
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let path_str = arguments["file_path"].as_str().ok_or_else(|| anyhow!("Missing file_path parameter"))?;
+        let path_str = arguments["file_path"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing file_path parameter"))?;
         let path = std::path::Path::new(path_str);
-        let absolute = if path.is_absolute() { path.to_path_buf() }
-            else { std::env::current_dir().map_err(|e| anyhow!("{}", e))?.join(path) };
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map_err(|e| anyhow!("{}", e))?
+                .join(path)
+        };
 
         let json_str = std::fs::read_to_string(&absolute)
             .map_err(|e| anyhow!("Failed to read import file: {}", e))?;
 
-        let entries: Vec<Value> = serde_json::from_str(&json_str)
-            .map_err(|e| anyhow!("Invalid JSON format: {}", e))?;
+        let entries: Vec<Value> =
+            serde_json::from_str(&json_str).map_err(|e| anyhow!("Invalid JSON format: {}", e))?;
 
         let conn = get_cache_connection()?;
         let mut count = 0i64;

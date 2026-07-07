@@ -11,7 +11,9 @@ pub struct LogExecutionEpisodeTool;
 
 #[async_trait::async_trait]
 impl Tool for LogExecutionEpisodeTool {
-    fn name(&self) -> &str { "log_execution_episode" }
+    fn name(&self) -> &str {
+        "log_execution_episode"
+    }
 
     fn description(&self) -> &str {
         "Log an execution episode: details tasks attempted, execution logs, status and reflections."
@@ -36,12 +38,20 @@ impl Tool for LogExecutionEpisodeTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let id = arguments.get("id").and_then(|v| v.as_str()).unwrap_or_else(|| {
-            Box::leak(uuid::Uuid::new_v4().to_string().into_boxed_str())
-        }).to_string();
-        let task_description = arguments["taskDescription"].as_str().ok_or_else(|| anyhow!("Missing 'taskDescription'"))?;
-        let execution_status = arguments["executionStatus"].as_str().ok_or_else(|| anyhow!("Missing 'executionStatus'"))?;
-        let steps_taken = arguments["stepsTaken"].as_str().ok_or_else(|| anyhow!("Missing 'stepsTaken'"))?;
+        let id = arguments
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_else(|| Box::leak(uuid::Uuid::new_v4().to_string().into_boxed_str()))
+            .to_string();
+        let task_description = arguments["taskDescription"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'taskDescription'"))?;
+        let execution_status = arguments["executionStatus"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'executionStatus'"))?;
+        let steps_taken = arguments["stepsTaken"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'stepsTaken'"))?;
         let error_message = arguments.get("errorMessage").and_then(|v| v.as_str());
         let reflection = arguments.get("reflection").and_then(|v| v.as_str());
         let (uid, sid, aid) = scope_from_args(arguments);
@@ -66,7 +76,9 @@ pub struct LogReflectionTool;
 
 #[async_trait::async_trait]
 impl Tool for LogReflectionTool {
-    fn name(&self) -> &str { "log_reflection" }
+    fn name(&self) -> &str {
+        "log_reflection"
+    }
 
     fn description(&self) -> &str {
         "Store a reflection memory summarizing what worked, what failed, why, and error analysis."
@@ -93,14 +105,25 @@ impl Tool for LogReflectionTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let task_description = arguments["taskDescription"].as_str().ok_or_else(|| anyhow!("Missing 'taskDescription'"))?;
-        let status = arguments["status"].as_str().ok_or_else(|| anyhow!("Missing 'status'"))?;
-        let attempt_number = arguments.get("attemptNumber").and_then(|v| v.as_i64()).unwrap_or(1);
-        let steps_taken = arguments["stepsTaken"].as_str().ok_or_else(|| anyhow!("Missing 'stepsTaken'"))?;
+        let task_description = arguments["taskDescription"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'taskDescription'"))?;
+        let status = arguments["status"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'status'"))?;
+        let attempt_number = arguments
+            .get("attemptNumber")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1);
+        let steps_taken = arguments["stepsTaken"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'stepsTaken'"))?;
         let error_encountered = arguments.get("errorEncountered").and_then(|v| v.as_str());
         let root_cause = arguments.get("rootCause").and_then(|v| v.as_str());
         let solution_applied = arguments.get("solutionApplied").and_then(|v| v.as_str());
-        let reflection = arguments["reflection"].as_str().ok_or_else(|| anyhow!("Missing 'reflection'"))?;
+        let reflection = arguments["reflection"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'reflection'"))?;
         let (uid, sid, aid) = scope_from_args(arguments);
         let id = uuid::Uuid::new_v4().to_string();
         let created_at = Utc::now().to_rfc3339();
@@ -124,7 +147,9 @@ pub struct RetrieveEpisodicReflectionsTool;
 
 #[async_trait::async_trait]
 impl Tool for RetrieveEpisodicReflectionsTool {
-    fn name(&self) -> &str { "retrieve_episodic_reflections" }
+    fn name(&self) -> &str {
+        "retrieve_episodic_reflections"
+    }
 
     fn description(&self) -> &str {
         "Retrieve reflections to guide current attempts based on query parameters."
@@ -143,7 +168,10 @@ impl Tool for RetrieveEpisodicReflectionsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments.get("query").and_then(|v| v.as_str()).unwrap_or("");
+        let query = arguments
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let (uid, sid, aid) = scope_from_args(arguments);
 
         let results = with_db(|conn| {
@@ -198,7 +226,9 @@ pub struct RecordToolPerformanceTool;
 
 #[async_trait::async_trait]
 impl Tool for RecordToolPerformanceTool {
-    fn name(&self) -> &str { "record_tool_performance" }
+    fn name(&self) -> &str {
+        "record_tool_performance"
+    }
 
     fn description(&self) -> &str {
         "Record the success rates and latencies of an LLM or specific tool usage."
@@ -223,12 +253,24 @@ impl Tool for RecordToolPerformanceTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let tool_name = arguments["toolName"].as_str().ok_or_else(|| anyhow!("Missing 'toolName'"))?;
-        let model_name = arguments["modelName"].as_str().ok_or_else(|| anyhow!("Missing 'modelName'"))?;
-        let task_type = arguments["taskType"].as_str().ok_or_else(|| anyhow!("Missing 'taskType'"))?;
-        let success_count: i64 = arguments["successCount"].as_i64().ok_or_else(|| anyhow!("Missing 'successCount'"))?;
-        let failure_count: i64 = arguments["failureCount"].as_i64().ok_or_else(|| anyhow!("Missing 'failureCount'"))?;
-        let average_latency: f64 = arguments["averageLatency"].as_f64().ok_or_else(|| anyhow!("Missing 'averageLatency'"))?;
+        let tool_name = arguments["toolName"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'toolName'"))?;
+        let model_name = arguments["modelName"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'modelName'"))?;
+        let task_type = arguments["taskType"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'taskType'"))?;
+        let success_count: i64 = arguments["successCount"]
+            .as_i64()
+            .ok_or_else(|| anyhow!("Missing 'successCount'"))?;
+        let failure_count: i64 = arguments["failureCount"]
+            .as_i64()
+            .ok_or_else(|| anyhow!("Missing 'failureCount'"))?;
+        let average_latency: f64 = arguments["averageLatency"]
+            .as_f64()
+            .ok_or_else(|| anyhow!("Missing 'averageLatency'"))?;
         let (uid, sid, aid) = scope_from_args(arguments);
         let last_used = Utc::now().to_rfc3339();
 
@@ -278,7 +320,9 @@ pub struct QueryToolPerformanceTool;
 
 #[async_trait::async_trait]
 impl Tool for QueryToolPerformanceTool {
-    fn name(&self) -> &str { "query_tool_performance" }
+    fn name(&self) -> &str {
+        "query_tool_performance"
+    }
 
     fn description(&self) -> &str {
         "Query tool performance logs to recommend optimal tools/models for specific task types."
@@ -298,7 +342,9 @@ impl Tool for QueryToolPerformanceTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let task_type = arguments["taskType"].as_str().ok_or_else(|| anyhow!("Missing 'taskType'"))?;
+        let task_type = arguments["taskType"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'taskType'"))?;
         let (uid, sid, aid) = scope_from_args(arguments);
 
         let results = with_db(|conn| {

@@ -4,8 +4,8 @@ use scraper::{Html, Selector};
 
 use super::{SearchBackend, SearchQuery, SearchResult};
 use crate::crawler::fingerprint::HeaderGenerator;
-use crate::error::SearchXyzError;
 use crate::crawler::headless::HeadlessBrowser;
+use crate::error::SearchXyzError;
 
 /// Native Google Scraper Backend — no API key required.
 pub struct GoogleBackend {

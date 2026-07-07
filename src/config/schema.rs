@@ -12,8 +12,7 @@ pub struct ProviderConfig {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProvidersConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openai: Option<ProviderConfig>,
@@ -35,11 +34,19 @@ pub struct ProvidersConfig {
     pub z_ai: Option<ProviderConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nvidia: Option<ProviderConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "opencode_zen")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "opencode_zen"
+    )]
     pub opencode_zen: Option<ProviderConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cerebras: Option<ProviderConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "google_ai_studio")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "google_ai_studio"
+    )]
     pub google_ai_studio: Option<ProviderConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cohere: Option<ProviderConfig>,
@@ -47,7 +54,11 @@ pub struct ProvidersConfig {
     pub llm7: Option<ProviderConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sambanova: Option<ProviderConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "huggingface")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "huggingface"
+    )]
     pub huggingface: Option<ProviderConfig>,
     #[serde(flatten)]
     pub others: HashMap<String, ProviderConfig>,
@@ -172,8 +183,7 @@ impl Default for AgentDefaults {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentsConfig {
     #[serde(default)]
     pub defaults: AgentDefaults,
@@ -327,8 +337,6 @@ pub struct Config {
     pub embeddings: Option<EmbeddingsConfig>,
 }
 
-
-
 impl Default for ChannelsConfig {
     fn default() -> Self {
         ChannelsConfig {
@@ -381,7 +389,203 @@ impl Default for Config {
     }
 }
 
+// ── Shared provider config resolution ─────────────────────────────────────
+// Single source of truth for resolving provider API key + base URL.
+// Used by: resolver.rs, channels/mod.rs (fetch_provider_models), cli/builder.rs.
 impl Config {
+    /// Resolve API key and base URL for a provider from config + env vars.
+    /// Returns `(api_key, api_base)` — ollama may return empty key.
+    pub fn resolve_provider_config(&self, provider_name: &str) -> (String, String) {
+        match provider_name {
+            "anthropic" => {
+                let p = self.providers.anthropic.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://api.anthropic.com".to_string());
+                (key, base)
+            }
+            "openai" => {
+                let p = self.providers.openai.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+                (key, base)
+            }
+            "openrouter" => {
+                let p = self.providers.openrouter.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
+                (key, base)
+            }
+            "deepseek" => {
+                let p = self.providers.deepseek.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://api.deepseek.com/v1".to_string());
+                (key, base)
+            }
+            "groq" => {
+                let p = self.providers.groq.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("GROQ_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://api.groq.com/openai/v1".to_string());
+                (key, base)
+            }
+            "ollama_local" => (String::new(), "http://localhost:11434/v1".to_string()),
+            "ollama" => {
+                let p = self.providers.ollama.as_ref();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
+                (String::new(), base)
+            }
+            "minimax" => {
+                let p = self.providers.minimax.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("MINIMAX_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://api.minimax.io/v1".to_string());
+                (key, base)
+            }
+            "mistral" => {
+                let p = self.providers.mistral.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("MISTRAL_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://api.mistral.ai/v1".to_string());
+                (key, base)
+            }
+            "z.ai" | "z_ai" => {
+                let p = self.providers.z_ai.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("Z_AI_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://api.z.ai/api/paas/v4/".to_string());
+                (key, base)
+            }
+            "nvidia" => {
+                let p = self.providers.nvidia.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("NVIDIA_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://integrate.api.nvidia.com/v1".to_string());
+                (key, base)
+            }
+            "opencode_zen" | "opencode zen" => {
+                let p = self.providers.opencode_zen.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("OPENCODE_ZEN_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://opencode.ai/zen/v1".to_string());
+                (key, base)
+            }
+            "cerebras" => {
+                let p = self.providers.cerebras.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("CEREBRAS_API_KEY").ok())
+                    .or_else(|| std::env::var("CEBRAS_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://api.cerebras.ai/v1".to_string());
+                (key, base)
+            }
+            "google_ai_studio" | "google ai studio" => {
+                let p = self.providers.google_ai_studio.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("GOOGLE_AI_STUDIO_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p.and_then(|x| x.api_base.clone()).unwrap_or_else(|| {
+                    "https://generativelanguage.googleapis.com/v1beta/openai/".to_string()
+                });
+                (key, base)
+            }
+            "cohere" => {
+                let p = self.providers.cohere.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("COHERE_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://api.cohere.com/v1".to_string());
+                (key, base)
+            }
+            "llm7" => {
+                let p = self.providers.llm7.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("LLM7_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://token.llm7.io/v1".to_string());
+                (key, base)
+            }
+            "sambanova" => {
+                let p = self.providers.sambanova.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("SAMBANOVA_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://api.sambanova.ai/v1".to_string());
+                (key, base)
+            }
+            "huggingface" => {
+                let p = self.providers.huggingface.as_ref();
+                let key = p
+                    .and_then(|x| x.api_key.clone())
+                    .or_else(|| std::env::var("HUGGINGFACE_API_KEY").ok())
+                    .unwrap_or_default();
+                let base = p
+                    .and_then(|x| x.api_base.clone())
+                    .unwrap_or_else(|| "https://api-inference.huggingface.co/v1".to_string());
+                (key, base)
+            }
+            _ => (String::new(), String::new()),
+        }
+    }
+
     pub fn is_provider_configured(&self, provider_name: &str) -> bool {
         if provider_name == "ollama_local" {
             return true;
@@ -409,7 +613,10 @@ impl Config {
         if provider_name == "ollama" {
             p_opt.is_some()
         } else if let Some(p) = p_opt {
-            p.api_key.as_ref().map(|k| !k.trim().is_empty()).unwrap_or(false)
+            p.api_key
+                .as_ref()
+                .map(|k| !k.trim().is_empty())
+                .unwrap_or(false)
         } else {
             false
         }
@@ -420,7 +627,8 @@ impl Config {
             return true;
         }
         if provider_name == "cerebras" {
-            return std::env::var("CEREBRAS_API_KEY").is_ok() || std::env::var("CEBRAS_API_KEY").is_ok();
+            return std::env::var("CEREBRAS_API_KEY").is_ok()
+                || std::env::var("CEBRAS_API_KEY").is_ok();
         }
         let env_var = match provider_name {
             "anthropic" => "ANTHROPIC_API_KEY",
@@ -469,15 +677,9 @@ impl Config {
         for &prov in providers_in_order {
             if self.is_provider_available(prov) {
                 let model_name = match prov {
-                    "google_ai_studio" => {
-                        "google_ai_studio/gemini-2.5-flash".to_string()
-                    }
-                    "anthropic" => {
-                        "anthropic/claude-3-5-sonnet".to_string()
-                    }
-                    "openai" => {
-                        "openai/gpt-4o-mini".to_string()
-                    }
+                    "google_ai_studio" => "google_ai_studio/gemini-2.5-flash".to_string(),
+                    "anthropic" => "anthropic/claude-3-5-sonnet".to_string(),
+                    "openai" => "openai/gpt-4o-mini".to_string(),
                     "deepseek" => {
                         if is_vision {
                             continue;
@@ -506,12 +708,8 @@ impl Config {
                             "openrouter/free".to_string()
                         }
                     }
-                    "opencode_zen" => {
-                        "opencode_zen/deepseek-v4-flash-free".to_string()
-                    }
-                    "z.ai" => {
-                        "z.ai/glm-4.7-flash".to_string()
-                    }
+                    "opencode_zen" => "opencode_zen/deepseek-v4-flash-free".to_string(),
+                    "z.ai" => "z.ai/glm-4.7-flash".to_string(),
                     "mistral" => {
                         if is_vision {
                             "mistral/pixtral-large-latest".to_string()
@@ -542,7 +740,7 @@ impl Config {
                     }
                     _ => continue,
                 };
-                
+
                 if !fallbacks.contains(&model_name) {
                     fallbacks.push(model_name);
                 }
@@ -552,4 +750,3 @@ impl Config {
         fallbacks
     }
 }
-

@@ -61,12 +61,18 @@ impl Tool for GsdBrowserTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments.get("action").and_then(|v| v.as_str())
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
 
         let bin_path = if let Some(home) = dirs::home_dir() {
             let p = home.join(".cargo").join("bin").join("gsd-browser");
-            if p.exists() { p } else { std::path::PathBuf::from("gsd-browser") }
+            if p.exists() {
+                p
+            } else {
+                std::path::PathBuf::from("gsd-browser")
+            }
         } else {
             std::path::PathBuf::from("gsd-browser")
         };
@@ -74,7 +80,9 @@ impl Tool for GsdBrowserTool {
 
         match action {
             "navigate" => {
-                let url = arguments.get("url").and_then(|v| v.as_str())
+                let url = arguments
+                    .get("url")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'url' parameter for navigate action"))?;
                 cmd.arg("navigate").arg(url);
             }
@@ -82,30 +90,42 @@ impl Tool for GsdBrowserTool {
                 cmd.arg("snapshot");
             }
             "click" => {
-                let ref_id = arguments.get("ref_id").and_then(|v| v.as_str())
+                let ref_id = arguments
+                    .get("ref_id")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for click action"))?;
                 cmd.arg("click-ref").arg(ref_id);
             }
             "hover" => {
-                let ref_id = arguments.get("ref_id").and_then(|v| v.as_str())
+                let ref_id = arguments
+                    .get("ref_id")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for hover action"))?;
                 cmd.arg("hover-ref").arg(ref_id);
             }
             "fill" => {
-                let ref_id = arguments.get("ref_id").and_then(|v| v.as_str())
+                let ref_id = arguments
+                    .get("ref_id")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for fill action"))?;
-                let text = arguments.get("text").and_then(|v| v.as_str())
+                let text = arguments
+                    .get("text")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'text' parameter for fill action"))?;
                 cmd.arg("fill-ref").arg(ref_id).arg(text);
             }
             "screenshot" => {
-                let path = arguments.get("path").and_then(|v| v.as_str())
+                let path = arguments
+                    .get("path")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'path' parameter for screenshot action"))?;
                 let resolved = crate::config::resolve_path(path);
                 cmd.arg("screenshot").arg("--output").arg(resolved);
             }
             "eval" => {
-                let script = arguments.get("script").and_then(|v| v.as_str())
+                let script = arguments
+                    .get("script")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'script' parameter for eval action"))?;
                 cmd.arg("eval").arg(script);
             }
@@ -116,7 +136,9 @@ impl Tool for GsdBrowserTool {
                 cmd.arg("page-source");
             }
             "save_pdf" => {
-                let path = arguments.get("path").and_then(|v| v.as_str())
+                let path = arguments
+                    .get("path")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'path' parameter for save_pdf action"))?;
                 let resolved = crate::config::resolve_path(path);
                 cmd.arg("save-pdf").arg("--output").arg(resolved);
@@ -129,7 +151,14 @@ impl Tool for GsdBrowserTool {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         if !output.status.success() {
-            return Err(anyhow!("gsd-browser error: {}", if stderr.trim().is_empty() { stdout } else { stderr }));
+            return Err(anyhow!(
+                "gsd-browser error: {}",
+                if stderr.trim().is_empty() {
+                    stdout
+                } else {
+                    stderr
+                }
+            ));
         }
 
         Ok(json!({

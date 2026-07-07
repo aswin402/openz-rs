@@ -24,9 +24,14 @@ pub fn get_sqlite_db_path() -> PathBuf {
     #[cfg(test)]
     {
         static TEST_DB_PATH: OnceLock<PathBuf> = OnceLock::new();
-        TEST_DB_PATH.get_or_init(|| {
-            std::env::temp_dir().join(format!("openz_test_shared_memory_{}.db", uuid::Uuid::new_v4()))
-        }).clone()
+        TEST_DB_PATH
+            .get_or_init(|| {
+                std::env::temp_dir().join(format!(
+                    "openz_test_shared_memory_{}.db",
+                    uuid::Uuid::new_v4()
+                ))
+            })
+            .clone()
     }
     #[cfg(not(test))]
     {
@@ -52,9 +57,14 @@ pub fn init_db() -> Result<Connection> {
 
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
 
-    let integrity: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap_or_else(|_| "ok".to_string());
+    let integrity: String = conn
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap_or_else(|_| "ok".to_string());
     if integrity != "ok" {
-        tracing::warn!("Memory database integrity check failed: {}. Recreating database.", integrity);
+        tracing::warn!(
+            "Memory database integrity check failed: {}. Recreating database.",
+            integrity
+        );
         drop(conn);
         let backup = path.with_extension("db.corrupt");
         let _ = std::fs::rename(&path, &backup);
@@ -116,12 +126,16 @@ where
     F: FnOnce(&mut Connection) -> Result<T>,
 {
     if let Some(mtx) = db_static().get() {
-        let mut guard = mtx.lock().map_err(|e| anyhow::anyhow!("Shared memory lock error: {}", e))?;
+        let mut guard = mtx
+            .lock()
+            .map_err(|e| anyhow::anyhow!("Shared memory lock error: {}", e))?;
         return f(&mut guard);
     }
     let conn = init_db()?;
     let mtx = db_static().get_or_init(|| Mutex::new(conn));
-    let mut guard = mtx.lock().map_err(|e| anyhow::anyhow!("Shared memory lock error: {}", e))?;
+    let mut guard = mtx
+        .lock()
+        .map_err(|e| anyhow::anyhow!("Shared memory lock error: {}", e))?;
     f(&mut guard)
 }
 
@@ -140,4 +154,3 @@ pub fn get_current_workspace() -> String {
     }
     ".".to_string()
 }
-

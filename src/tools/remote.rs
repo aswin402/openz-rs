@@ -1,6 +1,6 @@
+use crate::tools::Tool;
 use anyhow::Result;
 use serde_json::json;
-use crate::tools::Tool;
 
 pub struct SendRemoteInputTool;
 
@@ -32,10 +32,12 @@ impl Tool for SendRemoteInputTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let session_id = arguments.get("session_id")
+        let session_id = arguments
+            .get("session_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'session_id'"))?;
-        let message = arguments.get("message")
+        let message = arguments
+            .get("message")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'message'"))?;
 

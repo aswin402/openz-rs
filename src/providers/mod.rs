@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
-use anyhow::Result;
 use crate::session::Message;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
 
@@ -82,7 +82,7 @@ pub async fn parse_multimodal_content(text: &str) -> Vec<ContentPart> {
         if path_or_url.starts_with("http://") || path_or_url.starts_with("https://") {
             // Fetch remote image asynchronously
             let client = get_http_client();
-            
+
             if let Ok(resp) = client.get(path_or_url).send().await {
                 let mut size_ok = true;
                 if let Some(len_header) = resp.headers().get(reqwest::header::CONTENT_LENGTH) {
@@ -94,9 +94,13 @@ pub async fn parse_multimodal_content(text: &str) -> Vec<ContentPart> {
                         }
                     }
                 }
-                
+
                 if size_ok {
-                    if let Some(content_type) = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|h| h.to_str().ok().map(|s| s.to_string())) {
+                    if let Some(content_type) = resp
+                        .headers()
+                        .get(reqwest::header::CONTENT_TYPE)
+                        .and_then(|h| h.to_str().ok().map(|s| s.to_string()))
+                    {
                         if content_type.starts_with("image/") {
                             resolved_mime_type = content_type;
                         }
@@ -117,13 +121,15 @@ pub async fn parse_multimodal_content(text: &str) -> Vec<ContentPart> {
                 if let Ok(metadata) = std::fs::metadata(path) {
                     if metadata.len() <= 20 * 1024 * 1024 {
                         if let Ok(data) = std::fs::read(path) {
-                            resolved_mime_type = match path.extension().and_then(|ext| ext.to_str()) {
-                                Some("png") => "image/png",
-                                Some("jpg") | Some("jpeg") => "image/jpeg",
-                                Some("webp") => "image/webp",
-                                Some("gif") => "image/gif",
-                                _ => "image/png", // default fallback
-                            }.to_string();
+                            resolved_mime_type =
+                                match path.extension().and_then(|ext| ext.to_str()) {
+                                    Some("png") => "image/png",
+                                    Some("jpg") | Some("jpeg") => "image/jpeg",
+                                    Some("webp") => "image/webp",
+                                    Some("gif") => "image/gif",
+                                    _ => "image/png", // default fallback
+                                }
+                                .to_string();
                             image_data = Some(data);
                         }
                     }
@@ -132,7 +138,7 @@ pub async fn parse_multimodal_content(text: &str) -> Vec<ContentPart> {
         }
 
         if let Some(data) = image_data {
-            use base64::{Engine as _, engine::general_purpose};
+            use base64::{engine::general_purpose, Engine as _};
             let base64_data = general_purpose::STANDARD.encode(data);
             parts.push(ContentPart::Image {
                 mime_type: resolved_mime_type,
@@ -159,8 +165,12 @@ pub async fn parse_multimodal_content(text: &str) -> Vec<ContentPart> {
 
 pub fn model_supports_vision(model: &str) -> bool {
     let m = model.to_lowercase();
-    
-    if m.contains("gpt-4o") || m.starts_with("o3") || m.contains("gpt-4-turbo") || m.contains("gpt-4-vision-preview") {
+
+    if m.contains("gpt-4o")
+        || m.starts_with("o3")
+        || m.contains("gpt-4-turbo")
+        || m.contains("gpt-4-vision-preview")
+    {
         return true;
     }
     if m.starts_with("o1") && !m.contains("mini") && !m.contains("preview") {
@@ -187,15 +197,16 @@ pub fn model_supports_vision(model: &str) -> bool {
     if m.contains("qvq") || m.contains("qwen-vl") || m.contains("deepseek-vl") {
         return true;
     }
-    
+
     // Check if the model name has a distinct vision/multimodal word separated by -, _, or /
     // This avoids false positives like "supervision"
-    let has_vision_word = m.split(['/', '-', '_', ':'])
+    let has_vision_word = m
+        .split(['/', '-', '_', ':'])
         .any(|word| word == "vision" || word == "vl" || word == "vlm" || word == "multimodal");
     if has_vision_word {
         return true;
     }
-    
+
     false
 }
 
@@ -215,7 +226,8 @@ pub trait LLMProvider: Send + Sync {
         messages: &[Message],
         tools: &[serde_json::Value],
         settings: &GenerationSettings,
-    ) -> Result<std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<ChatStreamChunk>> + Send>>> {
+    ) -> Result<std::pin::Pin<Box<dyn futures_util::Stream<Item = Result<ChatStreamChunk>> + Send>>>
+    {
         let resp = self.chat(system_prompt, messages, tools, settings).await?;
         let mut chunks = Vec::new();
         if let Some(reasoning) = resp.reasoning_content {
@@ -240,11 +252,11 @@ pub trait LLMProvider: Send + Sync {
     }
 }
 
-pub mod openai;
 pub mod anthropic;
-pub mod resolver;
 pub mod circuit_breaker;
 pub mod ollama_manager;
+pub mod openai;
+pub mod resolver;
 
 #[cfg(test)]
 pub mod mock;
@@ -273,12 +285,16 @@ mod tests {
         assert!(model_supports_vision("google_ai_studio/gemini-2.0-flash"));
         assert!(model_supports_vision("nvidia/google/gemma-4-31b-it"));
         assert!(model_supports_vision("google/gemma-4-26b-a4b-it:free"));
-        assert!(model_supports_vision("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"));
+        assert!(model_supports_vision(
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
+        ));
         assert!(!model_supports_vision("nvidia/google/gemma-2-31b-it"));
         assert!(!model_supports_vision("google/gemma-2-27b-it"));
         // Meta Llama vision
         assert!(model_supports_vision("meta/llama-3.2-90b-vision"));
-        assert!(model_supports_vision("nvidia/meta/llama-3.2-90b-vision-instruct"));
+        assert!(model_supports_vision(
+            "nvidia/meta/llama-3.2-90b-vision-instruct"
+        ));
         // Mistral
         assert!(model_supports_vision("pixtral-12b"));
         assert!(model_supports_vision("pixtral-large-latest"));
@@ -288,10 +304,16 @@ mod tests {
         assert!(model_supports_vision("nvidia/nemotron-nano-12b-v2-vl:free"));
         assert!(model_supports_vision("qwen/qwen3-vl-32b-instruct"));
         assert!(model_supports_vision("qwen/qwen2.5-vl-72b-instruct"));
-        assert!(model_supports_vision("microsoft/phi-3-vision-128k-instruct"));
+        assert!(model_supports_vision(
+            "microsoft/phi-3-vision-128k-instruct"
+        ));
         assert!(model_supports_vision("microsoft/phi-4-multimodal-instruct"));
-        assert!(model_supports_vision("nvidia/llama-3.1-nemotron-nano-vl-8b-v1"));
-        assert!(model_supports_vision("nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1"));
+        assert!(model_supports_vision(
+            "nvidia/llama-3.1-nemotron-nano-vl-8b-v1"
+        ));
+        assert!(model_supports_vision(
+            "nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1"
+        ));
         assert!(model_supports_vision("baidu/ernie-4.5-vl-424b-a47b"));
         // Non-vision models
         assert!(!model_supports_vision("deepseek-chat"));

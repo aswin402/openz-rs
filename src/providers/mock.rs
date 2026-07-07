@@ -153,17 +153,15 @@ impl crate::providers::LLMProvider for MockProvider {
     ) -> anyhow::Result<crate::providers::LLMResponse> {
         // Inject error if remaining (without advancing the response counter).
         // Use fetch_update for atomic compare-and-swap to avoid race conditions.
-        let prev = self.inject_errors.fetch_update(
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-            |current| {
+        let prev = self
+            .inject_errors
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                 if current > 0 {
                     Some(current - 1)
                 } else {
                     None
                 }
-            },
-        );
+            });
         if prev.is_ok() {
             anyhow::bail!("MockProvider injected error");
         }
@@ -189,11 +187,16 @@ mod tests {
     async fn test_mock_provider_default_response() {
         let provider = MockProvider::new();
         let resp = provider
-            .chat("test", &[], &[], &crate::providers::GenerationSettings {
-                temperature: 0.0,
-                max_tokens: 100,
-                reasoning_effort: None,
-            })
+            .chat(
+                "test",
+                &[],
+                &[],
+                &crate::providers::GenerationSettings {
+                    temperature: 0.0,
+                    max_tokens: 100,
+                    reasoning_effort: None,
+                },
+            )
             .await
             .unwrap();
         assert_eq!(resp.content.unwrap(), "mock default response");
@@ -251,15 +254,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_provider_tool_call() {
-        let provider = MockProvider::new()
-            .with_response(MockResponse::tool_call("get_weather", serde_json::json!({"city": "NYC"})));
+        let provider = MockProvider::new().with_response(MockResponse::tool_call(
+            "get_weather",
+            serde_json::json!({"city": "NYC"}),
+        ));
 
         let resp = provider
-            .chat("", &[], &[], &crate::providers::GenerationSettings {
-                temperature: 0.0,
-                max_tokens: 100,
-                reasoning_effort: None,
-            })
+            .chat(
+                "",
+                &[],
+                &[],
+                &crate::providers::GenerationSettings {
+                    temperature: 0.0,
+                    max_tokens: 100,
+                    reasoning_effort: None,
+                },
+            )
             .await
             .unwrap();
 

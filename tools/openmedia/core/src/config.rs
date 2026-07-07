@@ -1,6 +1,6 @@
+use crate::error::{OpenMediaError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use crate::error::{OpenMediaError, Result};
 
 /// Root configuration for the OpenMedia server.
 /// Loaded from config.toml, environment variables, and CLI defaults.
@@ -239,14 +239,16 @@ impl Config {
         let mut config = Self::default();
 
         // Check if config file exists at ~/.openmedia/config.toml
-        let base_dirs = directories::BaseDirs::new()
-            .ok_or_else(|| OpenMediaError::ConfigError("Could not resolve home directory".into()))?;
+        let base_dirs = directories::BaseDirs::new().ok_or_else(|| {
+            OpenMediaError::ConfigError("Could not resolve home directory".into())
+        })?;
         let config_path = base_dirs.home_dir().join(".openmedia/config.toml");
 
         if config_path.exists() {
             let content = std::fs::read_to_string(&config_path)?;
-            let file_config: Config = toml::from_str(&content)
-                .map_err(|e| OpenMediaError::ConfigError(format!("Failed to parse config file: {}", e)))?;
+            let file_config: Config = toml::from_str(&content).map_err(|e| {
+                OpenMediaError::ConfigError(format!("Failed to parse config file: {}", e))
+            })?;
             config = file_config;
         }
 
@@ -263,7 +265,9 @@ impl Config {
         if let Ok(val) = std::env::var("OPENMEDIA_GPU_PREFERENCE") {
             match val.to_lowercase().as_str() {
                 "candle" => config.compute.preferred_backend = ComputeBackend::Candle,
-                "diffusion_rs" | "diffusionrs" => config.compute.preferred_backend = ComputeBackend::DiffusionRs,
+                "diffusion_rs" | "diffusionrs" => {
+                    config.compute.preferred_backend = ComputeBackend::DiffusionRs
+                }
                 "ort" | "onnx" => config.compute.preferred_backend = ComputeBackend::Ort,
                 "cpuonly" | "cpu" => config.compute.preferred_backend = ComputeBackend::CpuOnly,
                 _ => {}
@@ -307,7 +311,10 @@ impl Default for Config {
             },
             compute: ComputeConfig {
                 preferred_backend: ComputeBackend::Auto,
-                max_cpu_threads: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) / 2,
+                max_cpu_threads: std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(4)
+                    / 2,
                 max_gpu_memory: 0,
                 gpu_processing: true,
                 cuda_device: 0,
@@ -333,7 +340,10 @@ impl Default for Config {
                 default_renderer: "auto".into(),
                 ffmpeg_path: None,
                 chrome_path: None,
-                render_threads: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8),
+                render_threads: std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(4)
+                    .min(8),
             },
             svg: SvgConfig {
                 default_width: 800,

@@ -1,9 +1,9 @@
+use crate::agent::style::colors::{AURA_GOLD, AURA_SLATE, COLOR_RESET, EMERALD_GREEN, ERROR_RED};
+use crate::config::schema::Config;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
-use crate::config::schema::Config;
-use crate::agent::style::colors::{AURA_SLATE, EMERALD_GREEN, ERROR_RED, COLOR_RESET, AURA_GOLD};
 
 struct LocalOllamaState {
     spawned_by_us: bool,
@@ -155,12 +155,16 @@ pub fn stop_local_ollama() {
 }
 
 pub fn get_active_ollama_model() -> Option<String> {
-    let guard = ACTIVE_OLLAMA_MODEL.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = ACTIVE_OLLAMA_MODEL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     guard.clone()
 }
 
 pub fn set_active_ollama_model(model: Option<String>) {
-    let mut guard = ACTIVE_OLLAMA_MODEL.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = ACTIVE_OLLAMA_MODEL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     *guard = model;
 }
 

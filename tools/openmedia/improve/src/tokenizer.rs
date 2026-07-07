@@ -1,8 +1,8 @@
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use serde_json::Value;
 
 pub struct ClipTokenizer {
     vocab: HashMap<String, u32>,
@@ -23,7 +23,9 @@ impl ClipTokenizer {
                         let mut merges = Vec::new();
 
                         // Try extracting vocabulary
-                        if let Some(vocab_obj) = json.pointer("/model/vocab").and_then(|v| v.as_object()) {
+                        if let Some(vocab_obj) =
+                            json.pointer("/model/vocab").and_then(|v| v.as_object())
+                        {
                             for (k, v) in vocab_obj {
                                 if let Some(id) = v.as_u64() {
                                     vocab.insert(k.clone(), id as u32);
@@ -32,7 +34,9 @@ impl ClipTokenizer {
                         }
 
                         // Try extracting BPE merges
-                        if let Some(merges_arr) = json.pointer("/model/merges").and_then(|v| v.as_array()) {
+                        if let Some(merges_arr) =
+                            json.pointer("/model/merges").and_then(|v| v.as_array())
+                        {
                             for m in merges_arr {
                                 if let Some(m_str) = m.as_str() {
                                     let parts: Vec<&str> = m_str.split_whitespace().collect();
@@ -79,7 +83,7 @@ impl ClipTokenizer {
 
     pub fn encode(&self, text: &str, max_length: usize) -> Vec<i32> {
         let mut tokens = Vec::new();
-        
+
         // CLIP start of text token ID is typically 49406
         let sot_id = *self.vocab.get("<|startoftext|>").unwrap_or(&49406) as i32;
         let eot_id = *self.vocab.get("<|endoftext|>").unwrap_or(&49407) as i32;

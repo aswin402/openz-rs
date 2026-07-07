@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Result};
-use std::sync::Arc;
-use serde_json::Value;
+use crate::agent::style::colors::{AURA_GOLD, AURA_PURPLE, COLOR_RESET, EMERALD_GREEN};
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::tools::Tool;
-use crate::agent::style::colors::{AURA_PURPLE, COLOR_RESET, AURA_GOLD, EMERALD_GREEN};
+use anyhow::{anyhow, Result};
+use serde_json::Value;
+use std::sync::Arc;
 
 pub struct CompilerAutoHealTool {
     pub config: Config,
@@ -47,24 +47,30 @@ impl Tool for CompilerAutoHealTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let file_path_str = arguments.get("file_path").and_then(|v| v.as_str())
+        let file_path_str = arguments
+            .get("file_path")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'file_path' argument"))?;
-        let instruction = arguments.get("instruction").and_then(|v| v.as_str())
+        let instruction = arguments
+            .get("instruction")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'instruction' argument"))?;
-        let compile_command = arguments.get("compile_command").and_then(|v| v.as_str())
+        let compile_command = arguments
+            .get("compile_command")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'compile_command' argument"))?;
-        let max_iterations = arguments.get("max_iterations").and_then(|v| v.as_u64()).unwrap_or(3).min(5) as usize;
+        let max_iterations = arguments
+            .get("max_iterations")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3)
+            .min(5) as usize;
 
         // Validate compile command against allowlist to prevent shell injection
         let allowed_prefixes = [
-            "cargo ", "rustc ", "gcc ", "g++ ", "clang ", "clang++ ",
-            "make ", "cmake ", "ninja ", "go ", "go build", "go test", "go run",
-            "npm ", "npx ", "yarn ", "pnpm ", "node ",
-            "python ", "python3 ", "pip ", "pip3 ",
-            "javac ", "java ", "mvn ", "gradle ",
-            "swift ", "swiftc ",
-            "dotnet ", "msbuild ",
-            "pytest ", "jest ", "vitest ", "tsc ",
+            "cargo ", "rustc ", "gcc ", "g++ ", "clang ", "clang++ ", "make ", "cmake ", "ninja ",
+            "go ", "go build", "go test", "go run", "npm ", "npx ", "yarn ", "pnpm ", "node ",
+            "python ", "python3 ", "pip ", "pip3 ", "javac ", "java ", "mvn ", "gradle ", "swift ",
+            "swiftc ", "dotnet ", "msbuild ", "pytest ", "jest ", "vitest ", "tsc ",
         ];
         let cmd_lower = compile_command.trim().to_lowercase();
         let is_allowed = allowed_prefixes.iter().any(|p| cmd_lower.starts_with(p));
@@ -82,7 +88,10 @@ impl Tool for CompilerAutoHealTool {
         }
 
         // Create backup before modification
-        let backup_path = file_path.with_extension(format!("{}.bak", file_path.extension().and_then(|e| e.to_str()).unwrap_or("")));
+        let backup_path = file_path.with_extension(format!(
+            "{}.bak",
+            file_path.extension().and_then(|e| e.to_str()).unwrap_or("")
+        ));
         if let Err(e) = std::fs::copy(&file_path, &backup_path) {
             tracing::warn!("Failed to create backup of {:?}: {}", file_path, e);
         }
@@ -102,7 +111,11 @@ impl Tool for CompilerAutoHealTool {
             iteration += 1;
             crate::tui_println!(
                 "{}🔧 [Compiler Auto-Heal] Iteration {}/{} for {}...{}",
-                AURA_PURPLE, iteration, max_iterations, file_path.file_name().unwrap_or_default().to_string_lossy(), COLOR_RESET
+                AURA_PURPLE,
+                iteration,
+                max_iterations,
+                file_path.file_name().unwrap_or_default().to_string_lossy(),
+                COLOR_RESET
             );
 
             // Construct prompt
@@ -146,15 +159,28 @@ impl Tool for CompilerAutoHealTool {
                 reasoning_effort: None,
             };
 
-            let resp = self.provider.chat(system_prompt, &messages, &[], &settings).await?;
-            let response_text = resp.content.ok_or_else(|| anyhow!("No content returned from AI"))?;
+            let resp = self
+                .provider
+                .chat(system_prompt, &messages, &[], &settings)
+                .await?;
+            let response_text = resp
+                .content
+                .ok_or_else(|| anyhow!("No content returned from AI"))?;
 
             // Extract the code block
             let mut updated_content = response_text.trim().to_string();
             if updated_content.starts_with("```") {
                 let lines: Vec<&str> = updated_content.lines().collect();
-                let start = if lines.first().map(|l| l.starts_with("```")).unwrap_or(false) { 1 } else { 0 };
-                let end = if lines.last().map(|l| l.starts_with("```")).unwrap_or(false) { lines.len() - 1 } else { lines.len() };
+                let start = if lines.first().map(|l| l.starts_with("```")).unwrap_or(false) {
+                    1
+                } else {
+                    0
+                };
+                let end = if lines.last().map(|l| l.starts_with("```")).unwrap_or(false) {
+                    lines.len() - 1
+                } else {
+                    lines.len()
+                };
                 updated_content = lines[start..end].join("\n");
             }
             let updated_content_str = updated_content;
@@ -183,14 +209,17 @@ impl Tool for CompilerAutoHealTool {
                 compile_success = true;
                 crate::tui_println!(
                     "{}✓ [Compiler Auto-Heal] Compilation succeeded! (Iteration {}){}",
-                    EMERALD_GREEN, iteration, COLOR_RESET
+                    EMERALD_GREEN,
+                    iteration,
+                    COLOR_RESET
                 );
                 break;
             } else {
                 current_error = format!("{}\n{}", stdout, stderr);
                 crate::tui_println!(
                     "{}▲ [Compiler Auto-Heal] Compilation failed. Error output captured.{}",
-                    AURA_GOLD, COLOR_RESET
+                    AURA_GOLD,
+                    COLOR_RESET
                 );
             }
         }

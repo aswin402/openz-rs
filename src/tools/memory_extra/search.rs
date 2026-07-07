@@ -12,7 +12,9 @@ pub struct StoreSharedTeamMemoryTool;
 
 #[async_trait::async_trait]
 impl Tool for StoreSharedTeamMemoryTool {
-    fn name(&self) -> &str { "store_shared_team_memory" }
+    fn name(&self) -> &str {
+        "store_shared_team_memory"
+    }
 
     fn description(&self) -> &str {
         "Store a key-value memory shared across target agent IDs."
@@ -36,13 +38,27 @@ impl Tool for StoreSharedTeamMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let key = arguments["key"].as_str().ok_or_else(|| anyhow!("Missing 'key'"))?;
-        let value = arguments["value"].as_str().ok_or_else(|| anyhow!("Missing 'value'"))?;
-        let source_agent = arguments["sourceAgent"].as_str().ok_or_else(|| anyhow!("Missing 'sourceAgent'"))?;
-        let target_agents: Vec<String> = arguments["targetAgents"].as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        let key = arguments["key"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'key'"))?;
+        let value = arguments["value"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'value'"))?;
+        let source_agent = arguments["sourceAgent"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'sourceAgent'"))?;
+        let target_agents: Vec<String> = arguments["targetAgents"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .ok_or_else(|| anyhow!("Missing 'targetAgents'"))?;
-        let importance = arguments.get("importance").and_then(|v| v.as_f64()).unwrap_or(1.0);
+        let importance = arguments
+            .get("importance")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(1.0);
         let (uid, sid, aid) = scope_from_args(arguments);
         let timestamp = Utc::now().to_rfc3339();
         let targets_json = serde_json::to_string(&target_agents)?;
@@ -66,7 +82,9 @@ pub struct RetrieveSharedTeamMemoryTool;
 
 #[async_trait::async_trait]
 impl Tool for RetrieveSharedTeamMemoryTool {
-    fn name(&self) -> &str { "retrieve_shared_team_memory" }
+    fn name(&self) -> &str {
+        "retrieve_shared_team_memory"
+    }
 
     fn description(&self) -> &str {
         "Retrieve shared team memories targeted at a specific agent ID (or wildcard '*')."
@@ -85,10 +103,25 @@ impl Tool for RetrieveSharedTeamMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let agent_id = arguments.get("agentId").and_then(|v| v.as_str()).unwrap_or("");
-        let uid = arguments.get("userId").and_then(|v| v.as_str()).unwrap_or("*").to_string();
-        let sid = arguments.get("sessionId").and_then(|v| v.as_str()).unwrap_or("*").to_string();
-        let aid_scope = arguments.get("agentIdScope").and_then(|v| v.as_str()).unwrap_or("*").to_string();
+        let agent_id = arguments
+            .get("agentId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let uid = arguments
+            .get("userId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("*")
+            .to_string();
+        let sid = arguments
+            .get("sessionId")
+            .and_then(|v| v.as_str())
+            .unwrap_or("*")
+            .to_string();
+        let aid_scope = arguments
+            .get("agentIdScope")
+            .and_then(|v| v.as_str())
+            .unwrap_or("*")
+            .to_string();
 
         let results = with_db(|conn| {
             let mut stmt = conn.prepare(
@@ -107,7 +140,8 @@ impl Tool for RetrieveSharedTeamMemoryTool {
                 let targets_json: String = row.get(3)?;
                 let importance: f64 = row.get(4)?;
                 let timestamp: String = row.get(5)?;
-                let target_agents: Vec<String> = serde_json::from_str(&targets_json).unwrap_or_default();
+                let target_agents: Vec<String> =
+                    serde_json::from_str(&targets_json).unwrap_or_default();
 
                 if agent_id.is_empty()
                     || target_agents.contains(&agent_id.to_string())
@@ -133,15 +167,30 @@ impl Tool for RetrieveSharedTeamMemoryTool {
 
 // ─── FTS5 semantic search helper ─────────────────────────────────
 
-pub(crate) fn query_fts5(conn: &Connection, query: &str, limit: usize, uid: &str, sid: &str, aid: &str) -> Result<Vec<Value>> {
-    let clean_query: String = query.chars()
-        .map(|c| if c.is_alphanumeric() || c.is_whitespace() { c } else { ' ' })
+pub(crate) fn query_fts5(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+    uid: &str,
+    sid: &str,
+    aid: &str,
+) -> Result<Vec<Value>> {
+    let clean_query: String = query
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c.is_whitespace() {
+                c
+            } else {
+                ' '
+            }
+        })
         .collect();
     let words: Vec<&str> = clean_query.split_whitespace().collect();
     if words.is_empty() {
         return Ok(Vec::new());
     }
-    let match_query = words.iter()
+    let match_query = words
+        .iter()
         .map(|w| format!("{}*", w))
         .collect::<Vec<_>>()
         .join(" ");
@@ -156,7 +205,7 @@ pub(crate) fn query_fts5(conn: &Connection, query: &str, limit: usize, uid: &str
            AND (?4 IS NULL OR m.session_id = ?4 OR m.session_id = '*')
            AND (?5 IS NULL OR m.agent_id = ?5 OR m.agent_id = '*')
          ORDER BY rank
-         LIMIT ?2"
+         LIMIT ?2",
     )?;
     let mut rows = stmt.query(params![match_query, limit as i64, uid, sid, aid])?;
     let mut results = Vec::new();
@@ -177,7 +226,9 @@ pub struct SearchTextTool;
 
 #[async_trait::async_trait]
 impl Tool for SearchTextTool {
-    fn name(&self) -> &str { "search_text" }
+    fn name(&self) -> &str {
+        "search_text"
+    }
 
     fn description(&self) -> &str {
         "Search for semantic facts using keyword-based SQLite FTS5 index. Matches prefix terms (e.g. 'rust*' or 'memory*')."
@@ -198,8 +249,13 @@ impl Tool for SearchTextTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments["query"].as_str().ok_or_else(|| anyhow!("Missing 'query'"))?;
-        let limit = arguments.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+        let query = arguments["query"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'query'"))?;
+        let limit = arguments
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10) as usize;
         let (uid, sid, aid) = scope_from_args(arguments);
 
         let results = with_db(|conn| query_fts5(conn, query, limit, &uid, &sid, &aid))?;
@@ -213,7 +269,9 @@ pub struct HybridSearchTool;
 
 #[async_trait::async_trait]
 impl Tool for HybridSearchTool {
-    fn name(&self) -> &str { "hybrid_search" }
+    fn name(&self) -> &str {
+        "hybrid_search"
+    }
 
     fn description(&self) -> &str {
         "Search for semantic facts using hybrid search (keyword FTS5 + simple text similarity) merged via Reciprocal Rank Fusion (RRF)."
@@ -234,8 +292,13 @@ impl Tool for HybridSearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments["query"].as_str().ok_or_else(|| anyhow!("Missing 'query'"))?;
-        let limit = arguments.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+        let query = arguments["query"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'query'"))?;
+        let limit = arguments
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10) as usize;
         let (uid, sid, aid) = scope_from_args(arguments);
 
         let fts_results = with_db(|conn| query_fts5(conn, query, limit * 2, &uid, &sid, &aid))?;
@@ -251,7 +314,7 @@ impl Tool for HybridSearchTool {
                  WHERE valid_until IS NULL
                    AND (?1 IS NULL OR user_id = ?1 OR user_id = '*')
                    AND (?2 IS NULL OR session_id = ?2 OR session_id = '*')
-                   AND (?3 IS NULL OR agent_id = ?3 OR agent_id = '*')"
+                   AND (?3 IS NULL OR agent_id = ?3 OR agent_id = '*')",
             )?;
             let mut rows = stmt.query(params![uid, sid, aid])?;
             let mut facts = Vec::new();
@@ -267,11 +330,16 @@ impl Tool for HybridSearchTool {
         })?;
 
         // Score each fact by keyword overlap
-        let mut scored: Vec<(Value, f64)> = all_facts.into_iter()
+        let mut scored: Vec<(Value, f64)> = all_facts
+            .into_iter()
             .map(|fact| {
                 let text = fact["rawText"].as_str().unwrap_or("").to_lowercase();
                 let overlap = query_words.iter().filter(|w| text.contains(*w)).count();
-                let score = if query_words.is_empty() { 0.0 } else { overlap as f64 / query_words.len() as f64 };
+                let score = if query_words.is_empty() {
+                    0.0
+                } else {
+                    overlap as f64 / query_words.len() as f64
+                };
                 (fact, score)
             })
             .filter(|(_, s)| *s > 0.0)
@@ -288,21 +356,26 @@ impl Tool for HybridSearchTool {
             let rank = (i + 1) as f64;
             let node_id = fact["nodeId"].as_str().unwrap_or("");
             *doc_scores.entry(node_id.to_string()).or_insert(0.0) += 1.0 / (60.0 + rank);
-            doc_map.entry(node_id.to_string()).or_insert_with(|| fact.clone());
+            doc_map
+                .entry(node_id.to_string())
+                .or_insert_with(|| fact.clone());
         }
 
         for (i, (fact, _)) in scored.iter().enumerate() {
             let rank = (i + 1) as f64;
             let node_id = fact["nodeId"].as_str().unwrap_or("");
             *doc_scores.entry(node_id.to_string()).or_insert(0.0) += 1.0 / (60.0 + rank);
-            doc_map.entry(node_id.to_string()).or_insert_with(|| fact.clone());
+            doc_map
+                .entry(node_id.to_string())
+                .or_insert_with(|| fact.clone());
         }
 
         let mut ranked: Vec<(String, f64)> = doc_scores.into_iter().collect();
         ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         ranked.truncate(limit);
 
-        let results: Vec<Value> = ranked.into_iter()
+        let results: Vec<Value> = ranked
+            .into_iter()
             .filter_map(|(node_id, _)| doc_map.remove(&node_id))
             .collect();
 
@@ -316,13 +389,21 @@ pub(crate) fn text_similarity(a: &str, b: &str) -> f64 {
     let b_lower = b.to_lowercase();
     let a_words: Vec<&str> = a_lower.split_whitespace().collect();
     let b_words: Vec<&str> = b_lower.split_whitespace().collect();
-    if a_words.is_empty() && b_words.is_empty() { return 1.0; }
-    if a_words.is_empty() || b_words.is_empty() { return 0.0; }
+    if a_words.is_empty() && b_words.is_empty() {
+        return 1.0;
+    }
+    if a_words.is_empty() || b_words.is_empty() {
+        return 0.0;
+    }
 
     let a_set: std::collections::HashSet<&&str> = a_words.iter().collect();
     let b_set: std::collections::HashSet<&&str> = b_words.iter().collect();
 
     let intersection = a_set.intersection(&b_set).count();
     let union = a_set.union(&b_set).count();
-    if union == 0 { 0.0 } else { intersection as f64 / union as f64 }
+    if union == 0 {
+        0.0
+    } else {
+        intersection as f64 / union as f64
+    }
 }

@@ -13,7 +13,15 @@ impl GrepSearchTool {
             if name.starts_with('.') && name != "." && name != ".." {
                 return true;
             }
-            let skipped_dirs = ["target", "node_modules", "build", "dist", "vendor", "bin", "obj"];
+            let skipped_dirs = [
+                "target",
+                "node_modules",
+                "build",
+                "dist",
+                "vendor",
+                "bin",
+                "obj",
+            ];
             if skipped_dirs.contains(&name) {
                 return true;
             }
@@ -24,9 +32,9 @@ impl GrepSearchTool {
     fn is_binary_file(path: &Path) -> bool {
         if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
             let binary_extensions = [
-                "png", "jpg", "jpeg", "gif", "ico", "pdf", "zip", "tar", "gz", "7z", "rar",
-                "exe", "dll", "so", "dylib", "db", "sqlite", "wasm", "woff", "woff2", "ttf",
-                "eot", "mp4", "mp3", "wav", "avi", "mov", "bin", "out", "o", "a",
+                "png", "jpg", "jpeg", "gif", "ico", "pdf", "zip", "tar", "gz", "7z", "rar", "exe",
+                "dll", "so", "dylib", "db", "sqlite", "wasm", "woff", "woff2", "ttf", "eot", "mp4",
+                "mp3", "wav", "avi", "mov", "bin", "out", "o", "a",
             ];
             if binary_extensions.contains(&ext.to_lowercase().as_str()) {
                 return true;
@@ -110,13 +118,13 @@ impl GrepSearchTool {
     ) -> Result<Value> {
         let mut cmd = tokio::process::Command::new("rg");
         cmd.arg("--json");
-        
+
         cmd.arg("--glob").arg("!target");
         cmd.arg("--glob").arg("!node_modules");
         cmd.arg("--glob").arg("!build");
         cmd.arg("--glob").arg("!dist");
         cmd.arg("--glob").arg("!.git");
-        
+
         if !is_regex {
             cmd.arg("-F");
         }
@@ -138,10 +146,25 @@ impl GrepSearchTool {
             if let Ok(val) = serde_json::from_str::<Value>(line) {
                 if val.get("type").and_then(|t| t.as_str()) == Some("match") {
                     if let Some(data) = val.get("data") {
-                        let file = data.get("path").and_then(|p| p.get("text")).and_then(|t| t.as_str()).unwrap_or_default().to_string();
-                        let line_num = data.get("line_number").and_then(|l| l.as_u64()).unwrap_or(0);
-                        let content = data.get("lines").and_then(|l| l.get("text")).and_then(|t| t.as_str()).unwrap_or_default().trim_end_matches('\n').trim().to_string();
-                        
+                        let file = data
+                            .get("path")
+                            .and_then(|p| p.get("text"))
+                            .and_then(|t| t.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        let line_num = data
+                            .get("line_number")
+                            .and_then(|l| l.as_u64())
+                            .unwrap_or(0);
+                        let content = data
+                            .get("lines")
+                            .and_then(|l| l.get("text"))
+                            .and_then(|t| t.as_str())
+                            .unwrap_or_default()
+                            .trim_end_matches('\n')
+                            .trim()
+                            .to_string();
+
                         results.push(json!({
                             "file": file,
                             "line": line_num,
@@ -196,11 +219,16 @@ impl Tool for GrepSearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments.get("query").and_then(|v| v.as_str())
+        let query = arguments
+            .get("query")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
-        
-        let is_regex = arguments.get("is_regex").and_then(|v| v.as_bool()).unwrap_or(false);
-        
+
+        let is_regex = arguments
+            .get("is_regex")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         let search_dir_str = arguments.get("dir").and_then(|v| v.as_str()).unwrap_or(".");
         let search_dir = crate::config::loader::resolve_path(search_dir_str);
 
@@ -233,11 +261,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_grep_search() -> Result<()> {
-        let temp_dir = std::env::temp_dir().join(format!("openz_grep_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_grep_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir)?;
-        
+
         let file_path = temp_dir.join("test.txt");
-        std::fs::write(&file_path, "Hello world!\nThis is a grep test.\nHave a nice day!")?;
+        std::fs::write(
+            &file_path,
+            "Hello world!\nThis is a grep test.\nHave a nice day!",
+        )?;
 
         let tool = GrepSearchTool;
         let args = json!({

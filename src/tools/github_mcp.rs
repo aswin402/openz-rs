@@ -1,7 +1,9 @@
 use anyhow::Result;
-use serde_json::{json, Value};
-use openz_github_mcp::{GithubMcpServer, CreatePullRequestRequest, SearchIssuesRequest, GetIssueCommentsRequest};
+use openz_github_mcp::{
+    CreatePullRequestRequest, GetIssueCommentsRequest, GithubMcpServer, SearchIssuesRequest,
+};
 use rmcp::handler::server::wrapper::Parameters;
+use serde_json::{json, Value};
 
 pub fn get_server() -> &'static GithubMcpServer {
     static SERVER: std::sync::OnceLock<GithubMcpServer> = std::sync::OnceLock::new();
@@ -14,7 +16,9 @@ pub fn get_server() -> &'static GithubMcpServer {
         if !token.is_empty() {
             builder = builder.personal_token(token);
         }
-        let client = builder.build().unwrap_or_else(|_| openz_github_mcp::octocrab::Octocrab::default());
+        let client = builder
+            .build()
+            .unwrap_or_else(|_| openz_github_mcp::octocrab::Octocrab::default());
         GithubMcpServer::new(client)
     })
 }
@@ -39,7 +43,7 @@ impl crate::tools::Tool for GithubCreatePullRequestTool {
         let p: CreatePullRequestRequest = serde_json::from_value(arguments.clone())?;
         match get_server().create_pull_request(Parameters(p)).await {
             Ok(res_str) => Ok(json!({ "success": true, "result": res_str })),
-            Err(e) => Ok(json!({ "success": false, "error": e.message }))
+            Err(e) => Ok(json!({ "success": false, "error": e.message })),
         }
     }
 }
@@ -64,7 +68,7 @@ impl crate::tools::Tool for GithubSearchIssuesTool {
         let p: SearchIssuesRequest = serde_json::from_value(arguments.clone())?;
         match get_server().search_issues(Parameters(p)).await {
             Ok(res_str) => Ok(json!({ "success": true, "result": res_str })),
-            Err(e) => Ok(json!({ "success": false, "error": e.message }))
+            Err(e) => Ok(json!({ "success": false, "error": e.message })),
         }
     }
 }
@@ -89,7 +93,7 @@ impl crate::tools::Tool for GithubGetIssueCommentsTool {
         let p: GetIssueCommentsRequest = serde_json::from_value(arguments.clone())?;
         match get_server().get_issue_comments(Parameters(p)).await {
             Ok(res_str) => Ok(json!({ "success": true, "result": res_str })),
-            Err(e) => Ok(json!({ "success": false, "error": e.message }))
+            Err(e) => Ok(json!({ "success": false, "error": e.message })),
         }
     }
 }
@@ -101,13 +105,15 @@ mod tests {
     #[tokio::test]
     async fn test_server_init() {
         let server = get_server();
-        let _ = server.create_pull_request(Parameters(CreatePullRequestRequest {
-            owner: "test".to_string(),
-            repo: "test".to_string(),
-            title: "test".to_string(),
-            head: "test".to_string(),
-            base: "test".to_string(),
-            body: None,
-        })).await;
+        let _ = server
+            .create_pull_request(Parameters(CreatePullRequestRequest {
+                owner: "test".to_string(),
+                repo: "test".to_string(),
+                title: "test".to_string(),
+                head: "test".to_string(),
+                base: "test".to_string(),
+                body: None,
+            }))
+            .await;
     }
 }

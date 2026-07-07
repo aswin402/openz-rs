@@ -1,18 +1,21 @@
-use crate::tools::Tool;
-use crate::tools::ToolRegistry;
+use super::delegate_task::{
+    create_isolated_workspace, ensure_markdown_images, run_evolution_review, sync_changes_back,
+    WorktreeGuard,
+};
+use super::evaluator_optimizer::validate_schema;
+use super::parallel_research::get_status_from_goal;
+use super::{build_provider_for_model, CancellationToken, DELEGATION_DEPTH};
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
 use crate::subagents::SubagentProfile;
-use anyhow::{Result, anyhow};
-use std::sync::Arc;
+use crate::tools::Tool;
+use crate::tools::ToolRegistry;
+use anyhow::{anyhow, Result};
 use serde_json::Value;
-use super::{CancellationToken, DELEGATION_DEPTH, build_provider_for_model};
-use super::delegate_task::{create_isolated_workspace, WorktreeGuard, ensure_markdown_images, sync_changes_back, run_evolution_review};
-use super::evaluator_optimizer::validate_schema;
-use super::parallel_research::get_status_from_goal;
+use std::sync::Arc;
 
 pub struct DelegateProfileTool {
     pub config: Config,
@@ -127,7 +130,7 @@ impl Tool for DelegateProfileTool {
                 if let Some(mat) = cap.get(1) {
                     let path_str = mat.as_str();
                     let resolved_path = crate::config::resolve_path(path_str);
-                    
+
                     let mut final_path = None;
                     if resolved_path.exists() && resolved_path.is_file() {
                         final_path = Some(resolved_path);
@@ -140,7 +143,7 @@ impl Tool for DelegateProfileTool {
                             }
                         }
                     }
-                    
+
                     if let Some(path) = final_path {
                         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
                         if ["png", "jpg", "jpeg", "webp", "gif"].contains(&ext.as_str()) {
@@ -226,9 +229,12 @@ impl Tool for DelegateProfileTool {
             };
 
             let filtered_parent_tools = filter_tools_for_subagent(&self.profile.name, &self.parent_tools);
+            let mut child_config = self.config.clone();
+            child_config.agents.defaults.model = model_name.clone();
+            child_config.agents.defaults.fallback_models.clear();
 
             let child_registry = ToolRegistry::new_with_context(
-                self.config.clone(),
+                child_config.clone(),
                 provider.clone(),
                 self.session_manager.clone(),
             );
@@ -236,15 +242,15 @@ impl Tool for DelegateProfileTool {
                 child_registry.register(tool.clone());
             }
 
-            // Only register delegate_task if allowed for this profile
+            // Only manager-style profiles can spawn generic workers. Standard subagents must finish their own task.
             let allowed_delegate = match self.profile.name.as_str() {
                 "planner" | "sop_designer" | "openz_coordinator" => true,
-                _ => false, // Standard subagents don't delegate further by default
+                _ => false,
             };
 
             if allowed_delegate {
                 child_registry.register(std::sync::Arc::new(super::delegate_task::DelegateTaskTool {
-                    config: self.config.clone(),
+                    config: child_config.clone(),
                     parent_provider: provider.clone(),
                     session_manager: self.session_manager.clone(),
                     parent_tools: self.parent_tools.clone(),
@@ -253,7 +259,7 @@ impl Tool for DelegateProfileTool {
             }
 
             let child_agent = AgentLoop::new(
-                self.config.clone(),
+                child_config,
                 provider,
                 child_registry,
                 self.session_manager.clone(),
@@ -270,12 +276,13 @@ impl Tool for DelegateProfileTool {
             if !crate::agent::style::is_silent() {
                 let prefix = crate::agent::style::get_tree_prefix(false);
                 crate::tui_println!(
-                    "{}{}{}◎ {}{}{} {}{}subagent{}",
+                    "{}{}{}◎ {}{}{} {}{}subagent{} {}using {}{}",
                     AURA_SLATE, prefix, COLOR_RESET,
                     AURA_PURPLE, COLOR_BOLD, label, COLOR_RESET,
-                    AURA_SLATE, COLOR_RESET
+                    AURA_SLATE, COLOR_RESET,
+                    AURA_SLATE, model_name, COLOR_RESET
                 );
-                
+
                 let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                 let status_text = get_status_from_goal(goal);
                 crate::tui_println!(
@@ -324,10 +331,11 @@ impl Tool for DelegateProfileTool {
                     DELEGATION_DEPTH.scope(current_depth + 1, async {
                         crate::tools::subagent::ACTIVE_SUBAGENT.scope(self.profile.name.clone(), async {
                             tokio::select! {
-                                res = child_agent_ref.run(p_ref, c_ref) => res,
+                                biased;
                                 _ = self.cancellation_token.wait_for_cancellation() => {
                                     Err(anyhow!("Subagent task cancelled"))
                                 }
+                                res = child_agent_ref.run(p_ref, c_ref) => res,
                             }
                         }).await
                     }).await
@@ -382,10 +390,11 @@ impl Tool for DelegateProfileTool {
                                         let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
                                             DELEGATION_DEPTH.scope(current_depth + 1, async {
                                                 tokio::select! {
-                                                    res = child_agent_ref.run(p_ref, c_ref) => res,
+                                                    biased;
                                                     _ = self.cancellation_token.wait_for_cancellation() => {
                                                         Err(anyhow!("Subagent task cancelled"))
                                                     }
+                                                    res = child_agent_ref.run(p_ref, c_ref) => res,
                                                 }
                                             }).await
                                         });
@@ -418,10 +427,11 @@ impl Tool for DelegateProfileTool {
                                 let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
                                     DELEGATION_DEPTH.scope(current_depth + 1, async {
                                         tokio::select! {
-                                            res = child_agent_ref.run(p_ref, c_ref) => res,
+                                            biased;
                                             _ = self.cancellation_token.wait_for_cancellation() => {
                                                 Err(anyhow!("Subagent task cancelled"))
                                             }
+                                            res = child_agent_ref.run(p_ref, c_ref) => res,
                                         }
                                     }).await
                                 });
@@ -445,7 +455,7 @@ impl Tool for DelegateProfileTool {
                         let summary = crate::agent::style::format_subagent_summary(&run_res.content);
                         crate::tui_println!("{}{}{}✓ {}{}", AURA_SLATE, leaf_prefix, AURA_GREEN, summary, COLOR_RESET);
                     }
-                    
+
                     if workspace_dir != parent_dir {
                         let _ = sync_changes_back(&workspace_dir, &parent_dir);
                     }
@@ -525,123 +535,214 @@ pub fn format_subagent_name(name: &str) -> String {
     }
 }
 
-pub fn filter_tools_for_subagent(subagent_name: &str, all_tools: &[Arc<dyn Tool>]) -> Vec<Arc<dyn Tool>> {
+pub fn filter_tools_for_subagent(
+    subagent_name: &str,
+    all_tools: &[Arc<dyn Tool>],
+) -> Vec<Arc<dyn Tool>> {
     let allowed_names: Option<&[&str]> = match subagent_name {
         "planner" => Some(&[
-            "read_file", "list_dir", "find_files", "code_outline", 
-            "parallel_research", "evaluator_optimizer_loop"
+            "read_file",
+            "list_dir",
+            "find_files",
+            "code_outline",
+            "parallel_research",
+            "evaluator_optimizer_loop",
         ]),
         "researcher" => Some(&[
-            "read_file", "list_dir", "find_files", "web_fetch", 
-            "web_search", "doc_reader", "semantic_search", "crawl", 
-            "obscura"
+            "read_file",
+            "list_dir",
+            "find_files",
+            "web_fetch",
+            "web_search",
+            "doc_reader",
+            "semantic_search",
+            "crawl",
+            "obscura",
         ]),
         "architect" => Some(&[
-            "read_file", "write_file", "list_dir", "find_files", 
-            "code_outline", "ast_grep", "db_inspector"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "find_files",
+            "code_outline",
+            "ast_grep",
+            "db_inspector",
         ]),
-        "git_ops_agent" => Some(&[
-            "read_file", "list_dir", "git_manager"
-        ]),
+        "git_ops_agent" => Some(&["read_file", "list_dir", "git_manager"]),
         "ast_searcher" => Some(&[
-            "read_file", "list_dir", "find_files", "ast_grep", 
-            "code_outline", "grep_search"
+            "read_file",
+            "list_dir",
+            "find_files",
+            "ast_grep",
+            "code_outline",
+            "grep_search",
         ]),
-        "database_specialist" => Some(&[
-            "read_file", "list_dir", "db_inspector"
-        ]),
-        "browser_operator" => Some(&[
-            "read_file", "list_dir", "web_fetch", "crawl", "obscura"
-        ]),
+        "database_specialist" => Some(&["read_file", "list_dir", "db_inspector"]),
+        "browser_operator" => Some(&["read_file", "list_dir", "web_fetch", "crawl", "obscura"]),
         "dependency_manager" => Some(&[
-            "read_file", "write_file", "list_dir", "cargo_manager", "onpkg"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "cargo_manager",
+            "onpkg",
         ]),
-        "frontend_architect" => Some(&[
-            "read_file", "write_file", "list_dir", "generate_image"
-        ]),
+        "frontend_architect" => Some(&["read_file", "write_file", "list_dir", "generate_image"]),
         "docs_lookup_agent" => Some(&[
-            "read_file", "list_dir", "web_fetch", "web_search", "rust_docs"
+            "read_file",
+            "list_dir",
+            "web_fetch",
+            "web_search",
+            "rust_docs",
         ]),
-        "media_designer" => Some(&[
-            "read_file", "write_file", "list_dir", "generate_image"
-        ]),
-        "sop_designer" => Some(&[
-            "read_file", "write_file", "list_dir"
-        ]),
+        "media_designer" => Some(&["read_file", "write_file", "list_dir", "generate_image"]),
+        "sop_designer" => Some(&["read_file", "write_file", "list_dir"]),
         "api_integrator" => Some(&[
-            "read_file", "write_file", "list_dir", "web_fetch", "web_search", "exec_command"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "web_fetch",
+            "web_search",
+            "exec_command",
         ]),
-        "performance_tuner" => Some(&[
-            "read_file", "list_dir", "system_info", "exec_command"
-        ]),
-        "communication_manager" => Some(&[
-            "read_file", "list_dir", "check_port"
-        ]),
+        "performance_tuner" => Some(&["read_file", "list_dir", "system_info", "exec_command"]),
+        "communication_manager" => Some(&["read_file", "list_dir", "check_port"]),
         "document_compiler" => Some(&[
-            "read_file", "write_file", "list_dir", "find_files", "doc_reader", "exec_command", "compile_template"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "find_files",
+            "doc_reader",
+            "exec_command",
+            "compile_template",
         ]),
         "presentation_designer" => Some(&[
-            "read_file", "write_file", "list_dir", "find_files", "exec_command", "generate_image", "compile_template"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "find_files",
+            "exec_command",
+            "generate_image",
+            "compile_template",
         ]),
         "code_synthesizer" => Some(&[
-            "read_file", "write_file", "list_dir", "find_files", "onpkg", "code_outline", "cargo_manager"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "find_files",
+            "onpkg",
+            "code_outline",
+            "cargo_manager",
         ]),
-        "summarizer_agent" => Some(&[
-            "read_file", "write_file", "list_dir", "grep_search"
-        ]),
+        "summarizer_agent" => Some(&["read_file", "write_file", "list_dir", "grep_search"]),
         "automation_agent" => Some(&[
-            "read_file", "write_file", "list_dir", "find_files", "gsd_browser", "obscura",
-            "crawl", "web_fetch", "schedule_job", "list_jobs", "remove_job", "exec_command", "manage_mcp"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "find_files",
+            "gsd_browser",
+            "obscura",
+            "crawl",
+            "web_fetch",
+            "schedule_job",
+            "list_jobs",
+            "remove_job",
+            "exec_command",
+            "manage_mcp",
         ]),
         "coding_agent" => Some(&[
-            "read_file", "write_file", "list_dir", "find_files", "code_outline", "ast_grep",
-            "grep_search", "exec_command", "cargo_manager"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "find_files",
+            "code_outline",
+            "ast_grep",
+            "grep_search",
+            "exec_command",
+            "cargo_manager",
         ]),
         "reviewer" | "code_auditor" => Some(&[
-            "read_file", "list_dir", "code_outline", "ast_grep", "grep_search"
+            "read_file",
+            "list_dir",
+            "code_outline",
+            "ast_grep",
+            "grep_search",
         ]),
         "debugger" => Some(&[
-            "read_file", "write_file", "list_dir", "code_outline", "grep_search", 
-            "exec_command", "cargo_manager"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "code_outline",
+            "grep_search",
+            "exec_command",
+            "cargo_manager",
         ]),
         "test_engineer" => Some(&[
-            "read_file", "write_file", "list_dir", "exec_command", "cargo_manager"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "exec_command",
+            "cargo_manager",
         ]),
-        "devops_agent" => Some(&[
-            "read_file", "write_file", "list_dir", "exec_command"
-        ]),
+        "devops_agent" => Some(&["read_file", "write_file", "list_dir", "exec_command"]),
         "refactor_agent" => Some(&[
-            "read_file", "write_file", "list_dir", "code_outline", "ast_grep", "grep_search"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "code_outline",
+            "ast_grep",
+            "grep_search",
         ]),
-        "memory_manager" | "self_improvement" | "skill_improvement" => Some(&[
-            "read_file", "write_file", "list_dir", "find_files"
-        ]),
+        "memory_manager" | "self_improvement" | "skill_improvement" => {
+            Some(&["read_file", "write_file", "list_dir", "find_files"])
+        }
         "openz_maintainer" => Some(&[
-            "read_file", "write_file", "list_dir", "exec_command", "cargo_manager"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "exec_command",
+            "cargo_manager",
         ]),
         "mcps_manager" => Some(&[
-            "read_file", "write_file", "list_dir", "manage_mcp", "exec_command"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "manage_mcp",
+            "exec_command",
         ]),
         "vision_agent" => Some(&[
-            "read_file", "list_dir", "find_files", "generate_image", "doc_reader"
+            "read_file",
+            "list_dir",
+            "find_files",
+            "generate_image",
+            "doc_reader",
         ]),
         "skill_creator" => Some(&[
-            "read_file", "write_file", "list_dir", "exec_command", "cargo_manager"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "exec_command",
+            "cargo_manager",
         ]),
-        "documentation_agent" => Some(&[
-            "read_file", "write_file", "list_dir", "find_files"
-        ]),
+        "documentation_agent" => Some(&["read_file", "write_file", "list_dir", "find_files"]),
         "diagram_designer" => Some(&[
-            "read_file", "write_file", "list_dir", "openmedia_diagram_generate_mermaid"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "openmedia_diagram_generate_mermaid",
         ]),
         "video_animator" => Some(&[
-            "read_file", "write_file", "list_dir", "openmedia_video_create", "openmedia_video_preview"
+            "read_file",
+            "write_file",
+            "list_dir",
+            "openmedia_video_create",
+            "openmedia_video_preview",
         ]),
         _ => None,
     };
 
     let mut filtered: Vec<Arc<dyn Tool>> = if let Some(allowed) = allowed_names {
-        all_tools.iter()
+        all_tools
+            .iter()
             .filter(|t| allowed.contains(&t.name()))
             .cloned()
             .collect()

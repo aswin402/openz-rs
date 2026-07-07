@@ -11,7 +11,9 @@ pub struct LogRepositoryEvolutionTool;
 
 #[async_trait::async_trait]
 impl Tool for LogRepositoryEvolutionTool {
-    fn name(&self) -> &str { "log_repository_evolution" }
+    fn name(&self) -> &str {
+        "log_repository_evolution"
+    }
 
     fn description(&self) -> &str {
         "Log file changes, refactoring records, commits, versions, and bug status metrics."
@@ -35,12 +37,20 @@ impl Tool for LogRepositoryEvolutionTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let file_path = arguments["filePath"].as_str().ok_or_else(|| anyhow!("Missing filePath"))?;
-        let version = arguments["version"].as_str().ok_or_else(|| anyhow!("Missing version"))?;
+        let file_path = arguments["filePath"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing filePath"))?;
+        let version = arguments["version"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing version"))?;
         let commit_hash = arguments["commitHash"].as_str().unwrap_or("");
         let author = arguments["author"].as_str().unwrap_or("");
-        let change_type = arguments["changeType"].as_str().ok_or_else(|| anyhow!("Missing changeType"))?;
-        let summary = arguments["summary"].as_str().ok_or_else(|| anyhow!("Missing summary"))?;
+        let change_type = arguments["changeType"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing changeType"))?;
+        let summary = arguments["summary"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing summary"))?;
         let bug_introduced = arguments["bugIntroduced"].as_bool().unwrap_or(false) as i32;
         let bug_fixed = arguments["bugFixed"].as_bool().unwrap_or(false) as i32;
 
@@ -60,7 +70,9 @@ pub struct QueryRepositoryEvolutionTool;
 
 #[async_trait::async_trait]
 impl Tool for QueryRepositoryEvolutionTool {
-    fn name(&self) -> &str { "query_repository_evolution" }
+    fn name(&self) -> &str {
+        "query_repository_evolution"
+    }
 
     fn description(&self) -> &str {
         "Query repository file history and change statistics."
@@ -80,10 +92,14 @@ impl Tool for QueryRepositoryEvolutionTool {
 
         with_db(|conn| {
             if let Some(fp) = file_path {
-                let mut stmt = conn.prepare("SELECT * FROM repo_evolution WHERE file_path = ?1 ORDER BY created_at DESC")?;
+                let mut stmt = conn.prepare(
+                    "SELECT * FROM repo_evolution WHERE file_path = ?1 ORDER BY created_at DESC",
+                )?;
                 let rows = stmt.query_map(params![fp], map_repo_row)?;
                 let mut entries = Vec::new();
-                for r in rows { entries.push(r?); }
+                for r in rows {
+                    entries.push(r?);
+                }
                 Ok(json!({ "entries": entries, "totalCount": entries.len() }))
             } else {
                 let mut stmt = conn.prepare(
@@ -98,7 +114,9 @@ impl Tool for QueryRepositoryEvolutionTool {
                     }))
                 })?;
                 let mut stats = Vec::new();
-                for r in rows { stats.push(r?); }
+                for r in rows {
+                    stats.push(r?);
+                }
                 Ok(json!({ "statistics": stats }))
             }
         })
@@ -126,7 +144,9 @@ pub struct TraverseGraphTool;
 
 #[async_trait::async_trait]
 impl Tool for TraverseGraphTool {
-    fn name(&self) -> &str { "traverse_graph" }
+    fn name(&self) -> &str {
+        "traverse_graph"
+    }
 
     fn description(&self) -> &str {
         "Traverse nodes and edges from a start entity using BFS up to a maximum depth."
@@ -147,7 +167,9 @@ impl Tool for TraverseGraphTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let start = arguments["startEntity"].as_str().ok_or_else(|| anyhow!("Missing startEntity"))?;
+        let start = arguments["startEntity"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing startEntity"))?;
         let max_depth = arguments["maxDepth"].as_i64().unwrap_or(2) as usize;
         let (uid, sid, aid) = scope_from_args(arguments);
 
@@ -159,7 +181,9 @@ impl Tool for TraverseGraphTool {
             queue.push_back((start.to_string(), 0usize));
 
             while let Some((current, depth)) = queue.pop_front() {
-                if !visited.insert(current.clone()) || depth > max_depth { continue; }
+                if !visited.insert(current.clone()) || depth > max_depth {
+                    continue;
+                }
 
                 // Get node info
                 if let Ok(node) = conn.query_row(
@@ -175,18 +199,26 @@ impl Tool for TraverseGraphTool {
                     nodes.push(node);
                 }
 
-                if depth >= max_depth { continue; }
+                if depth >= max_depth {
+                    continue;
+                }
 
                 // Get neighbors
                 let mut stmt = conn.prepare(
                     "SELECT from_name, to_name, relation_type FROM graph_edges WHERE (from_name = ?1 OR to_name = ?1) AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*') AND valid_until IS NULL"
                 )?;
                 let rows = stmt.query_map(params![current, uid, sid, aid], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
                 })?;
                 for r in rows {
                     let (from, to, rel_type) = r?;
-                    edges.push(json!({ "from": from.clone(), "to": to.clone(), "relationType": rel_type }));
+                    edges.push(
+                        json!({ "from": from.clone(), "to": to.clone(), "relationType": rel_type }),
+                    );
                     let neighbor = if from == current { &to } else { &from };
                     if !visited.contains(neighbor) {
                         queue.push_back((neighbor.clone(), depth + 1));
@@ -205,7 +237,9 @@ pub struct FindPathTool;
 
 #[async_trait::async_trait]
 impl Tool for FindPathTool {
-    fn name(&self) -> &str { "find_path" }
+    fn name(&self) -> &str {
+        "find_path"
+    }
 
     fn description(&self) -> &str {
         "Find the shortest path and relations between two entity nodes using BFS."
@@ -226,8 +260,12 @@ impl Tool for FindPathTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let start = arguments["startEntity"].as_str().ok_or_else(|| anyhow!("Missing startEntity"))?;
-        let target = arguments["targetEntity"].as_str().ok_or_else(|| anyhow!("Missing targetEntity"))?;
+        let start = arguments["startEntity"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing startEntity"))?;
+        let target = arguments["targetEntity"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing targetEntity"))?;
         let (uid, sid, aid) = scope_from_args(arguments);
 
         with_db(|conn| {
@@ -239,13 +277,20 @@ impl Tool for FindPathTool {
 
             let mut found = false;
             while let Some(current) = queue.pop_front() {
-                if current == target { found = true; break; }
+                if current == target {
+                    found = true;
+                    break;
+                }
 
                 let mut stmt = conn.prepare(
                     "SELECT from_name, to_name, relation_type FROM graph_edges WHERE (from_name = ?1 OR to_name = ?1) AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*') AND valid_until IS NULL"
                 )?;
                 let rows = stmt.query_map(params![current, uid, sid, aid], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
                 })?;
                 for r in rows {
                     let (from, to, rel_type) = r?;
@@ -268,7 +313,9 @@ impl Tool for FindPathTool {
                 if let Some((p, rel)) = parent.get(&current) {
                     path.push(json!({ "from": p, "to": current, "relationType": rel }));
                     current = p.clone();
-                } else { break; }
+                } else {
+                    break;
+                }
             }
             path.reverse();
 
@@ -283,7 +330,9 @@ pub struct AnalyzeGraphCommunitiesTool;
 
 #[async_trait::async_trait]
 impl Tool for AnalyzeGraphCommunitiesTool {
-    fn name(&self) -> &str { "analyze_graph_communities" }
+    fn name(&self) -> &str {
+        "analyze_graph_communities"
+    }
 
     fn description(&self) -> &str {
         "Cluster the entity-relation graph into weakly connected communities with summaries."
@@ -308,12 +357,16 @@ impl Tool for AnalyzeGraphCommunitiesTool {
             let mut stmt = conn.prepare(
                 "SELECT name FROM graph_nodes WHERE (?1 IS NULL OR user_id = ?1 OR user_id = '*') AND (?2 IS NULL OR session_id = ?2 OR session_id = '*') AND (?3 IS NULL OR agent_id = ?3 OR agent_id = '*')"
             )?;
-            let names: Vec<String> = stmt.query_map(params![uid, sid, aid], |r| r.get(0))?
-                .filter_map(|r| r.ok()).collect();
+            let names: Vec<String> = stmt
+                .query_map(params![uid, sid, aid], |r| r.get(0))?
+                .filter_map(|r| r.ok())
+                .collect();
 
             // Union-Find
             let mut parent: HashMap<String, String> = HashMap::new();
-            for n in &names { parent.insert(n.clone(), n.clone()); }
+            for n in &names {
+                parent.insert(n.clone(), n.clone());
+            }
 
             fn find(p: &mut HashMap<String, String>, x: &str) -> String {
                 let px = p.get(x).cloned().unwrap_or_default();
@@ -321,7 +374,9 @@ impl Tool for AnalyzeGraphCommunitiesTool {
                     let root = find(p, &px);
                     p.insert(x.to_string(), root.clone());
                     root
-                } else { x.to_string() }
+                } else {
+                    x.to_string()
+                }
             }
 
             let mut edge_stmt = conn.prepare(
@@ -333,7 +388,9 @@ impl Tool for AnalyzeGraphCommunitiesTool {
             for (from, to) in edges.flatten() {
                 let rf = find(&mut parent, &from);
                 let rt = find(&mut parent, &to);
-                if rf != rt { parent.insert(rf, rt); }
+                if rf != rt {
+                    parent.insert(rf, rt);
+                }
             }
 
             // Group by root
@@ -345,9 +402,12 @@ impl Tool for AnalyzeGraphCommunitiesTool {
 
             let mut result = Vec::new();
             for (_, members) in communities {
-                if members.len() < 2 { continue; }
+                if members.len() < 2 {
+                    continue;
+                }
                 let summary = format!("{} entities: {}", members.len(), members.join(", "));
-                result.push(json!({ "size": members.len(), "members": members, "summary": summary }));
+                result
+                    .push(json!({ "size": members.len(), "members": members, "summary": summary }));
             }
             result.sort_by(|a, b| b["size"].as_i64().cmp(&a["size"].as_i64()));
 
@@ -360,11 +420,20 @@ impl Tool for AnalyzeGraphCommunitiesTool {
 
 pub struct DetectAndResolveConflictsTool;
 
-const EXCLUSIVE_RELATIONS: &[&str] = &["lives_in", "current_job", "spouse", "has_status", "is_born_in", "located_in"];
+const EXCLUSIVE_RELATIONS: &[&str] = &[
+    "lives_in",
+    "current_job",
+    "spouse",
+    "has_status",
+    "is_born_in",
+    "located_in",
+];
 
 #[async_trait::async_trait]
 impl Tool for DetectAndResolveConflictsTool {
-    fn name(&self) -> &str { "detect_and_resolve_conflicts" }
+    fn name(&self) -> &str {
+        "detect_and_resolve_conflicts"
+    }
 
     fn description(&self) -> &str {
         "Detect and resolve contradictions or conflicts in graph relations and semantic memories."
@@ -403,7 +472,10 @@ impl Tool for DetectAndResolveConflictsTool {
                 })?;
                 for r in rows {
                     let (entity, count) = r?;
-                    let description = format!("Entity '{}' has {} '{}' relations (exclusive type allows 1)", entity, count, rel_type);
+                    let description = format!(
+                        "Entity '{}' has {} '{}' relations (exclusive type allows 1)",
+                        entity, count, rel_type
+                    );
 
                     if !dry_run && strategy == "recency" {
                         // Keep the most recent, expire others

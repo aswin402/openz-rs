@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Result};
-use std::sync::OnceLock;
-use fastembed::{TextEmbedding, InitOptions, EmbeddingModel};
 use super::db::get_shared_client;
+use anyhow::{anyhow, Result};
+use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use std::sync::OnceLock;
 
 static GLOBAL_EMBEDDING_MODEL: OnceLock<std::sync::Mutex<TextEmbedding>> = OnceLock::new();
 
@@ -17,13 +17,18 @@ pub fn get_global_model() -> Result<&'static std::sync::Mutex<TextEmbedding>> {
 
 async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
     let config = crate::config::loader::load_config()?;
-    let preferred = config.embeddings.as_ref()
+    let preferred = config
+        .embeddings
+        .as_ref()
         .and_then(|e| e.preferred_provider.as_deref());
 
     let mut providers_order = vec!["google", "cohere", "openai"];
     if let Some(pref) = preferred {
         let p_clean = pref.to_lowercase();
-        if let Some(pos) = providers_order.iter().position(|&p| p == p_clean || (p == "openai" && (p_clean == "opencode_zen" || p_clean == "opencode-zen"))) {
+        if let Some(pos) = providers_order.iter().position(|&p| {
+            p == p_clean
+                || (p == "openai" && (p_clean == "opencode_zen" || p_clean == "opencode-zen"))
+        }) {
             let removed = providers_order.remove(pos);
             providers_order.insert(0, removed);
         }
@@ -33,7 +38,9 @@ async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
         match provider_name {
             "google" => {
                 if let Some(ref google_config) = config.providers.google_ai_studio {
-                    let key_opt = google_config.api_key.as_deref()
+                    let key_opt = google_config
+                        .api_key
+                        .as_deref()
                         .or_else(|| google_config.extra.get("apiKey").and_then(|v| v.as_str()));
                     if let Some(key) = key_opt {
                         if !key.trim().is_empty() {
@@ -42,7 +49,8 @@ async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
                                 key
                             );
                             let client = get_shared_client();
-                            let res = client.post(&url)
+                            let res = client
+                                .post(&url)
                                 .json(&serde_json::json!({
                                     "content": {
                                         "parts": [{
@@ -55,8 +63,14 @@ async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
                             if let Ok(res) = res {
                                 if res.status().is_success() {
                                     if let Ok(json) = res.json::<serde_json::Value>().await {
-                                        if let Some(values) = json.pointer("/embedding/values").and_then(|v| v.as_array()) {
-                                            let vec: Vec<f32> = values.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                                        if let Some(values) = json
+                                            .pointer("/embedding/values")
+                                            .and_then(|v| v.as_array())
+                                        {
+                                            let vec: Vec<f32> = values
+                                                .iter()
+                                                .filter_map(|v| v.as_f64().map(|f| f as f32))
+                                                .collect();
                                             if !vec.is_empty() {
                                                 return Ok(vec);
                                             }
@@ -70,14 +84,21 @@ async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
             }
             "cohere" => {
                 if let Some(ref cohere_config) = config.providers.cohere {
-                    let key_opt = cohere_config.api_key.as_deref()
+                    let key_opt = cohere_config
+                        .api_key
+                        .as_deref()
                         .or_else(|| cohere_config.extra.get("apiKey").and_then(|v| v.as_str()));
                     if let Some(key) = key_opt {
                         if !key.trim().is_empty() {
                             let url = "https://api.cohere.com/v1/embed";
                             let client = get_shared_client();
-                            let input_type = if is_query { "search_query" } else { "search_document" };
-                            let res = client.post(url)
+                            let input_type = if is_query {
+                                "search_query"
+                            } else {
+                                "search_document"
+                            };
+                            let res = client
+                                .post(url)
                                 .header("Authorization", format!("bearer {}", key))
                                 .header("Content-Type", "application/json")
                                 .json(&serde_json::json!({
@@ -90,9 +111,16 @@ async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
                             if let Ok(res) = res {
                                 if res.status().is_success() {
                                     if let Ok(json) = res.json::<serde_json::Value>().await {
-                                        if let Some(arr) = json.pointer("/embeddings").and_then(|v| v.as_array()) {
-                                            if let Some(first_embed) = arr.first().and_then(|v| v.as_array()) {
-                                                let vec: Vec<f32> = first_embed.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                                        if let Some(arr) =
+                                            json.pointer("/embeddings").and_then(|v| v.as_array())
+                                        {
+                                            if let Some(first_embed) =
+                                                arr.first().and_then(|v| v.as_array())
+                                            {
+                                                let vec: Vec<f32> = first_embed
+                                                    .iter()
+                                                    .filter_map(|v| v.as_f64().map(|f| f as f32))
+                                                    .collect();
                                                 if !vec.is_empty() {
                                                     return Ok(vec);
                                                 }
@@ -111,13 +139,19 @@ async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
                 let openai_model = "text-embedding-3-small".to_string();
 
                 if let Some(ref opencode_config) = config.providers.opencode_zen {
-                    let key_opt = opencode_config.api_key.as_deref()
+                    let key_opt = opencode_config
+                        .api_key
+                        .as_deref()
                         .or_else(|| opencode_config.extra.get("apiKey").and_then(|v| v.as_str()));
                     if let Some(key) = key_opt {
                         if !key.trim().is_empty() {
                             openai_key = Some(key.to_string());
-                            let base_opt = opencode_config.api_base.as_deref()
-                                .or_else(|| opencode_config.extra.get("apiBase").and_then(|v| v.as_str()));
+                            let base_opt = opencode_config.api_base.as_deref().or_else(|| {
+                                opencode_config
+                                    .extra
+                                    .get("apiBase")
+                                    .and_then(|v| v.as_str())
+                            });
                             if let Some(base) = base_opt {
                                 openai_base = base.to_string();
                             }
@@ -127,13 +161,16 @@ async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
 
                 if openai_key.is_none() {
                     if let Some(ref openai_config) = config.providers.openai {
-                        let key_opt = openai_config.api_key.as_deref()
+                        let key_opt = openai_config
+                            .api_key
+                            .as_deref()
                             .or_else(|| openai_config.extra.get("apiKey").and_then(|v| v.as_str()));
                         if let Some(key) = key_opt {
                             if !key.trim().is_empty() {
                                 openai_key = Some(key.to_string());
-                                let base_opt = openai_config.api_base.as_deref()
-                                    .or_else(|| openai_config.extra.get("apiBase").and_then(|v| v.as_str()));
+                                let base_opt = openai_config.api_base.as_deref().or_else(|| {
+                                    openai_config.extra.get("apiBase").and_then(|v| v.as_str())
+                                });
                                 if let Some(base) = base_opt {
                                     openai_base = base.to_string();
                                 }
@@ -145,7 +182,8 @@ async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
                 if let Some(key) = openai_key {
                     let url = format!("{}/embeddings", openai_base.trim_end_matches('/'));
                     let client = get_shared_client();
-                    let res = client.post(&url)
+                    let res = client
+                        .post(&url)
                         .header("Authorization", format!("Bearer {}", key))
                         .json(&serde_json::json!({
                             "input": text,
@@ -156,10 +194,16 @@ async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
                     if let Ok(res) = res {
                         if res.status().is_success() {
                             if let Ok(json) = res.json::<serde_json::Value>().await {
-                                if let Some(data) = json.pointer("/data").and_then(|v| v.as_array()) {
+                                if let Some(data) = json.pointer("/data").and_then(|v| v.as_array())
+                                {
                                     if let Some(first) = data.first() {
-                                        if let Some(values) = first.pointer("/embedding").and_then(|v| v.as_array()) {
-                                            let vec: Vec<f32> = values.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                                        if let Some(values) =
+                                            first.pointer("/embedding").and_then(|v| v.as_array())
+                                        {
+                                            let vec: Vec<f32> = values
+                                                .iter()
+                                                .filter_map(|v| v.as_f64().map(|f| f as f32))
+                                                .collect();
                                             if !vec.is_empty() {
                                                 return Ok(vec);
                                             }
@@ -175,22 +219,32 @@ async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
         }
     }
 
-    Err(anyhow::anyhow!("No active cloud embedding providers succeeded"))
+    Err(anyhow::anyhow!(
+        "No active cloud embedding providers succeeded"
+    ))
 }
 
-pub async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) -> Result<Vec<Vec<f32>>> {
+pub async fn get_cloud_embeddings_batch(
+    queries: Vec<String>,
+    is_query: bool,
+) -> Result<Vec<Vec<f32>>> {
     if queries.is_empty() {
         return Ok(Vec::new());
     }
 
     let config = crate::config::loader::load_config()?;
-    let preferred = config.embeddings.as_ref()
+    let preferred = config
+        .embeddings
+        .as_ref()
         .and_then(|e| e.preferred_provider.as_deref());
 
     let mut providers_order = vec!["google", "cohere", "openai"];
     if let Some(pref) = preferred {
         let p_clean = pref.to_lowercase();
-        if let Some(pos) = providers_order.iter().position(|&p| p == p_clean || (p == "openai" && (p_clean == "opencode_zen" || p_clean == "opencode-zen"))) {
+        if let Some(pos) = providers_order.iter().position(|&p| {
+            p == p_clean
+                || (p == "openai" && (p_clean == "opencode_zen" || p_clean == "opencode-zen"))
+        }) {
             let removed = providers_order.remove(pos);
             providers_order.insert(0, removed);
         }
@@ -200,7 +254,9 @@ pub async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) ->
         match provider_name {
             "google" => {
                 if let Some(ref google_config) = config.providers.google_ai_studio {
-                    let key_opt = google_config.api_key.as_deref()
+                    let key_opt = google_config
+                        .api_key
+                        .as_deref()
                         .or_else(|| google_config.extra.get("apiKey").and_then(|v| v.as_str()));
                     if let Some(key) = key_opt {
                         if !key.trim().is_empty() {
@@ -208,19 +264,23 @@ pub async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) ->
                                 "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents?key={}",
                                 key
                             );
-                            let requests: Vec<serde_json::Value> = queries.iter().map(|q| {
-                                serde_json::json!({
-                                    "model": "models/text-embedding-004",
-                                    "content": {
-                                        "parts": [{
-                                            "text": q
-                                        }]
-                                    }
+                            let requests: Vec<serde_json::Value> = queries
+                                .iter()
+                                .map(|q| {
+                                    serde_json::json!({
+                                        "model": "models/text-embedding-004",
+                                        "content": {
+                                            "parts": [{
+                                                "text": q
+                                            }]
+                                        }
+                                    })
                                 })
-                            }).collect();
+                                .collect();
 
                             let client = get_shared_client();
-                            let res = client.post(&url)
+                            let res = client
+                                .post(&url)
                                 .json(&serde_json::json!({
                                     "requests": requests
                                 }))
@@ -230,11 +290,21 @@ pub async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) ->
                             if let Ok(res) = res {
                                 if res.status().is_success() {
                                     if let Ok(json) = res.json::<serde_json::Value>().await {
-                                        if let Some(embeddings) = json.pointer("/embeddings").and_then(|v| v.as_array()) {
+                                        if let Some(embeddings) =
+                                            json.pointer("/embeddings").and_then(|v| v.as_array())
+                                        {
                                             let mut result = Vec::new();
                                             for emb in embeddings {
-                                                if let Some(values) = emb.pointer("/values").and_then(|v| v.as_array()) {
-                                                    let vec: Vec<f32> = values.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                                                if let Some(values) = emb
+                                                    .pointer("/values")
+                                                    .and_then(|v| v.as_array())
+                                                {
+                                                    let vec: Vec<f32> = values
+                                                        .iter()
+                                                        .filter_map(|v| {
+                                                            v.as_f64().map(|f| f as f32)
+                                                        })
+                                                        .collect();
                                                     result.push(vec);
                                                 }
                                             }
@@ -251,14 +321,21 @@ pub async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) ->
             }
             "cohere" => {
                 if let Some(ref cohere_config) = config.providers.cohere {
-                    let key_opt = cohere_config.api_key.as_deref()
+                    let key_opt = cohere_config
+                        .api_key
+                        .as_deref()
                         .or_else(|| cohere_config.extra.get("apiKey").and_then(|v| v.as_str()));
                     if let Some(key) = key_opt {
                         if !key.trim().is_empty() {
                             let url = "https://api.cohere.com/v1/embed";
                             let client = get_shared_client();
-                            let input_type = if is_query { "search_query" } else { "search_document" };
-                            let res = client.post(url)
+                            let input_type = if is_query {
+                                "search_query"
+                            } else {
+                                "search_document"
+                            };
+                            let res = client
+                                .post(url)
                                 .header("Authorization", format!("bearer {}", key))
                                 .header("Content-Type", "application/json")
                                 .json(&serde_json::json!({
@@ -268,15 +345,22 @@ pub async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) ->
                                 }))
                                 .send()
                                 .await;
-                            
+
                             if let Ok(res) = res {
                                 if res.status().is_success() {
                                     if let Ok(json) = res.json::<serde_json::Value>().await {
-                                        if let Some(arr) = json.pointer("/embeddings").and_then(|v| v.as_array()) {
+                                        if let Some(arr) =
+                                            json.pointer("/embeddings").and_then(|v| v.as_array())
+                                        {
                                             let mut result = Vec::new();
                                             for item in arr {
                                                 if let Some(first_embed) = item.as_array() {
-                                                    let vec: Vec<f32> = first_embed.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                                                    let vec: Vec<f32> = first_embed
+                                                        .iter()
+                                                        .filter_map(|v| {
+                                                            v.as_f64().map(|f| f as f32)
+                                                        })
+                                                        .collect();
                                                     result.push(vec);
                                                 }
                                             }
@@ -297,13 +381,19 @@ pub async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) ->
                 let openai_model = "text-embedding-3-small".to_string();
 
                 if let Some(ref opencode_config) = config.providers.opencode_zen {
-                    let key_opt = opencode_config.api_key.as_deref()
+                    let key_opt = opencode_config
+                        .api_key
+                        .as_deref()
                         .or_else(|| opencode_config.extra.get("apiKey").and_then(|v| v.as_str()));
                     if let Some(key) = key_opt {
                         if !key.trim().is_empty() {
                             openai_key = Some(key.to_string());
-                            let base_opt = opencode_config.api_base.as_deref()
-                                .or_else(|| opencode_config.extra.get("apiBase").and_then(|v| v.as_str()));
+                            let base_opt = opencode_config.api_base.as_deref().or_else(|| {
+                                opencode_config
+                                    .extra
+                                    .get("apiBase")
+                                    .and_then(|v| v.as_str())
+                            });
                             if let Some(base) = base_opt {
                                 openai_base = base.to_string();
                             }
@@ -313,13 +403,16 @@ pub async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) ->
 
                 if openai_key.is_none() {
                     if let Some(ref openai_config) = config.providers.openai {
-                        let key_opt = openai_config.api_key.as_deref()
+                        let key_opt = openai_config
+                            .api_key
+                            .as_deref()
                             .or_else(|| openai_config.extra.get("apiKey").and_then(|v| v.as_str()));
                         if let Some(key) = key_opt {
                             if !key.trim().is_empty() {
                                 openai_key = Some(key.to_string());
-                                let base_opt = openai_config.api_base.as_deref()
-                                    .or_else(|| openai_config.extra.get("apiBase").and_then(|v| v.as_str()));
+                                let base_opt = openai_config.api_base.as_deref().or_else(|| {
+                                    openai_config.extra.get("apiBase").and_then(|v| v.as_str())
+                                });
                                 if let Some(base) = base_opt {
                                     openai_base = base.to_string();
                                 }
@@ -331,7 +424,8 @@ pub async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) ->
                 if let Some(key) = openai_key {
                     let url = format!("{}/embeddings", openai_base.trim_end_matches('/'));
                     let client = get_shared_client();
-                    let res = client.post(&url)
+                    let res = client
+                        .post(&url)
                         .header("Authorization", format!("Bearer {}", key))
                         .json(&serde_json::json!({
                             "input": queries,
@@ -339,15 +433,21 @@ pub async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) ->
                         }))
                         .send()
                         .await;
-                    
+
                     if let Ok(res) = res {
                         if res.status().is_success() {
                             if let Ok(json) = res.json::<serde_json::Value>().await {
-                                if let Some(data) = json.pointer("/data").and_then(|v| v.as_array()) {
+                                if let Some(data) = json.pointer("/data").and_then(|v| v.as_array())
+                                {
                                     let mut result = Vec::new();
                                     for item in data {
-                                        if let Some(values) = item.pointer("/embedding").and_then(|v| v.as_array()) {
-                                            let vec: Vec<f32> = values.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                                        if let Some(values) =
+                                            item.pointer("/embedding").and_then(|v| v.as_array())
+                                        {
+                                            let vec: Vec<f32> = values
+                                                .iter()
+                                                .filter_map(|v| v.as_f64().map(|f| f as f32))
+                                                .collect();
                                             result.push(vec);
                                         }
                                     }
@@ -364,12 +464,15 @@ pub async fn get_cloud_embeddings_batch(queries: Vec<String>, is_query: bool) ->
         }
     }
 
-    Err(anyhow::anyhow!("No active cloud embedding providers succeeded for batch"))
+    Err(anyhow::anyhow!(
+        "No active cloud embedding providers succeeded for batch"
+    ))
 }
 
 pub async fn get_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
     let config = crate::config::loader::load_config().ok();
-    let mode = config.as_ref()
+    let mode = config
+        .as_ref()
         .and_then(|c| c.embeddings.as_ref())
         .map(|e| e.mode.as_str())
         .unwrap_or("local");
@@ -380,9 +483,15 @@ pub async fn get_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
             Ok(vec) => return Ok(vec),
             Err(e) => {
                 if mode == "cloud_only" {
-                    return Err(anyhow::anyhow!("Cloud embedding failed and local model fallback is disabled: {:?}", e));
+                    return Err(anyhow::anyhow!(
+                        "Cloud embedding failed and local model fallback is disabled: {:?}",
+                        e
+                    ));
                 }
-                tracing::warn!("Cloud embedding failed: {:?}. Falling back to local fastembed.", e);
+                tracing::warn!(
+                    "Cloud embedding failed: {:?}. Falling back to local fastembed.",
+                    e
+                );
             }
         }
     }
@@ -391,7 +500,9 @@ pub async fn get_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
     let text_owned = text.to_string();
     tokio::task::spawn_blocking(move || -> Result<Vec<f32>> {
         let model_mutex = get_global_model()?;
-        let mut model = model_mutex.lock().map_err(|e| anyhow!("Failed to lock model Mutex: {:?}", e))?;
+        let mut model = model_mutex
+            .lock()
+            .map_err(|e| anyhow!("Failed to lock model Mutex: {:?}", e))?;
         let formatted = if is_query {
             format!("query: {}", text_owned)
         } else {
@@ -399,7 +510,8 @@ pub async fn get_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
         };
         let embeds = model.embed(vec![&formatted], None)?;
         Ok(embeds[0].clone())
-    }).await?
+    })
+    .await?
 }
 
 pub fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {

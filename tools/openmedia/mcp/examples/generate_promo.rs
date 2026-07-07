@@ -6,7 +6,7 @@ use serde_json::json;
 async fn main() {
     println!("Initializing OpenMediaServer...");
     let mut config = Config::default();
-    
+
     // Set local paths
     let temp_dir = std::env::temp_dir();
     config.paths.model_dir = temp_dir.join("openmedia_models");
@@ -1139,7 +1139,10 @@ async fn main() {
     match result {
         Ok(json_response) => {
             println!("SUCCESS: Promo video rendered successfully!");
-            println!("Response: {}", serde_json::to_string_pretty(&json_response.0).unwrap());
+            println!(
+                "Response: {}",
+                serde_json::to_string_pretty(&json_response.0).unwrap()
+            );
         }
         Err(err) => {
             eprintln!("ERROR: Failed to render promo video: {}", err);

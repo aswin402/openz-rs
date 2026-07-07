@@ -1,8 +1,8 @@
 use super::*;
+use crate::tools::Tool;
 use anyhow::Result;
 use serde_json::json;
 use std::sync::Arc;
-use crate::tools::Tool;
 
 struct TestLock;
 
@@ -37,7 +37,7 @@ async fn test_shared_memory_workflow() -> Result<()> {
     let _lock = TestLock::acquire();
     let temp_dir = std::env::temp_dir().join(format!("openz_mem_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir)?;
-    
+
     std::env::set_var("OPENZ_CONFIG_DIR", &temp_dir);
 
     let store_tool = StoreMemoryTool;
@@ -48,10 +48,12 @@ async fn test_shared_memory_workflow() -> Result<()> {
     let _ = clear_tool.call(&json!({ "scope": "all" })).await?;
 
     // 1. Initial recall should return empty list
-    let res = recall_tool.call(&json!({
-        "query": "something",
-        "scope": "global"
-    })).await?;
+    let res = recall_tool
+        .call(&json!({
+            "query": "something",
+            "scope": "global"
+        }))
+        .await?;
     assert_eq!(res["status"], "success");
     assert_eq!(res["matches"].as_array().unwrap().len(), 0);
 
@@ -64,19 +66,23 @@ async fn test_shared_memory_workflow() -> Result<()> {
     assert_eq!(res["status"], "success");
 
     // Store another memory
-    let res = store_tool.call(&json!({
-        "text": "Docker builds should utilize multi-stage builds to reduce final image size.",
-        "tags": ["devops", "docker"],
-        "importance": 0.8
-    })).await?;
+    let res = store_tool
+        .call(&json!({
+            "text": "Docker builds should utilize multi-stage builds to reduce final image size.",
+            "tags": ["devops", "docker"],
+            "importance": 0.8
+        }))
+        .await?;
     assert_eq!(res["status"], "success");
 
     // 3. Recall memory (semantic search)
-    let res = recall_tool.call(&json!({
-        "query": "How do I fix cargo lock or compilation errors?",
-        "top_k": 1,
-        "scope": "global"
-    })).await?;
+    let res = recall_tool
+        .call(&json!({
+            "query": "How do I fix cargo lock or compilation errors?",
+            "top_k": 1,
+            "scope": "global"
+        }))
+        .await?;
     assert_eq!(res["status"], "success");
     let matches = res["matches"].as_array().unwrap();
     assert_eq!(matches.len(), 1);
@@ -84,35 +90,42 @@ async fn test_shared_memory_workflow() -> Result<()> {
     assert!(matches[0]["score"].as_f64().unwrap() > 0.1);
 
     // 4. Recall with tag filter
-    let res = recall_tool.call(&json!({
-        "query": "deployment",
-        "tags": ["docker"],
-        "scope": "global"
-    })).await?;
+    let res = recall_tool
+        .call(&json!({
+            "query": "deployment",
+            "tags": ["docker"],
+            "scope": "global"
+        }))
+        .await?;
     assert_eq!(res["status"], "success");
     let matches = res["matches"].as_array().unwrap();
     assert_eq!(matches.len(), 1);
-    assert!(matches[0]["text"].as_str().unwrap().contains("Docker builds"));
+    assert!(matches[0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Docker builds"));
 
     // Test decay pruning directly
     {
-        let count = with_db(|conn| {
-            prune_decayed_memories(conn)
-        })?;
+        let count = with_db(|conn| prune_decayed_memories(conn))?;
         assert_eq!(count, 0); // No memory should decay yet
     }
 
     // 5. Clear memories
-    let res = clear_tool.call(&json!({
-        "scope": "all"
-    })).await?;
+    let res = clear_tool
+        .call(&json!({
+            "scope": "all"
+        }))
+        .await?;
     assert_eq!(res["status"], "success");
 
     // Verify cleared
-    let res = recall_tool.call(&json!({
-        "query": "cargo",
-        "scope": "global"
-    })).await?;
+    let res = recall_tool
+        .call(&json!({
+            "query": "cargo",
+            "scope": "global"
+        }))
+        .await?;
     assert_eq!(res["matches"].as_array().unwrap().len(), 0);
 
     // Cleanup
@@ -146,7 +159,8 @@ impl crate::providers::LLMProvider for MockProvider {
 #[tokio::test]
 async fn test_shared_memory_consolidation() -> Result<()> {
     let _lock = TestLock::acquire();
-    let temp_dir = std::env::temp_dir().join(format!("openz_mem_con_test_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_mem_con_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir)?;
     std::env::set_var("OPENZ_CONFIG_DIR", &temp_dir);
 
@@ -165,21 +179,27 @@ async fn test_shared_memory_consolidation() -> Result<()> {
         "tags": ["debug"],
         "importance": 0.8
     })).await?;
-    let _ = store_tool.call(&json!({
-        "text": "Docker builds use multi-stage recipes to reduce image size.",
-        "tags": ["docker"],
-        "importance": 0.7
-    })).await?;
-    let _ = store_tool.call(&json!({
-        "text": "Git worktrees allow isolated branching for concurrent agent tasks.",
-        "tags": ["git"],
-        "importance": 0.7
-    })).await?;
-    let _ = store_tool.call(&json!({
-        "text": "Rust async traits require the async-trait crate macro.",
-        "tags": ["rust"],
-        "importance": 0.9
-    })).await?;
+    let _ = store_tool
+        .call(&json!({
+            "text": "Docker builds use multi-stage recipes to reduce image size.",
+            "tags": ["docker"],
+            "importance": 0.7
+        }))
+        .await?;
+    let _ = store_tool
+        .call(&json!({
+            "text": "Git worktrees allow isolated branching for concurrent agent tasks.",
+            "tags": ["git"],
+            "importance": 0.7
+        }))
+        .await?;
+    let _ = store_tool
+        .call(&json!({
+            "text": "Rust async traits require the async-trait crate macro.",
+            "tags": ["rust"],
+            "importance": 0.9
+        }))
+        .await?;
 
     // 2. Setup mock provider for the merge result
     let mock_provider = Arc::new(MockProvider {
@@ -196,7 +216,8 @@ async fn test_shared_memory_consolidation() -> Result<()> {
         let count: i64 = stmt.query_row([], |r| r.get(0))?;
 
         // Verify that the consolidated text is present
-        let mut stmt_check = conn.prepare("SELECT text FROM cognitive_memory WHERE text LIKE '%Consolidated Fact%'")?;
+        let mut stmt_check = conn
+            .prepare("SELECT text FROM cognitive_memory WHERE text LIKE '%Consolidated Fact%'")?;
         let text_found: String = stmt_check.query_row([], |r| r.get(0))?;
         Ok((count, text_found))
     })?;
@@ -212,7 +233,8 @@ async fn test_shared_memory_consolidation() -> Result<()> {
 #[tokio::test]
 async fn test_research_archive_workflow() -> Result<()> {
     let _lock = TestLock::acquire();
-    let temp_dir = std::env::temp_dir().join(format!("openz_research_test_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_research_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir)?;
     std::env::set_var("OPENZ_CONFIG_DIR", &temp_dir);
 
@@ -228,14 +250,19 @@ async fn test_research_archive_workflow() -> Result<()> {
     assert_eq!(res["status"], "success");
 
     // 2. Search for the research data
-    let res = search_tool.call(&json!({
-        "query": "actix-web examples",
-        "top_k": 1
-    })).await?;
+    let res = search_tool
+        .call(&json!({
+            "query": "actix-web examples",
+            "top_k": 1
+        }))
+        .await?;
     assert_eq!(res["status"], "success");
     let matches = res["matches"].as_array().unwrap();
     assert_eq!(matches.len(), 1);
-    assert!(matches[0]["content"].as_str().unwrap().contains("To set up actix-web"));
+    assert!(matches[0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("To set up actix-web"));
     assert!(matches[0]["source"].as_str().unwrap().contains("actix.rs"));
 
     // Cleanup
@@ -247,7 +274,8 @@ async fn test_research_archive_workflow() -> Result<()> {
 #[tokio::test]
 async fn test_interaction_history_workflow() -> Result<()> {
     let _lock = TestLock::acquire();
-    let temp_dir = std::env::temp_dir().join(format!("openz_interact_test_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_interact_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir)?;
     std::env::set_var("OPENZ_CONFIG_DIR", &temp_dir);
 
@@ -263,12 +291,15 @@ async fn test_interaction_history_workflow() -> Result<()> {
 
     // 3. Update errors
     update_interaction_errors(&id, "Cargo build failed with exit status 101").await?;
-    
+
     // 4. Verify updated history
     let history2 = get_recent_interactions(5).await?;
     assert_eq!(history2.len(), 1);
     assert_eq!(history2[0]["success"], false);
-    assert_eq!(history2[0]["errors"].as_str().unwrap(), "Cargo build failed with exit status 101");
+    assert_eq!(
+        history2[0]["errors"].as_str().unwrap(),
+        "Cargo build failed with exit status 101"
+    );
 
     // Cleanup
     std::env::remove_var("OPENZ_CONFIG_DIR");
@@ -279,7 +310,8 @@ async fn test_interaction_history_workflow() -> Result<()> {
 #[test]
 fn test_chunk_content_by_headings() {
     let query = "my query";
-    let content = "# Heading 1\nLine 1\nLine 2\n## Heading 2\nLine 3\n--- Sheet: Sheet1 ---\nLine 4";
+    let content =
+        "# Heading 1\nLine 1\nLine 2\n## Heading 2\nLine 3\n--- Sheet: Sheet1 ---\nLine 4";
     let chunks = chunk_content_by_headings(query, content);
     assert_eq!(chunks.len(), 3);
     assert_eq!(chunks[0].0, "my query - # Heading 1");

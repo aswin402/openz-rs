@@ -7,19 +7,19 @@ use anyhow::Result;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 
 // ── AURA palette (raw ANSI — no crossterm needed) ──────────────────────────
-const RESET:   &str = "\x1b[0m";
-const BOLD:    &str = "\x1b[1m";
-const DIM:     &str = "\x1b[2m";
+const RESET: &str = "\x1b[0m";
+const BOLD: &str = "\x1b[1m";
+const DIM: &str = "\x1b[2m";
 
-const PURPLE:  &str = "\x1b[38;2;199;146;234m";  // AURA_PURPLE  — brand / header
-const BLUE:    &str = "\x1b[38;2;130;170;255m";   // AURA_BLUE    — target module
-const GREEN:   &str = "\x1b[38;2;195;232;141m";   // AURA_GREEN   — INFO
-const GOLD:    &str = "\x1b[38;2;255;203;107m";   // AURA_GOLD    — WARN
-const ROSE:    &str = "\x1b[38;2;240;113;120m";   // AURA_ROSE    — ERROR
-const SLATE:   &str = "\x1b[38;2;107;122;153m";   // AURA_SLATE   — timestamp / dim
-const WHITE:   &str = "\x1b[38;2;220;220;220m";   // LIGHT_WHITE  — message body
-const ORANGE:  &str = "\x1b[38;2;255;133;75m";    // warm accent  — DEBUG
-const CYAN:    &str = "\x1b[38;2;137;221;255m";   // AURA_CYAN    — session tag
+const PURPLE: &str = "\x1b[38;2;199;146;234m"; // AURA_PURPLE  — brand / header
+const BLUE: &str = "\x1b[38;2;130;170;255m"; // AURA_BLUE    — target module
+const GREEN: &str = "\x1b[38;2;195;232;141m"; // AURA_GREEN   — INFO
+const GOLD: &str = "\x1b[38;2;255;203;107m"; // AURA_GOLD    — WARN
+const ROSE: &str = "\x1b[38;2;240;113;120m"; // AURA_ROSE    — ERROR
+const SLATE: &str = "\x1b[38;2;107;122;153m"; // AURA_SLATE   — timestamp / dim
+const WHITE: &str = "\x1b[38;2;220;220;220m"; // LIGHT_WHITE  — message body
+const ORANGE: &str = "\x1b[38;2;255;133;75m"; // warm accent  — DEBUG
+const CYAN: &str = "\x1b[38;2;137;221;255m"; // AURA_CYAN    — session tag
 
 /// Resolve the default log file path: ~/.openz/openz.log (or OPENZ_CONFIG_DIR/openz.log)
 pub fn default_log_path() -> PathBuf {
@@ -97,24 +97,33 @@ impl LogLevelFilter {
 
 struct ParsedLine<'a> {
     timestamp: &'a str,
-    level:     &'a str,
-    target:    &'a str,
-    message:   &'a str,
-    /// Extracted from `session=<key>` span field appended by tracing-subscriber.
-    session:   Option<String>,
+    level: &'a str,
+    target: &'a str,
+    message: &'a str,
+    /// All session= values found anywhere in the line (spans + trailing field).
+    sessions: Vec<String>,
 }
 
-fn extract_session_from_line(line: &str) -> Option<String> {
-    if let Some(pos) = line.find("session=") {
-        let start = pos + "session=".len();
+/// Extract ALL `session=<value>` occurrences from the entire line.
+/// Handles nested tracing spans like `turn{session=cli:abc}:turn{session=subagent:x:123}`
+/// as well as trailing `session=` fields.
+fn extract_all_sessions_from_line(line: &str) -> Vec<String> {
+    let mut sessions = Vec::new();
+    let mut search_from = 0;
+    while let Some(pos) = line[search_from..].find("session=") {
+        let abs_pos = search_from + pos;
+        let start = abs_pos + "session=".len();
         let val_slice = &line[start..];
-        let end = val_slice.find(|c| c == ' ' || c == ',' || c == '}' || c == ']' || c == '\n').unwrap_or(val_slice.len());
+        let end = val_slice
+            .find(|c: char| c == ' ' || c == ',' || c == '}' || c == ']' || c == '\n' || c == ')')
+            .unwrap_or(val_slice.len());
         let val = val_slice[..end].trim().to_string();
-        if !val.is_empty() {
-            return Some(val);
+        if !val.is_empty() && !sessions.contains(&val) {
+            sessions.push(val);
         }
+        search_from = start + end;
     }
-    None
+    sessions
 }
 
 /// Parse a tracing-subscriber line:
@@ -124,11 +133,15 @@ fn extract_session_from_line(line: &str) -> Option<String> {
 /// will not have it and are always shown regardless of filter.
 fn parse_line(line: &str) -> Option<ParsedLine<'_>> {
     let line = line.trim();
-    if line.is_empty() { return None; }
+    if line.is_empty() {
+        return None;
+    }
 
     // timestamp is the first token (ISO 8601, ends with 'Z')
     let (ts, rest) = line.split_once(' ')?;
-    if !ts.ends_with('Z') { return None; }
+    if !ts.ends_with('Z') {
+        return None;
+    }
 
     // level is the next word
     let rest = rest.trim_start();
@@ -146,10 +159,17 @@ fn parse_line(line: &str) -> Option<ParsedLine<'_>> {
     // Extract `session=<value>` from the trailing span fields.
     // tracing-subscriber appends span fields after the message, separated by
     // at least two spaces (or a tab):  `message  session=cli:direct`
-    let (message, session_opt) = extract_session_field(message_raw);
-    let session = session_opt.or_else(|| extract_session_from_line(line));
+    let (message, _session_opt) = extract_session_field(message_raw);
+    // Collect ALL session= values from anywhere in the line (spans + trailing).
+    let sessions = extract_all_sessions_from_line(line);
 
-    Some(ParsedLine { timestamp: ts, level, target, message, session })
+    Some(ParsedLine {
+        timestamp: ts,
+        level,
+        target,
+        message,
+        sessions,
+    })
 }
 
 /// Split `"message body  session=cli:direct"` into `("message body", Some("cli:direct"))`.
@@ -170,29 +190,29 @@ fn extract_session_field(raw: &str) -> (&str, Option<String>) {
     }
 }
 
-/// Returns true if `line_session` matches the filter.
-fn session_matches(line_session: &Option<String>, filter: &SessionFilter) -> bool {
+/// Returns true if any of the line's sessions match the filter.
+fn session_matches(line_sessions: &[String], filter: &SessionFilter) -> bool {
     match filter {
         SessionFilter::All => true,
         SessionFilter::Only(wanted) => {
-            match line_session {
+            if line_sessions.is_empty() {
                 // Lines without a session tag predate the feature — always show them
                 // so old history is not silently dropped.
-                None => true,
-                Some(s) => s.starts_with(wanted.as_str()),
+                true
+            } else {
+                line_sessions.iter().any(|s| s.starts_with(wanted.as_str()))
             }
         }
-        SessionFilter::Auto(opt_wanted) => {
-            match opt_wanted {
-                None => true,
-                Some(wanted) => {
-                    match line_session {
-                        None => true,
-                        Some(s) => s.starts_with(wanted.as_str()),
-                    }
+        SessionFilter::Auto(opt_wanted) => match opt_wanted {
+            None => true,
+            Some(wanted) => {
+                if line_sessions.is_empty() {
+                    true
+                } else {
+                    line_sessions.iter().any(|s| s.starts_with(wanted.as_str()))
                 }
             }
-        }
+        },
     }
 }
 
@@ -203,10 +223,12 @@ fn highlight_message(msg: &str) -> String {
     let re_key = RE_KEY.get_or_init(|| regex::Regex::new(r#""([^"]+)":\s*"#).unwrap());
 
     static RE_VAL_NUM: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re_val_num = RE_VAL_NUM.get_or_init(|| regex::Regex::new(r#"\b(true|false|null|\d+(\.\d+)?)\b"#).unwrap());
+    let re_val_num = RE_VAL_NUM
+        .get_or_init(|| regex::Regex::new(r#"\b(true|false|null|\d+(\.\d+)?)\b"#).unwrap());
 
     static RE_STR_LITERAL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re_str_literal = RE_STR_LITERAL.get_or_init(|| regex::Regex::new(r#""([^\x1b"]+)""#).unwrap());
+    let re_str_literal =
+        RE_STR_LITERAL.get_or_init(|| regex::Regex::new(r#""([^\x1b"]+)""#).unwrap());
 
     if !msg.contains('{') && !msg.contains('[') {
         return msg.to_string();
@@ -217,23 +239,32 @@ fn highlight_message(msg: &str) -> String {
     let json_part = &msg[start_idx..];
 
     let highlighted_json = json_part.to_string();
-    let highlighted_json = re_key.replace_all(&highlighted_json, |caps: &regex::Captures| {
-        format!("\"{}{}{}\": ", CYAN, &caps[1], RESET)
-    }).to_string();
+    let highlighted_json = re_key
+        .replace_all(&highlighted_json, |caps: &regex::Captures| {
+            format!("\"{}{}{}\": ", CYAN, &caps[1], RESET)
+        })
+        .to_string();
 
-    let highlighted_json = re_val_num.replace_all(&highlighted_json, |caps: &regex::Captures| {
-        format!("{}{}{}", ORANGE, &caps[1], RESET)
-    }).to_string();
+    let highlighted_json = re_val_num
+        .replace_all(&highlighted_json, |caps: &regex::Captures| {
+            format!("{}{}{}", ORANGE, &caps[1], RESET)
+        })
+        .to_string();
 
-    let highlighted_json = re_str_literal.replace_all(&highlighted_json, |caps: &regex::Captures| {
-        format!("\"{}{}{}\"", GREEN, &caps[1], RESET)
-    }).to_string();
+    let highlighted_json = re_str_literal
+        .replace_all(&highlighted_json, |caps: &regex::Captures| {
+            format!("\"{}{}{}\"", GREEN, &caps[1], RESET)
+        })
+        .to_string();
 
     format!("{}{}", prefix, highlighted_json)
 }
 
 fn is_subagent_tool(tool_name: &str) -> bool {
-    if tool_name == "delegate_task" || tool_name == "parallel_research" || tool_name == "evaluator_optimizer_loop" {
+    if tool_name == "delegate_task"
+        || tool_name == "parallel_research"
+        || tool_name == "evaluator_optimizer_loop"
+    {
         return true;
     }
     if let Ok(profiles) = crate::subagents::load_profiles() {
@@ -262,10 +293,13 @@ fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static 
     }
 
     // 2. LLM CALL
-    if message.contains("Sending completion request to LLM") || message.contains("Sending request to LLM") {
+    if message.contains("Sending completion request to LLM")
+        || message.contains("Sending request to LLM")
+    {
         let model = if let Some(idx) = message.find("model:") {
             let rest = &message[idx + "model:".len()..];
-            rest.trim_matches(|c| c == ')' || c == '"' || c == '(').trim()
+            rest.trim_matches(|c| c == ')' || c == '"' || c == '(')
+                .trim()
         } else {
             ""
         };
@@ -274,12 +308,7 @@ fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static 
         } else {
             format!("Sending request to LLM (model: {})", model)
         };
-        return Some((
-            "📡".to_string(),
-            "LLM CALL".to_string(),
-            msg,
-            SLATE,
-        ));
+        return Some(("📡".to_string(), "LLM CALL".to_string(), msg, SLATE));
     }
 
     // 3. THINKING (LLM reasoning)
@@ -316,7 +345,8 @@ fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static 
     if message.contains("Received LLM response") {
         let finish = if let Some(idx) = message.find("finish_reason:") {
             let rest = &message[idx + "finish_reason:".len()..];
-            rest.trim_matches(|c| c == ')' || c == '"' || c == '(').trim()
+            rest.trim_matches(|c| c == ')' || c == '"' || c == '(')
+                .trim()
         } else {
             ""
         };
@@ -325,12 +355,7 @@ fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static 
         } else {
             format!("Received LLM response (finish_reason: {})", finish)
         };
-        return Some((
-            "🤖".to_string(),
-            "RESPONSE".to_string(),
-            msg,
-            WHITE,
-        ));
+        return Some(("🤖".to_string(), "RESPONSE".to_string(), msg, WHITE));
     }
 
     // 5. TOOL START / SUBAGENT START
@@ -338,13 +363,13 @@ fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static 
         let tool = extract_quoted_field(message, "tool=");
         let args = extract_quoted_field(message, "arguments=");
         let is_subagent = tool.as_ref().map(|t| is_subagent_tool(t)).unwrap_or(false);
-        
+
         let formatted = match (tool, args) {
             (Some(t), Some(a)) => format!("{} with args: {}", t, a),
             (Some(t), None) => t.to_string(),
             _ => "tool execution".to_string(),
         };
-        
+
         if is_subagent {
             return Some((
                 "🤖".to_string(),
@@ -353,12 +378,7 @@ fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static 
                 PURPLE,
             ));
         } else {
-            return Some((
-                "🛠️".to_string(),
-                "TOOL START".to_string(),
-                formatted,
-                GOLD,
-            ));
+            return Some(("🛠️".to_string(), "TOOL START".to_string(), formatted, GOLD));
         }
     }
 
@@ -366,12 +386,12 @@ fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static 
     if message.contains("Tool call completed") {
         let tool = extract_quoted_field(message, "tool=");
         let is_subagent = tool.as_ref().map(|t| is_subagent_tool(t)).unwrap_or(false);
-        
+
         let formatted = match tool {
             Some(t) => format!("{} completed", t),
             None => "tool completed".to_string(),
         };
-        
+
         if is_subagent {
             return Some((
                 "🤖".to_string(),
@@ -380,12 +400,7 @@ fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static 
                 GREEN,
             ));
         } else {
-            return Some((
-                "✅".to_string(),
-                "TOOL DONE".to_string(),
-                formatted,
-                GREEN,
-            ));
+            return Some(("✅".to_string(), "TOOL DONE".to_string(), formatted, GREEN));
         }
     }
 
@@ -393,28 +408,38 @@ fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static 
     if message.contains("Tool call failed") || message.contains("Tool call timed out") {
         let tool = extract_quoted_field(message, "tool=");
         let err = extract_quoted_field(message, "error=");
-        let base = if message.contains("timed out") { "timed out" } else { "failed" };
+        let base = if message.contains("timed out") {
+            "timed out"
+        } else {
+            "failed"
+        };
         let is_subagent = tool.as_ref().map(|t| is_subagent_tool(t)).unwrap_or(false);
-        
+
         let formatted = match (tool, err) {
             (Some(t), Some(e)) => format!("{} {} - error: {}", t, base, e),
             (Some(t), None) => format!("{} {}", t, base),
             _ => format!("tool {}", base),
         };
-        
-        let icon = if message.contains("timed out") { "⏱️" } else { "✕" };
-        let label = if is_subagent { "SUBAGENT FAIL" } else { "TOOL FAIL" };
-        
-        return Some((
-            icon.to_string(),
-            label.to_string(),
-            formatted,
-            ROSE,
-        ));
+
+        let icon = if message.contains("timed out") {
+            "⏱️"
+        } else {
+            "✕"
+        };
+        let label = if is_subagent {
+            "SUBAGENT FAIL"
+        } else {
+            "TOOL FAIL"
+        };
+
+        return Some((icon.to_string(), label.to_string(), formatted, ROSE));
     }
 
     // 8. BLOCKED
-    if message.contains("Tool execution blocked") || message.contains("forbidden by security") || message.contains("denied by user") {
+    if message.contains("Tool execution blocked")
+        || message.contains("forbidden by security")
+        || message.contains("denied by user")
+    {
         let tool = extract_quoted_field(message, "tool=");
         let reason = if message.contains("blocked") {
             "loop/repetition detected"
@@ -427,16 +452,12 @@ fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static 
             Some(t) => format!("{} blocked - reason: {}", t, reason),
             _ => format!("tool blocked - reason: {}", reason),
         };
-        return Some((
-            "🛡️".to_string(),
-            "BLOCKED".to_string(),
-            formatted,
-            GOLD,
-        ));
+        return Some(("🛡️".to_string(), "BLOCKED".to_string(), formatted, GOLD));
     }
 
     // 9. CURATOR
-    if message.contains("Self-improvement curator:") || message.contains("Self-improvement curator") {
+    if message.contains("Self-improvement curator:") || message.contains("Self-improvement curator")
+    {
         let rest = if let Some(idx) = message.find("Self-improvement curator:") {
             &message[idx + "Self-improvement curator:".len()..]
         } else if let Some(idx) = message.find("Self-improvement curator") {
@@ -447,7 +468,10 @@ fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static 
         return Some((
             "🧹".to_string(),
             "CURATOR".to_string(),
-            rest.trim().trim_start_matches(['-', ':']).trim().to_string(),
+            rest.trim()
+                .trim_start_matches(['-', ':'])
+                .trim()
+                .to_string(),
             PURPLE,
         ));
     }
@@ -471,7 +495,9 @@ fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static 
         ));
     }
 
-    if message.contains("Compacted summary length") || message.contains("Consolidated long-term memory") {
+    if message.contains("Compacted summary length")
+        || message.contains("Consolidated long-term memory")
+    {
         return Some((
             "💾".to_string(),
             "COMPACTED".to_string(),
@@ -528,7 +554,7 @@ fn print_line_filtered(raw: &str, filter: &SessionFilter, level_filter: &LogLeve
         return;
     };
 
-    if !session_matches(&p.session, filter) {
+    if !session_matches(&p.sessions, filter) {
         return;
     }
 
@@ -545,19 +571,19 @@ fn print_line_filtered(raw: &str, filter: &SessionFilter, level_filter: &LogLeve
 
     // Level badge — fixed 5-char, coloured
     let (level_col, level_label) = match p.level {
-        "ERROR" => (ROSE,   "ERROR"),
-        "WARN"  => (GOLD,   "WARN "),
-        "INFO"  => (GREEN,  "INFO "),
+        "ERROR" => (ROSE, "ERROR"),
+        "WARN" => (GOLD, "WARN "),
+        "INFO" => (GREEN, "INFO "),
         "DEBUG" => (ORANGE, "DEBUG"),
-        "TRACE" => (SLATE,  "TRACE"),
-        other   => (SLATE,  other),
+        "TRACE" => (SLATE, "TRACE"),
+        other => (SLATE, other),
     };
 
     // Message colour varies by level
     let msg_col = match p.level {
         "ERROR" => ROSE,
-        "WARN"  => GOLD,
-        _       => WHITE,
+        "WARN" => GOLD,
+        _ => WHITE,
     };
 
     // Truncate target to keep it readable
@@ -581,7 +607,7 @@ fn print_line_filtered(raw: &str, filter: &SessionFilter, level_filter: &LogLeve
     };
 
     // Session badge (optional) — shown in cyan after the message
-    let session_badge = match &p.session {
+    let session_badge = match p.sessions.last() {
         Some(s) => {
             // Shorten long session keys: `cli:direct` → `cli`, `gateway:ws:abc` → `gateway`
             let short = s.split(':').next().unwrap_or(s.as_str());
@@ -625,30 +651,34 @@ fn print_line_filtered(raw: &str, filter: &SessionFilter, level_filter: &LogLeve
 
 // ── Header banner ───────────────────────────────────────────────────────────
 
-fn print_header(path: &std::path::Path, tail: usize, filter: &SessionFilter, level_filter: &LogLevelFilter) {
+fn print_header(
+    path: &std::path::Path,
+    tail: usize,
+    filter: &SessionFilter,
+    level_filter: &LogLevelFilter,
+) {
     let fname = path.display();
     let filter_label = filter.label();
     let level_label = format!("{:?}", level_filter);
     println!(
         "\n{PURPLE}{BOLD}  ◇ openz{RESET}  {SLATE}live logs{RESET}  {DIM}─{RESET}  {SLATE}{fname}{RESET}  {DIM}(tail {tail}  ·  {filter_label}  ·  level {level_label}){RESET}"
     );
-    println!(
-        "{SLATE}{DIM}  {}{RESET}\n",
-        "─".repeat(72)
-    );
+    println!("{SLATE}{DIM}  {}{RESET}\n", "─".repeat(72));
     println!(
         "  {SLATE}{DIM}{:<8}  {:<5}  {:<35}  MESSAGE{RESET}",
         "TIME", "LEVEL", "TARGET"
     );
-    println!(
-        "  {SLATE}{DIM}{}{RESET}\n",
-        "─".repeat(72)
-    );
+    println!("  {SLATE}{DIM}{}{RESET}\n", "─".repeat(72));
 }
 
 // ── Tail initial lines (reverse seek, O(tail) memory) ───────────────────
 
-fn print_tail(path: &PathBuf, tail: usize, filter: &SessionFilter, level_filter: &LogLevelFilter) -> Result<u64> {
+fn print_tail(
+    path: &PathBuf,
+    tail: usize,
+    filter: &SessionFilter,
+    level_filter: &LogLevelFilter,
+) -> Result<u64> {
     let mut f = match File::open(path) {
         Ok(f) => f,
         Err(_) => {
@@ -798,7 +828,12 @@ fn update_auto_session(filter: &mut SessionFilter) {
 
 // ── Follow loop (notify-based, falls back to polling) ────────────────────
 
-async fn follow(path: &PathBuf, mut pos: u64, mut filter: SessionFilter, level_filter: LogLevelFilter) -> Result<()> {
+async fn follow(
+    path: &PathBuf,
+    mut pos: u64,
+    mut filter: SessionFilter,
+    level_filter: LogLevelFilter,
+) -> Result<()> {
     let ctrl_c = tokio::signal::ctrl_c();
     tokio::pin!(ctrl_c);
 
@@ -812,15 +847,22 @@ async fn follow(path: &PathBuf, mut pos: u64, mut filter: SessionFilter, level_f
 
     // Set up notify watcher for instant file change notifications.
     // Falls back to polling if watcher creation fails.
-    let (notify_tx, mut notify_rx) = tokio::sync::mpsc::channel::<notify::Result<notify::Event>>(256);
+    let (notify_tx, mut notify_rx) =
+        tokio::sync::mpsc::channel::<notify::Result<notify::Event>>(256);
     let notify_path = path.clone();
 
     let has_notify = std::sync::atomic::AtomicBool::new(false);
 
-    if let Ok(mut watcher) = RecommendedWatcher::new(move |res| {
-        let _ = notify_tx.blocking_send(res);
-    }, Config::default()) {
-        if watcher.watch(&notify_path, RecursiveMode::NonRecursive).is_ok() {
+    if let Ok(mut watcher) = RecommendedWatcher::new(
+        move |res| {
+            let _ = notify_tx.blocking_send(res);
+        },
+        Config::default(),
+    ) {
+        if watcher
+            .watch(&notify_path, RecursiveMode::NonRecursive)
+            .is_ok()
+        {
             has_notify.store(true, std::sync::atomic::Ordering::SeqCst);
             // Keep watcher alive for this function's duration
             let _ = watcher;
@@ -902,9 +944,7 @@ pub async fn run_logs_viewer(
         SessionFilter::All => {
             // We still show all lines; just note if something is active.
             if let Some(active) = detect_active_session() {
-                println!(
-                    "\n  {CYAN}{DIM}◉ active session detected: {active}{RESET}"
-                );
+                println!("\n  {CYAN}{DIM}◉ active session detected: {active}{RESET}");
             }
             filter.clone()
         }
@@ -915,9 +955,7 @@ pub async fn run_logs_viewer(
     let pos = print_tail(&path, tail, &effective_filter, &level_filter)?;
 
     // Print live-follow separator
-    println!(
-        "\n  {PURPLE}{DIM}── live ──{RESET}\n"
-    );
+    println!("\n  {PURPLE}{DIM}── live ──{RESET}\n");
 
     follow(&path, pos, effective_filter, level_filter).await
 }

@@ -1,10 +1,10 @@
-use crate::cron::{calculate_next_run, CronJob};
-use crate::config::schema::Config;
 use crate::config::resolve_path;
+use crate::config::schema::Config;
+use crate::cron::{calculate_next_run, CronJob};
+use anyhow::Result;
 use chrono::Utc;
 use std::time::Duration;
 use tokio::time::sleep;
-use anyhow::Result;
 
 pub fn start_scheduler(config: Config) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -23,7 +23,10 @@ pub fn start_scheduler(config: Config) -> tokio::task::JoinHandle<()> {
             }
 
             if let Err(e) = tick_scheduler(&config).await {
-                crate::channels::cli::send_notification(&format!("Error in cron scheduler tick: {}", e));
+                crate::channels::cli::send_notification(&format!(
+                    "Error in cron scheduler tick: {}",
+                    e
+                ));
             }
 
             tokio::select! {
@@ -50,13 +53,15 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
                 Some(dt_str) => match dt_str.parse::<chrono::DateTime<Utc>>() {
                     Ok(dt) => dt,
                     Err(_) => {
-                        let next = calculate_next_run(&job.schedule, None).unwrap_or_else(|| now + chrono::Duration::minutes(5));
+                        let next = calculate_next_run(&job.schedule, None)
+                            .unwrap_or_else(|| now + chrono::Duration::minutes(5));
                         job.next_run = Some(next.to_rfc3339());
                         next
                     }
                 },
                 None => {
-                    let next = calculate_next_run(&job.schedule, None).unwrap_or_else(|| now + chrono::Duration::minutes(5));
+                    let next = calculate_next_run(&job.schedule, None)
+                        .unwrap_or_else(|| now + chrono::Duration::minutes(5));
                     job.next_run = Some(next.to_rfc3339());
                     next
                 }
@@ -71,32 +76,46 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
     for job_clone in jobs_to_run {
         let config_clone = config.clone();
         tokio::spawn(async move {
-            crate::channels::cli::send_notification(&format!("⏰ Executing Cron Job: {} (schedule: {})", job_clone.id, job_clone.schedule));
+            crate::channels::cli::send_notification(&format!(
+                "⏰ Executing Cron Job: {} (schedule: {})",
+                job_clone.id, job_clone.schedule
+            ));
             let completed_at = Utc::now();
-             match run_job(&config_clone, &job_clone).await {
+            match run_job(&config_clone, &job_clone).await {
                 Ok(_) => {
                     if let Err(e) = crate::cron::with_cron_jobs_mut(|jobs| {
                         if let Some(j) = jobs.iter_mut().find(|j| j.id == job_clone.id) {
                             j.last_run = Some(completed_at.to_rfc3339());
-                            let next = calculate_next_run(&j.schedule, Some(completed_at)).unwrap_or_else(|| completed_at + chrono::Duration::minutes(5));
+                            let next = calculate_next_run(&j.schedule, Some(completed_at))
+                                .unwrap_or_else(|| completed_at + chrono::Duration::minutes(5));
                             j.next_run = Some(next.to_rfc3339());
                         }
                     }) {
                         tracing::error!("Failed to update cron jobs metadata: {:?}", e);
                     }
-                    crate::channels::cli::send_notification(&format!("⏰ Cron Job {} completed successfully.", job_clone.id));
+                    crate::channels::cli::send_notification(&format!(
+                        "⏰ Cron Job {} completed successfully.",
+                        job_clone.id
+                    ));
                 }
                 Err(e) => {
                     if let Err(err) = crate::cron::with_cron_jobs_mut(|jobs| {
                         if let Some(j) = jobs.iter_mut().find(|j| j.id == job_clone.id) {
                             j.last_run = Some(completed_at.to_rfc3339());
-                            let next = calculate_next_run(&j.schedule, Some(completed_at)).unwrap_or_else(|| completed_at + chrono::Duration::minutes(5));
+                            let next = calculate_next_run(&j.schedule, Some(completed_at))
+                                .unwrap_or_else(|| completed_at + chrono::Duration::minutes(5));
                             j.next_run = Some(next.to_rfc3339());
                         }
                     }) {
-                        tracing::error!("Failed to update cron jobs metadata after failure: {:?}", err);
+                        tracing::error!(
+                            "Failed to update cron jobs metadata after failure: {:?}",
+                            err
+                        );
                     }
-                    crate::channels::cli::send_notification(&format!("Error running Cron Job {}: {}", job_clone.id, e));
+                    crate::channels::cli::send_notification(&format!(
+                        "Error running Cron Job {}: {}",
+                        job_clone.id, e
+                    ));
                 }
             }
         });
@@ -108,10 +127,10 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
 async fn run_job(config: &Config, job: &CronJob) -> Result<()> {
     // 1. Build AgentLoop using the configuration
     let agent_loop = crate::cli::build_agent_loop(config.clone()).await?;
-    
+
     // 2. Generate a unique session key
     let session_key = format!("cron:{}", job.id);
-    
+
     // 3. Prepare run query
     let prompt = format!(
         "[CRON JOB MODE] This task is running on an automated schedule.\n\nTask: {}",
@@ -128,7 +147,7 @@ async fn run_job(config: &Config, job: &CronJob) -> Result<()> {
     }
     let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
     let log_file = logs_dir.join(format!("job_{}_{}.log", job.id, timestamp));
-    
+
     let log_content = format!(
         "Cron Job ID: {}\nSchedule: {}\nExecuted At: {}\n\n=== Prompt ===\n{}\n\n=== Output ===\n{}\n",
         job.id, job.schedule, Utc::now().to_rfc3339(), job.prompt, res.content

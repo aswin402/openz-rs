@@ -1,10 +1,10 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
-use reqwest::Client;
-use regex::Regex;
+use anyhow::{anyhow, Result};
 use futures_util::StreamExt;
-use scraper::Html;
+use regex::Regex;
+use reqwest::Client;
 use scraper::node::Node;
+use scraper::Html;
 use std::time::Duration;
 
 fn web_re_whitespace() -> &'static Regex {
@@ -21,8 +21,11 @@ fn web_re_newlines() -> &'static Regex {
 pub fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => {
-            !(v4.is_private() || v4.is_loopback() || v4.is_link_local()
-                || v4.is_unspecified() || v4.is_broadcast())
+            !(v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast())
         }
         std::net::IpAddr::V6(v6) => {
             if let Some(v4) = v6.to_ipv4() {
@@ -48,22 +51,32 @@ pub fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
 }
 
 pub fn validate_url_sync(url: &reqwest::Url) -> Result<std::net::IpAddr> {
-    let host = url.host_str().ok_or_else(|| anyhow!("URL has no host"))?.to_lowercase();
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("URL has no host"))?
+        .to_lowercase();
 
     // Block non-HTTP schemes
     if url.scheme() != "http" && url.scheme() != "https" {
-        return Err(anyhow!("SSRF blocked: only http/https URLs are allowed (got '{}')", url.scheme()));
+        return Err(anyhow!(
+            "SSRF blocked: only http/https URLs are allowed (got '{}')",
+            url.scheme()
+        ));
     }
 
     // Block cloud metadata endpoints by hostname
     if host == "169.254.169.254" || host == "metadata.google.internal" {
-        return Err(anyhow!("SSRF blocked: cloud metadata endpoints are not allowed"));
+        return Err(anyhow!(
+            "SSRF blocked: cloud metadata endpoints are not allowed"
+        ));
     }
 
     // If the host is already a literal IP, check it directly
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         if !is_safe_ip(&ip) {
-            return Err(anyhow!("SSRF blocked: private/reserved IP addresses are not allowed"));
+            return Err(anyhow!(
+                "SSRF blocked: private/reserved IP addresses are not allowed"
+            ));
         }
         return Ok(ip);
     }
@@ -79,13 +92,17 @@ pub fn validate_url_sync(url: &reqwest::Url) -> Result<std::net::IpAddr> {
         if !is_safe_ip(ip) {
             return Err(anyhow!(
                 "SSRF blocked: hostname '{}' resolved to private/reserved IP {}",
-                host, ip
+                host,
+                ip
             ));
         }
     }
 
     let first_ip = resolved_ips.first().copied().ok_or_else(|| {
-        anyhow!("SSRF blocked: hostname '{}' could not be resolved to any IP", host)
+        anyhow!(
+            "SSRF blocked: hostname '{}' could not be resolved to any IP",
+            host
+        )
     })?;
 
     Ok(first_ip)
@@ -139,7 +156,18 @@ fn walk_nodes(node: ego_tree::NodeRef<'_, Node>, text: &mut String) {
 
             let is_block = matches!(
                 tag_name,
-                "p" | "div" | "br" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "tr" | "thead" | "tbody"
+                "p" | "div"
+                    | "br"
+                    | "h1"
+                    | "h2"
+                    | "h3"
+                    | "h4"
+                    | "h5"
+                    | "h6"
+                    | "li"
+                    | "tr"
+                    | "thead"
+                    | "tbody"
             );
             if is_block {
                 text.push('\n');
@@ -180,14 +208,19 @@ impl Tool for WebFetchTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let url_str = arguments.get("url").and_then(|v| v.as_str())
+        let url_str = arguments
+            .get("url")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'url' argument"))?;
 
         let resolved_ip = validate_url(url_str).await?;
 
         // Parse host and port to build the resolved Client
         let parsed_url = reqwest::Url::parse(url_str).map_err(|e| anyhow!("Invalid URL: {}", e))?;
-        let host = parsed_url.host_str().ok_or_else(|| anyhow!("URL has no host"))?.to_lowercase();
+        let host = parsed_url
+            .host_str()
+            .ok_or_else(|| anyhow!("URL has no host"))?
+            .to_lowercase();
         let port = parsed_url.port_or_known_default().unwrap_or(80);
 
         let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
@@ -205,7 +238,8 @@ impl Tool for WebFetchTool {
             .resolve(&host, socket_addr)
             .build()?;
 
-        let res = client.get(url_str)
+        let res = client
+            .get(url_str)
             .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
             .timeout(Duration::from_secs(30))
             .send()
@@ -219,7 +253,11 @@ impl Tool for WebFetchTool {
         const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10MB
         if let Some(content_length) = res.content_length() {
             if content_length > MAX_RESPONSE_SIZE as u64 {
-                return Err(anyhow!("Response too large ({} bytes, max {} bytes)", content_length, MAX_RESPONSE_SIZE));
+                return Err(anyhow!(
+                    "Response too large ({} bytes, max {} bytes)",
+                    content_length,
+                    MAX_RESPONSE_SIZE
+                ));
             }
         }
 
@@ -228,7 +266,10 @@ impl Tool for WebFetchTool {
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
             if body_bytes.len() + chunk.len() > MAX_RESPONSE_SIZE {
-                return Err(anyhow!("Response too large (exceeds max {} bytes)", MAX_RESPONSE_SIZE));
+                return Err(anyhow!(
+                    "Response too large (exceeds max {} bytes)",
+                    MAX_RESPONSE_SIZE
+                ));
             }
             body_bytes.extend_from_slice(&chunk);
         }
@@ -254,7 +295,12 @@ impl Tool for WebFetchTool {
             final_text.trim().to_string()
         };
 
-        let _ = crate::tools::shared_memory::archive_research_entry(url_str, &result_text, &format!("web_fetch: {}", url_str)).await;
+        let _ = crate::tools::shared_memory::archive_research_entry(
+            url_str,
+            &result_text,
+            &format!("web_fetch: {}", url_str),
+        )
+        .await;
 
         Ok(serde_json::Value::String(result_text))
     }
@@ -326,7 +372,9 @@ mod tests {
     #[tokio::test]
     async fn test_validate_url() {
         assert!(validate_url("http://example.com").await.is_ok());
-        assert!(validate_url("https://google.com/search?q=rust").await.is_ok());
+        assert!(validate_url("https://google.com/search?q=rust")
+            .await
+            .is_ok());
 
         assert!(validate_url("ftp://example.com").await.is_err());
         assert!(validate_url("http://127.0.0.1").await.is_err());

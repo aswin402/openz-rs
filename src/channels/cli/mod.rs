@@ -1,17 +1,17 @@
+use crate::agent::style::*;
 use crate::agent::AgentLoop;
 use crate::config::schema::AgentDefaults;
 use anyhow::Result;
 use std::io::{self, Write};
-use crate::agent::style::*;
 
 pub mod input;
-pub mod render;
 pub mod mcp;
+pub mod render;
 
 // Re-export mcp progress bar functions/states
 pub use mcp::{
-    init_mcp_progress, increment_mcp_loaded, increment_mcp_failed,
-    set_mcp_status, set_mcp_done, queue_notification, send_notification,
+    increment_mcp_failed, increment_mcp_loaded, init_mcp_progress, queue_notification,
+    send_notification, set_mcp_done, set_mcp_status,
 };
 
 // Re-export render custom limit
@@ -85,7 +85,10 @@ impl CliChannel {
             let default_hook = std::panic::take_hook();
             std::panic::set_hook(Box::new(move |panic_info| {
                 let _ = crossterm::terminal::disable_raw_mode();
-                let _ = crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen);
+                let _ = crossterm::execute!(
+                    std::io::stdout(),
+                    crossterm::terminal::LeaveAlternateScreen
+                );
                 default_hook(panic_info);
             }));
         });
@@ -107,9 +110,9 @@ impl crate::channels::Channel for CliChannel {
     }
 
     async fn start(&self) -> anyhow::Result<()> {
-        crate::agent::style::spinner::IS_SILENT.scope(false, async move {
-            self.start_inner().await
-        }).await
+        crate::agent::style::spinner::IS_SILENT
+            .scope(false, async move { self.start_inner().await })
+            .await
     }
 }
 
@@ -127,23 +130,51 @@ impl CliChannel {
         let session_key = crate::config::loader::get_cli_session_key();
         crate::shutdown::set_cli_active(true);
         let _guard = CliActiveGuard;
-        
+
         let white = "\x1b[38;2;240;240;240m";
         let slate = "\x1b[38;2;107;122;153m";
-        
-        println!("{}     ██████╗ ██████╗ ███████╗███╗   ██╗{}███████╗", white, RED_ORANGE);
-        println!("{}    ██╔═══██╗██╔══██╗██╔════╝████╗  ██║{}╚══███╔╝", white, RED_ORANGE);
-        println!("{}    ██║   ██║██████╔╝█████╗  ██╔██╗ ██║{}  ███╔╝", white, RED_ORANGE);
-        println!("{}    ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║{} ███╔╝", white, RED_ORANGE);
-        println!("{}    ╚██████╔╝██║     ███████╗██║ ╚████║{}███████╗", white, RED_ORANGE);
-        println!("{}     ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝{}╚══════╝\r", white, RED_ORANGE);
-        
-        println!("{}openz v{}{}", COLOR_BOLD, env!("CARGO_PKG_VERSION"), COLOR_RESET);
+
+        println!(
+            "{}     ██████╗ ██████╗ ███████╗███╗   ██╗{}███████╗",
+            white, RED_ORANGE
+        );
+        println!(
+            "{}    ██╔═══██╗██╔══██╗██╔════╝████╗  ██║{}╚══███╔╝",
+            white, RED_ORANGE
+        );
+        println!(
+            "{}    ██║   ██║██████╔╝█████╗  ██╔██╗ ██║{}  ███╔╝",
+            white, RED_ORANGE
+        );
+        println!(
+            "{}    ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║{} ███╔╝",
+            white, RED_ORANGE
+        );
+        println!(
+            "{}    ╚██████╔╝██║     ███████╗██║ ╚████║{}███████╗",
+            white, RED_ORANGE
+        );
+        println!(
+            "{}     ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝{}╚══════╝\r",
+            white, RED_ORANGE
+        );
+
+        println!(
+            "{}openz v{}{}",
+            COLOR_BOLD,
+            env!("CARGO_PKG_VERSION"),
+            COLOR_RESET
+        );
         {
             let defaults = self.defaults.lock().await;
-            println!("{}{}{}", slate, format!("{} | {}", defaults.provider, defaults.model), COLOR_RESET);
+            println!(
+                "{}{}{}",
+                slate,
+                format!("{} | {}", defaults.provider, defaults.model),
+                COLOR_RESET
+            );
         }
-        
+
         if let Ok(current_dir) = std::env::current_dir() {
             let path_str = if let Some(home) = dirs::home_dir() {
                 if current_dir == home {
@@ -158,9 +189,12 @@ impl CliChannel {
             };
             println!("{}{}{}", slate, path_str, COLOR_RESET);
         }
-        
-        println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
-        
+
+        println!(
+            "{}────────────────────────────────────────────────────────────{}",
+            LIGHT_WHITE, COLOR_RESET
+        );
+
         let session_manager = {
             let agent_loop = self.agent_loop.lock().await;
             agent_loop.session_manager.clone()
@@ -173,37 +207,41 @@ impl CliChannel {
             let (model, provider, session_manager) = {
                 let defaults = self.defaults.lock().await;
                 let agent_loop = self.agent_loop.lock().await;
-                (defaults.model.clone(), defaults.provider.clone(), agent_loop.session_manager.clone())
+                (
+                    defaults.model.clone(),
+                    defaults.provider.clone(),
+                    agent_loop.session_manager.clone(),
+                )
             };
-            
-            let (input, remote_sender) = match input::read_line_raw(
-                &model,
-                &provider,
-                &session_manager,
-                &session_key,
-            ) {
-                Ok(inp) => inp,
-                Err(e) => {
-                    eprintln!("Error reading input: {}", e);
-                    continue;
-                }
-            };
+
+            let (input, remote_sender) =
+                match input::read_line_raw(&model, &provider, &session_manager, &session_key) {
+                    Ok(inp) => inp,
+                    Err(e) => {
+                        eprintln!("Error reading input: {}", e);
+                        continue;
+                    }
+                };
             let trimmed = input.trim();
-            
+
             if trimmed.is_empty() {
                 continue;
             }
- 
+
             if trimmed == "/exit" || trimmed == "exit" || trimmed == "quit" {
                 println!("Goodbye!");
                 break;
             }
- 
+
             if trimmed == "/clear" {
                 use crossterm::ExecutableCommand;
                 let mut stdout = io::stdout();
-                let _ = stdout.execute(crossterm::terminal::Clear(crossterm::terminal::ClearType::All));
-                let _ = stdout.execute(crossterm::terminal::Clear(crossterm::terminal::ClearType::Purge));
+                let _ = stdout.execute(crossterm::terminal::Clear(
+                    crossterm::terminal::ClearType::All,
+                ));
+                let _ = stdout.execute(crossterm::terminal::Clear(
+                    crossterm::terminal::ClearType::Purge,
+                ));
                 let _ = stdout.execute(crossterm::cursor::MoveTo(0, 0));
                 let _ = stdout.flush();
                 continue;
@@ -214,7 +252,10 @@ impl CliChannel {
                 for &(cmd, desc) in render::SLASH_COMMANDS {
                     println!("  {}{:<12}{} - {}", RED_ORANGE, cmd, COLOR_RESET, desc);
                 }
-                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
                 continue;
             }
 
@@ -225,7 +266,10 @@ impl CliChannel {
                     let config = match load_config() {
                         Ok(c) => c,
                         Err(e) => {
-                            eprintln!("{}✕ Error: Failed to load config: {}{}", ERROR_RED, e, COLOR_RESET);
+                            eprintln!(
+                                "{}✕ Error: Failed to load config: {}{}",
+                                ERROR_RED, e, COLOR_RESET
+                            );
                             continue;
                         }
                     };
@@ -361,11 +405,7 @@ impl CliChannel {
                         ProviderModels {
                             name: "cerebras",
                             display: "Cerebras (3)",
-                            models: &[
-                                "llama-3.3-70b",
-                                "llama3.1-8b",
-                                "llama3.1-70b",
-                            ],
+                            models: &["llama-3.3-70b", "llama3.1-8b", "llama3.1-70b"],
                         },
                         ProviderModels {
                             name: "google_ai_studio",
@@ -394,11 +434,7 @@ impl CliChannel {
                         ProviderModels {
                             name: "llm7",
                             display: "LLM7 (3)",
-                            models: &[
-                                "gpt-4o",
-                                "gpt-4o-mini",
-                                "claude-3-5-sonnet",
-                            ],
+                            models: &["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"],
                         },
                         ProviderModels {
                             name: "sambanova",
@@ -428,36 +464,66 @@ impl CliChannel {
                         .collect();
 
                     if filtered_providers.is_empty() {
-                        println!("{}⚠️ No LLM providers configured! Please run 'openz configure' first.{}", crate::agent::style::colors::AURA_GOLD, crate::agent::style::colors::COLOR_RESET);
-                        println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                        println!(
+                            "{}⚠️ No LLM providers configured! Please run 'openz configure' first.{}",
+                            crate::agent::style::colors::AURA_GOLD,
+                            crate::agent::style::colors::COLOR_RESET
+                        );
+                        println!(
+                            "{}────────────────────────────────────────────────────────────{}",
+                            LIGHT_WHITE, COLOR_RESET
+                        );
                         continue;
                     }
 
-                    let mut provider_options: Vec<String> = filtered_providers.iter().map(|p| p.display.to_string()).collect();
+                    let mut provider_options: Vec<String> = filtered_providers
+                        .iter()
+                        .map(|p| p.display.to_string())
+                        .collect();
                     provider_options.push("Exit".to_string());
                     let (active_mdl, current_active_header) = {
                         let defaults = self.defaults.lock().await;
                         (
                             defaults.model.clone(),
-                            format!("Current active model: {} | Provider: {}", defaults.model, defaults.provider)
+                            format!(
+                                "Current active model: {} | Provider: {}",
+                                defaults.model, defaults.provider
+                            ),
                         )
                     };
-                    match select_menu_custom("Choose an LLM provider:", &provider_options, &active_mdl, Some(&current_active_header), false) {
+                    match select_menu_custom(
+                        "Choose an LLM provider:",
+                        &provider_options,
+                        &active_mdl,
+                        Some(&current_active_header),
+                        false,
+                    ) {
                         Ok(Some(selected_idx)) => {
                             if selected_idx == filtered_providers.len() {
                                 println!("Model selection cancelled.");
-                                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                                println!(
+                                    "{}────────────────────────────────────────────────────────────{}",
+                                    LIGHT_WHITE, COLOR_RESET
+                                );
                                 continue;
                             }
                             let prov_info = filtered_providers[selected_idx];
                             if prov_info.name == "ollama_local" {
                                 crate::providers::ollama_manager::ensure_local_ollama(&config);
                             }
-                            
-                            print!("{}◇ Fetching models for {}...{}", AURA_SLATE, prov_info.display, COLOR_RESET);
+
+                            print!(
+                                "{}◇ Fetching models for {}...{}",
+                                AURA_SLATE, prov_info.display, COLOR_RESET
+                            );
                             let _ = std::io::stdout().flush();
-                            
-                            let mut model_options = match crate::channels::fetch_provider_models(prov_info.name, &config).await {
+
+                            let mut model_options = match crate::channels::fetch_provider_models(
+                                prov_info.name,
+                                &config,
+                            )
+                            .await
+                            {
                                 Some(mut models) => {
                                     print!("\r\x1b[2K");
                                     let _ = std::io::stdout().flush();
@@ -478,42 +544,62 @@ impl CliChannel {
                             };
                             model_options.push("Type manually (Custom Model)".to_string());
                             model_options.push("Exit".to_string());
-                            
-                            match select_menu_custom(&format!("Choose a model from {}:", prov_info.display), &model_options, &active_mdl, None, false) {
+
+                            match select_menu_custom(
+                                &format!("Choose a model from {}:", prov_info.display),
+                                &model_options,
+                                &active_mdl,
+                                None,
+                                false,
+                            ) {
                                 Ok(Some(selected_model_idx)) => {
                                     if selected_model_idx == model_options.len() - 1 {
                                         println!("Model selection cancelled.");
-                                        println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                                        println!(
+                                            "{}────────────────────────────────────────────────────────────{}",
+                                            LIGHT_WHITE, COLOR_RESET
+                                        );
                                         continue;
                                     }
                                     let prov = prov_info.name;
                                     let mdl = if selected_model_idx == model_options.len() - 2 {
-                                        match inquire::Text::new("Enter custom model name:").prompt() {
+                                        match inquire::Text::new("Enter custom model name:")
+                                            .prompt()
+                                        {
                                             Ok(custom) => {
                                                 if custom.trim().is_empty() {
                                                     println!("Model selection cancelled.");
-                                                    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                                                    println!(
+                                                        "{}────────────────────────────────────────────────────────────{}",
+                                                        LIGHT_WHITE, COLOR_RESET
+                                                    );
                                                     continue;
                                                 }
                                                 custom.trim().to_string()
                                             }
                                             Err(_) => {
                                                 println!("Model selection cancelled.");
-                                                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                                                println!(
+                                                    "{}────────────────────────────────────────────────────────────{}",
+                                                    LIGHT_WHITE, COLOR_RESET
+                                                );
                                                 continue;
                                             }
                                         }
                                     } else {
                                         model_options[selected_model_idx].clone()
                                     };
-                                    
+
                                     use crate::config::loader::{load_config, save_config};
                                     match load_config() {
                                         Ok(mut config) => {
                                             config.agents.defaults.provider = prov.to_string();
                                             config.agents.defaults.model = mdl.clone();
                                             if let Err(e) = save_config(&config) {
-                                                eprintln!("{}✕ Error: Failed to save config: {}{}", ERROR_RED, e, COLOR_RESET);
+                                                eprintln!(
+                                                    "{}✕ Error: Failed to save config: {}{}",
+                                                    ERROR_RED, e, COLOR_RESET
+                                                );
                                             } else {
                                                 match crate::providers::resolver::resolve_provider_full(&config, &mdl) {
                                                     Ok(resolved) => {
@@ -533,7 +619,10 @@ impl CliChannel {
                                             }
                                         }
                                         Err(e) => {
-                                            eprintln!("{}✕ Error: Failed to load config: {}{}", ERROR_RED, e, COLOR_RESET);
+                                            eprintln!(
+                                                "{}✕ Error: Failed to load config: {}{}",
+                                                ERROR_RED, e, COLOR_RESET
+                                            );
                                         }
                                     }
                                 }
@@ -558,38 +647,58 @@ impl CliChannel {
                     } else {
                         ("auto", arg)
                     };
-                    
+
                     use crate::config::loader::{load_config, save_config};
                     match load_config() {
                         Ok(mut config) => {
                             config.agents.defaults.provider = prov.to_string();
                             config.agents.defaults.model = mdl.to_string();
                             if let Err(e) = save_config(&config) {
-                                eprintln!("{}✕ Error: Failed to save config: {}{}", ERROR_RED, e, COLOR_RESET);
+                                eprintln!(
+                                    "{}✕ Error: Failed to save config: {}{}",
+                                    ERROR_RED, e, COLOR_RESET
+                                );
                             } else {
-                                match crate::providers::resolver::resolve_provider_full(&config, mdl) {
+                                match crate::providers::resolver::resolve_provider_full(
+                                    &config, mdl,
+                                ) {
                                     Ok(resolved) => {
                                         let mut loop_lock = self.agent_loop.lock().await;
-                                        loop_lock.update_model_and_provider(config.clone(), resolved.instance);
+                                        loop_lock.update_model_and_provider(
+                                            config.clone(),
+                                            resolved.instance,
+                                        );
                                         let new_defaults = config.agents.defaults.clone();
                                         if let Ok(mut guard) = CUSTOM_CONTEXT_LIMIT.lock() {
                                             *guard = new_defaults.context_limit;
                                         }
                                         *self.defaults.lock().await = new_defaults;
-                                        println!("{}✓ Model updated to {} (provider: {}){}", EMERALD_GREEN, mdl, prov, COLOR_RESET);
+                                        println!(
+                                            "{}✓ Model updated to {} (provider: {}){}",
+                                            EMERALD_GREEN, mdl, prov, COLOR_RESET
+                                        );
                                     }
                                     Err(e) => {
-                                        eprintln!("{}✕ Error: Failed to resolve provider/model: {}{}", ERROR_RED, e, COLOR_RESET);
+                                        eprintln!(
+                                            "{}✕ Error: Failed to resolve provider/model: {}{}",
+                                            ERROR_RED, e, COLOR_RESET
+                                        );
                                     }
                                 }
                             }
                         }
                         Err(e) => {
-                            eprintln!("{}✕ Error: Failed to load config: {}{}", ERROR_RED, e, COLOR_RESET);
+                            eprintln!(
+                                "{}✕ Error: Failed to load config: {}{}",
+                                ERROR_RED, e, COLOR_RESET
+                            );
                         }
                     }
                 }
-                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
                 continue;
             }
 
@@ -604,13 +713,19 @@ impl CliChannel {
                         let archive_key = format!("cli:history_{}", timestamp);
                         current_session.key = archive_key;
                         let _ = session_manager.save(&current_session).await;
-                        
+
                         let empty_session = crate::session::Session::new(&session_key);
                         let _ = session_manager.save(&empty_session).await;
                     }
                 }
-                println!("{}✓ Session reset. Starting a new session.{}", EMERALD_GREEN, COLOR_RESET);
-                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                println!(
+                    "{}✓ Session reset. Starting a new session.{}",
+                    EMERALD_GREEN, COLOR_RESET
+                );
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
                 continue;
             }
 
@@ -630,7 +745,10 @@ impl CliChannel {
                         eprintln!("{}✕ Error loading skills: {}{}", ERROR_RED, e, COLOR_RESET);
                     }
                 }
-                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
                 continue;
             }
 
@@ -649,7 +767,10 @@ impl CliChannel {
                         println!("  • {} ({}) - {}", name, status, mcp_cfg.command);
                     }
                 }
-                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
                 continue;
             }
 
@@ -666,34 +787,64 @@ impl CliChannel {
                             match select_menu_with_history("Select a session to load:", &history) {
                                 Ok(selected) => {
                                     if selected == 0 {
-                                        let _ = crate::cli::archive_current_session(&session_manager, &session_key).await;
-                                        println!("{}✓ Started new session.{}", EMERALD_GREEN, COLOR_RESET);
+                                        let _ = crate::cli::archive_current_session(
+                                            &session_manager,
+                                            &session_key,
+                                        )
+                                        .await;
+                                        println!(
+                                            "{}✓ Started new session.{}",
+                                            EMERALD_GREEN, COLOR_RESET
+                                        );
                                     } else {
                                         let selected_item = &history[selected - 1];
                                         if selected_item.key != session_key {
-                                            let _ = crate::cli::archive_current_session(&session_manager, &session_key).await;
-                                            if let Ok(mut session) = session_manager.load(&selected_item.key) {
+                                            let _ = crate::cli::archive_current_session(
+                                                &session_manager,
+                                                &session_key,
+                                            )
+                                            .await;
+                                            if let Ok(mut session) =
+                                                session_manager.load(&selected_item.key)
+                                            {
                                                 session.key = session_key.to_string();
                                                 let _ = session_manager.save(&session).await;
-                                                println!("{}✓ Loaded session: {}{}", EMERALD_GREEN, selected_item.display_title, COLOR_RESET);
+                                                println!(
+                                                    "{}✓ Loaded session: {}{}",
+                                                    EMERALD_GREEN,
+                                                    selected_item.display_title,
+                                                    COLOR_RESET
+                                                );
                                                 render::print_session_history(&session);
                                             }
                                         } else {
-                                            println!("{}✓ You are already in this session.{}", EMERALD_GREEN, COLOR_RESET);
+                                            println!(
+                                                "{}✓ You are already in this session.{}",
+                                                EMERALD_GREEN, COLOR_RESET
+                                            );
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    eprintln!("{}✕ Error running selection menu: {}{}", ERROR_RED, e, COLOR_RESET);
+                                    eprintln!(
+                                        "{}✕ Error running selection menu: {}{}",
+                                        ERROR_RED, e, COLOR_RESET
+                                    );
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("{}✕ Error loading session history: {}{}", ERROR_RED, e, COLOR_RESET);
+                        eprintln!(
+                            "{}✕ Error loading session history: {}{}",
+                            ERROR_RED, e, COLOR_RESET
+                        );
                     }
                 }
-                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
                 continue;
             }
 
@@ -714,51 +865,80 @@ impl CliChannel {
                 } else {
                     println!("No active session found.");
                 }
-                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
                 continue;
             }
- 
+
             if trimmed == "/paste" || trimmed == "/clip" {
                 match input::handle_clipboard_paste(0) {
                     Ok(img_path) => {
-                        println!("{}✓ Image captured from clipboard and saved to: {}{}", EMERALD_GREEN, img_path.display(), COLOR_RESET);
+                        println!(
+                            "{}✓ Image captured from clipboard and saved to: {}{}",
+                            EMERALD_GREEN,
+                            img_path.display(),
+                            COLOR_RESET
+                        );
                         print!("Enter query/instructions for this image: ");
                         let _ = io::stdout().flush();
                         let mut query = String::new();
                         let _ = io::stdin().read_line(&mut query);
-                        let combined_query = format!("{} ![](file://{})", query.trim(), img_path.to_string_lossy());
-                        
+                        let combined_query = format!(
+                            "{} ![](file://{})",
+                            query.trim(),
+                            img_path.to_string_lossy()
+                        );
+
                         let agent_loop = self.agent_loop.lock().await;
                         match agent_loop.run(&combined_query, &session_key).await {
                             Ok(res) => {
                                 println!();
                                 render::print_colored_markdown(&res.content);
                                 println!();
-                                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                                println!(
+                                    "{}────────────────────────────────────────────────────────────{}",
+                                    LIGHT_WHITE, COLOR_RESET
+                                );
                             }
                             Err(e) => {
                                 eprintln!("{}✕ Error: {}{}", ERROR_RED, e, COLOR_RESET);
-                                println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                                println!(
+                                    "{}────────────────────────────────────────────────────────────{}",
+                                    LIGHT_WHITE, COLOR_RESET
+                                );
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("{}✕ Error: Failed to retrieve image from clipboard: {}{}", ERROR_RED, e, COLOR_RESET);
+                        eprintln!(
+                            "{}✕ Error: Failed to retrieve image from clipboard: {}{}",
+                            ERROR_RED, e, COLOR_RESET
+                        );
                     }
                 }
                 continue;
             }
- 
+
             let runner = self.agent_loop.lock().await;
-            
+
             let run_res = {
                 let _raw_mode = RawModeGuard::new().ok();
-                let run_fut: std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<crate::agent::RunResult>> + Send>> = if let Some(ref sender) = remote_sender {
-                    Box::pin(crate::agent::style::spinner::CURRENT_SESSION_KEY.scope(sender.clone(), runner.run(trimmed, &session_key)))
+                let run_fut: std::pin::Pin<
+                    Box<
+                        dyn std::future::Future<Output = anyhow::Result<crate::agent::RunResult>>
+                            + Send,
+                    >,
+                > = if let Some(ref sender) = remote_sender {
+                    Box::pin(
+                        crate::agent::style::spinner::CURRENT_SESSION_KEY
+                            .scope(sender.clone(), runner.run(trimmed, &session_key)),
+                    )
                 } else {
                     Box::pin(runner.run(trimmed, &session_key))
                 };
-                
+
                 let tx = crate::shutdown::cli_cancel_tx();
                 let mut rx = tx.subscribe();
                 let initial_val = *rx.borrow();
@@ -769,44 +949,70 @@ impl CliChannel {
                         }
                     }
                 };
-                
-                let keyboard_cancel_tx = tx.clone();
-                let keyboard_listener = tokio::task::spawn(async move {
+
+                // Keep raw mode active while a turn is running so Esc/Ctrl+C are delivered
+                // as key events to the cancellation watcher instead of being line-buffered.
+                let _run_raw_guard = RawModeGuard::new().ok();
+
+                // Use a dedicated OS thread (not a tokio task!) for keyboard polling.
+                // crossterm::event::poll/read are blocking calls that would starve
+                // the tokio runtime if run inside tokio::task::spawn.
+                let keyboard_done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let keyboard_done_for_thread = keyboard_done.clone();
+                let _keyboard_thread = std::thread::spawn(move || {
                     loop {
-                        if let Ok(true) = crossterm::event::poll(std::time::Duration::from_millis(50)) {
-                            if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read() {
+                        // Check if the main task told us to stop. The thread is detached below,
+                        // so cancellation never waits on a possibly-blocking terminal read.
+                        if keyboard_done_for_thread.load(std::sync::atomic::Ordering::SeqCst) {
+                            break;
+                        }
+                        if let Ok(true) =
+                            crossterm::event::poll(std::time::Duration::from_millis(100))
+                        {
+                            if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read()
+                            {
                                 if key.kind == crossterm::event::KeyEventKind::Press {
-                                    if key.code == crossterm::event::KeyCode::Esc {
-                                        let _ = keyboard_cancel_tx.send_modify(|val| *val += 1);
-                                        break;
-                                    }
-                                    if key.code == crossterm::event::KeyCode::Char('c') && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
-                                        let _ = keyboard_cancel_tx.send_modify(|val| *val += 1);
+                                    if key.code == crossterm::event::KeyCode::Esc
+                                        || (key.code == crossterm::event::KeyCode::Char('c')
+                                            && key
+                                                .modifiers
+                                                .contains(crossterm::event::KeyModifiers::CONTROL))
+                                    {
+                                        crate::shutdown::trigger_cli_cancel();
                                         break;
                                     }
                                 }
                             }
                         }
-                        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
                     }
                 });
-                
+
                 tokio::pin!(run_fut);
                 tokio::pin!(cancel_fut);
-                
-                tokio::select! {
+
+                let result = tokio::select! {
                     res = &mut run_fut => {
-                        keyboard_listener.abort();
                         Some(res)
                     }
                     _ = &mut cancel_fut => {
-                        keyboard_listener.abort();
+                        crate::shutdown::trigger_cli_cancel();
                         crate::tui_println!("\r\n{}▲ Execution cancelled by user (Ctrl+C / Esc).{}", AURA_GOLD, COLOR_RESET);
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_secs(2),
+                            &mut run_fut,
+                        )
+                        .await;
                         None
                     }
-                }
+                };
+
+                // Signal the keyboard thread to stop. Do not join: crossterm::event::read()
+                // can block after a poll/read race, and joining here makes Esc/Ctrl+C look hung.
+                keyboard_done.store(true, std::sync::atomic::Ordering::SeqCst);
+
+                result
             };
-            
+
             if let Some(ref sender) = remote_sender {
                 if sender.starts_with("telegram:") {
                     if let Some(chat_id_str) = sender.strip_prefix("telegram:") {
@@ -816,7 +1022,7 @@ impl CliChannel {
                     }
                 }
             }
-            
+
             match run_res {
                 Some(Ok(res)) => {
                     if !res.streamed {
@@ -824,14 +1030,22 @@ impl CliChannel {
                         render::print_colored_markdown(&res.content);
                     }
                     println!();
-                    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
-                    
+                    println!(
+                        "{}────────────────────────────────────────────────────────────{}",
+                        LIGHT_WHITE, COLOR_RESET
+                    );
+
                     if let Some(ref sender) = remote_sender {
                         if sender.starts_with("telegram:") {
                             if let Some(chat_id_str) = sender.strip_prefix("telegram:") {
                                 if let Ok(chat_id) = chat_id_str.parse::<i64>() {
-                                    if let Some((bot_token, client)) = crate::channels::telegram::get_telegram_bot_info() {
-                                        let send_url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
+                                    if let Some((bot_token, client)) =
+                                        crate::channels::telegram::get_telegram_bot_info()
+                                    {
+                                        let send_url = format!(
+                                            "https://api.telegram.org/bot{}/sendMessage",
+                                            bot_token
+                                        );
                                         let payload = serde_json::json!({
                                             "chat_id": chat_id,
                                             "text": format!("🔌 [Remote Control Output]\n{}", res.content)
@@ -845,15 +1059,24 @@ impl CliChannel {
                 }
                 Some(Err(e)) => {
                     eprintln!("{}✕ Error: {}{}", ERROR_RED, e, COLOR_RESET);
-                    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                    println!(
+                        "{}────────────────────────────────────────────────────────────{}",
+                        LIGHT_WHITE, COLOR_RESET
+                    );
                 }
                 None => {
-                    println!("\r\n{}✕ Conversation interrupted by user.{}", ERROR_RED, COLOR_RESET);
-                    println!("{}────────────────────────────────────────────────────────────{}", LIGHT_WHITE, COLOR_RESET);
+                    println!(
+                        "\r\n{}✕ Conversation interrupted by user.{}",
+                        ERROR_RED, COLOR_RESET
+                    );
+                    println!(
+                        "{}────────────────────────────────────────────────────────────{}",
+                        LIGHT_WHITE, COLOR_RESET
+                    );
                 }
             }
         }
-        
+
         Ok(())
     }
 }

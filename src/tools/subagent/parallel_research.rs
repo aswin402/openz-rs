@@ -1,14 +1,14 @@
-use crate::tools::Tool;
-use crate::tools::ToolRegistry;
+use super::{build_provider_for_model, CancellationToken, DELEGATION_DEPTH};
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
-use anyhow::{Result, anyhow};
-use std::sync::Arc;
+use crate::tools::Tool;
+use crate::tools::ToolRegistry;
+use anyhow::{anyhow, Result};
 use serde_json::Value;
-use super::{CancellationToken, DELEGATION_DEPTH, build_provider_for_model};
+use std::sync::Arc;
 
 pub struct ParallelResearchTool {
     pub config: Config,
@@ -80,7 +80,9 @@ impl Tool for ParallelResearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let tasks_val = arguments.get("tasks").and_then(|v| v.as_array())
+        let tasks_val = arguments
+            .get("tasks")
+            .and_then(|v| v.as_array())
             .ok_or_else(|| anyhow!("Missing or invalid 'tasks' argument"))?;
 
         if tasks_val.is_empty() {
@@ -92,8 +94,13 @@ impl Tool for ParallelResearchTool {
             let prefix = crate::agent::style::get_tree_prefix(false);
             crate::tui_println!(
                 "{}{}{}◎ {}{}ParallelResearch spawning {} subagents{}",
-                AURA_SLATE, prefix, COLOR_RESET,
-                AURA_PURPLE, COLOR_BOLD, tasks_val.len(), COLOR_RESET
+                AURA_SLATE,
+                prefix,
+                COLOR_RESET,
+                AURA_PURPLE,
+                COLOR_BOLD,
+                tasks_val.len(),
+                COLOR_RESET
             );
         }
 
@@ -109,8 +116,15 @@ impl Tool for ParallelResearchTool {
                 Some(g) => g.to_string(),
                 None => continue,
             };
-            let context = task_val.get("context").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let model_override = task_val.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let context = task_val
+                .get("context")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let model_override = task_val
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
 
             let role = get_heuristic_role(idx, &goal);
 
@@ -118,8 +132,12 @@ impl Tool for ParallelResearchTool {
                 let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                 crate::tui_println!(
                     "{}{}{}◌ {}{}\u{2014} queued{}",
-                    AURA_SLATE, leaf_prefix, AURA_SLATE,
-                    COLOR_BOLD, role, COLOR_RESET
+                    AURA_SLATE,
+                    leaf_prefix,
+                    AURA_SLATE,
+                    COLOR_BOLD,
+                    role,
+                    COLOR_RESET
                 );
             }
 
@@ -138,14 +156,19 @@ impl Tool for ParallelResearchTool {
             let current_workspace = current_workspace.clone();
             let role_clone = role.clone();
             let goal_clone = goal.clone();
-            
+
             let handle = tokio::spawn(async move {
                 if !is_parent_silent {
-                    let leaf_prefix = crate::agent::style::get_tree_prefix_for_depth(true, current_depth);
+                    let leaf_prefix =
+                        crate::agent::style::get_tree_prefix_for_depth(true, current_depth);
                     crate::tui_println!(
                         "{}{}{}● {}{}\u{2014} running...{}",
-                        AURA_SLATE, leaf_prefix, RED_ORANGE,
-                        COLOR_BOLD, role_clone, COLOR_RESET
+                        AURA_SLATE,
+                        leaf_prefix,
+                        RED_ORANGE,
+                        COLOR_BOLD,
+                        role_clone,
+                        COLOR_RESET
                     );
                 }
 
@@ -187,10 +210,11 @@ impl Tool for ParallelResearchTool {
 
                         crate::agent::style::spinner::IS_SILENT.scope(crate::agent::style::is_silent(), async {
                             tokio::select! {
-                                res = child_agent.run(&subagent_prompt, &child_session_id) => res,
+                                biased;
                                 _ = cancellation_token.wait_for_cancellation() => {
                                     Err(anyhow::anyhow!("Task cancelled"))
                                 }
+                                res = child_agent.run(&subagent_prompt, &child_session_id) => res,
                             }
                         }).await
                     }).await
@@ -198,23 +222,37 @@ impl Tool for ParallelResearchTool {
                 let run_res = run_res_fut.await;
 
                 if !is_parent_silent {
-                    let leaf_prefix = crate::agent::style::get_tree_prefix_for_depth(true, current_depth);
+                    let leaf_prefix =
+                        crate::agent::style::get_tree_prefix_for_depth(true, current_depth);
                     match run_res {
                         Ok(ref run_res) => {
-                            let summary = crate::agent::style::format_subagent_summary(&run_res.content);
+                            let summary =
+                                crate::agent::style::format_subagent_summary(&run_res.content);
                             crate::tui_println!(
                                 "{}{}{}{}✓ {}{} \u{2014} {}{}{}",
-                                AURA_SLATE, leaf_prefix, AURA_GREEN,
-                                COLOR_BOLD, role_clone, COLOR_RESET,
-                                AURA_GREEN, summary, COLOR_RESET
+                                AURA_SLATE,
+                                leaf_prefix,
+                                AURA_GREEN,
+                                COLOR_BOLD,
+                                role_clone,
+                                COLOR_RESET,
+                                AURA_GREEN,
+                                summary,
+                                COLOR_RESET
                             );
                         }
                         Err(ref e) => {
                             crate::tui_println!(
                                 "{}{}{}{}✕ {}{} \u{2014} failed: {}{}{}",
-                                AURA_SLATE, leaf_prefix, AURA_ROSE,
-                                COLOR_BOLD, role_clone, COLOR_RESET,
-                                AURA_ROSE, e, COLOR_RESET
+                                AURA_SLATE,
+                                leaf_prefix,
+                                AURA_ROSE,
+                                COLOR_BOLD,
+                                role_clone,
+                                COLOR_RESET,
+                                AURA_ROSE,
+                                e,
+                                COLOR_RESET
                             );
                         }
                     }
@@ -224,7 +262,18 @@ impl Tool for ParallelResearchTool {
             join_handles.push(handle);
         }
 
-        let join_results = futures_util::future::join_all(join_handles).await;
+        // Race join_all against cancellation — spawned tasks self-terminate
+        // via their own tokio::select! on the shared CancellationToken.
+        let join_results = {
+            let all_fut = futures_util::future::join_all(join_handles);
+            tokio::select! {
+                biased;
+                _ = self.cancellation_token.wait_for_cancellation() => {
+                    return Err(anyhow!("Parallel research cancelled by user"));
+                }
+                results = all_fut => results,
+            }
+        };
         let mut results = Vec::new();
 
         for res in join_results {
@@ -278,11 +327,20 @@ pub fn get_heuristic_role(index: usize, goal: &str) -> String {
     let goal_lower = goal.to_lowercase();
     if goal_lower.contains("test") {
         "Tester".to_string()
-    } else if goal_lower.contains("debug") || goal_lower.contains("error") || goal_lower.contains("fail") {
+    } else if goal_lower.contains("debug")
+        || goal_lower.contains("error")
+        || goal_lower.contains("fail")
+    {
         "Debugger".to_string()
-    } else if goal_lower.contains("architect") || goal_lower.contains("design") || goal_lower.contains("structure") {
+    } else if goal_lower.contains("architect")
+        || goal_lower.contains("design")
+        || goal_lower.contains("structure")
+    {
         "Architect".to_string()
-    } else if goal_lower.contains("write") || goal_lower.contains("code") || goal_lower.contains("implement") {
+    } else if goal_lower.contains("write")
+        || goal_lower.contains("code")
+        || goal_lower.contains("implement")
+    {
         "Developer".to_string()
     } else if goal_lower.contains("review") || goal_lower.contains("audit") {
         "Reviewer".to_string()

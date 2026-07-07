@@ -1,11 +1,10 @@
 pub mod engine;
 
-use serde::{Serialize, Deserialize};
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
-use std::collections::{HashMap, HashSet};
-use anyhow::{Result, Context};
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SopStep {
@@ -143,7 +142,12 @@ pub fn validate_sop_definition(def: &SopDefinition) -> Result<()> {
     }
 
     // 3. Cycle detection (DFS)
-    let step_indices: HashMap<&str, usize> = def.steps.iter().enumerate().map(|(i, s)| (s.name.as_str(), i)).collect();
+    let step_indices: HashMap<&str, usize> = def
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.name.as_str(), i))
+        .collect();
     let n = def.steps.len();
     let mut state = vec![0u8; n]; // 0 = unvisited, 1 = visiting, 2 = visited
 
@@ -159,7 +163,11 @@ pub fn validate_sop_definition(def: &SopDefinition) -> Result<()> {
         for dep_name in &step.depends_on {
             if let Some(&v) = step_indices.get(dep_name.as_str()) {
                 if state[v] == 1 {
-                    anyhow::bail!("Circular dependency detected involving step '{}' and step '{}'", step.name, dep_name);
+                    anyhow::bail!(
+                        "Circular dependency detected involving step '{}' and step '{}'",
+                        step.name,
+                        dep_name
+                    );
                 } else if state[v] == 0 {
                     dfs(v, def, step_indices, state)?;
                 }
@@ -369,13 +377,13 @@ fn get_default_sop_definitions() -> Vec<SopDefinition> {
     ]
 }
 
-
 pub fn substitute_template(template: &str, context: &serde_json::Value) -> String {
     let re = regex::Regex::new(r"\{\{([^}]+)\}\}").unwrap();
     re.replace_all(template, |caps: &regex::Captures| {
         let path = caps.get(1).unwrap().as_str().trim();
         resolve_path_value(context, path)
-    }).into_owned()
+    })
+    .into_owned()
 }
 
 fn resolve_path_value(json_value: &serde_json::Value, path: &str) -> String {
@@ -416,7 +424,10 @@ mod tests {
 
         let template = "Repo is {{payload.repository}} and issue is #{{payload.number}}. Result: {{steps.Analyze.output}}.";
         let substituted = substitute_template(template, &context);
-        assert_eq!(substituted, "Repo is openz-rs and issue is #42. Result: No issues found.");
+        assert_eq!(
+            substituted,
+            "Repo is openz-rs and issue is #42. Result: No issues found."
+        );
     }
 
     #[test]
@@ -431,57 +442,64 @@ mod tests {
 
     #[tokio::test]
     async fn test_sop_lifecycle() {
-        let temp_dir = std::env::temp_dir().join(format!("openz_sop_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_sop_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        crate::config::loader::CONFIG_DIR_OVERRIDE.scope(temp_dir.clone(), async move {
-            initialize_sop_system().unwrap();
+        crate::config::loader::CONFIG_DIR_OVERRIDE
+            .scope(temp_dir.clone(), async move {
+                initialize_sop_system().unwrap();
 
-            // Check default definitions are created
-            let defs = load_definitions().unwrap();
-            assert!(!defs.is_empty());
-            let pr_review = defs.iter().find(|d| d.id == "pr-review").unwrap();
-            assert_eq!(pr_review.steps.len(), 3);
+                // Check default definitions are created
+                let defs = load_definitions().unwrap();
+                assert!(!defs.is_empty());
+                let pr_review = defs.iter().find(|d| d.id == "pr-review").unwrap();
+                assert_eq!(pr_review.steps.len(), 3);
 
-            // Save a mock instance
-            let steps = pr_review.steps.iter().map(|step| StepExecutionState {
-                name: step.name.clone(),
-                status: "Pending".to_string(),
-                started_at: None,
-                completed_at: None,
-                output: None,
-                error: None,
-            }).collect();
+                // Save a mock instance
+                let steps = pr_review
+                    .steps
+                    .iter()
+                    .map(|step| StepExecutionState {
+                        name: step.name.clone(),
+                        status: "Pending".to_string(),
+                        started_at: None,
+                        completed_at: None,
+                        output: None,
+                        error: None,
+                    })
+                    .collect();
 
-            let inst = SopInstance {
-                id: "test-inst-123".to_string(),
-                sop_id: pr_review.id.clone(),
-                name: "Test Instance".to_string(),
-                status: SopStatus::Pending,
-                current_step_index: 0,
-                steps,
-                context: serde_json::json!({
-                    "payload": {"repo": "test"},
-                    "steps": {}
-                }),
-                started_at: Utc::now().to_rfc3339(),
-                completed_at: None,
-            };
+                let inst = SopInstance {
+                    id: "test-inst-123".to_string(),
+                    sop_id: pr_review.id.clone(),
+                    name: "Test Instance".to_string(),
+                    status: SopStatus::Pending,
+                    current_step_index: 0,
+                    steps,
+                    context: serde_json::json!({
+                        "payload": {"repo": "test"},
+                        "steps": {}
+                    }),
+                    started_at: Utc::now().to_rfc3339(),
+                    completed_at: None,
+                };
 
-            save_instance(&inst).unwrap();
+                save_instance(&inst).unwrap();
 
-            let loaded = load_instance("test-inst-123").unwrap();
-            assert_eq!(loaded.id, "test-inst-123");
-            assert_eq!(loaded.sop_id, "pr-review");
-            assert_eq!(loaded.status, SopStatus::Pending);
+                let loaded = load_instance("test-inst-123").unwrap();
+                assert_eq!(loaded.id, "test-inst-123");
+                assert_eq!(loaded.sop_id, "pr-review");
+                assert_eq!(loaded.status, SopStatus::Pending);
 
-            let list = list_instances().unwrap();
-            assert_eq!(list.len(), 1);
-            assert_eq!(list[0].id, "test-inst-123");
+                let list = list_instances().unwrap();
+                assert_eq!(list.len(), 1);
+                assert_eq!(list[0].id, "test-inst-123");
 
-            // Clean up temp dir
-            std::fs::remove_dir_all(&temp_dir).unwrap();
-        }).await;
+                // Clean up temp dir
+                std::fs::remove_dir_all(&temp_dir).unwrap();
+            })
+            .await;
     }
 
     #[test]
@@ -497,7 +515,10 @@ mod tests {
         "#;
         let step: SopStep = serde_json::from_str(json_str).unwrap();
         assert_eq!(step.name, "Step A");
-        assert_eq!(step.depends_on, vec!["Step B".to_string(), "Step C".to_string()]);
+        assert_eq!(
+            step.depends_on,
+            vec!["Step B".to_string(), "Step C".to_string()]
+        );
         assert_eq!(step.agent, Some("researcher".to_string()));
 
         // Test default value when field is missing
@@ -572,15 +593,13 @@ mod tests {
             id: "missing-dep-sop".to_string(),
             name: "Missing Dep SOP".to_string(),
             description: "A missing dep SOP".to_string(),
-            steps: vec![
-                SopStep {
-                    name: "A".to_string(),
-                    description: "Step A".to_string(),
-                    prompt_template: "Run A".to_string(),
-                    depends_on: vec!["C".to_string()],
-                    agent: None,
-                },
-            ],
+            steps: vec![SopStep {
+                name: "A".to_string(),
+                description: "Step A".to_string(),
+                prompt_template: "Run A".to_string(),
+                depends_on: vec!["C".to_string()],
+                agent: None,
+            }],
         };
         let err = validate_sop_definition(&def).unwrap_err().to_string();
         assert!(err.contains("depends on non-existent step"));
@@ -618,32 +637,36 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(format!("openz_sop_sim_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        crate::config::loader::CONFIG_DIR_OVERRIDE.scope(temp_dir.clone(), async move {
-            initialize_sop_system().unwrap();
+        crate::config::loader::CONFIG_DIR_OVERRIDE
+            .scope(temp_dir.clone(), async move {
+                initialize_sop_system().unwrap();
 
-            let config = crate::config::schema::Config::default();
-            let payload = serde_json::json!({
-                "feature_request": "Implement SOP simulator"
-            });
+                let config = crate::config::schema::Config::default();
+                let payload = serde_json::json!({
+                    "feature_request": "Implement SOP simulator"
+                });
 
-            // Trigger simulation for feature-release SOP
-            let result = engine::trigger_sop_simulation(config, "feature-release".to_string(), payload).await;
-            assert!(result.is_ok());
-            
-            let sim_id = result.unwrap();
-            assert!(sim_id.starts_with("sim-"));
+                // Trigger simulation for feature-release SOP
+                let result =
+                    engine::trigger_sop_simulation(config, "feature-release".to_string(), payload)
+                        .await;
+                assert!(result.is_ok());
 
-            // Load the simulated instance to verify it completed
-            let inst = load_instance(&sim_id).unwrap();
-            assert_eq!(inst.status, SopStatus::Completed);
-            assert_eq!(inst.steps.len(), 4);
-            for step in inst.steps {
-                assert_eq!(step.status, "Completed");
-                let output = step.output.unwrap();
-                assert!(output.contains("[Simulated Output for Step:"));
-            }
+                let sim_id = result.unwrap();
+                assert!(sim_id.starts_with("sim-"));
 
-            std::fs::remove_dir_all(&temp_dir).unwrap();
-        }).await;
+                // Load the simulated instance to verify it completed
+                let inst = load_instance(&sim_id).unwrap();
+                assert_eq!(inst.status, SopStatus::Completed);
+                assert_eq!(inst.steps.len(), 4);
+                for step in inst.steps {
+                    assert_eq!(step.status, "Completed");
+                    let output = step.output.unwrap();
+                    assert!(output.contains("[Simulated Output for Step:"));
+                }
+
+                std::fs::remove_dir_all(&temp_dir).unwrap();
+            })
+            .await;
     }
 }

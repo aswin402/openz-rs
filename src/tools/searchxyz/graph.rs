@@ -1,9 +1,9 @@
-use serde_json::{json, Value};
-use anyhow::Result;
-use crate::tools::Tool;
-use searchxyz::tools::{IndexRelationshipRequest, QueryGraphRequest, ReadGithubRepoRequest};
-use rmcp::handler::server::wrapper::Parameters;
 use super::{get_server, map_mcp_err};
+use crate::tools::Tool;
+use anyhow::Result;
+use rmcp::handler::server::wrapper::Parameters;
+use searchxyz::tools::{IndexRelationshipRequest, QueryGraphRequest, ReadGithubRepoRequest};
+use serde_json::{json, Value};
 
 // ── 9. Index Relationship ─────────────────────────────────────
 pub struct SearchXyzIndexRelationshipTool;
@@ -49,7 +49,10 @@ impl Tool for SearchXyzIndexRelationshipTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: IndexRelationshipRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server().index_relationship(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .index_relationship(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }
@@ -86,7 +89,10 @@ impl Tool for SearchXyzQueryGraphTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: QueryGraphRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server().query_graph(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .query_graph(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }
@@ -133,7 +139,10 @@ impl Tool for SearchXyzReadGithubRepoTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: ReadGithubRepoRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server().read_github_repo(Parameters(req)).await.map_err(map_mcp_err)?;
+        let res = get_server()
+            .read_github_repo(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
         Ok(json!(res))
     }
 }

@@ -2,11 +2,11 @@ use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::process::Command;
-use std::time::Duration;
-use tokio::time::sleep;
-use thirtyfour::prelude::*;
 use std::sync::OnceLock;
+use std::time::Duration;
+use thirtyfour::prelude::*;
 use tokio::sync::Mutex;
+use tokio::time::sleep;
 
 static DRIVER: OnceLock<Mutex<Option<WebDriver>>> = OnceLock::new();
 
@@ -18,8 +18,13 @@ async fn ensure_geckodriver_running() -> Result<()> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(500))
         .build()?;
-    
-    if client.get("http://127.0.0.1:4444/status").send().await.is_ok() {
+
+    if client
+        .get("http://127.0.0.1:4444/status")
+        .send()
+        .await
+        .is_ok()
+    {
         return Ok(());
     }
 
@@ -28,11 +33,17 @@ async fn ensure_geckodriver_running() -> Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn() {
+        .spawn()
+    {
         crate::shutdown::register_child(child_handle);
         for _ in 0..15 {
             sleep(Duration::from_millis(200)).await;
-            if client.get("http://127.0.0.1:4444/status").send().await.is_ok() {
+            if client
+                .get("http://127.0.0.1:4444/status")
+                .send()
+                .await
+                .is_ok()
+            {
                 return Ok(());
             }
         }
@@ -44,21 +55,21 @@ async fn ensure_geckodriver_running() -> Result<()> {
 async fn get_or_create_driver() -> Result<WebDriver> {
     let mutex = get_driver_mutex();
     let mut guard = mutex.lock().await;
-    
+
     if let Some(ref driver) = *guard {
         if driver.title().await.is_ok() {
             return Ok(driver.clone());
         }
     }
-    
+
     ensure_geckodriver_running().await?;
-    
+
     let mut caps = DesiredCapabilities::firefox();
     caps.add_arg("--headless")?;
-    
+
     let driver = WebDriver::new("http://localhost:4444", caps).await?;
     *guard = Some(driver.clone());
-    
+
     Ok(driver)
 }
 
@@ -129,7 +140,9 @@ impl Tool for FirefoxBrowserTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments.get("action").and_then(|v| v.as_str())
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
 
         if action == "close" {
@@ -150,7 +163,9 @@ impl Tool for FirefoxBrowserTool {
 
         let result = match action {
             "navigate" => {
-                let url = arguments.get("url").and_then(|v| v.as_str())
+                let url = arguments
+                    .get("url")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'url' parameter for navigate action"))?;
                 if let Err(e) = driver.goto(url).await {
                     reset_driver().await;
@@ -162,7 +177,9 @@ impl Tool for FirefoxBrowserTool {
                 })
             }
             "click" => {
-                let selector = arguments.get("selector").and_then(|v| v.as_str())
+                let selector = arguments
+                    .get("selector")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'selector' parameter for click action"))?;
                 let elem = driver.find(By::Css(selector)).await?;
                 elem.click().await?;
@@ -172,9 +189,13 @@ impl Tool for FirefoxBrowserTool {
                 })
             }
             "fill" => {
-                let selector = arguments.get("selector").and_then(|v| v.as_str())
+                let selector = arguments
+                    .get("selector")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'selector' parameter for fill action"))?;
-                let text = arguments.get("text").and_then(|v| v.as_str())
+                let text = arguments
+                    .get("text")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'text' parameter for fill action"))?;
                 let elem = driver.find(By::Css(selector)).await?;
                 elem.clear().await?;
@@ -185,7 +206,9 @@ impl Tool for FirefoxBrowserTool {
                 })
             }
             "screenshot" => {
-                let path = arguments.get("path").and_then(|v| v.as_str())
+                let path = arguments
+                    .get("path")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'path' parameter for screenshot action"))?;
                 driver.screenshot(std::path::Path::new(path)).await?;
                 json!({
@@ -194,7 +217,9 @@ impl Tool for FirefoxBrowserTool {
                 })
             }
             "eval" => {
-                let script = arguments.get("script").and_then(|v| v.as_str())
+                let script = arguments
+                    .get("script")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'script' parameter for eval action"))?;
                 let val = driver.execute(script, vec![]).await?;
                 json!({
@@ -216,7 +241,7 @@ impl Tool for FirefoxBrowserTool {
                     "output": md
                 })
             }
-            _ => return Err(anyhow!("Unknown action: {}", action))
+            _ => return Err(anyhow!("Unknown action: {}", action)),
         };
 
         Ok(result)

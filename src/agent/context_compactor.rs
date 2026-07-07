@@ -16,10 +16,10 @@ pub fn compress_json(raw_json: &str) -> anyhow::Result<String> {
                 }
             }
         }
-        
+
         let keys_str = keys.into_iter().collect::<Vec<String>>().join(", ");
         let first_item_str = serde_json::to_string_pretty(&arr[0]).unwrap_or_default();
-        
+
         Ok(format!(
             "[JSON Array: {} objects. Keys: [{}]. \nFirst element:\n{}]",
             total_count, keys_str, first_item_str
@@ -27,7 +27,10 @@ pub fn compress_json(raw_json: &str) -> anyhow::Result<String> {
     } else {
         let minified = serde_json::to_string(&value)?;
         if minified.len() > 1000 {
-            Ok(format!("{}...", minified.chars().take(1000).collect::<String>()))
+            Ok(format!(
+                "{}...",
+                minified.chars().take(1000).collect::<String>()
+            ))
         } else {
             Ok(minified)
         }
@@ -96,16 +99,21 @@ pub fn compress_logs(raw_logs: &str) -> String {
 
     for line in clean_logs.lines() {
         let trimmed = line.trim();
-        
+
         if re_rust_backtrace.is_match(trimmed) {
             is_backtrace = true;
-            filtered_lines.push("[Backtrace detected - stripping stack frames for token reduction]".to_string());
+            filtered_lines.push(
+                "[Backtrace detected - stripping stack frames for token reduction]".to_string(),
+            );
             continue;
         }
         if is_backtrace {
             if trimmed.is_empty() {
                 is_backtrace = false;
-            } else if re_backtrace_line.is_match(trimmed) || trimmed.starts_with("frame #") || trimmed.starts_with("at ") {
+            } else if re_backtrace_line.is_match(trimmed)
+                || trimmed.starts_with("frame #")
+                || trimmed.starts_with("at ")
+            {
                 continue;
             }
         }
@@ -116,7 +124,7 @@ pub fn compress_logs(raw_logs: &str) -> String {
                 continue;
             }
         }
-        
+
         if re_cargo_error.is_match(trimmed) {
             error_count += 1;
             if error_count > 5 {
@@ -129,15 +137,24 @@ pub fn compress_logs(raw_logs: &str) -> String {
 
     let mut filtered_logs = filtered_lines.join("\n");
     if warning_count > 10 {
-        filtered_logs.push_str(&format!("\n... [Skipped {} additional cargo warnings to save tokens] ...", warning_count - 10));
+        filtered_logs.push_str(&format!(
+            "\n... [Skipped {} additional cargo warnings to save tokens] ...",
+            warning_count - 10
+        ));
     }
     if error_count > 5 {
-        filtered_logs.push_str(&format!("\n... [Skipped {} additional cargo errors to save tokens] ...", error_count - 5));
+        filtered_logs.push_str(&format!(
+            "\n... [Skipped {} additional cargo errors to save tokens] ...",
+            error_count - 5
+        ));
     }
 
     if filtered_logs.len() > 2000 {
         let first_part: String = filtered_logs.chars().take(1000).collect();
-        let last_part: String = filtered_logs.chars().skip(filtered_logs.chars().count().saturating_sub(1000)).collect();
+        let last_part: String = filtered_logs
+            .chars()
+            .skip(filtered_logs.chars().count().saturating_sub(1000))
+            .collect();
         format!(
             "{}\n\n... [TRUNCATED LOGS] ...\n\n{}",
             first_part, last_part

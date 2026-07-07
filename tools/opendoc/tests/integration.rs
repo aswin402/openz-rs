@@ -4,9 +4,9 @@
 
 mod common;
 
-use opendoc_mcp::handlers::load_to_ir;
-use opendoc_mcp::engine::{complexity, replace, search};
 use common::*;
+use opendoc_mcp::engine::{complexity, replace, search};
+use opendoc_mcp::handlers::load_to_ir;
 
 // ──────────────────────────────────────────────
 //  TXT → IR
@@ -77,7 +77,11 @@ fn test_xlsx_text_representation() {
 #[test]
 fn test_html_to_ir() {
     let path = temp_path("html");
-    std::fs::write(&path, "<html><body><h1>Title</h1><p>Hello World</p></body></html>").unwrap();
+    std::fs::write(
+        &path,
+        "<html><body><h1>Title</h1><p>Hello World</p></body></html>",
+    )
+    .unwrap();
 
     let doc = load_to_ir(path.to_str().unwrap()).unwrap();
     assert_eq!(doc.format, "html");
@@ -88,7 +92,11 @@ fn test_html_to_ir() {
 #[test]
 fn test_html_text_content() {
     let path = temp_path("html");
-    std::fs::write(&path, "<html><body><p>Para 1</p><p>Para 2</p></body></html>").unwrap();
+    std::fs::write(
+        &path,
+        "<html><body><p>Para 1</p><p>Para 2</p></body></html>",
+    )
+    .unwrap();
 
     let doc = load_to_ir(path.to_str().unwrap()).unwrap();
     let text = doc.text.unwrap_or_default();
@@ -145,18 +153,25 @@ fn test_complexity_scanned() {
     // Empty doc with no text → scanned
     let report = complexity::analyze_complexity(&doc);
     assert!(report.needs_ocr);
-    assert!(matches!(report.estimated_complexity, complexity::Complexity::Scanned));
+    assert!(matches!(
+        report.estimated_complexity,
+        complexity::Complexity::Scanned
+    ));
 }
 
 #[test]
 fn test_complexity_simple() {
     let mut doc = opendoc_mcp::ir::Document::new("txt");
-    doc.paragraphs.push(opendoc_mcp::ir::Paragraph::new("Hello world"));
+    doc.paragraphs
+        .push(opendoc_mcp::ir::Paragraph::new("Hello world"));
     doc.metadata.page_count = Some(1);
 
     let report = complexity::analyze_complexity(&doc);
     assert!(!report.needs_ocr);
-    assert!(matches!(report.estimated_complexity, complexity::Complexity::Simple));
+    assert!(matches!(
+        report.estimated_complexity,
+        complexity::Complexity::Simple
+    ));
     assert_eq!(report.recommended_pipeline, "text");
 }
 
@@ -167,7 +182,8 @@ fn test_complexity_simple() {
 #[test]
 fn test_search_found() {
     let mut doc = opendoc_mcp::ir::Document::new("txt");
-    doc.paragraphs.push(opendoc_mcp::ir::Paragraph::new("The quick brown fox"));
+    doc.paragraphs
+        .push(opendoc_mcp::ir::Paragraph::new("The quick brown fox"));
 
     let results = search::search_document(&doc, "fox", false);
     assert_eq!(results.len(), 1);
@@ -177,7 +193,8 @@ fn test_search_found() {
 #[test]
 fn test_search_not_found() {
     let mut doc = opendoc_mcp::ir::Document::new("txt");
-    doc.paragraphs.push(opendoc_mcp::ir::Paragraph::new("Hello world"));
+    doc.paragraphs
+        .push(opendoc_mcp::ir::Paragraph::new("Hello world"));
 
     let results = search::search_document(&doc, "foobar", false);
     assert!(results.is_empty());
@@ -186,7 +203,8 @@ fn test_search_not_found() {
 #[test]
 fn test_replace_text() {
     let mut doc = opendoc_mcp::ir::Document::new("txt");
-    doc.paragraphs.push(opendoc_mcp::ir::Paragraph::new("Hello World"));
+    doc.paragraphs
+        .push(opendoc_mcp::ir::Paragraph::new("Hello World"));
 
     let count = replace::replace_text(&mut doc, "World", "Rust");
     assert_eq!(count, 1);
@@ -196,7 +214,8 @@ fn test_replace_text() {
 #[test]
 fn test_replace_regex() {
     let mut doc = opendoc_mcp::ir::Document::new("txt");
-    doc.paragraphs.push(opendoc_mcp::ir::Paragraph::new("Hello 123 World"));
+    doc.paragraphs
+        .push(opendoc_mcp::ir::Paragraph::new("Hello 123 World"));
 
     let count = replace::replace_text(&mut doc, r"\d+", "NUM");
     assert_eq!(count, 1);
@@ -250,7 +269,7 @@ fn test_conversion_bidirectional() {
     gen_csv(&path_csv);
 
     let path_md = temp_path("md");
-    
+
     // Convert CSV -> MD
     let res = opendoc_mcp::converters::convert(
         path_csv.to_str().unwrap(),

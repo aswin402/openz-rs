@@ -398,7 +398,72 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.37 (Latest Release)
+### v0.0.39 (Latest Release)
+*   **Fix: Esc / Ctrl+C cancellation was unreliable during subagent execution (CRITICAL)**:
+    *   **Root cause:** Crossterm raw mode converts `Ctrl+C` from a signal (`SIGINT`) into a key event, bypassing the OS signal handler. The keyboard listener was running inside `tokio::task::spawn` with blocking `crossterm::event::poll/read` calls, starving the Tokio runtime and preventing the cancellation future from making progress.
+    *   **Fix:** Moved keyboard input polling to a dedicated **OS thread** (`std::thread::spawn`) instead of a Tokio task. The OS thread polls crossterm events every 100ms without blocking the async runtime, and signals cancellation via the existing `CLI_CANCEL_TX` watch channel.
+    *   **Fix:** Added a `std::sync::mpsc` channel for the main task to signal the keyboard thread to stop cleanly after the agent turn completes, preventing leaked threads.
+*   **Fix: LLM streaming loop was not cancellation-aware (CRITICAL)**:
+    *   The `while let Some(chunk) = stream.next().await` loop in `run.rs` would block indefinitely on slow LLM responses with no cancellation check.
+    *   **Fix:** Replaced with a `tokio::select!` loop that races each `stream.next()` against a **cancel-safe** `watch::Receiver::changed()` listener (not `Notify`, which loses permits when dropped in `select!`).
+*   **Fix: Tool execution (subagent delegation) was not cancellable (HIGH)**:
+    *   Tool calls (especially `delegate_task`, `parallel_research`) ran behind `tokio::time::timeout` but had no way to be interrupted by user input.
+    *   **Fix:** Wrapped tool execution in `tokio::select!` racing the timeout+execution against the `CLI_CANCEL_TX` watch channel. Cancellation and timeout errors both propagate to the turn-level `CancellationToken` to break the agent loop immediately.
+    *   Flattened the match arms from `Ok(Ok(res)) / Ok(Err(e)) / Err(timeout)` to `Ok(res) / Err(e)` since timeout is now folded into the `Err` variant.
+*   **Fix: Subagent tool spinners were silently suppressed (MEDIUM)**:
+    *   `with_spinner()` in `spinner.rs` returned early (no visual feedback) when `DELEGATION_DEPTH > 0`, making subagent tool execution appear frozen.
+    *   **Fix:** Spinners now render at all delegation depths with tree-prefix indentation (using `get_tree_prefix()`), giving visual feedback during subagent work.
+*   **Fix: `openz logs` missed subagent log lines when filtering by session (HIGH)**:
+    *   Nested tracing spans produce lines like `turn{session=cli:abc}:turn{session=subagent:vision:123}: ...` with multiple `session=` values. The old `extract_session_from_line` only found the FIRST `session=` (the parent CLI session), so filtering by the subagent session would miss these lines.
+    *   **Fix:** Replaced `extract_session_from_line` with `extract_all_sessions_from_line` that collects ALL `session=` values from the entire line. Updated `session_matches` to check if ANY of the line's sessions match the filter. The session badge now displays the LAST (most specific) session.
+*   **Fix: Non-streaming LLM call path was completely un-cancellable (CRITICAL)**:
+    *   When `streaming = false`, `chat_with_fallback()` calls `active_provider.chat()` wrapped in `with_spinner()` — neither races against any cancel signal. The code blocks on the HTTP response indefinitely, ignoring Esc/Ctrl+C entirely.
+    *   **Fix:** Wrapped the non-streaming `chat_with_fallback` call in `tokio::select!` racing against the `CLI_CANCEL_TX` watch channel. On cancel, sets `turn_cancel.cancel()` and returns `TurnState::Save` immediately.
+*   **Fix: `chat_with_fallback` retry loop ignored cancellation (HIGH)**:
+    *   When the primary provider fails, the fallback loop iterates through up to 3 fallback models + retries the original — none checked for cancellation. With network issues, this means 4+ HTTP timeouts before cancel takes effect.
+    *   **Fix:** Added cancel-before-attempt checks at each stage: before each fallback model attempt, and before the final retry of the original provider. Returns `Err("Cancelled by user")` immediately.
+*   **Fix: Auto-continuation loop ignored cancellation (MEDIUM)**:
+    *   When `finish_reason == "length"`, up to 3 additional `chat_with_fallback` calls run with no cancel check, compounding the non-streaming blocking bug.
+    *   **Fix:** Added `turn_cancel.is_cancelled()` check at the start of each continuation iteration.
+*   **Fix: Multi-tool-call batch didn't break on cancel (MEDIUM)**:
+    *   When the LLM returns multiple tool calls in one response, the `for call in resp.tool_calls` loop continues after the first tool is cancelled, starting and immediately cancelling each subsequent tool (unnecessary overhead + error accumulation).
+    *   **Fix:** Added `turn_cancel.is_cancelled()` check at the start of each tool call iteration to break immediately.
+*   **Fix: Vision subagent model routing and fallback isolation (CRITICAL)**:
+    *   Dynamic subagent tools are now reserved inside the 128-tool OpenAI-compatible payload limit, preventing `vision_agent` from being described in prompts but missing from executable tool schemas.
+    *   Subagent runtime config now preserves the selected profile model/provider/fallbacks across per-turn config reloads, so `vision_agent` no longer reverts internally to the main orchestrator model.
+    *   Profile subagents no longer inherit the main agent's global fallback models; each profile owns its configured primary/fallback chain.
+    *   OpenRouter-style `*:free` model IDs (for example `google/gemma-4-31b-it:free` and `nvidia/...:free`) route to OpenRouter instead of being sent to OpenAI or stripped incorrectly.
+*   **Fix: Delegate-task cancellation and false interrupt reporting (HIGH)**:
+    *   Active agent turns now keep crossterm raw mode enabled while the keyboard cancellation watcher is running, so Esc/Ctrl+C are delivered during long `delegate_task` and subagent calls.
+    *   Tool/subagent timeouts no longer set the same turn-cancel flag used by real user interrupts, preventing misleading `Turn cancelled by user` messages when the provider timed out or rate-limited.
+    *   Generic delegated workers no longer receive recursive `delegate_task` registration by default, preventing runaway nested delegation loops.
+*   **Chore:** Bumped version to `v0.0.39`.
+
+### v0.0.38 (Previous Release)
+*   **Fix: Live `openz logs` streaming was unusably delayed (CRITICAL)**:
+    *   Linked `CancellationToken` to `CLI_CANCEL_TX` (per-turn Ctrl+C signal) in addition to the existing `SHUTDOWN_TX` (global SIGTERM) listener. Previously, pressing Ctrl+C during a subagent task only cancelled the outer CLI loop but left subagent background tasks running.
+    *   Added `biased;` to all 8 `tokio::select!` cancellation branches in `delegate_task.rs`, `delegate_profile.rs`, and `parallel_research.rs` — ensures cancellation is checked before running the child agent.
+    *   Fixed `CancellationToken` background task unconditionally firing when `shutdown::receiver()` returned `None` — now only cancels if a signal actually fired.
+    *   Fixed `parallel_research.rs` spawned tasks: added `tokio::select!` with `biased;` cancellation to race `join_all` against `wait_for_cancellation()`, so the parent returns immediately on Ctrl+C instead of waiting for spawned tasks.
+*   **Fix: Multi-workspace session conflicts (HIGH)**:
+    *   Replaced the hardcoded `"cli:direct"` session key with a workspace-unique key derived from the current working directory hash (`cli:{cwd_hash}`).
+    *   This allows multiple `openz agent` instances to run simultaneously in different project directories without lock contention.
+    *   Remote input (Telegram, watcher, `send_remote_input`) still works via a `"cli:direct"` global inbox fallback in the CLI input loop.
+    *   Added `get_cli_session_key()` to `config/loader.rs`. Updated `channels/cli/mod.rs`, `cli/agent.rs`, `channels/cli/input.rs`, `agent/security.rs`, and `agent/agent_loop/mod.rs`.
+*   **Fix: Background channel `eprintln!` calls corrupt TUI (MEDIUM)**:
+    *   Replaced 15 `eprintln!()` calls in Discord, Telegram, Email, agent subroutines, and config loader with `tracing::error!()` or `tui_println!()` to prevent terminal corruption when running background channels concurrently.
+*   **Refactor: Eliminated 30 `#[allow(unused_macros)]` boilerplate blocks (LOW)**:
+    *   Defined shared `#[macro_export]` versions of `println!`, `print!`, `eprintln!`, `eprint!` in `agent/style/mod.rs`.
+    *   All CLI modules now use `use crate::{println, ...};` instead of redefining the same 3-4 macros locally (11 files, ~270 lines removed).
+*   **Refactor: Deduplicated provider config resolution (MEDIUM)**:
+    *   Added `Config::resolve_provider_config()` in `config/schema.rs` as the single source of truth for provider API key + base URL resolution.
+    *   Removed ~500 lines of identical 17-way match arms from `providers/resolver.rs`, `channels/mod.rs`, and `cli/builder.rs`.
+*   **Chore: `.gitignore` cleanup, removed old branding**:
+    *   Added `/memory.db-shm` and `/memory.db-wal` to `.gitignore`.
+    *   Removed stale `nanobotdocs/` directory (old branding) and duplicate `assets/logo1.png`.
+    *   Bumped version to `v0.0.38`.
+
+### v0.0.37 (Previous Release)
 *   **Feature: Bot Detection Bypass (Stealth) for SearchXyz (HIGH)**:
     *   Implemented dynamic **Rotating Proxies** inside DuckDuckGo and Google search backends.
     *   Implemented **Headless Browser Fallback** (`js-rendering` feature utilizing `chromiumoxide`) to bypass Cloudflare captchas and rate-limiting blocks automatically on Raw HTTP request failure.

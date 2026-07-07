@@ -17,7 +17,10 @@ impl Default for WebSearchTool {
 impl WebSearchTool {
     pub fn new() -> Self {
         WebSearchTool {
-            client: Client::builder().use_rustls_tls().build().unwrap_or_default(),
+            client: Client::builder()
+                .use_rustls_tls()
+                .build()
+                .unwrap_or_default(),
         }
     }
 }
@@ -46,21 +49,33 @@ impl Tool for WebSearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments.get("query").and_then(|v| v.as_str())
+        let query = arguments
+            .get("query")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
 
         let search_res = self.perform_search(arguments).await?;
 
         if let Some(arr) = search_res.as_array() {
             if !arr.is_empty() {
-                let results_str = arr.iter().map(|r| {
-                    format!("Title: {}\nURL: {}\nSnippet: {}\n---", 
-                        r["title"].as_str().unwrap_or_default(),
-                        r["url"].as_str().unwrap_or_default(),
-                        r["snippet"].as_str().unwrap_or_default()
-                    )
-                }).collect::<Vec<String>>().join("\n");
-                let _ = crate::tools::shared_memory::archive_research_entry(query, &results_str, "web_search").await;
+                let results_str = arr
+                    .iter()
+                    .map(|r| {
+                        format!(
+                            "Title: {}\nURL: {}\nSnippet: {}\n---",
+                            r["title"].as_str().unwrap_or_default(),
+                            r["url"].as_str().unwrap_or_default(),
+                            r["snippet"].as_str().unwrap_or_default()
+                        )
+                    })
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                let _ = crate::tools::shared_memory::archive_research_entry(
+                    query,
+                    &results_str,
+                    "web_search",
+                )
+                .await;
             }
         }
 
@@ -70,7 +85,9 @@ impl Tool for WebSearchTool {
 
 impl WebSearchTool {
     async fn perform_search(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments.get("query").and_then(|v| v.as_str())
+        let query = arguments
+            .get("query")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
 
         // 0. Try SearchXyz Dispatcher (Local/stealth federated searches)
@@ -78,7 +95,11 @@ impl WebSearchTool {
             query: query.to_string(),
             max_results: 10,
         };
-        match crate::tools::searchxyz::get_server().dispatcher.search(&search_query).await {
+        match crate::tools::searchxyz::get_server()
+            .dispatcher
+            .search(&search_query)
+            .await
+        {
             Ok(results) => {
                 let mut search_results = Vec::new();
                 for r in results {
@@ -93,7 +114,10 @@ impl WebSearchTool {
                 }
             }
             Err(e) => {
-                tracing::warn!("SearchXyz dispatcher query failed, falling back to other engines: {:?}", e);
+                tracing::warn!(
+                    "SearchXyz dispatcher query failed, falling back to other engines: {:?}",
+                    e
+                );
             }
         }
 
@@ -101,21 +125,35 @@ impl WebSearchTool {
         if let Ok(websurfx_url) = std::env::var("WEBSURFX_URL") {
             if !websurfx_url.trim().is_empty() {
                 let base = websurfx_url.trim().trim_end_matches('/');
-                let encoded_query = percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC).to_string();
+                let encoded_query = percent_encoding::utf8_percent_encode(
+                    query,
+                    percent_encoding::NON_ALPHANUMERIC,
+                )
+                .to_string();
                 let url = format!("{}/?q={}&json=true", base, encoded_query);
-                
-                let res = self.client.get(&url)
-                    .send()
-                    .await?;
+
+                let res = self.client.get(&url).send().await?;
 
                 if res.status().is_success() {
                     let resp_json: Value = res.json().await?;
                     if let Some(results) = resp_json.get("results").and_then(|r| r.as_array()) {
                         let mut search_results = Vec::new();
                         for r in results {
-                            let title = r.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                            let url = r.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                            let snippet = r.get("content").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                            let title = r
+                                .get("title")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            let url = r
+                                .get("url")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            let snippet = r
+                                .get("content")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
                             search_results.push(json!({
                                 "title": title,
                                 "url": url,
@@ -139,7 +177,9 @@ impl WebSearchTool {
                     "search_depth": "basic",
                     "max_results": 5
                 });
-                let res = self.client.post("https://api.tavily.com/search")
+                let res = self
+                    .client
+                    .post("https://api.tavily.com/search")
                     .json(&body)
                     .send()
                     .await?;
@@ -149,9 +189,21 @@ impl WebSearchTool {
                     if let Some(results) = resp_json.get("results").and_then(|r| r.as_array()) {
                         let mut search_results = Vec::new();
                         for r in results {
-                            let title = r.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                            let url = r.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                            let snippet = r.get("content").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                            let title = r
+                                .get("title")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            let url = r
+                                .get("url")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            let snippet = r
+                                .get("content")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
                             search_results.push(json!({
                                 "title": title,
                                 "url": url,
@@ -172,7 +224,9 @@ impl WebSearchTool {
                     "numResults": 5,
                     "useAutoprompt": true
                 });
-                let res = self.client.post("https://api.exa.ai/search")
+                let res = self
+                    .client
+                    .post("https://api.exa.ai/search")
                     .header("x-api-key", exa_key)
                     .json(&body)
                     .send()
@@ -183,9 +237,21 @@ impl WebSearchTool {
                     if let Some(results) = resp_json.get("results").and_then(|r| r.as_array()) {
                         let mut search_results = Vec::new();
                         for r in results {
-                            let title = r.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                            let url = r.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                            let snippet = r.get("text").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                            let title = r
+                                .get("title")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            let url = r
+                                .get("url")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            let snippet = r
+                                .get("text")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
                             search_results.push(json!({
                                 "title": title,
                                 "url": url,
@@ -217,21 +283,24 @@ impl WebSearchTool {
                     if let (Ok(result_selector), Ok(title_selector), Ok(snippet_selector)) = (
                         Selector::parse(".result"),
                         Selector::parse(".result__title .result__a"),
-                        Selector::parse(".result__snippet")
+                        Selector::parse(".result__snippet"),
                     ) {
                         for element in document.select(&result_selector) {
-                            let title = element.select(&title_selector)
+                            let title = element
+                                .select(&title_selector)
                                 .next()
                                 .map(|e| e.text().collect::<String>().trim().to_string())
                                 .unwrap_or_default();
 
-                            let href = element.select(&title_selector)
+                            let href = element
+                                .select(&title_selector)
                                 .next()
                                 .and_then(|e| e.value().attr("href"))
                                 .map(|s| s.to_string())
                                 .unwrap_or_default();
 
-                            let snippet = element.select(&snippet_selector)
+                            let snippet = element
+                                .select(&snippet_selector)
                                 .next()
                                 .map(|e| e.text().collect::<String>().trim().to_string())
                                 .unwrap_or_default();
@@ -292,7 +361,7 @@ impl WebSearchTool {
                         if let (Ok(li_selector), Ok(title_selector), Ok(snippet_selector)) = (
                             Selector::parse("li"),
                             Selector::parse("a.title"),
-                            Selector::parse("p.s")
+                            Selector::parse("p.s"),
                         ) {
                             for element in document.select(&li_selector) {
                                 let title_node = element.select(&title_selector).next();
@@ -300,7 +369,11 @@ impl WebSearchTool {
 
                                 if let Some(tn) = title_node {
                                     let title = tn.text().collect::<String>().trim().to_string();
-                                    let href = tn.value().attr("href").map(|s| s.to_string()).unwrap_or_default();
+                                    let href = tn
+                                        .value()
+                                        .attr("href")
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_default();
                                     let snippet = snippet_node
                                         .map(|e| e.text().collect::<String>().trim().to_string())
                                         .unwrap_or_default();

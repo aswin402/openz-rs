@@ -1,6 +1,6 @@
+use crate::tools::Tool;
 use anyhow::Result;
 use serde_json::Value;
-use crate::tools::Tool;
 
 pub struct DiagnoseToolTool {
     registry: crate::tools::ToolRegistry,
@@ -40,13 +40,23 @@ impl Tool for DiagnoseToolTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let tool_name = arguments.get("tool_name").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("Missing tool_name"))?;
-        let mock_args = arguments.get("mock_args").cloned().unwrap_or_else(|| serde_json::json!({}));
+        let tool_name = arguments
+            .get("tool_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing tool_name"))?;
+        let mock_args = arguments
+            .get("mock_args")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
 
         // Retrieve tool bypassing filter_scope
         let tool = {
             let filter_scope_backup = {
-                let mut g = self.registry.filter_scope.lock().map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
+                let mut g = self
+                    .registry
+                    .filter_scope
+                    .lock()
+                    .map_err(|e| anyhow::anyhow!("Lock poisoned: {}", e))?;
                 g.take()
             };
             let t = self.registry.get(tool_name);
@@ -72,22 +82,18 @@ impl Tool for DiagnoseToolTool {
         let elapsed_ms = start_time.elapsed().as_millis();
 
         match result {
-            Ok(output) => {
-                Ok(serde_json::json!({
-                    "success": true,
-                    "duration_ms": elapsed_ms,
-                    "schema": schema,
-                    "output": output
-                }))
-            }
-            Err(e) => {
-                Ok(serde_json::json!({
-                    "success": false,
-                    "duration_ms": elapsed_ms,
-                    "schema": schema,
-                    "error": e.to_string()
-                }))
-            }
+            Ok(output) => Ok(serde_json::json!({
+                "success": true,
+                "duration_ms": elapsed_ms,
+                "schema": schema,
+                "output": output
+            })),
+            Err(e) => Ok(serde_json::json!({
+                "success": false,
+                "duration_ms": elapsed_ms,
+                "schema": schema,
+                "error": e.to_string()
+            })),
         }
     }
 }
@@ -131,7 +137,10 @@ impl Tool for CurateSkillTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments.get("action").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("Missing action"))?;
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing action"))?;
 
         match action {
             "list" => {
@@ -143,8 +152,14 @@ impl Tool for CurateSkillTool {
                 }))
             }
             "add" => {
-                let skill_name = arguments.get("skill_name").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'add'"))?;
-                let content = arguments.get("content").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("Missing content for action 'add'"))?;
+                let skill_name = arguments
+                    .get("skill_name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'add'"))?;
+                let content = arguments
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("Missing content for action 'add'"))?;
                 let profile = arguments.get("profile").and_then(|v| v.as_str());
 
                 if let Some(prof) = profile {
@@ -159,7 +174,10 @@ impl Tool for CurateSkillTool {
                 }))
             }
             "delete" => {
-                let skill_name = arguments.get("skill_name").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'delete'"))?;
+                let skill_name = arguments
+                    .get("skill_name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'delete'"))?;
                 let profile = arguments.get("profile").and_then(|v| v.as_str());
 
                 crate::agent::skills::delete_skill_with_profile(skill_name, profile)?;
@@ -213,7 +231,10 @@ impl Tool for OptimizeToolScopeTool {
 
         match prefixes {
             Some(arr) if !arr.is_empty() => {
-                let prefixes_vec: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+                let prefixes_vec: Vec<String> = arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
                 self.registry.set_filter_scope(Some(prefixes_vec.clone()));
                 Ok(serde_json::json!({
                     "success": true,
@@ -236,7 +257,12 @@ fn redact_secrets(val: &mut Value) {
         Value::Object(map) => {
             for (k, v) in map.iter_mut() {
                 let lower = k.to_lowercase();
-                if lower.contains("api_key") || lower.contains("bot_token") || lower.contains("verify_token") || lower.contains("password") || lower.contains("secret") {
+                if lower.contains("api_key")
+                    || lower.contains("bot_token")
+                    || lower.contains("verify_token")
+                    || lower.contains("password")
+                    || lower.contains("secret")
+                {
                     if v.is_string() {
                         *v = Value::String("********".to_string());
                     }
@@ -319,7 +345,10 @@ impl Tool for ManageConfigTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments.get("action").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("Missing action"))?;
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing action"))?;
 
         match action {
             "view" => {
@@ -332,7 +361,10 @@ impl Tool for ManageConfigTool {
                 }))
             }
             "update" => {
-                let updates = arguments.get("updates").and_then(|v| v.as_object()).ok_or_else(|| anyhow::anyhow!("Missing updates for action 'update'"))?;
+                let updates = arguments
+                    .get("updates")
+                    .and_then(|v| v.as_object())
+                    .ok_or_else(|| anyhow::anyhow!("Missing updates for action 'update'"))?;
 
                 let mut config = crate::config::loader::load_config()?;
 
@@ -420,10 +452,19 @@ fn dir_size_and_count(path: &std::path::Path) -> (u64, usize) {
 
 async fn check_endpoint_latency(client: &reqwest::Client, url: &str) -> (Option<u128>, String) {
     let start = std::time::Instant::now();
-    match client.get(url).timeout(std::time::Duration::from_secs(3)).send().await {
+    match client
+        .get(url)
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await
+    {
         Ok(resp) => {
             let elapsed = start.elapsed().as_millis();
-            let status = if resp.status().is_success() || resp.status().as_u16() == 401 || resp.status().as_u16() == 404 || resp.status().as_u16() == 400 {
+            let status = if resp.status().is_success()
+                || resp.status().as_u16() == 401
+                || resp.status().as_u16() == 404
+                || resp.status().as_u16() == 400
+            {
                 "reachable".to_string()
             } else {
                 format!("status {}", resp.status())
@@ -503,12 +544,20 @@ impl Tool for DiagnoseSystemTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let check_latency = arguments.get("check_latency").and_then(|v| v.as_bool()).unwrap_or(true);
-        let check_db_integrity = arguments.get("check_db_integrity").and_then(|v| v.as_bool()).unwrap_or(false);
+        let check_latency = arguments
+            .get("check_latency")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let check_db_integrity = arguments
+            .get("check_db_integrity")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         let os_type = std::env::consts::OS.to_string();
         let arch = std::env::consts::ARCH.to_string();
-        let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
 
         let openz_dir = crate::config::resolve_path("~/.openz");
         let sessions_dir = openz_dir.join("sessions");
@@ -567,7 +616,10 @@ impl Tool for DiagnoseSystemTool {
                 if let Some(ref openai) = config.providers.openai {
                     if let Some(ref api_key) = openai.api_key {
                         if !api_key.is_empty() {
-                            let base = openai.api_base.as_deref().unwrap_or("https://api.openai.com/v1");
+                            let base = openai
+                                .api_base
+                                .as_deref()
+                                .unwrap_or("https://api.openai.com/v1");
                             endpoints.push(("openai", base.to_string()));
                         }
                     }
@@ -575,7 +627,10 @@ impl Tool for DiagnoseSystemTool {
                 if let Some(ref anthropic) = config.providers.anthropic {
                     if let Some(ref api_key) = anthropic.api_key {
                         if !api_key.is_empty() {
-                            let base = anthropic.api_base.as_deref().unwrap_or("https://api.anthropic.com/v1");
+                            let base = anthropic
+                                .api_base
+                                .as_deref()
+                                .unwrap_or("https://api.anthropic.com/v1");
                             endpoints.push(("anthropic", base.to_string()));
                         }
                     }
@@ -583,7 +638,10 @@ impl Tool for DiagnoseSystemTool {
                 if let Some(ref openrouter) = config.providers.openrouter {
                     if let Some(ref api_key) = openrouter.api_key {
                         if !api_key.is_empty() {
-                            let base = openrouter.api_base.as_deref().unwrap_or("https://openrouter.ai/api/v1");
+                            let base = openrouter
+                                .api_base
+                                .as_deref()
+                                .unwrap_or("https://openrouter.ai/api/v1");
                             endpoints.push(("openrouter", base.to_string()));
                         }
                     }
@@ -591,7 +649,10 @@ impl Tool for DiagnoseSystemTool {
                 if let Some(ref deepseek) = config.providers.deepseek {
                     if let Some(ref api_key) = deepseek.api_key {
                         if !api_key.is_empty() {
-                            let base = deepseek.api_base.as_deref().unwrap_or("https://api.deepseek.com");
+                            let base = deepseek
+                                .api_base
+                                .as_deref()
+                                .unwrap_or("https://api.deepseek.com");
                             endpoints.push(("deepseek", base.to_string()));
                         }
                     }
@@ -605,7 +666,7 @@ impl Tool for DiagnoseSystemTool {
                             "endpoint": url,
                             "latency_ms": latency,
                             "status": status
-                        })
+                        }),
                     );
                 }
             }
@@ -660,7 +721,10 @@ impl Tool for ManageSessionsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments.get("action").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("Missing 'action'"))?;
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'action'"))?;
         let openz_dir = crate::config::resolve_path("~/.openz");
         let sessions_dir = openz_dir.join("sessions");
 
@@ -670,10 +734,17 @@ impl Tool for ManageSessionsTool {
                 if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
-                            let session_key = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                        if path.is_file()
+                            && path.extension().and_then(|s| s.to_str()) == Some("json")
+                        {
+                            let session_key = path
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("")
+                                .to_string();
                             let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                            let last_updated = entry.metadata()
+                            let last_updated = entry
+                                .metadata()
                                 .and_then(|m| m.modified())
                                 .map(|t| {
                                     let dt: chrono::DateTime<chrono::Utc> = t.into();
@@ -684,7 +755,9 @@ impl Tool for ManageSessionsTool {
                             let mut msg_count = 0;
                             if let Ok(content) = std::fs::read_to_string(&path) {
                                 if let Ok(val) = serde_json::from_str::<Value>(&content) {
-                                    if let Some(msgs) = val.get("messages").and_then(|v| v.as_array()) {
+                                    if let Some(msgs) =
+                                        val.get("messages").and_then(|v| v.as_array())
+                                    {
                                         msg_count = msgs.len();
                                     }
                                 }
@@ -705,7 +778,10 @@ impl Tool for ManageSessionsTool {
                 }))
             }
             "prune" => {
-                let older_than_days = arguments.get("older_than_days").and_then(|v| v.as_u64()).unwrap_or(7);
+                let older_than_days = arguments
+                    .get("older_than_days")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(7);
                 let outputs_dir = openz_dir.join("tool_outputs");
                 let mut files_removed = 0;
                 let mut bytes_reclaimed = 0;
@@ -714,7 +790,8 @@ impl Tool for ManageSessionsTool {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                        if path.is_file() && name.starts_with("output_") && name.ends_with(".json") {
+                        if path.is_file() && name.starts_with("output_") && name.ends_with(".json")
+                        {
                             if let Ok(metadata) = entry.metadata() {
                                 if let Ok(modified) = metadata.modified() {
                                     if let Ok(elapsed) = modified.elapsed() {
@@ -742,7 +819,9 @@ impl Tool for ManageSessionsTool {
                 }))
             }
             "archive" => {
-                let session_key = arguments.get("session_key").and_then(|v| v.as_str())
+                let session_key = arguments
+                    .get("session_key")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("Missing 'session_key' for action 'archive'"))?;
                 let session_file = sessions_dir.join(format!("{}.json", session_key));
                 let lock_file = sessions_dir.join(format!("{}.lock", session_key));
@@ -774,7 +853,9 @@ impl Tool for ManageSessionsTool {
                 }))
             }
             "delete" => {
-                let session_key = arguments.get("session_key").and_then(|v| v.as_str())
+                let session_key = arguments
+                    .get("session_key")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("Missing 'session_key' for action 'delete'"))?;
                 let session_file = sessions_dir.join(format!("{}.json", session_key));
                 let lock_file = sessions_dir.join(format!("{}.lock", session_key));
@@ -834,7 +915,10 @@ impl Tool for ManageBackupsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments.get("action").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("Missing 'action'"))?;
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'action'"))?;
         let openz_dir = crate::config::resolve_path("~/.openz");
         let backups_dir = openz_dir.join("backups");
 
@@ -865,7 +949,9 @@ impl Tool for ManageBackupsTool {
                     if let Ok(entries) = std::fs::read_dir(&skills_dir) {
                         for entry in entries.flatten() {
                             let path = entry.path();
-                            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+                            if path.is_file()
+                                && path.extension().and_then(|s| s.to_str()) == Some("md")
+                            {
                                 if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
                                     if let Ok(content) = std::fs::read_to_string(&path) {
                                         skills_map.insert(name.to_string(), Value::String(content));
@@ -902,10 +988,18 @@ impl Tool for ManageBackupsTool {
                     if let Ok(entries) = std::fs::read_dir(&backups_dir) {
                         for entry in entries.flatten() {
                             let path = entry.path();
-                            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
-                            if path.is_file() && name.starts_with("backup_") && name.ends_with(".json") {
+                            let name = path
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("")
+                                .to_string();
+                            if path.is_file()
+                                && name.starts_with("backup_")
+                                && name.ends_with(".json")
+                            {
                                 let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                                let created_at = entry.metadata()
+                                let created_at = entry
+                                    .metadata()
                                     .and_then(|m| m.modified())
                                     .map(|t| {
                                         let dt: chrono::DateTime<chrono::Utc> = t.into();
@@ -922,7 +1016,12 @@ impl Tool for ManageBackupsTool {
                         }
                     }
                 }
-                backups_list.sort_by(|a, b| b["backup_name"].as_str().unwrap_or("").cmp(a["backup_name"].as_str().unwrap_or("")));
+                backups_list.sort_by(|a, b| {
+                    b["backup_name"]
+                        .as_str()
+                        .unwrap_or("")
+                        .cmp(a["backup_name"].as_str().unwrap_or(""))
+                });
 
                 Ok(serde_json::json!({
                     "status": "success",
@@ -930,16 +1029,24 @@ impl Tool for ManageBackupsTool {
                 }))
             }
             "restore" => {
-                let backup_name = arguments.get("backup_name").and_then(|v| v.as_str())
+                let backup_name = arguments
+                    .get("backup_name")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("Missing 'backup_name' for restore action"))?;
 
-                if backup_name.contains('/') || backup_name.contains('\\') || backup_name.contains("..") {
+                if backup_name.contains('/')
+                    || backup_name.contains('\\')
+                    || backup_name.contains("..")
+                {
                     return Err(anyhow::anyhow!("Invalid backup_name specified."));
                 }
 
                 let backup_path = backups_dir.join(backup_name);
                 if !backup_path.exists() {
-                    return Err(anyhow::anyhow!("Backup file '{}' does not exist.", backup_name));
+                    return Err(anyhow::anyhow!(
+                        "Backup file '{}' does not exist.",
+                        backup_name
+                    ));
                 }
 
                 let content = std::fs::read_to_string(&backup_path)?;
@@ -955,7 +1062,10 @@ impl Tool for ManageBackupsTool {
                 if let Some(subagents_val) = backup_data.get("subagents") {
                     if !subagents_val.is_null() {
                         let subagents_file = openz_dir.join("subagents.json");
-                        std::fs::write(&subagents_file, serde_json::to_string_pretty(subagents_val)?)?;
+                        std::fs::write(
+                            &subagents_file,
+                            serde_json::to_string_pretty(subagents_val)?,
+                        )?;
                     }
                 }
 
@@ -976,16 +1086,24 @@ impl Tool for ManageBackupsTool {
                 }))
             }
             "delete" => {
-                let backup_name = arguments.get("backup_name").and_then(|v| v.as_str())
+                let backup_name = arguments
+                    .get("backup_name")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("Missing 'backup_name' for delete action"))?;
 
-                if backup_name.contains('/') || backup_name.contains('\\') || backup_name.contains("..") {
+                if backup_name.contains('/')
+                    || backup_name.contains('\\')
+                    || backup_name.contains("..")
+                {
                     return Err(anyhow::anyhow!("Invalid backup_name specified."));
                 }
 
                 let backup_path = backups_dir.join(backup_name);
                 if !backup_path.exists() {
-                    return Err(anyhow::anyhow!("Backup file '{}' does not exist.", backup_name));
+                    return Err(anyhow::anyhow!(
+                        "Backup file '{}' does not exist.",
+                        backup_name
+                    ));
                 }
 
                 std::fs::remove_file(&backup_path)?;
@@ -1067,27 +1185,35 @@ mod tests {
         })));
 
         // 2. Add skill
-        let add_res = rt.block_on(tool.call(&serde_json::json!({
-            "action": "add",
-            "skill_name": "test_curate_skills_temp",
-            "content": "This is a test skill content"
-        }))).unwrap();
+        let add_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "add",
+                "skill_name": "test_curate_skills_temp",
+                "content": "This is a test skill content"
+            })))
+            .unwrap();
         assert!(add_res["success"].as_bool().unwrap());
 
         // 3. List skills and verify
-        let list_res = rt.block_on(tool.call(&serde_json::json!({
-            "action": "list"
-        }))).unwrap();
+        let list_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "list"
+            })))
+            .unwrap();
         assert!(list_res["success"].as_bool().unwrap());
         let skills = list_res["skills"].as_array().unwrap();
-        let found = skills.iter().any(|s| s["name"].as_str().unwrap() == "test_curate_skills_temp");
+        let found = skills
+            .iter()
+            .any(|s| s["name"].as_str().unwrap() == "test_curate_skills_temp");
         assert!(found);
 
         // 4. Delete skill
-        let del_res = rt.block_on(tool.call(&serde_json::json!({
-            "action": "delete",
-            "skill_name": "test_curate_skills_temp"
-        }))).unwrap();
+        let del_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "delete",
+                "skill_name": "test_curate_skills_temp"
+            })))
+            .unwrap();
         assert!(del_res["success"].as_bool().unwrap());
     }
 
@@ -1100,9 +1226,11 @@ mod tests {
         let original_config = crate::config::loader::load_config().unwrap();
 
         // 1. View config
-        let view_res = rt.block_on(tool.call(&serde_json::json!({
-            "action": "view"
-        }))).unwrap();
+        let view_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "view"
+            })))
+            .unwrap();
         assert!(view_res["success"].as_bool().unwrap());
         // Verify redacted api_key / secret key format if they exist
         let config_val = &view_res["config"];
@@ -1117,15 +1245,17 @@ mod tests {
         }
 
         // 2. Update config hyperparameters
-        let update_res = rt.block_on(tool.call(&serde_json::json!({
-            "action": "update",
-            "updates": {
-                "max_tokens": 1234,
-                "temperature": 0.25,
-                "caveman_mode": false,
-                "streaming": false
-            }
-        }))).unwrap();
+        let update_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "update",
+                "updates": {
+                    "max_tokens": 1234,
+                    "temperature": 0.25,
+                    "caveman_mode": false,
+                    "streaming": false
+                }
+            })))
+            .unwrap();
         assert!(update_res["success"].as_bool().unwrap());
 
         // 3. Verify they were updated and saved
@@ -1136,14 +1266,19 @@ mod tests {
         assert_eq!(updated_config.agents.defaults.streaming, false);
 
         // 4. Try updating an invalid/restricted field (should be blocked)
-        let invalid_res = rt.block_on(tool.call(&serde_json::json!({
-            "action": "update",
-            "updates": {
-                "invalid_field": "some_value"
-            }
-        }))).unwrap();
+        let invalid_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "update",
+                "updates": {
+                    "invalid_field": "some_value"
+                }
+            })))
+            .unwrap();
         assert_eq!(invalid_res["success"].as_bool().unwrap(), false);
-        assert!(invalid_res["error"].as_str().unwrap().contains("invalid_field"));
+        assert!(invalid_res["error"]
+            .as_str()
+            .unwrap()
+            .contains("invalid_field"));
 
         // Restore original config
         crate::config::loader::save_config(&original_config).unwrap();
@@ -1155,10 +1290,12 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
 
         // 1. Run diagnostic without latency checking to keep it fast
-        let res = rt.block_on(tool.call(&serde_json::json!({
-            "check_latency": false,
-            "check_db_integrity": false
-        }))).unwrap();
+        let res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "check_latency": false,
+                "check_db_integrity": false
+            })))
+            .unwrap();
 
         assert_eq!(res["status"].as_str().unwrap(), "success");
         assert!(res["system"]["os"].as_str().is_some());
@@ -1191,29 +1328,40 @@ mod tests {
         // 1. Create a dummy session file for testing
         let test_session_key = "test_session_xyz_999";
         let session_file = sessions_dir.join(format!("{}.json", test_session_key));
-        std::fs::write(&session_file, serde_json::json!({
-            "messages": [
-                {
-                    "role": "user",
-                    "content": "Hello"
-                }
-            ]
-        }).to_string()).unwrap();
+        std::fs::write(
+            &session_file,
+            serde_json::json!({
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Hello"
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
 
         // 2. List sessions and check if our dummy is present
-        let list_res = rt.block_on(tool.call(&serde_json::json!({
-            "action": "list"
-        }))).unwrap();
+        let list_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "list"
+            })))
+            .unwrap();
         assert_eq!(list_res["status"].as_str().unwrap(), "success");
         let sessions = list_res["sessions"].as_array().unwrap();
-        let found = sessions.iter().any(|s| s["session_key"].as_str().unwrap() == test_session_key);
+        let found = sessions
+            .iter()
+            .any(|s| s["session_key"].as_str().unwrap() == test_session_key);
         assert!(found);
 
         // 3. Archive our dummy session
-        let archive_res = rt.block_on(tool.call(&serde_json::json!({
-            "action": "archive",
-            "session_key": test_session_key
-        }))).unwrap();
+        let archive_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "archive",
+                "session_key": test_session_key
+            })))
+            .unwrap();
         assert_eq!(archive_res["status"].as_str().unwrap(), "success");
         assert!(!session_file.exists());
 
@@ -1233,18 +1381,22 @@ mod tests {
         std::fs::write(&session_file, "{\"messages\": []}").unwrap();
         assert!(session_file.exists());
 
-        let delete_res = rt.block_on(tool.call(&serde_json::json!({
-            "action": "delete",
-            "session_key": test_session_key
-        }))).unwrap();
+        let delete_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "delete",
+                "session_key": test_session_key
+            })))
+            .unwrap();
         assert_eq!(delete_res["status"].as_str().unwrap(), "success");
         assert!(!session_file.exists());
 
         // 5. Test pruning (prune should execute without errors)
-        let prune_res = rt.block_on(tool.call(&serde_json::json!({
-            "action": "prune",
-            "older_than_days": 30
-        }))).unwrap();
+        let prune_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "prune",
+                "older_than_days": 30
+            })))
+            .unwrap();
         assert_eq!(prune_res["status"].as_str().unwrap(), "success");
         assert!(prune_res["details"]["files_removed"].as_u64().is_some());
     }
@@ -1255,41 +1407,55 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
 
         // 1. Create a backup
-        let create_res = rt.block_on(tool.call(&serde_json::json!({
-            "action": "create"
-        }))).unwrap();
+        let create_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "create"
+            })))
+            .unwrap();
         assert_eq!(create_res["status"].as_str().unwrap(), "success");
         let backup_name = create_res["backup_name"].as_str().unwrap();
 
         // 2. List backups and ensure it exists
-        let list_res = rt.block_on(tool.call(&serde_json::json!({
-            "action": "list"
-        }))).unwrap();
+        let list_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "list"
+            })))
+            .unwrap();
         assert_eq!(list_res["status"].as_str().unwrap(), "success");
         let backups = list_res["backups"].as_array().unwrap();
-        let found = backups.iter().any(|b| b["backup_name"].as_str().unwrap() == backup_name);
+        let found = backups
+            .iter()
+            .any(|b| b["backup_name"].as_str().unwrap() == backup_name);
         assert!(found);
 
         // 3. Restore from the backup
-        let restore_res = rt.block_on(tool.call(&serde_json::json!({
-            "action": "restore",
-            "backup_name": backup_name
-        }))).unwrap();
+        let restore_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "restore",
+                "backup_name": backup_name
+            })))
+            .unwrap();
         assert_eq!(restore_res["status"].as_str().unwrap(), "success");
 
         // 4. Delete the backup
-        let delete_res = rt.block_on(tool.call(&serde_json::json!({
-            "action": "delete",
-            "backup_name": backup_name
-        }))).unwrap();
+        let delete_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "delete",
+                "backup_name": backup_name
+            })))
+            .unwrap();
         assert_eq!(delete_res["status"].as_str().unwrap(), "success");
 
         // 5. Ensure it is gone from the list
-        let list_res_2 = rt.block_on(tool.call(&serde_json::json!({
-            "action": "list"
-        }))).unwrap();
+        let list_res_2 = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "list"
+            })))
+            .unwrap();
         let backups_2 = list_res_2["backups"].as_array().unwrap();
-        let found_2 = backups_2.iter().any(|b| b["backup_name"].as_str().unwrap() == backup_name);
+        let found_2 = backups_2
+            .iter()
+            .any(|b| b["backup_name"].as_str().unwrap() == backup_name);
         assert!(!found_2);
     }
 }

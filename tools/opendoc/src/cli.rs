@@ -116,14 +116,16 @@ mod imp {
             Commands::Serve { log_level } => {
                 let filter = tracing_subscriber::EnvFilter::try_from_default_env()
                     .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&log_level));
-                tracing_subscriber::fmt()
-                    .with_env_filter(filter)
-                    .init();
+                tracing_subscriber::fmt().with_env_filter(filter).init();
                 tracing::info!("Starting opendoc-mcp server...");
                 let server = crate::server::OpendocServer::new();
                 tokio::runtime::Runtime::new()?.block_on(server.run())?;
             }
-            Commands::Convert { source, target, output } => {
+            Commands::Convert {
+                source,
+                target,
+                output,
+            } => {
                 let out = output.unwrap_or_else(|| {
                     let stem = std::path::Path::new(&source)
                         .file_stem()
@@ -215,8 +217,12 @@ mod imp {
                 });
                 println!("{}", serde_json::to_string_pretty(&formats).unwrap());
             }
-            Commands::Digest { archive, output_dir } => {
-                match crate::batch::archive::process_archive_digest(&archive, output_dir.as_deref()) {
+            Commands::Digest {
+                archive,
+                output_dir,
+            } => {
+                match crate::batch::archive::process_archive_digest(&archive, output_dir.as_deref())
+                {
                     Ok(result) => println!("{}", serde_json::to_string_pretty(&result).unwrap()),
                     Err(e) => eprintln!("Error: {}", e),
                 }

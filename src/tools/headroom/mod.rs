@@ -1,36 +1,38 @@
+pub mod cache;
+pub mod compress;
 pub mod scoping;
 pub mod stats;
-pub mod compress;
-pub mod cache;
 
 // Re-exports
+pub use cache::{
+    CacheAlignTool, CacheStatsTool, ClearCacheTool, ExportCacheTool, ImportCacheTool,
+    SearchCacheTool,
+};
+pub use compress::{
+    CompressContentTool, CompressDiffTool, CompressDirectoryTool, CompressFileTool,
+    CompressSchemaTool, CompressUrlTool, RetrieveOriginalTool, RunAndCompressTool,
+};
 pub use scoping::{ScopeContextTool, SummarizeCodebaseTool};
 pub use stats::{CountTokensTool, PingTool, ServerInfoTool};
-pub use compress::{
-    CompressContentTool, RetrieveOriginalTool, CompressSchemaTool, CompressFileTool,
-    CompressDiffTool, CompressUrlTool, RunAndCompressTool, CompressDirectoryTool,
-};
-pub use cache::{
-    CacheStatsTool, ClearCacheTool, SearchCacheTool, CacheAlignTool, ExportCacheTool,
-    ImportCacheTool,
-};
 
 // Shared Constants and Helpers
 pub const MAX_INPUT_SIZE: usize = 512_000; // 500KB max input
 pub const CACHE_CAPACITY: usize = 1000;
 
 pub fn estimate_tokens(text: &str) -> usize {
-    if text.is_empty() { return 0; }
+    if text.is_empty() {
+        return 0;
+    }
     text.len().div_ceil(4)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
-    use serde_json::json;
     use crate::tools::graph_memory::test_lock;
     use crate::tools::Tool;
+    use serde_json::json;
+    use std::path::Path;
 
     #[tokio::test]
     async fn test_auto_detect_json() {
@@ -40,7 +42,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_auto_detect_code() {
-        assert_eq!(compress::auto_detect_type("fn main() { println!(\"hi\"); }"), "code");
+        assert_eq!(
+            compress::auto_detect_type("fn main() { println!(\"hi\"); }"),
+            "code"
+        );
         assert_eq!(compress::auto_detect_type("def hello():\n    pass"), "code");
     }
 
@@ -54,11 +59,14 @@ mod tests {
     #[tokio::test]
     async fn test_compress_content_preview() {
         let tool = CompressContentTool;
-        let res = tool.call(&json!({
-            "raw_text": "fn hello() { println!(\"world\"); }",
-            "content_type": "code",
-            "preview": true
-        })).await.unwrap();
+        let res = tool
+            .call(&json!({
+                "raw_text": "fn hello() { println!(\"world\"); }",
+                "content_type": "code",
+                "preview": true
+            }))
+            .await
+            .unwrap();
         assert!(res["compressed"].as_str().unwrap().contains("hello"));
         assert!(res["ccr_id"].is_null());
     }
@@ -68,11 +76,14 @@ mod tests {
         let _l = test_lock().lock().await;
 
         let tool_c = CompressContentTool;
-        let res = tool_c.call(&json!({
-            "raw_text": "This is a test string for CCR round-trip verification.",
-            "content_type": "text_logs",
-            "preview": false
-        })).await.unwrap();
+        let res = tool_c
+            .call(&json!({
+                "raw_text": "This is a test string for CCR round-trip verification.",
+                "content_type": "text_logs",
+                "preview": false
+            }))
+            .await
+            .unwrap();
 
         let ccr_id = res["ccr_id"].as_str().unwrap().to_string();
         assert!(ccr_id.starts_with("ccr_"));
@@ -80,7 +91,10 @@ mod tests {
 
         let tool_r = RetrieveOriginalTool;
         let res2 = tool_r.call(&json!({ "ccr_id": ccr_id })).await.unwrap();
-        assert_eq!(res2["content"].as_str().unwrap(), "This is a test string for CCR round-trip verification.");
+        assert_eq!(
+            res2["content"].as_str().unwrap(),
+            "This is a test string for CCR round-trip verification."
+        );
         assert_eq!(res2["source"], "cache");
     }
 
@@ -95,7 +109,10 @@ mod tests {
     async fn test_compress_json_content() {
         let tool = CompressContentTool;
         let json_input = r#"{"name":"test","items":[1,2,3],"nested":{"key":"val"}}"#;
-        let res = tool.call(&json!({ "raw_text": json_input, "content_type": "json", "preview": true })).await.unwrap();
+        let res = tool
+            .call(&json!({ "raw_text": json_input, "content_type": "json", "preview": true }))
+            .await
+            .unwrap();
         let compressed = res["compressed"].as_str().unwrap();
         assert!(compressed.contains("name") || compressed.contains("items"));
     }
@@ -129,11 +146,14 @@ mod tests {
 
         // First insert something
         let tool_c = CompressContentTool;
-        let _ = tool_c.call(&json!({
-            "raw_text": "cache test data for stats",
-            "content_type": "text_logs",
-            "preview": false
-        })).await.unwrap();
+        let _ = tool_c
+            .call(&json!({
+                "raw_text": "cache test data for stats",
+                "content_type": "text_logs",
+                "preview": false
+            }))
+            .await
+            .unwrap();
 
         // Check stats
         let stats = CacheStatsTool;
@@ -151,24 +171,33 @@ mod tests {
         let _l = test_lock().lock().await;
 
         let tool_c = CompressContentTool;
-        let _ = tool_c.call(&json!({
-            "raw_text": "unique_search_term_for_testing_12345",
-            "content_type": "text_logs",
-            "preview": false
-        })).await.unwrap();
+        let _ = tool_c
+            .call(&json!({
+                "raw_text": "unique_search_term_for_testing_12345",
+                "content_type": "text_logs",
+                "preview": false
+            }))
+            .await
+            .unwrap();
 
         let search = SearchCacheTool;
-        let res = search.call(&json!({ "query": "unique_search_term" })).await.unwrap();
+        let res = search
+            .call(&json!({ "query": "unique_search_term" }))
+            .await
+            .unwrap();
         assert!(res["count"].as_u64().unwrap() > 0);
     }
 
     #[tokio::test]
     async fn test_cache_align() {
         let tool = CacheAlignTool;
-        let res = tool.call(&json!({
-            "chunks": ["chunk b", "chunk a"],
-            "padding_size": 16
-        })).await.unwrap();
+        let res = tool
+            .call(&json!({
+                "chunks": ["chunk b", "chunk a"],
+                "padding_size": 16
+            }))
+            .await
+            .unwrap();
 
         let aligned = res["aligned"].as_str().unwrap();
         assert!(aligned.find("chunk a").unwrap() < aligned.find("chunk b").unwrap());
@@ -196,7 +225,10 @@ mod tests {
 -old
 +new
 "#;
-        let res = tool.call(&json!({ "diff_text": diff, "preview": true })).await.unwrap();
+        let res = tool
+            .call(&json!({ "diff_text": diff, "preview": true }))
+            .await
+            .unwrap();
         let compressed = res["compressed"].as_str().unwrap();
         assert!(compressed.contains("Diff Summary"));
         assert!(compressed.contains("src/server.rs"));
@@ -211,11 +243,14 @@ mod tests {
         std::fs::write(&file_path, "fn test() { println!(\"hello\"); }").unwrap();
 
         let tool = CompressFileTool;
-        let res = tool.call(&json!({
-            "file_path": file_path.to_string_lossy(),
-            "content_type": "code",
-            "preview": true
-        })).await.unwrap();
+        let res = tool
+            .call(&json!({
+                "file_path": file_path.to_string_lossy(),
+                "content_type": "code",
+                "preview": true
+            }))
+            .await
+            .unwrap();
         assert!(res["compressed"].as_str().unwrap().contains("test"));
 
         std::fs::remove_dir_all(&dir).unwrap();
@@ -235,7 +270,10 @@ mod tests {
 
         // Export
         let export = ExportCacheTool;
-        let res = export.call(&json!({ "file_path": export_path.to_string_lossy() })).await.unwrap();
+        let res = export
+            .call(&json!({ "file_path": export_path.to_string_lossy() }))
+            .await
+            .unwrap();
         assert!(res["count"].as_u64().unwrap() > 0);
 
         // Clear cache
@@ -244,7 +282,10 @@ mod tests {
 
         // Import
         let import = ImportCacheTool;
-        let res2 = import.call(&json!({ "file_path": export_path.to_string_lossy() })).await.unwrap();
+        let res2 = import
+            .call(&json!({ "file_path": export_path.to_string_lossy() }))
+            .await
+            .unwrap();
         assert!(res2["imported"].as_u64().unwrap() > 0);
 
         std::fs::remove_dir_all(&dir).unwrap();
@@ -252,10 +293,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_content_type_from_ext() {
-        assert_eq!(compress::detect_content_type_from_ext(Path::new("test.rs")), Some("code"));
-        assert_eq!(compress::detect_content_type_from_ext(Path::new("data.json")), Some("json"));
-        assert_eq!(compress::detect_content_type_from_ext(Path::new("doc.md")), Some("markdown"));
-        assert_eq!(compress::detect_content_type_from_ext(Path::new("unknown.xyz")), None);
+        assert_eq!(
+            compress::detect_content_type_from_ext(Path::new("test.rs")),
+            Some("code")
+        );
+        assert_eq!(
+            compress::detect_content_type_from_ext(Path::new("data.json")),
+            Some("json")
+        );
+        assert_eq!(
+            compress::detect_content_type_from_ext(Path::new("doc.md")),
+            Some("markdown")
+        );
+        assert_eq!(
+            compress::detect_content_type_from_ext(Path::new("unknown.xyz")),
+            None
+        );
     }
 
     #[tokio::test]
@@ -274,10 +327,17 @@ mod tests {
         let src = dir.join("src");
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(dir.join("Cargo.toml"), "[package]").unwrap();
-        std::fs::write(src.join("main.rs"), "fn main() {\n    println!(\"hello\");\n}").unwrap();
+        std::fs::write(
+            src.join("main.rs"),
+            "fn main() {\n    println!(\"hello\");\n}",
+        )
+        .unwrap();
 
         let tool = SummarizeCodebaseTool;
-        let res = tool.call(&json!({ "root_path": dir.to_string_lossy() })).await.unwrap();
+        let res = tool
+            .call(&json!({ "root_path": dir.to_string_lossy() }))
+            .await
+            .unwrap();
         assert_eq!(res["project_type"], "Rust");
         assert!(res["total_files"].as_u64().unwrap() >= 2);
 
@@ -346,7 +406,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_filter_python_output() {
-        let raw = "Collecting requests\nDownloading requests-2.28.0-py3-none-any.whl\nreal output here\n";
+        let raw =
+            "Collecting requests\nDownloading requests-2.28.0-py3-none-any.whl\nreal output here\n";
         let filtered = compress::filter_python_output(raw);
         assert!(!filtered.contains("Collecting requests"));
         assert!(filtered.contains("real output here"));

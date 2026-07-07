@@ -1,14 +1,15 @@
 use crate::agent::AgentLoop;
-use serde::Deserialize;
-use std::sync::Arc;
-use tokio::time::{sleep, Duration};
 use reqwest::Client;
-use std::sync::{OnceLock, Mutex};
+use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::{Mutex, OnceLock};
 use tokio::sync::oneshot;
+use tokio::time::{sleep, Duration};
 
 static TELEGRAM_BOT_INFO: OnceLock<(String, Client)> = OnceLock::new();
-static APPROVAL_CALLBACKS: OnceLock<Mutex<HashMap<String, oneshot::Sender<bool>>>> = OnceLock::new();
+static APPROVAL_CALLBACKS: OnceLock<Mutex<HashMap<String, oneshot::Sender<bool>>>> =
+    OnceLock::new();
 
 pub fn get_telegram_bot_info() -> Option<(String, Client)> {
     TELEGRAM_BOT_INFO.get().cloned()
@@ -67,7 +68,7 @@ static ACTIVE_TYPING_LOOPS: OnceLock<Mutex<HashMap<i64, oneshot::Sender<()>>>> =
 pub fn start_typing_indicator(chat_id: i64, token: String, client: Client) {
     let map = ACTIVE_TYPING_LOOPS.get_or_init(|| Mutex::new(HashMap::new()));
     let (tx, rx) = oneshot::channel::<()>();
-    
+
     let mut got_inserted = false;
     if let Ok(mut guard) = map.lock() {
         if let Some(old_tx) = guard.remove(&chat_id) {
@@ -76,7 +77,7 @@ pub fn start_typing_indicator(chat_id: i64, token: String, client: Client) {
         guard.insert(chat_id, tx);
         got_inserted = true;
     }
-    
+
     if got_inserted {
         tokio::spawn(async move {
             let send_action_url = format!("https://api.telegram.org/bot{}/sendChatAction", token);
@@ -85,7 +86,7 @@ pub fn start_typing_indicator(chat_id: i64, token: String, client: Client) {
                 "action": "typing"
             });
             let _ = client.post(&send_action_url).json(&payload).send().await;
-            
+
             let mut rx = rx;
             loop {
                 tokio::select! {
@@ -173,7 +174,8 @@ impl super::Channel for TelegramChannel {
         let active_msg = crate::channels::select_random_message(crate::channels::ACTIVE_MESSAGES);
         for chat_str in &chats {
             if let Ok(chat_id) = chat_str.parse::<i64>() {
-                let send_url = format!("https://api.telegram.org/bot{}/sendMessage", self.bot_token);
+                let send_url =
+                    format!("https://api.telegram.org/bot{}/sendMessage", self.bot_token);
                 let payload = serde_json::json!({
                     "chat_id": chat_id,
                     "text": active_msg
@@ -183,7 +185,10 @@ impl super::Channel for TelegramChannel {
         }
 
         // Register slash commands for Telegram
-        let set_commands_url = format!("https://api.telegram.org/bot{}/setMyCommands", self.bot_token);
+        let set_commands_url = format!(
+            "https://api.telegram.org/bot{}/setMyCommands",
+            self.bot_token
+        );
         let commands_payload = serde_json::json!({
             "commands": [
                 { "command": "remote", "description": "Toggle TUI remote control mode" },
@@ -201,20 +206,31 @@ impl super::Channel for TelegramChannel {
         let silent_clone = silent;
         let token_clone = self.bot_token.clone();
         tokio::spawn(async move {
-            match client_clone.post(&set_commands_url).json(&commands_payload).send().await {
+            match client_clone
+                .post(&set_commands_url)
+                .json(&commands_payload)
+                .send()
+                .await
+            {
                 Ok(res) => {
                     if !res.status().is_success() {
                         if let Ok(text) = res.text().await {
-                            let text_redacted = text.replace(&token_clone, "[REDACTED_TELEGRAM_TOKEN]");
-                            eprintln!("Failed to register Telegram slash commands: {}", text_redacted);
+                            let text_redacted =
+                                text.replace(&token_clone, "[REDACTED_TELEGRAM_TOKEN]");
+                            tracing::error!(
+                                "Failed to register Telegram slash commands: {}",
+                                text_redacted
+                            );
                         }
                     } else if !silent_clone {
                         println!("✓ Telegram slash commands registered successfully.");
                     }
                 }
                 Err(e) => {
-                    let err_msg = e.to_string().replace(&token_clone, "[REDACTED_TELEGRAM_TOKEN]");
-                    eprintln!("Error registering Telegram slash commands: {}", err_msg);
+                    let err_msg = e
+                        .to_string()
+                        .replace(&token_clone, "[REDACTED_TELEGRAM_TOKEN]");
+                    tracing::error!("Error registering Telegram slash commands: {}", err_msg);
                 }
             }
         });
@@ -244,7 +260,7 @@ impl super::Channel for TelegramChannel {
                         Ok(r) => r,
                         Err(e) => {
                             let err_msg = e.to_string().replace(&self.bot_token, "[REDACTED_TELEGRAM_TOKEN]");
-                            eprintln!("Telegram poll error: {}", err_msg);
+                            tracing::error!("Telegram poll error: {}", err_msg);
                             tokio::select! {
                                 _ = sleep(Duration::from_secs(5)) => {}
                                 _ = shutdown_rx.changed() => {
@@ -270,7 +286,7 @@ impl super::Channel for TelegramChannel {
                 if resp.ok {
                     for update in resp.result {
                         offset = update.update_id + 1;
-                        
+
                         // 1. Handle regular chat messages
                         if let Some(msg) = update.message {
                             if let Some(text) = msg.text {
@@ -279,53 +295,99 @@ impl super::Channel for TelegramChannel {
                                 let token = self.bot_token.clone();
                                 let client = self.client.clone();
                                 let trimmed = text.trim();
-                                
+
                                 if trimmed.starts_with('/') {
                                     let cmd = trimmed.split_whitespace().next().unwrap_or("");
-                                    if cmd == "/remote" || cmd == "/remotecontrol" || cmd == "/local" || cmd == "/exit" || cmd == "/new" || cmd == "/mcps" || cmd == "/memory" || cmd == "/skill" || cmd == "/skills" || cmd.starts_with("/model") || cmd == "/help" || cmd == "/clear" || cmd == "/history" {
+                                    if cmd == "/remote"
+                                        || cmd == "/remotecontrol"
+                                        || cmd == "/local"
+                                        || cmd == "/exit"
+                                        || cmd == "/new"
+                                        || cmd == "/mcps"
+                                        || cmd == "/memory"
+                                        || cmd == "/skill"
+                                        || cmd == "/skills"
+                                        || cmd.starts_with("/model")
+                                        || cmd == "/help"
+                                        || cmd == "/clear"
+                                        || cmd == "/history"
+                                    {
                                         if cmd == "/new" {
                                             let session_manager = &agent.session_manager;
                                             let session_key = format!("telegram:{}", chat_id);
-                                            if let Ok(mut current_session) = session_manager.load(&session_key) {
+                                            if let Ok(mut current_session) =
+                                                session_manager.load(&session_key)
+                                            {
                                                 if !current_session.messages.is_empty() {
-                                                    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
-                                                    let archive_key = format!("telegram:history_{}", timestamp);
+                                                    let timestamp = chrono::Utc::now()
+                                                        .format("%Y%m%d_%H%M%S")
+                                                        .to_string();
+                                                    let archive_key =
+                                                        format!("telegram:history_{}", timestamp);
                                                     current_session.key = archive_key;
-                                                    let _ = session_manager.save(&current_session).await;
-                                                    
-                                                    let empty_session = crate::session::Session::new(&session_key);
-                                                    let _ = session_manager.save(&empty_session).await;
+                                                    let _ = session_manager
+                                                        .save(&current_session)
+                                                        .await;
+
+                                                    let empty_session =
+                                                        crate::session::Session::new(&session_key);
+                                                    let _ =
+                                                        session_manager.save(&empty_session).await;
                                                 }
                                             }
                                             tokio::spawn(async move {
-                                                let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
                                                 let payload = serde_json::json!({
                                                     "chat_id": chat_id,
                                                     "text": "✓ Session reset. Starting a new session."
                                                 });
-                                                let _ = client.post(&send_url).json(&payload).send().await;
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
                                             });
                                             continue;
                                         }
 
                                         if cmd == "/mcps" {
-                                            let mut response = String::from("🛠️ *Configured MCP Servers:*\n");
+                                            let mut response =
+                                                String::from("🛠️ *Configured MCP Servers:*\n");
                                             if agent.config.mcp_servers.is_empty() {
                                                 response.push_str("No MCP servers configured.");
                                             } else {
                                                 for (name, mcp_cfg) in &agent.config.mcp_servers {
-                                                    let status = if mcp_cfg.enabled { "✅ enabled" } else { "❌ disabled" };
-                                                    response.push_str(&format!("• *{}* ({}) \n`{}`\n", escape_markdown(name), status, escape_markdown(&mcp_cfg.command)));
+                                                    let status = if mcp_cfg.enabled {
+                                                        "✅ enabled"
+                                                    } else {
+                                                        "❌ disabled"
+                                                    };
+                                                    response.push_str(&format!(
+                                                        "• *{}* ({}) \n`{}`\n",
+                                                        escape_markdown(name),
+                                                        status,
+                                                        escape_markdown(&mcp_cfg.command)
+                                                    ));
                                                 }
                                             }
                                             tokio::spawn(async move {
-                                                let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
                                                 let payload = serde_json::json!({
                                                     "chat_id": chat_id,
                                                     "text": response,
                                                     "parse_mode": "Markdown"
                                                 });
-                                                let _ = client.post(&send_url).json(&payload).send().await;
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
                                             });
                                             continue;
                                         }
@@ -333,59 +395,86 @@ impl super::Channel for TelegramChannel {
                                         if cmd == "/memory" {
                                             let session_manager = &agent.session_manager;
                                             let session_key = format!("telegram:{}", chat_id);
-                                            let mut response = String::from("🧠 *Session Metadata & Memory:*\n");
-                                            if let Ok(session) = session_manager.load(&session_key) {
+                                            let mut response =
+                                                String::from("🧠 *Session Metadata & Memory:*\n");
+                                            if let Ok(session) = session_manager.load(&session_key)
+                                            {
                                                 if session.metadata.is_empty() {
                                                     response.push_str("No memory or metadata recorded for this session.");
                                                 } else {
-                                                     for (k, v) in &session.metadata {
-                                                         let v_str = if let Some(s) = v.as_str() {
-                                                             s.to_string()
-                                                         } else {
-                                                             v.to_string()
-                                                         };
-                                                         response.push_str(&format!("• *{}*: {}\n", escape_markdown(k), escape_markdown(&v_str)));
-                                                     }
+                                                    for (k, v) in &session.metadata {
+                                                        let v_str = if let Some(s) = v.as_str() {
+                                                            s.to_string()
+                                                        } else {
+                                                            v.to_string()
+                                                        };
+                                                        response.push_str(&format!(
+                                                            "• *{}*: {}\n",
+                                                            escape_markdown(k),
+                                                            escape_markdown(&v_str)
+                                                        ));
+                                                    }
                                                 }
                                             } else {
                                                 response.push_str("No active session found.");
                                             }
                                             tokio::spawn(async move {
-                                                let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
                                                 let payload = serde_json::json!({
                                                     "chat_id": chat_id,
                                                     "text": response,
                                                     "parse_mode": "Markdown"
                                                 });
-                                                let _ = client.post(&send_url).json(&payload).send().await;
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
                                             });
                                             continue;
                                         }
 
                                         if cmd == "/skill" || cmd == "/skills" {
-                                            let mut response = String::from("⚡ *Active Skills:*\n");
+                                            let mut response =
+                                                String::from("⚡ *Active Skills:*\n");
                                             match crate::agent::skills::load_skills() {
                                                 Ok(skills) => {
                                                     if skills.is_empty() {
                                                         response.push_str("No active skills found in ~/.openz/skills");
                                                     } else {
                                                         for skill in skills {
-                                                            response.push_str(&format!("• *{}*\n", escape_markdown(&skill.name)));
+                                                            response.push_str(&format!(
+                                                                "• *{}*\n",
+                                                                escape_markdown(&skill.name)
+                                                            ));
                                                         }
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    response.push_str(&format!("❌ Failed to load skills: {}", escape_markdown(&e.to_string())));
+                                                    response.push_str(&format!(
+                                                        "❌ Failed to load skills: {}",
+                                                        escape_markdown(&e.to_string())
+                                                    ));
                                                 }
                                             }
                                             tokio::spawn(async move {
-                                                let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
                                                 let payload = serde_json::json!({
                                                     "chat_id": chat_id,
                                                     "text": response,
                                                     "parse_mode": "Markdown"
                                                 });
-                                                let _ = client.post(&send_url).json(&payload).send().await;
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
                                             });
                                             continue;
                                         }
@@ -393,15 +482,26 @@ impl super::Channel for TelegramChannel {
                                         if cmd.starts_with("/model") {
                                             let model = &agent.config.agents.defaults.model;
                                             let provider = &agent.config.agents.defaults.provider;
-                                            let response = format!("🤖 *Active Model:* `{}`\n*Provider:* `{}`", escape_markdown(model), escape_markdown(provider));
+                                            let response = format!(
+                                                "🤖 *Active Model:* `{}`\n*Provider:* `{}`",
+                                                escape_markdown(model),
+                                                escape_markdown(provider)
+                                            );
                                             tokio::spawn(async move {
-                                                let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
                                                 let payload = serde_json::json!({
                                                     "chat_id": chat_id,
                                                     "text": response,
                                                     "parse_mode": "Markdown"
                                                 });
-                                                let _ = client.post(&send_url).json(&payload).send().await;
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
                                             });
                                             continue;
                                         }
@@ -418,37 +518,58 @@ impl super::Channel for TelegramChannel {
                                                              /help — List these commands\n\
                                                              /exit — Exit remote control mode";
                                             tokio::spawn(async move {
-                                                let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
                                                 let payload = serde_json::json!({
                                                     "chat_id": chat_id,
                                                     "text": help_text,
                                                     "parse_mode": "Markdown"
                                                 });
-                                                let _ = client.post(&send_url).json(&payload).send().await;
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
                                             });
                                             continue;
                                         }
 
                                         if cmd == "/clear" {
                                             tokio::spawn(async move {
-                                                let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
                                                 let payload = serde_json::json!({
                                                     "chat_id": chat_id,
                                                     "text": "🧹 `/clear` is a TUI-only command (it does not apply to Telegram chat history)."
                                                 });
-                                                let _ = client.post(&send_url).json(&payload).send().await;
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
                                             });
                                             continue;
                                         }
 
                                         if cmd == "/history" {
                                             tokio::spawn(async move {
-                                                let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
                                                 let payload = serde_json::json!({
                                                     "chat_id": chat_id,
                                                     "text": "🗂️ `/history` interactive menu is a TUI-only command. To reset/clear history, use `/new`."
                                                 });
-                                                let _ = client.post(&send_url).json(&payload).send().await;
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
                                             });
                                             continue;
                                         }
@@ -459,19 +580,23 @@ impl super::Channel for TelegramChannel {
                                         } else {
                                             toggle_remote_control(chat_id)
                                         };
-                                        
+
                                         tokio::spawn(async move {
                                             let msg = if active {
                                                 "🔌 [Remote Control Mode Activated]\nAll messages you type here will be forwarded directly to your active terminal TUI session on the laptop.\nType `/remote` or `/local` to exit."
                                             } else {
                                                 "🏠 [Local Mode Activated]\nMessages will be processed locally by the Telegram bot."
                                             };
-                                            let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                                            let send_url = format!(
+                                                "https://api.telegram.org/bot{}/sendMessage",
+                                                token
+                                            );
                                             let payload = serde_json::json!({
                                                 "chat_id": chat_id,
                                                 "text": msg
                                             });
-                                            let _ = client.post(&send_url).json(&payload).send().await;
+                                            let _ =
+                                                client.post(&send_url).json(&payload).send().await;
                                         });
                                         continue;
                                     }
@@ -480,24 +605,46 @@ impl super::Channel for TelegramChannel {
                                 if is_remote_control_active(chat_id) {
                                     tokio::spawn(async move {
                                         let remote_sender = format!("telegram:{}", chat_id);
-                                        start_typing_indicator(chat_id, token.clone(), client.clone());
-                                        match crate::agent::activity::send_inbox_message("cli:direct", &text, &remote_sender) {
+                                        start_typing_indicator(
+                                            chat_id,
+                                            token.clone(),
+                                            client.clone(),
+                                        );
+                                        match crate::agent::activity::send_inbox_message(
+                                            "cli:direct",
+                                            &text,
+                                            &remote_sender,
+                                        ) {
                                             Ok(_) => {
-                                                let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
                                                 let payload = serde_json::json!({
                                                     "chat_id": chat_id,
                                                     "text": "🔌 Remote command forwarded to TUI session. Executing..."
                                                 });
-                                                let _ = client.post(&send_url).json(&payload).send().await;
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
                                             }
                                             Err(e) => {
                                                 stop_typing_indicator(chat_id);
-                                                let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
                                                 let payload = serde_json::json!({
                                                     "chat_id": chat_id,
                                                     "text": format!("❌ Failed to forward remote command: {}", e)
                                                 });
-                                                let _ = client.post(&send_url).json(&payload).send().await;
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
                                             }
                                         }
                                     });
@@ -512,14 +659,17 @@ impl super::Channel for TelegramChannel {
                                     };
                                     let silent = std::env::var("OPENZ_SILENT").is_ok();
                                     if !silent {
-                                        println!("💬 Telegram message from chat {}: {}", chat_id, text);
+                                        println!(
+                                            "💬 Telegram message from chat {}: {}",
+                                            chat_id, text
+                                        );
                                     }
                                     let session_key = format!("telegram:{}", chat_id);
-                                    
+
                                     start_typing_indicator(chat_id, token.clone(), client.clone());
                                     let run_res = agent.run(&text, &session_key).await;
                                     stop_typing_indicator(chat_id);
-                                    
+
                                     match run_res {
                                         Ok(res) => {
                                             let send_url = format!(
@@ -531,7 +681,11 @@ impl super::Channel for TelegramChannel {
                                                     "chat_id": chat_id,
                                                     "text": chunk
                                                 });
-                                                let _ = client.post(&send_url).json(&payload).send().await;
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
                                             }
                                         }
                                         Err(e) => {
@@ -543,7 +697,8 @@ impl super::Channel for TelegramChannel {
                                                 "chat_id": chat_id,
                                                 "text": format!("Error processing request: {}", e)
                                             });
-                                            let _ = client.post(&send_url).json(&payload).send().await;
+                                            let _ =
+                                                client.post(&send_url).json(&payload).send().await;
                                         }
                                     }
                                 });
@@ -560,7 +715,8 @@ impl super::Channel for TelegramChannel {
                                     let approved = action == "approve";
 
                                     // Resolve wait condition
-                                    let map = APPROVAL_CALLBACKS.get_or_init(|| Mutex::new(HashMap::new()));
+                                    let map = APPROVAL_CALLBACKS
+                                        .get_or_init(|| Mutex::new(HashMap::new()));
                                     if let Ok(mut guard) = map.lock() {
                                         if let Some(tx) = guard.remove(req_id) {
                                             let _ = tx.send(approved);
@@ -568,12 +724,20 @@ impl super::Channel for TelegramChannel {
                                     }
 
                                     // Answer callback query so the Telegram UI stops showing loading indicator
-                                    let answer_url = format!("https://api.telegram.org/bot{}/answerCallbackQuery", self.bot_token);
+                                    let answer_url = format!(
+                                        "https://api.telegram.org/bot{}/answerCallbackQuery",
+                                        self.bot_token
+                                    );
                                     let answer_payload = serde_json::json!({
                                         "callback_query_id": cb.id,
                                         "text": if approved { "Action approved ✅" } else { "Action denied ❌" }
                                     });
-                                    let _ = self.client.post(&answer_url).json(&answer_payload).send().await;
+                                    let _ = self
+                                        .client
+                                        .post(&answer_url)
+                                        .json(&answer_payload)
+                                        .send()
+                                        .await;
 
                                     // Remove the inline buttons from the original message so they cannot be clicked again
                                     if let Some(ref inner_msg) = cb.message {
@@ -585,14 +749,19 @@ impl super::Channel for TelegramChannel {
                                                 "message_id": message_id,
                                                 "reply_markup": {
                                                     "inline_keyboard": [[
-                                                        { 
+                                                        {
                                                             "text": if approved { "Approved ✅" } else { "Denied ❌" },
                                                             "callback_data": "done"
                                                         }
                                                     ]]
                                                 }
                                             });
-                                            let _ = self.client.post(&edit_markup_url).json(&edit_payload).send().await;
+                                            let _ = self
+                                                .client
+                                                .post(&edit_markup_url)
+                                                .json(&edit_payload)
+                                                .send()
+                                                .await;
                                         }
                                     }
                                 }
@@ -632,7 +801,7 @@ fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
             chunks.push(remaining.to_string());
             break;
         }
-        
+
         let mut split_at = max_len;
         while split_at > 0 && !remaining.is_char_boundary(split_at) {
             split_at -= 1;
@@ -643,7 +812,7 @@ fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
                 split_at += 1;
             }
         }
-        
+
         let candidate = &remaining[..split_at];
         let final_split = if let Some(idx) = candidate.rfind('\n') {
             if idx > 0 {
@@ -654,7 +823,7 @@ fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
         } else {
             split_at
         };
-        
+
         chunks.push(remaining[..final_split].to_string());
         remaining = remaining[final_split..].trim_start_matches('\n');
     }

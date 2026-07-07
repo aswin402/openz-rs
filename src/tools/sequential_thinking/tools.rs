@@ -1,18 +1,15 @@
 use anyhow::{anyhow, Result};
+use chrono::Utc;
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
-use chrono::Utc;
 
-use crate::tools::Tool;
+use super::engine::{analyze_quality, generate_mermaid};
 use super::store::{
-    ThoughtData, ToolResult, ThoughtStore,
-    MemoryThoughtStore, SqliteThoughtStore, get_db_path,
+    get_db_path, MemoryThoughtStore, SqliteThoughtStore, ThoughtData, ThoughtStore, ToolResult,
 };
-use super::engine::{
-    generate_mermaid, analyze_quality,
-};
+use crate::tools::Tool;
 
 // ─── Engine (shared mutable state) ───────────────────────────────
 
@@ -32,12 +29,10 @@ pub(crate) fn get_engine() -> &'static Arc<tokio::sync::Mutex<SequentialThinking
             let _ = std::fs::create_dir_all(parent);
         }
         let store: Box<dyn ThoughtStore> = match Connection::open(&db_path) {
-            Ok(conn) => {
-                match SqliteThoughtStore::new(conn) {
-                    Ok(s) => Box::new(s),
-                    Err(_) => Box::new(MemoryThoughtStore::new()),
-                }
-            }
+            Ok(conn) => match SqliteThoughtStore::new(conn) {
+                Ok(s) => Box::new(s),
+                Err(_) => Box::new(MemoryThoughtStore::new()),
+            },
             Err(_) => Box::new(MemoryThoughtStore::new()),
         };
         Arc::new(tokio::sync::Mutex::new(SequentialThinkingEngine {
@@ -58,7 +53,10 @@ impl SequentialThinkingEngine {
             self.branches.clear();
             for t in &self.thought_history {
                 if let (Some(_), Some(branch_id)) = (t.branch_from_thought, t.branch_id.as_ref()) {
-                    self.branches.entry(branch_id.clone()).or_default().push(t.clone());
+                    self.branches
+                        .entry(branch_id.clone())
+                        .or_default()
+                        .push(t.clone());
                 }
             }
         }
@@ -83,7 +81,10 @@ impl SequentialThinkingEngine {
         }
         self.store.save_thought(&session_id, &input)?;
         if let (Some(_), Some(branch_id)) = (input.branch_from_thought, input.branch_id.as_ref()) {
-            self.branches.entry(branch_id.clone()).or_default().push(input.clone());
+            self.branches
+                .entry(branch_id.clone())
+                .or_default()
+                .push(input.clone());
         }
 
         let thought_number = input.thought_number;
@@ -94,7 +95,11 @@ impl SequentialThinkingEngine {
         self.thought_history.push(input);
 
         let branches = self.branches.keys().cloned().collect::<Vec<String>>();
-        let confidence_history = self.thought_history.iter().map(|t| t.confidence_score).collect();
+        let confidence_history = self
+            .thought_history
+            .iter()
+            .map(|t| t.confidence_score)
+            .collect();
         let thought_graph_mermaid = generate_mermaid(&self.thought_history);
 
         Ok(ToolResult {
@@ -117,7 +122,9 @@ pub struct SequentialThinkingTool;
 
 #[async_trait::async_trait]
 impl Tool for SequentialThinkingTool {
-    fn name(&self) -> &str { "sequentialthinking" }
+    fn name(&self) -> &str {
+        "sequentialthinking"
+    }
 
     fn description(&self) -> &str {
         "A detailed tool for dynamic and reflective problem-solving through thoughts. Supports branching, revisions, Graph of Thoughts (GoT) merging, and Clear Thought parameters."
@@ -156,7 +163,8 @@ impl Tool for SequentialThinkingTool {
 
         let engine = get_engine();
         let mut guard = engine.lock().await;
-        let result = guard.process_thought(thought_data)
+        let result = guard
+            .process_thought(thought_data)
             .map_err(|e| anyhow!("{}", e))?;
         Ok(serde_json::to_value(result).unwrap_or(Value::Null))
     }
@@ -168,7 +176,9 @@ pub struct AnalyzeGraphTool;
 
 #[async_trait::async_trait]
 impl Tool for AnalyzeGraphTool {
-    fn name(&self) -> &str { "analyze_graph" }
+    fn name(&self) -> &str {
+        "analyze_graph"
+    }
 
     fn description(&self) -> &str {
         "Query and analyze the thought graph of a thinking session. Supports low_confidence, contradictions, unverified_assumptions, dead_branches, summary_stats, and quality_report queries."
@@ -194,72 +204,139 @@ impl Tool for AnalyzeGraphTool {
         let engine = get_engine();
         let mut guard = engine.lock().await;
 
-        let session_id = arguments["sessionId"].as_str().map(String::from).unwrap_or_else(|| guard.current_session_id.clone());
+        let session_id = arguments["sessionId"]
+            .as_str()
+            .map(String::from)
+            .unwrap_or_else(|| guard.current_session_id.clone());
         if session_id.is_empty() {
             return Err(anyhow!("No active session and no sessionId provided"));
         }
-        guard.load_session(&session_id).map_err(|e| anyhow!("{}", e))?;
+        guard
+            .load_session(&session_id)
+            .map_err(|e| anyhow!("{}", e))?;
 
-        let query = arguments["query"].as_str().ok_or_else(|| anyhow!("Missing query parameter"))?;
+        let query = arguments["query"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing query parameter"))?;
 
         match query {
             "low_confidence" => {
                 let threshold = arguments["confidenceThreshold"].as_f64().unwrap_or(0.5);
-                let low: Vec<ThoughtData> = guard.thought_history.iter()
+                let low: Vec<ThoughtData> = guard
+                    .thought_history
+                    .iter()
                     .filter(|t| t.confidence_score.map(|c| c <= threshold).unwrap_or(false))
-                    .cloned().collect();
+                    .cloned()
+                    .collect();
                 Ok(json!(low))
             }
             "contradictions" => {
                 let mut assumed = HashSet::new();
                 let mut refuted = HashSet::new();
                 for t in &guard.thought_history {
-                    if let Some(ref ass) = t.assumptions { for a in ass { assumed.insert(a.trim().to_lowercase()); } }
+                    if let Some(ref ass) = t.assumptions {
+                        for a in ass {
+                            assumed.insert(a.trim().to_lowercase());
+                        }
+                    }
                     if let Some(ref ver) = t.verified_assumptions {
                         for v in ver {
                             let vc = v.trim().to_lowercase();
-                            if vc.contains("refuted") || vc.contains("false") || vc.contains("falsified") {
-                                refuted.insert(vc.replace("refuted:", "").replace("refuted", "").replace("false:", "").replace("false", "").replace("falsified:", "").replace("falsified", "").trim().to_string());
+                            if vc.contains("refuted")
+                                || vc.contains("false")
+                                || vc.contains("falsified")
+                            {
+                                refuted.insert(
+                                    vc.replace("refuted:", "")
+                                        .replace("refuted", "")
+                                        .replace("false:", "")
+                                        .replace("false", "")
+                                        .replace("falsified:", "")
+                                        .replace("falsified", "")
+                                        .trim()
+                                        .to_string(),
+                                );
                             }
                         }
                     }
                 }
-                let contradictions: Vec<String> = assumed.intersection(&refuted).map(|s| format!("Assumption '{}' is assumed but has been refuted/falsified.", s)).collect();
+                let contradictions: Vec<String> = assumed
+                    .intersection(&refuted)
+                    .map(|s| {
+                        format!(
+                            "Assumption '{}' is assumed but has been refuted/falsified.",
+                            s
+                        )
+                    })
+                    .collect();
                 Ok(json!(contradictions))
             }
             "unverified_assumptions" => {
                 let mut assumed = HashSet::new();
                 let mut verified = HashSet::new();
                 for t in &guard.thought_history {
-                    if let Some(ref ass) = t.assumptions { for a in ass { assumed.insert(a.clone()); } }
+                    if let Some(ref ass) = t.assumptions {
+                        for a in ass {
+                            assumed.insert(a.clone());
+                        }
+                    }
                     if let Some(ref ver) = t.verified_assumptions {
                         for v in ver {
-                            let vc = v.replace("verified:", "").replace("refuted:", "").replace("false:", "").trim().to_string();
+                            let vc = v
+                                .replace("verified:", "")
+                                .replace("refuted:", "")
+                                .replace("false:", "")
+                                .trim()
+                                .to_string();
                             verified.insert(vc);
                             verified.insert(v.clone());
                         }
                     }
                 }
-                Ok(json!(assumed.into_iter().filter(|a| !verified.contains(a)).collect::<Vec<String>>()))
+                Ok(json!(assumed
+                    .into_iter()
+                    .filter(|a| !verified.contains(a))
+                    .collect::<Vec<String>>()))
             }
             "dead_branches" => {
-                if guard.thought_history.is_empty() { return Ok(json!([])); }
+                if guard.thought_history.is_empty() {
+                    return Ok(json!([]));
+                }
                 let last = &guard.thought_history[guard.thought_history.len() - 1];
                 let mut main_chain = HashSet::new();
                 let mut queue = vec![last.thought_number];
                 while let Some(tn) = queue.pop() {
                     if main_chain.insert(tn) {
-                        if let Some(t) = guard.thought_history.iter().find(|x| x.thought_number == tn) {
-                            if let Some(ref parents) = t.parent_thoughts { queue.extend(parents.iter().copied()); }
-                            if let Some(bf) = t.branch_from_thought { queue.push(bf); }
-                            if let Some(rev) = t.revises_thought { queue.push(rev); }
-                            if t.parent_thoughts.is_none() && t.branch_from_thought.is_none() && !t.is_revision.unwrap_or(false) && t.thought_number > 1 {
+                        if let Some(t) = guard
+                            .thought_history
+                            .iter()
+                            .find(|x| x.thought_number == tn)
+                        {
+                            if let Some(ref parents) = t.parent_thoughts {
+                                queue.extend(parents.iter().copied());
+                            }
+                            if let Some(bf) = t.branch_from_thought {
+                                queue.push(bf);
+                            }
+                            if let Some(rev) = t.revises_thought {
+                                queue.push(rev);
+                            }
+                            if t.parent_thoughts.is_none()
+                                && t.branch_from_thought.is_none()
+                                && !t.is_revision.unwrap_or(false)
+                                && t.thought_number > 1
+                            {
                                 queue.push(t.thought_number - 1);
                             }
                         }
                     }
                 }
-                let dead: Vec<ThoughtData> = guard.thought_history.iter().filter(|t| !main_chain.contains(&t.thought_number)).cloned().collect();
+                let dead: Vec<ThoughtData> = guard
+                    .thought_history
+                    .iter()
+                    .filter(|t| !main_chain.contains(&t.thought_number))
+                    .cloned()
+                    .collect();
                 Ok(json!(dead))
             }
             "summary_stats" => {
@@ -290,7 +367,9 @@ pub struct ExportSessionTool;
 
 #[async_trait::async_trait]
 impl Tool for ExportSessionTool {
-    fn name(&self) -> &str { "export_session" }
+    fn name(&self) -> &str {
+        "export_session"
+    }
 
     fn description(&self) -> &str {
         "Export the reasoning session in various formats: mermaid graph, JSON Graph, markdown report, or Graphviz DOT format."
@@ -314,11 +393,20 @@ impl Tool for ExportSessionTool {
         let engine = get_engine();
         let mut guard = engine.lock().await;
 
-        let session_id = arguments["sessionId"].as_str().map(String::from).unwrap_or_else(|| guard.current_session_id.clone());
-        if session_id.is_empty() { return Err(anyhow!("No active session and no sessionId provided")); }
-        guard.load_session(&session_id).map_err(|e| anyhow!("{}", e))?;
+        let session_id = arguments["sessionId"]
+            .as_str()
+            .map(String::from)
+            .unwrap_or_else(|| guard.current_session_id.clone());
+        if session_id.is_empty() {
+            return Err(anyhow!("No active session and no sessionId provided"));
+        }
+        guard
+            .load_session(&session_id)
+            .map_err(|e| anyhow!("{}", e))?;
 
-        let format = arguments["format"].as_str().ok_or_else(|| anyhow!("Missing format parameter"))?;
+        let format = arguments["format"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing format parameter"))?;
 
         match format {
             "mermaid" => {
@@ -334,48 +422,125 @@ impl Tool for ExportSessionTool {
                         "thought": t.thought, "confidenceScore": t.confidence_score, "timestamp": t.timestamp,
                     }));
                     if let Some(ref parents) = t.parent_thoughts {
-                        for p in parents { edges.push(json!({ "source": format!("T{}", p), "target": format!("T{}", t.thought_number), "type": "parent" })); }
+                        for p in parents {
+                            edges.push(json!({ "source": format!("T{}", p), "target": format!("T{}", t.thought_number), "type": "parent" }));
+                        }
                         continue;
                     }
                     if let Some(bf) = t.branch_from_thought {
                         edges.push(json!({ "source": format!("T{}", bf), "target": format!("T{}", t.thought_number), "type": "branch" }));
                     } else if t.is_revision.unwrap_or(false) {
-                        if let Some(rev) = t.revises_thought { edges.push(json!({ "source": format!("T{}", rev), "target": format!("T{}", t.thought_number), "type": "revision" })); }
+                        if let Some(rev) = t.revises_thought {
+                            edges.push(json!({ "source": format!("T{}", rev), "target": format!("T{}", t.thought_number), "type": "revision" }));
+                        }
                     } else if i > 0 {
                         edges.push(json!({ "source": format!("T{}", guard.thought_history[i - 1].thought_number), "target": format!("T{}", t.thought_number), "type": "standard" }));
                     }
                 }
-                Ok(json!({ "format": "json", "sessionId": session_id, "data": { "nodes": nodes, "edges": edges } }))
+                Ok(
+                    json!({ "format": "json", "sessionId": session_id, "data": { "nodes": nodes, "edges": edges } }),
+                )
             }
             "markdown" => {
                 let mut md = String::new();
-                md.push_str(&format!("# Reasoning Session History - Session `{}`\n\n", session_id));
+                md.push_str(&format!(
+                    "# Reasoning Session History - Session `{}`\n\n",
+                    session_id
+                ));
                 for t in &guard.thought_history {
-                    let kind = if t.is_revision.unwrap_or(false) { "Revision" } else if t.branch_from_thought.is_some() { "Branch" } else { "Thought" };
+                    let kind = if t.is_revision.unwrap_or(false) {
+                        "Revision"
+                    } else if t.branch_from_thought.is_some() {
+                        "Branch"
+                    } else {
+                        "Thought"
+                    };
                     md.push_str(&format!("## {} {}\n", kind, t.thought_number));
-                    if let Some(ts) = t.timestamp { md.push_str(&format!("*Timestamp: {}*\n\n", ts.format("%Y-%m-%d %H:%M:%S UTC"))); }
+                    if let Some(ts) = t.timestamp {
+                        md.push_str(&format!(
+                            "*Timestamp: {}*\n\n",
+                            ts.format("%Y-%m-%d %H:%M:%S UTC")
+                        ));
+                    }
                     md.push_str(&format!("{}\n\n", t.thought));
-                    if let Some(ref ass) = t.assumptions { if !ass.is_empty() { md.push_str("### Assumptions\n"); for a in ass { md.push_str(&format!("- 🤔 {}\n", a)); } md.push('\n'); } }
-                    if let Some(ref ver) = t.verified_assumptions { if !ver.is_empty() { md.push_str("### Verified Assumptions\n"); for v in ver { md.push_str(&format!("- ✅ {}\n", v)); } md.push('\n'); } }
-                    if let Some(conf) = t.confidence_score { md.push_str(&format!("*Confidence Score: {}/5 ({:.0}%)*\n\n", (conf * 5.0).round(), conf * 100.0)); }
-                    if let Some(ref c) = t.criticism { md.push_str(&format!("> **🧐 Self-Criticism:** {}\n\n", c)); }
-                    if let Some(ref h) = t.hypothesis { md.push_str(&format!("> **🔬 Hypothesis:** {}\n\n", h)); }
-                    if let Some(ref vm) = t.verification_method { md.push_str(&format!("> **🧪 Verification:** {}\n\n", vm)); }
+                    if let Some(ref ass) = t.assumptions {
+                        if !ass.is_empty() {
+                            md.push_str("### Assumptions\n");
+                            for a in ass {
+                                md.push_str(&format!("- 🤔 {}\n", a));
+                            }
+                            md.push('\n');
+                        }
+                    }
+                    if let Some(ref ver) = t.verified_assumptions {
+                        if !ver.is_empty() {
+                            md.push_str("### Verified Assumptions\n");
+                            for v in ver {
+                                md.push_str(&format!("- ✅ {}\n", v));
+                            }
+                            md.push('\n');
+                        }
+                    }
+                    if let Some(conf) = t.confidence_score {
+                        md.push_str(&format!(
+                            "*Confidence Score: {}/5 ({:.0}%)*\n\n",
+                            (conf * 5.0).round(),
+                            conf * 100.0
+                        ));
+                    }
+                    if let Some(ref c) = t.criticism {
+                        md.push_str(&format!("> **🧐 Self-Criticism:** {}\n\n", c));
+                    }
+                    if let Some(ref h) = t.hypothesis {
+                        md.push_str(&format!("> **🔬 Hypothesis:** {}\n\n", h));
+                    }
+                    if let Some(ref vm) = t.verification_method {
+                        md.push_str(&format!("> **🧪 Verification:** {}\n\n", vm));
+                    }
                     md.push_str("---\n\n");
                 }
                 Ok(json!({ "format": "markdown", "sessionId": session_id, "data": md }))
             }
             "dot" => {
-                let mut dot = String::from("digraph G {\n  node [shape=box, style=filled, fontname=\"Arial\"];\n");
+                let mut dot = String::from(
+                    "digraph G {\n  node [shape=box, style=filled, fontname=\"Arial\"];\n",
+                );
                 for (i, t) in guard.thought_history.iter().enumerate() {
                     let id = format!("T{}", t.thought_number);
                     let preview: String = t.thought.chars().take(20).collect();
-                    let color = if t.is_revision.unwrap_or(false) { "\"#fafd7c\"" } else if t.branch_from_thought.is_some() { "\"#a1e887\"" } else { "\"#a5ccf7\"" };
-                    dot.push_str(&format!("  {} [label=\"T{}: {}...\", fillcolor={}];\n", id, t.thought_number, preview, color));
-                    if let Some(ref parents) = t.parent_thoughts { for p in parents { dot.push_str(&format!("  T{} -> {};\n", p, id)); } continue; }
-                    if let Some(bf) = t.branch_from_thought { dot.push_str(&format!("  T{} -> {};\n", bf, id)); }
-                    else if t.is_revision.unwrap_or(false) { if let Some(rev) = t.revises_thought { dot.push_str(&format!("  T{} -> {} [style=dotted, label=\"revises\"];\n", rev, id)); } }
-                    else if i > 0 { dot.push_str(&format!("  T{} -> {};\n", guard.thought_history[i - 1].thought_number, id)); }
+                    let color = if t.is_revision.unwrap_or(false) {
+                        "\"#fafd7c\""
+                    } else if t.branch_from_thought.is_some() {
+                        "\"#a1e887\""
+                    } else {
+                        "\"#a5ccf7\""
+                    };
+                    dot.push_str(&format!(
+                        "  {} [label=\"T{}: {}...\", fillcolor={}];\n",
+                        id, t.thought_number, preview, color
+                    ));
+                    if let Some(ref parents) = t.parent_thoughts {
+                        for p in parents {
+                            dot.push_str(&format!("  T{} -> {};\n", p, id));
+                        }
+                        continue;
+                    }
+                    if let Some(bf) = t.branch_from_thought {
+                        dot.push_str(&format!("  T{} -> {};\n", bf, id));
+                    } else if t.is_revision.unwrap_or(false) {
+                        if let Some(rev) = t.revises_thought {
+                            dot.push_str(&format!(
+                                "  T{} -> {} [style=dotted, label=\"revises\"];\n",
+                                rev, id
+                            ));
+                        }
+                    } else if i > 0 {
+                        dot.push_str(&format!(
+                            "  T{} -> {};\n",
+                            guard.thought_history[i - 1].thought_number,
+                            id
+                        ));
+                    }
                 }
                 dot.push_str("}\n");
                 Ok(json!({ "format": "dot", "sessionId": session_id, "data": dot }))
@@ -391,7 +556,9 @@ pub struct SummarizeReasoningTool;
 
 #[async_trait::async_trait]
 impl Tool for SummarizeReasoningTool {
-    fn name(&self) -> &str { "summarize_reasoning" }
+    fn name(&self) -> &str {
+        "summarize_reasoning"
+    }
 
     fn description(&self) -> &str {
         "Retrieve a structured summary and timeline of the reasoning chain for the specified session."
@@ -410,35 +577,71 @@ impl Tool for SummarizeReasoningTool {
         let engine = get_engine();
         let mut guard = engine.lock().await;
 
-        let session_id = arguments["sessionId"].as_str().map(String::from).unwrap_or_else(|| guard.current_session_id.clone());
-        if session_id.is_empty() { return Err(anyhow!("No active session and no sessionId provided")); }
-        guard.load_session(&session_id).map_err(|e| anyhow!("{}", e))?;
+        let session_id = arguments["sessionId"]
+            .as_str()
+            .map(String::from)
+            .unwrap_or_else(|| guard.current_session_id.clone());
+        if session_id.is_empty() {
+            return Err(anyhow!("No active session and no sessionId provided"));
+        }
+        guard
+            .load_session(&session_id)
+            .map_err(|e| anyhow!("{}", e))?;
 
         let total_thoughts = guard.thought_history.len();
         let total_branches = guard.branches.len();
 
-        let confidences: Vec<f64> = guard.thought_history.iter().filter_map(|t| t.confidence_score).collect();
-        let average_confidence = if confidences.is_empty() { 0.0 } else { confidences.iter().sum::<f64>() / confidences.len() as f64 };
+        let confidences: Vec<f64> = guard
+            .thought_history
+            .iter()
+            .filter_map(|t| t.confidence_score)
+            .collect();
+        let average_confidence = if confidences.is_empty() {
+            0.0
+        } else {
+            confidences.iter().sum::<f64>() / confidences.len() as f64
+        };
 
         let mut merge_points = Vec::new();
         for t in &guard.thought_history {
-            if let Some(ref parents) = t.parent_thoughts { if parents.len() > 1 { merge_points.push(t.thought_number); } }
+            if let Some(ref parents) = t.parent_thoughts {
+                if parents.len() > 1 {
+                    merge_points.push(t.thought_number);
+                }
+            }
         }
 
         let mut assumed = HashSet::new();
         let mut verified = HashSet::new();
         for t in &guard.thought_history {
-            if let Some(ref ass) = t.assumptions { for a in ass { assumed.insert(a.clone()); } }
+            if let Some(ref ass) = t.assumptions {
+                for a in ass {
+                    assumed.insert(a.clone());
+                }
+            }
             if let Some(ref ver) = t.verified_assumptions {
                 for v in ver {
-                    let vc = v.replace("verified:", "").replace("refuted:", "").replace("false:", "").trim().to_string();
-                    verified.insert(vc); verified.insert(v.clone());
+                    let vc = v
+                        .replace("verified:", "")
+                        .replace("refuted:", "")
+                        .replace("false:", "")
+                        .trim()
+                        .to_string();
+                    verified.insert(vc);
+                    verified.insert(v.clone());
                 }
             }
         }
-        let unverified_assumptions: Vec<String> = assumed.into_iter().filter(|a| !verified.contains(a)).collect();
+        let unverified_assumptions: Vec<String> = assumed
+            .into_iter()
+            .filter(|a| !verified.contains(a))
+            .collect();
 
-        let open_todos = guard.thought_history.last().and_then(|t| t.left_to_be_done.clone()).unwrap_or_default();
+        let open_todos = guard
+            .thought_history
+            .last()
+            .and_then(|t| t.left_to_be_done.clone())
+            .unwrap_or_default();
 
         let mut parts = Vec::new();
         for t in &guard.thought_history {
@@ -452,7 +655,9 @@ impl Tool for SummarizeReasoningTool {
                     part = format!("{}(merge:{})", part, p_str.join("+"));
                 }
             } else if t.is_revision.unwrap_or(false) {
-                if let Some(rev) = t.revises_thought { part = format!("{}(revises:T{})", part, rev); }
+                if let Some(rev) = t.revises_thought {
+                    part = format!("{}(revises:T{})", part, rev);
+                }
             }
             parts.push(part);
         }
@@ -472,7 +677,9 @@ pub struct TemplatesTool;
 
 #[async_trait::async_trait]
 impl Tool for TemplatesTool {
-    fn name(&self) -> &str { "reasoning_templates" }
+    fn name(&self) -> &str {
+        "reasoning_templates"
+    }
 
     fn description(&self) -> &str {
         "Retrieve pre-structured reasoning templates to guide complex thinking processes. Includes divide-and-conquer, hypothesis testing, and devil's advocate reasoning."
@@ -530,7 +737,9 @@ impl Tool for TemplatesTool {
             "divide-and-conquer" => Ok(divide_and_conquer),
             "hypothesis-test" => Ok(hypothesis_test),
             "devils-advocate" => Ok(devils_advocate),
-            "all" | _ => Ok(json!({ "templates": [divide_and_conquer, hypothesis_test, devils_advocate] })),
+            "all" | _ => {
+                Ok(json!({ "templates": [divide_and_conquer, hypothesis_test, devils_advocate] }))
+            }
         }
     }
 }

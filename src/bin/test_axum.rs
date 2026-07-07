@@ -1,8 +1,8 @@
 use axum::Router;
-use tower_http::services::ServeDir;
 use std::fs;
 use std::time::Duration;
 use tokio::time::sleep;
+use tower_http::services::ServeDir;
 
 async fn force_utf8(
     req: axum::http::Request<axum::body::Body>,
@@ -12,8 +12,12 @@ async fn force_utf8(
     if let Some(content_type) = response.headers().get(axum::http::header::CONTENT_TYPE) {
         if let Ok(content_type_str) = content_type.to_str() {
             if content_type_str.starts_with("text/html") && !content_type_str.contains("charset") {
-                if let Ok(new_val) = axum::http::header::HeaderValue::from_str("text/html; charset=utf-8") {
-                    response.headers_mut().insert(axum::http::header::CONTENT_TYPE, new_val);
+                if let Ok(new_val) =
+                    axum::http::header::HeaderValue::from_str("text/html; charset=utf-8")
+                {
+                    response
+                        .headers_mut()
+                        .insert(axum::http::header::CONTENT_TYPE, new_val);
                 }
             }
         }

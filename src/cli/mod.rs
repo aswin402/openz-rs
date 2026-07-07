@@ -1,55 +1,27 @@
+pub mod agent;
 pub mod args;
 pub mod builder;
-pub mod onboard;
-pub mod configure;
-pub mod agent;
-pub mod channels;
-pub mod sop;
-pub mod logs;
-pub mod streaming;
 pub mod changelog;
+pub mod channels;
+pub mod configure;
+pub mod logs;
+pub mod onboard;
+pub mod sop;
+pub mod streaming;
+pub mod tools;
 
+use crate::print;
+pub use agent::{archive_current_session, load_session_history};
 use anyhow::Result;
-use clap::Parser;
-pub use args::{CliArgs, Command, ChannelAction, SopAction};
+pub use args::{ChannelAction, CliArgs, Command, SopAction};
 pub use builder::build_agent_loop;
-pub use agent::{load_session_history, archive_current_session};
 pub use channels::{
-    handle_gateway, handle_telegram, handle_discord, handle_whatsapp, handle_email,
-    is_telegram_configured, is_email_configured,
+    handle_discord, handle_email, handle_gateway, handle_telegram, handle_whatsapp,
+    is_email_configured, is_telegram_configured,
 };
-pub use sop::handle_sop;
+use clap::Parser;
 pub use logs::handle_logs;
-
-#[allow(unused_macros)]
-macro_rules! println {
-    () => {
-        crate::tui_println!()
-    };
-    ($($arg:tt)*) => {
-        crate::tui_println!($($arg)*)
-    };
-}
-
-#[allow(unused_macros)]
-macro_rules! print {
-    () => {
-        crate::tui_print!()
-    };
-    ($($arg:tt)*) => {
-        crate::tui_print!($($arg)*)
-    };
-}
-
-#[allow(unused_macros)]
-macro_rules! eprintln {
-    () => {
-        crate::tui_println!()
-    };
-    ($($arg:tt)*) => {
-        crate::tui_println!($($arg)*)
-    };
-}
+pub use sop::handle_sop;
 
 static IS_SILENT_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -97,46 +69,36 @@ pub async fn run_cli() -> Result<()> {
         Command::Agent => {
             agent::handle_agent().await?;
         }
-        Command::Gateway { action } => {
-            match action {
-                Some(ChannelAction::Logs { tail }) => {
-                    logs::handle_logs(None, tail, Some("gateway".to_string()), None).await?;
-                }
-                None => channels::handle_gateway().await?,
+        Command::Gateway { action } => match action {
+            Some(ChannelAction::Logs { tail }) => {
+                logs::handle_logs(None, tail, Some("gateway".to_string()), None).await?;
             }
-        }
-        Command::Telegram { action } => {
-            match action {
-                Some(ChannelAction::Logs { tail }) => {
-                    logs::handle_logs(None, tail, Some("telegram".to_string()), None).await?;
-                }
-                None => channels::handle_telegram().await?,
+            None => channels::handle_gateway().await?,
+        },
+        Command::Telegram { action } => match action {
+            Some(ChannelAction::Logs { tail }) => {
+                logs::handle_logs(None, tail, Some("telegram".to_string()), None).await?;
             }
-        }
-        Command::Discord { action } => {
-            match action {
-                Some(ChannelAction::Logs { tail }) => {
-                    logs::handle_logs(None, tail, Some("discord".to_string()), None).await?;
-                }
-                None => channels::handle_discord().await?,
+            None => channels::handle_telegram().await?,
+        },
+        Command::Discord { action } => match action {
+            Some(ChannelAction::Logs { tail }) => {
+                logs::handle_logs(None, tail, Some("discord".to_string()), None).await?;
             }
-        }
-        Command::Whatsapp { action } => {
-            match action {
-                Some(ChannelAction::Logs { tail }) => {
-                    logs::handle_logs(None, tail, Some("whatsapp".to_string()), None).await?;
-                }
-                None => channels::handle_whatsapp().await?,
+            None => channels::handle_discord().await?,
+        },
+        Command::Whatsapp { action } => match action {
+            Some(ChannelAction::Logs { tail }) => {
+                logs::handle_logs(None, tail, Some("whatsapp".to_string()), None).await?;
             }
-        }
-        Command::Email { action } => {
-            match action {
-                Some(ChannelAction::Logs { tail }) => {
-                    logs::handle_logs(None, tail, Some("email".to_string()), None).await?;
-                }
-                None => channels::handle_email().await?,
+            None => channels::handle_whatsapp().await?,
+        },
+        Command::Email { action } => match action {
+            Some(ChannelAction::Logs { tail }) => {
+                logs::handle_logs(None, tail, Some("email".to_string()), None).await?;
             }
-        }
+            None => channels::handle_email().await?,
+        },
         Command::Subagent => {
             let config = crate::config::loader::load_config()?;
             crate::subagents::run_subagent_manager(config).await?;
@@ -155,7 +117,12 @@ pub async fn run_cli() -> Result<()> {
         Command::Sop { action } => {
             sop::handle_sop(action).await?;
         }
-        Command::Logs { path, tail, session, level } => {
+        Command::Logs {
+            path,
+            tail,
+            session,
+            level,
+        } => {
             logs::handle_logs(path, tail, session, level).await?;
         }
         Command::Changelog => {

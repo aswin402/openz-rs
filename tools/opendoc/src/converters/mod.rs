@@ -5,8 +5,8 @@
 //!   PPTX → IR → Markdown
 //!   etc.
 
-pub mod transmutation;
 pub mod render;
+pub mod transmutation;
 
 use crate::ir::Document;
 use std::path::Path;
@@ -71,8 +71,7 @@ fn docx_to_pdf(source: &str, output: &str) -> Result<ConversionResult, Conversio
     let pdf_bytes = doc
         .to_pdf()
         .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
-    std::fs::write(output, &pdf_bytes)
-        .map_err(|e| ConversionError::IoError(e.to_string()))?;
+    std::fs::write(output, &pdf_bytes).map_err(|e| ConversionError::IoError(e.to_string()))?;
     Ok(ConversionResult {
         source: source.to_string(),
         output: output.to_string(),
@@ -86,8 +85,7 @@ fn docx_to_markdown(source: &str, output: &str) -> Result<ConversionResult, Conv
     let doc = rdocx::Document::open(source)
         .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
     let md = doc.to_markdown();
-    std::fs::write(output, &md)
-        .map_err(|e| ConversionError::IoError(e.to_string()))?;
+    std::fs::write(output, &md).map_err(|e| ConversionError::IoError(e.to_string()))?;
     Ok(ConversionResult {
         source: source.to_string(),
         output: output.to_string(),
@@ -101,8 +99,7 @@ fn docx_to_html(source: &str, output: &str) -> Result<ConversionResult, Conversi
     let doc = rdocx::Document::open(source)
         .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
     let html = doc.to_html();
-    std::fs::write(output, &html)
-        .map_err(|e| ConversionError::IoError(e.to_string()))?;
+    std::fs::write(output, &html).map_err(|e| ConversionError::IoError(e.to_string()))?;
     Ok(ConversionResult {
         source: source.to_string(),
         output: output.to_string(),
@@ -114,20 +111,17 @@ fn docx_to_html(source: &str, output: &str) -> Result<ConversionResult, Conversi
 
 fn pptx_to_markdown(source: &str, output: &str) -> Result<ConversionResult, ConversionError> {
     let md = crate::handlers::pptx::to_markdown(source);
-    let json: serde_json::Value = serde_json::from_str(&md)
-        .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
-    
+    let json: serde_json::Value =
+        serde_json::from_str(&md).map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
+
     if let Some(err) = json.get("error") {
         return Err(ConversionError::ConversionFailed(err.to_string()));
     }
-    
-    let md_text = json.get("markdown")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-        
-    std::fs::write(output, md_text)
-        .map_err(|e| ConversionError::IoError(e.to_string()))?;
-        
+
+    let md_text = json.get("markdown").and_then(|v| v.as_str()).unwrap_or("");
+
+    std::fs::write(output, md_text).map_err(|e| ConversionError::IoError(e.to_string()))?;
+
     Ok(ConversionResult {
         source: source.to_string(),
         output: output.to_string(),
@@ -142,26 +136,32 @@ fn pptx_to_pdf(source: &str, output: &str) -> Result<ConversionResult, Conversio
     // Load PPTX via the pptx handler
     let doc = crate::handlers::pptx::to_ir(source)
         .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
-    
+
     let text: Vec<&str> = doc.paragraphs.iter().map(|p| p.text.as_str()).collect();
-    
+
     // Create PDF using lopdf (one page per ~40 lines of content)
     let mut pdf = lopdf::Document::new();
-    
+
     let font_id = pdf.add_object(lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([
         (b"Type".to_vec(), lopdf::Object::Name(b"Font".to_vec())),
         (b"Subtype".to_vec(), lopdf::Object::Name(b"Type1".to_vec())),
-        (b"BaseFont".to_vec(), lopdf::Object::Name(b"Helvetica".to_vec())),
+        (
+            b"BaseFont".to_vec(),
+            lopdf::Object::Name(b"Helvetica".to_vec()),
+        ),
     ])));
-    
+
     let mut page_ids = Vec::new();
     let pages_id = pdf.new_object_id();
-    let lines: Vec<String> = text.iter().map(|s| {
-        s.replace('\\', "\\\\")
-            .replace('(', "\\(")
-            .replace(')', "\\)")
-    }).collect();
-    
+    let lines: Vec<String> = text
+        .iter()
+        .map(|s| {
+            s.replace('\\', "\\\\")
+                .replace('(', "\\(")
+                .replace(')', "\\)")
+        })
+        .collect();
+
     let chunks = lines.chunks(40);
     for chunk in chunks {
         let mut content_parts = vec!["BT /F1 12 Tf 50 700 Td".to_string()];
@@ -174,33 +174,43 @@ fn pptx_to_pdf(source: &str, output: &str) -> Result<ConversionResult, Conversio
         }
         content_parts.push("ET".to_string());
         let content_str = content_parts.join(" ");
-        
+
         let content_id = pdf.add_object(lopdf::Object::Stream(lopdf::Stream {
             dict: lopdf::Dictionary::new(),
             content: content_str.into_bytes(),
             allows_compression: true,
             start_position: None,
         }));
-        
+
         let page_id = pdf.new_object_id();
         let page = lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([
             (b"Type".to_vec(), lopdf::Object::Name(b"Page".to_vec())),
             (b"Parent".to_vec(), lopdf::Object::Reference(pages_id)),
             (b"Contents".to_vec(), lopdf::Object::Reference(content_id)),
-            (b"Resources".to_vec(), lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([
-                (b"Font".to_vec(), lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([
-                    (b"F1".to_vec(), lopdf::Object::Reference(font_id)),
-                ]))),
-            ]))),
-            (b"MediaBox".to_vec(), lopdf::Object::Array(vec![
-                lopdf::Object::Integer(0), lopdf::Object::Integer(0),
-                lopdf::Object::Integer(612), lopdf::Object::Integer(792),
-            ])),
+            (
+                b"Resources".to_vec(),
+                lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([(
+                    b"Font".to_vec(),
+                    lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([(
+                        b"F1".to_vec(),
+                        lopdf::Object::Reference(font_id),
+                    )])),
+                )])),
+            ),
+            (
+                b"MediaBox".to_vec(),
+                lopdf::Object::Array(vec![
+                    lopdf::Object::Integer(0),
+                    lopdf::Object::Integer(0),
+                    lopdf::Object::Integer(612),
+                    lopdf::Object::Integer(792),
+                ]),
+            ),
         ]));
         pdf.objects.insert(page_id, page);
         page_ids.push(page_id);
     }
-    
+
     if page_ids.is_empty() {
         let content_id = pdf.add_object(lopdf::Object::Stream(lopdf::Stream {
             dict: lopdf::Dictionary::new(),
@@ -213,45 +223,65 @@ fn pptx_to_pdf(source: &str, output: &str) -> Result<ConversionResult, Conversio
             (b"Type".to_vec(), lopdf::Object::Name(b"Page".to_vec())),
             (b"Parent".to_vec(), lopdf::Object::Reference(pages_id)),
             (b"Contents".to_vec(), lopdf::Object::Reference(content_id)),
-            (b"Resources".to_vec(), lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([
-                (b"Font".to_vec(), lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([
-                    (b"F1".to_vec(), lopdf::Object::Reference(font_id)),
-                ]))),
-            ]))),
-            (b"MediaBox".to_vec(), lopdf::Object::Array(vec![
-                lopdf::Object::Integer(0), lopdf::Object::Integer(0),
-                lopdf::Object::Integer(612), lopdf::Object::Integer(792),
-            ])),
+            (
+                b"Resources".to_vec(),
+                lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([(
+                    b"Font".to_vec(),
+                    lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([(
+                        b"F1".to_vec(),
+                        lopdf::Object::Reference(font_id),
+                    )])),
+                )])),
+            ),
+            (
+                b"MediaBox".to_vec(),
+                lopdf::Object::Array(vec![
+                    lopdf::Object::Integer(0),
+                    lopdf::Object::Integer(0),
+                    lopdf::Object::Integer(612),
+                    lopdf::Object::Integer(792),
+                ]),
+            ),
         ]));
         pdf.objects.insert(page_id, page);
         page_ids.push(page_id);
     }
-    
+
     let pages = lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([
         (b"Type".to_vec(), lopdf::Object::Name(b"Pages".to_vec())),
-        (b"Kids".to_vec(), lopdf::Object::Array(
-            page_ids.iter().map(|id| lopdf::Object::Reference(*id)).collect()
-        )),
-        (b"Count".to_vec(), lopdf::Object::Integer(page_ids.len() as i64)),
+        (
+            b"Kids".to_vec(),
+            lopdf::Object::Array(
+                page_ids
+                    .iter()
+                    .map(|id| lopdf::Object::Reference(*id))
+                    .collect(),
+            ),
+        ),
+        (
+            b"Count".to_vec(),
+            lopdf::Object::Integer(page_ids.len() as i64),
+        ),
     ]));
     pdf.objects.insert(pages_id, pages);
-    
+
     let catalog_id = pdf.new_object_id();
     let catalog = lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([
         (b"Type".to_vec(), lopdf::Object::Name(b"Catalog".to_vec())),
         (b"Pages".to_vec(), lopdf::Object::Reference(pages_id)),
     ]));
     pdf.objects.insert(catalog_id, catalog);
-    pdf.trailer.set("Root", lopdf::Object::Reference(catalog_id));
+    pdf.trailer
+        .set("Root", lopdf::Object::Reference(catalog_id));
     pdf.max_id = catalog_id.0;
-    
+
     pdf.save(output)
         .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
-    
+
     let size = std::fs::metadata(output)
         .map(|m| m.len() as usize)
         .unwrap_or(0);
-    
+
     Ok(ConversionResult {
         source: source.to_string(),
         output: output.to_string(),
@@ -261,21 +291,24 @@ fn pptx_to_pdf(source: &str, output: &str) -> Result<ConversionResult, Conversio
     })
 }
 
-
-fn pdf_to_text_with_password(source: &str, output: &str, password: Option<&str>) -> Result<ConversionResult, ConversionError> {
+fn pdf_to_text_with_password(
+    source: &str,
+    output: &str,
+    password: Option<&str>,
+) -> Result<ConversionResult, ConversionError> {
     let mut doc = lopdf::Document::load(source)
         .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
     if doc.is_encrypted() {
         let pass = password.unwrap_or("");
-        doc.decrypt(pass.as_bytes())
-            .map_err(|e| ConversionError::ConversionFailed(format!("Failed to decrypt PDF: {}", e)))?;
+        doc.decrypt(pass.as_bytes()).map_err(|e| {
+            ConversionError::ConversionFailed(format!("Failed to decrypt PDF: {}", e))
+        })?;
     }
     let pages: Vec<u32> = doc.get_pages().keys().copied().collect();
     let text = doc
         .extract_text(&pages)
         .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
-    std::fs::write(output, &text)
-        .map_err(|e| ConversionError::IoError(e.to_string()))?;
+    std::fs::write(output, &text).map_err(|e| ConversionError::IoError(e.to_string()))?;
     Ok(ConversionResult {
         source: source.to_string(),
         output: output.to_string(),
@@ -285,22 +318,25 @@ fn pdf_to_text_with_password(source: &str, output: &str, password: Option<&str>)
     })
 }
 
-
-fn pdf_to_markdown_with_password(source: &str, output: &str, password: Option<&str>) -> Result<ConversionResult, ConversionError> {
+fn pdf_to_markdown_with_password(
+    source: &str,
+    output: &str,
+    password: Option<&str>,
+) -> Result<ConversionResult, ConversionError> {
     let mut doc = lopdf::Document::load(source)
         .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
     if doc.is_encrypted() {
         let pass = password.unwrap_or("");
-        doc.decrypt(pass.as_bytes())
-            .map_err(|e| ConversionError::ConversionFailed(format!("Failed to decrypt PDF: {}", e)))?;
+        doc.decrypt(pass.as_bytes()).map_err(|e| {
+            ConversionError::ConversionFailed(format!("Failed to decrypt PDF: {}", e))
+        })?;
     }
     let pages: Vec<u32> = doc.get_pages().keys().copied().collect();
     let text = doc
         .extract_text(&pages)
         .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
     let md = format!("# Extracted PDF\n\n{}", text);
-    std::fs::write(output, &md)
-        .map_err(|e| ConversionError::IoError(e.to_string()))?;
+    std::fs::write(output, &md).map_err(|e| ConversionError::IoError(e.to_string()))?;
     Ok(ConversionResult {
         source: source.to_string(),
         output: output.to_string(),
@@ -335,8 +371,7 @@ fn xlsx_to_csv(source: &str, output: &str) -> Result<ConversionResult, Conversio
         }
     }
 
-    std::fs::write(output, &csv_output)
-        .map_err(|e| ConversionError::IoError(e.to_string()))?;
+    std::fs::write(output, &csv_output).map_err(|e| ConversionError::IoError(e.to_string()))?;
     Ok(ConversionResult {
         source: source.to_string(),
         output: output.to_string(),
@@ -372,13 +407,16 @@ fn escape_csv(s: &str) -> String {
 
 /// Export a parsed IR document to a target format.
 /// Supported formats: json, txt, md, html, csv, xlsx, docx.
-pub fn export(doc: &Document, target_format: &str, output: &str) -> Result<ConversionResult, ConversionError> {
+pub fn export(
+    doc: &Document,
+    target_format: &str,
+    output: &str,
+) -> Result<ConversionResult, ConversionError> {
     match target_format {
         "json" => {
             let json = serde_json::to_string_pretty(doc)
                 .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
-            std::fs::write(output, &json)
-                .map_err(|e| ConversionError::IoError(e.to_string()))?;
+            std::fs::write(output, &json).map_err(|e| ConversionError::IoError(e.to_string()))?;
             Ok(ConversionResult {
                 source: doc.path.clone().unwrap_or_default(),
                 output: output.to_string(),
@@ -406,8 +444,7 @@ pub fn export(doc: &Document, target_format: &str, output: &str) -> Result<Conve
         }
         "md" | "markdown" => {
             let md = doc.to_markdown();
-            std::fs::write(output, &md)
-                .map_err(|e| ConversionError::IoError(e.to_string()))?;
+            std::fs::write(output, &md).map_err(|e| ConversionError::IoError(e.to_string()))?;
             Ok(ConversionResult {
                 source: doc.path.clone().unwrap_or_default(),
                 output: output.to_string(),
@@ -418,7 +455,9 @@ pub fn export(doc: &Document, target_format: &str, output: &str) -> Result<Conve
         }
         "html" => {
             let mut html = String::new();
-            html.push_str("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n</head>\n<body>\n");
+            html.push_str(
+                "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n</head>\n<body>\n",
+            );
             if !doc.paragraphs.is_empty() || !doc.tables.is_empty() {
                 for p in &doc.paragraphs {
                     if p.is_heading {
@@ -457,8 +496,7 @@ pub fn export(doc: &Document, target_format: &str, output: &str) -> Result<Conve
                 html.push_str(&format!("<pre>{}</pre>\n", escape_html(raw)));
             }
             html.push_str("</body>\n</html>");
-            std::fs::write(output, &html)
-                .map_err(|e| ConversionError::IoError(e.to_string()))?;
+            std::fs::write(output, &html).map_err(|e| ConversionError::IoError(e.to_string()))?;
             Ok(ConversionResult {
                 source: doc.path.clone().unwrap_or_default(),
                 output: output.to_string(),
@@ -472,7 +510,8 @@ pub fn export(doc: &Document, target_format: &str, output: &str) -> Result<Conve
             if !doc.tables.is_empty() {
                 let table = &doc.tables[0];
                 if !table.headers.is_empty() {
-                    let escaped_hdrs: Vec<String> = table.headers.iter().map(|h| escape_csv(h)).collect();
+                    let escaped_hdrs: Vec<String> =
+                        table.headers.iter().map(|h| escape_csv(h)).collect();
                     csv_str.push_str(&escaped_hdrs.join(","));
                     csv_str.push('\n');
                 }
@@ -525,8 +564,12 @@ pub fn export(doc: &Document, target_format: &str, output: &str) -> Result<Conve
                     if p.is_heading {
                         run = run.bold(true).size(24.0);
                     } else {
-                        if p.bold { run = run.bold(true); }
-                        if p.italic { run = run.italic(true); }
+                        if p.bold {
+                            run = run.bold(true);
+                        }
+                        if p.italic {
+                            run = run.italic(true);
+                        }
                     }
                 }
                 for table in &doc.tables {
@@ -552,7 +595,9 @@ pub fn export(doc: &Document, target_format: &str, output: &str) -> Result<Conve
                         for (r_idx, row) in table.rows.iter().enumerate() {
                             for (c_idx, cell_val) in row.iter().enumerate() {
                                 if c_idx < cols {
-                                    if let Some(mut cell) = docx_table.cell(r_idx + row_offset, c_idx) {
+                                    if let Some(mut cell) =
+                                        docx_table.cell(r_idx + row_offset, c_idx)
+                                    {
                                         cell.set_text(cell_val);
                                     }
                                 }
@@ -561,7 +606,8 @@ pub fn export(doc: &Document, target_format: &str, output: &str) -> Result<Conve
                     }
                 }
             }
-            docx_doc.save(output)
+            docx_doc
+                .save(output)
                 .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
             let size = std::fs::metadata(output)
                 .map(|m| m.len() as usize)
@@ -607,7 +653,9 @@ pub enum ConversionError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{Document as IrDocument, Paragraph as IrParagraph, Table as IrTable, Section as IrSection};
+    use crate::ir::{
+        Document as IrDocument, Paragraph as IrParagraph, Section as IrSection, Table as IrTable,
+    };
     use std::fs;
 
     #[test]
@@ -621,7 +669,7 @@ mod tests {
         let dir = std::env::temp_dir();
         let path = dir.join("test_unsupported.txt");
         fs::write(&path, "content").unwrap();
-        
+
         let res = convert(path.to_str().unwrap(), "unsupported_format", "/tmp/out.pdf");
         assert!(res.is_err());
         let _ = fs::remove_file(path);
@@ -632,7 +680,7 @@ mod tests {
         let dir = std::env::temp_dir();
         let mut doc = IrDocument::new("txt");
         doc.path = Some(dir.join("source_export.txt").to_str().unwrap().to_string());
-        
+
         let p_text = IrParagraph::new("Hello paragraph");
         doc.paragraphs.push(p_text);
 
@@ -649,7 +697,7 @@ mod tests {
         });
         doc.tables.push(IrTable::new(
             vec!["Header1".to_string(), "Header2".to_string()],
-            vec![vec!["Value1".to_string(), "Value2".to_string()]]
+            vec![vec!["Value1".to_string(), "Value2".to_string()]],
         ));
 
         // Test export to JSON

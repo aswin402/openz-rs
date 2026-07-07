@@ -17,7 +17,11 @@ pub struct BatchResult {
 }
 
 /// Helper function to walk directory recursively or flat.
-fn walk_dir(dir: &Path, pattern: &str, recursive: bool) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
+fn walk_dir(
+    dir: &Path,
+    pattern: &str,
+    recursive: bool,
+) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
     let mut files = Vec::new();
     let target_ext = pattern.trim_start_matches('*').trim_start_matches('.');
 
@@ -54,7 +58,15 @@ pub fn batch_convert(
     target_format: &str,
     output_dir: &str,
 ) -> Vec<BatchResult> {
-    batch_convert_extended(input_dir, pattern, target_format, output_dir, false, None, None)
+    batch_convert_extended(
+        input_dir,
+        pattern,
+        target_format,
+        output_dir,
+        false,
+        None,
+        None,
+    )
 }
 
 /// Batch conversion with advanced options (recursive traversal, password decryption, and threadpool control).
@@ -137,10 +149,10 @@ mod tests {
         // Use an atomic/unique subdirectory path to avoid collisions
         static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        
+
         let batch_in = dir.join(format!("test_batch_in_{}", id));
         let batch_out = dir.join(format!("test_batch_out_{}", id));
-        
+
         let _ = std::fs::create_dir_all(&batch_in);
         let _ = std::fs::create_dir_all(batch_in.join("subdir"));
 
@@ -164,7 +176,7 @@ mod tests {
         );
 
         assert_eq!(results.len(), 2);
-        
+
         let output1 = batch_out.join("doc1.md");
         let output2 = batch_out.join("subdir").join("doc2.md");
 

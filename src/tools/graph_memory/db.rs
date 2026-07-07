@@ -162,9 +162,7 @@ pub(crate) fn init_db() -> Result<Connection> {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let conn = Connection::open(&path).unwrap_or_else(|_| {
-        Connection::open_in_memory().unwrap()
-    });
+    let conn = Connection::open(&path).unwrap_or_else(|_| Connection::open_in_memory().unwrap());
     conn.execute_batch(&format!(
         "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; {}",
         SCHEMA_DDL
@@ -178,9 +176,14 @@ pub(crate) fn get_db_path() -> std::path::PathBuf {
     #[cfg(test)]
     {
         static TEST_DB_PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
-        TEST_DB_PATH.get_or_init(|| {
-            std::env::temp_dir().join(format!("openz_test_graph_memory_{}.db", uuid::Uuid::new_v4()))
-        }).clone()
+        TEST_DB_PATH
+            .get_or_init(|| {
+                std::env::temp_dir().join(format!(
+                    "openz_test_graph_memory_{}.db",
+                    uuid::Uuid::new_v4()
+                ))
+            })
+            .clone()
     }
     #[cfg(not(test))]
     {
@@ -197,20 +200,36 @@ where
     F: FnOnce(&Connection) -> Result<T>,
 {
     if let Some(mtx) = db_static().get() {
-        let guard = mtx.lock().map_err(|e| anyhow!("Graph memory lock error: {}", e))?;
+        let guard = mtx
+            .lock()
+            .map_err(|e| anyhow!("Graph memory lock error: {}", e))?;
         return f(&guard);
     }
     let conn = init_db()?;
     let mtx = db_static().get_or_init(|| Mutex::new(conn));
-    let guard = mtx.lock().map_err(|e| anyhow!("Graph memory lock error: {}", e))?;
+    let guard = mtx
+        .lock()
+        .map_err(|e| anyhow!("Graph memory lock error: {}", e))?;
     f(&guard)
 }
 
 // ─── Scope helpers ──────────────────────────────────────────────
 
 pub(crate) fn scope_from_args(args: &Value) -> (String, String, String) {
-    let user_id = args.get("userId").and_then(|v| v.as_str()).unwrap_or("*").to_string();
-    let session_id = args.get("sessionId").and_then(|v| v.as_str()).unwrap_or("*").to_string();
-    let agent_id = args.get("agentId").and_then(|v| v.as_str()).unwrap_or("*").to_string();
+    let user_id = args
+        .get("userId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("*")
+        .to_string();
+    let session_id = args
+        .get("sessionId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("*")
+        .to_string();
+    let agent_id = args
+        .get("agentId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("*")
+        .to_string();
     (user_id, session_id, agent_id)
 }

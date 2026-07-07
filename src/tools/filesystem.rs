@@ -1,6 +1,6 @@
-use crate::tools::Tool;
 use crate::config::resolve_path;
-use anyhow::{Result, anyhow, Context};
+use crate::tools::Tool;
+use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::path::Path;
 
@@ -8,7 +8,8 @@ fn verify_safe_path(path: &Path) -> Result<()> {
     let mut check_path = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        let workspace = crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone())
+        let workspace = crate::config::loader::ACTIVE_WORKSPACE
+            .try_with(|w| w.clone())
             .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
         workspace.join(path)
     };
@@ -25,7 +26,8 @@ fn verify_safe_path(path: &Path) -> Result<()> {
         }
     }
 
-    let workspace = crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone())
+    let workspace = crate::config::loader::ACTIVE_WORKSPACE
+        .try_with(|w| w.clone())
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
     if let Ok(w_canon) = workspace.canonicalize() {
         if check_path.starts_with(&w_canon) {
@@ -80,7 +82,8 @@ impl Tool for ReadFileTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let path_str = arguments.get("path")
+        let path_str = arguments
+            .get("path")
             .or(arguments.get("TargetFile"))
             .or(arguments.get("filepath"))
             .or(arguments.get("file"))
@@ -103,19 +106,25 @@ impl Tool for ReadFileTool {
 
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read file at {:?}", path))?;
-        
-        let start_line = arguments.get("start_line").and_then(|v| v.as_u64()).map(|v| v as usize);
-        let end_line = arguments.get("end_line").and_then(|v| v.as_u64()).map(|v| v as usize);
-        
+
+        let start_line = arguments
+            .get("start_line")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize);
+        let end_line = arguments
+            .get("end_line")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize);
+
         if start_line.is_some() || end_line.is_some() {
             let lines: Vec<&str> = content.lines().collect();
             let start = start_line.unwrap_or(1).saturating_sub(1);
             let end = end_line.unwrap_or(lines.len()).min(lines.len());
-            
+
             if start > lines.len() || start >= end {
                 return Ok(serde_json::Value::String(String::new()));
             }
-            
+
             let sliced = lines[start..end].join("\n");
             Ok(serde_json::Value::String(sliced))
         } else {
@@ -148,29 +157,31 @@ impl Tool for WriteFileTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let path_str = arguments.get("path")
+        let path_str = arguments
+            .get("path")
             .or(arguments.get("TargetFile"))
             .or(arguments.get("filepath"))
             .or(arguments.get("file"))
             .or(arguments.get("Path"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
-        let content = arguments.get("content")
+        let content = arguments
+            .get("content")
             .or(arguments.get("code"))
             .or(arguments.get("text"))
             .or(arguments.get("content_str"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'content' argument"))?;
-        
+
         let path = resolve_path(path_str);
         verify_safe_path(&path)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        
+
         fs::write(&path, content)
             .with_context(|| format!("Failed to write to file at {:?}", path))?;
-        
+
         Ok(serde_json::json!({ "status": "success", "path": path.to_string_lossy() }))
     }
 }
@@ -198,7 +209,8 @@ impl Tool for ListDirTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let path_str = arguments.get("path")
+        let path_str = arguments
+            .get("path")
             .or(arguments.get("TargetFile"))
             .or(arguments.get("filepath"))
             .or(arguments.get("file"))
@@ -207,22 +219,24 @@ impl Tool for ListDirTool {
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
         let path = resolve_path(path_str);
         verify_safe_path(&path)?;
-        
+
         let mut entries = Vec::new();
-        for entry in fs::read_dir(&path).with_context(|| format!("Failed to read directory at {:?}", path))? {
+        for entry in fs::read_dir(&path)
+            .with_context(|| format!("Failed to read directory at {:?}", path))?
+        {
             let entry = entry?;
             let file_name = entry.file_name().to_string_lossy().into_owned();
             let metadata = entry.metadata()?;
             let is_dir = metadata.is_dir();
             let size = metadata.len();
-            
+
             entries.push(serde_json::json!({
                 "name": file_name,
                 "is_dir": is_dir,
                 "size_bytes": size
             }));
         }
-        
+
         Ok(serde_json::Value::Array(entries))
     }
 }
@@ -251,15 +265,17 @@ impl Tool for PatchFileTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let path_str = arguments.get("path")
+        let path_str = arguments
+            .get("path")
             .or(arguments.get("TargetFile"))
             .or(arguments.get("filepath"))
             .or(arguments.get("file"))
             .or(arguments.get("Path"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
-        
-        let patch_str = arguments.get("patch")
+
+        let patch_str = arguments
+            .get("patch")
             .or(arguments.get("content"))
             .or(arguments.get("diff"))
             .and_then(|v| v.as_str())
@@ -267,7 +283,7 @@ impl Tool for PatchFileTool {
 
         let path = resolve_path(path_str);
         verify_safe_path(&path)?;
-        
+
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read file at {:?}", path))?;
 
@@ -310,35 +326,52 @@ impl Tool for ReplaceLinesTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let path_str = arguments.get("path")
+        let path_str = arguments
+            .get("path")
             .or(arguments.get("TargetFile"))
             .or(arguments.get("filepath"))
             .or(arguments.get("file"))
             .or(arguments.get("Path"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
-        
-        let start_line = arguments.get("start_line").and_then(|v| v.as_u64()).map(|v| v as usize)
+
+        let start_line = arguments
+            .get("start_line")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
             .ok_or_else(|| anyhow!("Missing 'start_line' argument"))?;
-        let end_line = arguments.get("end_line").and_then(|v| v.as_u64()).map(|v| v as usize)
+        let end_line = arguments
+            .get("end_line")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
             .ok_or_else(|| anyhow!("Missing 'end_line' argument"))?;
-        let replacement = arguments.get("replacement").and_then(|v| v.as_str())
+        let replacement = arguments
+            .get("replacement")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'replacement' argument"))?;
 
         if start_line == 0 || end_line == 0 || start_line > end_line {
-            return Err(anyhow!("Invalid line range: {} to {}", start_line, end_line));
+            return Err(anyhow!(
+                "Invalid line range: {} to {}",
+                start_line,
+                end_line
+            ));
         }
 
         let path = resolve_path(path_str);
         verify_safe_path(&path)?;
-        
+
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read file at {:?}", path))?;
-        
+
         let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-        
+
         if start_line > lines.len() + 1 {
-            return Err(anyhow!("start_line {} is beyond file line count {}", start_line, lines.len()));
+            return Err(anyhow!(
+                "start_line {} is beyond file line count {}",
+                start_line,
+                lines.len()
+            ));
         }
 
         let start_idx = start_line - 1;
@@ -399,7 +432,11 @@ impl FindFilesTool {
         Ok(results)
     }
 
-    fn walk_and_find(dir: &std::path::Path, re: &regex::Regex, results: &mut Vec<String>) -> Result<()> {
+    fn walk_and_find(
+        dir: &std::path::Path,
+        re: &regex::Regex,
+        results: &mut Vec<String>,
+    ) -> Result<()> {
         if let Ok(metadata) = dir.symlink_metadata() {
             if metadata.file_type().is_symlink() {
                 return Ok(());
@@ -475,9 +512,11 @@ impl Tool for FindFilesTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let pattern = arguments.get("pattern").and_then(|v| v.as_str())
+        let pattern = arguments
+            .get("pattern")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'pattern' argument"))?;
-        
+
         let search_dir_str = arguments.get("dir").and_then(|v| v.as_str()).unwrap_or(".");
         let search_dir = resolve_path(search_dir_str);
         verify_safe_path(&search_dir)?;
@@ -527,18 +566,23 @@ impl Tool for ZenflowEditTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let path_str = arguments.get("path")
+        let path_str = arguments
+            .get("path")
             .or(arguments.get("TargetFile"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' parameter"))?;
-        let content = arguments.get("content").and_then(|v| v.as_str())
+        let content = arguments
+            .get("content")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'content' parameter"))?;
-        let compile_cmd = arguments.get("compile_command").and_then(|v| v.as_str())
+        let compile_cmd = arguments
+            .get("compile_command")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'compile_command' parameter"))?;
 
         let path = resolve_path(path_str);
         verify_safe_path(&path)?;
-        
+
         let run_cmd = |cmd: String| async move {
             let mut command = tokio::process::Command::new("sh");
             crate::config::loader::set_tokio_command_cwd(&mut command);
@@ -574,7 +618,9 @@ impl Tool for ZenflowEditTool {
                 escaped
             };
             let _ = run_cmd(format!("git add -- {}", escaped_path)).await;
-            if let Ok((code, _)) = run_cmd("git commit -m \"Zenflow pre-edit backup\" --no-verify".to_string()).await {
+            if let Ok((code, _)) =
+                run_cmd("git commit -m \"Zenflow pre-edit backup\" --no-verify".to_string()).await
+            {
                 if code == 0 {
                     committed = true;
                 }
@@ -623,12 +669,16 @@ impl Tool for ZenflowEditTool {
                 reasoning_effort: None,
             };
 
-            if let Ok(resp) = self.provider.chat(system_prompt, &messages, &[], &settings).await {
+            if let Ok(resp) = self
+                .provider
+                .chat(system_prompt, &messages, &[], &settings)
+                .await
+            {
                 if let Some(healed_content) = resp.content {
                     let mut cleaned = healed_content.trim();
                     if cleaned.starts_with("```") {
                         if let Some(pos) = cleaned.find('\n') {
-                            cleaned = &cleaned[pos+1..];
+                            cleaned = &cleaned[pos + 1..];
                         }
                     }
                     if cleaned.ends_with("```") {
@@ -676,9 +726,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_files() -> Result<()> {
-        let temp_dir = std::env::temp_dir().join(format!("openz_find_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_find_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir)?;
-        
+
         let file_path = temp_dir.join("match_this.txt");
         std::fs::write(&file_path, "Hello world!")?;
 
@@ -692,16 +743,17 @@ mod tests {
         assert_eq!(res["status"], "success");
         let results = res["results"].as_array().unwrap();
         assert!(results.len() >= 1);
-        
+
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
     }
 
     #[tokio::test]
     async fn test_replace_lines() -> Result<()> {
-        let temp_dir = std::env::temp_dir().join(format!("openz_replace_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_replace_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir)?;
-        
+
         let file_path = temp_dir.join("test.txt");
         std::fs::write(&file_path, "line 1\nline 2\nline 3")?;
 
@@ -715,7 +767,7 @@ mod tests {
 
         let res = tool.call(&args).await?;
         assert_eq!(res["status"], "success");
-        
+
         let updated = std::fs::read_to_string(&file_path)?;
         assert_eq!(updated, "line 1\nreplaced line 2\nline 3");
 
@@ -723,4 +775,3 @@ mod tests {
         Ok(())
     }
 }
-

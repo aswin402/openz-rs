@@ -65,7 +65,12 @@ pub fn md_to_ir(md: &str, path: Option<&str>) -> Result<Document, String> {
     for event in parser {
         match event {
             Event::Start(Tag::Table(_)) => {
-                flush_para(&mut doc, &mut text_parts, &mut current_text, &mut current_heading_level);
+                flush_para(
+                    &mut doc,
+                    &mut text_parts,
+                    &mut current_text,
+                    &mut current_heading_level,
+                );
                 in_table = true;
                 current_headers.clear();
                 current_rows.clear();
@@ -100,20 +105,40 @@ pub fn md_to_ir(md: &str, path: Option<&str>) -> Result<Document, String> {
                 current_text.clear();
             }
             Event::Start(Tag::Heading { level, .. }) => {
-                flush_para(&mut doc, &mut text_parts, &mut current_text, &mut current_heading_level);
+                flush_para(
+                    &mut doc,
+                    &mut text_parts,
+                    &mut current_text,
+                    &mut current_heading_level,
+                );
                 current_heading_level = Some(level as u32);
             }
             Event::End(TagEnd::Heading(..)) => {
-                flush_para(&mut doc, &mut text_parts, &mut current_text, &mut current_heading_level);
+                flush_para(
+                    &mut doc,
+                    &mut text_parts,
+                    &mut current_text,
+                    &mut current_heading_level,
+                );
             }
             Event::Start(Tag::Paragraph) => {
                 if !in_table {
-                    flush_para(&mut doc, &mut text_parts, &mut current_text, &mut current_heading_level);
+                    flush_para(
+                        &mut doc,
+                        &mut text_parts,
+                        &mut current_text,
+                        &mut current_heading_level,
+                    );
                 }
             }
             Event::End(TagEnd::Paragraph) => {
                 if !in_table {
-                    flush_para(&mut doc, &mut text_parts, &mut current_text, &mut current_heading_level);
+                    flush_para(
+                        &mut doc,
+                        &mut text_parts,
+                        &mut current_text,
+                        &mut current_heading_level,
+                    );
                 }
             }
             Event::Text(text) => {
@@ -129,7 +154,12 @@ pub fn md_to_ir(md: &str, path: Option<&str>) -> Result<Document, String> {
         }
     }
 
-    flush_para(&mut doc, &mut text_parts, &mut current_text, &mut current_heading_level);
+    flush_para(
+        &mut doc,
+        &mut text_parts,
+        &mut current_text,
+        &mut current_heading_level,
+    );
 
     doc.text = Some(text_parts.join("\n"));
     doc.metadata.page_count = Some(1);

@@ -1,9 +1,9 @@
-use openmedia_mcp::{
-    OpenMediaServer, Parameters, VideoCreateRequest, VideoCreateSlideshowRequest,
-    VideoAddTransitionRequest, VideoAddAudioRequest, VideoFromTemplateRequest,
-    VideoPreviewRequest, VideoExtractFramesRequest, VideoTrimRequest,
-};
 use openmedia_core::Config;
+use openmedia_mcp::{
+    OpenMediaServer, Parameters, VideoAddAudioRequest, VideoAddTransitionRequest,
+    VideoCreateRequest, VideoCreateSlideshowRequest, VideoExtractFramesRequest,
+    VideoFromTemplateRequest, VideoPreviewRequest, VideoTrimRequest,
+};
 
 #[tokio::test]
 async fn test_mcp_video_generation_tools() {
@@ -77,8 +77,16 @@ async fn test_mcp_video_generation_tools() {
     // Create a dummy image for slideshow test
     let slideshow_img_path = temp_dir.path().join("slide1.png");
     let mut img_bytes = Vec::new();
-    let img = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(320, 240, image::Rgba([50, 100, 150, 255])));
-    img.write_to(&mut std::io::Cursor::new(&mut img_bytes), image::ImageFormat::Png).unwrap();
+    let img = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        320,
+        240,
+        image::Rgba([50, 100, 150, 255]),
+    ));
+    img.write_to(
+        &mut std::io::Cursor::new(&mut img_bytes),
+        image::ImageFormat::Png,
+    )
+    .unwrap();
     std::fs::write(&slideshow_img_path, &img_bytes).unwrap();
 
     // Test 3: video_create_slideshow
@@ -93,7 +101,10 @@ async fn test_mcp_video_generation_tools() {
         fps: Some(5),
         output_path: None,
     });
-    let res = server.video_create_slideshow(slideshow_params).await.unwrap();
+    let res = server
+        .video_create_slideshow(slideshow_params)
+        .await
+        .unwrap();
     let out: openmedia_core::VideoSpec = serde_json::from_value(res.0.into()).unwrap();
     assert_eq!(out.width, 320);
     assert_eq!(out.height, 240);
@@ -142,7 +153,11 @@ async fn test_mcp_video_generation_tools() {
 
     // Test 7: video_add_transition and video_add_audio on scene JSON file
     let scene_file_path = temp_dir.path().join("scene.json");
-    std::fs::write(&scene_file_path, serde_json::to_string_pretty(&scene_json).unwrap()).unwrap();
+    std::fs::write(
+        &scene_file_path,
+        serde_json::to_string_pretty(&scene_json).unwrap(),
+    )
+    .unwrap();
 
     let add_transition_params = Parameters(VideoAddTransitionRequest {
         scene_path: scene_file_path.to_str().unwrap().to_string(),
@@ -151,7 +166,10 @@ async fn test_mcp_video_generation_tools() {
         transition_type: "crossfade".to_string(),
         duration: Some(0.5),
     });
-    let res = server.video_add_transition(add_transition_params).await.unwrap();
+    let res = server
+        .video_add_transition(add_transition_params)
+        .await
+        .unwrap();
     let updated_scene = res.0;
     assert_eq!(updated_scene["transitions"].as_array().unwrap().len(), 1);
 

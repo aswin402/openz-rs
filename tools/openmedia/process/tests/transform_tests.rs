@@ -1,12 +1,16 @@
-use openmedia_process::{resize_image, ResizeMethod, write_image_with_format};
 use image::{DynamicImage, RgbaImage};
+use openmedia_process::{resize_image, write_image_with_format, ResizeMethod};
 
 #[test]
 fn test_resize_and_avif_encoding() {
-    let img = DynamicImage::ImageRgba8(RgbaImage::from_pixel(100, 100, image::Rgba([128, 128, 128, 255])));
+    let img = DynamicImage::ImageRgba8(RgbaImage::from_pixel(
+        100,
+        100,
+        image::Rgba([128, 128, 128, 255]),
+    ));
     let resized = resize_image(&img, 50, 50, ResizeMethod::Bilinear);
     assert_eq!(resized.width(), 50);
-    
+
     let bytes = write_image_with_format(&resized, "avif", 80).unwrap();
     assert!(!bytes.is_empty());
 

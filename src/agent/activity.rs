@@ -1,6 +1,6 @@
+use crate::config::loader::resolve_path;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use crate::config::loader::resolve_path;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AgentActivity {

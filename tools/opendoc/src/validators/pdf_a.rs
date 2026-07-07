@@ -43,21 +43,26 @@ pub fn validate_pdf_a(path: &Path) -> Result<PdfAValidationResult, lopdf::Error>
                 } else if type_name.as_name().ok() == Some(b"Font") {
                     // Check if it's embedded or a standard font
                     let mut font_is_embedded = false;
-                    
+
                     // Simple fonts can have /FontDescriptor which has /FontFile, /FontFile2, or /FontFile3
                     if let Ok(descriptor_obj) = dict.get(b"FontDescriptor") {
                         let descriptor = match descriptor_obj {
-                            Object::Reference(ref_id) => doc.get_object(*ref_id).ok().and_then(|o| o.as_dict().ok()),
+                            Object::Reference(ref_id) => {
+                                doc.get_object(*ref_id).ok().and_then(|o| o.as_dict().ok())
+                            }
                             Object::Dictionary(d) => Some(d),
                             _ => None,
                         };
                         if let Some(d) = descriptor {
-                            if d.get(b"FontFile").is_ok() || d.get(b"FontFile2").is_ok() || d.get(b"FontFile3").is_ok() {
+                            if d.get(b"FontFile").is_ok()
+                                || d.get(b"FontFile2").is_ok()
+                                || d.get(b"FontFile3").is_ok()
+                            {
                                 font_is_embedded = true;
                             }
                         }
                     }
-                    
+
                     // Type3 fonts are self-contained
                     if let Ok(subtype) = dict.get(b"Subtype") {
                         if subtype.as_name().ok() == Some(b"Type3") {
@@ -66,12 +71,16 @@ pub fn validate_pdf_a(path: &Path) -> Result<PdfAValidationResult, lopdf::Error>
                     }
 
                     if !font_is_embedded {
-                        let font_name = dict.get(b"BaseFont")
+                        let font_name = dict
+                            .get(b"BaseFont")
                             .ok()
                             .and_then(|o| o.as_name().ok())
                             .map(|n| String::from_utf8_lossy(n).into_owned())
                             .unwrap_or_else(|| "Unknown Font".to_string());
-                        errors.push(format!("Font '{}' is not embedded. All fonts must be embedded in PDF/A.", font_name));
+                        errors.push(format!(
+                            "Font '{}' is not embedded. All fonts must be embedded in PDF/A.",
+                            font_name
+                        ));
                     }
                 }
             }
@@ -80,13 +89,22 @@ pub fn validate_pdf_a(path: &Path) -> Result<PdfAValidationResult, lopdf::Error>
             if let Ok(action_type) = dict.get(b"S") {
                 if let Object::Name(ref name) = action_type {
                     if name == b"JavaScript" || name == b"JS" {
-                        errors.push("JavaScript action detected. JavaScript is forbidden in PDF/A.".to_string());
+                        errors.push(
+                            "JavaScript action detected. JavaScript is forbidden in PDF/A."
+                                .to_string(),
+                        );
                     } else if name == b"Launch" {
                         errors.push("Launch action detected. Launching external programs is forbidden in PDF/A.".to_string());
                     } else if name == b"Sound" {
-                        errors.push("Sound action detected. Audio/video content is forbidden in PDF/A.".to_string());
+                        errors.push(
+                            "Sound action detected. Audio/video content is forbidden in PDF/A."
+                                .to_string(),
+                        );
                     } else if name == b"Movie" {
-                        errors.push("Movie action detected. Audio/video content is forbidden in PDF/A.".to_string());
+                        errors.push(
+                            "Movie action detected. Audio/video content is forbidden in PDF/A."
+                                .to_string(),
+                        );
                     }
                 }
             }
@@ -94,7 +112,10 @@ pub fn validate_pdf_a(path: &Path) -> Result<PdfAValidationResult, lopdf::Error>
     }
 
     if !has_metadata {
-        errors.push("Metadata stream (XMP) is missing. PDF/A requires document-level XMP metadata.".to_string());
+        errors.push(
+            "Metadata stream (XMP) is missing. PDF/A requires document-level XMP metadata."
+                .to_string(),
+        );
     }
 
     if !has_output_intent {
@@ -109,17 +130,20 @@ pub fn validate_pdf_a(path: &Path) -> Result<PdfAValidationResult, lopdf::Error>
                     if let Ok(decompressed) = stream.decompressed_content() {
                         let xml_str = String::from_utf8_lossy(&decompressed);
                         if xml_str.contains("pdfaid:part") {
-                            let part = xml_str.split("pdfaid:part>")
+                            let part = xml_str
+                                .split("pdfaid:part>")
                                 .nth(1)
                                 .and_then(|s| s.split('<').next())
                                 .unwrap_or("1")
                                 .trim();
-                            let conformance = xml_str.split("pdfaid:conformance>")
+                            let conformance = xml_str
+                                .split("pdfaid:conformance>")
                                 .nth(1)
                                 .and_then(|s| s.split('<').next())
                                 .unwrap_or("B")
                                 .trim();
-                            detected_level = Some(format!("PDF/A-{}{}", part, conformance.to_uppercase()));
+                            detected_level =
+                                Some(format!("PDF/A-{}{}", part, conformance.to_uppercase()));
                         }
                     }
                 }

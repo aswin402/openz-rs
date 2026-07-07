@@ -32,7 +32,9 @@ pub struct SetWorkingMemoryTool;
 
 #[async_trait::async_trait]
 impl Tool for SetWorkingMemoryTool {
-    fn name(&self) -> &str { "set_working_memory" }
+    fn name(&self) -> &str {
+        "set_working_memory"
+    }
 
     fn description(&self) -> &str {
         "Set an ephemeral key-value pair in working memory, with an optional TTL (seconds)."
@@ -54,17 +56,24 @@ impl Tool for SetWorkingMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let key = arguments["key"].as_str().ok_or_else(|| anyhow!("Missing 'key'"))?;
-        let value = arguments["value"].as_str().ok_or_else(|| anyhow!("Missing 'value'"))?;
+        let key = arguments["key"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'key'"))?;
+        let value = arguments["value"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'value'"))?;
         let ttl = arguments.get("ttl").and_then(|v| v.as_u64()).unwrap_or(300);
         let (uid, sid, aid) = scope_from_args(arguments);
         let scoped = working_scoped_key(key, &uid, &sid, &aid);
 
-        let mut map = working_memory_static().lock().map_err(|e| anyhow!("Working memory lock error: {}", e))?;
-        
+        let mut map = working_memory_static()
+            .lock()
+            .map_err(|e| anyhow!("Working memory lock error: {}", e))?;
+
         // Eviction limit to prevent unbounded in-memory growth
         if !map.contains_key(&scoped) && map.len() >= 1000 {
-            let oldest_key = map.iter()
+            let oldest_key = map
+                .iter()
                 .min_by_key(|&(_, entry)| entry.created_at)
                 .map(|(k, _)| k.clone());
             if let Some(k) = oldest_key {
@@ -72,12 +81,15 @@ impl Tool for SetWorkingMemoryTool {
             }
         }
 
-        map.insert(scoped, WorkingEntry {
-            value: value.to_string(),
-            created_at: std::time::Instant::now(),
-            ttl_seconds: ttl,
-            access_count: 0,
-        });
+        map.insert(
+            scoped,
+            WorkingEntry {
+                value: value.to_string(),
+                created_at: std::time::Instant::now(),
+                ttl_seconds: ttl,
+                access_count: 0,
+            },
+        );
 
         Ok(json!({ "status": format!("Set working memory key '{}' (TTL: {}s)", key, ttl) }))
     }
@@ -89,7 +101,9 @@ pub struct GetWorkingMemoryTool;
 
 #[async_trait::async_trait]
 impl Tool for GetWorkingMemoryTool {
-    fn name(&self) -> &str { "get_working_memory" }
+    fn name(&self) -> &str {
+        "get_working_memory"
+    }
 
     fn description(&self) -> &str {
         "Retrieve an ephemeral value from working memory. Checks and handles TTL expiration."
@@ -109,11 +123,15 @@ impl Tool for GetWorkingMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let key = arguments["key"].as_str().ok_or_else(|| anyhow!("Missing 'key'"))?;
+        let key = arguments["key"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'key'"))?;
         let (uid, sid, aid) = scope_from_args(arguments);
         let scoped = working_scoped_key(key, &uid, &sid, &aid);
 
-        let mut map = working_memory_static().lock().map_err(|e| anyhow!("Working memory lock error: {}", e))?;
+        let mut map = working_memory_static()
+            .lock()
+            .map_err(|e| anyhow!("Working memory lock error: {}", e))?;
 
         if let Some(entry) = map.get(&scoped) {
             if entry.created_at.elapsed().as_secs() >= entry.ttl_seconds {
@@ -139,7 +157,9 @@ pub struct EvictExpiredWorkingMemoryTool;
 
 #[async_trait::async_trait]
 impl Tool for EvictExpiredWorkingMemoryTool {
-    fn name(&self) -> &str { "evict_expired_working_memory" }
+    fn name(&self) -> &str {
+        "evict_expired_working_memory"
+    }
 
     fn description(&self) -> &str {
         "Evict expired keys from working memory, promoting important ones (accessed >= 3 times) to semantic memory."
@@ -158,10 +178,13 @@ impl Tool for EvictExpiredWorkingMemoryTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let (uid, sid, aid) = scope_from_args(arguments);
-        let mut map = working_memory_static().lock().map_err(|e| anyhow!("Working memory lock error: {}", e))?;
+        let mut map = working_memory_static()
+            .lock()
+            .map_err(|e| anyhow!("Working memory lock error: {}", e))?;
         let mut evicted = 0usize;
 
-        let to_remove: Vec<String> = map.iter()
+        let to_remove: Vec<String> = map
+            .iter()
             .filter(|(_, e)| e.created_at.elapsed().as_secs() >= e.ttl_seconds)
             .map(|(k, _)| k.clone())
             .collect();
@@ -172,7 +195,8 @@ impl Tool for EvictExpiredWorkingMemoryTool {
                 if entry.access_count >= 3 {
                     // Promote to semantic memory
                     let fact_id = format!("working-promoted-{}", uuid::Uuid::new_v4());
-                    let raw_text = format!("Ephemeral working memory was promoted: {}", entry.value);
+                    let raw_text =
+                        format!("Ephemeral working memory was promoted: {}", entry.value);
                     let _ = store_semantic_fact(&fact_id, &raw_text, 0.8, &uid, &sid, &aid);
                 }
             }
@@ -188,7 +212,9 @@ pub struct PromoteWorkingMemoryTool;
 
 #[async_trait::async_trait]
 impl Tool for PromoteWorkingMemoryTool {
-    fn name(&self) -> &str { "promote_working_memory" }
+    fn name(&self) -> &str {
+        "promote_working_memory"
+    }
 
     fn description(&self) -> &str {
         "Manually promote a working memory entry to long-term semantic memory and remove it from working memory."
@@ -208,14 +234,21 @@ impl Tool for PromoteWorkingMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let key = arguments["key"].as_str().ok_or_else(|| anyhow!("Missing 'key'"))?;
+        let key = arguments["key"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'key'"))?;
         let (uid, sid, aid) = scope_from_args(arguments);
         let scoped = working_scoped_key(key, &uid, &sid, &aid);
 
-        let mut map = working_memory_static().lock().map_err(|e| anyhow!("Working memory lock error: {}", e))?;
+        let mut map = working_memory_static()
+            .lock()
+            .map_err(|e| anyhow!("Working memory lock error: {}", e))?;
         if let Some(entry) = map.remove(&scoped) {
             let fact_id = format!("working-promoted-{}", uuid::Uuid::new_v4());
-            let raw_text = format!("Ephemeral working memory under key '{}' was promoted: {}", key, entry.value);
+            let raw_text = format!(
+                "Ephemeral working memory under key '{}' was promoted: {}",
+                key, entry.value
+            );
             store_semantic_fact(&fact_id, &raw_text, 0.8, &uid, &sid, &aid)?;
             Ok(json!({ "status": format!("Promoted '{}' to semantic memory", key) }))
         } else {
@@ -226,7 +259,14 @@ impl Tool for PromoteWorkingMemoryTool {
 
 // ─── Semantic fact helper ────────────────────────────────────────
 
-pub(crate) fn store_semantic_fact(node_id: &str, text: &str, importance: f64, user_id: &str, session_id: &str, agent_id: &str) -> Result<()> {
+pub(crate) fn store_semantic_fact(
+    node_id: &str,
+    text: &str,
+    importance: f64,
+    user_id: &str,
+    session_id: &str,
+    agent_id: &str,
+) -> Result<()> {
     let timestamp = Utc::now().to_rfc3339();
     with_db(|conn| {
         conn.execute(

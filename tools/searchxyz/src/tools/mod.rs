@@ -264,7 +264,10 @@ impl SearchXyzServer {
     #[tool(
         description = "Fetch a URL and extract its content as clean markdown. Strips ads, nav, scripts. Returns page title and readable text."
     )]
-    pub async fn read_url(&self, req: Parameters<ReadUrlRequest>) -> Result<String, rmcp::ErrorData> {
+    pub async fn read_url(
+        &self,
+        req: Parameters<ReadUrlRequest>,
+    ) -> Result<String, rmcp::ErrorData> {
         let url = &req.0.url;
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return Err(rmcp::ErrorData::invalid_params(
@@ -580,7 +583,10 @@ impl SearchXyzServer {
     #[tool(
         description = "Map a website's structure by discovering all internal page URLs using sitemap.xml and/or fast recursive link crawling, without extracting page content."
     )]
-    pub async fn site_map(&self, req: Parameters<SiteMapRequest>) -> Result<String, rmcp::ErrorData> {
+    pub async fn site_map(
+        &self,
+        req: Parameters<SiteMapRequest>,
+    ) -> Result<String, rmcp::ErrorData> {
         let url = &req.0.url;
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return Err(rmcp::ErrorData::invalid_params(

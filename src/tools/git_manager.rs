@@ -49,7 +49,9 @@ impl Tool for GitManagerTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments.get("action").and_then(|v| v.as_str())
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
 
         let mut cmd = Command::new("git");
@@ -69,10 +71,14 @@ impl Tool for GitManagerTool {
                 cmd.args(["diff", "HEAD"]);
             }
             "add" => {
-                let files_arr = arguments.get("files").and_then(|v| v.as_array())
+                let files_arr = arguments
+                    .get("files")
+                    .and_then(|v| v.as_array())
                     .ok_or_else(|| anyhow!("Missing 'files' argument for 'add' action"))?;
                 if files_arr.is_empty() {
-                    return Err(anyhow!("At least one file must be specified for 'add' action"));
+                    return Err(anyhow!(
+                        "At least one file must be specified for 'add' action"
+                    ));
                 }
                 cmd.arg("add");
                 for f in files_arr {
@@ -82,8 +88,11 @@ impl Tool for GitManagerTool {
                 }
             }
             "commit" => {
-                let message = arguments.get("message").and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'message' argument for 'commit' action"))?.trim();
+                let message = arguments
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing 'message' argument for 'commit' action"))?
+                    .trim();
                 if message.is_empty() {
                     return Err(anyhow!("Commit message cannot be empty"));
                 }
@@ -116,23 +125,33 @@ mod tests {
 
     #[tokio::test]
     async fn test_git_manager_actions() -> Result<()> {
-        let temp_dir = std::env::temp_dir().join(format!("openz_git_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_git_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir)?;
 
         // Initialize git repo
         let init_status = Command::new("git")
             .arg("init")
             .current_dir(&temp_dir)
-            .status().await?;
-        
+            .status()
+            .await?;
+
         if !init_status.success() {
             let _ = std::fs::remove_dir_all(&temp_dir);
             return Ok(());
         }
 
         // Configure git locally
-        let _ = Command::new("git").args(&["config", "user.name", "Test User"]).current_dir(&temp_dir).status().await;
-        let _ = Command::new("git").args(&["config", "user.email", "test@example.com"]).current_dir(&temp_dir).status().await;
+        let _ = Command::new("git")
+            .args(&["config", "user.name", "Test User"])
+            .current_dir(&temp_dir)
+            .status()
+            .await;
+        let _ = Command::new("git")
+            .args(&["config", "user.email", "test@example.com"])
+            .current_dir(&temp_dir)
+            .status()
+            .await;
 
         let file_path = temp_dir.join("test.txt");
         std::fs::write(&file_path, "initial content")?;
@@ -141,35 +160,43 @@ mod tests {
         let cwd_str = temp_dir.to_str().unwrap();
 
         // 1. Git Status
-        let res = tool.call(&json!({
-            "action": "status",
-            "cwd": cwd_str
-        })).await?;
+        let res = tool
+            .call(&json!({
+                "action": "status",
+                "cwd": cwd_str
+            }))
+            .await?;
         assert_eq!(res["status"], "success");
         assert!(res["stdout"].as_str().unwrap().contains("test.txt"));
 
         // 2. Git Add
-        let res = tool.call(&json!({
-            "action": "add",
-            "files": ["test.txt"],
-            "cwd": cwd_str
-        })).await?;
+        let res = tool
+            .call(&json!({
+                "action": "add",
+                "files": ["test.txt"],
+                "cwd": cwd_str
+            }))
+            .await?;
         assert_eq!(res["status"], "success");
 
         // 3. Git Commit
-        let res = tool.call(&json!({
-            "action": "commit",
-            "message": "initial commit",
-            "cwd": cwd_str
-        })).await?;
+        let res = tool
+            .call(&json!({
+                "action": "commit",
+                "message": "initial commit",
+                "cwd": cwd_str
+            }))
+            .await?;
         assert_eq!(res["status"], "success");
 
         // 4. Git Log
-        let res = tool.call(&json!({
-            "action": "log",
-            "limit": 1,
-            "cwd": cwd_str
-        })).await?;
+        let res = tool
+            .call(&json!({
+                "action": "log",
+                "limit": 1,
+                "cwd": cwd_str
+            }))
+            .await?;
         assert_eq!(res["status"], "success");
         assert!(res["stdout"].as_str().unwrap().contains("initial commit"));
 

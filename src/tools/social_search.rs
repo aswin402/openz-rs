@@ -25,9 +25,11 @@ impl SocialSearchTool {
     }
 
     async fn search_reddit(&self, query: &str) -> Result<Value> {
-        let encoded = percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC).to_string();
+        let encoded =
+            percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC)
+                .to_string();
         let url = format!("https://old.reddit.com/search.json?q={}&limit=5", encoded);
-        
+
         let mut last_err = None;
         for attempt in 0..3 {
             let res = self.client.get(&url).send().await;
@@ -35,14 +37,34 @@ impl SocialSearchTool {
                 Ok(r) if r.status().is_success() => {
                     let resp_json: Value = r.json().await?;
                     let mut results = Vec::new();
-                    if let Some(children) = resp_json.get("data").and_then(|d| d.get("children")).and_then(|c| c.as_array()) {
+                    if let Some(children) = resp_json
+                        .get("data")
+                        .and_then(|d| d.get("children"))
+                        .and_then(|c| c.as_array())
+                    {
                         for child in children {
                             if let Some(data) = child.get("data") {
-                                let title = data.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                                let permalink = data.get("permalink").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                                let selftext = data.get("selftext").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                                let author = data.get("author").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                                
+                                let title = data
+                                    .get("title")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .to_string();
+                                let permalink = data
+                                    .get("permalink")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .to_string();
+                                let selftext = data
+                                    .get("selftext")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .to_string();
+                                let author = data
+                                    .get("author")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or_default()
+                                    .to_string();
+
                                 let url = format!("https://reddit.com{}", permalink);
                                 let snippet = if selftext.is_empty() {
                                     format!("Posted by u/{}", author)
@@ -63,7 +85,10 @@ impl SocialSearchTool {
                     return Ok(Value::Array(results));
                 }
                 Ok(r) if r.status().as_u16() == 429 => {
-                    last_err = Some(format!("Reddit rate-limited (HTTP 429) on attempt {}", attempt + 1));
+                    last_err = Some(format!(
+                        "Reddit rate-limited (HTTP 429) on attempt {}",
+                        attempt + 1
+                    ));
                     tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt))).await;
                     continue;
                 }
@@ -75,7 +100,10 @@ impl SocialSearchTool {
                 }
             }
         }
-        Err(anyhow!("Reddit search failed after 3 attempts: {}", last_err.unwrap_or_default()))
+        Err(anyhow!(
+            "Reddit search failed after 3 attempts: {}",
+            last_err.unwrap_or_default()
+        ))
     }
 
     async fn search_twitter(&self, _query: &str) -> Result<Value> {
@@ -85,7 +113,9 @@ impl SocialSearchTool {
     }
 
     async fn search_youtube(&self, query: &str) -> Result<Value> {
-        let encoded = percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC).to_string();
+        let encoded =
+            percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC)
+                .to_string();
         let mut results = Vec::new();
 
         // Primary: scrape YouTube search page directly
@@ -94,7 +124,8 @@ impl SocialSearchTool {
             if resp.status().is_success() {
                 if let Ok(text) = resp.text().await {
                     let re_id = regex::Regex::new(r#"/watch\?v=([a-zA-Z0-9_-]{11})"#).unwrap();
-                    let re_title = regex::Regex::new(r#""title":\{"runs":\[\{"text":"([^"]+)"\}"#).unwrap();
+                    let re_title =
+                        regex::Regex::new(r#""title":\{"runs":\[\{"text":"([^"]+)"\}"#).unwrap();
                     let mut video_ids = Vec::new();
                     for cap in re_id.captures_iter(&text).take(15) {
                         let vid = cap[1].to_string();
@@ -103,12 +134,17 @@ impl SocialSearchTool {
                         }
                     }
 
-                    let titles: Vec<String> = re_title.captures_iter(&text).take(10)
+                    let titles: Vec<String> = re_title
+                        .captures_iter(&text)
+                        .take(10)
                         .map(|cap| cap[1].to_string())
                         .collect();
 
                     for (i, vid) in video_ids.iter().take(5).enumerate() {
-                        let title = titles.get(i).cloned().unwrap_or_else(|| "YouTube Video".to_string());
+                        let title = titles
+                            .get(i)
+                            .cloned()
+                            .unwrap_or_else(|| "YouTube Video".to_string());
                         results.push(json!({
                             "title": title,
                             "url": format!("https://youtube.com/watch?v={}", vid),
@@ -120,19 +156,29 @@ impl SocialSearchTool {
         }
 
         if results.is_empty() {
-            Err(anyhow!("YouTube search returned no results. The page may have changed format."))
+            Err(anyhow!(
+                "YouTube search returned no results. The page may have changed format."
+            ))
         } else {
             Ok(Value::Array(results))
         }
     }
 
     async fn search_hacker_news(&self, query: &str) -> Result<Value> {
-        let encoded = percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC).to_string();
-        let url = format!("https://hn.algolia.com/api/v1/search?tags=story&hitsPerPage=5&query={}", encoded);
-        
+        let encoded =
+            percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC)
+                .to_string();
+        let url = format!(
+            "https://hn.algolia.com/api/v1/search?tags=story&hitsPerPage=5&query={}",
+            encoded
+        );
+
         let res = self.client.get(&url).send().await?;
         if !res.status().is_success() {
-            return Err(anyhow!("Hacker News request failed with HTTP {}", res.status()));
+            return Err(anyhow!(
+                "Hacker News request failed with HTTP {}",
+                res.status()
+            ));
         }
 
         let resp_json: Value = res.json().await?;
@@ -140,10 +186,21 @@ impl SocialSearchTool {
 
         if let Some(hits) = resp_json.get("hits").and_then(|h| h.as_array()) {
             for hit in hits {
-                let title = hit.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                let title = hit
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
                 let points = hit.get("points").and_then(|v| v.as_i64()).unwrap_or(0);
-                let num_comments = hit.get("num_comments").and_then(|v| v.as_i64()).unwrap_or(0);
-                let object_id = hit.get("objectID").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                let num_comments = hit
+                    .get("num_comments")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                let object_id = hit
+                    .get("objectID")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
                 let url = if let Some(u) = hit.get("url").and_then(|v| v.as_str()) {
                     u.to_string()
                 } else {
@@ -162,12 +219,20 @@ impl SocialSearchTool {
     }
 
     async fn search_polymarket(&self, query: &str) -> Result<Value> {
-        let encoded = percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC).to_string();
-        let url = format!("https://gamma-api.polymarket.com/markets?active=true&limit=5&q={}", encoded);
-        
+        let encoded =
+            percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC)
+                .to_string();
+        let url = format!(
+            "https://gamma-api.polymarket.com/markets?active=true&limit=5&q={}",
+            encoded
+        );
+
         let res = self.client.get(&url).send().await?;
         if !res.status().is_success() {
-            return Err(anyhow!("Polymarket API request failed with HTTP {}", res.status()));
+            return Err(anyhow!(
+                "Polymarket API request failed with HTTP {}",
+                res.status()
+            ));
         }
 
         let resp_json: Value = res.json().await?;
@@ -175,10 +240,14 @@ impl SocialSearchTool {
 
         if let Some(markets) = resp_json.as_array() {
             for m in markets {
-                let question = m.get("question").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                let question = m
+                    .get("question")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
                 let outcome_prices = m.get("outcomePrices").and_then(|v| v.as_array());
                 let outcomes = m.get("outcomes").and_then(|v| v.as_array());
-                
+
                 let mut price_info = String::new();
                 if let (Some(outs), Some(prices)) = (outcomes, outcome_prices) {
                     for (o, p) in outs.iter().zip(prices.iter()) {
@@ -186,14 +255,22 @@ impl SocialSearchTool {
                             if !price_info.is_empty() {
                                 price_info.push_str(", ");
                             }
-                            price_info.push_str(&format!("{}: {}c", o_str, (p_str.parse::<f32>().unwrap_or(0.0) * 100.0) as i32));
+                            price_info.push_str(&format!(
+                                "{}: {}c",
+                                o_str,
+                                (p_str.parse::<f32>().unwrap_or(0.0) * 100.0) as i32
+                            ));
                         }
                     }
                 }
 
                 let slug = m.get("slug").and_then(|v| v.as_str()).unwrap_or_default();
                 let url = format!("https://polymarket.com/event/{}", slug);
-                let description = m.get("description").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                let description = m
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
 
                 results.push(json!({
                     "title": question,
@@ -216,9 +293,15 @@ impl SocialSearchTool {
         );
 
         let mut errors = Vec::new();
-        if let Err(e) = &twitter { errors.push(format!("twitter: {}", e)); }
-        if let Err(e) = &youtube { errors.push(format!("youtube: {}", e)); }
-        if let Err(e) = &reddit { errors.push(format!("reddit: {}", e)); }
+        if let Err(e) = &twitter {
+            errors.push(format!("twitter: {}", e));
+        }
+        if let Err(e) = &youtube {
+            errors.push(format!("youtube: {}", e));
+        }
+        if let Err(e) = &reddit {
+            errors.push(format!("reddit: {}", e));
+        }
 
         Ok(json!({
             "reddit": reddit.unwrap_or_default(),
@@ -260,9 +343,13 @@ impl Tool for SocialSearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let platform = arguments.get("platform").and_then(|v| v.as_str())
+        let platform = arguments
+            .get("platform")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'platform' parameter"))?;
-        let query = arguments.get("query").and_then(|v| v.as_str())
+        let query = arguments
+            .get("query")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
 
         match platform {

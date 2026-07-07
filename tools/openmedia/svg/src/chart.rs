@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
-use openmedia_core::{Result, OpenMediaError};
 use crate::SvgBuilder;
+use openmedia_core::{OpenMediaError, Result};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChartPoint {
@@ -25,13 +25,15 @@ pub fn create_chart(
     let mut builder = SvgBuilder::new(width, height);
 
     // Dynamic background
-    builder.rect(0.0, 0.0, width as f64, height as f64)
+    builder
+        .rect(0.0, 0.0, width as f64, height as f64)
         .fill("#1a1a2e")
         .finish();
 
     // Standard title
     if let Some(t) = title {
-        builder.text(width as f64 / 2.0 - (t.len() as f64 * 4.0), 35.0, t)
+        builder
+            .text(width as f64 / 2.0 - (t.len() as f64 * 4.0), 35.0, t)
             .fill("#ffffff")
             .font_size(18.0)
             .font_family("sans-serif")
@@ -39,7 +41,7 @@ pub fn create_chart(
     }
 
     let palette = vec![
-        "#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2", "#4f46e5"
+        "#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2", "#4f46e5",
     ];
 
     match chart_type.to_lowercase().as_str() {
@@ -62,13 +64,21 @@ pub fn create_chart(
                 let y_val = margin_top + plot_height * (1.0 - ratio);
                 let label_val = ratio * max_val;
 
-                builder.path(&format!("M {} {} L {} {}", margin_left, y_val, width as f64 - margin_right, y_val))
+                builder
+                    .path(&format!(
+                        "M {} {} L {} {}",
+                        margin_left,
+                        y_val,
+                        width as f64 - margin_right,
+                        y_val
+                    ))
                     .stroke("#333355")
                     .stroke_width(1.0)
                     .fill("none")
                     .finish();
 
-                builder.text(10.0, y_val + 4.0, &format!("{:.1}", label_val))
+                builder
+                    .text(10.0, y_val + 4.0, &format!("{:.1}", label_val))
                     .fill("#94a3b8")
                     .font_size(10.0)
                     .font_family("sans-serif")
@@ -88,13 +98,15 @@ pub fn create_chart(
                 let y = margin_top + plot_height - bar_height;
                 let color = palette[i % palette.len()];
 
-                builder.rect(x, y, inner_bar_width, bar_height)
+                builder
+                    .rect(x, y, inner_bar_width, bar_height)
                     .fill(color)
                     .finish();
 
                 // Draw X-axis label
                 let label_x = x + inner_bar_width / 2.0 - (p.label.len() as f64 * 3.0);
-                builder.text(label_x, margin_top + plot_height + 20.0, &p.label)
+                builder
+                    .text(label_x, margin_top + plot_height + 20.0, &p.label)
                     .fill("#94a3b8")
                     .font_size(10.0)
                     .font_family("sans-serif")
@@ -120,13 +132,21 @@ pub fn create_chart(
                 let y_val = margin_top + plot_height * (1.0 - ratio);
                 let label_val = ratio * max_val;
 
-                builder.path(&format!("M {} {} L {} {}", margin_left, y_val, width as f64 - margin_right, y_val))
+                builder
+                    .path(&format!(
+                        "M {} {} L {} {}",
+                        margin_left,
+                        y_val,
+                        width as f64 - margin_right,
+                        y_val
+                    ))
                     .stroke("#333355")
                     .stroke_width(1.0)
                     .fill("none")
                     .finish();
 
-                builder.text(10.0, y_val + 4.0, &format!("{:.1}", label_val))
+                builder
+                    .text(10.0, y_val + 4.0, &format!("{:.1}", label_val))
                     .fill("#94a3b8")
                     .font_size(10.0)
                     .font_family("sans-serif")
@@ -153,7 +173,8 @@ pub fn create_chart(
                 }
             }
 
-            builder.path(&path_d)
+            builder
+                .path(&path_d)
                 .stroke("#3b82f6")
                 .stroke_width(3.0)
                 .fill("none")
@@ -169,7 +190,8 @@ pub fn create_chart(
                 };
                 let y = margin_top + plot_height - (p.value / max_val) * plot_height;
 
-                builder.circle(x, y, 5.0)
+                builder
+                    .circle(x, y, 5.0)
                     .fill("#ffffff")
                     .stroke("#3b82f6")
                     .stroke_width(2.0)
@@ -177,7 +199,8 @@ pub fn create_chart(
 
                 // Draw X-axis label
                 let label_x = x - (p.label.len() as f64 * 3.0);
-                builder.text(label_x, margin_top + plot_height + 20.0, &p.label)
+                builder
+                    .text(label_x, margin_top + plot_height + 20.0, &p.label)
                     .fill("#94a3b8")
                     .font_size(10.0)
                     .font_family("sans-serif")
@@ -193,9 +216,7 @@ pub fn create_chart(
 
             if total <= 0.0 {
                 // If total is 0 or negative, render a fallback circle
-                builder.circle(cx, cy, r)
-                    .fill("#475569")
-                    .finish();
+                builder.circle(cx, cy, r).fill("#475569").finish();
             } else {
                 let mut current_angle = -std::f64::consts::FRAC_PI_2; // start at 12 o'clock
                 let n = data.len();
@@ -210,7 +231,11 @@ pub fn create_chart(
                     let x2 = cx + r * next_angle.cos();
                     let y2 = cy + r * next_angle.sin();
 
-                    let large_arc_flag = if slice_angle > std::f64::consts::PI { 1 } else { 0 };
+                    let large_arc_flag = if slice_angle > std::f64::consts::PI {
+                        1
+                    } else {
+                        0
+                    };
 
                     let d = format!(
                         "M {} {} L {} {} A {} {} 0 {} 1 {} {} Z",
@@ -219,7 +244,8 @@ pub fn create_chart(
 
                     let color = palette[i % palette.len()];
 
-                    builder.path(&d)
+                    builder
+                        .path(&d)
                         .fill(color)
                         .stroke("#1a1a2e")
                         .stroke_width(1.5)
@@ -238,12 +264,22 @@ pub fn create_chart(
                 let p = &data[i];
                 let color = palette[i % palette.len()];
 
-                builder.rect(legend_x, legend_y, 15.0, 15.0)
+                builder
+                    .rect(legend_x, legend_y, 15.0, 15.0)
                     .fill(color)
                     .finish();
 
-                let percentage = if total > 0.0 { (p.value / total) * 100.0 } else { 0.0 };
-                builder.text(legend_x + 25.0, legend_y + 12.0, &format!("{}: {} ({:.1}%)", p.label, p.value, percentage))
+                let percentage = if total > 0.0 {
+                    (p.value / total) * 100.0
+                } else {
+                    0.0
+                };
+                builder
+                    .text(
+                        legend_x + 25.0,
+                        legend_y + 12.0,
+                        &format!("{}: {} ({:.1}%)", p.label, p.value, percentage),
+                    )
                     .fill("#ffffff")
                     .font_size(11.0)
                     .font_family("sans-serif")
@@ -270,15 +306,29 @@ pub fn create_chart(
                 let ratio = i as f64 / grid_count as f64;
                 let y_val = margin_top + plot_height * (1.0 - ratio);
                 let label_val = ratio * max_val;
-                builder.path(&format!("M {} {} L {} {}", margin_left, y_val, width as f64 - margin_right, y_val))
-                    .stroke("#333355").stroke_width(1.0).fill("none").finish();
-                builder.text(10.0, y_val + 4.0, &format!("{:.1}", label_val))
-                    .fill("#94a3b8").font_size(10.0).font_family("sans-serif").finish();
+                builder
+                    .path(&format!(
+                        "M {} {} L {} {}",
+                        margin_left,
+                        y_val,
+                        width as f64 - margin_right,
+                        y_val
+                    ))
+                    .stroke("#333355")
+                    .stroke_width(1.0)
+                    .fill("none")
+                    .finish();
+                builder
+                    .text(10.0, y_val + 4.0, &format!("{:.1}", label_val))
+                    .fill("#94a3b8")
+                    .font_size(10.0)
+                    .font_family("sans-serif")
+                    .finish();
             }
 
             let n = data.len();
             let y_base = margin_top + plot_height;
-            
+
             // 1. Build area polygon path
             let mut poly_points = format!("M {} {}", margin_left, y_base);
             for i in 0..n {
@@ -291,10 +341,15 @@ pub fn create_chart(
                 let y = margin_top + plot_height - (p.value / max_val) * plot_height;
                 poly_points.push_str(&format!(" L {} {}", x, y));
             }
-            let last_x = if n > 1 { margin_left + plot_width } else { margin_left + plot_width / 2.0 };
+            let last_x = if n > 1 {
+                margin_left + plot_width
+            } else {
+                margin_left + plot_width / 2.0
+            };
             poly_points.push_str(&format!(" L {} {} Z", last_x, y_base));
 
-            builder.path(&poly_points)
+            builder
+                .path(&poly_points)
                 .fill("#3b82f6")
                 .opacity(0.3)
                 .finish();
@@ -316,16 +371,28 @@ pub fn create_chart(
                     line_path.push_str(&format!(" L {} {}", x, y));
                 }
 
-                builder.circle(x, y, 4.0)
-                    .fill("#ffffff").stroke("#3b82f6").stroke_width(2.0).finish();
+                builder
+                    .circle(x, y, 4.0)
+                    .fill("#ffffff")
+                    .stroke("#3b82f6")
+                    .stroke_width(2.0)
+                    .finish();
 
                 // Labels
                 let label_x = x - (p.label.len() as f64 * 3.0);
-                builder.text(label_x, y_base + 20.0, &p.label)
-                    .fill("#94a3b8").font_size(10.0).font_family("sans-serif").finish();
+                builder
+                    .text(label_x, y_base + 20.0, &p.label)
+                    .fill("#94a3b8")
+                    .font_size(10.0)
+                    .font_family("sans-serif")
+                    .finish();
             }
-            builder.path(&line_path)
-                .stroke("#3b82f6").stroke_width(3.0).fill("none").finish();
+            builder
+                .path(&line_path)
+                .stroke("#3b82f6")
+                .stroke_width(3.0)
+                .fill("none")
+                .finish();
         }
         "scatter" => {
             let margin_left = 60.0;
@@ -345,10 +412,24 @@ pub fn create_chart(
                 let ratio = i as f64 / grid_count as f64;
                 let y_val = margin_top + plot_height * (1.0 - ratio);
                 let label_val = ratio * max_val;
-                builder.path(&format!("M {} {} L {} {}", margin_left, y_val, width as f64 - margin_right, y_val))
-                    .stroke("#333355").stroke_width(1.0).fill("none").finish();
-                builder.text(10.0, y_val + 4.0, &format!("{:.1}", label_val))
-                    .fill("#94a3b8").font_size(10.0).font_family("sans-serif").finish();
+                builder
+                    .path(&format!(
+                        "M {} {} L {} {}",
+                        margin_left,
+                        y_val,
+                        width as f64 - margin_right,
+                        y_val
+                    ))
+                    .stroke("#333355")
+                    .stroke_width(1.0)
+                    .fill("none")
+                    .finish();
+                builder
+                    .text(10.0, y_val + 4.0, &format!("{:.1}", label_val))
+                    .fill("#94a3b8")
+                    .font_size(10.0)
+                    .font_family("sans-serif")
+                    .finish();
             }
 
             let n = data.len();
@@ -364,17 +445,29 @@ pub fn create_chart(
                 let y = margin_top + plot_height - (p.value / max_val) * plot_height;
 
                 let color = palette[i % palette.len()];
-                builder.circle(x, y, 6.0)
-                    .fill(color).stroke("#ffffff").stroke_width(1.5).finish();
+                builder
+                    .circle(x, y, 6.0)
+                    .fill(color)
+                    .stroke("#ffffff")
+                    .stroke_width(1.5)
+                    .finish();
 
                 // Value label above dot
-                builder.text(x - 10.0, y - 10.0, &format!("{:.1}", p.value))
-                    .fill("#ffffff").font_size(9.0).font_family("sans-serif").finish();
+                builder
+                    .text(x - 10.0, y - 10.0, &format!("{:.1}", p.value))
+                    .fill("#ffffff")
+                    .font_size(9.0)
+                    .font_family("sans-serif")
+                    .finish();
 
                 // X-axis labels
                 let label_x = x - (p.label.len() as f64 * 3.0);
-                builder.text(label_x, y_base + 20.0, &p.label)
-                    .fill("#94a3b8").font_size(10.0).font_family("sans-serif").finish();
+                builder
+                    .text(label_x, y_base + 20.0, &p.label)
+                    .fill("#94a3b8")
+                    .font_size(10.0)
+                    .font_family("sans-serif")
+                    .finish();
             }
         }
         "radar" => {
@@ -392,9 +485,10 @@ pub fn create_chart(
                 let ratio = i as f64 / ring_count as f64;
                 let ring_r = r * ratio;
                 let mut grid_path = String::new();
-                
+
                 for j in 0..n {
-                    let angle = j as f64 * (2.0 * std::f64::consts::PI / n as f64) - std::f64::consts::FRAC_PI_2;
+                    let angle = j as f64 * (2.0 * std::f64::consts::PI / n as f64)
+                        - std::f64::consts::FRAC_PI_2;
                     let x = cx + ring_r * angle.cos();
                     let y = cy + ring_r * angle.sin();
                     if j == 0 {
@@ -404,32 +498,45 @@ pub fn create_chart(
                     }
                 }
                 grid_path.push_str(" Z");
-                builder.path(&grid_path)
-                    .stroke("#333355").stroke_width(1.0).fill("none").finish();
+                builder
+                    .path(&grid_path)
+                    .stroke("#333355")
+                    .stroke_width(1.0)
+                    .fill("none")
+                    .finish();
             }
 
             // Draw spokes (lines from center to outer ring vertices)
             let mut data_path = String::new();
             for j in 0..n {
-                let angle = j as f64 * (2.0 * std::f64::consts::PI / n as f64) - std::f64::consts::FRAC_PI_2;
+                let angle = j as f64 * (2.0 * std::f64::consts::PI / n as f64)
+                    - std::f64::consts::FRAC_PI_2;
                 let outer_x = cx + r * angle.cos();
                 let outer_y = cy + r * angle.sin();
-                
-                builder.path(&format!("M {} {} L {} {}", cx, cy, outer_x, outer_y))
-                    .stroke("#333355").stroke_width(1.0).fill("none").finish();
+
+                builder
+                    .path(&format!("M {} {} L {} {}", cx, cy, outer_x, outer_y))
+                    .stroke("#333355")
+                    .stroke_width(1.0)
+                    .fill("none")
+                    .finish();
 
                 // Labels
                 let label_dist = r + 20.0;
                 let label_x = cx + label_dist * angle.cos() - (data[j].label.len() as f64 * 3.0);
                 let label_y = cy + label_dist * angle.sin() + 4.0;
-                builder.text(label_x, label_y, &data[j].label)
-                    .fill("#94a3b8").font_size(11.0).font_family("sans-serif").finish();
+                builder
+                    .text(label_x, label_y, &data[j].label)
+                    .fill("#94a3b8")
+                    .font_size(11.0)
+                    .font_family("sans-serif")
+                    .finish();
 
                 // Data point coord
                 let val_r = r * (data[j].value / max_val);
                 let val_x = cx + val_r * angle.cos();
                 let val_y = cy + val_r * angle.sin();
-                
+
                 if j == 0 {
                     data_path.push_str(&format!("M {} {}", val_x, val_y));
                 } else {
@@ -439,20 +546,32 @@ pub fn create_chart(
             data_path.push_str(" Z");
 
             // Draw data polygon area
-            builder.path(&data_path)
-                .fill("#3b82f6").opacity(0.35).finish();
-            builder.path(&data_path)
-                .stroke("#3b82f6").stroke_width(2.5).fill("none").finish();
+            builder
+                .path(&data_path)
+                .fill("#3b82f6")
+                .opacity(0.35)
+                .finish();
+            builder
+                .path(&data_path)
+                .stroke("#3b82f6")
+                .stroke_width(2.5)
+                .fill("none")
+                .finish();
 
             // Draw circles on data vertices
             for j in 0..n {
-                let angle = j as f64 * (2.0 * std::f64::consts::PI / n as f64) - std::f64::consts::FRAC_PI_2;
+                let angle = j as f64 * (2.0 * std::f64::consts::PI / n as f64)
+                    - std::f64::consts::FRAC_PI_2;
                 let val_r = r * (data[j].value / max_val);
                 let val_x = cx + val_r * angle.cos();
                 let val_y = cy + val_r * angle.sin();
-                
-                builder.circle(val_x, val_y, 4.0)
-                    .fill("#ffffff").stroke("#3b82f6").stroke_width(2.0).finish();
+
+                builder
+                    .circle(val_x, val_y, 4.0)
+                    .fill("#ffffff")
+                    .stroke("#3b82f6")
+                    .stroke_width(2.0)
+                    .finish();
             }
         }
         other => {

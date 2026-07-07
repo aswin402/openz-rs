@@ -1,5 +1,5 @@
 use image::DynamicImage;
-use openmedia_core::{Result, OpenMediaError};
+use openmedia_core::{OpenMediaError, Result};
 
 pub fn write_image_with_format(img: &DynamicImage, format: &str, quality: u8) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
@@ -29,16 +29,21 @@ pub fn write_image_with_format(img: &DynamicImage, format: &str, quality: u8) ->
                 })?;
         }
         "avif" => {
-            img.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Avif)
-                .map_err(|e| OpenMediaError::ImageEncodeError {
-                    format: "avif".to_string(),
-                    reason: e.to_string(),
-                })?;
+            img.write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Avif,
+            )
+            .map_err(|e| OpenMediaError::ImageEncodeError {
+                format: "avif".to_string(),
+                reason: e.to_string(),
+            })?;
         }
-        _ => return Err(OpenMediaError::ImageEncodeError {
-            format: format.to_string(),
-            reason: "Unsupported format".to_string(),
-        }),
+        _ => {
+            return Err(OpenMediaError::ImageEncodeError {
+                format: format.to_string(),
+                reason: "Unsupported format".to_string(),
+            })
+        }
     }
     Ok(bytes)
 }

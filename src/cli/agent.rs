@@ -2,44 +2,15 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::config::loader::{load_config, resolve_path};
-use crate::session::SessionManager;
-use crate::agent::style::{HistoryItem, select_menu_with_history};
-use crate::cli::builder::build_agent_loop;
-use crate::cron::scheduler::start_scheduler;
+use crate::agent::style::{select_menu_with_history, HistoryItem};
 use crate::channels::{
-    CliChannel, WsGateway, TelegramChannel, DiscordChannel, WhatsAppChannel, EmailChannel, Channel,
+    Channel, CliChannel, DiscordChannel, EmailChannel, TelegramChannel, WhatsAppChannel, WsGateway,
 };
-
-#[allow(unused_macros)]
-macro_rules! println {
-    () => {
-        crate::tui_println!()
-    };
-    ($($arg:tt)*) => {
-        crate::tui_println!($($arg)*)
-    };
-}
-
-#[allow(unused_macros)]
-macro_rules! print {
-    () => {
-        crate::tui_print!()
-    };
-    ($($arg:tt)*) => {
-        crate::tui_print!($($arg)*)
-    };
-}
-
-#[allow(unused_macros)]
-macro_rules! eprintln {
-    () => {
-        crate::tui_println!()
-    };
-    ($($arg:tt)*) => {
-        crate::tui_println!($($arg)*)
-    };
-}
+use crate::cli::builder::build_agent_loop;
+use crate::config::loader::{load_config, resolve_path};
+use crate::cron::scheduler::start_scheduler;
+use crate::session::SessionManager;
+use crate::{eprintln, println};
 
 #[derive(Deserialize)]
 struct SessionMetadataOnly {
@@ -59,7 +30,7 @@ pub fn load_session_history() -> Result<Vec<HistoryItem>> {
     if !sessions_dir.exists() {
         return Ok(Vec::new());
     }
-    
+
     let mut items = Vec::new();
     for entry in std::fs::read_dir(sessions_dir)? {
         let entry = entry?;
@@ -68,7 +39,9 @@ pub fn load_session_history() -> Result<Vec<HistoryItem>> {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(session) = serde_json::from_str::<SessionMetadataOnly>(&content) {
                     if !session.messages.is_empty() {
-                        let preview = session.messages.iter()
+                        let preview = session
+                            .messages
+                            .iter()
                             .find(|m| m.role == "user")
                             .map(|m| {
                                 let mut text = m.content.clone();
@@ -79,7 +52,7 @@ pub fn load_session_history() -> Result<Vec<HistoryItem>> {
                                 text
                             })
                             .unwrap_or_else(|| "Empty session".to_string());
-                            
+
                         items.push(HistoryItem {
                             key: session.key.clone(),
                             display_title: preview,
@@ -90,20 +63,23 @@ pub fn load_session_history() -> Result<Vec<HistoryItem>> {
             }
         }
     }
-    
+
     items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     Ok(items)
 }
 
-pub async fn archive_current_session(session_manager: &SessionManager) -> Result<()> {
-    if let Ok(mut current_session) = session_manager.load("cli:direct") {
+pub async fn archive_current_session(
+    session_manager: &SessionManager,
+    session_key: &str,
+) -> Result<()> {
+    if let Ok(mut current_session) = session_manager.load(session_key) {
         if !current_session.messages.is_empty() {
             let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
             let archive_key = format!("cli:history_{}", timestamp);
             current_session.key = archive_key;
             session_manager.save(&current_session).await?;
-            
-            let empty_session = crate::session::Session::new("cli:direct");
+
+            let empty_session = crate::session::Session::new(session_key);
             session_manager.save(&empty_session).await?;
         }
     }
@@ -113,6 +89,7 @@ pub async fn archive_current_session(session_manager: &SessionManager) -> Result
 pub async fn handle_agent() -> Result<()> {
     let config = load_config()?;
     let defaults = config.agents.defaults.clone();
+    let session_key = crate::config::loader::get_cli_session_key();
     start_scheduler(config.clone());
 
     let sessions_dir = resolve_path("~/.openz/sessions");
@@ -120,17 +97,17 @@ pub async fn handle_agent() -> Result<()> {
 
     let history = load_session_history()?;
     if history.is_empty() {
-        archive_current_session(&session_manager).await?;
+        archive_current_session(&session_manager, &session_key).await?;
     } else {
         let selected = select_menu_with_history("Welcome to OpenZ! Select an option:", &history)?;
         if selected == 0 {
-            archive_current_session(&session_manager).await?;
+            archive_current_session(&session_manager, &session_key).await?;
         } else {
             let selected_item = &history[selected - 1];
-            if selected_item.key != "cli:direct" {
-                archive_current_session(&session_manager).await?;
+            if selected_item.key != session_key {
+                archive_current_session(&session_manager, &session_key).await?;
                 let mut session = session_manager.load(&selected_item.key)?;
-                session.key = "cli:direct".to_string();
+                session.key = session_key.clone();
                 session_manager.save(&session).await?;
             }
         }
@@ -241,14 +218,11 @@ pub async fn handle_agent() -> Result<()> {
                 eprintln!("TUI error: {}", e);
             }
         }
-        _ = tokio::signal::ctrl_c() => {
-            println!("\r\nExiting OpenZ...");
-        }
         _ = shutdown_rx.changed() => {
             println!("\r\nExiting OpenZ...");
         }
     }
-    
+
     crate::channels::shutdown_gateways(&config).await;
     Ok(())
 }

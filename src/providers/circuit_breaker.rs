@@ -94,9 +94,7 @@ impl CircuitBreaker {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .check()
-            .map_err(|_| {
-                "Provider circuit breaker is open — too many recent failures".to_string()
-            })
+            .map_err(|_| "Provider circuit breaker is open — too many recent failures".to_string())
     }
 
     /// Record a successful API call.
@@ -205,7 +203,9 @@ where
                     // Non-retryable — return the error immediately.
                     return Err(anyhow::anyhow!(
                         "Provider '{}' error (HTTP {}): {}",
-                        provider_name, status, error_text
+                        provider_name,
+                        status,
+                        error_text
                     ));
                 }
             }

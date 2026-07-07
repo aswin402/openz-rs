@@ -110,9 +110,7 @@ mod tests {
         let mut doc = Document::new("csv");
         doc.tables.push(Table {
             headers: vec!["Name".to_string(), "City".to_string()],
-            rows: vec![
-                vec!["Alice".to_string(), "NYC".to_string()],
-            ],
+            rows: vec![vec!["Alice".to_string(), "NYC".to_string()]],
             caption: None,
         });
         let count = replace_text(&mut doc, "NYC", "LA");

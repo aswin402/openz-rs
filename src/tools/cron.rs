@@ -1,6 +1,6 @@
-use crate::tools::Tool;
 use crate::cron::{load_jobs, CronJob};
-use anyhow::{Result, anyhow};
+use crate::tools::Tool;
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 
 pub struct ScheduleJobTool;
@@ -37,11 +37,17 @@ impl Tool for ScheduleJobTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let id = arguments.get("id").and_then(|v| v.as_str())
+        let id = arguments
+            .get("id")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'id' argument"))?;
-        let schedule = arguments.get("schedule").and_then(|v| v.as_str())
+        let schedule = arguments
+            .get("schedule")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'schedule' argument"))?;
-        let prompt = arguments.get("prompt").and_then(|v| v.as_str())
+        let prompt = arguments
+            .get("prompt")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'prompt' argument"))?;
 
         if crate::cron::calculate_next_run(schedule, None).is_none() {
@@ -107,7 +113,7 @@ impl Tool for ListJobsTool {
         Ok(serde_json::Value::Array(
             jobs.into_iter()
                 .filter_map(|j| serde_json::to_value(j).ok())
-                .collect()
+                .collect(),
         ))
     }
 }
@@ -138,7 +144,9 @@ impl Tool for RemoveJobTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let id = arguments.get("id").and_then(|v| v.as_str())
+        let id = arguments
+            .get("id")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'id' argument"))?;
 
         let id_str = id.to_string();

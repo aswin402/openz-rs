@@ -1,12 +1,14 @@
-use crate::tools::Tool;
 use crate::config::resolve_path;
-use crate::tools::browser_common::{connect_to_tab, ensure_browser_running, kill_browser_on_port_9222, send_cdp_cmd};
+use crate::tools::browser_common::{
+    connect_to_tab, ensure_browser_running, kill_browser_on_port_9222, send_cdp_cmd,
+};
+use crate::tools::Tool;
 use anyhow::{anyhow, Result};
+use base64::prelude::*;
 use serde_json::{json, Value};
 use std::fs;
 use std::time::Duration;
 use tokio::time::sleep;
-use base64::prelude::*;
 
 pub struct HtmlToVideoTool;
 
@@ -76,64 +78,92 @@ impl Tool for HtmlToVideoTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let html_path_str = arguments.get("html_path").and_then(|v| v.as_str())
+        let html_path_str = arguments
+            .get("html_path")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'html_path' parameter"))?;
-        
-        let output_path_str = arguments.get("output_path").and_then(|v| v.as_str()).unwrap_or("output.mp4");
+
+        let output_path_str = arguments
+            .get("output_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("output.mp4");
         let output_path = resolve_path(output_path_str);
 
-        let width = arguments.get("width").and_then(|v| v.as_i64()).unwrap_or(1920);
-        let height = arguments.get("height").and_then(|v| v.as_i64()).unwrap_or(1080);
+        let width = arguments
+            .get("width")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1920);
+        let height = arguments
+            .get("height")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1080);
         let fps = arguments.get("fps").and_then(|v| v.as_i64()).unwrap_or(30);
-        let duration_secs = arguments.get("duration_seconds").and_then(|v| v.as_f64()).unwrap_or(5.0);
+        let duration_secs = arguments
+            .get("duration_seconds")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(5.0);
         let tick_js = arguments.get("tick_js").and_then(|v| v.as_str());
-        let settle_ms = arguments.get("settle_ms").and_then(|v| v.as_i64()).unwrap_or(30).max(0) as u64;
-        let load_delay_ms = arguments.get("load_delay_ms").and_then(|v| v.as_i64()).unwrap_or(1500);
+        let settle_ms = arguments
+            .get("settle_ms")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(30)
+            .max(0) as u64;
+        let load_delay_ms = arguments
+            .get("load_delay_ms")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1500);
 
         let total_frames = (duration_secs * fps as f64).round() as usize;
         if total_frames == 0 {
-            return Err(anyhow!("Total frames cannot be zero. Adjust duration or FPS."));
+            return Err(anyhow!(
+                "Total frames cannot be zero. Adjust duration or FPS."
+            ));
         }
 
         let mut _server_guard = ServerGuard(None);
-        let target_url = if html_path_str.starts_with("http://") || html_path_str.starts_with("https://") {
-            html_path_str.to_string()
-        } else {
-            let mut raw_path = if let Some(stripped) = html_path_str.strip_prefix("file://") {
-                std::path::PathBuf::from(stripped)
+        let target_url =
+            if html_path_str.starts_with("http://") || html_path_str.starts_with("https://") {
+                html_path_str.to_string()
             } else {
-                resolve_path(html_path_str)
-            };
-            if !raw_path.is_absolute() {
-                if let Ok(cwd) = std::env::current_dir() {
-                    raw_path = cwd.join(raw_path);
+                let mut raw_path = if let Some(stripped) = html_path_str.strip_prefix("file://") {
+                    std::path::PathBuf::from(stripped)
+                } else {
+                    resolve_path(html_path_str)
+                };
+                if !raw_path.is_absolute() {
+                    if let Ok(cwd) = std::env::current_dir() {
+                        raw_path = cwd.join(raw_path);
+                    }
                 }
-            }
 
-            let parent_dir = raw_path.parent().unwrap_or(&raw_path).to_path_buf();
-            let filename = raw_path.file_name().and_then(|n| n.to_str()).unwrap_or("index.html").to_string();
+                let parent_dir = raw_path.parent().unwrap_or(&raw_path).to_path_buf();
+                let filename = raw_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("index.html")
+                    .to_string();
 
-            match tokio::net::TcpListener::bind("127.0.0.1:0").await {
-                Ok(listener) => {
-                    if let Ok(addr) = listener.local_addr() {
-                        let port = addr.port();
-                        let app = axum::Router::new()
-                            .nest_service("/", tower_http::services::ServeDir::new(&parent_dir))
-                            .layer(axum::middleware::from_fn(force_utf8));
-                        let handle = tokio::spawn(async move {
-                            let _ = axum::serve(listener, app).await;
-                        });
-                        _server_guard.0 = Some(handle);
-                        format!("http://127.0.0.1:{}/{}", port, filename)
-                    } else {
+                match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+                    Ok(listener) => {
+                        if let Ok(addr) = listener.local_addr() {
+                            let port = addr.port();
+                            let app = axum::Router::new()
+                                .nest_service("/", tower_http::services::ServeDir::new(&parent_dir))
+                                .layer(axum::middleware::from_fn(force_utf8));
+                            let handle = tokio::spawn(async move {
+                                let _ = axum::serve(listener, app).await;
+                            });
+                            _server_guard.0 = Some(handle);
+                            format!("http://127.0.0.1:{}/{}", port, filename)
+                        } else {
+                            format!("file://{}", raw_path.to_string_lossy())
+                        }
+                    }
+                    Err(_) => {
                         format!("file://{}", raw_path.to_string_lossy())
                     }
                 }
-                Err(_) => {
-                    format!("file://{}", raw_path.to_string_lossy())
-                }
-            }
-        };
+            };
 
         let uuid = uuid::Uuid::new_v4().to_string();
         let temp_frames_dir = std::env::temp_dir().join(format!("openz_html_video_{}", uuid));
@@ -142,72 +172,108 @@ impl Tool for HtmlToVideoTool {
         ensure_browser_running().await?;
 
         let client = reqwest::Client::new();
-        let mut res = client.put("http://127.0.0.1:9222/json/new")
-            .send()
-            .await;
-        
+        let mut res = client.put("http://127.0.0.1:9222/json/new").send().await;
+
         if !matches!(&res, Ok(r) if r.status().is_success()) {
-            res = client.get("http://127.0.0.1:9222/json/new")
-                .send()
-                .await;
+            res = client.get("http://127.0.0.1:9222/json/new").send().await;
         }
-        
+
         if !matches!(&res, Ok(r) if r.status().is_success()) {
             kill_browser_on_port_9222();
             sleep(Duration::from_millis(500)).await;
             ensure_browser_running().await?;
-            res = client.put("http://127.0.0.1:9222/json/new")
-                .send()
-                .await;
+            res = client.put("http://127.0.0.1:9222/json/new").send().await;
             if !matches!(&res, Ok(r) if r.status().is_success()) {
-                res = client.get("http://127.0.0.1:9222/json/new")
-                    .send()
-                    .await;
+                res = client.get("http://127.0.0.1:9222/json/new").send().await;
             }
         }
 
         let tab_info: Value = res?.json().await?;
-        let web_socket_debugger_url = tab_info.get("webSocketDebuggerUrl")
+        let web_socket_debugger_url = tab_info
+            .get("webSocketDebuggerUrl")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("No webSocketDebuggerUrl returned from browser tab"))?;
 
         let (mut write, mut read) = connect_to_tab(web_socket_debugger_url).await?;
         let mut message_id = 0u64;
 
-        let _ = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Page.enable", json!({})).await?;
-        let _ = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.enable", json!({})).await?;
+        let _ = send_cdp_cmd(
+            &mut write,
+            &mut read,
+            &mut message_id,
+            "Page.enable",
+            json!({}),
+        )
+        .await?;
+        let _ = send_cdp_cmd(
+            &mut write,
+            &mut read,
+            &mut message_id,
+            "Runtime.enable",
+            json!({}),
+        )
+        .await?;
 
-        let _ = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Emulation.setDeviceMetricsOverride", json!({
-            "width": width,
-            "height": height,
-            "deviceScaleFactor": 1,
-            "mobile": false
-        })).await?;
+        let _ = send_cdp_cmd(
+            &mut write,
+            &mut read,
+            &mut message_id,
+            "Emulation.setDeviceMetricsOverride",
+            json!({
+                "width": width,
+                "height": height,
+                "deviceScaleFactor": 1,
+                "mobile": false
+            }),
+        )
+        .await?;
 
-        let _ = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Page.navigate", json!({
-            "url": target_url
-        })).await?;
+        let _ = send_cdp_cmd(
+            &mut write,
+            &mut read,
+            &mut message_id,
+            "Page.navigate",
+            json!({
+                "url": target_url
+            }),
+        )
+        .await?;
 
         sleep(Duration::from_millis(load_delay_ms as u64)).await;
 
         for frame in 0..total_frames {
             if let Some(js) = tick_js {
                 let js_injected = js.replace("{frame}", &frame.to_string());
-                let _ = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Runtime.evaluate", json!({
-                    "expression": js_injected,
-                    "returnByValue": true
-                })).await?;
+                let _ = send_cdp_cmd(
+                    &mut write,
+                    &mut read,
+                    &mut message_id,
+                    "Runtime.evaluate",
+                    json!({
+                        "expression": js_injected,
+                        "returnByValue": true
+                    }),
+                )
+                .await?;
             }
 
             if settle_ms > 0 {
                 sleep(Duration::from_millis(settle_ms)).await;
             }
 
-            let screenshot_res = send_cdp_cmd(&mut write, &mut read, &mut message_id, "Page.captureScreenshot", json!({
-                "format": "png"
-            })).await?;
+            let screenshot_res = send_cdp_cmd(
+                &mut write,
+                &mut read,
+                &mut message_id,
+                "Page.captureScreenshot",
+                json!({
+                    "format": "png"
+                }),
+            )
+            .await?;
 
-            let base64_data = screenshot_res.pointer("/result/data")
+            let base64_data = screenshot_res
+                .pointer("/result/data")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Failed to capture screenshot data for frame {}", frame))?;
 
@@ -217,7 +283,10 @@ impl Tool for HtmlToVideoTool {
         }
 
         let target_id = tab_info.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        let _ = client.get(format!("http://127.0.0.1:9222/json/close/{}", target_id)).send().await;
+        let _ = client
+            .get(format!("http://127.0.0.1:9222/json/close/{}", target_id))
+            .send()
+            .await;
 
         if let Some(parent) = output_path.parent() {
             fs::create_dir_all(parent)?;
@@ -263,8 +332,12 @@ async fn force_utf8(
     if let Some(content_type) = response.headers().get(axum::http::header::CONTENT_TYPE) {
         if let Ok(content_type_str) = content_type.to_str() {
             if content_type_str.starts_with("text/html") && !content_type_str.contains("charset") {
-                if let Ok(new_val) = axum::http::header::HeaderValue::from_str("text/html; charset=utf-8") {
-                    response.headers_mut().insert(axum::http::header::CONTENT_TYPE, new_val);
+                if let Ok(new_val) =
+                    axum::http::header::HeaderValue::from_str("text/html; charset=utf-8")
+                {
+                    response
+                        .headers_mut()
+                        .insert(axum::http::header::CONTENT_TYPE, new_val);
                 }
             }
         }

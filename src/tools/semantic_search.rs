@@ -1,9 +1,9 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
-use serde::{Serialize, Deserialize};
 
 pub struct SemanticSearchTool;
 
@@ -56,13 +56,14 @@ fn get_files_recursively(path: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
         for entry in fs::read_dir(path)? {
             let entry = entry?;
             let entry_path = entry.path();
-            
+
             // Skip common build/vcs directories to be efficient
             let path_str = entry_path.to_string_lossy();
-            if path_str.contains("/.git") || 
-               path_str.contains("/target") || 
-               path_str.contains("/node_modules") || 
-               path_str.contains("/.fastembed_cache") {
+            if path_str.contains("/.git")
+                || path_str.contains("/target")
+                || path_str.contains("/node_modules")
+                || path_str.contains("/.fastembed_cache")
+            {
                 continue;
             }
 
@@ -148,12 +149,16 @@ impl Tool for SemanticSearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments.get("query").and_then(|v| v.as_str())
+        let query = arguments
+            .get("query")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
-        
-        let paths_val = arguments.get("paths").and_then(|v| v.as_array())
+
+        let paths_val = arguments
+            .get("paths")
+            .and_then(|v| v.as_array())
             .ok_or_else(|| anyhow!("Missing 'paths' parameter"))?;
-        
+
         let top_k = arguments.get("top_k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
         let mut files = Vec::new();
@@ -173,7 +178,9 @@ impl Tool for SemanticSearchTool {
 
         // Prune deleted files from cache to prevent unbounded growth
         let initial_cache_len = cache.files.len();
-        cache.files.retain(|path_str, _| Path::new(path_str).exists());
+        cache
+            .files
+            .retain(|path_str, _| Path::new(path_str).exists());
         if cache.files.len() != initial_cache_len {
             cache_updated = true;
         }
@@ -185,7 +192,8 @@ impl Tool for SemanticSearchTool {
         for file_path in &files {
             let path_str = file_path.to_string_lossy().to_string();
             let mtime_secs = match fs::metadata(file_path).and_then(|m| m.modified()) {
-                Ok(time) => time.duration_since(std::time::SystemTime::UNIX_EPOCH)
+                Ok(time) => time
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0),
                 Err(_) => 0,
@@ -223,7 +231,7 @@ impl Tool for SemanticSearchTool {
         // 2. Spawn blocking task to generate embeddings for query and new chunks
         let query_owned = query.to_string();
         let query_prefixed = format!("query: {}", query_owned);
-        
+
         let mut dirty_texts = Vec::new();
         for (_, _, chunks) in &dirty_files {
             for text in chunks {
@@ -231,24 +239,28 @@ impl Tool for SemanticSearchTool {
             }
         }
 
-        let (query_vec, new_embeds) = tokio::task::spawn_blocking(move || -> Result<(Vec<f32>, Vec<Vec<f32>>)> {
-            let model_mutex = crate::tools::shared_memory::get_global_model()?;
-            let mut model = model_mutex.lock().map_err(|e| anyhow!("Failed to lock model Mutex: {:?}", e))?;
-            
-            // Embed Query
-            let query_embeds = model.embed(vec![&query_prefixed], None)?;
-            let q_vec = query_embeds[0].clone();
+        let (query_vec, new_embeds) =
+            tokio::task::spawn_blocking(move || -> Result<(Vec<f32>, Vec<Vec<f32>>)> {
+                let model_mutex = crate::tools::shared_memory::get_global_model()?;
+                let mut model = model_mutex
+                    .lock()
+                    .map_err(|e| anyhow!("Failed to lock model Mutex: {:?}", e))?;
 
-            // Embed New Passages if any
-            let p_embeds = if !dirty_texts.is_empty() {
-                let refs: Vec<&str> = dirty_texts.iter().map(|s| s.as_str()).collect();
-                model.embed(refs, None)?
-            } else {
-                Vec::new()
-            };
+                // Embed Query
+                let query_embeds = model.embed(vec![&query_prefixed], None)?;
+                let q_vec = query_embeds[0].clone();
 
-            Ok((q_vec, p_embeds))
-        }).await??;
+                // Embed New Passages if any
+                let p_embeds = if !dirty_texts.is_empty() {
+                    let refs: Vec<&str> = dirty_texts.iter().map(|s| s.as_str()).collect();
+                    model.embed(refs, None)?
+                } else {
+                    Vec::new()
+                };
+
+                Ok((q_vec, p_embeds))
+            })
+            .await??;
 
         // 3. Merge new embeddings back into cache and final list
         if !dirty_files.is_empty() {
@@ -273,10 +285,13 @@ impl Tool for SemanticSearchTool {
                     });
                 }
 
-                cache.files.insert(path_str, CachedFile {
-                    mtime_secs,
-                    chunks: cached_chunks,
-                });
+                cache.files.insert(
+                    path_str,
+                    CachedFile {
+                        mtime_secs,
+                        chunks: cached_chunks,
+                    },
+                );
                 cache_updated = true;
             }
         }
@@ -286,7 +301,9 @@ impl Tool for SemanticSearchTool {
         }
 
         if final_chunks.is_empty() {
-            return Err(anyhow!("Could not extract any readable text chunks from files."));
+            return Err(anyhow!(
+                "Could not extract any readable text chunks from files."
+            ));
         }
 
         // 4. Calculate similarity scores and sort

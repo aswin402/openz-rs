@@ -50,7 +50,10 @@ impl DiscordChannel {
         DiscordChannel {
             bot_token,
             agent_loop: Arc::new(agent_loop),
-            client: Client::builder().use_rustls_tls().build().unwrap_or_default(),
+            client: Client::builder()
+                .use_rustls_tls()
+                .build()
+                .unwrap_or_default(),
             concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
         }
     }
@@ -71,18 +74,23 @@ impl super::Channel for DiscordChannel {
             }
             return Ok(());
         }
-        
+
         let session_dir = self.agent_loop.session_manager.dir.clone();
-        
+
         // Send Active message to all active channels at startup
         let channels = crate::channels::get_active_session_targets(&session_dir, "discord_");
         let active_msg = crate::channels::select_random_message(crate::channels::ACTIVE_MESSAGES);
         for channel_id in &channels {
-            let send_url = format!("https://discord.com/api/v10/channels/{}/messages", channel_id);
+            let send_url = format!(
+                "https://discord.com/api/v10/channels/{}/messages",
+                channel_id
+            );
             let payload = serde_json::json!({
                 "content": active_msg
             });
-            let _ = self.client.post(&send_url)
+            let _ = self
+                .client
+                .post(&send_url)
                 .header("Authorization", format!("Bot {}", self.bot_token))
                 .json(&payload)
                 .send()
@@ -116,7 +124,8 @@ impl super::Channel for DiscordChannel {
                 self.concurrency_limit.clone(),
                 silent,
             )
-            .await {
+            .await
+            {
                 Ok(_) => {
                     backoff = Duration::from_secs(2);
                     retry_count = 0;
@@ -130,12 +139,16 @@ impl super::Channel for DiscordChannel {
                     };
                     if retry_count >= MAX_RETRIES {
                         if !silent {
-                            eprintln!("Discord gateway failed after {} retries: {}. Giving up.", MAX_RETRIES, err_msg);
+                            tracing::error!(
+                                "Discord gateway failed after {} retries: {}. Giving up.",
+                                MAX_RETRIES,
+                                err_msg
+                            );
                         }
                         break;
                     }
                     if !silent {
-                        eprintln!("Discord gateway connection error: {}. Reconnecting in {}s... (attempt {}/{})", err_msg, backoff.as_secs(), retry_count, MAX_RETRIES);
+                        tracing::error!("Discord gateway connection error: {}. Reconnecting in {}s... (attempt {}/{})", err_msg, backoff.as_secs(), retry_count, MAX_RETRIES);
                     }
                     tokio::select! {
                         _ = sleep(backoff) => {}
@@ -175,7 +188,10 @@ async fn connect_and_listen(
     };
 
     if !silent {
-        println!("✓ Discord hello received, heartbeat interval: {}ms", heartbeat_interval);
+        println!(
+            "✓ Discord hello received, heartbeat interval: {}ms",
+            heartbeat_interval
+        );
     }
 
     // Spawn message writer task with mpsc channel
@@ -227,7 +243,9 @@ async fn connect_and_listen(
             }
         }
     });
-    let _ = tx.send(Message::Text(serde_json::to_string(&identify_pkt)?)).await;
+    let _ = tx
+        .send(Message::Text(serde_json::to_string(&identify_pkt)?))
+        .await;
 
     if !silent {
         println!("✓ Discord Identify packet sent, listening for events...");
@@ -285,19 +303,26 @@ async fn connect_and_listen(
                                     };
                                     let session_key = format!("discord:{}", payload.channel_id);
                                     let run_res = agent.run(&payload.content, &session_key).await;
-                                    
+
                                     let response_text = match run_res {
                                         Ok(res) => res.content,
                                         Err(e) => format!("Error processing request: {}", e),
                                     };
 
-                                    let send_url = format!("https://discord.com/api/v10/channels/{}/messages", payload.channel_id);
+                                    let send_url = format!(
+                                        "https://discord.com/api/v10/channels/{}/messages",
+                                        payload.channel_id
+                                    );
                                     for chunk in chunk_message(&response_text, 2000) {
                                         let reply_payload = serde_json::json!({
                                             "content": chunk
                                         });
-                                        let _ = client_clone.post(&send_url)
-                                            .header("Authorization", format!("Bot {}", bot_token_clone))
+                                        let _ = client_clone
+                                            .post(&send_url)
+                                            .header(
+                                                "Authorization",
+                                                format!("Bot {}", bot_token_clone),
+                                            )
                                             .json(&reply_payload)
                                             .send()
                                             .await;
@@ -329,7 +354,7 @@ fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
             chunks.push(remaining.to_string());
             break;
         }
-        
+
         let mut split_at = max_len;
         while split_at > 0 && !remaining.is_char_boundary(split_at) {
             split_at -= 1;
@@ -340,7 +365,7 @@ fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
                 split_at += 1;
             }
         }
-        
+
         let candidate = &remaining[..split_at];
         let final_split = if let Some(idx) = candidate.rfind('\n') {
             if idx > 0 {
@@ -351,7 +376,7 @@ fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
         } else {
             split_at
         };
-        
+
         chunks.push(remaining[..final_split].to_string());
         remaining = remaining[final_split..].trim_start_matches('\n');
     }

@@ -34,13 +34,13 @@ impl Tool for OnpkgTool {
                 "action": {
                     "type": "string",
                     "enum": [
-                        "list_stacks", 
-                        "show_stack", 
-                        "scaffold", 
-                        "doctor", 
-                        "add_template", 
-                        "add_skill", 
-                        "add_package", 
+                        "list_stacks",
+                        "show_stack",
+                        "scaffold",
+                        "doctor",
+                        "add_template",
+                        "add_skill",
+                        "add_package",
                         "install_package"
                     ],
                     "description": "The onpkg action to perform."
@@ -72,7 +72,9 @@ impl Tool for OnpkgTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments.get("action").and_then(|v| v.as_str())
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
 
         let onpkg_bin = Self::resolve_binary();
@@ -84,12 +86,18 @@ impl Tool for OnpkgTool {
                 cmd.args(["stack", "list"]);
             }
             "show_stack" => {
-                let stack = arguments.get("stack_name").and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'stack_name' parameter for show_stack action"))?;
+                let stack = arguments
+                    .get("stack_name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        anyhow!("Missing 'stack_name' parameter for show_stack action")
+                    })?;
                 cmd.args(["stack", "show", stack]);
             }
             "scaffold" => {
-                let stack = arguments.get("stack_name").and_then(|v| v.as_str())
+                let stack = arguments
+                    .get("stack_name")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'stack_name' parameter for scaffold action"))?;
                 cmd.args(["stack", "add", stack]);
                 if let Some(dir) = arguments.get("dir").and_then(|v| v.as_str()) {
@@ -102,21 +110,31 @@ impl Tool for OnpkgTool {
                 cmd.arg("doctor");
             }
             "add_template" => {
-                let name = arguments.get("name").and_then(|v| v.as_str())
+                let name = arguments
+                    .get("name")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'name' parameter for add_template action"))?;
-                let source = arguments.get("source").and_then(|v| v.as_str())
+                let source = arguments
+                    .get("source")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'source' parameter for add_template action"))?;
                 cmd.args(["template", "add", name, source]);
             }
             "add_skill" => {
-                let name = arguments.get("name").and_then(|v| v.as_str())
+                let name = arguments
+                    .get("name")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'name' parameter for add_skill action"))?;
-                let source = arguments.get("source").and_then(|v| v.as_str())
+                let source = arguments
+                    .get("source")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'source' parameter for add_skill action"))?;
                 cmd.args(["skill", "add", name, source]);
             }
             "add_package" => {
-                let name = arguments.get("name").and_then(|v| v.as_str())
+                let name = arguments
+                    .get("name")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'name' parameter for add_package action"))?;
                 cmd.args(["pkg", "add", name]);
                 if let Some(rt) = arguments.get("runtime").and_then(|v| v.as_str()) {
@@ -125,8 +143,12 @@ impl Tool for OnpkgTool {
                 }
             }
             "install_package" => {
-                let name = arguments.get("name").and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'name' parameter for install_package action"))?;
+                let name = arguments
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        anyhow!("Missing 'name' parameter for install_package action")
+                    })?;
                 cmd.args(["pkg", "install", name]);
                 if let Some(rt) = arguments.get("runtime").and_then(|v| v.as_str()) {
                     cmd.arg("--runtime");
@@ -157,8 +179,8 @@ pub fn sync_onpkg_manifest() -> Result<()> {
 
     // 1. Read onpkg.json
     let content = std::fs::read_to_string(onpkg_json_path)?;
-    let mut manifest: Value = serde_json::from_str(&content)
-        .map_err(|e| anyhow!("Failed to parse onpkg.json: {}", e))?;
+    let mut manifest: Value =
+        serde_json::from_str(&content).map_err(|e| anyhow!("Failed to parse onpkg.json: {}", e))?;
 
     // Ensure agent_instructions and docs_directory exist
     if manifest.get("agent_instructions").is_none() {
@@ -172,7 +194,7 @@ pub fn sync_onpkg_manifest() -> Result<()> {
         .and_then(|v| v.as_str())
         .unwrap_or("onpkg_docs/")
         .to_string();
-    
+
     let docs_dir = std::path::PathBuf::from(docs_dir_name);
     if !docs_dir.exists() {
         std::fs::create_dir_all(&docs_dir)?;
@@ -222,7 +244,11 @@ pub fn sync_onpkg_manifest() -> Result<()> {
     let mut index_content = String::from("# Project AI Agent Skills 🧠\n\nThis directory contains instructions and guidelines for AI agents working on this project.\n\n## Available Skills\n");
     for skill in &active_skills {
         let name_without_ext = skill.strip_suffix(".md").unwrap_or(skill);
-        index_content.push_str(&format!("- [{name}](file://./{skill})\n", name = name_without_ext, skill = skill));
+        index_content.push_str(&format!(
+            "- [{name}](file://./{skill})\n",
+            name = name_without_ext,
+            skill = skill
+        ));
     }
     std::fs::write(index_path, index_content)?;
 
@@ -230,7 +256,7 @@ pub fn sync_onpkg_manifest() -> Result<()> {
     if manifest.get("architecture").is_none() {
         manifest["architecture"] = json!({});
     }
-    
+
     // Components
     let comp_paths = vec!["src/components", "components"];
     for p in comp_paths {
@@ -251,8 +277,14 @@ pub fn sync_onpkg_manifest() -> Result<()> {
 
     // Entrypoint
     let entry_paths = vec![
-        "src/main.rs", "src/lib.rs", "src/main.tsx", "src/index.js", 
-        "src/index.ts", "index.html", "src/main.py", "main.py"
+        "src/main.rs",
+        "src/lib.rs",
+        "src/main.tsx",
+        "src/index.js",
+        "src/index.ts",
+        "index.html",
+        "src/main.py",
+        "main.py",
     ];
     for p in entry_paths {
         if std::path::Path::new(p).exists() {
@@ -288,7 +320,10 @@ pub fn sync_onpkg_manifest() -> Result<()> {
                 let trimmed = line.trim();
                 if trimmed.starts_with('[') {
                     in_deps = trimmed == "[dependencies]" || trimmed == "[workspace.dependencies]";
-                    if let Some(pkg) = trimmed.strip_prefix("[dependencies.").and_then(|s| s.strip_suffix(']')) {
+                    if let Some(pkg) = trimmed
+                        .strip_prefix("[dependencies.")
+                        .and_then(|s| s.strip_suffix(']'))
+                    {
                         core_packages.insert(pkg.trim().to_string());
                     }
                     continue;
@@ -311,7 +346,8 @@ pub fn sync_onpkg_manifest() -> Result<()> {
                         core_packages.insert(key.to_string());
                     }
                 }
-                if let Some(dev_deps) = pkg_json.get("devDependencies").and_then(|d| d.as_object()) {
+                if let Some(dev_deps) = pkg_json.get("devDependencies").and_then(|d| d.as_object())
+                {
                     for key in dev_deps.keys() {
                         core_packages.insert(key.to_string());
                     }
@@ -325,7 +361,10 @@ pub fn sync_onpkg_manifest() -> Result<()> {
 
     // Preserve existing added_by_agent packages, but update core packages
     let mut added_by_agent = Vec::new();
-    if let Some(arr) = manifest["packages"].get("added_by_agent").and_then(|a| a.as_array()) {
+    if let Some(arr) = manifest["packages"]
+        .get("added_by_agent")
+        .and_then(|a| a.as_array())
+    {
         for v in arr {
             if let Some(s) = v.as_str() {
                 added_by_agent.push(s.to_string());
@@ -460,9 +499,11 @@ mod tests {
     #[tokio::test]
     async fn test_onpkg_tool() -> Result<()> {
         let tool = OnpkgTool;
-        let res = tool.call(&json!({
-            "action": "doctor"
-        })).await?;
+        let res = tool
+            .call(&json!({
+                "action": "doctor"
+            }))
+            .await?;
 
         assert_eq!(res["status"], "success");
         assert!(res["stdout"].as_str().unwrap().contains("Doctor complete"));

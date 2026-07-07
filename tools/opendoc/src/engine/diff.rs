@@ -215,7 +215,10 @@ pub fn render_diff_visual(a: &Document, b: &Document, is_html: bool) -> String {
         match op {
             DiffOp::Unchanged(text) => {
                 if is_html {
-                    rendered_lines.push(format!("<div class=\"diff-line\" style=\"padding: 4px 8px;\">{}</div>", text));
+                    rendered_lines.push(format!(
+                        "<div class=\"diff-line\" style=\"padding: 4px 8px;\">{}</div>",
+                        text
+                    ));
                 } else {
                     rendered_lines.push(text);
                 }
@@ -258,12 +261,12 @@ pub fn render_diff_visual(a: &Document, b: &Document, is_html: bool) -> String {
         html.push_str("<div class=\"diff-container\">\n");
         html.push_str("<h1>Document Diff Comparison</h1>\n");
         html.push_str(&format!("<div class=\"diff-summary\"><span>Original: {} paragraphs</span> <span>Modified: {} paragraphs</span></div>\n", n, m));
-        
+
         for line in rendered_lines {
             html.push_str(&line);
             html.push_str("\n");
         }
-        
+
         html.push_str("</div>\n</body>\n</html>");
         html
     } else {

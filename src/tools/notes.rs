@@ -1,10 +1,12 @@
+use crate::tools::shared_memory::{
+    get_current_workspace, get_db_mutex, get_embedding, with_db, CognitiveMemoryEntry,
+};
 use crate::tools::Tool;
-use crate::tools::shared_memory::{get_db_mutex, with_db, get_current_workspace, get_embedding, CognitiveMemoryEntry};
 use anyhow::{anyhow, Result};
+use rusqlite::params;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
-use rusqlite::params;
 
 pub struct IndexNotesTool;
 
@@ -86,7 +88,10 @@ impl Tool for IndexNotesTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let path_str = arguments.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let path_str = arguments
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
         let resolved_path = crate::config::resolve_path(path_str);
 
         if !resolved_path.exists() {
@@ -110,7 +115,7 @@ impl Tool for IndexNotesTool {
                         let id = uuid::Uuid::new_v4().to_string();
                         let workspace = get_current_workspace();
                         let timestamp = chrono::Utc::now().to_rfc3339();
-                        
+
                         entries_to_add.push(CognitiveMemoryEntry {
                             id,
                             text: formatted_text,

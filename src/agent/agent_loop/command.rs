@@ -1,6 +1,6 @@
-use anyhow::Result;
-use crate::tools::subagent::{DelegateTaskTool, CancellationToken};
 use super::{AgentLoop, TurnContext, TurnState};
+use crate::tools::subagent::{CancellationToken, DelegateTaskTool};
+use anyhow::Result;
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
     let config = &ctx.config;
@@ -44,7 +44,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 "/audit" => {
                     match ctx.session.verify_hash_chain() {
                         Ok(_) => {
-                            let mut output = "✅ MERKLE AUDIT PASS: Chain integrity verified successfully.\n\n".to_string();
+                            let mut output =
+                                "✅ MERKLE AUDIT PASS: Chain integrity verified successfully.\n\n"
+                                    .to_string();
                             output.push_str("Index | Role | Timestamp | Merkle Block Hash\n");
                             output.push_str("------|------|-----------|-------------------\n");
                             for (i, msg) in ctx.session.messages.iter().enumerate() {
@@ -58,14 +60,20 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             ctx.final_content = output;
                         }
                         Err(e) => {
-                            ctx.final_content = format!("❌ MERKLE AUDIT FAIL: Chain integrity compromised!\nError: {}", e);
+                            ctx.final_content = format!(
+                                "❌ MERKLE AUDIT FAIL: Chain integrity compromised!\nError: {}",
+                                e
+                            );
                         }
                     }
                     return Ok(TurnState::Done);
                 }
                 "/memory" => {
                     if parts.len() < 2 {
-                        let memory = ctx.session.metadata.get("memory")
+                        let memory = ctx
+                            .session
+                            .metadata
+                            .get("memory")
                             .and_then(|v| v.as_str())
                             .unwrap_or("No memory recorded yet.");
                         ctx.final_content = format!("=== Agent Long-Term Memory ===\n{}", memory);
@@ -81,7 +89,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                     ctx.final_content = "Usage: /memory add <fact>".to_string();
                                 } else {
                                     let fact = parts[2..].join(" ");
-                                    let mut existing = ctx.session.metadata.get("memory")
+                                    let mut existing = ctx
+                                        .session
+                                        .metadata
+                                        .get("memory")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("")
                                         .to_string();
@@ -89,7 +100,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                         existing.push('\n');
                                     }
                                     existing.push_str(&format!("* {}", fact));
-                                    ctx.session.metadata.insert("memory".to_string(), serde_json::Value::String(existing));
+                                    ctx.session.metadata.insert(
+                                        "memory".to_string(),
+                                        serde_json::Value::String(existing),
+                                    );
                                     loop_ref.session_manager.save(&ctx.session).await?;
                                     ctx.final_content = format!("Added to memory: {}", fact);
                                 }
@@ -112,10 +126,13 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         match crate::agent::skills::load_skills_with_profile(profile_name) {
                             Ok(skills) => {
                                 if skills.is_empty() {
-                                    ctx.final_content = "No active skills recorded yet.".to_string();
+                                    ctx.final_content =
+                                        "No active skills recorded yet.".to_string();
                                 } else {
-                                    let list: Vec<String> = skills.iter().map(|s| format!("* {}", s.name)).collect();
-                                    ctx.final_content = format!("=== Agent Skills ===\n{}", list.join("\n"));
+                                    let list: Vec<String> =
+                                        skills.iter().map(|s| format!("* {}", s.name)).collect();
+                                    ctx.final_content =
+                                        format!("=== Agent Skills ===\n{}", list.join("\n"));
                                 }
                             }
                             Err(e) => {
@@ -135,12 +152,20 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                     ctx.final_content = "Usage: /skill view <name>".to_string();
                                 } else {
                                     let name = parts[2];
-                                    match crate::agent::skills::load_skills_with_profile(profile_name) {
+                                    match crate::agent::skills::load_skills_with_profile(
+                                        profile_name,
+                                    ) {
                                         Ok(skills) => {
-                                            if let Some(skill) = skills.iter().find(|s| s.name == name) {
-                                                ctx.final_content = format!("=== Skill: {} ===\n{}", skill.name, skill.content);
+                                            if let Some(skill) =
+                                                skills.iter().find(|s| s.name == name)
+                                            {
+                                                ctx.final_content = format!(
+                                                    "=== Skill: {} ===\n{}",
+                                                    skill.name, skill.content
+                                                );
                                             } else {
-                                                ctx.final_content = format!("Skill '{}' not found.", name);
+                                                ctx.final_content =
+                                                    format!("Skill '{}' not found.", name);
                                             }
                                         }
                                         Err(e) => {
@@ -151,19 +176,23 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             }
                             "add" | "set" => {
                                 if parts.len() < 4 {
-                                    ctx.final_content = "Usage: /skill add <name> <content>".to_string();
+                                    ctx.final_content =
+                                        "Usage: /skill add <name> <content>".to_string();
                                 } else {
                                     let name = parts[2];
                                     let content = parts[3..].join(" ");
                                     let res = if let Some(prof) = profile_name {
-                                        crate::agent::skills::save_subagent_skill(prof, name, &content)
+                                        crate::agent::skills::save_subagent_skill(
+                                            prof, name, &content,
+                                        )
                                     } else {
                                         crate::agent::skills::save_skill(name, &content)
                                     };
                                     if let Err(e) = res {
                                         ctx.final_content = format!("Error saving skill: {}", e);
                                     } else {
-                                        ctx.final_content = format!("Skill '{}' added/updated successfully.", name);
+                                        ctx.final_content =
+                                            format!("Skill '{}' added/updated successfully.", name);
                                     }
                                 }
                             }
@@ -172,10 +201,14 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                     ctx.final_content = "Usage: /skill delete <name>".to_string();
                                 } else {
                                     let name = parts[2];
-                                    if let Err(e) = crate::agent::skills::delete_skill_with_profile(name, profile_name) {
+                                    if let Err(e) = crate::agent::skills::delete_skill_with_profile(
+                                        name,
+                                        profile_name,
+                                    ) {
                                         ctx.final_content = format!("Error deleting skill: {}", e);
                                     } else {
-                                        ctx.final_content = format!("Skill '{}' deleted successfully.", name);
+                                        ctx.final_content =
+                                            format!("Skill '{}' deleted successfully.", name);
                                     }
                                 }
                             }
@@ -191,17 +224,22 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         ctx.final_content = "Usage: /delegate <goal>".to_string();
                     } else {
                         let goal = parts[1..].join(" ");
-                        let parent_tools = loop_ref.tools.get_static_tools()
+                        let parent_tools = loop_ref
+                            .tools
+                            .get_static_tools()
                             .into_iter()
-                            .filter(|t| t.name() != "delegate_task" && t.name() != "parallel_research")
+                            .filter(|t| {
+                                t.name() != "delegate_task" && t.name() != "parallel_research"
+                            })
                             .collect();
-                        let delegate_tool: std::sync::Arc<dyn crate::tools::Tool> = std::sync::Arc::new(DelegateTaskTool {
-                            config: (*config).clone(),
-                            parent_provider: ctx.active_provider.clone(),
-                            session_manager: loop_ref.session_manager.clone(),
-                            parent_tools,
-                            cancellation_token: CancellationToken::new(),
-                        });
+                        let delegate_tool: std::sync::Arc<dyn crate::tools::Tool> =
+                            std::sync::Arc::new(DelegateTaskTool {
+                                config: (*config).clone(),
+                                parent_provider: ctx.active_provider.clone(),
+                                session_manager: loop_ref.session_manager.clone(),
+                                parent_tools,
+                                cancellation_token: CancellationToken::new(),
+                            });
 
                         let args = serde_json::json!({
                             "goal": goal,
@@ -209,8 +247,11 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
                         match delegate_tool.call(&args).await {
                             Ok(res_val) => {
-                                if let Some(summary) = res_val.get("summary").and_then(|v| v.as_str()) {
-                                    ctx.final_content = format!("=== Subagent Summary ===\n{}", summary);
+                                if let Some(summary) =
+                                    res_val.get("summary").and_then(|v| v.as_str())
+                                {
+                                    ctx.final_content =
+                                        format!("=== Subagent Summary ===\n{}", summary);
                                 } else {
                                     ctx.final_content = format!("Subagent completed: {}", res_val);
                                 }

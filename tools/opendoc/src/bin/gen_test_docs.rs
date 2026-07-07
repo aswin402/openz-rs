@@ -1,5 +1,5 @@
-use opendoc_mcp::handlers::{docx, pptx, pdf};
 use opendoc_mcp::handlers::load_to_ir;
+use opendoc_mcp::handlers::{docx, pdf, pptx};
 use std::path::Path;
 
 fn main() {
@@ -12,7 +12,10 @@ fn main() {
 
     println!("Generating DOCX document (20 pages)...");
     // 1. Create DOCX
-    docx::create_document(docx_path.to_str().unwrap(), Some("20 Page DOCX Test Document"));
+    docx::create_document(
+        docx_path.to_str().unwrap(),
+        Some("20 Page DOCX Test Document"),
+    );
     for i in 1..=20 {
         docx::add_paragraph(
             docx_path.to_str().unwrap(),
@@ -58,7 +61,10 @@ fn main() {
         if i > 1 {
             pdf_text.push('\x0c');
         }
-        pdf_text.push_str(&format!("This is page {} of the 20-page PDF document.\n", i));
+        pdf_text.push_str(&format!(
+            "This is page {} of the 20-page PDF document.\n",
+            i
+        ));
     }
     pdf::create_pdf(pdf_path.to_str().unwrap(), &pdf_text, Some("Agent Tester"));
 
@@ -69,18 +75,31 @@ fn main() {
 
     // Verify DOCX
     let docx_ir = load_to_ir(docx_path.to_str().unwrap()).unwrap();
-    println!("DOCX loaded successfully. Type: {}, Paragraphs count: {}", docx_ir.format, docx_ir.paragraphs.len());
+    println!(
+        "DOCX loaded successfully. Type: {}, Paragraphs count: {}",
+        docx_ir.format,
+        docx_ir.paragraphs.len()
+    );
     // Expect 21 paragraphs (1 default empty paragraph from template + 20 added paragraphs)
     assert_eq!(docx_ir.paragraphs.len(), 21);
 
     // Verify PPTX
     let pptx_ir = load_to_ir(pptx_path.to_str().unwrap()).unwrap();
-    println!("PPTX loaded successfully. Type: {}, Slide count in metadata: {}", pptx_ir.format, pptx_ir.metadata.page_count.unwrap_or(0));
+    println!(
+        "PPTX loaded successfully. Type: {}, Slide count in metadata: {}",
+        pptx_ir.format,
+        pptx_ir.metadata.page_count.unwrap_or(0)
+    );
     assert_eq!(pptx_ir.metadata.page_count.unwrap_or(0), 8);
 
     // Verify PDF
     let pdf_ir = load_to_ir(pdf_path.to_str().unwrap()).unwrap();
-    println!("PDF loaded successfully. Type: {}, Page count in metadata: {}, Paragraphs count: {}", pdf_ir.format, pdf_ir.metadata.page_count.unwrap_or(0), pdf_ir.paragraphs.len());
+    println!(
+        "PDF loaded successfully. Type: {}, Page count in metadata: {}, Paragraphs count: {}",
+        pdf_ir.format,
+        pdf_ir.metadata.page_count.unwrap_or(0),
+        pdf_ir.paragraphs.len()
+    );
     assert_eq!(pdf_ir.metadata.page_count.unwrap_or(0), 20);
     assert!(pdf_ir.paragraphs.len() >= 20);
 

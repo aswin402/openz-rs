@@ -1,11 +1,11 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result, Context};
+use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::fs;
 
 use wavyte::{
-    Composition, RenderSettings, RenderToMp4Opts, BackendKind, create_backend,
-    render_to_mp4, FrameRange, FrameIndex,
+    create_backend, render_to_mp4, BackendKind, Composition, FrameIndex, FrameRange,
+    RenderSettings, RenderToMp4Opts,
 };
 
 pub struct VideoGeneratorTool;
@@ -43,10 +43,15 @@ impl Tool for VideoGeneratorTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let comp_json = arguments.get("composition_json").and_then(|v| v.as_str())
+        let comp_json = arguments
+            .get("composition_json")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'composition_json' parameter"))?;
-        
-        let output_path_str = arguments.get("output_path").and_then(|v| v.as_str()).unwrap_or("output.mp4");
+
+        let output_path_str = arguments
+            .get("output_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("output.mp4");
         let output_path = crate::config::resolve_path(output_path_str);
 
         let bg_rgba = if let Some(arr) = arguments.get("bg_rgba").and_then(|v| v.as_array()) {
@@ -65,8 +70,8 @@ impl Tool for VideoGeneratorTool {
         };
 
         // Deserialize composition from JSON
-        let comp: Composition = serde_json::from_str(comp_json)
-            .context("Failed to deserialize composition JSON")?;
+        let comp: Composition =
+            serde_json::from_str(comp_json).context("Failed to deserialize composition JSON")?;
 
         comp.validate().context("Composition validation failed")?;
 
@@ -84,7 +89,7 @@ impl Tool for VideoGeneratorTool {
         let render_future = tokio::task::spawn_blocking(move || -> Result<()> {
             let mut backend = create_backend(BackendKind::Cpu, &settings)
                 .map_err(|e| anyhow!("Failed to create rendering backend: {}", e))?;
-            
+
             let assets = wavyte::PreparedAssetStore::prepare(&comp, ".")
                 .map_err(|e| anyhow!("Failed to prepare composition assets: {}", e))?;
 
@@ -100,7 +105,8 @@ impl Tool for VideoGeneratorTool {
                 },
                 backend.as_mut(),
                 &assets,
-            ).map_err(|e| anyhow!("Failed to render composition to MP4: {}", e))?;
+            )
+            .map_err(|e| anyhow!("Failed to render composition to MP4: {}", e))?;
 
             Ok(())
         });
@@ -123,12 +129,16 @@ impl Tool for VideoGeneratorTool {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
-    use wavyte::{Anim, Asset, Canvas, Clip, ClipProps, Fps, FrameIndex, FrameRange, PathAsset, Track, Transform2D, Vec2, BlendMode};
+    use wavyte::{
+        Anim, Asset, BlendMode, Canvas, Clip, ClipProps, Fps, FrameIndex, FrameRange, PathAsset,
+        Track, Transform2D, Vec2,
+    };
 
     #[tokio::test]
     async fn test_generate_video() -> Result<()> {
         let tool = VideoGeneratorTool;
-        let temp_dir = std::env::temp_dir().join(format!("openz_video_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_video_test_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&temp_dir)?;
         let output_file = temp_dir.join("test_video.mp4");
 

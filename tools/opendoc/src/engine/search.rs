@@ -5,7 +5,10 @@ pub fn search_document(doc: &Document, query: &str, use_regex: bool) -> Vec<Sear
     let mut results = Vec::new();
 
     let pattern: Box<dyn Fn(&str) -> bool> = if use_regex {
-        match regex::RegexBuilder::new(query).size_limit(1_000_000).build() {
+        match regex::RegexBuilder::new(query)
+            .size_limit(1_000_000)
+            .build()
+        {
             Ok(re) => Box::new(move |text: &str| re.is_match(text)),
             Err(_) => return results,
         }
@@ -36,8 +39,16 @@ pub fn search_document(doc: &Document, query: &str, use_regex: bool) -> Vec<Sear
                 paragraph_index: Some(i),
                 text: p.text.clone(),
                 is_heading: p.is_heading,
-                match_type: if p.is_heading { "heading".to_string() } else { "paragraph".to_string() },
-                location: if p.is_heading { format!("heading {}", p.heading_level) } else { format!("paragraph {}", i + 1) },
+                match_type: if p.is_heading {
+                    "heading".to_string()
+                } else {
+                    "paragraph".to_string()
+                },
+                location: if p.is_heading {
+                    format!("heading {}", p.heading_level)
+                } else {
+                    format!("paragraph {}", i + 1)
+                },
             });
         }
     }
@@ -87,7 +98,12 @@ pub fn search_document(doc: &Document, query: &str, use_regex: bool) -> Vec<Sear
                         text: cell.clone(),
                         is_heading: false,
                         match_type: "table_cell".to_string(),
-                        location: format!("table {}, row {}, column {}", t_idx + 1, r_idx + 1, c_idx + 1),
+                        location: format!(
+                            "table {}, row {}, column {}",
+                            t_idx + 1,
+                            r_idx + 1,
+                            c_idx + 1
+                        ),
                     });
                 }
             }
@@ -115,7 +131,8 @@ mod tests {
     #[test]
     fn test_search_case_insensitive() {
         let mut doc = Document::new("txt");
-        doc.paragraphs.push(crate::ir::Paragraph::new("Hello World"));
+        doc.paragraphs
+            .push(crate::ir::Paragraph::new("Hello World"));
         let results = search_document(&doc, "hello", false);
         assert_eq!(results.len(), 1);
     }
@@ -123,7 +140,8 @@ mod tests {
     #[test]
     fn test_search_regex() {
         let mut doc = Document::new("txt");
-        doc.paragraphs.push(crate::ir::Paragraph::new("Call 555-1234"));
+        doc.paragraphs
+            .push(crate::ir::Paragraph::new("Call 555-1234"));
         let results = search_document(&doc, r"\d{3}-\d{4}", true);
         assert_eq!(results.len(), 1);
     }
@@ -133,7 +151,8 @@ mod tests {
         let mut doc = Document::new("txt");
         doc.paragraphs.push(crate::ir::Paragraph::new("First"));
         doc.paragraphs.push(crate::ir::Paragraph::new("Second"));
-        doc.paragraphs.push(crate::ir::Paragraph::new("First again"));
+        doc.paragraphs
+            .push(crate::ir::Paragraph::new("First again"));
         let results = search_document(&doc, "First", false);
         assert_eq!(results.len(), 2);
     }
@@ -154,13 +173,13 @@ mod tests {
             index: 0,
             content: Vec::new(),
         });
-        
+
         let table = crate::ir::Table::new(
             vec!["Header A".to_string(), "Header B".to_string()],
             vec![vec!["Value A".to_string(), "Target Cell".to_string()]],
         );
         doc.tables.push(table);
-        
+
         // 1. Search section title
         let results_sec = search_document(&doc, "Introduction", false);
         assert_eq!(results_sec.len(), 1);

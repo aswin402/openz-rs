@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use openmedia_core::{ImageOutput, ModelInfo, ProgressReporter, Result};
 use serde::{Deserialize, Serialize};
-use openmedia_core::{Result, ImageOutput, ModelInfo, ProgressReporter};
+use std::sync::Arc;
 
 /// Parameters for text-to-image generation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,7 +153,9 @@ impl DiffusionPipeline for DummyDiffusionPipeline {
         _request: &Txt2ImgRequest,
         _progress: Arc<dyn ProgressReporter>,
     ) -> Result<ImageOutput> {
-        Err(openmedia_core::OpenMediaError::BackendUnavailable("Dummy backend".into()))
+        Err(openmedia_core::OpenMediaError::BackendUnavailable(
+            "Dummy backend".into(),
+        ))
     }
 
     async fn img2img(
@@ -161,7 +163,9 @@ impl DiffusionPipeline for DummyDiffusionPipeline {
         _request: &Img2ImgRequest,
         _progress: Arc<dyn ProgressReporter>,
     ) -> Result<ImageOutput> {
-        Err(openmedia_core::OpenMediaError::BackendUnavailable("Dummy backend".into()))
+        Err(openmedia_core::OpenMediaError::BackendUnavailable(
+            "Dummy backend".into(),
+        ))
     }
 
     async fn inpaint(
@@ -169,7 +173,9 @@ impl DiffusionPipeline for DummyDiffusionPipeline {
         _request: &InpaintRequest,
         _progress: Arc<dyn ProgressReporter>,
     ) -> Result<ImageOutput> {
-        Err(openmedia_core::OpenMediaError::BackendUnavailable("Dummy backend".into()))
+        Err(openmedia_core::OpenMediaError::BackendUnavailable(
+            "Dummy backend".into(),
+        ))
     }
 
     fn backend_name(&self) -> &str {

@@ -1,24 +1,26 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
 use rusqlite::params;
+use serde_json::{json, Value};
 
 use super::db::{get_db_mutex, with_db};
-use super::embeddings::{get_embedding, get_cloud_embeddings_batch, get_global_model, cosine_similarity};
+use super::embeddings::{
+    cosine_similarity, get_cloud_embeddings_batch, get_embedding, get_global_model,
+};
 
 pub fn chunk_content_by_headings(query: &str, content: &str) -> Vec<(String, String)> {
     let mut chunks = Vec::new();
     let lines: Vec<&str> = content.lines().collect();
-    
+
     let mut current_heading = String::new();
     let mut current_chunk = Vec::new();
     let mut current_len = 0;
-    
+
     for line in lines {
-        let is_heading = line.trim_start().starts_with('#') 
+        let is_heading = line.trim_start().starts_with('#')
             || line.trim_start().starts_with("--- Sheet:")
             || line.trim_start().starts_with("Title:");
-        
+
         if is_heading && !current_chunk.is_empty() {
             let chunk_text = current_chunk.join("\n");
             let chunk_query = if current_heading.is_empty() {
@@ -30,14 +32,14 @@ pub fn chunk_content_by_headings(query: &str, content: &str) -> Vec<(String, Str
             current_chunk.clear();
             current_len = 0;
         }
-        
+
         if is_heading {
             current_heading = line.trim().to_string();
         }
-        
+
         current_chunk.push(line);
         current_len += line.len();
-        
+
         if current_len > 2500 {
             let chunk_text = current_chunk.join("\n");
             let chunk_query = if current_heading.is_empty() {
@@ -50,7 +52,7 @@ pub fn chunk_content_by_headings(query: &str, content: &str) -> Vec<(String, Str
             current_len = 0;
         }
     }
-    
+
     if !current_chunk.is_empty() {
         let chunk_text = current_chunk.join("\n");
         let chunk_query = if current_heading.is_empty() {
@@ -60,24 +62,32 @@ pub fn chunk_content_by_headings(query: &str, content: &str) -> Vec<(String, Str
         };
         chunks.push((chunk_query, chunk_text));
     }
-    
+
     if chunks.is_empty() {
         chunks.push((query.to_string(), content.to_string()));
     }
-    
+
     chunks
 }
 
 pub async fn archive_research_entry(query: &str, content: &str, source: &str) -> Result<()> {
     let chunks = chunk_content_by_headings(query, content);
     for (chunk_query, chunk_content) in chunks {
-        let embedding = get_embedding(&chunk_query, false).await.unwrap_or_else(|e| {
-            eprintln!("Failed to generate embedding for research archive chunk: {:?}", e);
-            Vec::new()
-        });
+        let embedding = get_embedding(&chunk_query, false)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(
+                    "Failed to generate embedding for research archive chunk: {:?}",
+                    e
+                );
+                Vec::new()
+            });
 
         if embedding.is_empty() {
-            eprintln!("Skipping research archive chunk (empty embedding): {}", chunk_query);
+            tracing::warn!(
+                "Skipping research archive chunk (empty embedding): {}",
+                chunk_query
+            );
             continue;
         }
 
@@ -112,7 +122,8 @@ pub async fn archive_research_entries(entries: Vec<(String, String, String)>) ->
     }
 
     let config = crate::config::loader::load_config().ok();
-    let mode = config.as_ref()
+    let mode = config
+        .as_ref()
         .and_then(|c| c.embeddings.as_ref())
         .map(|e| e.mode.as_str())
         .unwrap_or("local");
@@ -120,7 +131,7 @@ pub async fn archive_research_entries(entries: Vec<(String, String, String)>) ->
     let mut all_embeddings = Vec::new();
     for chunk_group in all_chunks.chunks(128) {
         let queries_to_embed: Vec<String> = chunk_group.iter().map(|(q, _, _)| q.clone()).collect();
-        
+
         let mut embeds = None;
         if mode != "local" {
             match get_cloud_embeddings_batch(queries_to_embed.clone(), false).await {
@@ -131,7 +142,10 @@ pub async fn archive_research_entries(entries: Vec<(String, String, String)>) ->
                     if mode == "cloud_only" {
                         return Err(anyhow::anyhow!("Cloud batch embedding failed and local model fallback is disabled: {:?}", e));
                     }
-                    tracing::warn!("Cloud batch embedding failed: {:?}. Falling back to local fastembed.", e);
+                    tracing::warn!(
+                        "Cloud batch embedding failed: {:?}. Falling back to local fastembed.",
+                        e
+                    );
                 }
             }
         }
@@ -141,18 +155,23 @@ pub async fn archive_research_entries(entries: Vec<(String, String, String)>) ->
             None => {
                 tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>> {
                     let model_mutex = get_global_model()?;
-                    let mut model = model_mutex.lock().map_err(|e| anyhow!("Failed to lock model Mutex: {:?}", e))?;
-                    
+                    let mut model = model_mutex
+                        .lock()
+                        .map_err(|e| anyhow!("Failed to lock model Mutex: {:?}", e))?;
+
                     let refs: Vec<&str> = queries_to_embed.iter().map(|s| s.as_str()).collect();
-                    let formatted_refs: Vec<String> = refs.iter().map(|s| format!("passage: {}", s)).collect();
-                    let formatted_slices: Vec<&str> = formatted_refs.iter().map(|s| s.as_str()).collect();
-                    
+                    let formatted_refs: Vec<String> =
+                        refs.iter().map(|s| format!("passage: {}", s)).collect();
+                    let formatted_slices: Vec<&str> =
+                        formatted_refs.iter().map(|s| s.as_str()).collect();
+
                     let embeds = model.embed(formatted_slices, None)?;
                     Ok(embeds)
-                }).await??
+                })
+                .await??
             }
         };
-        
+
         all_embeddings.extend(embeds);
     }
 
@@ -219,7 +238,8 @@ pub async fn search_research_entries(query: &str, top_k: usize) -> Result<Value>
     for entry in entries {
         let entry_query = entry["query"].as_str().unwrap_or_default();
         let entry_content = entry["content"].as_str().unwrap_or_default();
-        let entry_embed: Vec<f32> = serde_json::from_value(entry["embedding"].clone()).unwrap_or_default();
+        let entry_embed: Vec<f32> =
+            serde_json::from_value(entry["embedding"].clone()).unwrap_or_default();
 
         let sim = if !query_embed.is_empty() && !entry_embed.is_empty() {
             cosine_similarity(&query_embed, &entry_embed)
@@ -229,7 +249,9 @@ pub async fn search_research_entries(query: &str, top_k: usize) -> Result<Value>
 
         let query_lower_entry = entry_query.to_lowercase();
         let content_lower_entry = entry_content.to_lowercase();
-        let keyword_match = query_lower_entry.contains(&query_lower) || content_lower_entry.contains(&query_lower) || query_lower.contains(&query_lower_entry);
+        let keyword_match = query_lower_entry.contains(&query_lower)
+            || content_lower_entry.contains(&query_lower)
+            || query_lower.contains(&query_lower_entry);
 
         let final_score = if keyword_match {
             sim * 0.7 + 0.3
@@ -244,7 +266,8 @@ pub async fn search_research_entries(query: &str, top_k: usize) -> Result<Value>
 
     scored_results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-    let selected: Vec<Value> = scored_results.into_iter()
+    let selected: Vec<Value> = scored_results
+        .into_iter()
         .take(top_k)
         .map(|(score, mut entry)| {
             if let Some(obj) = entry.as_object_mut() {
@@ -293,11 +316,17 @@ impl Tool for ArchiveResearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments.get("query").and_then(|v| v.as_str())
+        let query = arguments
+            .get("query")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
-        let content = arguments.get("content").and_then(|v| v.as_str())
+        let content = arguments
+            .get("content")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'content' parameter"))?;
-        let source = arguments.get("source").and_then(|v| v.as_str())
+        let source = arguments
+            .get("source")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'source' parameter"))?;
 
         archive_research_entry(query, content, source).await?;
@@ -340,7 +369,9 @@ impl Tool for SearchResearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments.get("query").and_then(|v| v.as_str())
+        let query = arguments
+            .get("query")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
         let top_k = arguments.get("top_k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 

@@ -4,5 +4,7 @@
 .env.*.local
 *.log
 /memory.db
+/memory.db-shm
+/memory.db-wal
 /.fastembed_cache/
 /logs/

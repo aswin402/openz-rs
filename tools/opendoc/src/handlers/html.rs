@@ -8,8 +8,8 @@ use scraper::{Html, Selector};
 
 /// Load an HTML file into the Internal Representation
 pub fn to_ir(file_path: &str) -> Result<Document, String> {
-    let content = std::fs::read_to_string(file_path)
-        .map_err(|e| format!("Failed to read HTML file: {e}"))?;
+    let content =
+        std::fs::read_to_string(file_path).map_err(|e| format!("Failed to read HTML file: {e}"))?;
 
     html_to_ir(&content, Some(file_path))
 }
@@ -36,8 +36,8 @@ pub fn html_to_ir(html: &str, path: Option<&str>) -> Result<Document, String> {
     let mut text_parts: Vec<String> = Vec::new();
 
     // Process heading elements as sections in document order
-    let heading_sel = Selector::parse("h1, h2, h3, h4, h5, h6")
-        .map_err(|e| format!("Selector error: {e}"))?;
+    let heading_sel =
+        Selector::parse("h1, h2, h3, h4, h5, h6").map_err(|e| format!("Selector error: {e}"))?;
     for el in document.select(&heading_sel) {
         let tag_name = el.value().name();
         let level: u32 = tag_name[1..].parse().unwrap_or(1);
@@ -54,14 +54,14 @@ pub fn html_to_ir(html: &str, path: Option<&str>) -> Result<Document, String> {
     }
 
     // Process paragraph elements as paragraphs
-    let p_sel = Selector::parse("p, div, span, li")
-        .map_err(|e| format!("Selector error: {e}"))?;
+    let p_sel = Selector::parse("p, div, span, li").map_err(|e| format!("Selector error: {e}"))?;
     for el in document.select(&p_sel) {
         let text = el.text().collect::<String>().trim().to_string();
         if !text.is_empty() {
             // Check if this is a heading tag
             let tag_name = el.value().name();
-            if tag_name.starts_with('h') && tag_name.len() == 2
+            if tag_name.starts_with('h')
+                && tag_name.len() == 2
                 && tag_name.as_bytes()[1].is_ascii_digit()
             {
                 continue; // already added as section
@@ -108,7 +108,8 @@ mod tests {
 
     #[test]
     fn test_html_headings_order() {
-        let html = "<html><body><h1>First H1</h1><h2>Then H2</h2><h1>Then H1 Again</h1></body></html>";
+        let html =
+            "<html><body><h1>First H1</h1><h2>Then H2</h2><h1>Then H1 Again</h1></body></html>";
         let doc = html_to_ir(html, None).unwrap();
         assert_eq!(doc.sections.len(), 3);
         assert_eq!(doc.sections[0].title, "First H1");

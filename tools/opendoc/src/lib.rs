@@ -27,7 +27,5 @@ pub mod server;
 #[cfg(feature = "cli")]
 pub mod cli;
 
-
-
 /// Security and path validation
 pub mod security;

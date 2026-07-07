@@ -1,7 +1,7 @@
-use anyhow::Result;
+use super::{get_session_lock, AgentLoop, TurnContext, TurnState};
 use crate::agent::style::*;
+use anyhow::Result;
 use serde::Deserialize;
-use super::{AgentLoop, TurnContext, TurnState, get_session_lock};
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
     let config = &ctx.config;
@@ -13,10 +13,19 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
     let traces_dir = crate::config::resolve_path("~/.openz/traces");
     if let Err(e) = std::fs::create_dir_all(&traces_dir) {
-        eprintln!("{}▲ Failed to create traces directory: {}{}", AURA_GOLD, e, COLOR_RESET);
+        tracing::error!(
+            "{}▲ Failed to create traces directory: {}{}",
+            AURA_GOLD,
+            e,
+            COLOR_RESET
+        );
     } else {
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
-        let trace_file = traces_dir.join(format!("trace_{}_{}.json", ctx.session_key.replace(":", "_"), timestamp));
+        let trace_file = traces_dir.join(format!(
+            "trace_{}_{}.json",
+            ctx.session_key.replace(":", "_"),
+            timestamp
+        ));
         let trace_record = serde_json::json!({
             "session_key": ctx.session_key,
             "timestamp": chrono::Utc::now().to_rfc3339(),
@@ -53,7 +62,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 profile_name = Some(parts_key[1].to_string());
             }
 
-            let write_log = |status: &str, memory_updated: bool, skills_saved: Vec<String>, error_message: Option<String>| {
+            let write_log = |status: &str,
+                             memory_updated: bool,
+                             skills_saved: Vec<String>,
+                             error_message: Option<String>| {
                 #[derive(serde::Serialize)]
                 struct CuratorStatus {
                     last_run_timestamp: String,
@@ -88,20 +100,21 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             } else {
                 for tool in &tools_used {
                     let t = tool.to_lowercase();
-                    if t.contains("write_file") ||
-                       t.contains("patch_file") ||
-                       t.contains("replace_lines") ||
-                       t.contains("zenflow_edit") ||
-                       t.contains("db_write") ||
-                       t.contains("cargo") ||
-                       t.contains("exec_command") ||
-                       t.contains("web_fetch") ||
-                       t.contains("web_search") ||
-                       t.contains("crawl") ||
-                       t.contains("obscura") ||
-                       t.contains("gsd_browser") ||
-                       t.contains("remote_input") ||
-                       t.contains("mcp") {
+                    if t.contains("write_file")
+                        || t.contains("patch_file")
+                        || t.contains("replace_lines")
+                        || t.contains("zenflow_edit")
+                        || t.contains("db_write")
+                        || t.contains("cargo")
+                        || t.contains("exec_command")
+                        || t.contains("web_fetch")
+                        || t.contains("web_search")
+                        || t.contains("crawl")
+                        || t.contains("obscura")
+                        || t.contains("gsd_browser")
+                        || t.contains("remote_input")
+                        || t.contains("mcp")
+                    {
                         should_run = true;
                         break;
                     }
@@ -132,10 +145,13 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 skills_to_save: Vec<ReviewSkill>,
             }
 
-            let recent_interactions = crate::tools::shared_memory::get_recent_interactions(15).await.unwrap_or_default();
+            let recent_interactions = crate::tools::shared_memory::get_recent_interactions(15)
+                .await
+                .unwrap_or_default();
 
             let existing_memory = if let Ok(s) = session_manager.load_async(&session_key).await {
-                s.metadata.get("memory")
+                s.metadata
+                    .get("memory")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string()
@@ -144,9 +160,14 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             };
 
             let mut existing_skills_desc = String::new();
-            if let Ok(skills) = crate::agent::skills::load_skills_with_profile(profile_name.as_deref()) {
+            if let Ok(skills) =
+                crate::agent::skills::load_skills_with_profile(profile_name.as_deref())
+            {
                 for skill in skills {
-                    existing_skills_desc.push_str(&format!("Skill Name: {}\nContent:\n{}\n\n", skill.name, skill.content));
+                    existing_skills_desc.push_str(&format!(
+                        "Skill Name: {}\nContent:\n{}\n\n",
+                        skill.name, skill.content
+                    ));
                 }
             }
 
@@ -180,7 +201,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     let query = item["query"].as_str().unwrap_or("");
                     let success = item["success"].as_bool().unwrap_or(true);
                     let errors = item["errors"].as_str().unwrap_or("");
-                    prompt_content.push_str(&format!("{}. Task: \"{}\" | Status: {}\n", i + 1, query, if success { "SUCCESS" } else { "FAILED" }));
+                    prompt_content.push_str(&format!(
+                        "{}. Task: \"{}\" | Status: {}\n",
+                        i + 1,
+                        query,
+                        if success { "SUCCESS" } else { "FAILED" }
+                    ));
                     if !errors.is_empty() {
                         prompt_content.push_str(&format!("   Errors encountered: {}\n", errors));
                     }
@@ -210,29 +236,46 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     }
                     "assistant" => {
                         prompt_content.push_str("[assistant]:\n");
-                        if let Some(reasoning) = msg.extra.get("reasoning_content").and_then(|v| v.as_str()) {
+                        if let Some(reasoning) =
+                            msg.extra.get("reasoning_content").and_then(|v| v.as_str())
+                        {
                             if !reasoning.is_empty() {
                                 prompt_content.push_str(&format!("  Thinking:\n{}\n", reasoning));
                             }
                         }
-                        if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
+                        if let Some(tool_calls) =
+                            msg.extra.get("tool_calls").and_then(|v| v.as_array())
+                        {
                             if !tool_calls.is_empty() {
                                 prompt_content.push_str("  Tool Calls:\n");
                                 for tc in tool_calls {
-                                    let name = tc.get("name").and_then(|v| v.as_str())
-                                        .or_else(|| tc.get("function").and_then(|f| f.get("name")).and_then(|v| v.as_str()));
-                                    let args = tc.get("arguments")
-                                        .or_else(|| tc.get("function").and_then(|f| f.get("arguments")));
-                                    
+                                    let name =
+                                        tc.get("name").and_then(|v| v.as_str()).or_else(|| {
+                                            tc.get("function")
+                                                .and_then(|f| f.get("name"))
+                                                .and_then(|v| v.as_str())
+                                        });
+                                    let args = tc.get("arguments").or_else(|| {
+                                        tc.get("function").and_then(|f| f.get("arguments"))
+                                    });
+
                                     if let (Some(name_str), Some(args_val)) = (name, args) {
                                         let args_str = args_val.to_string();
                                         let args_truncated = if args_str.len() > 1000 {
-                                            let truncated: String = args_str.chars().take(1000).collect();
-                                            format!("{}... [TRUNCATED - {} bytes]", truncated, args_str.len() - 1000)
+                                            let truncated: String =
+                                                args_str.chars().take(1000).collect();
+                                            format!(
+                                                "{}... [TRUNCATED - {} bytes]",
+                                                truncated,
+                                                args_str.len() - 1000
+                                            )
                                         } else {
                                             args_str
                                         };
-                                        prompt_content.push_str(&format!("    - Call tool '{}' with arguments: {}\n", name_str, args_truncated));
+                                        prompt_content.push_str(&format!(
+                                            "    - Call tool '{}' with arguments: {}\n",
+                                            name_str, args_truncated
+                                        ));
                                     }
                                 }
                             }
@@ -240,24 +283,38 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         if !msg.content.is_empty() {
                             let content_truncated = if msg.content.len() > 2000 {
                                 let truncated: String = msg.content.chars().take(2000).collect();
-                                format!("{}... [TRUNCATED - {} bytes]", truncated, msg.content.len() - 2000)
+                                format!(
+                                    "{}... [TRUNCATED - {} bytes]",
+                                    truncated,
+                                    msg.content.len() - 2000
+                                )
                             } else {
                                 msg.content.clone()
                             };
-                            prompt_content.push_str(&format!("  Response: {}\n", content_truncated));
+                            prompt_content
+                                .push_str(&format!("  Response: {}\n", content_truncated));
                         }
                     }
                     "tool" => {
-                        let tool_name = msg.extra.get("name")
+                        let tool_name = msg
+                            .extra
+                            .get("name")
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown");
                         let content_truncated = if msg.content.len() > 2000 {
                             let truncated: String = msg.content.chars().take(2000).collect();
-                            format!("{}... [TRUNCATED {} bytes]", truncated, msg.content.len() - 2000)
+                            format!(
+                                "{}... [TRUNCATED {} bytes]",
+                                truncated,
+                                msg.content.len() - 2000
+                            )
                         } else {
                             msg.content.clone()
                         };
-                        prompt_content.push_str(&format!("[tool output for '{}']:\n{}\n", tool_name, content_truncated));
+                        prompt_content.push_str(&format!(
+                            "[tool output for '{}']:\n{}\n",
+                            tool_name, content_truncated
+                        ));
                     }
                     role => {
                         prompt_content.push_str(&format!("[{}]: {}\n", role, msg.content));
@@ -282,7 +339,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             let mut memory_updated = false;
             let mut error_msg = None;
 
-            match provider.chat(system_prompt_review, &review_msgs, &[], &settings).await {
+            match provider
+                .chat(system_prompt_review, &review_msgs, &[], &settings)
+                .await
+            {
                 Ok(resp) => {
                     if let Some(content) = resp.content {
                         let trimmed = content.trim();
@@ -301,7 +361,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                 after_start.trim().to_string()
                             }
                         } else {
-                            if let (Some(first_brace), Some(last_brace)) = (trimmed.find('{'), trimmed.rfind('}')) {
+                            if let (Some(first_brace), Some(last_brace)) =
+                                (trimmed.find('{'), trimmed.rfind('}'))
+                            {
                                 if first_brace < last_brace {
                                     trimmed[first_brace..=last_brace].to_string()
                                 } else {
@@ -317,8 +379,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                 if review.memory_updated {
                                     let lock = get_session_lock(&session_key);
                                     let _guard = lock.lock().await;
-                                    if let Ok(mut latest_session) = session_manager.load_async(&session_key).await {
-                                        if latest_session.updated_at != initial_updated_at || latest_session.messages.len() != initial_msg_count {
+                                    if let Ok(mut latest_session) =
+                                        session_manager.load_async(&session_key).await
+                                    {
+                                        if latest_session.updated_at != initial_updated_at
+                                            || latest_session.messages.len() != initial_msg_count
+                                        {
                                             let msg = "Aborted memory update: session was modified concurrently".to_string();
                                             error_msg = Some(msg.clone());
                                             crate::channels::cli::send_notification(&format!(
@@ -326,20 +392,37 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                 AURA_GOLD, COLOR_RESET
                                             ));
                                         } else {
-                                            latest_session.metadata.insert("memory".to_string(), serde_json::Value::String(review.memory_content.trim().to_string()));
-                                            if let Err(e) = session_manager.save(&latest_session).await {
+                                            latest_session.metadata.insert(
+                                                "memory".to_string(),
+                                                serde_json::Value::String(
+                                                    review.memory_content.trim().to_string(),
+                                                ),
+                                            );
+                                            if let Err(e) =
+                                                session_manager.save(&latest_session).await
+                                            {
                                                 let msg = format!("Failed to save memory: {}", e);
                                                 error_msg = Some(msg.clone());
-                                                crate::channels::cli::send_notification(&format!("{}▲ [Self-Improvement] Failed to save self-improvement memory: {}{}", AURA_GOLD, e, COLOR_RESET));
+                                                crate::channels::cli::send_notification(&format!(
+                                                    "{}▲ [Self-Improvement] Failed to save self-improvement memory: {}{}",
+                                                    AURA_GOLD, e, COLOR_RESET
+                                                ));
                                             } else {
                                                 memory_updated = true;
                                                 tracing::info!(session = %session_key, "Self-improvement curator: updated session memory.");
-                                                crate::channels::cli::send_notification(&format!("{}◇ [Self-Improvement] Memory updated based on recent conversation.{}", AURA_BLUE, COLOR_RESET));
+                                                crate::channels::cli::send_notification(&format!(
+                                                    "{}◇ [Self-Improvement] Memory updated based on recent conversation.{}",
+                                                    AURA_BLUE, COLOR_RESET
+                                                ));
 
-                                                let facts: Vec<String> = review.memory_content
+                                                let facts: Vec<String> = review
+                                                    .memory_content
                                                     .lines()
                                                     .map(|line| line.trim())
-                                                    .filter(|line| line.starts_with('-') || line.starts_with('*'))
+                                                    .filter(|line| {
+                                                        line.starts_with('-')
+                                                            || line.starts_with('*')
+                                                    })
                                                     .map(|line| {
                                                         let fact = line[1..].trim();
                                                         fact.trim_start_matches("**")
@@ -355,47 +438,70 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                 let aid = "*";
 
                                                 for fact in facts {
-                                                    let node_id = format!("fact_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+                                                    let node_id = format!(
+                                                        "fact_{}",
+                                                        &uuid::Uuid::new_v4().to_string()[..8]
+                                                    );
                                                     let timestamp = chrono::Utc::now().to_rfc3339();
-                                                    let _ = crate::tools::graph_memory::with_db(|conn| {
-                                                        let mut check_stmt = conn.prepare(
+                                                    let _ = crate::tools::graph_memory::with_db(
+                                                        |conn| {
+                                                            let mut check_stmt = conn.prepare(
                                                             "SELECT 1 FROM semantic_metadata WHERE raw_text = ?1 AND valid_until IS NULL"
                                                         ).map_err(|e| anyhow::anyhow!(e))?;
-                                                        let exists = check_stmt.exists(rusqlite::params![&fact]).map_err(|e| anyhow::anyhow!(e))?;
-                                                        if !exists {
-                                                            conn.execute(
+                                                            let exists = check_stmt
+                                                                .exists(rusqlite::params![&fact])
+                                                                .map_err(|e| anyhow::anyhow!(e))?;
+                                                            if !exists {
+                                                                conn.execute(
                                                                 "INSERT INTO semantic_metadata (node_id, raw_text, timestamp, importance, user_id, session_id, agent_id)
                                                                  VALUES (?1, ?2, ?3, 0.8, ?4, ?5, ?6)",
                                                                 rusqlite::params![node_id, fact, timestamp, uid, sid, aid],
                                                             ).map_err(|e| anyhow::anyhow!(e))?;
-                                                            let _ = conn.execute(
+                                                                let _ = conn.execute(
                                                                 "INSERT INTO semantic_fts (node_id, raw_text) VALUES (?1, ?2)",
                                                                 rusqlite::params![node_id, fact],
                                                             );
-                                                        }
-                                                        Ok(())
-                                                    });
+                                                            }
+                                                            Ok(())
+                                                        },
+                                                    );
                                                 }
                                             }
                                         }
                                     }
                                 }
-                                
+
                                 for skill in review.skills_to_save {
                                     if !skill.name.is_empty() && !skill.content.is_empty() {
                                         let res = if let Some(ref prof) = profile_name {
-                                            crate::agent::skills::save_subagent_skill(prof, &skill.name, &skill.content)
+                                            crate::agent::skills::save_subagent_skill(
+                                                prof,
+                                                &skill.name,
+                                                &skill.content,
+                                            )
                                         } else {
-                                            crate::agent::skills::save_skill(&skill.name, &skill.content)
+                                            crate::agent::skills::save_skill(
+                                                &skill.name,
+                                                &skill.content,
+                                            )
                                         };
                                         if let Err(e) = res {
-                                            let msg = format!("Failed to save skill '{}': {}", skill.name, e);
+                                            let msg = format!(
+                                                "Failed to save skill '{}': {}",
+                                                skill.name, e
+                                            );
                                             error_msg = Some(msg);
-                                            crate::channels::cli::send_notification(&format!("{}▲ [Self-Improvement] Failed to save self-improvement skill '{}': {}{}", AURA_GOLD, skill.name, e, COLOR_RESET));
+                                            crate::channels::cli::send_notification(&format!(
+                                                "{}▲ [Self-Improvement] Failed to save self-improvement skill '{}': {}{}",
+                                                AURA_GOLD, skill.name, e, COLOR_RESET
+                                            ));
                                         } else {
                                             skills_saved.push(skill.name.clone());
                                             tracing::info!(session = %session_key, skill = %skill.name, "Self-improvement curator: saved skill.");
-                                            crate::channels::cli::send_notification(&format!("{}◇ [Self-Improvement] Skill '{}' updated/created based on recent conversation.{}", AURA_BLUE, skill.name, COLOR_RESET));
+                                            crate::channels::cli::send_notification(&format!(
+                                                "{}◇ [Self-Improvement] Skill '{}' updated/created based on recent conversation.{}",
+                                                AURA_BLUE, skill.name, COLOR_RESET
+                                            ));
                                         }
                                     }
                                 }
@@ -414,7 +520,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             }
                         }
                     } else {
-                        write_log("failed", false, vec![], Some("Empty content returned from LLM".to_string()));
+                        write_log(
+                            "failed",
+                            false,
+                            vec![],
+                            Some("Empty content returned from LLM".to_string()),
+                        );
                     }
                 }
                 Err(e) => {

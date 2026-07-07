@@ -133,20 +133,28 @@ impl Default for MemoryThoughtStore {
 
 impl MemoryThoughtStore {
     pub fn new() -> Self {
-        Self { sessions: HashMap::new(), created_at: HashMap::new(), updated_at: HashMap::new() }
+        Self {
+            sessions: HashMap::new(),
+            created_at: HashMap::new(),
+            updated_at: HashMap::new(),
+        }
     }
 }
 
 impl ThoughtStore for MemoryThoughtStore {
     fn save_thought(&mut self, session_id: &str, thought: &ThoughtData) -> Result<(), String> {
         let is_new = !self.sessions.contains_key(session_id);
-        self.sessions.entry(session_id.to_string()).or_default().push(thought.clone());
+        self.sessions
+            .entry(session_id.to_string())
+            .or_default()
+            .push(thought.clone());
         let now = Utc::now();
         self.created_at.entry(session_id.to_string()).or_insert(now);
         self.updated_at.insert(session_id.to_string(), now);
 
         if is_new && self.sessions.len() > 100 {
-            let oldest_key = self.updated_at
+            let oldest_key = self
+                .updated_at
                 .iter()
                 .filter(|&(key, _)| key != session_id)
                 .min_by_key(|&(_, time)| time)
@@ -169,7 +177,12 @@ impl ThoughtStore for MemoryThoughtStore {
             .map(|(id, thoughts)| {
                 let created = self.created_at.get(id).copied().unwrap_or_else(Utc::now);
                 let updated = self.updated_at.get(id).copied().unwrap_or_else(Utc::now);
-                SessionInfo { id: id.clone(), created_at: created, updated_at: updated, total_thoughts: thoughts.len() }
+                SessionInfo {
+                    id: id.clone(),
+                    created_at: created,
+                    updated_at: updated,
+                    total_thoughts: thoughts.len(),
+                }
             })
             .collect();
         list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
@@ -191,14 +204,18 @@ pub struct SqliteThoughtStore {
 
 impl SqliteThoughtStore {
     pub fn new(conn: Connection) -> Result<Self, String> {
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys = ON;")
-            .map_err(|e| e.to_string())?;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys = ON;",
+        )
+        .map_err(|e| e.to_string())?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY, created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL, total_thoughts INTEGER DEFAULT 0
-            );", [],
-        ).map_err(|e| e.to_string())?;
+            );",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS thoughts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -206,11 +223,15 @@ impl SqliteThoughtStore {
                 thought_number INTEGER NOT NULL,
                 thought_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
-            );", [],
-        ).map_err(|e| e.to_string())?;
+            );",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_thoughts_session ON thoughts(session_id);", [],
-        ).map_err(|e| e.to_string())?;
+            "CREATE INDEX IF NOT EXISTS idx_thoughts_session ON thoughts(session_id);",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
         Ok(Self { conn })
     }
 }
@@ -218,12 +239,14 @@ impl SqliteThoughtStore {
 impl ThoughtStore for SqliteThoughtStore {
     fn save_thought(&mut self, session_id: &str, thought: &ThoughtData) -> Result<(), String> {
         let now = Utc::now().to_rfc3339();
-        self.conn.execute(
-            "INSERT INTO sessions (id, created_at, updated_at, total_thoughts)
+        self.conn
+            .execute(
+                "INSERT INTO sessions (id, created_at, updated_at, total_thoughts)
              VALUES (?1, ?2, ?3, 1) ON CONFLICT(id) DO UPDATE SET
              updated_at = excluded.updated_at, total_thoughts = total_thoughts + 1;",
-            params![session_id, now, now],
-        ).map_err(|e| e.to_string())?;
+                params![session_id, now, now],
+            )
+            .map_err(|e| e.to_string())?;
         let thought_json = serde_json::to_string(thought).map_err(|e| e.to_string())?;
         self.conn.execute(
             "INSERT INTO thoughts (session_id, thought_number, thought_json, created_at) VALUES (?1, ?2, ?3, ?4);",
@@ -235,10 +258,12 @@ impl ThoughtStore for SqliteThoughtStore {
         let mut stmt = self.conn.prepare(
             "SELECT thought_json FROM thoughts WHERE session_id = ?1 ORDER BY thought_number ASC, id ASC;",
         ).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map(params![session_id], |row| {
-            let json_str: String = row.get(0)?;
-            Ok(json_str)
-        }).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![session_id], |row| {
+                let json_str: String = row.get(0)?;
+                Ok(json_str)
+            })
+            .map_err(|e| e.to_string())?;
         let mut thoughts = Vec::new();
         for r in rows {
             let json_str = r.map_err(|e| e.to_string())?;
@@ -250,20 +275,38 @@ impl ThoughtStore for SqliteThoughtStore {
         let mut stmt = self.conn.prepare(
             "SELECT id, created_at, updated_at, total_thoughts FROM sessions ORDER BY updated_at DESC;",
         ).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?))
-        }).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|e| e.to_string())?;
         let mut sessions = Vec::new();
         for r in rows {
             let (id, created_str, updated_str, total) = r.map_err(|e| e.to_string())?;
-            let created_at = DateTime::parse_from_rfc3339(&created_str).map(|dt| dt.with_timezone(&Utc)).unwrap_or_else(|_| Utc::now());
-            let updated_at = DateTime::parse_from_rfc3339(&updated_str).map(|dt| dt.with_timezone(&Utc)).unwrap_or_else(|_| Utc::now());
-            sessions.push(SessionInfo { id, created_at, updated_at, total_thoughts: total as usize });
+            let created_at = DateTime::parse_from_rfc3339(&created_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            let updated_at = DateTime::parse_from_rfc3339(&updated_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            sessions.push(SessionInfo {
+                id,
+                created_at,
+                updated_at,
+                total_thoughts: total as usize,
+            });
         }
         Ok(sessions)
     }
     fn delete_session(&mut self, session_id: &str) -> Result<(), String> {
-        self.conn.execute("DELETE FROM sessions WHERE id = ?1;", params![session_id]).map_err(|e| e.to_string())?;
+        self.conn
+            .execute("DELETE FROM sessions WHERE id = ?1;", params![session_id])
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 }
@@ -294,12 +337,10 @@ pub fn get_store() -> &'static Arc<tokio::sync::Mutex<Box<dyn ThoughtStore>>> {
             let _ = std::fs::create_dir_all(parent);
         }
         let store: Box<dyn ThoughtStore> = match Connection::open(&db_path) {
-            Ok(conn) => {
-                match SqliteThoughtStore::new(conn) {
-                    Ok(s) => Box::new(s),
-                    Err(_) => Box::new(MemoryThoughtStore::new()),
-                }
-            }
+            Ok(conn) => match SqliteThoughtStore::new(conn) {
+                Ok(s) => Box::new(s),
+                Err(_) => Box::new(MemoryThoughtStore::new()),
+            },
             Err(_) => Box::new(MemoryThoughtStore::new()),
         };
         Arc::new(tokio::sync::Mutex::new(store))

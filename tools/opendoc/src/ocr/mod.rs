@@ -1,10 +1,10 @@
 #[cfg(feature = "ocr")]
 mod ocr_impl {
-    use crate::ir::Document;
     use crate::ir::elements::Paragraph;
-    use std::process::Command;
+    use crate::ir::Document;
     use std::fs;
     use std::path::Path;
+    use std::process::Command;
 
     pub fn is_ocr_available() -> bool {
         Command::new("which")
@@ -19,7 +19,7 @@ mod ocr_impl {
             Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
             Err(_) => return vec!["eng".to_string()],
         };
-        
+
         let mut langs = Vec::new();
         let mut lines = output.lines();
         let _ = lines.next(); // Skip header
@@ -37,7 +37,9 @@ mod ocr_impl {
 
     pub fn ocr_document(file_path: &str, language: Option<&str>) -> Result<Document, String> {
         if !is_ocr_available() {
-            return Err("tesseract CLI not found. Please install tesseract-ocr on your system.".to_string());
+            return Err(
+                "tesseract CLI not found. Please install tesseract-ocr on your system.".to_string(),
+            );
         }
 
         let lang = language.unwrap_or("eng");
@@ -46,7 +48,8 @@ mod ocr_impl {
             return Err(format!("File not found: {}", file_path));
         }
 
-        let ext = path.extension()
+        let ext = path
+            .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
@@ -93,7 +96,10 @@ mod ocr_impl {
                 Ok(out) if out.status.success() => {}
                 Ok(out) => {
                     let _ = fs::remove_dir_all(&temp_dir);
-                    return Err(format!("pdftoppm failed: {}", String::from_utf8_lossy(&out.stderr)));
+                    return Err(format!(
+                        "pdftoppm failed: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    ));
                 }
                 Err(e) => {
                     let _ = fs::remove_dir_all(&temp_dir);
@@ -114,7 +120,7 @@ mod ocr_impl {
                     }
                 }
             }
-            
+
             entries.sort_by_key(|p| {
                 let fname = p.file_name().and_then(|f| f.to_str()).unwrap_or("");
                 let num_str: String = fname.chars().filter(|c| c.is_ascii_digit()).collect();
@@ -145,7 +151,11 @@ mod ocr_impl {
                     }
                     Ok(out) => {
                         let _ = fs::remove_dir_all(&temp_dir);
-                        return Err(format!("Tesseract failed on page {}: {}", idx + 1, String::from_utf8_lossy(&out.stderr)));
+                        return Err(format!(
+                            "Tesseract failed on page {}: {}",
+                            idx + 1,
+                            String::from_utf8_lossy(&out.stderr)
+                        ));
                     }
                     Err(e) => {
                         let _ = fs::remove_dir_all(&temp_dir);
@@ -171,7 +181,10 @@ mod ocr_impl {
                 }
                 Ok(out) => {
                     let _ = fs::remove_dir_all(&temp_dir);
-                    return Err(format!("Tesseract failed: {}", String::from_utf8_lossy(&out.stderr)));
+                    return Err(format!(
+                        "Tesseract failed: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    ));
                 }
                 Err(e) => {
                     let _ = fs::remove_dir_all(&temp_dir);
@@ -207,8 +220,11 @@ mod ocr_impl {
     use crate::ir::Document;
 
     pub fn ocr_document(_file_path: &str, _language: Option<&str>) -> Result<Document, String> {
-        Err("OCR feature not enabled. Build with --features ocr to enable.\n\
-             See https://github.com/aswin402/opendoc-mcp#ocr for setup instructions.".to_string())
+        Err(
+            "OCR feature not enabled. Build with --features ocr to enable.\n\
+             See https://github.com/aswin402/opendoc-mcp#ocr for setup instructions."
+                .to_string(),
+        )
     }
 
     pub fn is_ocr_available() -> bool {
@@ -227,8 +243,8 @@ pub use ocr_impl::*;
 pub struct OcrConfig {
     pub language: String,
     pub dpi: u32,
-    pub psm: i32,          // Tesseract page segmentation mode
-    pub preprocess: bool,  // Apply image preprocessing (deskew, denoise)
+    pub psm: i32,         // Tesseract page segmentation mode
+    pub preprocess: bool, // Apply image preprocessing (deskew, denoise)
 }
 
 impl Default for OcrConfig {
@@ -236,7 +252,7 @@ impl Default for OcrConfig {
         Self {
             language: "eng".to_string(),
             dpi: 300,
-            psm: 3,  // Fully automatic page segmentation
+            psm: 3, // Fully automatic page segmentation
             preprocess: true,
         }
     }
