@@ -1,5 +1,8 @@
 use super::evaluator_optimizer::validate_schema;
-use super::{build_provider_for_model, CancellationToken, DELEGATION_DEPTH};
+use super::{
+    build_provider_for_model, classify_subagent_error, status_json, CancellationToken,
+    SubagentRunStatus, DELEGATION_DEPTH,
+};
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
 use crate::config::schema::Config;
@@ -415,7 +418,14 @@ impl Tool for DelegateTaskTool {
             Ok(res) => {
                 if !crate::agent::style::is_silent() {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                    crate::tui_println!("{}{}{}✓ Complete{}", AURA_SLATE, leaf_prefix, AURA_GREEN, COLOR_RESET);
+                    crate::tui_println!(
+                        "{}{}{}✓ {}{}",
+                        AURA_SLATE,
+                        leaf_prefix,
+                        AURA_GREEN,
+                        SubagentRunStatus::Completed.label(),
+                        COLOR_RESET
+                    );
                 }
 
                 // Run evolution review
@@ -423,20 +433,43 @@ impl Tool for DelegateTaskTool {
 
                 Ok(serde_json::json!({
                     "status": "success",
+                    "lifecycle": status_json(&SubagentRunStatus::Completed),
                     "session_id": child_session_id,
                     "summary": res.content
                 }))
             }
             Err(e) => {
-                if self.cancellation_token.is_cancelled() {
+                let error_text = e.to_string();
+                let lifecycle = classify_subagent_error(&error_text, &self.cancellation_token);
+                if matches!(lifecycle, SubagentRunStatus::Cancelled) {
+                    if !crate::agent::style::is_silent() {
+                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                        crate::tui_println!(
+                            "{}{}{}▲ {}{}",
+                            AURA_SLATE,
+                            leaf_prefix,
+                            AURA_GOLD,
+                            lifecycle.label(),
+                            COLOR_RESET
+                        );
+                    }
                     return Err(e);
                 }
                 if !crate::agent::style::is_silent() {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                    crate::tui_println!("{}{}{}✗{} Subagent execution failed: {}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, ERROR_RED, e, COLOR_RESET);
+                    crate::tui_println!(
+                        "{}{}{}✗{} {}{}",
+                        AURA_SLATE,
+                        leaf_prefix,
+                        COLOR_RESET,
+                        ERROR_RED,
+                        lifecycle.label(),
+                        COLOR_RESET
+                    );
                 }
                 Ok(serde_json::json!({
                     "status": "error",
+                    "lifecycle": status_json(&lifecycle),
                     "error": format!("Subagent execution failed: {:?}", e)
                 }))
             }
@@ -506,44 +539,206 @@ impl Drop for WorktreeGuard {
     }
 }
 
-fn enforce_disk_quota() {
-    let worktrees_dir = crate::config::resolve_path("~/.openz/worktrees");
+#[derive(Clone, Copy, Debug)]
+pub struct WorktreeCleanupPolicy {
+    pub max_age: std::time::Duration,
+    pub max_count: usize,
+    pub max_total_bytes: u64,
+    pub min_free_bytes: u64,
+}
+
+impl Default for WorktreeCleanupPolicy {
+    fn default() -> Self {
+        Self {
+            max_age: std::time::Duration::from_secs(30 * 60),
+            max_count: 2,
+            max_total_bytes: 2 * 1024 * 1024 * 1024,
+            min_free_bytes: 5 * 1024 * 1024 * 1024,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct WorktreeCandidate {
+    path: std::path::PathBuf,
+    modified: std::time::SystemTime,
+    size_bytes: u64,
+}
+
+fn is_openz_worktree_dir(path: &std::path::Path) -> bool {
+    path.is_dir()
+        && path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|name| name.starts_with("openz_worktree_"))
+}
+
+pub fn directory_size_bytes(path: &std::path::Path) -> u64 {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(_) => return 0,
+    };
+
+    if metadata.is_file() {
+        return metadata.len();
+    }
+    if !metadata.is_dir() {
+        return 0;
+    }
+
+    let mut total = 0;
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(_) => return 0,
+    };
+    for entry in entries.flatten() {
+        total += directory_size_bytes(&entry.path());
+    }
+    total
+}
+
+fn collect_worktree_candidates(worktrees_dir: &std::path::Path) -> Vec<WorktreeCandidate> {
+    let mut candidates = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(worktrees_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !is_openz_worktree_dir(&path) {
+                continue;
+            }
+            let metadata = match std::fs::metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+            let modified = metadata
+                .modified()
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            candidates.push(WorktreeCandidate {
+                size_bytes: directory_size_bytes(&path),
+                path,
+                modified,
+            });
+        }
+    }
+    candidates.sort_by(|a, b| a.modified.cmp(&b.modified));
+    candidates
+}
+
+#[cfg(unix)]
+fn available_bytes(path: &std::path::Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    let rc = unsafe { libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) };
+    if rc != 0 {
+        return None;
+    }
+    let stat = unsafe { stat.assume_init() };
+    Some(stat.f_bavail.saturating_mul(stat.f_frsize))
+}
+
+#[cfg(not(unix))]
+fn available_bytes(_path: &std::path::Path) -> Option<u64> {
+    None
+}
+
+pub fn cleanup_worktrees_dir(worktrees_dir: &std::path::Path, policy: WorktreeCleanupPolicy) {
     if !worktrees_dir.exists() || !worktrees_dir.is_dir() {
         return;
     }
 
-    let mut worktrees = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&worktrees_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if name.starts_with("openz_worktree_") {
-                    if let Ok(metadata) = std::fs::metadata(&path) {
-                        if let Ok(modified) = metadata.modified() {
-                            worktrees.push((path, modified));
-                        }
-                    }
-                }
-            }
+    let now = std::time::SystemTime::now();
+    let candidates = collect_worktree_candidates(worktrees_dir);
+
+    for candidate in &candidates {
+        let is_expired = now
+            .duration_since(candidate.modified)
+            .map(|age| age > policy.max_age)
+            .unwrap_or(false);
+        if is_expired {
+            tracing::warn!(
+                path = %candidate.path.display(),
+                "Removing expired OpenZ subagent worktree"
+            );
+            let _ = std::fs::remove_dir_all(&candidate.path);
         }
     }
 
-    // Keep at most 3 most recent worktrees (to save space)
-    const MAX_WORKTREES: usize = 3;
-    if worktrees.len() <= MAX_WORKTREES {
-        return;
+    let mut candidates = collect_worktree_candidates(worktrees_dir);
+    while candidates.len() > policy.max_count {
+        if let Some(candidate) = candidates.first() {
+            tracing::warn!(
+                path = %candidate.path.display(),
+                "Removing oldest OpenZ subagent worktree to satisfy count quota"
+            );
+            let _ = std::fs::remove_dir_all(&candidate.path);
+        }
+        candidates = collect_worktree_candidates(worktrees_dir);
     }
 
-    worktrees.sort_by(|a, b| a.1.cmp(&b.1)); // Sort oldest to newest
-
-    let delete_count = worktrees.len() - MAX_WORKTREES;
-    for i in 0..delete_count {
-        let (path, _) = &worktrees[i];
-        let _ = std::fs::remove_dir_all(path);
+    loop {
+        let total_bytes: u64 = candidates
+            .iter()
+            .map(|candidate| candidate.size_bytes)
+            .sum();
+        let free_ok = available_bytes(worktrees_dir)
+            .map(|free| free >= policy.min_free_bytes)
+            .unwrap_or(true);
+        if (policy.max_total_bytes == 0 || total_bytes <= policy.max_total_bytes) && free_ok {
+            break;
+        }
+        if let Some(candidate) = candidates.first() {
+            tracing::warn!(
+                path = %candidate.path.display(),
+                total_bytes,
+                "Removing oldest OpenZ subagent worktree to satisfy disk quota"
+            );
+            let _ = std::fs::remove_dir_all(&candidate.path);
+        } else {
+            break;
+        }
+        candidates = collect_worktree_candidates(worktrees_dir);
     }
 }
 
+#[cfg(test)]
+pub fn set_directory_modified_time_for_test(
+    path: &std::path::Path,
+    modified: std::time::SystemTime,
+) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let duration = modified
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default();
+        let times = [
+            libc::timespec {
+                tv_sec: duration.as_secs() as libc::time_t,
+                tv_nsec: duration.subsec_nanos() as libc::c_long,
+            },
+            libc::timespec {
+                tv_sec: duration.as_secs() as libc::time_t,
+                tv_nsec: duration.subsec_nanos() as libc::c_long,
+            },
+        ];
+        let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+        let rc = unsafe { libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0) };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, modified);
+        Ok(())
+    }
+}
+
+fn enforce_disk_quota() {
+    let worktrees_dir = crate::config::resolve_path("~/.openz/worktrees");
+    cleanup_worktrees_dir(&worktrees_dir, WorktreeCleanupPolicy::default());
+}
 
 pub fn cleanup_stale_resources() {
     // 1. Run git worktree prune in current directory if it's a git repo
@@ -564,23 +759,11 @@ pub fn cleanup_stale_resources() {
         }
     }
 
-    let ttl_seconds = 3600; // 1 hour TTL for active worktrees
+    let ttl_seconds = WorktreeCleanupPolicy::default().max_age.as_secs();
 
     // 2. Clean dedicated directory (~/.openz/worktrees)
     let worktrees_dir = crate::config::resolve_path("~/.openz/worktrees");
-    if worktrees_dir.exists() && worktrees_dir.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&worktrees_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if name.starts_with("openz_worktree_") && is_older_than(&path, ttl_seconds) {
-                        let _ = std::fs::remove_dir_all(&path);
-                    }
-                }
-            }
-        }
-    }
+    cleanup_worktrees_dir(&worktrees_dir, WorktreeCleanupPolicy::default());
 
     // 3. Clean legacy /tmp/openz_worktree_* directories
     let tmp_dir = std::env::temp_dir();

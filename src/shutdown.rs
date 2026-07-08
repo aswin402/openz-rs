@@ -75,3 +75,29 @@ pub fn trigger() {
 pub fn receiver() -> Option<watch::Receiver<bool>> {
     SHUTDOWN_TX.get().map(|tx| tx.subscribe())
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SigintAction {
+    CancelTurn,
+    Shutdown,
+}
+
+pub fn sigint_action(cli_active: bool, raw_input_active: bool) -> SigintAction {
+    if cli_active && !raw_input_active {
+        SigintAction::CancelTurn
+    } else {
+        SigintAction::Shutdown
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{sigint_action, SigintAction};
+
+    #[test]
+    fn test_sigint_decision_cancels_only_active_turns() {
+        assert_eq!(sigint_action(true, false), SigintAction::CancelTurn);
+        assert_eq!(sigint_action(true, true), SigintAction::Shutdown);
+        assert_eq!(sigint_action(false, false), SigintAction::Shutdown);
+    }
+}

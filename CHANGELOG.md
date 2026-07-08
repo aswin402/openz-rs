@@ -398,7 +398,22 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.40 (Latest Release)
+### v0.0.41 (Latest Release)
+*   **Fix: OpenZ worktree disk quota guard (CRITICAL)**:
+    *   Added size-aware cleanup for `~/.openz/worktrees/openz_worktree_*` to prevent stale subagent worktrees from consuming large disk space.
+    *   Worktree cleanup now enforces max age, max count, max total bytes, and a minimum free-space safety margin.
+    *   Added tests to verify old worktrees are removed, non-OpenZ directories are preserved, and oldest worktrees are pruned first when the quota is exceeded.
+*   **Fix: Ctrl+C / exit shutdown hang (HIGH)**:
+    *   Distinguishes idle-prompt Ctrl+C from active-turn cancellation so idle Ctrl+C triggers app shutdown instead of only sending a turn-cancel signal.
+    *   Bounds gateway shutdown and outbound offline-notification HTTP calls with short timeouts so OpenZ cannot sit indefinitely after `Goodbye!` / `Shutting down gateways...`.
+*   **Feature: Subagent lifecycle status model (HIGH)**:
+    *   Added structured subagent lifecycle states for queued, running, fallback, cancelling, cancelled, timed out, failed, and completed states.
+    *   Subagent JSON tool results now include lifecycle metadata so TUI and future monitoring can render clear status instead of relying on raw strings.
+*   **Chore: Version drift guard**:
+    *   Added a test that verifies Cargo, README, ONPKG, Markdown changelog, and CLI changelog version surfaces stay synchronized.
+*   **Chore:** Bumped version to `v0.0.41`.
+
+### v0.0.40 (Previous Release)
 *   **Fix: Subagent cancellation caused invisible input / frozen prompt text (CRITICAL)**:
     *   **Root cause:** When a user cancelled a turn (using `Esc` or `Ctrl+C`), the outer future (`run_fut`) was aborted immediately. However, because the future wrapping the subagent spinner (`with_spinner`) was dropped mid-execution, the clean-up block that popped the spinner from the `ACTIVE_SPINNERS` stack was bypassed. This left the spinner on the stack indefinitely.
     *   **Consequence:** The TUI print shims (`tui_print_fn` and `tui_println_fn`) constantly saw an active spinner and printed `\r\x1b[2K` on every print, immediately clearing the prompt and the user's typed input characters as they typed them.

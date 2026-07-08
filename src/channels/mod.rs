@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use std::time::Duration;
 
 #[async_trait]
 pub trait Channel: Send + Sync {
@@ -8,6 +9,9 @@ pub trait Channel: Send + Sync {
     /// Runs/starts the listener loop for the channel
     async fn start(&self) -> anyhow::Result<()>;
 }
+
+pub const SHUTDOWN_HTTP_TIMEOUT: Duration = Duration::from_secs(3);
+pub const SHUTDOWN_GATEWAYS_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub const ACTIVE_MESSAGES: &[&str] = &[
     "Hey there, I'm back.",
@@ -77,6 +81,8 @@ pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
     let sessions_dir = crate::config::loader::resolve_path("~/.openz/sessions");
     let client = reqwest::Client::builder()
         .use_rustls_tls()
+        .connect_timeout(SHUTDOWN_HTTP_TIMEOUT)
+        .timeout(SHUTDOWN_HTTP_TIMEOUT)
         .build()
         .unwrap_or_default();
 
@@ -222,6 +228,18 @@ pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
     crate::providers::ollama_manager::stop_local_ollama();
 }
 
+pub async fn shutdown_gateways_bounded(config: &crate::config::schema::Config) {
+    match tokio::time::timeout(SHUTDOWN_GATEWAYS_TIMEOUT, shutdown_gateways(config)).await {
+        Ok(()) => {}
+        Err(_) => {
+            crate::tui_println!(
+                "Gateway shutdown timed out after {}s; forcing local exit.",
+                SHUTDOWN_GATEWAYS_TIMEOUT.as_secs()
+            );
+        }
+    }
+}
+
 pub async fn fetch_provider_models(
     provider_name: &str,
     config: &crate::config::schema::Config,
@@ -361,6 +379,8 @@ pub fn send_notification(msg: &str) {
             let sessions_dir = crate::config::loader::resolve_path("~/.openz/sessions");
             let client = reqwest::Client::builder()
                 .use_rustls_tls()
+                .connect_timeout(SHUTDOWN_HTTP_TIMEOUT)
+                .timeout(SHUTDOWN_HTTP_TIMEOUT)
                 .build()
                 .unwrap_or_default();
 
@@ -452,6 +472,12 @@ pub fn send_notification(msg: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_shutdown_timeout_is_short_enough_for_interactive_exit() {
+        assert!(super::SHUTDOWN_HTTP_TIMEOUT.as_secs() <= 3);
+        assert!(super::SHUTDOWN_GATEWAYS_TIMEOUT.as_secs() <= 5);
+    }
+
     use super::*;
 
     #[tokio::test]

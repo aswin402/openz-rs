@@ -35,6 +35,147 @@ impl Tool for MockTool {
     }
 }
 
+#[test]
+fn test_lifecycle_status_labels_are_stable_for_tui() {
+    use super::lifecycle::SubagentRunStatus;
+
+    assert_eq!(SubagentRunStatus::Queued.label(), "queued");
+    assert_eq!(SubagentRunStatus::Running.label(), "running");
+    assert_eq!(
+        SubagentRunStatus::Fallback {
+            model: "gemini".into(),
+            attempt: 1,
+            total: 3
+        }
+        .label(),
+        "fallback 1/3: gemini"
+    );
+    assert_eq!(SubagentRunStatus::Cancelling.label(), "cancelling");
+    assert_eq!(SubagentRunStatus::Cancelled.label(), "cancelled");
+    assert_eq!(SubagentRunStatus::TimedOut.label(), "timed out");
+    assert_eq!(
+        SubagentRunStatus::Failed {
+            error: "boom".into()
+        }
+        .label(),
+        "failed: boom"
+    );
+    assert_eq!(SubagentRunStatus::Completed.label(), "completed");
+}
+
+#[test]
+fn test_lifecycle_classifies_timeout_without_user_cancel() {
+    use super::lifecycle::{classify_subagent_error, SubagentRunStatus};
+    let token = CancellationToken::new();
+
+    assert_eq!(
+        classify_subagent_error("Subagent execution timed out after 5 minutes", &token),
+        SubagentRunStatus::TimedOut
+    );
+}
+
+#[test]
+fn test_lifecycle_classifies_user_cancel_from_token() {
+    use super::lifecycle::{classify_subagent_error, SubagentRunStatus};
+    let token = CancellationToken::new();
+    token.cancel();
+
+    assert_eq!(
+        classify_subagent_error("provider returned 429", &token),
+        SubagentRunStatus::Cancelled
+    );
+}
+
+#[test]
+fn test_worktree_cleanup_removes_old_openz_worktrees() -> Result<()> {
+    let root = std::env::temp_dir().join(format!(
+        "openz_worktree_cleanup_age_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root)?;
+    let old_dir = root.join("openz_worktree_old");
+    let fresh_dir = root.join("openz_worktree_fresh");
+    let unrelated_dir = root.join("not_openz_worktree_old");
+    std::fs::create_dir_all(&old_dir)?;
+    std::fs::create_dir_all(&fresh_dir)?;
+    std::fs::create_dir_all(&unrelated_dir)?;
+    std::fs::write(old_dir.join("data.txt"), b"old")?;
+    std::fs::write(fresh_dir.join("data.txt"), b"fresh")?;
+    std::fs::write(unrelated_dir.join("data.txt"), b"keep")?;
+
+    let old_time = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+    delegate_task::set_directory_modified_time_for_test(&old_dir, old_time)?;
+
+    delegate_task::cleanup_worktrees_dir(
+        &root,
+        delegate_task::WorktreeCleanupPolicy {
+            max_age: std::time::Duration::from_secs(3600),
+            max_count: 10,
+            max_total_bytes: 1024 * 1024,
+            min_free_bytes: 0,
+        },
+    );
+
+    assert!(!old_dir.exists(), "old OpenZ worktree should be deleted");
+    assert!(fresh_dir.exists(), "fresh OpenZ worktree should be kept");
+    assert!(
+        unrelated_dir.exists(),
+        "non-OpenZ directory must never be deleted"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn test_worktree_cleanup_enforces_total_size_quota_oldest_first() -> Result<()> {
+    let root = std::env::temp_dir().join(format!(
+        "openz_worktree_cleanup_quota_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&root)?;
+    let old_dir = root.join("openz_worktree_old");
+    let mid_dir = root.join("openz_worktree_mid");
+    let new_dir = root.join("openz_worktree_new");
+    for dir in [&old_dir, &mid_dir, &new_dir] {
+        std::fs::create_dir_all(dir)?;
+        std::fs::write(dir.join("blob.bin"), vec![0_u8; 1024])?;
+    }
+
+    let now = std::time::SystemTime::now();
+    delegate_task::set_directory_modified_time_for_test(
+        &old_dir,
+        now - std::time::Duration::from_secs(300),
+    )?;
+    delegate_task::set_directory_modified_time_for_test(
+        &mid_dir,
+        now - std::time::Duration::from_secs(200),
+    )?;
+    delegate_task::set_directory_modified_time_for_test(
+        &new_dir,
+        now - std::time::Duration::from_secs(100),
+    )?;
+
+    delegate_task::cleanup_worktrees_dir(
+        &root,
+        delegate_task::WorktreeCleanupPolicy {
+            max_age: std::time::Duration::from_secs(3600),
+            max_count: 10,
+            max_total_bytes: 2048,
+            min_free_bytes: 0,
+        },
+    );
+
+    assert!(
+        !old_dir.exists(),
+        "oldest worktree should be deleted to satisfy size quota"
+    );
+    assert!(mid_dir.exists(), "middle worktree should remain");
+    assert!(new_dir.exists(), "newest worktree should remain");
+    assert!(delegate_task::directory_size_bytes(&root) <= 2048);
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_cancellation_token_observes_cli_cancel_signal() {
     let _guard = cancel_test_guard().await;
@@ -375,7 +516,10 @@ async fn test_evaluator_optimizer_loop_success() -> Result<()> {
 #[tokio::test]
 async fn test_delegate_task_cancellation_propagation() -> Result<()> {
     let _guard = cancel_test_guard().await;
-    let temp_dir = std::env::temp_dir().join(format!("openz_delegate_cancel_test_{}", uuid::Uuid::new_v4()));
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_delegate_cancel_test_{}",
+        uuid::Uuid::new_v4()
+    ));
     std::fs::create_dir_all(&temp_dir)?;
 
     std::env::set_var("ANTHROPIC_API_KEY", "dummy");
@@ -408,7 +552,11 @@ async fn test_delegate_task_cancellation_propagation() -> Result<()> {
         .await;
 
     // Check that it returned an Err, not Ok
-    assert!(res.is_err(), "Expected an error because the task was cancelled, got: {:?}", res);
+    assert!(
+        res.is_err(),
+        "Expected an error because the task was cancelled, got: {:?}",
+        res
+    );
 
     // Cleanup env vars
     std::env::remove_var("ANTHROPIC_API_KEY");
@@ -421,7 +569,10 @@ async fn test_delegate_task_cancellation_propagation() -> Result<()> {
 #[tokio::test]
 async fn test_delegate_profile_cancellation_propagation() -> Result<()> {
     let _guard = cancel_test_guard().await;
-    let temp_dir = std::env::temp_dir().join(format!("openz_delegate_profile_cancel_test_{}", uuid::Uuid::new_v4()));
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_delegate_profile_cancel_test_{}",
+        uuid::Uuid::new_v4()
+    ));
     std::fs::create_dir_all(&temp_dir)?;
 
     std::env::set_var("ANTHROPIC_API_KEY", "dummy");
@@ -464,7 +615,11 @@ async fn test_delegate_profile_cancellation_propagation() -> Result<()> {
         .await;
 
     // Check that it returned an Err, not Ok
-    assert!(res.is_err(), "Expected an error because the profile tool was cancelled, got: {:?}", res);
+    assert!(
+        res.is_err(),
+        "Expected an error because the profile tool was cancelled, got: {:?}",
+        res
+    );
 
     // Cleanup env vars
     std::env::remove_var("ANTHROPIC_API_KEY");
@@ -473,5 +628,3 @@ async fn test_delegate_profile_cancellation_propagation() -> Result<()> {
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
 }
-
-

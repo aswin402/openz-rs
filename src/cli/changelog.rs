@@ -163,8 +163,39 @@ pub async fn handle_changelog() -> Result<()> {
     );
 
     println!(
-        "  {green}[v0.0.14] - Current Release{reset}",
+        "  {green}[v{}] - Current Release{reset}",
+        env!("CARGO_PKG_VERSION"),
         green = AURA_GREEN,
+        reset = COLOR_RESET
+    );
+    println!("    • Added size-aware cleanup and quotas for stale OpenZ subagent worktrees.");
+    println!("    • Fixed idle Ctrl+C / exit shutdown hangs by bounding gateway cleanup.");
+    println!("    • Added structured subagent lifecycle statuses and version drift tests.");
+
+    println!(
+        "  {slate}[v0.0.40]{reset}",
+        slate = AURA_SLATE,
+        reset = COLOR_RESET
+    );
+    println!("    • Fixed subagent model routing, fallback isolation, and OpenRouter free-model handling.");
+    println!(
+        "    • Improved CLI cancellation for long-running LLM, tool, and delegated subagent turns."
+    );
+    println!(
+        "    • Split agent loop and tool registration internals into smaller maintainable units."
+    );
+
+    println!(
+        "  {slate}[v0.0.39]{reset}",
+        slate = AURA_SLATE,
+        reset = COLOR_RESET
+    );
+    println!("    • Reserved dynamic subagent tools inside provider API tool limits.");
+    println!("    • Prevented profile subagents from inheriting unrelated global fallback models.");
+
+    println!(
+        "  {slate}[v0.0.14]{reset}",
+        slate = AURA_SLATE,
         reset = COLOR_RESET
     );
     println!("    • Implemented incremental session saving to disk to prevent data loss on early command cancellation.");

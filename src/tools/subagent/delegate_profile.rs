@@ -4,7 +4,10 @@ use super::delegate_task::{
 };
 use super::evaluator_optimizer::validate_schema;
 use super::parallel_research::get_status_from_goal;
-use super::{build_provider_for_model, CancellationToken, DELEGATION_DEPTH};
+use super::{
+    build_provider_for_model, classify_subagent_error, status_json, CancellationToken,
+    SubagentRunStatus, DELEGATION_DEPTH,
+};
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
 use crate::config::schema::Config;
@@ -227,7 +230,17 @@ impl Tool for DelegateProfileTool {
             }
 
             if idx > 0 {
-                crate::tui_println!("{}▲ Primary model failed. Trying fallback model ({} of {}): {}{}", AURA_GOLD, idx, models_to_try.len() - 1, model_name, COLOR_RESET);
+                let fallback_status = SubagentRunStatus::Fallback {
+                    model: model_name.clone(),
+                    attempt: idx,
+                    total: models_to_try.len() - 1,
+                };
+                crate::tui_println!(
+                    "{}▲ Primary model failed. Trying {}{}",
+                    AURA_GOLD,
+                    fallback_status.label(),
+                    COLOR_RESET
+                );
             }
 
             let provider = if std::env::var("OPENZ_USE_MOCK_PROVIDER").is_ok() {
@@ -479,6 +492,7 @@ impl Tool for DelegateProfileTool {
 
                     return Ok(serde_json::json!({
                         "status": "success",
+                        "lifecycle": status_json(&SubagentRunStatus::Completed),
                         "session_id": child_session_id,
                         "model_used": model_name,
                         "summary": run_res.content
@@ -488,12 +502,32 @@ impl Tool for DelegateProfileTool {
                     if has_branch {
                         let _ = crate::tools::graph_memory::RollbackDatabaseBranchTool.call(&serde_json::json!({})).await;
                     }
-                    if self.cancellation_token.is_cancelled() {
+                    let error_text = e.to_string();
+                    let lifecycle = classify_subagent_error(&error_text, &self.cancellation_token);
+                    if matches!(lifecycle, SubagentRunStatus::Cancelled) {
+                        if !crate::agent::style::is_silent() {
+                            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                            crate::tui_println!(
+                                "{}{}{}▲ {}{}",
+                                AURA_SLATE,
+                                leaf_prefix,
+                                AURA_GOLD,
+                                lifecycle.label(),
+                                COLOR_RESET
+                            );
+                        }
                         return Err(e);
                     }
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                        crate::tui_println!("{}{}{}✕ Error: {}{}", AURA_SLATE, leaf_prefix, AURA_ROSE, e, COLOR_RESET);
+                        crate::tui_println!(
+                            "{}{}{}✕ {}{}",
+                            AURA_SLATE,
+                            leaf_prefix,
+                            AURA_ROSE,
+                            lifecycle.label(),
+                            COLOR_RESET
+                        );
                     }
                     last_error = Some(e);
                 }
@@ -501,8 +535,12 @@ impl Tool for DelegateProfileTool {
         }
 
         let err_msg = format!("All configured models/fallbacks failed for subagent '{}'. Last error: {:?}", self.profile.name, last_error);
+        let lifecycle = SubagentRunStatus::Failed {
+            error: err_msg.clone(),
+        };
         Ok(serde_json::json!({
             "status": "error",
+            "lifecycle": status_json(&lifecycle),
             "error": err_msg
         }))
         }).await

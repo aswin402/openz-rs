@@ -223,6 +223,7 @@ pub async fn handle_agent() -> Result<()> {
         }
     }
 
-    crate::channels::shutdown_gateways(&config).await;
+    crate::shutdown::trigger();
+    crate::channels::shutdown_gateways_bounded(&config).await;
     Ok(())
 }

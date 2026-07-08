@@ -66,6 +66,10 @@ impl RawModeGuard {
     }
 }
 
+pub fn is_raw_input_active() -> bool {
+    input::IS_RAW_INPUT_ACTIVE.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
         let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableBracketedPaste);

@@ -54,7 +54,7 @@ pub async fn handle_telegram() -> Result<()> {
         }
     }
 
-    crate::channels::shutdown_gateways(&config).await;
+    crate::channels::shutdown_gateways_bounded(&config).await;
     Ok(())
 }
 
@@ -85,7 +85,7 @@ pub async fn handle_discord() -> Result<()> {
         }
     }
 
-    crate::channels::shutdown_gateways(&config).await;
+    crate::channels::shutdown_gateways_bounded(&config).await;
     Ok(())
 }
 
@@ -124,7 +124,7 @@ pub async fn handle_whatsapp() -> Result<()> {
         }
     }
 
-    crate::channels::shutdown_gateways(&config).await;
+    crate::channels::shutdown_gateways_bounded(&config).await;
     Ok(())
 }
 
@@ -145,7 +145,7 @@ pub async fn handle_email() -> Result<()> {
         }
     }
 
-    crate::channels::shutdown_gateways(&config).await;
+    crate::channels::shutdown_gateways_bounded(&config).await;
     Ok(())
 }
 

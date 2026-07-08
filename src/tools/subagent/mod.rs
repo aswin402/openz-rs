@@ -11,6 +11,7 @@ pub mod cancellation_token;
 pub mod delegate_profile;
 pub mod delegate_task;
 pub mod evaluator_optimizer;
+pub mod lifecycle;
 pub mod optimize_profile;
 pub mod parallel_research;
 
@@ -21,6 +22,7 @@ pub use cancellation_token::CancellationToken;
 pub use delegate_profile::DelegateProfileTool;
 pub use delegate_task::{cleanup_stale_resources, DelegateTaskTool};
 pub use evaluator_optimizer::EvaluatorOptimizerLoopTool;
+pub use lifecycle::{classify_subagent_error, status_json, SubagentRunStatus};
 pub use optimize_profile::{CreateSubagentTool, DeleteSubagentTool, OptimizeSubagentTool};
 pub use parallel_research::ParallelResearchTool;
 

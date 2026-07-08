@@ -122,10 +122,14 @@ async fn main() -> anyhow::Result<()> {
                 tokio::select! {
                     _ = sigint.recv() => {
                         tracing::info!("Received SIGINT/Ctrl+C");
-                        if openz::shutdown::is_cli_active() {
-                            openz::shutdown::trigger_cli_cancel();
-                        } else {
-                            break;
+                        match openz::shutdown::sigint_action(
+                            openz::shutdown::is_cli_active(),
+                            openz::channels::cli::is_raw_input_active(),
+                        ) {
+                            openz::shutdown::SigintAction::CancelTurn => {
+                                openz::shutdown::trigger_cli_cancel();
+                            }
+                            openz::shutdown::SigintAction::Shutdown => break,
                         }
                     },
                     _ = sigterm.recv() => {
@@ -140,10 +144,14 @@ async fn main() -> anyhow::Result<()> {
             loop {
                 tokio::signal::ctrl_c().await.ok();
                 tracing::info!("Received Ctrl+C/SIGINT");
-                if openz::shutdown::is_cli_active() {
-                    openz::shutdown::trigger_cli_cancel();
-                } else {
-                    break;
+                match openz::shutdown::sigint_action(
+                    openz::shutdown::is_cli_active(),
+                    openz::channels::cli::is_raw_input_active(),
+                ) {
+                    openz::shutdown::SigintAction::CancelTurn => {
+                        openz::shutdown::trigger_cli_cancel();
+                    }
+                    openz::shutdown::SigintAction::Shutdown => break,
                 }
             }
         }
