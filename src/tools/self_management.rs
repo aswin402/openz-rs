@@ -98,6 +98,121 @@ impl Tool for DiagnoseToolTool {
     }
 }
 
+pub struct ToolCatalogTool {
+    registry: crate::tools::ToolRegistry,
+}
+
+impl ToolCatalogTool {
+    pub fn new(registry: crate::tools::ToolRegistry) -> Self {
+        Self { registry }
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for ToolCatalogTool {
+    fn name(&self) -> &str {
+        "tool_catalog"
+    }
+
+    fn description(&self) -> &str {
+        "List registered native tools with domain, risk, resource metadata, and whether each tool is currently exposed to the model."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "domain": {
+                    "type": "string",
+                    "description": "Optional domain filter, such as filesystem, shell, web, subagent, memory, document, media, or self_management."
+                },
+                "risk": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                    "description": "Optional risk filter."
+                },
+                "include_schema": {
+                    "type": "boolean",
+                    "description": "Include each tool JSON parameter schema. Default false to keep output compact."
+                },
+                "only_exposed": {
+                    "type": "boolean",
+                    "description": "If true, only return tools currently included in the provider tool payload."
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Optional prompt/task text to explain prompt-aware tool routing for that turn."
+                }
+            }
+        })
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let include_schema = arguments
+            .get("include_schema")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let only_exposed = arguments
+            .get("only_exposed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let domain_filter = arguments.get("domain").and_then(|v| v.as_str());
+        let risk_filter = arguments.get("risk").and_then(|v| v.as_str());
+        let prompt = arguments
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let all_entries = self
+            .registry
+            .catalog_entries_for_prompt(include_schema, prompt);
+        let exposed_count = all_entries
+            .iter()
+            .filter(|entry| entry["exposed_to_model"].as_bool().unwrap_or(false))
+            .count();
+        let entries: Vec<Value> = all_entries
+            .into_iter()
+            .filter(|entry| {
+                if only_exposed && !entry["exposed_to_model"].as_bool().unwrap_or(false) {
+                    return false;
+                }
+                if let Some(domain) = domain_filter {
+                    if entry["domain"].as_str() != Some(domain) {
+                        return false;
+                    }
+                }
+                if let Some(risk) = risk_filter {
+                    if entry["risk"].as_str() != Some(risk) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect();
+
+        let mut domains = std::collections::BTreeMap::<String, usize>::new();
+        let mut risks = std::collections::BTreeMap::<String, usize>::new();
+        for entry in &entries {
+            if let Some(domain) = entry["domain"].as_str() {
+                *domains.entry(domain.to_string()).or_default() += 1;
+            }
+            if let Some(risk) = entry["risk"].as_str() {
+                *risks.entry(risk.to_string()).or_default() += 1;
+            }
+        }
+
+        Ok(serde_json::json!({
+            "success": true,
+            "tool_count": entries.len(),
+            "exposed_count": exposed_count,
+            "selected_domains": self.registry.selected_domains_for_prompt(prompt),
+            "domains": domains,
+            "risks": risks,
+            "tools": entries
+        }))
+    }
+}
+
 pub struct CurateSkillTool;
 
 #[async_trait::async_trait]
@@ -332,6 +447,26 @@ impl Tool for ManageConfigTool {
                             "type": "boolean",
                             "description": "Enable/disable token response streaming."
                         },
+                        "show_tool_router_status": {
+                            "type": "boolean",
+                            "description": "Show compact tool-router selection summaries in the TUI."
+                        },
+                        "min_free_disk_gb": {
+                            "type": "number",
+                            "description": "Minimum free disk space required before disk-writing tools run."
+                        },
+                        "allow_network_tools": {
+                            "type": "boolean",
+                            "description": "Allow tools marked as network-capable to run."
+                        },
+                        "max_concurrent_process_tools": {
+                            "type": "integer",
+                            "description": "Maximum active process-spawning tools allowed before new process tools are blocked."
+                        },
+                        "warn_before_expensive_tools": {
+                            "type": "boolean",
+                            "description": "Require approval before tools that combine network/process/disk behavior."
+                        },
                         "max_tool_iterations": {
                             "type": "integer",
                             "description": "Maximum execution steps per turn."
@@ -403,6 +538,31 @@ impl Tool for ManageConfigTool {
                         "streaming" => {
                             if let Some(b) = v.as_bool() {
                                 config.agents.defaults.streaming = b;
+                            }
+                        }
+                        "show_tool_router_status" => {
+                            if let Some(b) = v.as_bool() {
+                                config.agents.defaults.show_tool_router_status = b;
+                            }
+                        }
+                        "min_free_disk_gb" => {
+                            if let Some(n) = v.as_f64() {
+                                config.agents.defaults.min_free_disk_gb = n;
+                            }
+                        }
+                        "allow_network_tools" => {
+                            if let Some(b) = v.as_bool() {
+                                config.agents.defaults.allow_network_tools = b;
+                            }
+                        }
+                        "max_concurrent_process_tools" => {
+                            if let Some(n) = v.as_u64() {
+                                config.agents.defaults.max_concurrent_process_tools = n as usize;
+                            }
+                        }
+                        "warn_before_expensive_tools" => {
+                            if let Some(b) = v.as_bool() {
+                                config.agents.defaults.warn_before_expensive_tools = b;
                             }
                         }
                         "max_tool_iterations" => {
@@ -1123,6 +1283,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_tool_catalog_reports_metadata_and_exposure() {
+        let registry = crate::tools::ToolRegistry::new();
+        registry.register(std::sync::Arc::new(crate::tools::shell::ExecCommandTool));
+        registry.register(std::sync::Arc::new(crate::tools::filesystem::ReadFileTool));
+
+        let catalog = ToolCatalogTool::new(registry);
+        let res = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(catalog.call(&serde_json::json!({
+                "include_schema": false,
+                "prompt": "run cargo test and inspect files"
+            })))
+            .unwrap();
+
+        assert_eq!(res["success"].as_bool().unwrap(), true);
+        assert_eq!(res["tool_count"].as_u64().unwrap(), 2);
+        assert_eq!(res["exposed_count"].as_u64().unwrap(), 2);
+
+        let tools = res["tools"].as_array().unwrap();
+        let exec = tools
+            .iter()
+            .find(|tool| tool["name"].as_str() == Some("exec_command"))
+            .expect("exec_command entry");
+        assert_eq!(exec["domain"].as_str().unwrap(), "shell");
+        assert_eq!(exec["risk"].as_str().unwrap(), "high");
+        assert_eq!(exec["spawns_process"].as_bool().unwrap(), true);
+        assert_eq!(exec["requires_approval"].as_bool().unwrap(), true);
+        assert_eq!(exec["matched_prompt_domain"].as_bool().unwrap(), true);
+        assert!(exec["selection_reason"]
+            .as_str()
+            .unwrap()
+            .contains("prompt_domain"));
+        assert!(exec["selected_score"].as_i64().unwrap() > 0);
+        assert!(exec["aliases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|alias| alias.as_str() == Some("shell command")));
+        assert!(exec["examples"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|example| example
+                .as_str()
+                .unwrap_or("")
+                .contains("safe project-local command")));
+        assert!(exec["when_to_use"]
+            .as_str()
+            .unwrap()
+            .contains("shell commands"));
+        assert!(exec["when_not_to_use"]
+            .as_str()
+            .unwrap()
+            .contains("file reads"));
+
+        let selected_domains = res["selected_domains"].as_array().unwrap();
+        assert!(selected_domains.iter().any(|d| d.as_str() == Some("shell")));
+
+        let read_file = tools
+            .iter()
+            .find(|tool| tool["name"].as_str() == Some("read_file"))
+            .expect("read_file entry");
+        assert_eq!(read_file["domain"].as_str().unwrap(), "filesystem");
+        assert_eq!(read_file["risk"].as_str().unwrap(), "low");
+        assert_eq!(read_file["writes_disk"].as_bool().unwrap(), false);
+    }
+
+    #[test]
     fn test_diagnose_and_optimize_tools() {
         let registry = crate::tools::ToolRegistry::new();
         struct DummyTool;
@@ -1252,7 +1480,11 @@ mod tests {
                     "max_tokens": 1234,
                     "temperature": 0.25,
                     "caveman_mode": false,
-                    "streaming": false
+                    "streaming": false,
+                    "min_free_disk_gb": 3.5,
+                    "allow_network_tools": false,
+                    "max_concurrent_process_tools": 2,
+                    "warn_before_expensive_tools": false
                 }
             })))
             .unwrap();
@@ -1264,6 +1496,16 @@ mod tests {
         assert_eq!(updated_config.agents.defaults.temperature, 0.25f32);
         assert_eq!(updated_config.agents.defaults.caveman_mode, false);
         assert_eq!(updated_config.agents.defaults.streaming, false);
+        assert_eq!(updated_config.agents.defaults.min_free_disk_gb, 3.5);
+        assert_eq!(updated_config.agents.defaults.allow_network_tools, false);
+        assert_eq!(
+            updated_config.agents.defaults.max_concurrent_process_tools,
+            2
+        );
+        assert_eq!(
+            updated_config.agents.defaults.warn_before_expensive_tools,
+            false
+        );
 
         // 4. Try updating an invalid/restricted field (should be blocked)
         let invalid_res = rt

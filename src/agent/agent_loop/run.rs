@@ -13,6 +13,108 @@ fn should_cancel_turn_after_tool_error(error_str: &str) -> bool {
         || lower.contains("subagent task cancelled")
 }
 
+struct ApprovedToolExec<'a> {
+    tool: std::sync::Arc<dyn crate::tools::Tool>,
+    call: &'a crate::providers::ToolCallRequest,
+    metadata: &'a crate::tools::ToolMetadata,
+    config: &'a crate::config::schema::Config,
+    formatted_args: &'a str,
+    session_key: &'a str,
+    silent: bool,
+    tool_spinner_msg: &'a str,
+    turn_cancel: &'a crate::tools::subagent::CancellationToken,
+    turn_errors: &'a mut Vec<String>,
+}
+
+async fn execute_approved_tool(params: ApprovedToolExec<'_>) -> serde_json::Value {
+    let _process_guard = if params.metadata.spawns_process {
+        match crate::tools::resource_policy::try_acquire_process_tool(
+            params.config.agents.defaults.max_concurrent_process_tools,
+        ) {
+            Ok(guard) => Some(guard),
+            Err(reason) => {
+                let error_str = format!(
+                    "Tool blocked by resource policy: {}. {}",
+                    params.call.name, reason
+                );
+                params.turn_errors.push(format!(
+                    "Tool {} blocked by process resource policy: {}",
+                    params.call.name, reason
+                ));
+                return super::tool_execution::render_tool_failure(
+                    params.call,
+                    params.formatted_args,
+                    params.session_key,
+                    params.silent,
+                    &error_str,
+                )
+                .await;
+            }
+        }
+    } else {
+        None
+    };
+
+    let tool_timeout =
+        std::time::Duration::from_secs(params.config.agents.defaults.tool_timeout_secs);
+    let fut = params.tool.call(&params.call.arguments);
+    let timed_fut = tokio::time::timeout(tool_timeout, fut);
+    let tool_cancel_tx = crate::shutdown::cli_cancel_tx();
+    let mut tool_cancel_rx = tool_cancel_tx.subscribe();
+    let tool_cancel_initial = *tool_cancel_rx.borrow();
+    let cancel_aware_fut = async {
+        tokio::select! {
+            biased;
+            _ = async {
+                while *tool_cancel_rx.borrow() == tool_cancel_initial {
+                    if tool_cancel_rx.changed().await.is_err() { break; }
+                }
+            } => {
+                Err(anyhow::anyhow!("Cancelled by user"))
+            }
+            res = timed_fut => {
+                match res {
+                    Ok(r) => r,
+                    Err(_) => Err(anyhow::anyhow!(
+                        "Tool execution timed out after {}s",
+                        params.config.agents.defaults.tool_timeout_secs
+                    )),
+                }
+            }
+        }
+    };
+
+    match with_spinner(params.tool_spinner_msg, cancel_aware_fut).await {
+        Ok(res) => {
+            super::tool_execution::render_tool_success(
+                params.call,
+                params.formatted_args,
+                params.session_key,
+                params.silent,
+                res,
+            )
+            .await
+        }
+        Err(e) => {
+            let error_str = e.to_string();
+            if should_cancel_turn_after_tool_error(&error_str) {
+                params.turn_cancel.cancel();
+            }
+            params
+                .turn_errors
+                .push(format!("Tool {} failed: {}", params.call.name, error_str));
+            super::tool_execution::render_tool_failure(
+                params.call,
+                params.formatted_args,
+                params.session_key,
+                params.silent,
+                &error_str,
+            )
+            .await
+        }
+    }
+}
+
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
     let mut iterations = 0;
     let mut loop_blocked_count = 0;
@@ -74,7 +176,13 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             break;
         }
 
-        let tools_openai = loop_ref.tools.to_openai_format();
+        let tools_openai = loop_ref.tools.to_openai_format_for_prompt(ctx.user_content);
+        if config.agents.defaults.show_tool_router_status
+            && !crate::agent::style::spinner::is_silent()
+        {
+            let summary = loop_ref.tools.tool_router_status_line(ctx.user_content);
+            crate::tui_println!("{}◎ {}{}", AURA_PURPLE, summary, COLOR_RESET);
+        }
 
         let activity_msg = format!("{}▶ Thinking{}", RED_ORANGE, COLOR_RESET);
         let start_time = std::time::Instant::now();
@@ -701,53 +809,26 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             } else {
                 match loop_ref.tools.get(&call.name) {
                     Some(t) => {
-                        let tool_timeout = std::time::Duration::from_secs(
-                            config.agents.defaults.tool_timeout_secs,
-                        );
-                        let fut = t.call(&call.arguments);
-                        let timed_fut = tokio::time::timeout(tool_timeout, fut);
-                        // Race tool execution against CLI cancel signal
-                        let tool_cancel_tx = crate::shutdown::cli_cancel_tx();
-                        let mut tool_cancel_rx = tool_cancel_tx.subscribe();
-                        let tool_cancel_initial = *tool_cancel_rx.borrow();
-                        let cancel_aware_fut = async {
-                            tokio::select! {
-                                biased;
-                                _ = async {
-                                    while *tool_cancel_rx.borrow() == tool_cancel_initial {
-                                        if tool_cancel_rx.changed().await.is_err() { break; }
-                                    }
-                                } => {
-                                    Err(anyhow::anyhow!("Cancelled by user"))
-                                }
-                                res = timed_fut => {
-                                    match res {
-                                        Ok(r) => r,
-                                        Err(_) => Err(anyhow::anyhow!("Tool execution timed out after {}s", config.agents.defaults.tool_timeout_secs)),
-                                    }
-                                }
-                            }
-                        };
-                        match with_spinner(&tool_spinner_msg, cancel_aware_fut).await {
-                            Ok(res) => {
-                                super::tool_execution::render_tool_success(
-                                    &call,
-                                    &formatted_args,
-                                    ctx.session_key,
-                                    silent,
-                                    res,
-                                )
-                                .await
-                            }
-                            Err(e) => {
-                                let error_str = e.to_string();
-                                // If the tool was cancelled by user, propagate to turn-level cancellation
-                                // so the next iteration breaks immediately instead of re-prompting the LLM.
-                                if should_cancel_turn_after_tool_error(&error_str) {
-                                    turn_cancel_clone.cancel();
-                                }
-                                ctx.turn_errors
-                                    .push(format!("Tool {} failed: {}", call.name, error_str));
+                        let metadata = t.metadata();
+                        let runtime =
+                            crate::tools::resource_policy::RuntimeResourceSnapshot::current();
+                        let policy_decision =
+                            crate::tools::resource_policy::ToolResourcePolicy::evaluate(
+                                &metadata,
+                                &config.agents.defaults,
+                                &runtime,
+                            );
+
+                        match policy_decision {
+                            crate::tools::resource_policy::ToolResourceDecision::Block { reason } => {
+                                let error_str = format!(
+                                    "Tool blocked by resource policy: {}. {}",
+                                    call.name, reason
+                                );
+                                ctx.turn_errors.push(format!(
+                                    "Tool {} blocked by resource policy: {}",
+                                    call.name, reason
+                                ));
                                 super::tool_execution::render_tool_failure(
                                     &call,
                                     &formatted_args,
@@ -755,6 +836,69 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                     silent,
                                     &error_str,
                                 )
+                                .await
+                            }
+                            crate::tools::resource_policy::ToolResourceDecision::RequireApproval { reason } => {
+                                let approved = if approval.approval_requested {
+                                    true
+                                } else {
+                                    crate::agent::security::ask_approval(
+                                        ctx.session_key,
+                                        &call.name,
+                                        &serde_json::json!({
+                                            "resource_policy_reason": reason,
+                                            "arguments": call.arguments,
+                                        }),
+                                    )
+                                    .await
+                                    .unwrap_or(false)
+                                };
+                                if !approved {
+                                    let error_str = format!(
+                                        "Tool denied by resource policy approval: {}. {}",
+                                        call.name, reason
+                                    );
+                                    ctx.turn_errors.push(format!(
+                                        "Tool {} denied by resource policy approval: {}",
+                                        call.name, reason
+                                    ));
+                                    super::tool_execution::render_tool_failure(
+                                        &call,
+                                        &formatted_args,
+                                        ctx.session_key,
+                                        silent,
+                                        &error_str,
+                                    )
+                                    .await
+                                } else {
+                                    execute_approved_tool(ApprovedToolExec {
+                                        tool: t.clone(),
+                                        call: &call,
+                                        metadata: &metadata,
+                                        config: &config,
+                                        formatted_args: &formatted_args,
+                                        session_key: ctx.session_key,
+                                        silent,
+                                        tool_spinner_msg: &tool_spinner_msg,
+                                        turn_cancel: &turn_cancel_clone,
+                                        turn_errors: &mut ctx.turn_errors,
+                                    })
+                                    .await
+                                }
+                            }
+                            crate::tools::resource_policy::ToolResourceDecision::Allow => {
+                                execute_approved_tool(ApprovedToolExec {
+                                    tool: t.clone(),
+                                    call: &call,
+                                    metadata: &metadata,
+                                    config: &config,
+                                    formatted_args: &formatted_args,
+                                    session_key: ctx.session_key,
+                                    silent,
+                                    tool_spinner_msg: &tool_spinner_msg,
+                                    turn_cancel: &turn_cancel_clone,
+                                    turn_errors: &mut ctx.turn_errors,
+                                })
                                 .await
                             }
                         }

@@ -156,6 +156,9 @@ fn register_core_tools(
         crate::tools::self_management::DiagnoseToolTool::new(registry.clone()),
     ));
     registry.register(std::sync::Arc::new(
+        crate::tools::self_management::ToolCatalogTool::new(registry.clone()),
+    ));
+    registry.register(std::sync::Arc::new(
         crate::tools::self_management::CurateSkillTool,
     ));
     registry.register(std::sync::Arc::new(
@@ -867,6 +870,7 @@ mod tests {
         assert!(names.contains(&"read_file".to_string()));
         assert!(names.contains(&"exec_command".to_string()));
         assert!(names.contains(&"delegate_task".to_string()));
+        assert!(names.contains(&"tool_catalog".to_string()));
         assert!(names.contains(&"sequentialthinking".to_string()));
         assert!(names.contains(&"scope_context".to_string()));
         assert!(names.contains(&"create_entities".to_string()));
@@ -880,23 +884,177 @@ mod tests {
     }
 
     #[test]
-    fn openai_format_is_sorted_and_truncated_to_api_limit() {
+    fn openai_format_prioritizes_high_value_tools_when_truncated() {
         let registry = ToolRegistry::new();
-        for i in (0..140).rev() {
-            registry.register(Arc::new(TestTool(format!("tool_{i:03}"))));
+        for i in 0..140 {
+            registry.register(Arc::new(MetaTestTool {
+                name: format!("low_tool_{i:03}"),
+                domain: "general",
+                priority: 1,
+                risk: crate::tools::ToolRisk::Low,
+            }));
         }
+        registry.register(Arc::new(MetaTestTool {
+            name: "cargo_manager".to_string(),
+            domain: "code",
+            priority: 95,
+            risk: crate::tools::ToolRisk::Medium,
+        }));
+        registry.register(Arc::new(MetaTestTool {
+            name: "read_file".to_string(),
+            domain: "filesystem",
+            priority: 90,
+            risk: crate::tools::ToolRisk::Low,
+        }));
 
-        let tools = registry.to_openai_format();
+        let tools =
+            registry.to_openai_format_for_prompt("run cargo test and fix the rust compile errors");
         assert_eq!(tools.len(), 128);
         let names: Vec<_> = tools
             .iter()
             .map(|tool| tool["function"]["name"].as_str().unwrap().to_string())
             .collect();
-        let mut sorted = names.clone();
-        sorted.sort();
-        assert_eq!(names, sorted);
-        assert_eq!(names.first().unwrap(), "tool_000");
-        assert_eq!(names.last().unwrap(), "tool_127");
+        assert!(names.contains(&"cargo_manager".to_string()));
+        assert!(names.contains(&"read_file".to_string()));
+        assert!(
+            !names.contains(&"low_tool_139".to_string()),
+            "low priority unrelated tools should be dropped first"
+        );
+    }
+
+    #[test]
+    fn metadata_includes_aliases_and_examples_for_tool_choice() {
+        let metadata = crate::tools::ToolMetadata::infer("cargo_manager");
+        assert!(metadata.aliases.contains(&"cargo test"));
+        assert!(metadata.aliases.contains(&"cargo check"));
+        assert!(metadata
+            .examples
+            .iter()
+            .any(|example| example.contains("cargo test")));
+        assert!(metadata.when_to_use.contains("Rust"));
+        assert!(metadata.when_not_to_use.contains("read"));
+    }
+
+    #[tokio::test]
+    async fn provider_tool_description_includes_compact_choice_hints() {
+        let registry = ToolRegistry::new();
+        let config = Config::default();
+        let provider = Arc::new(crate::providers::mock::MockProvider::new());
+        let sessions = SessionManager::new(std::path::PathBuf::from("/tmp/openz-test-sessions"));
+        register_all_tools(&registry, &config, provider, sessions).unwrap();
+
+        let tools = registry.to_openai_format_for_prompt("run cargo test");
+        let description = tools
+            .iter()
+            .find(|tool| tool["function"]["name"].as_str() == Some("cargo_manager"))
+            .and_then(|tool| tool["function"]["description"].as_str())
+            .expect("cargo_manager description");
+        assert!(description.contains("Use when:"));
+        assert!(description.contains("Avoid when:"));
+        assert!(description.contains("Aliases:"));
+        assert!(description.contains("cargo test"));
+    }
+
+    #[test]
+    fn route_analysis_formats_compact_status_line() {
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(MetaTestTool {
+            name: "cargo_manager".to_string(),
+            domain: "code",
+            priority: 95,
+            risk: crate::tools::ToolRisk::Medium,
+        }));
+        for i in 0..140 {
+            registry.register(Arc::new(MetaTestTool {
+                name: format!("general_tool_{i:03}"),
+                domain: "general",
+                priority: 1,
+                risk: crate::tools::ToolRisk::Low,
+            }));
+        }
+
+        let summary = registry.tool_router_status_line("run cargo test");
+        assert!(summary.contains("Tool Router selected 128/141 tools"));
+        assert!(summary.contains("code"));
+        assert!(summary.contains("filesystem"));
+        assert!(summary.contains("dropped 13"));
+    }
+
+    #[test]
+    fn route_analysis_reports_api_limit_hidden_reason() {
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(MetaTestTool {
+            name: "cargo_manager".to_string(),
+            domain: "code",
+            priority: 95,
+            risk: crate::tools::ToolRisk::Medium,
+        }));
+        for i in 0..140 {
+            registry.register(Arc::new(MetaTestTool {
+                name: format!("general_tool_{i:03}"),
+                domain: "general",
+                priority: 1,
+                risk: crate::tools::ToolRisk::Low,
+            }));
+        }
+
+        let route = registry.route_for_prompt("run cargo test");
+        assert!(route.selected_domains.contains(&"code".to_string()));
+        assert!(route.dropped_count > 0);
+        let hidden = route
+            .entries
+            .iter()
+            .find(|entry| entry.hidden_reason == Some("api_limit"))
+            .expect("at least one tool hidden by API limit");
+        assert!(!hidden.exposed_to_model);
+    }
+
+    #[test]
+    fn prompt_aware_format_selects_relevant_tool_domains() {
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(MetaTestTool {
+            name: "web_fetch".to_string(),
+            domain: "web",
+            priority: 80,
+            risk: crate::tools::ToolRisk::Medium,
+        }));
+        registry.register(Arc::new(MetaTestTool {
+            name: "gsd_browser".to_string(),
+            domain: "web",
+            priority: 80,
+            risk: crate::tools::ToolRisk::Medium,
+        }));
+        registry.register(Arc::new(MetaTestTool {
+            name: "openmedia_image_resize".to_string(),
+            domain: "media",
+            priority: 80,
+            risk: crate::tools::ToolRisk::Medium,
+        }));
+        for i in 0..140 {
+            registry.register(Arc::new(MetaTestTool {
+                name: format!("general_tool_{i:03}"),
+                domain: "general",
+                priority: 1,
+                risk: crate::tools::ToolRisk::Low,
+            }));
+        }
+
+        let website_tools =
+            registry.to_openai_format_for_prompt("research this website and summarize the page");
+        let website_names: Vec<_> = website_tools
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(website_names.contains(&"web_fetch".to_string()));
+        assert!(website_names.contains(&"gsd_browser".to_string()));
+
+        let image_tools =
+            registry.to_openai_format_for_prompt("resize this image and make an svg preview");
+        let image_names: Vec<_> = image_tools
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(image_names.contains(&"openmedia_image_resize".to_string()));
     }
 
     #[tokio::test]
@@ -925,18 +1083,38 @@ mod tests {
         );
     }
 
-    struct TestTool(String);
+    struct MetaTestTool {
+        name: String,
+        domain: &'static str,
+        priority: u8,
+        risk: crate::tools::ToolRisk,
+    }
 
     #[async_trait::async_trait]
-    impl crate::tools::Tool for TestTool {
+    impl crate::tools::Tool for MetaTestTool {
         fn name(&self) -> &str {
-            &self.0
+            &self.name
         }
         fn description(&self) -> &str {
             "test"
         }
         fn parameters(&self) -> serde_json::Value {
             serde_json::json!({ "type": "object" })
+        }
+        fn metadata(&self) -> crate::tools::ToolMetadata {
+            crate::tools::ToolMetadata {
+                domain: self.domain,
+                risk: self.risk,
+                uses_network: self.domain == "web",
+                writes_disk: false,
+                spawns_process: false,
+                requires_approval: matches!(self.risk, crate::tools::ToolRisk::High),
+                priority: self.priority,
+                aliases: &[],
+                examples: &[],
+                when_to_use: "",
+                when_not_to_use: "",
+            }
         }
         async fn call(&self, _arguments: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
             Ok(serde_json::json!({ "ok": true }))

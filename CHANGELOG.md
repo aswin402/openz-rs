@@ -398,7 +398,22 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.41 (Latest Release)
+### v0.0.42 (Latest Release)
+*   **Feature: Prompt-aware tool router (HIGH)**:
+    *   Added tool metadata for domains, risk, resource usage, aliases, examples, and use/avoid guidance so OpenZ can expose the most relevant tools per prompt.
+    *   Tool descriptions sent to providers now include compact routing hints to improve tool choice without inflating the full system prompt.
+    *   Added optional TUI router visibility through `showToolRouterStatus` for debugging which tools were selected and why.
+*   **Feature: Native tool catalog and observability (HIGH)**:
+    *   Added the `tool_catalog` native tool so agents can inspect available tools, domains, aliases, risk levels, examples, and current router/resource status.
+    *   Extended config management support for router and resource-policy settings.
+*   **Guardrail: Tool resource policy (HIGH)**:
+    *   Added disk-space, network-tool, expensive-tool, and concurrent process-tool checks before native tool execution.
+    *   Added configurable `minFreeDiskGb`, `allowNetworkTools`, `maxConcurrentProcessTools`, and `warnBeforeExpensiveTools` settings.
+    *   Reused existing approval flow for expensive tools while avoiding duplicate approval prompts after the security guard has already asked.
+*   **Tests:** Added targeted coverage for tool routing metadata, API truncation behavior, tool catalog output, self-management config updates, and resource-policy decisions.
+*   **Chore:** Bumped version to `v0.0.42`.
+
+### v0.0.41 (Previous Release)
 *   **Fix: OpenZ worktree disk quota guard (CRITICAL)**:
     *   Added size-aware cleanup for `~/.openz/worktrees/openz_worktree_*` to prevent stale subagent worktrees from consuming large disk space.
     *   Worktree cleanup now enforces max age, max count, max total bytes, and a minimum free-space safety margin.

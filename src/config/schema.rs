@@ -101,6 +101,25 @@ pub struct AgentDefaults {
     pub tool_timeout_secs: u64,
     #[serde(default = "default_streaming", alias = "streaming")]
     pub streaming: bool,
+    #[serde(
+        default = "default_show_tool_router_status",
+        alias = "show_tool_router_status"
+    )]
+    pub show_tool_router_status: bool,
+    #[serde(default = "default_min_free_disk_gb", alias = "min_free_disk_gb")]
+    pub min_free_disk_gb: f64,
+    #[serde(default = "default_allow_network_tools", alias = "allow_network_tools")]
+    pub allow_network_tools: bool,
+    #[serde(
+        default = "default_max_concurrent_process_tools",
+        alias = "max_concurrent_process_tools"
+    )]
+    pub max_concurrent_process_tools: usize,
+    #[serde(
+        default = "default_warn_before_expensive_tools",
+        alias = "warn_before_expensive_tools"
+    )]
+    pub warn_before_expensive_tools: bool,
 }
 
 fn default_enable_sandbox() -> bool {
@@ -108,6 +127,26 @@ fn default_enable_sandbox() -> bool {
 }
 
 fn default_streaming() -> bool {
+    true
+}
+
+fn default_show_tool_router_status() -> bool {
+    false
+}
+
+fn default_min_free_disk_gb() -> f64 {
+    2.0
+}
+
+fn default_allow_network_tools() -> bool {
+    true
+}
+
+fn default_max_concurrent_process_tools() -> usize {
+    3
+}
+
+fn default_warn_before_expensive_tools() -> bool {
     true
 }
 
@@ -178,6 +217,11 @@ impl Default for AgentDefaults {
             tool_output_limit: None,
             enable_sandbox: default_enable_sandbox(),
             tool_timeout_secs: default_tool_timeout_secs(),
+            show_tool_router_status: default_show_tool_router_status(),
+            min_free_disk_gb: default_min_free_disk_gb(),
+            allow_network_tools: default_allow_network_tools(),
+            max_concurrent_process_tools: default_max_concurrent_process_tools(),
+            warn_before_expensive_tools: default_warn_before_expensive_tools(),
             streaming: default_streaming(),
         }
     }

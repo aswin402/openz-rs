@@ -11,7 +11,569 @@ pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
     fn parameters(&self) -> serde_json::Value;
+    fn metadata(&self) -> ToolMetadata {
+        ToolMetadata::infer(self.name())
+    }
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolMetadata {
+    pub domain: &'static str,
+    pub risk: ToolRisk,
+    pub uses_network: bool,
+    pub writes_disk: bool,
+    pub spawns_process: bool,
+    pub requires_approval: bool,
+    pub priority: u8,
+    pub aliases: &'static [&'static str],
+    pub examples: &'static [&'static str],
+    pub when_to_use: &'static str,
+    pub when_not_to_use: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolRisk {
+    Low,
+    Medium,
+    High,
+}
+
+impl ToolRisk {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
+impl ToolMetadata {
+    pub fn infer(name: &str) -> Self {
+        let domain = infer_tool_domain(name);
+        let writes_disk = tool_writes_disk(name);
+        let spawns_process = matches!(name, "exec_command" | "python_sandbox")
+            || name.contains("browser")
+            || name.starts_with("cargo_")
+            || name.starts_with("openmedia_video_")
+            || name.starts_with("opendoc_convert")
+            || name.starts_with("mcp_");
+        let uses_network = tool_uses_network(name);
+        let risk = if matches!(name, "exec_command" | "db_write")
+            || writes_disk
+            || name.contains("delete")
+            || name.contains("remove")
+            || name.contains("restore")
+            || name.contains("clear")
+        {
+            ToolRisk::High
+        } else if uses_network
+            || spawns_process
+            || name.contains("create")
+            || name.contains("update")
+        {
+            ToolRisk::Medium
+        } else {
+            ToolRisk::Low
+        };
+        let requires_approval = matches!(risk, ToolRisk::High);
+        let priority = match domain {
+            "subagent" => 100,
+            "filesystem" | "shell" | "code" => 90,
+            "self_management" => 85,
+            "search" | "web" | "git" => 75,
+            "memory" | "reasoning" | "context" => 65,
+            "media" | "document" => 55,
+            _ => 40,
+        };
+        let (when_to_use, when_not_to_use) = tool_usage_hints(name, domain);
+
+        Self {
+            domain,
+            risk,
+            uses_network,
+            writes_disk,
+            spawns_process,
+            requires_approval,
+            priority,
+            aliases: tool_aliases(name, domain),
+            examples: tool_examples(name, domain),
+            when_to_use,
+            when_not_to_use,
+        }
+    }
+
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "domain": self.domain,
+            "risk": self.risk.as_str(),
+            "uses_network": self.uses_network,
+            "writes_disk": self.writes_disk,
+            "spawns_process": self.spawns_process,
+            "requires_approval": self.requires_approval,
+            "priority": self.priority,
+            "aliases": self.aliases,
+            "examples": self.examples,
+            "when_to_use": self.when_to_use,
+            "when_not_to_use": self.when_not_to_use,
+        })
+    }
+}
+
+fn infer_tool_domain(name: &str) -> &'static str {
+    if matches!(
+        name,
+        "delegate_task" | "parallel_research" | "evaluator_optimizer_loop"
+    ) || name.contains("subagent")
+    {
+        "subagent"
+    } else if matches!(
+        name,
+        "read_file"
+            | "write_file"
+            | "patch_file"
+            | "replace_lines"
+            | "list_dir"
+            | "find_files"
+            | "zenflow_edit"
+    ) {
+        "filesystem"
+    } else if matches!(name, "exec_command" | "python_sandbox" | "wasm_sandbox") {
+        "shell"
+    } else if name.starts_with("git") || name.starts_with("github") {
+        "git"
+    } else if name.starts_with("cargo")
+        || name.contains("compiler")
+        || name.contains("grep")
+        || name.contains("outline")
+        || name.contains("ast_grep")
+        || name.contains("rust_docs")
+    {
+        "code"
+    } else if name.starts_with("web")
+        || name.contains("browser")
+        || name.contains("crawl")
+        || name.starts_with("searchxyz")
+        || name.contains("social_search")
+    {
+        "web"
+    } else if name.contains("memory")
+        || name.contains("entities")
+        || name.contains("relations")
+        || name.contains("observations")
+        || name.contains("graph")
+        || name.contains("recall")
+    {
+        "memory"
+    } else if name.contains("headroom")
+        || name.contains("compress")
+        || name.contains("cache")
+        || name.contains("scope_context")
+    {
+        "context"
+    } else if name.contains("thinking") || name.contains("reasoning") {
+        "reasoning"
+    } else if name.starts_with("opendoc") || name.starts_with("docs_") || name.contains("document")
+    {
+        "document"
+    } else if name.starts_with("openmedia")
+        || name.contains("image")
+        || name.contains("video")
+        || name.contains("svg")
+        || name.contains("mermaid")
+    {
+        "media"
+    } else if name.contains("config")
+        || name.contains("diagnose")
+        || name.contains("session")
+        || name.contains("backup")
+        || name.contains("tool_catalog")
+        || name.contains("tool_scope")
+    {
+        "self_management"
+    } else if name.starts_with("mcp") || name.contains("mcp") {
+        "mcp"
+    } else {
+        "general"
+    }
+}
+
+fn tool_writes_disk(name: &str) -> bool {
+    matches!(
+        name,
+        "write_file"
+            | "patch_file"
+            | "replace_lines"
+            | "zenflow_edit"
+            | "db_write"
+            | "manage_config"
+            | "manage_sessions"
+            | "manage_backups"
+            | "curate_skill"
+            | "create_subagent"
+            | "delete_subagent"
+            | "optimize_subagent"
+    ) || name.contains("create")
+        || name.contains("update")
+        || name.contains("delete")
+        || name.contains("remove")
+        || name.contains("clear")
+        || name.contains("import")
+        || name.contains("download")
+}
+
+fn tool_uses_network(name: &str) -> bool {
+    matches!(
+        name,
+        "web_fetch" | "web_search" | "crawl_site" | "social_search" | "check_port"
+    ) || name.starts_with("searchxyz")
+        || name.starts_with("github")
+        || name.starts_with("docs_install")
+        || name.contains("browser")
+        || name.contains("download")
+        || name.contains("mcp")
+}
+
+fn tool_aliases(name: &str, domain: &str) -> &'static [&'static str] {
+    match name {
+        "cargo_manager" => &[
+            "cargo test",
+            "cargo check",
+            "cargo build",
+            "clippy",
+            "rust tests",
+        ],
+        "exec_command" => &["shell command", "terminal", "bash", "run command"],
+        "read_file" => &["open file", "inspect file", "view file"],
+        "grep_search" => &["search code", "find text", "ripgrep"],
+        "web_fetch" => &["fetch url", "read webpage", "download page"],
+        "web_search" => &["internet search", "search web", "lookup online"],
+        "delegate_task" => &["subagent", "delegate", "specialist agent"],
+        "git_manager" => &["git status", "git diff", "git commit", "git log"],
+        "tool_catalog" => &["list tools", "tool help", "available tools"],
+        _ => match domain {
+            "code" => &["code search", "compile", "test", "refactor"],
+            "filesystem" => &["file", "directory", "edit file"],
+            "web" => &["website", "browser", "research online"],
+            "media" => &["image", "video", "svg", "diagram"],
+            "document" => &["pdf", "docx", "xlsx", "document"],
+            "memory" => &["remember", "recall", "knowledge graph"],
+            "subagent" => &["delegate", "worker", "specialist"],
+            _ => &[],
+        },
+    }
+}
+
+fn tool_examples(name: &str, domain: &str) -> &'static [&'static str] {
+    match name {
+        "cargo_manager" => &["Run cargo test --lib", "Run cargo check after Rust edits"],
+        "exec_command" => &[
+            "Run ls to inspect generated files",
+            "Run a safe project-local command",
+        ],
+        "read_file" => &["Read src/main.rs before editing", "Inspect a config file"],
+        "grep_search" => &["Find all uses of a function", "Search for a symbol in src"],
+        "web_fetch" => &["Fetch a documentation URL", "Read one webpage"],
+        "web_search" => &[
+            "Search current public documentation",
+            "Look up recent release info",
+        ],
+        "delegate_task" => &[
+            "Ask a reviewer subagent to inspect changes",
+            "Route image analysis to a vision subagent",
+        ],
+        "git_manager" => &["Check git status", "Review a diff before commit"],
+        "tool_catalog" => &[
+            "List tools for a website research task",
+            "Explain why tools were hidden",
+        ],
+        _ => match domain {
+            "code" => &["Analyze or modify source code"],
+            "web" => &["Research a website or URL"],
+            "media" => &["Create or transform visual media"],
+            "document" => &["Read, convert, or edit documents"],
+            "memory" => &["Store or retrieve durable facts"],
+            _ => &[],
+        },
+    }
+}
+
+fn tool_usage_hints(name: &str, domain: &str) -> (&'static str, &'static str) {
+    match name {
+        "cargo_manager" => (
+            "Use for Rust cargo build, check, test, clippy, and compiler-fix workflows.",
+            "Avoid when only reading files or searching source text.",
+        ),
+        "exec_command" => (
+            "Use for shell commands that cannot be handled by a safer native tool.",
+            "Avoid for file reads, code search, or destructive commands without approval.",
+        ),
+        "read_file" => (
+            "Use to inspect known text files before editing or explaining code.",
+            "Avoid for broad searches; use grep or find tools instead.",
+        ),
+        "grep_search" => (
+            "Use to find symbols, text, TODOs, and call sites across a project.",
+            "Avoid when the exact file is already known and only needs reading.",
+        ),
+        "web_fetch" => (
+            "Use to read a specific URL supplied by the user or found by search.",
+            "Avoid for open-ended research; search first.",
+        ),
+        "web_search" => (
+            "Use when current or external web information is required.",
+            "Avoid when the answer is fully available from local project files.",
+        ),
+        "delegate_task" => (
+            "Use for independent specialist work, reviews, research, or multimodal routing.",
+            "Avoid for simple direct actions the orchestrator can complete itself.",
+        ),
+        "git_manager" => (
+            "Use for git status, diffs, commit history, and repository state checks.",
+            "Avoid for GitHub API operations; use GitHub tools for remote provider actions.",
+        ),
+        "tool_catalog" => (
+            "Use to inspect available tools, routing decisions, and hidden tool reasons.",
+            "Avoid when the correct tool is already obvious and exposed.",
+        ),
+        _ => match domain {
+            "code" => (
+                "Use for source-code analysis, build, test, or refactor tasks.",
+                "Avoid for non-code document or media tasks.",
+            ),
+            "filesystem" => (
+                "Use for project-local file and directory operations.",
+                "Avoid for web or provider operations.",
+            ),
+            "web" => (
+                "Use for URLs, browsers, crawling, and online research.",
+                "Avoid for local-only codebase questions.",
+            ),
+            "media" => (
+                "Use for image, video, SVG, Mermaid, and rendering tasks.",
+                "Avoid for plain text or source-code edits.",
+            ),
+            "document" => (
+                "Use for PDF, DOCX, XLSX, PPTX, and document conversion tasks.",
+                "Avoid for source-code builds or shell commands.",
+            ),
+            "memory" => (
+                "Use for durable facts, recall, graph memory, and knowledge retrieval.",
+                "Avoid for transient one-turn calculations.",
+            ),
+            "subagent" => (
+                "Use for delegated specialist tasks and parallel work.",
+                "Avoid for simple single-step local tool calls.",
+            ),
+            "self_management" => (
+                "Use for OpenZ diagnostics, config, sessions, and tool routing introspection.",
+                "Avoid for user project modifications.",
+            ),
+            _ => ("", ""),
+        },
+    }
+}
+
+fn format_tool_description(description: &str, metadata: &ToolMetadata) -> String {
+    let mut parts = vec![description.to_string()];
+    if !metadata.when_to_use.is_empty() {
+        parts.push(format!("Use when: {}", metadata.when_to_use));
+    }
+    if !metadata.when_not_to_use.is_empty() {
+        parts.push(format!("Avoid when: {}", metadata.when_not_to_use));
+    }
+    if !metadata.aliases.is_empty() {
+        parts.push(format!("Aliases: {}.", metadata.aliases.join(", ")));
+    }
+    if let Some(example) = metadata.examples.first() {
+        parts.push(format!("Example: {}.", example));
+    }
+    parts.join(" ")
+}
+
+fn is_core_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "tool_catalog"
+            | "optimize_tool_scope"
+            | "diagnose_tool"
+            | "delegate_task"
+            | "send_remote_input"
+            | "read_file"
+            | "find_files"
+            | "grep_search"
+    )
+}
+
+fn tool_allowed_by_filter(name: &str, filter: Option<&Vec<String>>) -> bool {
+    if let Some(prefixes) = filter {
+        is_core_tool(name) || prefixes.iter().any(|prefix| name.starts_with(prefix))
+    } else {
+        true
+    }
+}
+
+fn select_domains_for_prompt(prompt: &str) -> std::collections::BTreeSet<&'static str> {
+    let lower = prompt.to_lowercase();
+    let mut domains = std::collections::BTreeSet::new();
+    domains.insert("self_management");
+    domains.insert("filesystem");
+    domains.insert("subagent");
+
+    if contains_any(
+        &lower,
+        &[
+            "cargo", "rust", "test", "build", "compile", "compiler", "error", "code", "function",
+            "module", "refactor", "lint", "clippy",
+        ],
+    ) {
+        domains.insert("code");
+        domains.insert("shell");
+        domains.insert("git");
+    }
+    if contains_any(
+        &lower,
+        &[
+            "website", "web", "url", "browser", "page", "crawl", "fetch", "search", "internet",
+            "research", "http", "https",
+        ],
+    ) {
+        domains.insert("web");
+    }
+    if contains_any(
+        &lower,
+        &[
+            "image",
+            "photo",
+            "picture",
+            "screenshot",
+            "svg",
+            "video",
+            "media",
+            "mermaid",
+            "diagram",
+            "render",
+        ],
+    ) {
+        domains.insert("media");
+        domains.insert("document");
+    }
+    if contains_any(
+        &lower,
+        &[
+            "pdf",
+            "docx",
+            "xlsx",
+            "pptx",
+            "document",
+            "spreadsheet",
+            "archive",
+        ],
+    ) {
+        domains.insert("document");
+    }
+    if contains_any(
+        &lower,
+        &[
+            "git", "commit", "push", "pull", "pr", "github", "branch", "diff",
+        ],
+    ) {
+        domains.insert("git");
+        domains.insert("code");
+    }
+    if contains_any(
+        &lower,
+        &["memory", "remember", "recall", "fact", "knowledge", "graph"],
+    ) {
+        domains.insert("memory");
+    }
+    if contains_any(&lower, &["think", "reason", "plan", "analyze", "breakdown"]) {
+        domains.insert("reasoning");
+        domains.insert("context");
+    }
+    if contains_any(
+        &lower,
+        &["terminal", "shell", "command", "bash", "process", "port"],
+    ) {
+        domains.insert("shell");
+    }
+    if contains_any(&lower, &["mcp", "server", "gateway", "bridge"]) {
+        domains.insert("mcp");
+    }
+
+    domains
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
+}
+
+fn tool_selection_score(
+    name: &str,
+    metadata: &ToolMetadata,
+    selected_domains: &std::collections::BTreeSet<&'static str>,
+) -> i32 {
+    let mut score = metadata.priority as i32;
+    if is_core_tool(name) {
+        score += 1_000;
+    }
+    if selected_domains.contains(metadata.domain) {
+        score += 500;
+    }
+    score -= match metadata.risk {
+        ToolRisk::Low => 0,
+        ToolRisk::Medium => 10,
+        ToolRisk::High => 25,
+    };
+    if metadata.requires_approval {
+        score -= 10;
+    }
+    score
+}
+
+fn tool_selection_reasons(
+    name: &str,
+    metadata: &ToolMetadata,
+    selected_domains: &std::collections::BTreeSet<&'static str>,
+) -> Vec<&'static str> {
+    let mut reasons = Vec::new();
+    if is_core_tool(name) {
+        reasons.push("core_tool");
+    }
+    if selected_domains.contains(metadata.domain) {
+        reasons.push("prompt_domain");
+    }
+    match metadata.risk {
+        ToolRisk::Low => reasons.push("low_risk"),
+        ToolRisk::Medium => reasons.push("medium_risk_penalty"),
+        ToolRisk::High => reasons.push("high_risk_penalty"),
+    }
+    if metadata.requires_approval {
+        reasons.push("requires_approval");
+    }
+    reasons
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolRouteEntry {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+    pub metadata: ToolMetadata,
+    pub selected_score: i32,
+    pub matched_prompt_domain: bool,
+    pub selection_reason: Vec<String>,
+    pub exposed_to_model: bool,
+    pub hidden_reason: Option<&'static str>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolRouteAnalysis {
+    pub selected_domains: Vec<String>,
+    pub selected_count: usize,
+    pub dropped_count: usize,
+    pub entries: Vec<ToolRouteEntry>,
 }
 
 #[derive(Clone)]
@@ -215,36 +777,205 @@ impl ToolRegistry {
         }
     }
 
-    pub fn to_openai_format(&self) -> Vec<serde_json::Value> {
+    pub fn selected_domains_for_prompt(&self, prompt: &str) -> Vec<String> {
+        select_domains_for_prompt(prompt)
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    }
+
+    pub fn catalog_entries(&self, include_schema: bool) -> Vec<serde_json::Value> {
+        self.catalog_entries_for_prompt(include_schema, "")
+    }
+
+    pub fn catalog_entries_for_prompt(
+        &self,
+        include_schema: bool,
+        prompt: &str,
+    ) -> Vec<serde_json::Value> {
+        let mut entries: Vec<serde_json::Value> = self
+            .route_for_prompt(prompt)
+            .entries
+            .into_iter()
+            .map(|entry| {
+                let selection_reason = entry.selection_reason.join(",");
+                let mut value = serde_json::json!({
+                    "name": entry.name,
+                    "description": entry.description,
+                    "domain": entry.metadata.domain,
+                    "risk": entry.metadata.risk.as_str(),
+                    "uses_network": entry.metadata.uses_network,
+                    "writes_disk": entry.metadata.writes_disk,
+                    "spawns_process": entry.metadata.spawns_process,
+                    "requires_approval": entry.metadata.requires_approval,
+                    "priority": entry.metadata.priority,
+                    "aliases": entry.metadata.aliases,
+                    "examples": entry.metadata.examples,
+                    "when_to_use": entry.metadata.when_to_use,
+                    "when_not_to_use": entry.metadata.when_not_to_use,
+                    "selected_score": entry.selected_score,
+                    "matched_prompt_domain": entry.matched_prompt_domain,
+                    "selection_reason": selection_reason,
+                    "exposed_to_model": entry.exposed_to_model,
+                    "hidden_reason": entry.hidden_reason,
+                });
+                if include_schema {
+                    value["parameters"] = entry.parameters;
+                }
+                value
+            })
+            .collect();
+
+        entries.sort_by(|a, b| {
+            let domain_a = a["domain"].as_str().unwrap_or("");
+            let domain_b = b["domain"].as_str().unwrap_or("");
+            domain_a.cmp(domain_b).then_with(|| {
+                let name_a = a["name"].as_str().unwrap_or("");
+                let name_b = b["name"].as_str().unwrap_or("");
+                name_a.cmp(name_b)
+            })
+        });
+        entries
+    }
+
+    pub fn route_for_prompt(&self, prompt: &str) -> ToolRouteAnalysis {
         let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
-        let mut tools_list: Vec<serde_json::Value> = self
-            .read_tools()
+        let selected_domains_set = select_domains_for_prompt(prompt);
+        let selected_domains: Vec<String> = selected_domains_set
+            .iter()
+            .map(|domain| (*domain).to_string())
+            .collect();
+        let static_tools = self.read_tools();
+        let static_names: std::collections::HashSet<String> =
+            static_tools.keys().cloned().collect();
+        let reserved_subagents = self
+            .dynamic_subagent_tools(filter.as_ref(), &static_names)
+            .len()
+            .min(128);
+        let static_limit = 128usize.saturating_sub(reserved_subagents);
+
+        let mut entries: Vec<ToolRouteEntry> = static_tools
             .values()
-            .filter(|t| {
-                if let Some(ref prefixes) = filter {
-                    let name = t.name();
-                    name == "delegate_task"
-                        || name == "send_remote_input"
-                        || name == "optimize_tool_scope"
-                        || prefixes.iter().any(|prefix| name.starts_with(prefix))
-                } else {
-                    true
+            .filter(|tool| tool_allowed_by_filter(tool.name(), filter.as_ref()))
+            .map(|tool| {
+                let metadata = tool.metadata();
+                let selected_score =
+                    tool_selection_score(tool.name(), &metadata, &selected_domains_set);
+                let matched_prompt_domain = selected_domains_set.contains(metadata.domain);
+                let selection_reason =
+                    tool_selection_reasons(tool.name(), &metadata, &selected_domains_set)
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect();
+                ToolRouteEntry {
+                    name: tool.name().to_string(),
+                    description: tool.description().to_string(),
+                    parameters: tool.parameters(),
+                    metadata,
+                    selected_score,
+                    matched_prompt_domain,
+                    selection_reason,
+                    exposed_to_model: false,
+                    hidden_reason: None,
                 }
             })
-            .map(|t| {
+            .collect();
+        drop(static_tools);
+
+        entries.sort_by(|a, b| {
+            b.selected_score
+                .cmp(&a.selected_score)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+
+        let selected_count = entries.len().min(static_limit);
+        let dropped_count = entries.len().saturating_sub(selected_count);
+        for (idx, entry) in entries.iter_mut().enumerate() {
+            if idx < selected_count {
+                entry.exposed_to_model = true;
+            } else {
+                entry.hidden_reason = Some("api_limit");
+            }
+        }
+
+        ToolRouteAnalysis {
+            selected_domains,
+            selected_count,
+            dropped_count,
+            entries,
+        }
+    }
+
+    pub fn tool_router_status_line(&self, prompt: &str) -> String {
+        let route = self.route_for_prompt(prompt);
+        let total = route.entries.len();
+        let domains = if route.selected_domains.is_empty() {
+            "none".to_string()
+        } else {
+            route.selected_domains.join(", ")
+        };
+        format!(
+            "Tool Router selected {}/{} tools: {} · dropped {}",
+            route.selected_count, total, domains, route.dropped_count
+        )
+    }
+
+    pub fn to_openai_format(&self) -> Vec<serde_json::Value> {
+        self.to_openai_format_for_prompt("")
+    }
+
+    pub fn to_openai_format_for_prompt(&self, prompt: &str) -> Vec<serde_json::Value> {
+        let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
+        let static_tools = self.read_tools();
+        let static_names: std::collections::HashSet<String> =
+            static_tools.keys().cloned().collect();
+        drop(static_tools);
+        let mut subagent_tools = self.dynamic_subagent_tools(filter.as_ref(), &static_names);
+        let route = self.route_for_prompt(prompt);
+        let total_tools = route.entries.len() + subagent_tools.len();
+        if total_tools > 128 {
+            tracing::warn!(
+                total_tools,
+                selected_static = route.selected_count,
+                dropped_static = route.dropped_count,
+                selected_domains = ?route.selected_domains,
+                "Too many tools registered; selecting top 128 by prompt/domain priority."
+            );
+        } else {
+            tracing::debug!(
+                total_tools,
+                selected_static = route.selected_count,
+                selected_domains = ?route.selected_domains,
+                "Tool router selected model tool payload."
+            );
+        }
+
+        let mut selected: Vec<serde_json::Value> = route
+            .entries
+            .into_iter()
+            .filter(|entry| entry.exposed_to_model)
+            .map(|entry| {
                 serde_json::json!({
                     "type": "function",
                     "function": {
-                        "name": t.name(),
-                        "description": t.description(),
-                        "parameters": t.parameters(),
+                        "name": entry.name,
+                        "description": format_tool_description(&entry.description, &entry.metadata),
+                        "parameters": entry.parameters,
                     }
                 })
             })
             .collect();
-        let mut subagent_tools: Vec<serde_json::Value> = Vec::new();
+        subagent_tools.truncate(128usize.saturating_sub(selected.len()));
+        selected.extend(subagent_tools);
+        selected
+    }
 
-        // Add custom subagents from subagents.json dynamically
+    fn dynamic_subagent_tools(
+        &self,
+        filter: Option<&Vec<String>>,
+        static_names: &std::collections::HashSet<String>,
+    ) -> Vec<serde_json::Value> {
+        let mut subagent_tools: Vec<serde_json::Value> = Vec::new();
         if let Some((_, _, _)) = &self.context {
             if let Ok(profiles) = crate::subagents::load_profiles() {
                 let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT
@@ -254,7 +985,7 @@ impl ToolRegistry {
                     if !active_subagent.is_empty() && profile.name == active_subagent {
                         continue;
                     }
-                    if let Some(ref prefixes) = filter {
+                    if let Some(prefixes) = filter {
                         if !prefixes
                             .iter()
                             .any(|prefix| profile.name.starts_with(prefix) || prefix == "subagent")
@@ -262,7 +993,7 @@ impl ToolRegistry {
                             continue;
                         }
                     }
-                    if !self.read_tools().contains_key(&profile.name) {
+                    if !static_names.contains(&profile.name) {
                         subagent_tools.push(serde_json::json!({
                             "type": "function",
                             "function": {
@@ -281,40 +1012,19 @@ impl ToolRegistry {
                                         }
                                     },
                                     "required": ["goal"]
-                                    })
+                                })
                             }
                         }));
                     }
                 }
             }
         }
-
-        // Sort tool lists alphabetically by function name for determinism.
-        tools_list.sort_by(|a, b| {
-            let name_a = a["function"]["name"].as_str().unwrap_or("");
-            let name_b = b["function"]["name"].as_str().unwrap_or("");
-            name_a.cmp(name_b)
-        });
         subagent_tools.sort_by(|a, b| {
             let name_a = a["function"]["name"].as_str().unwrap_or("");
             let name_b = b["function"]["name"].as_str().unwrap_or("");
             name_a.cmp(name_b)
         });
-
-        let total_tools = tools_list.len() + subagent_tools.len();
-        if total_tools > 128 {
-            tracing::warn!(
-                "Too many tools registered ({}); truncating to 128 to satisfy API limits.",
-                total_tools
-            );
-            let reserved_subagents = subagent_tools.len().min(128);
-            let static_limit = 128usize.saturating_sub(reserved_subagents);
-            tools_list.truncate(static_limit);
-            subagent_tools.truncate(reserved_subagents);
-        }
-
-        tools_list.extend(subagent_tools);
-        tools_list
+        subagent_tools
     }
 }
 
@@ -353,6 +1063,7 @@ pub mod opendoc;
 pub mod openmedia;
 pub mod outline;
 pub mod remote;
+pub mod resource_policy;
 pub mod rust_docs;
 #[path = "searchxyz/mod.rs"]
 pub mod searchxyz;

@@ -8,6 +8,7 @@ pub(crate) struct ToolApprovalDecision {
     pub is_loop: bool,
     pub forbidden: bool,
     pub approved: bool,
+    pub approval_requested: bool,
     pub should_halt: bool,
 }
 
@@ -38,6 +39,7 @@ pub(crate) async fn evaluate_tool_approval(
 
     let mut approved = true;
     let mut forbidden = false;
+    let mut approval_requested = false;
 
     if parse_error.is_none()
         && crate::agent::security::SecurityGuard::is_forbidden(&call.name, &call.arguments)
@@ -57,6 +59,7 @@ pub(crate) async fn evaluate_tool_approval(
             let _ = std::io::stdout().flush();
         }
 
+        approval_requested = true;
         approved = crate::agent::security::ask_approval(session_key, &call.name, &call.arguments)
             .await
             .unwrap_or(false);
@@ -68,6 +71,7 @@ pub(crate) async fn evaluate_tool_approval(
         is_loop,
         forbidden,
         approved,
+        approval_requested,
         should_halt,
     }
 }
