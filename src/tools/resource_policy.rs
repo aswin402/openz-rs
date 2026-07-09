@@ -17,6 +17,23 @@ pub enum ToolResourceDecision {
     Block { reason: String },
 }
 
+impl ToolResourceDecision {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::RequireApproval { .. } => "require_approval",
+            Self::Block { .. } => "block",
+        }
+    }
+
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            Self::Allow => None,
+            Self::RequireApproval { reason } | Self::Block { reason } => Some(reason),
+        }
+    }
+}
+
 pub struct ToolResourcePolicy;
 
 #[derive(Debug)]

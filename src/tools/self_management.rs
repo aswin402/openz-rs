@@ -142,6 +142,10 @@ impl Tool for ToolCatalogTool {
                 "prompt": {
                     "type": "string",
                     "description": "Optional prompt/task text to explain prompt-aware tool routing for that turn."
+                },
+                "resource_overrides": {
+                    "type": "object",
+                    "description": "Optional diagnostic overrides for resource-policy preview, such as allow_network_tools, min_free_disk_gb, free_disk_gb, active_process_tools, max_concurrent_process_tools, and warn_before_expensive_tools."
                 }
             }
         })
@@ -163,9 +167,75 @@ impl Tool for ToolCatalogTool {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        let all_entries = self
+        let mut defaults = crate::config::loader::load_config()
+            .map(|config| config.agents.defaults)
+            .unwrap_or_default();
+        let mut runtime = crate::tools::resource_policy::RuntimeResourceSnapshot::current();
+        if let Some(overrides) = arguments.get("resource_overrides").and_then(|v| v.as_object()) {
+            if let Some(value) = overrides.get("allow_network_tools").and_then(|v| v.as_bool()) {
+                defaults.allow_network_tools = value;
+            }
+            if let Some(value) = overrides.get("min_free_disk_gb").and_then(|v| v.as_f64()) {
+                defaults.min_free_disk_gb = value;
+            }
+            if let Some(value) = overrides
+                .get("max_concurrent_process_tools")
+                .and_then(|v| v.as_u64())
+            {
+                defaults.max_concurrent_process_tools = value as usize;
+            }
+            if let Some(value) = overrides
+                .get("warn_before_expensive_tools")
+                .and_then(|v| v.as_bool())
+            {
+                defaults.warn_before_expensive_tools = value;
+            }
+            if let Some(value) = overrides.get("free_disk_gb").and_then(|v| v.as_f64()) {
+                runtime.free_disk_gb = Some(value);
+            }
+            if let Some(value) = overrides.get("active_process_tools").and_then(|v| v.as_u64()) {
+                runtime.active_process_tools = value as usize;
+            }
+        }
+
+        let mut all_entries = self
             .registry
             .catalog_entries_for_prompt(include_schema, prompt);
+        for entry in &mut all_entries {
+            let risk = match entry["risk"].as_str().unwrap_or("low") {
+                "high" => crate::tools::ToolRisk::High,
+                "medium" => crate::tools::ToolRisk::Medium,
+                _ => crate::tools::ToolRisk::Low,
+            };
+            let metadata = crate::tools::ToolMetadata {
+                domain: "general",
+                risk,
+                uses_network: entry["uses_network"].as_bool().unwrap_or(false),
+                writes_disk: entry["writes_disk"].as_bool().unwrap_or(false),
+                spawns_process: entry["spawns_process"].as_bool().unwrap_or(false),
+                requires_approval: entry["requires_approval"].as_bool().unwrap_or(false),
+                priority: entry["priority"].as_u64().unwrap_or(0) as u8,
+                aliases: &[],
+                examples: &[],
+                when_to_use: "",
+                when_not_to_use: "",
+            };
+            let decision = crate::tools::resource_policy::ToolResourcePolicy::evaluate(
+                &metadata,
+                &defaults,
+                &runtime,
+            );
+            entry["resource_policy"] = serde_json::json!({
+                "decision": decision.as_str(),
+                "reason": decision.reason(),
+                "free_disk_gb": runtime.free_disk_gb,
+                "active_process_tools": runtime.active_process_tools,
+                "min_free_disk_gb": defaults.min_free_disk_gb,
+                "allow_network_tools": defaults.allow_network_tools,
+                "max_concurrent_process_tools": defaults.max_concurrent_process_tools,
+                "warn_before_expensive_tools": defaults.warn_before_expensive_tools,
+            });
+        }
         let exposed_count = all_entries
             .iter()
             .filter(|entry| entry["exposed_to_model"].as_bool().unwrap_or(false))
@@ -1348,6 +1418,56 @@ mod tests {
         assert_eq!(read_file["domain"].as_str().unwrap(), "filesystem");
         assert_eq!(read_file["risk"].as_str().unwrap(), "low");
         assert_eq!(read_file["writes_disk"].as_bool().unwrap(), false);
+    }
+
+    #[test]
+    fn test_tool_catalog_reports_resource_policy_visibility() {
+        struct NetworkTool;
+        #[async_trait::async_trait]
+        impl Tool for NetworkTool {
+            fn name(&self) -> &str {
+                "web_fetch"
+            }
+            fn description(&self) -> &str {
+                "Fetch a web page"
+            }
+            fn parameters(&self) -> serde_json::Value {
+                serde_json::json!({})
+            }
+            async fn call(&self, _args: &serde_json::Value) -> Result<serde_json::Value> {
+                Ok(serde_json::json!({"ok": true}))
+            }
+        }
+
+        let registry = crate::tools::ToolRegistry::new();
+        registry.register(std::sync::Arc::new(NetworkTool));
+
+        let catalog = ToolCatalogTool::new(registry);
+        let res = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(catalog.call(&serde_json::json!({
+                "prompt": "fetch this webpage",
+                "resource_overrides": {
+                    "allow_network_tools": false,
+                    "free_disk_gb": 100.0,
+                    "active_process_tools": 0
+                }
+            })))
+            .unwrap();
+
+        let tools = res["tools"].as_array().unwrap();
+        let web_fetch = tools
+            .iter()
+            .find(|tool| tool["name"].as_str() == Some("web_fetch"))
+            .expect("web_fetch entry");
+
+        assert_eq!(web_fetch["resource_policy"]["decision"].as_str(), Some("block"));
+        assert!(web_fetch["resource_policy"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("Network tools are disabled"));
+        assert_eq!(web_fetch["resource_policy"]["free_disk_gb"].as_f64(), Some(100.0));
+        assert_eq!(web_fetch["resource_policy"]["active_process_tools"].as_u64(), Some(0));
     }
 
     #[test]
