@@ -8,3 +8,4 @@
 /memory.db-wal
 /.fastembed_cache/
 /logs/
+.openz/

@@ -368,6 +368,35 @@ impl Default for EmbeddingsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillsConfig {
+    #[serde(default = "default_workspace_skills_enabled", alias = "workspace_skills_enabled")]
+    pub workspace_skills_enabled: bool,
+    #[serde(default, alias = "external_dirs")]
+    pub external_dirs: Vec<String>,
+    #[serde(default = "default_skill_write_approval", alias = "write_approval")]
+    pub write_approval: bool,
+}
+
+fn default_workspace_skills_enabled() -> bool {
+    true
+}
+
+fn default_skill_write_approval() -> bool {
+    false
+}
+
+impl Default for SkillsConfig {
+    fn default() -> Self {
+        Self {
+            workspace_skills_enabled: default_workspace_skills_enabled(),
+            external_dirs: Vec::new(),
+            write_approval: default_skill_write_approval(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub providers: ProvidersConfig,
@@ -379,6 +408,8 @@ pub struct Config {
     pub mcp_servers: HashMap<String, McpServerConfig>,
     #[serde(default)]
     pub embeddings: Option<EmbeddingsConfig>,
+    #[serde(default)]
+    pub skills: SkillsConfig,
 }
 
 impl Default for ChannelsConfig {
@@ -429,6 +460,7 @@ impl Default for Config {
             channels: ChannelsConfig::default(),
             mcp_servers: HashMap::new(),
             embeddings: Some(EmbeddingsConfig::default()),
+            skills: SkillsConfig::default(),
         }
     }
 }

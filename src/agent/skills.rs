@@ -17,6 +17,52 @@ pub fn get_db_path() -> PathBuf {
     crate::config::resolve_path("~/.openz/memory.db")
 }
 
+pub fn get_workspace_skills_dir() -> PathBuf {
+    crate::config::resolve_path(".openz/skills")
+}
+
+fn load_skill_files_from_dir(
+    dir: &std::path::Path,
+    skills_map: &mut std::collections::HashMap<String, Skill>,
+) -> Result<()> {
+    if !dir.exists() || !dir.is_dir() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+            let name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if name.is_empty() || name == "INDEX" || name.ends_with(".bak") {
+                continue;
+            }
+            let content = fs::read_to_string(&path)?;
+            skills_map.insert(name.clone(), Skill { name, content });
+        } else if path.is_dir() {
+            let skill_file = path.join("SKILL.md");
+            if skill_file.exists() && skill_file.is_file() {
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                let content = fs::read_to_string(&skill_file)?;
+                skills_map.insert(name.clone(), Skill { name, content });
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn get_connection() -> Result<Connection> {
     let path = get_db_path();
     if let Some(parent) = path.parent() {
@@ -370,22 +416,17 @@ pub fn load_skills_with_profile(profile_name: Option<&str>) -> Result<Vec<Skill>
         }
     }
 
-    // 2. Load from local workspace directory (./skills) to support workspace overrides
-    let local_dir = std::path::Path::new("skills");
-    if local_dir.exists() && local_dir.is_dir() {
-        for entry in fs::read_dir(local_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
-                let name = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                let content = fs::read_to_string(&path)?;
-                skills_map.insert(name.clone(), Skill { name, content });
-            }
-        }
+    // 2. Load explicit workspace skills from .openz/skills. This avoids treating a
+    // project-level ./skills directory as writable agent memory.
+    let skills_config = crate::config::loader::load_config()
+        .map(|config| config.skills)
+        .unwrap_or_default();
+    if skills_config.workspace_skills_enabled {
+        load_skill_files_from_dir(&get_workspace_skills_dir(), &mut skills_map)?;
+    }
+    for external_dir in skills_config.external_dirs {
+        let dir = crate::config::resolve_path(&external_dir);
+        load_skill_files_from_dir(&dir, &mut skills_map)?;
     }
 
     Ok(skills_map.into_values().collect())
@@ -655,12 +696,6 @@ pub fn save_skill(name: &str, content: &str) -> Result<()> {
         params![safe_name, content, now],
     )?;
 
-    let local_dir = std::path::Path::new("skills");
-    if local_dir.exists() && local_dir.is_dir() {
-        let path = local_dir.join(format!("{}.md", safe_name));
-        fs::write(path, content)?;
-    }
-
     Ok(())
 }
 
@@ -686,22 +721,12 @@ pub fn delete_skill_with_profile(name: &str, profile_name: Option<&str>) -> Resu
         )?;
     }
 
-    let local_path = std::path::Path::new("skills").join(format!("{}.md", safe_name));
-    if local_path.exists() {
-        fs::remove_file(local_path)?;
-    }
     Ok(())
 }
 
 pub fn clear_skills() -> Result<()> {
     let conn = get_connection()?;
     conn.execute("DELETE FROM skills", [])?;
-
-    let local_dir = std::path::Path::new("skills");
-    if local_dir.exists() && local_dir.is_dir() {
-        fs::remove_dir_all(local_dir)?;
-        fs::create_dir_all(local_dir)?;
-    }
 
     Ok(())
 }
@@ -731,6 +756,9 @@ pub fn save_subagent_skill(profile: &str, name: &str, content: &str) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static SKILL_CWD_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_scan_skill_content() {
@@ -759,6 +787,56 @@ mod tests {
         let skills_after = load_skills().expect("Failed to load skills");
         let found_after = skills_after.iter().find(|s| s.name == skill_name);
         assert!(found_after.is_none());
+    }
+
+    #[test]
+    fn test_save_skill_does_not_write_repo_skills_dir() {
+        let _lock = SKILL_CWD_TEST_LOCK.lock().unwrap();
+        let original = std::env::current_dir().unwrap();
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_skill_storage_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(temp_dir.join("skills")).unwrap();
+        std::env::set_current_dir(&temp_dir).unwrap();
+
+        let skill_name = "repo_pollution_guard";
+        let skill_content = "# Repo Pollution Guard
+Keep runtime skills out of project skills.";
+        let res = save_skill(skill_name, skill_content);
+
+        std::env::set_current_dir(original).unwrap();
+        let repo_skill_path = temp_dir.join("skills").join(format!("{}.md", skill_name));
+        let _ = delete_skill(skill_name);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        assert!(res.is_ok());
+        assert!(
+            !repo_skill_path.exists(),
+            "save_skill must not write runtime skills into ./skills"
+        );
+    }
+
+    #[test]
+    fn test_workspace_openz_skills_load_as_overrides() {
+        let _lock = SKILL_CWD_TEST_LOCK.lock().unwrap();
+        let original = std::env::current_dir().unwrap();
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_workspace_skills_{}", uuid::Uuid::new_v4()));
+        let workspace_skills = temp_dir.join(".openz").join("skills");
+        std::fs::create_dir_all(&workspace_skills).unwrap();
+        std::fs::write(
+            workspace_skills.join("workspace_override.md"),
+            "# Workspace Override
+This skill is scoped to this workspace.",
+        )
+        .unwrap();
+        std::env::set_current_dir(&temp_dir).unwrap();
+
+        let skills = load_skills().unwrap();
+
+        std::env::set_current_dir(original).unwrap();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        assert!(skills.iter().any(|skill| skill.name == "workspace_override"));
     }
 
     #[test]

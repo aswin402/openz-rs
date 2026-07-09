@@ -540,6 +540,19 @@ impl Tool for ManageConfigTool {
                         "max_tool_iterations": {
                             "type": "integer",
                             "description": "Maximum execution steps per turn."
+                        },
+                        "skills_workspace_skills_enabled": {
+                            "type": "boolean",
+                            "description": "Enable workspace-scoped skills from .openz/skills."
+                        },
+                        "skills_external_dirs": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Additional skill directories to scan after the OpenZ skill store."
+                        },
+                        "skills_write_approval": {
+                            "type": "boolean",
+                            "description": "Require approval/staging before agent-created skill writes."
                         }
                     },
                     "description": "Key-value map of configuration defaults to update. Ignored for action 'view'."
@@ -638,6 +651,24 @@ impl Tool for ManageConfigTool {
                         "max_tool_iterations" => {
                             if let Some(n) = v.as_u64() {
                                 config.agents.defaults.max_tool_iterations = n as usize;
+                            }
+                        }
+                        "skills_workspace_skills_enabled" => {
+                            if let Some(b) = v.as_bool() {
+                                config.skills.workspace_skills_enabled = b;
+                            }
+                        }
+                        "skills_external_dirs" => {
+                            if let Some(values) = v.as_array() {
+                                config.skills.external_dirs = values
+                                    .iter()
+                                    .filter_map(|value| value.as_str().map(str::to_string))
+                                    .collect();
+                            }
+                        }
+                        "skills_write_approval" => {
+                            if let Some(b) = v.as_bool() {
+                                config.skills.write_approval = b;
                             }
                         }
                         other => {
@@ -1604,7 +1635,10 @@ mod tests {
                     "min_free_disk_gb": 3.5,
                     "allow_network_tools": false,
                     "max_concurrent_process_tools": 2,
-                    "warn_before_expensive_tools": false
+                    "warn_before_expensive_tools": false,
+                    "skills_workspace_skills_enabled": false,
+                    "skills_external_dirs": ["~/.agents/skills", "/tmp/openz-team-skills"],
+                    "skills_write_approval": true
                 }
             })))
             .unwrap();
@@ -1626,6 +1660,12 @@ mod tests {
             updated_config.agents.defaults.warn_before_expensive_tools,
             false
         );
+        assert_eq!(updated_config.skills.workspace_skills_enabled, false);
+        assert_eq!(
+            updated_config.skills.external_dirs,
+            vec!["~/.agents/skills".to_string(), "/tmp/openz-team-skills".to_string()]
+        );
+        assert_eq!(updated_config.skills.write_approval, true);
 
         // 4. Try updating an invalid/restricted field (should be blocked)
         let invalid_res = rt
