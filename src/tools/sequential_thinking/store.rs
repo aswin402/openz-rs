@@ -314,11 +314,7 @@ impl ThoughtStore for SqliteThoughtStore {
 // ─── DB path helper ──────────────────────────────────────────────
 
 pub fn get_db_path() -> PathBuf {
-    if let Ok(override_dir) = std::env::var("OPENZ_CONFIG_DIR") {
-        PathBuf::from(override_dir).join("thoughts.db")
-    } else {
-        crate::config::resolve_path("~/.openz/thoughts.db")
-    }
+    crate::config::loader::runtime_db_path("thoughts.db")
 }
 
 // ─── Shared Database Lock and Store Accessors ────────────────────

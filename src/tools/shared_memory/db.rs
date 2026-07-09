@@ -35,11 +35,7 @@ pub fn get_sqlite_db_path() -> PathBuf {
     }
     #[cfg(not(test))]
     {
-        if let Ok(override_dir) = std::env::var("OPENZ_CONFIG_DIR") {
-            PathBuf::from(override_dir).join("memory.db")
-        } else {
-            crate::config::resolve_path("~/.openz/memory.db")
-        }
+        crate::config::loader::runtime_db_path("memory.db")
     }
 }
 

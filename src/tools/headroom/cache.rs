@@ -17,11 +17,7 @@ static CCR_COUNTER: AtomicU64 = AtomicU64::new(0);
 // ─── DB path & connection ───────────────────────────────────────
 
 fn get_db_path() -> PathBuf {
-    if let Ok(override_dir) = std::env::var("OPENZ_CONFIG_DIR") {
-        PathBuf::from(override_dir).join("ccr_cache.db")
-    } else {
-        crate::config::resolve_path("~/.openz/ccr_cache.db")
-    }
+    crate::config::loader::runtime_db_path("ccr_cache.db")
 }
 
 pub fn get_cache_connection() -> Result<std::sync::MutexGuard<'static, Connection>> {

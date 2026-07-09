@@ -93,7 +93,7 @@ fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
 }
 
 fn load_cache() -> EmbeddingsCache {
-    let cache_path = crate::config::resolve_path("~/.openz/embeddings_cache.json");
+    let cache_path = crate::config::loader::runtime_db_path("embeddings_cache.json");
     if cache_path.exists() {
         if let Ok(content) = fs::read_to_string(&cache_path) {
             if let Ok(cache) = serde_json::from_str::<EmbeddingsCache>(&content) {
@@ -105,7 +105,7 @@ fn load_cache() -> EmbeddingsCache {
 }
 
 fn save_cache(cache: &EmbeddingsCache) -> Result<()> {
-    let cache_path = crate::config::resolve_path("~/.openz/embeddings_cache.json");
+    let cache_path = crate::config::loader::runtime_db_path("embeddings_cache.json");
     if let Some(parent) = cache_path.parent() {
         fs::create_dir_all(parent)?;
     }

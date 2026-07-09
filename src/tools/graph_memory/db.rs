@@ -187,11 +187,7 @@ pub(crate) fn get_db_path() -> std::path::PathBuf {
     }
     #[cfg(not(test))]
     {
-        if let Ok(override_dir) = std::env::var("OPENZ_CONFIG_DIR") {
-            std::path::PathBuf::from(override_dir).join(DB_FILENAME)
-        } else {
-            crate::config::resolve_path("~/.openz/graph_memory.db")
-        }
+        crate::config::loader::runtime_db_path(DB_FILENAME)
     }
 }
 

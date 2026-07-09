@@ -4,6 +4,7 @@ pub mod builder;
 pub mod changelog;
 pub mod channels;
 pub mod configure;
+pub mod doctor;
 pub mod logs;
 pub mod onboard;
 pub mod sop;
@@ -15,6 +16,7 @@ pub use agent::{archive_current_session, load_session_history};
 use anyhow::Result;
 pub use args::{ChannelAction, CliArgs, Command, SopAction};
 pub use builder::build_agent_loop;
+pub use doctor::handle_doctor;
 pub use channels::{
     handle_discord, handle_email, handle_gateway, handle_telegram, handle_whatsapp,
     is_email_configured, is_telegram_configured,
@@ -59,6 +61,10 @@ pub async fn run_cli() -> Result<()> {
     let args = CliArgs::parse();
     crate::tools::subagent::cleanup_stale_resources();
 
+    // Surface (and offer to migrate) any stale runtime DB files left in the
+    // working directory instead of letting them shadow the global database.
+    crate::config::loader::check_root_runtime_dbs();
+
     match args.command {
         Command::Onboard => {
             onboard::handle_onboard().await?;
@@ -102,6 +108,9 @@ pub async fn run_cli() -> Result<()> {
         Command::Subagent => {
             let config = crate::config::loader::load_config()?;
             crate::subagents::run_subagent_manager(config).await?;
+        }
+        Command::Doctor => {
+            doctor::handle_doctor().await?;
         }
         Command::McpBridge { port, command_args } => {
             if command_args.is_empty() {

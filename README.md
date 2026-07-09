@@ -38,6 +38,7 @@ Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent l
   * **Discord Gateway (`discord`):** Gateway client listening for events via WebSocket.
   * **WhatsApp API (`whatsapp`):** Axum webhook receiver server verifying and processing incoming messages.
 * **Changelog & System Specifications:** The `openz changelog` command prints system hardware specifications (ROM/RAM footprint, CPU load, boot time), architectural inspirations, key capabilities, model protocol integrations, and release history directly to the terminal.
+* **Runtime DB Doctor:** The `openz doctor` command verifies that all runtime databases (`memory.db`, `graph_memory.db`, etc.) live under `~/.openz` and automatically relocates any stray artifacts found in the working directory (data is preserved, never deleted).
 
 ---
 

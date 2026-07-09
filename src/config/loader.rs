@@ -2,7 +2,7 @@ use crate::config::schema::Config;
 use anyhow::{Context, Result};
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 tokio::task_local! {
     pub static ACTIVE_WORKSPACE: PathBuf;
@@ -59,6 +59,166 @@ pub fn config_dir() -> PathBuf {
 
 pub fn config_path() -> PathBuf {
     config_dir().join("config.json")
+}
+
+/// Known runtime database / cache filenames that must live under the global
+/// OpenZ data directory (see [`runtime_data_dir`]), never inside a project or
+/// workspace root. These are runtime artifacts, not source files.
+pub const RUNTIME_DB_FILENAMES: &[&str] = &[
+    "memory.db",
+    "graph_memory.db",
+    "thoughts.db",
+    "ccr_cache.db",
+    "embeddings_cache.json",
+];
+
+/// Directory where all global runtime state (databases, caches, sessions,
+/// config) lives. Honors the `CONFIG_DIR_OVERRIDE` task-local (used inside
+/// tool execution) and the `OPENZ_CONFIG_DIR` environment variable, falling
+/// back to `~/.openz`.
+///
+/// This path is derived from `~/.openz` (or an explicit override) and is
+/// **never** the project working directory, so runtime state never leaks into
+/// a repository root.
+pub fn runtime_data_dir() -> PathBuf {
+    config_dir()
+}
+
+/// Resolve the on-disk path for a named runtime database/cache file.
+///
+/// The result always lives under [`runtime_data_dir`] and therefore never
+/// resolves to the workspace or repository root, regardless of the active
+/// workspace task-local. Use this for every SQLite database and cache file
+/// (memory, graph memory, thoughts, CCR cache, embeddings cache).
+pub fn runtime_db_path(filename: &str) -> PathBuf {
+    runtime_data_dir().join(filename)
+}
+
+/// Find runtime DB artifacts (e.g. `memory.db`, `*.db`, `*.db-wal`,
+/// `*.db-shm`, `embeddings_cache.json`) sitting directly inside `root`.
+///
+/// This detects stale files that an older build may have dropped into a
+/// project/working directory. It is pure and safe to call from tests.
+pub fn root_runtime_db_artifacts(root: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    if !root.is_dir() {
+        return found;
+    }
+
+    let mut push_if_present = |name: &str| {
+        let p = root.join(name);
+        if p.is_file() {
+            found.push(p);
+        }
+    };
+
+    for name in RUNTIME_DB_FILENAMES {
+        push_if_present(name);
+    }
+
+    // Also catch any stray SQLite companions in the root, even if the base
+    // filename is not in the known list.
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            if let Ok(ft) = entry.file_type() {
+                if !ft.is_file() {
+                    continue;
+                }
+                let fname = entry.file_name().to_string_lossy().to_string();
+                if fname.ends_with(".db") || fname.ends_with(".db-wal") || fname.ends_with(".db-shm") {
+                    let p = entry.path();
+                    if !found.contains(&p) {
+                        found.push(p);
+                    }
+                }
+            }
+        }
+    }
+
+    found.sort();
+    found
+}
+
+/// Result of scanning the working directory for stray runtime DB files.
+#[derive(Debug, Clone)]
+pub struct RootDbDiagnostics {
+    pub root: PathBuf,
+    pub found: Vec<PathBuf>,
+    pub global_memory_db_exists: bool,
+}
+
+impl RootDbDiagnostics {
+    /// True when one or more runtime DB artifacts were found in the root.
+    pub fn has_root_runtime_dbs(&self) -> bool {
+        !self.found.is_empty()
+    }
+}
+
+/// Scan the current working directory for stray runtime DB artifacts and emit
+/// a diagnostic warning when found. This is the "doctor" check that should run
+/// at startup so stale `./memory.db` files are surfaced instead of silently
+/// shadowing the real global database.
+pub fn check_root_runtime_dbs() -> RootDbDiagnostics {
+    let root = std::env::current_dir().unwrap_or_default();
+    let found = root_runtime_db_artifacts(&root);
+    let global_memory_db_exists = runtime_db_path("memory.db").exists();
+
+    if !found.is_empty() {
+        let files: Vec<String> = found
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        tracing::warn!(
+            root = %root.display(),
+            files = ?files,
+            global_memory_db_exists,
+            "Runtime database files found in the working directory. These are stale artifacts and should live under the global data dir (~/.openz). Migrate or archive them (e.g. via `openz doctor`) so they do not shadow the real database."
+        );
+    }
+
+    RootDbDiagnostics {
+        root,
+        found,
+        global_memory_db_exists,
+    }
+}
+
+/// Relocate stray runtime DB artifacts out of the working directory.
+///
+/// - If the matching global DB does not yet exist, the artifact is **migrated**
+///   (moved) into the global data dir so its data is preserved.
+/// - Otherwise the artifact is **archived** under
+///   `~/.openz/legacy-root-backup/<timestamp>/` so nothing is destroyed.
+///
+/// Returns the `(from, to)` moves performed. This never deletes data.
+pub fn migrate_root_runtime_dbs() -> Vec<(PathBuf, PathBuf)> {
+    let diag = check_root_runtime_dbs();
+    if !diag.has_root_runtime_dbs() {
+        return Vec::new();
+    }
+
+    let global_dir = runtime_data_dir();
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S");
+    let archive_dir = global_dir.join(format!("legacy-root-backup/{}", stamp));
+
+    let mut moves = Vec::new();
+    for src in &diag.found {
+        let fname = src
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let dst = if runtime_db_path(&fname).exists() {
+            let _ = std::fs::create_dir_all(&archive_dir);
+            archive_dir.join(&fname)
+        } else {
+            let _ = std::fs::create_dir_all(&global_dir);
+            global_dir.join(&fname)
+        };
+        if let Ok(()) = std::fs::rename(src, &dst) {
+            moves.push((src.clone(), dst));
+        }
+    }
+    moves
 }
 
 /// Generate a unique CLI session key based on the current working directory.
@@ -190,5 +350,67 @@ mod tests {
         assert_ne!(first_key, second_key);
         assert!(first_key.starts_with("cli:"));
         assert!(second_key.starts_with("cli:"));
+    }
+
+    #[tokio::test]
+    async fn runtime_db_path_never_resolves_to_workspace_root() {
+        let workspace = std::env::temp_dir().join(format!("openz_ws_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        // runtime_db_path must be derived from ~/.openz, independent of the
+        // active workspace task-local, so it can never land in the repo root.
+        let path = super::ACTIVE_WORKSPACE
+            .scope(workspace.clone(), async { super::runtime_db_path("memory.db") })
+            .await;
+
+        assert!(!path.starts_with(&workspace), "runtime DB resolved inside workspace: {path:?}");
+        assert!(path.ends_with("memory.db"));
+        assert!(path.to_string_lossy().contains(".openz"));
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[test]
+    fn openz_config_dir_moves_db_location() {
+        let custom = std::env::temp_dir().join(format!("openz_cfg_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&custom).unwrap();
+        std::env::set_var("OPENZ_CONFIG_DIR", &custom);
+
+        let path = super::runtime_db_path("memory.db");
+
+        assert_eq!(path, custom.join("memory.db"));
+        std::env::remove_var("OPENZ_CONFIG_DIR");
+        let _ = std::fs::remove_dir_all(&custom);
+    }
+
+    #[test]
+    fn root_memory_db_triggers_diagnostic() {
+        let root = std::env::temp_dir().join(format!("openz_root_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("memory.db"), b"stale").unwrap();
+        std::fs::write(root.join("memory.db-shm"), b"").unwrap();
+        std::fs::write(root.join("memory.db-wal"), b"").unwrap();
+
+        let found = super::root_runtime_db_artifacts(&root);
+        let names: Vec<String> = found
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        assert!(names.contains(&"memory.db".to_string()), "memory.db not detected: {names:?}");
+        assert!(names.contains(&"memory.db-shm".to_string()));
+        assert!(names.contains(&"memory.db-wal".to_string()));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn workspace_openz_runtime_files_are_gitignored() {
+        let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let gitignore = std::fs::read_to_string(format!("{manifest}/.gitignore"))
+            .expect(".gitignore must exist at repo root");
+        let lower = gitignore.to_lowercase();
+        assert!(lower.contains(".openz/"), ".gitignore must ignore workspace .openz/ runtime dir");
+        assert!(lower.contains("/memory.db"), ".gitignore must ignore root memory.db");
+        assert!(lower.contains(".db-wal"), ".gitignore must ignore sqlite -wal companions");
     }
 }

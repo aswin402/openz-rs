@@ -14,7 +14,7 @@ pub fn get_skills_dir() -> PathBuf {
 }
 
 pub fn get_db_path() -> PathBuf {
-    crate::config::resolve_path("~/.openz/memory.db")
+    crate::config::loader::runtime_db_path("memory.db")
 }
 
 pub fn get_workspace_skills_dir() -> PathBuf {
@@ -63,12 +63,7 @@ fn load_skill_files_from_dir(
     Ok(())
 }
 
-pub fn get_connection() -> Result<Connection> {
-    let path = get_db_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let conn = Connection::open(path)?;
+fn create_skills_schema(conn: &Connection) -> Result<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS skills (
             name TEXT NOT NULL,
@@ -81,6 +76,59 @@ pub fn get_connection() -> Result<Connection> {
         )",
         [],
     )?;
+    Ok(())
+}
+
+fn quarantine_malformed_memory_db(path: &std::path::Path) {
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S");
+    let backup = path.with_extension(format!("db.corrupt.{}", stamp));
+    let _ = std::fs::rename(path, &backup);
+    let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+    let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+    tracing::warn!(
+        source = %path.display(),
+        backup = %backup.display(),
+        "Malformed OpenZ memory database quarantined; a fresh database will be created."
+    );
+}
+
+pub fn get_connection() -> Result<Connection> {
+    let path = get_db_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut conn = Connection::open(&path)?;
+    if let Err(err) = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;") {
+        tracing::warn!(
+            database = %path.display(),
+            error = %err,
+            "OpenZ memory database failed during SQLite initialization."
+        );
+        drop(conn);
+        quarantine_malformed_memory_db(&path);
+        conn = Connection::open(&path)?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
+    }
+    let integrity = conn.query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0));
+    let integrity_failure = match integrity {
+        Ok(value) if value == "ok" => None,
+        Ok(value) => Some(value),
+        Err(err) => Some(err.to_string()),
+    };
+    if let Some(reason) = integrity_failure {
+        tracing::warn!(
+            database = %path.display(),
+            reason = %reason,
+            "OpenZ memory database integrity check failed."
+        );
+        drop(conn);
+        quarantine_malformed_memory_db(&path);
+        conn = Connection::open(&path)?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
+    }
+
+    create_skills_schema(&conn)?;
     static SKILLS_INIT_ONCE: std::sync::Once = std::sync::Once::new();
     SKILLS_INIT_ONCE.call_once(|| {
         let _ = migrate_old_skills_to_db(&conn);

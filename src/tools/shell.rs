@@ -517,21 +517,21 @@ fn find_wasm_file(program: &str) -> Option<std::path::PathBuf> {
             }
         }
 
-        // Check local skills directory (./skills/)
-        let local_skills_dir = std::path::Path::new("skills");
-        if local_skills_dir.exists() && local_skills_dir.is_dir() {
-            let local_skill_path = local_skills_dir.join(file_name);
-            if local_skill_path.exists()
-                && local_skill_path.is_file()
-                && local_skill_path.extension().and_then(|s| s.to_str()) == Some("wasm")
+        // Check explicit workspace-local OpenZ skills (.openz/skills/).
+        let workspace_skills_dir = crate::agent::skills::get_workspace_skills_dir();
+        if workspace_skills_dir.exists() && workspace_skills_dir.is_dir() {
+            let workspace_skill_path = workspace_skills_dir.join(file_name);
+            if workspace_skill_path.exists()
+                && workspace_skill_path.is_file()
+                && workspace_skill_path.extension().and_then(|s| s.to_str()) == Some("wasm")
             {
-                return Some(local_skill_path);
+                return Some(workspace_skill_path);
             }
-            if local_skill_path.extension().and_then(|s| s.to_str()) != Some("wasm") {
-                let mut local_skill_wasm_path = local_skill_path.clone();
-                local_skill_wasm_path.set_extension("wasm");
-                if local_skill_wasm_path.exists() && local_skill_wasm_path.is_file() {
-                    return Some(local_skill_wasm_path);
+            if workspace_skill_path.extension().and_then(|s| s.to_str()) != Some("wasm") {
+                let mut workspace_skill_wasm_path = workspace_skill_path.clone();
+                workspace_skill_wasm_path.set_extension("wasm");
+                if workspace_skill_wasm_path.exists() && workspace_skill_wasm_path.is_file() {
+                    return Some(workspace_skill_wasm_path);
                 }
             }
         }
@@ -636,6 +636,33 @@ mod tests {
     fn test_find_wasm_file_nonexistent() {
         let path = find_wasm_file("nonexistent_wasm_file_12345");
         assert!(path.is_none());
+    }
+
+    #[test]
+    fn test_find_wasm_file_uses_workspace_openz_skills_not_repo_skills() {
+        let original = std::env::current_dir().unwrap();
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_wasm_skills_{}", uuid::Uuid::new_v4()));
+        let repo_skills = temp_dir.join("skills");
+        let workspace_skills = temp_dir.join(".openz").join("skills");
+        std::fs::create_dir_all(&repo_skills).unwrap();
+        std::fs::create_dir_all(&workspace_skills).unwrap();
+        std::fs::write(repo_skills.join("tool.wasm"), b"repo").unwrap();
+        std::fs::write(workspace_skills.join("tool.wasm"), b"workspace").unwrap();
+        std::env::set_current_dir(&temp_dir).unwrap();
+
+        let found = find_wasm_file("tool");
+
+        std::env::set_current_dir(original).unwrap();
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        assert!(
+            found
+                .as_ref()
+                .map(|path| path.ends_with(".openz/skills/tool.wasm"))
+                .unwrap_or(false),
+            "expected workspace .openz/skills WASM, got {found:?}"
+        );
     }
 
     #[tokio::test]

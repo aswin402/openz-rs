@@ -3,9 +3,36 @@
 .env.local
 .env.*.local
 *.log
+
+# ── Runtime databases / caches (must never live in a repo root) ──
+# SQLite databases and their WAL/SHM companions.
 /memory.db
 /memory.db-shm
 /memory.db-wal
+/graph_memory.db
+/graph_memory.db-shm
+/graph_memory.db-wal
+/thoughts.db
+/thoughts.db-shm
+/thoughts.db-wal
+/ccr_cache.db
+/ccr_cache.db-shm
+/ccr_cache.db-wal
+/context-bus.db
+/context-bus.db-shm
+/context-bus.db-wal
+/openz.db
+/openz.db-shm
+/openz.db-wal
+/embeddings_cache.json
+# Any other stray SQLite artifacts dropped in the working directory.
+*.db
+*.db-wal
+*.db-shm
+
 /.fastembed_cache/
 /logs/
+.superpowers/
+.crush/
+# Workspace-local OpenZ runtime state (<workspace>/.openz/).
 .openz/

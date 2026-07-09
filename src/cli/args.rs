@@ -34,6 +34,7 @@ pub enum Command {
         action: Option<ChannelAction>,
     },
     Subagent,
+    Doctor,
     McpBridge {
         #[arg(long)]
         port: u16,

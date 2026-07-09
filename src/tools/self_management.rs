@@ -820,7 +820,7 @@ impl Tool for DiagnoseSystemTool {
             .map(|n| n.get())
             .unwrap_or(1);
 
-        let openz_dir = crate::config::resolve_path("~/.openz");
+        let openz_dir = crate::config::loader::runtime_data_dir();
         let sessions_dir = openz_dir.join("sessions");
         let outputs_dir = openz_dir.join("tool_outputs");
         let traces_dir = openz_dir.join("traces");
@@ -986,7 +986,7 @@ impl Tool for ManageSessionsTool {
             .get("action")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'action'"))?;
-        let openz_dir = crate::config::resolve_path("~/.openz");
+        let openz_dir = crate::config::loader::runtime_data_dir();
         let sessions_dir = openz_dir.join("sessions");
 
         match action {
@@ -1180,7 +1180,7 @@ impl Tool for ManageBackupsTool {
             .get("action")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'action'"))?;
-        let openz_dir = crate::config::resolve_path("~/.openz");
+        let openz_dir = crate::config::loader::runtime_data_dir();
         let backups_dir = openz_dir.join("backups");
 
         match action {
@@ -1723,7 +1723,7 @@ mod tests {
         let tool = ManageSessionsTool;
         let rt = tokio::runtime::Runtime::new().unwrap();
 
-        let openz_dir = crate::config::resolve_path("~/.openz");
+        let openz_dir = crate::config::loader::runtime_data_dir();
         let sessions_dir = openz_dir.join("sessions");
         std::fs::create_dir_all(&sessions_dir).unwrap();
 

@@ -450,7 +450,9 @@ mod tests {
     fn test_get_version_history() {
         let history = get_version_history();
         assert!(!history.is_empty());
-        assert!(history.contains("v0.0.36"));
+        // The latest release heading is always the first recorded block and is
+        // guaranteed to match CARGO_PKG_VERSION by version_sync_tests.
+        assert!(history.contains(&format!("v{}", env!("CARGO_PKG_VERSION"))));
     }
 
     #[test]

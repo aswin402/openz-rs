@@ -412,6 +412,15 @@ Inside `openz agent`, the user can issue direct slash commands:
     *   Reused existing approval flow for expensive tools while avoiding duplicate approval prompts after the security guard has already asked.
 *   **Tests:** Added targeted coverage for tool routing metadata, API truncation behavior, tool catalog output, self-management config updates, and resource-policy decisions.
 *   **Chore:** Bumped version to `v0.0.42`.
+*   **Feature: Runtime database placement & doctor (MEDIUM)**:
+    *   Added centralized `runtime_data_dir()` / `runtime_db_path()` helpers in `config/loader.rs` so all SQLite databases and caches resolve consistently under `~/.openz/` — never the workspace/repo root.
+    *   Refactored 6 DB-path call sites (`shared_memory`, `graph_memory`, `sequential_thinking`, `headroom`, `skills`, `semantic_search`) to use the centralized resolution.
+    *   Added `RUNTIME_DB_FILENAMES` constant and `check_root_runtime_dbs()` startup doctor that warns if stale artifacts are found in the working directory.
+    *   Added `openz doctor` CLI command that migrates stray root DBs into `~/.openz/` (or archives them if the global copy already exists) and prunes stale `graph_memory.db.branch_*` files — all non-destructive, data preserved in `legacy-root-backup/`.
+    *   Hardened `.gitignore` for all known runtime DB artifacts (`memory.db`, `graph_memory.db`, `thoughts.db`, `ccr_cache.db`, `embeddings_cache.json`, `*.db`, `*.db-wal`, `*.db-shm`, and `.openz/`).
+    *   Updated `localinstall.sh` / `localupdate.sh` to self-clean stray runtime DBs from the working directory before compilation.
+    *   **Tests:** Added 4 new tests covering runtime-DB path isolation from workspace root, `OPENZ_CONFIG_DIR` redirect, root-memory.db detection, and `.gitignore` pattern verification.
+    *   **Fix:** Changed stale `test_get_version_history` assertion from hardcoded `v0.0.36` to `env!("CARGO_PKG_VERSION")` so it tracks the current release.
 
 ### v0.0.41 (Previous Release)
 *   **Fix: OpenZ worktree disk quota guard (CRITICAL)**:
