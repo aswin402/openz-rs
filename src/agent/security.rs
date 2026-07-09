@@ -550,6 +550,54 @@ impl SecurityGuard {
     }
 }
 
+const APPROVAL_DETAIL_MAX_LINES: usize = 12;
+const APPROVAL_DETAIL_MAX_CHARS: usize = 1600;
+
+fn compact_approval_description(description: &str, max_width: usize) -> String {
+    let mut compact = String::new();
+    let mut emitted_lines = 0usize;
+    let mut consumed_chars = 0usize;
+    let mut truncated = false;
+
+    'outer: for (line_idx, line) in description.lines().enumerate() {
+        let wrapped_lines = crate::agent::style::wrap_line(line, max_width);
+        for (sub_idx, sub_line) in wrapped_lines.iter().enumerate() {
+            let remaining_chars = APPROVAL_DETAIL_MAX_CHARS.saturating_sub(consumed_chars);
+            if emitted_lines >= APPROVAL_DETAIL_MAX_LINES || remaining_chars == 0 {
+                truncated = true;
+                break 'outer;
+            }
+
+            let sub_line_chars = sub_line.chars().count();
+            let rendered = if sub_line_chars > remaining_chars {
+                truncated = true;
+                sub_line.chars().take(remaining_chars).collect::<String>()
+            } else {
+                sub_line.clone()
+            };
+
+            if line_idx == 0 && sub_idx == 0 && emitted_lines == 0 {
+                compact.push_str(&rendered);
+            } else {
+                compact.push_str("\n             ");
+                compact.push_str(&rendered);
+            }
+            emitted_lines += 1;
+            consumed_chars += rendered.chars().count();
+
+            if sub_line_chars > remaining_chars {
+                break 'outer;
+            }
+        }
+    }
+
+    if truncated {
+        compact.push_str("\n             ... details truncated; inspect the full tool arguments above or deny if unsure");
+    }
+
+    compact
+}
+
 /// Request approval for a sensitive tool call over TUI or Telegram.
 pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value) -> Result<bool> {
     let description = SecurityGuard::format_description(tool_name, arguments);
@@ -650,18 +698,7 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
         let terminal_width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80) as usize;
         let max_width = terminal_width.saturating_sub(13).max(10);
 
-        let mut formatted_details = String::new();
-        let desc_lines: Vec<&str> = description.split('\n').collect();
-        for (line_idx, line) in desc_lines.iter().enumerate() {
-            let wrapped_lines = crate::agent::style::wrap_line(line, max_width);
-            for (sub_idx, sub_line) in wrapped_lines.iter().enumerate() {
-                if line_idx == 0 && sub_idx == 0 {
-                    formatted_details.push_str(sub_line);
-                } else {
-                    formatted_details.push_str(&format!("\n             {}", sub_line));
-                }
-            }
-        }
+        let formatted_details = compact_approval_description(&description, max_width);
 
         let header = format!(
             "{}🔒 SECURITY SHIELD: Sensitive Action Requested{}\n  {}Tool:      {}{}\n  {}Details:   {}{}",
@@ -992,6 +1029,30 @@ mod tests {
             &json!({"command": "reboot"}),
             "loose"
         ));
+    }
+
+    #[test]
+    fn test_compact_approval_description_truncates_long_details() {
+        let long_description = (0..80)
+            .map(|idx| format!("line-{idx}: {}", "x".repeat(120)))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let compact = compact_approval_description(&long_description, 60);
+
+        assert!(compact.contains("details truncated"));
+        assert!(compact.lines().count() <= APPROVAL_DETAIL_MAX_LINES + 1);
+        assert!(compact.chars().count() < long_description.chars().count());
+    }
+
+    #[test]
+    fn test_compact_approval_description_keeps_short_details() {
+        let description = "Command: echo hello\nReason: safe test";
+        let compact = compact_approval_description(description, 80);
+
+        assert!(!compact.contains("details truncated"));
+        assert!(compact.contains("Command: echo hello"));
+        assert!(compact.contains("Reason: safe test"));
     }
 
     #[test]
