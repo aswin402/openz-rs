@@ -621,13 +621,22 @@ async fn test_delegate_task_cancels_while_child_run_is_active() -> Result<()> {
         cancel_start.elapsed() < std::time::Duration::from_secs(2),
         "active cancellation should return promptly"
     );
+    let value = res.expect("active cancellation should return structured JSON");
+    assert_eq!(value["status"], "cancelled");
+    assert_eq!(value["lifecycle"]["code"], "cancelled");
+    assert_eq!(value["lifecycle"]["label"], "cancelled");
+    assert_eq!(value["tool"], "delegate_task");
+    assert!(value["session_id"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty()));
+    assert!(value["model_used"]
+        .as_str()
+        .is_some_and(|model| !model.is_empty()));
     assert!(
-        res.is_err(),
-        "active cancellation should return Err: {res:?}"
-    );
-    assert!(
-        res.unwrap_err().to_string().contains("cancelled"),
-        "active cancellation error should be classified as cancelled"
+        value["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("cancelled")),
+        "cancellation result should retain the cancellation reason: {value:?}"
     );
 
     std::env::remove_var("ANTHROPIC_API_KEY");
@@ -675,12 +684,16 @@ async fn test_delegate_task_cancellation_propagation() -> Result<()> {
         })
         .await;
 
-    // Check that it returned an Err, not Ok
-    assert!(
-        res.is_err(),
-        "Expected an error because the task was cancelled, got: {:?}",
-        res
-    );
+    let value = res.expect("cancelled task should return structured JSON");
+    assert_eq!(value["status"], "cancelled");
+    assert_eq!(value["lifecycle"]["code"], "cancelled");
+    assert_eq!(value["tool"], "delegate_task");
+    assert!(value["session_id"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty()));
+    assert!(value["model_used"]
+        .as_str()
+        .is_some_and(|model| !model.is_empty()));
 
     // Cleanup env vars
     std::env::remove_var("ANTHROPIC_API_KEY");
@@ -760,13 +773,23 @@ async fn test_delegate_profile_cancels_while_child_run_is_active() -> Result<()>
         cancel_start.elapsed() < std::time::Duration::from_secs(2),
         "active profile cancellation should return promptly"
     );
+    let value = res.expect("active profile cancellation should return structured JSON");
+    assert_eq!(value["status"], "cancelled");
+    assert_eq!(value["lifecycle"]["code"], "cancelled");
+    assert_eq!(value["lifecycle"]["label"], "cancelled");
+    assert_eq!(value["tool"], "delegate_profile");
+    assert_eq!(value["subagent"], "test_subagent");
+    assert!(value["session_id"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty()));
+    assert!(value["model_used"]
+        .as_str()
+        .is_some_and(|model| !model.is_empty()));
     assert!(
-        res.is_err(),
-        "active profile cancellation should return Err: {res:?}"
-    );
-    assert!(
-        res.unwrap_err().to_string().contains("cancelled"),
-        "active profile cancellation error should be classified as cancelled"
+        value["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("cancelled")),
+        "profile cancellation result should retain the cancellation reason: {value:?}"
     );
 
     std::env::remove_var("ANTHROPIC_API_KEY");
@@ -824,12 +847,17 @@ async fn test_delegate_profile_cancellation_propagation() -> Result<()> {
         })
         .await;
 
-    // Check that it returned an Err, not Ok
-    assert!(
-        res.is_err(),
-        "Expected an error because the profile tool was cancelled, got: {:?}",
-        res
-    );
+    let value = res.expect("cancelled profile should return structured JSON");
+    assert_eq!(value["status"], "cancelled");
+    assert_eq!(value["lifecycle"]["code"], "cancelled");
+    assert_eq!(value["tool"], "delegate_profile");
+    assert_eq!(value["subagent"], "test_subagent");
+    assert!(value["session_id"]
+        .as_str()
+        .is_some_and(|id| !id.is_empty()));
+    assert!(value["model_used"]
+        .as_str()
+        .is_some_and(|model| !model.is_empty()));
 
     // Cleanup env vars
     std::env::remove_var("ANTHROPIC_API_KEY");

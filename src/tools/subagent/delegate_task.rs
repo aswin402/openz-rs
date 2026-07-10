@@ -1,7 +1,7 @@
 use super::evaluator_optimizer::validate_schema;
 use super::{
-    build_provider_for_model, classify_subagent_error, compact_lifecycle_line, status_json,
-    CancellationToken, SubagentRunStatus, DELEGATION_DEPTH,
+    build_provider_for_model, cancellation_result_json, classify_subagent_error,
+    compact_lifecycle_line, status_json, CancellationToken, SubagentRunStatus, DELEGATION_DEPTH,
 };
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
@@ -475,7 +475,13 @@ impl Tool for DelegateTaskTool {
                             COLOR_RESET
                         );
                     }
-                    return Err(e);
+                    return Ok(cancellation_result_json(
+                        "delegate_task",
+                        None,
+                        &child_session_id,
+                        &selected_model,
+                        &error_text,
+                    ));
                 }
                 if !crate::agent::style::is_silent() {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);

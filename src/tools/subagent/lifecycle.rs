@@ -85,3 +85,31 @@ pub fn status_json(status: &SubagentRunStatus) -> serde_json::Value {
         "label": status.label(),
     })
 }
+
+pub fn cancellation_result_json(
+    tool_name: &str,
+    subagent_name: Option<&str>,
+    session_id: &str,
+    model_used: &str,
+    error: &str,
+) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "status": "cancelled",
+        "lifecycle": status_json(&SubagentRunStatus::Cancelled),
+        "tool": tool_name,
+        "session_id": session_id,
+        "model_used": model_used,
+        "error": error,
+    });
+
+    if let Some(name) = subagent_name {
+        if let Some(map) = value.as_object_mut() {
+            map.insert(
+                "subagent".to_string(),
+                serde_json::Value::String(name.to_string()),
+            );
+        }
+    }
+
+    value
+}

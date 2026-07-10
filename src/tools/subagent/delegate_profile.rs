@@ -5,8 +5,8 @@ use super::delegate_task::{
 use super::evaluator_optimizer::validate_schema;
 use super::parallel_research::get_status_from_goal;
 use super::{
-    build_provider_for_model, classify_subagent_error, compact_lifecycle_line, status_json,
-    CancellationToken, SubagentRunStatus, DELEGATION_DEPTH,
+    build_provider_for_model, cancellation_result_json, classify_subagent_error,
+    compact_lifecycle_line, status_json, CancellationToken, SubagentRunStatus, DELEGATION_DEPTH,
 };
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
@@ -220,7 +220,13 @@ impl Tool for DelegateProfileTool {
 
         for (idx, model_name) in models_to_try.iter().enumerate() {
             if self.cancellation_token.is_cancelled() {
-                return Err(anyhow::anyhow!("Subagent task cancelled"));
+                return Ok(cancellation_result_json(
+                    "delegate_profile",
+                    Some(&self.profile.name),
+                    &child_session_id,
+                    model_name,
+                    "Subagent task cancelled",
+                ));
             }
 
             // For vision_agent, skip models that don't support vision to avoid wasting fallbacks
@@ -562,7 +568,13 @@ impl Tool for DelegateProfileTool {
                                 COLOR_RESET
                             );
                         }
-                        return Err(e);
+                        return Ok(cancellation_result_json(
+                            "delegate_profile",
+                            Some(&self.profile.name),
+                            &child_session_id,
+                            &model_name,
+                            &error_text,
+                        ));
                     }
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
