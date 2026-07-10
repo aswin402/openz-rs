@@ -168,7 +168,9 @@ define_opendoc_tool!(OpendocChunkForEmbeddingTool, "opendoc_chunk_for_embedding"
 pub struct FillTemplateParams {
     #[schemars(description = "File path to the template document")]
     pub file_path: String,
-    #[schemars(description = "JSON object of key-value pairs to fill")]
+    #[schemars(
+        description = "JSON object of key-value pairs to fill, e.g. {\"name\":\"Ada\",\"items\":[\"A\",\"B\"]}"
+    )]
     pub variables: serde_json::Value,
     #[schemars(description = "Optional password for encrypted documents")]
     pub password: Option<String>,
@@ -674,7 +676,9 @@ define_opendoc_tool!(
 pub struct FillPdfFormParams {
     #[schemars(description = "File path to the PDF")]
     pub file_path: String,
-    #[schemars(description = "JSON object mapping field names to values")]
+    #[schemars(
+        description = "JSON object mapping field names to values, e.g. {\"full_name\":\"Ada Lovelace\",\"accepted\":true}"
+    )]
     pub values: serde_json::Value,
 }
 define_opendoc_tool!(

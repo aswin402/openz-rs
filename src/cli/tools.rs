@@ -851,6 +851,90 @@ fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) {
 mod tests {
     use super::*;
 
+    fn schema_required_fields(schema: &serde_json::Value) -> Vec<String> {
+        schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect()
+    }
+
+    fn schema_properties(
+        schema: &serde_json::Value,
+    ) -> Option<&serde_json::Map<String, serde_json::Value>> {
+        schema.get("properties").and_then(|v| v.as_object())
+    }
+
+    fn is_opaque_json_property(prop: &serde_json::Value) -> bool {
+        prop.get("type").is_none()
+            && prop.get("anyOf").is_none()
+            && prop.get("oneOf").is_none()
+            && prop.get("allOf").is_none()
+            && prop.get("$ref").is_none()
+            && prop.get("properties").is_none()
+            && prop.get("items").is_none()
+    }
+
+    fn has_actionable_json_example(prop: &serde_json::Value) -> bool {
+        prop.get("description")
+            .and_then(|v| v.as_str())
+            .map(|description| {
+                let lower = description.to_lowercase();
+                lower.contains("json") && (description.contains('{') || description.contains('['))
+            })
+            .unwrap_or(false)
+    }
+
+    fn has_raw_json_normalizer(tool_name: &str, field_name: &str) -> bool {
+        matches!(
+            (tool_name, field_name),
+            ("openmedia_create_svg", "elements")
+                | ("openmedia_template_create", "parameter_schema")
+                | ("openmedia_template_create", "scene_template")
+                | ("openmedia_video_create", "scene")
+                | ("openmedia_video_preview", "scene")
+                | ("openmedia_video_from_template", "parameters")
+        )
+    }
+
+    #[tokio::test]
+    async fn required_raw_json_tool_fields_are_documented_or_normalized() {
+        let registry = ToolRegistry::new();
+        let config = Config::default();
+        let provider = Arc::new(crate::providers::mock::MockProvider::new());
+        let sessions = SessionManager::new(std::path::PathBuf::from("/tmp/openz-test-sessions"));
+
+        register_all_tools(&registry, &config, provider, sessions).unwrap();
+
+        let mut offenders = Vec::new();
+        for entry in registry.catalog_entries(true) {
+            let name = entry["name"].as_str().unwrap_or("<unknown>");
+            let schema = &entry["parameters"];
+            let Some(properties) = schema_properties(schema) else {
+                continue;
+            };
+
+            for field in schema_required_fields(schema) {
+                let Some(prop) = properties.get(&field) else {
+                    continue;
+                };
+                if is_opaque_json_property(prop)
+                    && !has_actionable_json_example(prop)
+                    && !has_raw_json_normalizer(name, &field)
+                {
+                    offenders.push(format!("{name}.{field}"));
+                }
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "required raw JSON fields need concrete schemas, examples, or normalizer coverage: {offenders:?}"
+        );
+    }
+
     #[tokio::test]
     async fn register_all_tools_includes_expected_domains_without_duplicates() {
         let registry = ToolRegistry::new();
