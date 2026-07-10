@@ -5,8 +5,8 @@ use super::delegate_task::{
 use super::evaluator_optimizer::validate_schema;
 use super::parallel_research::get_status_from_goal;
 use super::{
-    build_provider_for_model, classify_subagent_error, status_json, CancellationToken,
-    SubagentRunStatus, DELEGATION_DEPTH,
+    build_provider_for_model, classify_subagent_error, compact_lifecycle_line, status_json,
+    CancellationToken, SubagentRunStatus, DELEGATION_DEPTH,
 };
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
@@ -360,6 +360,22 @@ impl Tool for DelegateProfileTool {
                             tokio::select! {
                                 biased;
                                 _ = self.cancellation_token.wait_for_cancellation() => {
+                                    if !crate::agent::style::is_silent() {
+                                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                        let line = compact_lifecycle_line(
+                                            &self.profile.name,
+                                            &model_name,
+                                            &SubagentRunStatus::Cancelling,
+                                        );
+                                        crate::tui_println!(
+                                            "{}{}{}▲ {}{}",
+                                            AURA_SLATE,
+                                            leaf_prefix,
+                                            AURA_GOLD,
+                                            line,
+                                            COLOR_RESET
+                                        );
+                                    }
                                     Err(anyhow!("Subagent task cancelled"))
                                 }
                                 res = child_agent_ref.run(p_ref, c_ref) => res,
@@ -419,6 +435,22 @@ impl Tool for DelegateProfileTool {
                                                 tokio::select! {
                                                     biased;
                                                     _ = self.cancellation_token.wait_for_cancellation() => {
+                                                        if !crate::agent::style::is_silent() {
+                                                            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                                            let line = compact_lifecycle_line(
+                                                                &self.profile.name,
+                                                                &model_name,
+                                                                &SubagentRunStatus::Cancelling,
+                                                            );
+                                                            crate::tui_println!(
+                                                                "{}{}{}▲ {}{}",
+                                                                AURA_SLATE,
+                                                                leaf_prefix,
+                                                                AURA_GOLD,
+                                                                line,
+                                                                COLOR_RESET
+                                                            );
+                                                        }
                                                         Err(anyhow!("Subagent task cancelled"))
                                                     }
                                                     res = child_agent_ref.run(p_ref, c_ref) => res,
@@ -480,7 +512,20 @@ impl Tool for DelegateProfileTool {
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                         let summary = crate::agent::style::format_subagent_summary(&run_res.content);
-                        crate::tui_println!("{}{}{}✓ {}{}", AURA_SLATE, leaf_prefix, AURA_GREEN, summary, COLOR_RESET);
+                        let line = compact_lifecycle_line(
+                            &self.profile.name,
+                            &model_name,
+                            &SubagentRunStatus::Completed,
+                        );
+                        crate::tui_println!(
+                            "{}{}{}✓ {} - {}{}",
+                            AURA_SLATE,
+                            leaf_prefix,
+                            AURA_GREEN,
+                            line,
+                            summary,
+                            COLOR_RESET
+                        );
                     }
 
                     if workspace_dir != parent_dir {
@@ -507,12 +552,13 @@ impl Tool for DelegateProfileTool {
                     if matches!(lifecycle, SubagentRunStatus::Cancelled) {
                         if !crate::agent::style::is_silent() {
                             let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                            let line = compact_lifecycle_line(&self.profile.name, &model_name, &lifecycle);
                             crate::tui_println!(
                                 "{}{}{}▲ {}{}",
                                 AURA_SLATE,
                                 leaf_prefix,
                                 AURA_GOLD,
-                                lifecycle.label(),
+                                line,
                                 COLOR_RESET
                             );
                         }
@@ -520,12 +566,13 @@ impl Tool for DelegateProfileTool {
                     }
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                        let line = compact_lifecycle_line(&self.profile.name, &model_name, &lifecycle);
                         crate::tui_println!(
                             "{}{}{}✕ {}{}",
                             AURA_SLATE,
                             leaf_prefix,
                             AURA_ROSE,
-                            lifecycle.label(),
+                            line,
                             COLOR_RESET
                         );
                     }

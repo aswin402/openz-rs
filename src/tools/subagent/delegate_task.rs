@@ -1,7 +1,7 @@
 use super::evaluator_optimizer::validate_schema;
 use super::{
-    build_provider_for_model, classify_subagent_error, status_json, CancellationToken,
-    SubagentRunStatus, DELEGATION_DEPTH,
+    build_provider_for_model, classify_subagent_error, compact_lifecycle_line, status_json,
+    CancellationToken, SubagentRunStatus, DELEGATION_DEPTH,
 };
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
@@ -276,6 +276,22 @@ impl Tool for DelegateTaskTool {
                     tokio::select! {
                         biased;
                         _ = self.cancellation_token.wait_for_cancellation() => {
+                            if !crate::agent::style::is_silent() {
+                                let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                let line = compact_lifecycle_line(
+                                    "delegate_task",
+                                    &selected_model,
+                                    &SubagentRunStatus::Cancelling,
+                                );
+                                crate::tui_println!(
+                                    "{}{}{}▲ {}{}",
+                                    AURA_SLATE,
+                                    leaf_prefix,
+                                    AURA_GOLD,
+                                    line,
+                                    COLOR_RESET
+                                );
+                            }
                             Err(anyhow!("Subagent task cancelled"))
                         }
                         res = child_agent_ref.run(p_ref, c_ref) => res,
@@ -418,12 +434,17 @@ impl Tool for DelegateTaskTool {
             Ok(res) => {
                 if !crate::agent::style::is_silent() {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                    let line = compact_lifecycle_line(
+                        "delegate_task",
+                        &selected_model,
+                        &SubagentRunStatus::Completed,
+                    );
                     crate::tui_println!(
                         "{}{}{}✓ {}{}",
                         AURA_SLATE,
                         leaf_prefix,
                         AURA_GREEN,
-                        SubagentRunStatus::Completed.label(),
+                        line,
                         COLOR_RESET
                     );
                 }
@@ -444,12 +465,13 @@ impl Tool for DelegateTaskTool {
                 if matches!(lifecycle, SubagentRunStatus::Cancelled) {
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                        let line = compact_lifecycle_line("delegate_task", &selected_model, &lifecycle);
                         crate::tui_println!(
                             "{}{}{}▲ {}{}",
                             AURA_SLATE,
                             leaf_prefix,
                             AURA_GOLD,
-                            lifecycle.label(),
+                            line,
                             COLOR_RESET
                         );
                     }
@@ -457,13 +479,14 @@ impl Tool for DelegateTaskTool {
                 }
                 if !crate::agent::style::is_silent() {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                    let line = compact_lifecycle_line("delegate_task", &selected_model, &lifecycle);
                     crate::tui_println!(
                         "{}{}{}✗{} {}{}",
                         AURA_SLATE,
                         leaf_prefix,
                         COLOR_RESET,
                         ERROR_RED,
-                        lifecycle.label(),
+                        line,
                         COLOR_RESET
                     );
                 }

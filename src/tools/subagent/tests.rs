@@ -64,6 +64,23 @@ fn test_lifecycle_status_labels_are_stable_for_tui() {
 }
 
 #[test]
+fn test_compact_lifecycle_line_for_cancellation_is_stable() {
+    use super::lifecycle::{compact_lifecycle_line, SubagentRunStatus};
+
+    let line = compact_lifecycle_line(
+        "vision_agent",
+        "google_ai_studio/gemini-2.5-flash",
+        &SubagentRunStatus::Cancelling,
+    );
+
+    assert_eq!(
+        line,
+        "vision_agent | google_ai_studio/gemini-2.5-flash | cancelling"
+    );
+    assert!(!line.contains("Running..."));
+}
+
+#[test]
 fn test_lifecycle_classifies_timeout_without_user_cancel() {
     use super::lifecycle::{classify_subagent_error, SubagentRunStatus};
     let token = CancellationToken::new();

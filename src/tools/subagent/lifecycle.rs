@@ -67,6 +67,18 @@ pub fn classify_subagent_error(error: &str, token: &CancellationToken) -> Subage
     }
 }
 
+pub fn compact_lifecycle_line(name: &str, model: &str, status: &SubagentRunStatus) -> String {
+    let clean_name = name.trim();
+    let clean_model = model.trim();
+    let label = status.label();
+
+    if clean_model.is_empty() {
+        format!("{clean_name} | {label}")
+    } else {
+        format!("{clean_name} | {clean_model} | {label}")
+    }
+}
+
 pub fn status_json(status: &SubagentRunStatus) -> serde_json::Value {
     serde_json::json!({
         "code": status.code(),
