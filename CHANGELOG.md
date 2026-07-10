@@ -398,7 +398,14 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.42 (Latest Release)
+### v0.0.43 (Latest Release)
+*   **Fix: OpenMedia tool argument normalization:** Hardened OpenMedia video and raw-JSON tool calls so agents can pass structured objects, JSON strings, scene file paths, and raw top-level `VideoScene` objects without hitting misleading `missing field scene` or `expected struct VideoScene` errors.
+    *   `openmedia_video_create` and `openmedia_video_preview` now accept `scene`, `scene_path`, JSON-string scenes, and raw `VideoScene` inputs.
+    *   `openmedia_video_from_template`, `openmedia_create_svg`, `openmedia_image_batch_process`, `openmedia_template_create/update`, and Mermaid custom themes now parse JSON-string fields before execution.
+    *   `diagnose_tool` now supplies a minimal valid OpenMedia video scene for placeholder video diagnostics instead of calling those tools with invalid `{ "test": true }` arguments.
+*   **Chore:** Bumped version to `v0.0.43`.
+
+### v0.0.42
 *   **Feature: Prompt-aware tool router (HIGH)**:
     *   Added tool metadata for domains, risk, resource usage, aliases, examples, and use/avoid guidance so OpenZ can expose the most relevant tools per prompt.
     *   Tool descriptions sent to providers now include compact routing hints to improve tool choice without inflating the full system prompt.
