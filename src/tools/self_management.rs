@@ -6,6 +6,64 @@ pub struct DiagnoseToolTool {
     registry: crate::tools::ToolRegistry,
 }
 
+fn is_placeholder_mock_args(value: &Value) -> bool {
+    value
+        .as_object()
+        .map(|obj| obj.is_empty() || (obj.len() == 1 && obj.contains_key("test")))
+        .unwrap_or(false)
+}
+
+fn minimal_openmedia_video_scene() -> Value {
+    serde_json::json!({
+        "width": 320,
+        "height": 240,
+        "fps": 1,
+        "duration": 1.0,
+        "background": "#000000",
+        "scenes": [{
+            "id": "scene_1",
+            "start": 0.0,
+            "end": 1.0,
+            "elements": [{
+                "type": "text",
+                "content": "OpenMedia",
+                "style": {
+                    "font_family": "sans-serif",
+                    "font_size": 24.0,
+                    "font_weight": 400,
+                    "color": "#ffffff",
+                    "text_align": "center"
+                },
+                "position": { "x": 160.0, "y": 120.0 },
+                "anchor": "center",
+                "timeline": null
+            }]
+        }],
+        "transitions": [],
+        "audio": null
+    })
+}
+
+fn normalize_diagnose_mock_args(tool_name: &str, mock_args: Value) -> Value {
+    if !is_placeholder_mock_args(&mock_args) {
+        return mock_args;
+    }
+
+    match tool_name {
+        "openmedia_video_create" => serde_json::json!({
+            "scene": minimal_openmedia_video_scene()
+        }),
+        "openmedia_video_preview" => serde_json::json!({
+            "scene": minimal_openmedia_video_scene(),
+            "time": 0.0,
+            "width": 160,
+            "height": 120,
+            "output_format": "png"
+        }),
+        _ => mock_args,
+    }
+}
+
 impl DiagnoseToolTool {
     pub fn new(registry: crate::tools::ToolRegistry) -> Self {
         Self { registry }
@@ -48,6 +106,7 @@ impl Tool for DiagnoseToolTool {
             .get("mock_args")
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
+        let mock_args = normalize_diagnose_mock_args(tool_name, mock_args);
 
         // Retrieve tool bypassing filter_scope
         let tool = {
@@ -171,8 +230,14 @@ impl Tool for ToolCatalogTool {
             .map(|config| config.agents.defaults)
             .unwrap_or_default();
         let mut runtime = crate::tools::resource_policy::RuntimeResourceSnapshot::current();
-        if let Some(overrides) = arguments.get("resource_overrides").and_then(|v| v.as_object()) {
-            if let Some(value) = overrides.get("allow_network_tools").and_then(|v| v.as_bool()) {
+        if let Some(overrides) = arguments
+            .get("resource_overrides")
+            .and_then(|v| v.as_object())
+        {
+            if let Some(value) = overrides
+                .get("allow_network_tools")
+                .and_then(|v| v.as_bool())
+            {
                 defaults.allow_network_tools = value;
             }
             if let Some(value) = overrides.get("min_free_disk_gb").and_then(|v| v.as_f64()) {
@@ -193,7 +258,10 @@ impl Tool for ToolCatalogTool {
             if let Some(value) = overrides.get("free_disk_gb").and_then(|v| v.as_f64()) {
                 runtime.free_disk_gb = Some(value);
             }
-            if let Some(value) = overrides.get("active_process_tools").and_then(|v| v.as_u64()) {
+            if let Some(value) = overrides
+                .get("active_process_tools")
+                .and_then(|v| v.as_u64())
+            {
                 runtime.active_process_tools = value as usize;
             }
         }
@@ -221,9 +289,7 @@ impl Tool for ToolCatalogTool {
                 when_not_to_use: "",
             };
             let decision = crate::tools::resource_policy::ToolResourcePolicy::evaluate(
-                &metadata,
-                &defaults,
-                &runtime,
+                &metadata, &defaults, &runtime,
             );
             entry["resource_policy"] = serde_json::json!({
                 "decision": decision.as_str(),
@@ -1492,13 +1558,37 @@ mod tests {
             .find(|tool| tool["name"].as_str() == Some("web_fetch"))
             .expect("web_fetch entry");
 
-        assert_eq!(web_fetch["resource_policy"]["decision"].as_str(), Some("block"));
+        assert_eq!(
+            web_fetch["resource_policy"]["decision"].as_str(),
+            Some("block")
+        );
         assert!(web_fetch["resource_policy"]["reason"]
             .as_str()
             .unwrap()
             .contains("Network tools are disabled"));
-        assert_eq!(web_fetch["resource_policy"]["free_disk_gb"].as_f64(), Some(100.0));
-        assert_eq!(web_fetch["resource_policy"]["active_process_tools"].as_u64(), Some(0));
+        assert_eq!(
+            web_fetch["resource_policy"]["free_disk_gb"].as_f64(),
+            Some(100.0)
+        );
+        assert_eq!(
+            web_fetch["resource_policy"]["active_process_tools"].as_u64(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn test_diagnose_openmedia_video_args_use_minimal_scene_for_placeholder() {
+        let create_args = normalize_diagnose_mock_args(
+            "openmedia_video_create",
+            serde_json::json!({ "test": true }),
+        );
+        assert_eq!(create_args["scene"]["width"], 320);
+        assert!(create_args.get("test").is_none());
+
+        let preview_args =
+            normalize_diagnose_mock_args("openmedia_video_preview", serde_json::json!({}));
+        assert_eq!(preview_args["scene"]["fps"], 1);
+        assert_eq!(preview_args["output_format"], "png");
     }
 
     #[test]
@@ -1663,7 +1753,10 @@ mod tests {
         assert_eq!(updated_config.skills.workspace_skills_enabled, false);
         assert_eq!(
             updated_config.skills.external_dirs,
-            vec!["~/.agents/skills".to_string(), "/tmp/openz-team-skills".to_string()]
+            vec![
+                "~/.agents/skills".to_string(),
+                "/tmp/openz-team-skills".to_string()
+            ]
         );
         assert_eq!(updated_config.skills.write_approval, true);
 

@@ -42,7 +42,8 @@ macro_rules! define_openmedia_tool {
             }
 
             async fn call(&self, arguments: &Value) -> Result<Value> {
-                let req: $request_type = serde_json::from_value(arguments.clone())?;
+                let normalized = normalize_openmedia_arguments($tool_name, arguments);
+                let req: $request_type = serde_json::from_value(normalized)?;
                 let Json(McpObject(res)) = get_server()
                     .await
                     .$server_method(Parameters(req))
@@ -52,6 +53,160 @@ macro_rules! define_openmedia_tool {
             }
         }
     };
+}
+
+fn parse_embedded_json_string(value: &Value) -> Option<Value> {
+    let raw = value.as_str()?.trim();
+    if !(raw.starts_with('{') || raw.starts_with('[')) {
+        return None;
+    }
+    serde_json::from_str(raw).ok()
+}
+
+fn parse_json_string_fields(arguments: &Value, fields: &[&str]) -> Value {
+    let Some(obj) = arguments.as_object() else {
+        return arguments.clone();
+    };
+
+    let mut normalized = obj.clone();
+    let mut changed = false;
+    for field in fields {
+        if let Some(parsed) = normalized.get(*field).and_then(parse_embedded_json_string) {
+            normalized.insert((*field).to_string(), parsed);
+            changed = true;
+        }
+    }
+
+    if changed {
+        Value::Object(normalized)
+    } else {
+        arguments.clone()
+    }
+}
+
+fn normalize_openmedia_arguments(tool_name: &str, arguments: &Value) -> Value {
+    match tool_name {
+        "openmedia_diagram_generate_mermaid" => {
+            parse_json_string_fields(arguments, &["custom_theme"])
+        }
+        "openmedia_create_svg" => parse_json_string_fields(arguments, &["elements"]),
+        "openmedia_image_batch_process" => parse_json_string_fields(arguments, &["operations"]),
+        "openmedia_video_from_template" => parse_json_string_fields(arguments, &["parameters"]),
+        "openmedia_template_create" => {
+            parse_json_string_fields(arguments, &["parameter_schema", "scene_template"])
+        }
+        "openmedia_template_update" => {
+            parse_json_string_fields(arguments, &["parameter_schema", "scene_template"])
+        }
+        _ => arguments.clone(),
+    }
+}
+
+fn is_video_scene_object(value: &Value) -> bool {
+    value
+        .as_object()
+        .map(|obj| {
+            obj.contains_key("width")
+                && obj.contains_key("height")
+                && obj.contains_key("fps")
+                && obj.contains_key("duration")
+                && obj.contains_key("background")
+                && obj.contains_key("scenes")
+        })
+        .unwrap_or(false)
+}
+
+fn normalize_video_scene_arguments(arguments: &Value) -> Value {
+    let Some(obj) = arguments.as_object() else {
+        return arguments.clone();
+    };
+
+    if obj.contains_key("scene") {
+        return arguments.clone();
+    }
+
+    if let Some(scene_path) = obj.get("scene_path") {
+        let mut normalized = obj.clone();
+        normalized.insert("scene".to_string(), scene_path.clone());
+        normalized.remove("scene_path");
+        return Value::Object(normalized);
+    }
+
+    if is_video_scene_object(arguments) {
+        let mut scene = obj.clone();
+        let output_path = scene.remove("output_path");
+        let mut normalized = serde_json::Map::new();
+        normalized.insert("scene".to_string(), Value::Object(scene));
+        if let Some(output_path) = output_path {
+            normalized.insert("output_path".to_string(), output_path);
+        }
+        return Value::Object(normalized);
+    }
+
+    arguments.clone()
+}
+
+fn video_scene_parameter_schema(include_preview_fields: bool) -> Value {
+    let mut properties = serde_json::Map::new();
+    properties.insert(
+        "scene".to_string(),
+        json!({
+            "description": "VideoScene object, JSON string, or path to a .json file. Prefer passing a structured object, not an escaped JSON string.",
+            "anyOf": [
+                {
+                    "type": "object",
+                    "required": ["width", "height", "fps", "duration", "background", "scenes"],
+                    "properties": {
+                        "width": { "type": "integer", "minimum": 1 },
+                        "height": { "type": "integer", "minimum": 1 },
+                        "fps": { "type": "integer", "minimum": 1 },
+                        "duration": { "type": "number", "exclusiveMinimum": 0 },
+                        "background": { "type": "string" },
+                        "scenes": { "type": "array" },
+                        "transitions": { "type": "array" },
+                        "audio": { "type": ["object", "null"] },
+                        "custom_fonts": { "type": ["array", "null"] }
+                    }
+                },
+                { "type": "string" }
+            ]
+        }),
+    );
+    properties.insert(
+        "scene_path".to_string(),
+        json!({
+            "type": "string",
+            "description": "Alias for scene when using a scene JSON file path."
+        }),
+    );
+
+    if include_preview_fields {
+        properties.insert(
+            "time".to_string(),
+            json!({ "type": "number", "description": "Time offset in seconds. Default 0.0." }),
+        );
+        properties.insert("width".to_string(), json!({ "type": "integer" }));
+        properties.insert("height".to_string(), json!({ "type": "integer" }));
+        properties.insert(
+            "output_format".to_string(),
+            json!({ "type": "string", "enum": ["png", "jpeg", "jpg"] }),
+        );
+    } else {
+        properties.insert(
+            "output_path".to_string(),
+            json!({ "type": "string", "description": "Optional .mp4 output path." }),
+        );
+    }
+
+    json!({
+        "type": "object",
+        "properties": properties,
+        "anyOf": [
+            { "required": ["scene"] },
+            { "required": ["scene_path"] },
+            { "required": ["width", "height", "fps", "duration", "background", "scenes"] }
+        ]
+    })
 }
 
 // ── 1. Model & SVG Tools ───────────────────────────────────────
@@ -188,20 +343,63 @@ define_openmedia_tool!(
 );
 
 // ── 4. Video Compositing & Templates ────────────────────────────
-define_openmedia_tool!(
-    OpenMediaVideoCreateTool,
-    "openmedia_video_create",
-    "Compile frame-by-frame videos defined using a JSON Scene DSL.",
-    openmedia_mcp::VideoCreateRequest,
-    video_create
-);
-define_openmedia_tool!(
-    OpenMediaVideoPreviewTool,
-    "openmedia_video_preview",
-    "Generate a video preview frame at a specific timestamp offset.",
-    openmedia_mcp::VideoPreviewRequest,
-    video_preview
-);
+pub struct OpenMediaVideoCreateTool;
+
+#[async_trait::async_trait]
+impl crate::tools::Tool for OpenMediaVideoCreateTool {
+    fn name(&self) -> &str {
+        "openmedia_video_create"
+    }
+
+    fn description(&self) -> &str {
+        "Compile frame-by-frame videos from a VideoScene DSL. Pass scene as a structured object when possible; JSON strings and scene_path are also accepted."
+    }
+
+    fn parameters(&self) -> Value {
+        video_scene_parameter_schema(false)
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let normalized = normalize_video_scene_arguments(arguments);
+        let normalized = normalize_openmedia_arguments(self.name(), &normalized);
+        let req: openmedia_mcp::VideoCreateRequest = serde_json::from_value(normalized)?;
+        let Json(McpObject(res)) = get_server()
+            .await
+            .video_create(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
+        Ok(res)
+    }
+}
+
+pub struct OpenMediaVideoPreviewTool;
+
+#[async_trait::async_trait]
+impl crate::tools::Tool for OpenMediaVideoPreviewTool {
+    fn name(&self) -> &str {
+        "openmedia_video_preview"
+    }
+
+    fn description(&self) -> &str {
+        "Generate a preview frame for a VideoScene DSL at a timestamp. Pass scene as an object, JSON string, or scene_path."
+    }
+
+    fn parameters(&self) -> Value {
+        video_scene_parameter_schema(true)
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let normalized = normalize_video_scene_arguments(arguments);
+        let normalized = normalize_openmedia_arguments(self.name(), &normalized);
+        let req: openmedia_mcp::VideoPreviewRequest = serde_json::from_value(normalized)?;
+        let Json(McpObject(res)) = get_server()
+            .await
+            .video_preview(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
+        Ok(res)
+    }
+}
 define_openmedia_tool!(
     OpenMediaVideoCreateSlideshowTool,
     "openmedia_video_create_slideshow",
@@ -341,6 +539,67 @@ impl crate::tools::Tool for OpenMediaPingTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn minimal_video_scene() -> Value {
+        json!({
+            "width": 320,
+            "height": 240,
+            "fps": 5,
+            "duration": 2.0,
+            "background": "#000000",
+            "scenes": [{
+                "id": "scene_1",
+                "start": 0.0,
+                "end": 2.0,
+                "elements": []
+            }],
+            "transitions": [],
+            "audio": null
+        })
+    }
+
+    #[test]
+    fn test_openmedia_args_parse_json_string_fields() {
+        let normalized = normalize_openmedia_arguments(
+            "openmedia_video_from_template",
+            &json!({
+                "template_name": "social_media",
+                "parameters": "{\"title\":\"Facts\",\"content\":[\"One\"]}"
+            }),
+        );
+        assert_eq!(normalized["parameters"]["title"], "Facts");
+        assert_eq!(normalized["parameters"]["content"][0], "One");
+
+        let svg = normalize_openmedia_arguments(
+            "openmedia_create_svg",
+            &json!({ "width": 100, "height": 100, "elements": "[]" }),
+        );
+        assert!(svg["elements"].as_array().is_some());
+    }
+
+    #[test]
+    fn test_openmedia_video_args_wrap_raw_scene() {
+        let mut raw = minimal_video_scene();
+        raw["output_path"] = json!("/tmp/out.mp4");
+
+        let normalized = normalize_video_scene_arguments(&raw);
+
+        assert_eq!(normalized["scene"]["width"], 320);
+        assert_eq!(normalized["output_path"], "/tmp/out.mp4");
+        assert!(normalized["scene"].get("output_path").is_none());
+    }
+
+    #[test]
+    fn test_openmedia_video_args_accept_scene_path_alias() {
+        let normalized = normalize_video_scene_arguments(&json!({
+            "scene_path": "/tmp/scene.json",
+            "output_path": "/tmp/out.mp4"
+        }));
+
+        assert_eq!(normalized["scene"], "/tmp/scene.json");
+        assert!(normalized.get("scene_path").is_none());
+        assert_eq!(normalized["output_path"], "/tmp/out.mp4");
+    }
 
     #[tokio::test]
     async fn test_openmedia_server_ping() {

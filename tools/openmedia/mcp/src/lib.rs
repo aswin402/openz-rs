@@ -479,6 +479,44 @@ pub struct VideoTrimRequest {
 }
 
 // Helper functions for SVG Animation MCP Tools
+
+fn parse_json_value_field(
+    value: &serde_json::Value,
+    field_name: &str,
+) -> Result<serde_json::Value, String> {
+    if let Some(raw) = value.as_str() {
+        let trimmed = raw.trim();
+        if trimmed.starts_with('{') || trimmed.starts_with('[') {
+            return serde_json::from_str(trimmed)
+                .map_err(|e| format!("failed to parse {field_name} JSON string: {e}"));
+        }
+    }
+    Ok(value.clone())
+}
+
+fn parse_video_scene_value(value: &serde_json::Value) -> Result<VideoScene, String> {
+    if let Some(raw) = value.as_str() {
+        let trimmed = raw.trim();
+        if trimmed.starts_with('{') {
+            return serde_json::from_str(trimmed)
+                .map_err(|e| format!("failed to parse scene JSON string: {e}"));
+        }
+
+        let path = std::path::Path::new(trimmed);
+        if path.exists() && path.is_file() {
+            let s = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+            return serde_json::from_str(&s)
+                .map_err(|e| format!("failed to parse scene file '{}': {e}", path.display()));
+        }
+
+        return Err(format!(
+            "scene string must be a VideoScene JSON object string or an existing file path: {trimmed}"
+        ));
+    }
+
+    serde_json::from_value(value.clone()).map_err(|e| e.to_string())
+}
+
 fn parse_easing(s: Option<&str>) -> openmedia_animate::Easing {
     let name = s.unwrap_or("linear");
     match name.to_lowercase().as_str() {
@@ -1642,18 +1680,7 @@ impl OpenMediaServer {
         params: Parameters<VideoCreateRequest>,
     ) -> Result<Json<McpObject>, String> {
         let req = params.0;
-        let scene: VideoScene = if req.scene.is_string() {
-            let path_str = req.scene.as_str().unwrap();
-            let path = std::path::Path::new(path_str);
-            if path.exists() && path.is_file() {
-                let s = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-                serde_json::from_str(&s).map_err(|e| e.to_string())?
-            } else {
-                serde_json::from_value(req.scene.clone()).map_err(|e| e.to_string())?
-            }
-        } else {
-            serde_json::from_value(req.scene.clone()).map_err(|e| e.to_string())?
-        };
+        let scene = parse_video_scene_value(&req.scene)?;
 
         let output_path = if let Some(out_p) = req.output_path {
             std::path::PathBuf::from(out_p)
@@ -1683,18 +1710,7 @@ impl OpenMediaServer {
         params: Parameters<VideoPreviewRequest>,
     ) -> Result<Json<McpObject>, String> {
         let req = params.0;
-        let scene: VideoScene = if req.scene.is_string() {
-            let path_str = req.scene.as_str().unwrap();
-            let path = std::path::Path::new(path_str);
-            if path.exists() && path.is_file() {
-                let s = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-                serde_json::from_str(&s).map_err(|e| e.to_string())?
-            } else {
-                serde_json::from_value(req.scene.clone()).map_err(|e| e.to_string())?
-            }
-        } else {
-            serde_json::from_value(req.scene.clone()).map_err(|e| e.to_string())?
-        };
+        let scene = parse_video_scene_value(&req.scene)?;
 
         let t = req.time.unwrap_or(0.0);
         let w = req.width.unwrap_or(scene.width);
@@ -2066,7 +2082,8 @@ impl OpenMediaServer {
         &self,
         params: Parameters<VideoFromTemplateRequest>,
     ) -> Result<Json<McpObject>, String> {
-        let req = params.0;
+        let mut req = params.0;
+        req.parameters = parse_json_value_field(&req.parameters, "parameters")?;
         let output_path = if let Some(out_p) = req.output_path {
             std::path::PathBuf::from(out_p)
         } else {
@@ -3414,7 +3431,8 @@ impl OpenMediaServer {
         &self,
         params: Parameters<CreateSvgRequest>,
     ) -> Result<Json<McpObject>, String> {
-        let req = params.0;
+        let mut req = params.0;
+        req.elements = parse_json_value_field(&req.elements, "elements")?;
         let start_time = std::time::Instant::now();
         let _ = std::fs::create_dir_all(&self.config.paths.output_dir);
 
@@ -3583,7 +3601,9 @@ impl OpenMediaServer {
         &self,
         params: Parameters<TemplateCreateRequest>,
     ) -> Result<Json<McpObject>, String> {
-        let req = params.0;
+        let mut req = params.0;
+        req.parameter_schema = parse_json_value_field(&req.parameter_schema, "parameter_schema")?;
+        req.scene_template = parse_json_value_field(&req.scene_template, "scene_template")?;
         let templates_dir = get_templates_dir();
         std::fs::create_dir_all(&templates_dir)
             .map_err(|e| format!("Failed to create templates directory: {}", e))?;
@@ -3755,10 +3775,11 @@ impl OpenMediaServer {
             template_data["description"] = serde_json::json!(desc);
         }
         if let Some(schema) = req.parameter_schema {
-            template_data["parameter_schema"] = schema;
+            template_data["parameter_schema"] =
+                parse_json_value_field(&schema, "parameter_schema")?;
         }
         if let Some(template) = req.scene_template {
-            template_data["scene_template"] = template;
+            template_data["scene_template"] = parse_json_value_field(&template, "scene_template")?;
         }
 
         let content = serde_json::to_string_pretty(&template_data).map_err(|e| e.to_string())?;
@@ -4940,6 +4961,71 @@ mod tests {
         assert!(read_res3.is_err());
 
         let _ = std::fs::remove_dir_all(&output_dir);
+    }
+
+    fn minimal_video_scene_json() -> serde_json::Value {
+        serde_json::json!({
+            "width": 320,
+            "height": 240,
+            "fps": 5,
+            "duration": 2.0,
+            "background": "#000000",
+            "scenes": [{
+                "id": "scene_1",
+                "start": 0.0,
+                "end": 2.0,
+                "elements": []
+            }],
+            "transitions": [],
+            "audio": null
+        })
+    }
+
+    #[test]
+    fn test_parse_json_value_field_accepts_object_and_json_string() {
+        let object = serde_json::json!({ "title": "Demo" });
+        assert_eq!(
+            parse_json_value_field(&object, "parameters").unwrap(),
+            object
+        );
+
+        let parsed = parse_json_value_field(
+            &serde_json::Value::String("{\"items\":[1,2]}".to_string()),
+            "parameters",
+        )
+        .unwrap();
+        assert_eq!(parsed["items"][0], 1);
+
+        let parsed_array = parse_json_value_field(
+            &serde_json::Value::String("[1,2,3]".to_string()),
+            "elements",
+        )
+        .unwrap();
+        assert_eq!(parsed_array.as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_parse_video_scene_value_accepts_object() {
+        let scene = parse_video_scene_value(&minimal_video_scene_json()).unwrap();
+        assert_eq!(scene.width, 320);
+        assert_eq!(scene.scenes.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_video_scene_value_accepts_json_string() {
+        let raw = minimal_video_scene_json().to_string();
+        let scene = parse_video_scene_value(&serde_json::Value::String(raw)).unwrap();
+        assert_eq!(scene.height, 240);
+        assert_eq!(scene.fps, 5);
+    }
+
+    #[test]
+    fn test_parse_video_scene_value_rejects_missing_path() {
+        let err = parse_video_scene_value(&serde_json::Value::String(
+            "/tmp/openz-missing-scene.json".to_string(),
+        ))
+        .unwrap_err();
+        assert!(err.contains("scene string must be"));
     }
 
     #[test]
