@@ -398,7 +398,14 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.43 (Latest Release)
+### v0.0.44 (Latest Release)
+*   **Fix: Subagent lifecycle status output:** Compact subagent TUI status lines now show `name | model | status` for completion, cancellation, and failures instead of generic or repeated status text.
+    *   Added an explicit `cancelling` lifecycle line when Esc/Ctrl+C cancellation reaches delegate task/profile runs.
+    *   Kept cancellation propagation tests green for both `delegate_task` and profile-backed subagent tools.
+    *   Added regression coverage to ensure cancellation status output does not fall back to generic `Running...` text.
+*   **Chore:** Bumped version to `v0.0.44`.
+
+### v0.0.43
 *   **Fix: OpenMedia tool argument normalization:** Hardened OpenMedia video and raw-JSON tool calls so agents can pass structured objects, JSON strings, scene file paths, and raw top-level `VideoScene` objects without hitting misleading `missing field scene` or `expected struct VideoScene` errors.
     *   `openmedia_video_create` and `openmedia_video_preview` now accept `scene`, `scene_path`, JSON-string scenes, and raw `VideoScene` inputs.
     *   `openmedia_video_from_template`, `openmedia_create_svg`, `openmedia_image_batch_process`, `openmedia_template_create/update`, and Mermaid custom themes now parse JSON-string fields before execution.
