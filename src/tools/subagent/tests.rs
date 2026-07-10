@@ -530,6 +530,113 @@ async fn test_evaluator_optimizer_loop_success() -> Result<()> {
     Ok(())
 }
 
+struct BlockingMockProvider {
+    started_tx: tokio::sync::watch::Sender<bool>,
+    release_rx: tokio::sync::watch::Receiver<bool>,
+}
+
+#[async_trait::async_trait]
+impl crate::providers::LLMProvider for BlockingMockProvider {
+    async fn chat(
+        &self,
+        _system_prompt: &str,
+        _messages: &[crate::session::Message],
+        _tools: &[serde_json::Value],
+        _settings: &crate::providers::GenerationSettings,
+    ) -> Result<crate::providers::LLMResponse> {
+        let _ = self.started_tx.send(true);
+        let mut release_rx = self.release_rx.clone();
+        while !*release_rx.borrow() {
+            if release_rx.changed().await.is_err() {
+                break;
+            }
+        }
+        Ok(crate::providers::LLMResponse {
+            content: Some("should not complete after cancellation".to_string()),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            reasoning_content: None,
+        })
+    }
+}
+
+#[tokio::test]
+async fn test_delegate_task_cancels_while_child_run_is_active() -> Result<()> {
+    let _guard = cancel_test_guard().await;
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_delegate_active_cancel_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    std::env::set_var("ANTHROPIC_API_KEY", "dummy");
+    std::env::set_var("OPENAI_API_KEY", "dummy");
+    std::env::set_var("OPENZ_USE_MOCK_PROVIDER", "true");
+
+    let (started_tx, mut started_rx) = tokio::sync::watch::channel(false);
+    let (_release_tx, release_rx) = tokio::sync::watch::channel(false);
+    let provider = Arc::new(BlockingMockProvider {
+        started_tx,
+        release_rx,
+    });
+    let cancellation_token = CancellationToken::new();
+
+    let tool = DelegateTaskTool {
+        config: Config::default(),
+        parent_provider: provider,
+        session_manager: SessionManager::new(temp_dir.clone()),
+        parent_tools: Vec::new(),
+        cancellation_token: cancellation_token.clone(),
+    };
+
+    let temp_for_task = temp_dir.clone();
+    let handle = tokio::spawn(async move {
+        crate::config::loader::CONFIG_DIR_OVERRIDE
+            .scope(temp_for_task, async move {
+                tool.call(&serde_json::json!({
+                    "goal": "Block until cancelled",
+                    "context": "This test cancels after the subagent starts"
+                }))
+                .await
+            })
+            .await
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !*started_rx.borrow() {
+            started_rx.changed().await.unwrap();
+        }
+    })
+    .await
+    .expect("subagent child run should start before cancellation");
+
+    let cancel_start = std::time::Instant::now();
+    cancellation_token.cancel();
+    let res = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+        .await
+        .expect("active subagent cancellation should not wait for timeout")
+        .expect("delegate task join should complete");
+
+    assert!(
+        cancel_start.elapsed() < std::time::Duration::from_secs(2),
+        "active cancellation should return promptly"
+    );
+    assert!(
+        res.is_err(),
+        "active cancellation should return Err: {res:?}"
+    );
+    assert!(
+        res.unwrap_err().to_string().contains("cancelled"),
+        "active cancellation error should be classified as cancelled"
+    );
+
+    std::env::remove_var("ANTHROPIC_API_KEY");
+    std::env::remove_var("OPENAI_API_KEY");
+    std::env::remove_var("OPENZ_USE_MOCK_PROVIDER");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_delegate_task_cancellation_propagation() -> Result<()> {
     let _guard = cancel_test_guard().await;
@@ -576,6 +683,92 @@ async fn test_delegate_task_cancellation_propagation() -> Result<()> {
     );
 
     // Cleanup env vars
+    std::env::remove_var("ANTHROPIC_API_KEY");
+    std::env::remove_var("OPENAI_API_KEY");
+    std::env::remove_var("OPENZ_USE_MOCK_PROVIDER");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_delegate_profile_cancels_while_child_run_is_active() -> Result<()> {
+    let _guard = cancel_test_guard().await;
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_delegate_profile_active_cancel_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    std::env::set_var("ANTHROPIC_API_KEY", "dummy");
+    std::env::set_var("OPENAI_API_KEY", "dummy");
+    std::env::set_var("OPENZ_USE_MOCK_PROVIDER", "true");
+
+    let (started_tx, mut started_rx) = tokio::sync::watch::channel(false);
+    let (_release_tx, release_rx) = tokio::sync::watch::channel(false);
+    let provider = Arc::new(BlockingMockProvider {
+        started_tx,
+        release_rx,
+    });
+    let cancellation_token = CancellationToken::new();
+    let profile = crate::subagents::SubagentProfile {
+        name: "test_subagent".to_string(),
+        description: "test subagent description".to_string(),
+        system_prompt: "you are a test subagent".to_string(),
+        model: Some("gpt-4o-mini".to_string()),
+        fallbacks: None,
+        extra: serde_json::Map::new(),
+    };
+
+    let tool = DelegateProfileTool {
+        config: Config::default(),
+        parent_provider: provider,
+        session_manager: SessionManager::new(temp_dir.clone()),
+        profile,
+        parent_tools: Vec::new(),
+        cancellation_token: cancellation_token.clone(),
+    };
+
+    let temp_for_task = temp_dir.clone();
+    let handle = tokio::spawn(async move {
+        crate::config::loader::CONFIG_DIR_OVERRIDE
+            .scope(temp_for_task, async move {
+                tool.call(&serde_json::json!({
+                    "goal": "Block until cancelled",
+                    "context": "This test cancels after the profile subagent starts"
+                }))
+                .await
+            })
+            .await
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !*started_rx.borrow() {
+            started_rx.changed().await.unwrap();
+        }
+    })
+    .await
+    .expect("profile child run should start before cancellation");
+
+    let cancel_start = std::time::Instant::now();
+    cancellation_token.cancel();
+    let res = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+        .await
+        .expect("active profile cancellation should not wait for timeout")
+        .expect("profile delegate join should complete");
+
+    assert!(
+        cancel_start.elapsed() < std::time::Duration::from_secs(2),
+        "active profile cancellation should return promptly"
+    );
+    assert!(
+        res.is_err(),
+        "active profile cancellation should return Err: {res:?}"
+    );
+    assert!(
+        res.unwrap_err().to_string().contains("cancelled"),
+        "active profile cancellation error should be classified as cancelled"
+    );
+
     std::env::remove_var("ANTHROPIC_API_KEY");
     std::env::remove_var("OPENAI_API_KEY");
     std::env::remove_var("OPENZ_USE_MOCK_PROVIDER");
