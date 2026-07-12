@@ -216,7 +216,7 @@ impl Tool for DelegateTaskTool {
             }
         }
 
-        let parent_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let parent_dir = current_workspace_root();
         let parent_dir_clone = parent_dir.clone();
         let workspace_res = tokio::task::spawn_blocking(move || {
             create_isolated_workspace(&parent_dir_clone)
@@ -764,8 +764,20 @@ pub fn set_directory_modified_time_for_test(
     }
 }
 
+fn openz_worktrees_dir() -> std::path::PathBuf {
+    crate::config::loader::runtime_data_dir().join("worktrees")
+}
+
+pub fn current_workspace_root() -> std::path::PathBuf {
+    crate::config::loader::ACTIVE_WORKSPACE
+        .try_with(|workspace| workspace.clone())
+        .unwrap_or_else(|_| {
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        })
+}
+
 fn enforce_disk_quota() {
-    let worktrees_dir = crate::config::resolve_path("~/.openz/worktrees");
+    let worktrees_dir = openz_worktrees_dir();
     cleanup_worktrees_dir(&worktrees_dir, WorktreeCleanupPolicy::default());
 }
 
@@ -791,7 +803,7 @@ pub fn cleanup_stale_resources() {
     let ttl_seconds = WorktreeCleanupPolicy::default().max_age.as_secs();
 
     // 2. Clean dedicated directory (~/.openz/worktrees)
-    let worktrees_dir = crate::config::resolve_path("~/.openz/worktrees");
+    let worktrees_dir = openz_worktrees_dir();
     cleanup_worktrees_dir(&worktrees_dir, WorktreeCleanupPolicy::default());
 
     // 3. Clean legacy /tmp/openz_worktree_* directories
@@ -811,7 +823,7 @@ pub fn cleanup_stale_resources() {
     let seven_days_in_seconds = 7 * 24 * 3600;
 
     // 4. Clean tool_outputs (~/.openz/tool_outputs)
-    let tool_outputs_dir = crate::config::resolve_path("~/.openz/tool_outputs");
+    let tool_outputs_dir = crate::config::loader::runtime_data_dir().join("tool_outputs");
     if tool_outputs_dir.exists() && tool_outputs_dir.is_dir() {
         if let Ok(entries) = std::fs::read_dir(&tool_outputs_dir) {
             for entry in entries.flatten() {
@@ -824,7 +836,7 @@ pub fn cleanup_stale_resources() {
     }
 
     // 5. Clean traces (~/.openz/traces)
-    let traces_dir = crate::config::resolve_path("~/.openz/traces");
+    let traces_dir = crate::config::loader::runtime_data_dir().join("traces");
     if traces_dir.exists() && traces_dir.is_dir() {
         if let Ok(entries) = std::fs::read_dir(&traces_dir) {
             for entry in entries.flatten() {
@@ -837,7 +849,7 @@ pub fn cleanup_stale_resources() {
     }
 
     // 6. Clean cron_logs (~/.openz/cron_logs)
-    let cron_logs_dir = crate::config::resolve_path("~/.openz/cron_logs");
+    let cron_logs_dir = crate::config::loader::runtime_data_dir().join("cron_logs");
     if cron_logs_dir.exists() && cron_logs_dir.is_dir() {
         if let Ok(entries) = std::fs::read_dir(&cron_logs_dir) {
             for entry in entries.flatten() {
@@ -864,15 +876,7 @@ fn is_older_than(path: &std::path::Path, seconds: u64) -> bool {
 pub fn create_isolated_workspace(parent_dir: &std::path::Path) -> Result<std::path::PathBuf> {
     enforce_disk_quota();
 
-    let worktrees_dir = crate::config::resolve_path("~/.openz/worktrees");
-    if !worktrees_dir.exists() {
-        let _ = std::fs::create_dir_all(&worktrees_dir);
-    }
-    let temp_dir = worktrees_dir.join(format!(
-        "openz_worktree_{}",
-        &uuid::Uuid::new_v4().to_string()[..8]
-    ));
-
+    let worktrees_dir = openz_worktrees_dir();
     // 1. Check if parent_dir is a git repository
     let git_check = std::process::Command::new("git")
         .args(["rev-parse", "--is-inside-work-tree"])
@@ -883,6 +887,21 @@ pub fn create_isolated_workspace(parent_dir: &std::path::Path) -> Result<std::pa
         Ok(out) => out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "true",
         Err(_) => false,
     };
+
+    if !is_git && is_dangerous_fallback_copy_root(parent_dir) {
+        return Err(anyhow!(
+            "Refusing to recursively copy unsafe workspace root '{}'. Launch OpenZ from a project directory or use a git repository for isolated subagent workspaces.",
+            parent_dir.display()
+        ));
+    }
+
+    if !worktrees_dir.exists() {
+        let _ = std::fs::create_dir_all(&worktrees_dir);
+    }
+    let temp_dir = worktrees_dir.join(format!(
+        "openz_worktree_{}",
+        &uuid::Uuid::new_v4().to_string()[..8]
+    ));
 
     if is_git {
         // 2. Create git worktree
@@ -949,6 +968,57 @@ pub fn create_isolated_workspace(parent_dir: &std::path::Path) -> Result<std::pa
     Ok(temp_dir)
 }
 
+fn should_skip_workspace_copy_dir(name: &str) -> bool {
+    matches!(
+        name,
+        "target"
+            | "node_modules"
+            | ".git"
+            | ".fastembed_cache"
+            | ".sediment"
+            | "logs"
+            | ".openz"
+            | ".cache"
+            | ".local"
+            | ".cargo"
+            | ".rustup"
+            | ".npm"
+            | ".pnpm-store"
+            | ".yarn"
+            | ".bun"
+            | ".gradle"
+            | ".m2"
+            | ".venv"
+            | "venv"
+            | "__pycache__"
+            | "Downloads"
+            | "snap"
+            | "tmp"
+            | "temp"
+    )
+}
+
+fn canonical_or_original(path: &std::path::Path) -> std::path::PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn is_dangerous_fallback_copy_root(path: &std::path::Path) -> bool {
+    let canonical = canonical_or_original(path);
+    if canonical.parent().is_none() {
+        return true;
+    }
+
+    if dirs::home_dir()
+        .map(|home| canonical == canonical_or_original(&home))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    let runtime_dir = canonical_or_original(&crate::config::loader::runtime_data_dir());
+    canonical == runtime_dir || canonical.starts_with(runtime_dir.join("worktrees"))
+}
+
 pub fn copy_dir_recursive_filtered(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     if !src.exists() {
         return Ok(());
@@ -956,13 +1026,7 @@ pub fn copy_dir_recursive_filtered(src: &std::path::Path, dst: &std::path::Path)
 
     if src.is_dir() {
         let name = src.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if name == "target"
-            || name == "node_modules"
-            || name == ".git"
-            || name == ".fastembed_cache"
-            || name == ".sediment"
-            || name == "logs"
-        {
+        if should_skip_workspace_copy_dir(name) {
             return Ok(());
         }
 

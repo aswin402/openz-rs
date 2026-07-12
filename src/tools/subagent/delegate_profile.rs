@@ -1,6 +1,6 @@
 use super::delegate_task::{
-    create_isolated_workspace, ensure_markdown_images, run_evolution_review, sync_changes_back,
-    WorktreeGuard,
+    create_isolated_workspace, current_workspace_root, ensure_markdown_images,
+    run_evolution_review, sync_changes_back, WorktreeGuard,
 };
 use super::evaluator_optimizer::validate_schema;
 use super::parallel_research::get_status_from_goal;
@@ -190,7 +190,7 @@ impl Tool for DelegateProfileTool {
             _ => false, // Skip isolated workspace setup for read-only, analytical, and config-focused agents
         };
 
-        let parent_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let parent_dir = current_workspace_root();
         let workspace_dir = if !needs_workspace {
             parent_dir.clone()
         } else {

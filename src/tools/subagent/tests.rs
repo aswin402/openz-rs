@@ -194,6 +194,80 @@ fn test_worktree_cleanup_enforces_total_size_quota_oldest_first() -> Result<()> 
 }
 
 #[tokio::test]
+async fn test_create_isolated_workspace_rejects_home_like_non_git_root() -> Result<()> {
+    let _lock = crate::tools::graph_memory::test_lock().lock().await;
+    let temp_root = std::env::temp_dir().join(format!(
+        "openz_home_like_worktree_guard_{}",
+        uuid::Uuid::new_v4()
+    ));
+    let fake_home = temp_root.join("home");
+    let config_dir = temp_root.join("openz_config");
+    std::fs::create_dir_all(fake_home.join(".cache/big"))?;
+    std::fs::create_dir_all(&config_dir)?;
+    std::fs::write(fake_home.join(".cache/big/blob.bin"), vec![0_u8; 1024])?;
+
+    let old_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", &fake_home);
+
+    let res = crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(config_dir.clone(), async {
+            delegate_task::create_isolated_workspace(&fake_home)
+        })
+        .await;
+
+    if let Some(old_home) = old_home {
+        std::env::set_var("HOME", old_home);
+    } else {
+        std::env::remove_var("HOME");
+    }
+
+    assert!(
+        res.is_err(),
+        "home-like roots must not be recursively copied"
+    );
+    assert!(
+        !config_dir.join("worktrees").exists()
+            || std::fs::read_dir(config_dir.join("worktrees"))?
+                .next()
+                .is_none(),
+        "rejecting a home-like root must not leave a worktree behind"
+    );
+
+    let _ = std::fs::remove_dir_all(&temp_root);
+    Ok(())
+}
+
+#[test]
+fn test_fallback_copy_skips_heavy_user_cache_dirs() -> Result<()> {
+    let src =
+        std::env::temp_dir().join(format!("openz_filtered_copy_src_{}", uuid::Uuid::new_v4()));
+    let dst =
+        std::env::temp_dir().join(format!("openz_filtered_copy_dst_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(src.join("src"))?;
+    std::fs::create_dir_all(src.join(".cache/huge"))?;
+    std::fs::create_dir_all(src.join(".local/share"))?;
+    std::fs::create_dir_all(src.join(".openz/worktrees"))?;
+    std::fs::create_dir_all(src.join("Downloads"))?;
+    std::fs::write(src.join("src/main.rs"), "fn main() {}")?;
+    std::fs::write(src.join(".cache/huge/blob.bin"), vec![0_u8; 1024])?;
+    std::fs::write(src.join(".local/share/blob.bin"), vec![0_u8; 1024])?;
+    std::fs::write(src.join(".openz/worktrees/blob.bin"), vec![0_u8; 1024])?;
+    std::fs::write(src.join("Downloads/blob.bin"), vec![0_u8; 1024])?;
+
+    delegate_task::copy_dir_recursive_filtered(&src, &dst)?;
+
+    assert!(dst.join("src/main.rs").exists());
+    assert!(!dst.join(".cache").exists());
+    assert!(!dst.join(".local").exists());
+    assert!(!dst.join(".openz").exists());
+    assert!(!dst.join("Downloads").exists());
+
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&dst);
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_cancellation_token_observes_cli_cancel_signal() {
     let _guard = cancel_test_guard().await;
     let token = CancellationToken::new();
