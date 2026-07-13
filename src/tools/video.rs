@@ -53,6 +53,7 @@ impl Tool for VideoGeneratorTool {
             .and_then(|v| v.as_str())
             .unwrap_or("output.mp4");
         let output_path = crate::config::resolve_path(output_path_str);
+        crate::tools::resource_policy::ensure_artifact_write_allowed("generate_video")?;
 
         let bg_rgba = if let Some(arr) = arguments.get("bg_rgba").and_then(|v| v.as_array()) {
             if arr.len() == 4 {

@@ -81,7 +81,7 @@ fn current_openz_free_disk_gb() -> Option<f64> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
 
-    let path = crate::config::resolve_path("~/.openz");
+    let path = crate::config::loader::runtime_data_dir();
     let _ = std::fs::create_dir_all(&path);
     let c_path = CString::new(path.as_os_str().as_bytes()).ok()?;
     let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
@@ -97,6 +97,37 @@ fn current_openz_free_disk_gb() -> Option<f64> {
 #[cfg(not(unix))]
 fn current_openz_free_disk_gb() -> Option<f64> {
     None
+}
+
+pub fn evaluate_artifact_write(
+    action: &str,
+    min_free_disk_gb: f64,
+    runtime: &RuntimeResourceSnapshot,
+) -> ToolResourceDecision {
+    if let Some(free_disk_gb) = runtime.free_disk_gb {
+        if free_disk_gb < min_free_disk_gb {
+            return ToolResourceDecision::Block {
+                reason: format!(
+                    "{} blocked: free disk {:.1}GB is below required minimum {:.1}GB",
+                    action, free_disk_gb, min_free_disk_gb
+                ),
+            };
+        }
+    }
+
+    ToolResourceDecision::Allow
+}
+
+pub fn ensure_artifact_write_allowed(action: &str) -> anyhow::Result<()> {
+    let defaults = AgentDefaults::default();
+    let runtime = RuntimeResourceSnapshot::current();
+    match evaluate_artifact_write(action, defaults.min_free_disk_gb, &runtime) {
+        ToolResourceDecision::Allow | ToolResourceDecision::RequireApproval { .. } => Ok(()),
+        ToolResourceDecision::Block { reason } => Err(anyhow::anyhow!(
+            "Resource policy blocked artifact generation: {}",
+            reason
+        )),
+    }
 }
 
 impl ToolResourcePolicy {
@@ -251,6 +282,39 @@ mod tests {
         );
         assert!(
             matches!(decision, ToolResourceDecision::RequireApproval { ref reason } if reason.contains("high risk"))
+        );
+    }
+
+    #[test]
+    fn artifact_write_blocks_when_free_disk_is_below_floor() {
+        let runtime = RuntimeResourceSnapshot {
+            free_disk_gb: Some(0.5),
+            active_process_tools: 0,
+        };
+        let decision = evaluate_artifact_write("generate_video", 2.0, &runtime);
+        assert!(
+            matches!(decision, ToolResourceDecision::Block { ref reason } if reason.contains("generate_video") && reason.contains("free disk"))
+        );
+    }
+
+    #[test]
+    fn artifact_write_allows_when_disk_is_unknown_or_sufficient() {
+        let unknown = RuntimeResourceSnapshot {
+            free_disk_gb: None,
+            active_process_tools: 0,
+        };
+        assert_eq!(
+            evaluate_artifact_write("generate_image", 2.0, &unknown),
+            ToolResourceDecision::Allow
+        );
+
+        let enough = RuntimeResourceSnapshot {
+            free_disk_gb: Some(5.0),
+            active_process_tools: 0,
+        };
+        assert_eq!(
+            evaluate_artifact_write("generate_image", 2.0, &enough),
+            ToolResourceDecision::Allow
         );
     }
 

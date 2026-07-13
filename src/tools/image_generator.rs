@@ -163,6 +163,7 @@ impl Tool for GenerateImageTool {
             .and_then(|v| v.as_str())
             .unwrap_or("output.png");
         let output_path = resolve_path(output_path_str);
+        crate::tools::resource_policy::ensure_artifact_write_allowed("generate_image")?;
         let selector = arguments.get("selector").and_then(|v| v.as_str());
         let settle_ms = arguments
             .get("settle_ms")
