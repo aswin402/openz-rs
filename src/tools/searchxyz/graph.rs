@@ -131,6 +131,22 @@ impl Tool for SearchXyzReadGithubRepoTool {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Folder/file paths to ignore."
+                },
+                "max_files": {
+                    "type": "integer",
+                    "description": "Maximum files to ingest from the repository (default: 2000, capped at 10000)."
+                },
+                "max_total_bytes": {
+                    "type": "integer",
+                    "description": "Maximum total bytes to ingest from selected files (default: 20MB, capped at 200MB)."
+                },
+                "git_timeout_secs": {
+                    "type": "integer",
+                    "description": "Timeout for each git command in seconds (default: 60, capped at 600)."
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Optional output character budget. Truncates large repository summaries with metadata when exceeded."
                 }
             },
             "required": ["repo_url"]

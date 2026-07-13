@@ -54,10 +54,7 @@ static STDOUT_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 static ACTIVE_SPINNERS: OnceLock<Mutex<Vec<ActiveSpinner>>> = OnceLock::new();
 
 pub fn stdout_lock() -> std::sync::MutexGuard<'static, ()> {
-    STDOUT_MUTEX
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap()
+    STDOUT_MUTEX.get_or_init(|| Mutex::new(())).lock().unwrap()
 }
 
 pub fn is_spinner_active() -> bool {
@@ -155,4 +152,3 @@ where
 
     result
 }
-

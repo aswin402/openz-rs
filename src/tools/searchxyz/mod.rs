@@ -31,10 +31,38 @@ pub use web::{
     SearchXyzSearchWebTool, SearchXyzSiteMapTool,
 };
 
+fn openz_config_dir() -> std::path::PathBuf {
+    if let Ok(path) = std::env::var("OPENZ_CONFIG_DIR") {
+        return std::path::PathBuf::from(path);
+    }
+
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".openz")
+}
+
+fn apply_openz_embedded_paths(config: &mut Config) {
+    let defaults = Config::default();
+    let base = openz_config_dir().join("searchxyz");
+
+    if std::env::var_os("SEARCHXYZ_INDEX_PATH").is_none()
+        && config.index.path == defaults.index.path
+    {
+        config.index.path = base.join("index");
+    }
+
+    if std::env::var_os("SEARCHXYZ_CACHE_PATH").is_none()
+        && config.cache.path == defaults.cache.path
+    {
+        config.cache.path = base.join("cache.json");
+    }
+}
+
 pub fn get_server() -> &'static SearchXyzServer {
     static SERVER: OnceLock<SearchXyzServer> = OnceLock::new();
     SERVER.get_or_init(|| {
         let mut config = Config::load(None).unwrap_or_default();
+        apply_openz_embedded_paths(&mut config);
         if cfg!(test) {
             let temp_dir =
                 std::env::temp_dir().join(format!("searchxyz_test_index_{}", uuid::Uuid::new_v4()));
@@ -115,6 +143,16 @@ pub fn map_mcp_err(err: rmcp::ErrorData) -> anyhow::Error {
 mod tests {
     use super::*;
     use crate::tools::Tool;
+
+    #[test]
+    fn test_openz_embedded_paths_use_openz_dir_for_defaults() {
+        std::env::remove_var("SEARCHXYZ_INDEX_PATH");
+        std::env::remove_var("SEARCHXYZ_CACHE_PATH");
+        let mut config = Config::default();
+        apply_openz_embedded_paths(&mut config);
+        assert!(config.index.path.ends_with(".openz/searchxyz/index"));
+        assert!(config.cache.path.ends_with(".openz/searchxyz/cache.json"));
+    }
 
     #[test]
     fn test_searchxyz_tools_metadata() {

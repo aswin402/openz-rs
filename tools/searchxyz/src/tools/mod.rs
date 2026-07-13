@@ -37,6 +37,10 @@ pub struct ReadUrlRequest {
         description = "Enable JavaScript rendering with a headless browser for dynamic or JS-heavy websites."
     )]
     pub render_js: Option<bool>,
+    #[schemars(
+        description = "Optional maximum characters to return; appends truncation metadata when exceeded."
+    )]
+    pub max_chars: Option<usize>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -49,6 +53,10 @@ pub struct SearchAndReadRequest {
         description = "Enable JavaScript rendering with a headless browser for dynamic or JS-heavy websites."
     )]
     pub render_js: Option<bool>,
+    #[schemars(
+        description = "Optional maximum characters to return; appends truncation metadata when exceeded."
+    )]
+    pub max_chars: Option<usize>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -85,6 +93,10 @@ pub struct DeepResearchRequest {
         description = "Enable JavaScript rendering with a headless browser for dynamic or JS-heavy websites."
     )]
     pub render_js: Option<bool>,
+    #[schemars(
+        description = "Optional maximum characters to return; appends truncation metadata when exceeded."
+    )]
+    pub max_chars: Option<usize>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -151,6 +163,20 @@ pub struct ReadGithubRepoRequest {
         description = "Optional list of folder/file paths to ignore. Defaults to standard ignore folders (target, node_modules, etc.)."
     )]
     pub exclude_paths: Option<Vec<String>>,
+    #[schemars(
+        description = "Maximum number of files to index from this repository (default 2000, max 10000)."
+    )]
+    pub max_files: Option<usize>,
+    #[schemars(
+        description = "Maximum total bytes to read from indexed repository files (default 20MB, max 200MB)."
+    )]
+    pub max_total_bytes: Option<u64>,
+    #[schemars(description = "Git command timeout in seconds (default 60, max 600).")]
+    pub git_timeout_secs: Option<u64>,
+    #[schemars(
+        description = "Optional maximum characters to return; appends truncation metadata when exceeded."
+    )]
+    pub max_chars: Option<usize>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -163,6 +189,10 @@ pub struct ExportResearchRequest {
         description = "Optional limit on how many documents to export (default 50, max 200)."
     )]
     pub limit: Option<usize>,
+    #[schemars(
+        description = "Optional maximum characters to return; appends truncation metadata when exceeded."
+    )]
+    pub max_chars: Option<usize>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -177,10 +207,15 @@ pub struct DeleteSourceRequest {
         description = "The source URL to delete from the search index and knowledge graph."
     )]
     pub url: String,
+    #[schemars(description = "Must be true to confirm this destructive deletion.")]
+    pub confirm: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
-pub struct ClearIndexRequest {}
+pub struct ClearIndexRequest {
+    #[schemars(description = "Must be true to confirm wiping the full SearchXyz index and graph.")]
+    pub confirm: Option<bool>,
+}
 
 #[derive(serde::Serialize, serde::Deserialize, rmcp::schemars::JsonSchema)]
 pub struct ResearchBundle {
@@ -188,6 +223,34 @@ pub struct ResearchBundle {
     pub exported_at: String,
     pub documents: Vec<ExtractedContent>,
     pub graph: crate::graph::KnowledgeGraph,
+}
+
+fn limit_output(tool_name: &str, output: &str, max_chars: Option<usize>) -> String {
+    let Some(max_chars) = max_chars else {
+        return output.to_string();
+    };
+
+    let original_chars = output.chars().count();
+    if original_chars <= max_chars {
+        return output.to_string();
+    }
+
+    let mut end_byte = output.len();
+    for (count, (idx, _)) in output.char_indices().enumerate() {
+        if count == max_chars {
+            end_byte = idx;
+            break;
+        }
+    }
+
+    let mut limited = output[..end_byte].to_string();
+    limited.push_str(&format!(
+        "
+
+---
+Output truncated by SearchXyz: tool={tool_name}, original_chars={original_chars}, returned_chars={max_chars}. Re-run with a higher max_chars value for more content."
+    ));
+    limited
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -228,6 +291,37 @@ impl SearchXyzServer {
             graph,
             config: Arc::new(config),
         }
+    }
+
+    fn graph_path(&self) -> std::path::PathBuf {
+        self.config.index.path.join("graph.json")
+    }
+
+    fn reload_index_nonfatal(&self, context: &str) {
+        if let Err(e) = self.index.reload() {
+            tracing::warn!(error = %e, context, "Failed to reload search index reader after mutation");
+        }
+    }
+
+    async fn persist_graph_nonfatal(&self, context: &str) {
+        let graph_path = self.graph_path();
+        let graph = self.graph.lock().await;
+        if let Err(e) = graph.save_to_file(&graph_path) {
+            tracing::warn!(path = ?graph_path, error = %e, context, "Failed to persist SearchXyz graph");
+        }
+    }
+
+    async fn persist_cache_nonfatal(&self, context: &str) {
+        let cache = self.cache.lock().await;
+        if let Err(e) = cache.save_to_file(&self.config.cache.path) {
+            tracing::warn!(path = ?self.config.cache.path, error = %e, context, "Failed to persist SearchXyz cache");
+        }
+    }
+
+    async fn persist_research_state_nonfatal(&self, context: &str) {
+        self.reload_index_nonfatal(context);
+        self.persist_graph_nonfatal(context).await;
+        self.persist_cache_nonfatal(context).await;
     }
 
     #[tool(
@@ -302,12 +396,14 @@ impl SearchXyzServer {
                 let mut graph = self.graph.lock().await;
                 graph.extract_heuristics(url, &title, &transcript);
             }
+            self.persist_research_state_nonfatal("youtube transcript")
+                .await;
 
             let text = format!(
                 "# {}\n\n**Source:** {}\n\n---\n\n{}",
                 title, url, transcript
             );
-            return Ok(text);
+            return Ok(limit_output("read_url", &text, req.0.max_chars));
         }
 
         // ── Check for GitHub repository URLs ──
@@ -319,9 +415,12 @@ impl SearchXyzServer {
                 None,
                 None,
                 None,
+                None,
             )
             .await?;
-            return Ok(summary);
+            self.persist_research_state_nonfatal("github repo ingestion")
+                .await;
+            return Ok(limit_output("read_url", &summary, req.0.max_chars));
         }
 
         if depth > 1 {
@@ -340,6 +439,7 @@ impl SearchXyzServer {
                     graph.extract_heuristics(&page.url, &page.title, &page.content_markdown);
                 }
             }
+            self.persist_research_state_nonfatal("spider crawl").await;
 
             let text = crawled_pages
                 .iter()
@@ -350,7 +450,7 @@ impl SearchXyzServer {
                     )
                 })
                 .collect::<String>();
-            Ok(text)
+            Ok(limit_output("read_url", &text, req.0.max_chars))
         } else {
             let fetch_result = self.crawler.fetch_url(url, render_js).await?;
             let content = self.extractor.extract(
@@ -369,12 +469,13 @@ impl SearchXyzServer {
                 let mut graph = self.graph.lock().await;
                 graph.extract_heuristics(url, &content.title, &content.content_markdown);
             }
+            self.persist_research_state_nonfatal("read_url").await;
 
             let text = format!(
                 "# {}\n\n**Source:** {}\n\n---\n\n{}",
                 content.title, content.url, content.content_markdown
             );
-            Ok(text)
+            Ok(limit_output("read_url", &text, req.0.max_chars))
         }
     }
 
@@ -395,6 +496,14 @@ impl SearchXyzServer {
         );
 
         let results = pipeline.run(&req.0.query, max, render_js).await?;
+        {
+            let mut graph = self.graph.lock().await;
+            for result in &results {
+                graph.extract_heuristics(&result.url, &result.title, &result.content_markdown);
+            }
+        }
+        self.persist_research_state_nonfatal("search_and_read")
+            .await;
         let text = results
             .iter()
             .map(|r| {
@@ -404,7 +513,7 @@ impl SearchXyzServer {
                 )
             })
             .collect::<String>();
-        Ok(text)
+        Ok(limit_output("search_and_read", &text, req.0.max_chars))
     }
 
     #[tool(
@@ -543,6 +652,14 @@ impl SearchXyzServer {
 
         output.push_str(&format!("*Summary: Executed {} sub-queries successfully, retrieving a total of {} unique pages.*\n\n", executed_count, all_pages.len()));
 
+        {
+            let mut graph = self.graph.lock().await;
+            for page in all_pages.values() {
+                graph.extract_heuristics(&page.url, &page.title, &page.content_markdown);
+            }
+        }
+        self.persist_research_state_nonfatal("deep_research").await;
+
         output.push_str("---\n## Compiled Research Documents\n\n");
         for (url, page) in all_pages {
             output.push_str(&format!(
@@ -551,7 +668,7 @@ impl SearchXyzServer {
             ));
         }
 
-        Ok(output)
+        Ok(limit_output("deep_research", &output, req.0.max_chars))
     }
 
     #[tool(
@@ -576,6 +693,7 @@ impl SearchXyzServer {
             let mut graph = self.graph.lock().await;
             graph.extract_heuristics(&req.0.url, &req.0.title, &req.0.content);
         }
+        self.persist_research_state_nonfatal("index_content").await;
 
         Ok(format!("Successfully indexed content for `{}`", req.0.url))
     }
@@ -733,6 +851,11 @@ impl SearchXyzServer {
     ) -> Result<String, rmcp::ErrorData> {
         let include_exts = req.0.include_extensions.as_deref();
         let exclude_paths = req.0.exclude_paths.as_deref();
+        let limits = crate::crawler::github::GithubIngestLimits::from_options(
+            req.0.max_files,
+            req.0.max_total_bytes,
+            req.0.git_timeout_secs,
+        );
         let summary = crate::crawler::github::clone_and_index_repo(
             &self.index,
             &self.graph,
@@ -740,9 +863,10 @@ impl SearchXyzServer {
             req.0.branch.as_deref(),
             include_exts,
             exclude_paths,
+            Some(limits),
         )
         .await?;
-        Ok(summary)
+        Ok(limit_output("read_github_repo", &summary, req.0.max_chars))
     }
 
     #[tool(
@@ -774,7 +898,7 @@ impl SearchXyzServer {
             )
         })?;
 
-        Ok(json)
+        Ok(limit_output("export_research", &json, req.0.max_chars))
     }
 
     #[tool(
@@ -832,10 +956,8 @@ impl SearchXyzServer {
             }
         }
 
-        // Force reload the index reader so that imported documents are immediately searchable
-        if let Err(e) = self.index.reload() {
-            tracing::warn!(error = %e, "Failed to reload index reader after import (non-fatal)");
-        }
+        self.reload_index_nonfatal("import_research");
+        self.persist_graph_nonfatal("import_research").await;
 
         Ok(format!(
             "### Import Summary\n\n\
@@ -853,19 +975,33 @@ impl SearchXyzServer {
         &self,
         req: Parameters<DeleteSourceRequest>,
     ) -> Result<String, rmcp::ErrorData> {
+        if req.0.confirm != Some(true) {
+            return Err(rmcp::ErrorData::invalid_params(
+                "searchxyz_delete_source requires confirm=true",
+                None,
+            ));
+        }
         self.index.delete_document(&req.0.url).await?;
         {
             let mut g = self.graph.lock().await;
             g.prune_node(&req.0.url);
         }
+        self.reload_index_nonfatal("delete_source");
+        self.persist_graph_nonfatal("delete_source").await;
         Ok(format!("Successfully deleted source `{}`", req.0.url))
     }
 
     #[tool(description = "Wipe all documents and graph relationships from the local index.")]
     pub async fn clear_index(
         &self,
-        _req: Parameters<ClearIndexRequest>,
+        req: Parameters<ClearIndexRequest>,
     ) -> Result<String, rmcp::ErrorData> {
+        if req.0.confirm != Some(true) {
+            return Err(rmcp::ErrorData::invalid_params(
+                "searchxyz_clear_index requires confirm=true",
+                None,
+            ));
+        }
         let mut writer = self.index.writer.lock().await;
         writer
             .delete_all_documents()
@@ -877,6 +1013,8 @@ impl SearchXyzServer {
             let mut g = self.graph.lock().await;
             g.clear();
         }
+        self.reload_index_nonfatal("clear_index");
+        self.persist_graph_nonfatal("clear_index").await;
         Ok("Successfully cleared search index and knowledge graph.".to_string())
     }
 }
@@ -910,8 +1048,198 @@ mod tests {
     use crate::config::{Config, IndexConfig};
     use crate::graph::KnowledgeGraph;
     use crate::index::SearchIndex;
+    use crate::search::{SearchBackend, SearchQuery, SearchResult};
+    use async_trait::async_trait;
     use std::sync::Arc;
     use tokio::sync::Mutex;
+
+    struct StaticBackend {
+        url: String,
+    }
+
+    #[async_trait]
+    impl SearchBackend for StaticBackend {
+        fn name(&self) -> &str {
+            "static"
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        async fn search(
+            &self,
+            _query: &SearchQuery,
+        ) -> Result<Vec<SearchResult>, crate::error::SearchXyzError> {
+            Ok(vec![SearchResult {
+                title: "Static test page".to_string(),
+                url: self.url.clone(),
+                snippet: "A local page about Rust and Tokio".to_string(),
+                source: "static".to_string(),
+            }])
+        }
+    }
+
+    async fn serve_one_html_page(body: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0_u8; 1024];
+            let _ = stream.read(&mut buf).await;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        format!("http://{addr}/test")
+    }
+
+    fn test_server_with_config(
+        index: SearchIndex,
+        cache: Arc<Mutex<crate::cache::Cache>>,
+        graph: Arc<Mutex<KnowledgeGraph>>,
+        config: Config,
+        dispatcher: crate::search::SearchDispatcher,
+    ) -> SearchXyzServer {
+        SearchXyzServer::new(
+            dispatcher,
+            crate::crawler::Crawler::new(
+                crate::config::CrawlerConfig::default(),
+                crate::config::HeadlessConfig::default(),
+                crate::config::ProxyConfig::default(),
+                cache.clone(),
+            ),
+            crate::extractor::ExtractionPipeline::new(crate::config::ExtractorConfig::default()),
+            index,
+            cache,
+            graph,
+            config,
+        )
+    }
+
+    #[tokio::test]
+    pub async fn test_index_content_persists_graph_and_reload_makes_recall_immediate() {
+        let test_dir =
+            std::env::temp_dir().join(format!("searchxyz_test_persist_{}", rand::random::<u64>()));
+        let _ = std::fs::remove_dir_all(&test_dir);
+
+        let mut config = Config::default();
+        config.index = IndexConfig {
+            path: test_dir.clone(),
+            writer_heap_bytes: 15_000_000,
+            embedding: Default::default(),
+        };
+        config.cache.path = test_dir.join("cache.json");
+
+        let index = SearchIndex::open(&config.index).unwrap();
+        let graph = Arc::new(Mutex::new(KnowledgeGraph::new()));
+        let cache = Arc::new(Mutex::new(crate::cache::Cache::new(10, 60)));
+        let server = test_server_with_config(
+            index,
+            cache,
+            graph,
+            config,
+            crate::search::SearchDispatcher::new(vec![]),
+        );
+
+        server
+            .index_content(Parameters(IndexContentRequest {
+                url: "https://example.com/rust-tokio".to_string(),
+                title: "Rust Tokio Notes".to_string(),
+                content: "Rust and Tokio power async AI agent search memory.".to_string(),
+            }))
+            .await
+            .unwrap();
+
+        let results = server.index.search("Tokio", 5).unwrap();
+        assert_eq!(
+            results.len(),
+            1,
+            "indexed content should be searchable immediately"
+        );
+
+        let graph_path = test_dir.join("graph.json");
+        let persisted = KnowledgeGraph::load_from_file(&graph_path).unwrap();
+        assert!(
+            persisted
+                .nodes
+                .contains_key("https://example.com/rust-tokio"),
+            "graph mutations should be persisted to graph.json"
+        );
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[tokio::test]
+    pub async fn test_search_and_read_enriches_and_persists_graph() {
+        let html = r#"
+            <html>
+              <head><title>Rust Tokio Research</title></head>
+              <body><main>Rust and Tokio are useful for async search agents, crawling, and vector memory.</main></body>
+            </html>
+        "#;
+        let url = serve_one_html_page(html).await;
+        let test_dir = std::env::temp_dir().join(format!(
+            "searchxyz_test_research_graph_{}",
+            rand::random::<u64>()
+        ));
+        let _ = std::fs::remove_dir_all(&test_dir);
+
+        let mut config = Config::default();
+        config.index = IndexConfig {
+            path: test_dir.clone(),
+            writer_heap_bytes: 15_000_000,
+            embedding: Default::default(),
+        };
+        config.cache.path = test_dir.join("cache.json");
+
+        let index = SearchIndex::open(&config.index).unwrap();
+        let graph = Arc::new(Mutex::new(KnowledgeGraph::new()));
+        let cache = Arc::new(Mutex::new(crate::cache::Cache::new(10, 60)));
+        let server = test_server_with_config(
+            index,
+            cache,
+            graph,
+            config,
+            crate::search::SearchDispatcher::new(vec![Box::new(StaticBackend {
+                url: url.clone(),
+            })]),
+        );
+
+        server
+            .search_and_read(Parameters(SearchAndReadRequest {
+                query: "rust tokio".to_string(),
+                max_pages: Some(1),
+                render_js: Some(false),
+                max_chars: None,
+            }))
+            .await
+            .unwrap();
+
+        let graph_path = test_dir.join("graph.json");
+        let persisted = KnowledgeGraph::load_from_file(&graph_path).unwrap();
+        assert!(
+            persisted.nodes.contains_key(&url),
+            "search_and_read should enrich and persist graph entries for fetched pages"
+        );
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_limit_output_truncates_with_metadata() {
+        let limited = limit_output("deep_research", "abcdef", Some(3));
+        assert!(limited.starts_with("abc"));
+        assert!(limited.contains("Output truncated by SearchXyz"));
+        assert!(limited.contains("original_chars=6"));
+        assert!(limited.contains("returned_chars=3"));
+    }
 
     #[tokio::test]
     pub async fn test_export_import_research() {
@@ -973,6 +1301,7 @@ mod tests {
             .export_research(Parameters(ExportResearchRequest {
                 query: None,
                 limit: None,
+                max_chars: None,
             }))
             .await
             .unwrap();
@@ -1124,10 +1453,20 @@ mod tests {
             assert_eq!(g.edges.len(), 2);
         }
 
+        // Test delete_source requires explicit confirmation
+        let denied_delete = server
+            .delete_source(Parameters(DeleteSourceRequest {
+                url: "https://example.com/doc1".to_string(),
+                confirm: None,
+            }))
+            .await;
+        assert!(denied_delete.is_err());
+
         // Test delete_source for doc1
         let delete_res = server
             .delete_source(Parameters(DeleteSourceRequest {
                 url: "https://example.com/doc1".to_string(),
+                confirm: Some(true),
             }))
             .await
             .unwrap();
@@ -1149,9 +1488,17 @@ mod tests {
             assert_eq!(g.edges[0].source, "https://example.com/doc2");
         }
 
+        // Test clear_index requires explicit confirmation
+        let denied_clear = server
+            .clear_index(Parameters(ClearIndexRequest { confirm: None }))
+            .await;
+        assert!(denied_clear.is_err());
+
         // Test clear_index
         let clear_res = server
-            .clear_index(Parameters(ClearIndexRequest {}))
+            .clear_index(Parameters(ClearIndexRequest {
+                confirm: Some(true),
+            }))
             .await
             .unwrap();
         assert!(clear_res.contains("Successfully cleared search index"));

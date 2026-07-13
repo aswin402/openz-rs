@@ -370,7 +370,10 @@ impl Default for EmbeddingsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillsConfig {
-    #[serde(default = "default_workspace_skills_enabled", alias = "workspace_skills_enabled")]
+    #[serde(
+        default = "default_workspace_skills_enabled",
+        alias = "workspace_skills_enabled"
+    )]
     pub workspace_skills_enabled: bool,
     #[serde(default, alias = "external_dirs")]
     pub external_dirs: Vec<String>,

@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use tokio::sync::Mutex;
 
 use crate::error::SearchXyzError;
@@ -26,6 +26,129 @@ const DEFAULT_EXCLUDE_PATHS: &[&str] = &[
 ];
 
 const MAX_FILE_SIZE_BYTES: u64 = 256 * 1024; // 256 KB
+const DEFAULT_MAX_REPO_FILES: usize = 2_000;
+const MAX_REPO_FILES_CAP: usize = 10_000;
+const DEFAULT_MAX_REPO_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_REPO_BYTES_CAP: u64 = 200 * 1024 * 1024;
+const DEFAULT_GIT_TIMEOUT_SECS: u64 = 60;
+const MAX_GIT_TIMEOUT_SECS: u64 = 600;
+
+#[derive(Debug, Clone, Copy)]
+pub struct GithubIngestLimits {
+    pub max_files: usize,
+    pub max_total_bytes: u64,
+    pub git_timeout_secs: u64,
+}
+
+impl Default for GithubIngestLimits {
+    fn default() -> Self {
+        Self {
+            max_files: DEFAULT_MAX_REPO_FILES,
+            max_total_bytes: DEFAULT_MAX_REPO_BYTES,
+            git_timeout_secs: DEFAULT_GIT_TIMEOUT_SECS,
+        }
+    }
+}
+
+impl GithubIngestLimits {
+    pub fn from_options(
+        max_files: Option<usize>,
+        max_total_bytes: Option<u64>,
+        git_timeout_secs: Option<u64>,
+    ) -> Self {
+        Self {
+            max_files: max_files
+                .unwrap_or(DEFAULT_MAX_REPO_FILES)
+                .clamp(1, MAX_REPO_FILES_CAP),
+            max_total_bytes: max_total_bytes
+                .unwrap_or(DEFAULT_MAX_REPO_BYTES)
+                .clamp(1, MAX_REPO_BYTES_CAP),
+            git_timeout_secs: git_timeout_secs
+                .unwrap_or(DEFAULT_GIT_TIMEOUT_SECS)
+                .clamp(1, MAX_GIT_TIMEOUT_SECS),
+        }
+    }
+}
+
+fn run_command_with_timeout(
+    cmd: &mut Command,
+    timeout_secs: u64,
+    url: &str,
+    action: &str,
+) -> Result<Output, SearchXyzError> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| SearchXyzError::CrawlFailed {
+        url: url.to_string(),
+        reason: format!("Failed to spawn {action}: {e}"),
+    })?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        if child
+            .try_wait()
+            .map_err(|e| SearchXyzError::CrawlFailed {
+                url: url.to_string(),
+                reason: format!("Failed while waiting for {action}: {e}"),
+            })?
+            .is_some()
+        {
+            return child
+                .wait_with_output()
+                .map_err(|e| SearchXyzError::CrawlFailed {
+                    url: url.to_string(),
+                    reason: format!("Failed to collect {action} output: {e}"),
+                });
+        }
+
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(SearchXyzError::CrawlFailed {
+                url: url.to_string(),
+                reason: format!("{action} timed out after {timeout_secs}s"),
+            });
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+fn enforce_ingest_limits(
+    repo_dir: &Path,
+    relative_files: &[PathBuf],
+    limits: &GithubIngestLimits,
+    url: &str,
+) -> Result<(), SearchXyzError> {
+    if relative_files.len() > limits.max_files {
+        return Err(SearchXyzError::CrawlFailed {
+            url: url.to_string(),
+            reason: format!(
+                "GitHub ingest file count limit exceeded: files={}, max_files={}",
+                relative_files.len(),
+                limits.max_files
+            ),
+        });
+    }
+
+    let mut total_bytes = 0_u64;
+    for rel in relative_files {
+        let path = repo_dir.join(rel);
+        if let Ok(metadata) = fs::metadata(&path) {
+            total_bytes = total_bytes.saturating_add(metadata.len());
+            if total_bytes > limits.max_total_bytes {
+                return Err(SearchXyzError::CrawlFailed {
+                    url: url.to_string(),
+                    reason: format!(
+                        "GitHub ingest byte limit exceeded: bytes={}, max_total_bytes={}",
+                        total_bytes, limits.max_total_bytes
+                    ),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
 
 /// Parse a GitHub URL to extract Owner, Repo, and optional Branch
 pub fn parse_github_url(url: &str) -> Option<(String, String, Option<String>)> {
@@ -114,7 +237,10 @@ pub async fn clone_and_index_repo(
     branch: Option<&str>,
     include_exts: Option<&[String]>,
     exclude_paths: Option<&[String]>,
+    limits: Option<GithubIngestLimits>,
 ) -> Result<String, SearchXyzError> {
+    let limits = limits.unwrap_or_default();
+
     // 1. Parse GitHub URL
     let (owner, repo_name, parsed_branch) =
         parse_github_url(url).ok_or_else(|| SearchXyzError::CrawlFailed {
@@ -157,14 +283,16 @@ pub async fn clone_and_index_repo(
     if repo_dir.exists() && repo_git_dir.exists() {
         is_incremental = true;
         // 1. Get active branch
-        let active_branch_output = Command::new("git")
+        let mut active_branch_cmd = Command::new("git");
+        active_branch_cmd
             .args(["rev-parse", "--abbrev-ref", "HEAD"])
-            .current_dir(&repo_dir)
-            .output()
-            .map_err(|e| SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: format!("Failed to get active branch name: {}", e),
-            })?;
+            .current_dir(&repo_dir);
+        let active_branch_output = run_command_with_timeout(
+            &mut active_branch_cmd,
+            limits.git_timeout_secs,
+            url,
+            "git rev-parse --abbrev-ref",
+        )?;
         if !active_branch_output.status.success() {
             let stderr = String::from_utf8_lossy(&active_branch_output.stderr);
             return Err(SearchXyzError::CrawlFailed {
@@ -177,14 +305,14 @@ pub async fn clone_and_index_repo(
             .to_string();
 
         // 2. Get old commit hash
-        let old_commit_output = Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(&repo_dir)
-            .output()
-            .map_err(|e| SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: format!("Failed to get old commit hash: {}", e),
-            })?;
+        let mut old_commit_cmd = Command::new("git");
+        old_commit_cmd.args(["rev-parse", "HEAD"]).current_dir(&repo_dir);
+        let old_commit_output = run_command_with_timeout(
+            &mut old_commit_cmd,
+            limits.git_timeout_secs,
+            url,
+            "git rev-parse HEAD",
+        )?;
         if !old_commit_output.status.success() {
             let stderr = String::from_utf8_lossy(&old_commit_output.stderr);
             return Err(SearchXyzError::CrawlFailed {
@@ -195,17 +323,21 @@ pub async fn clone_and_index_repo(
         let old_commit = String::from_utf8_lossy(&old_commit_output.stdout)
             .trim()
             .to_string();
+        if old_commit.is_empty() {
+            return Err(SearchXyzError::CrawlFailed {
+                url: url.to_string(),
+                reason: "git rev-parse HEAD (old) returned an empty commit hash".to_string(),
+            });
+        }
 
         // 3. Fetch from remote
         tracing::info!(repo = %repo_base_url, branch = %active_branch, "Fetching latest changes");
-        let fetch_output = Command::new("git")
+        let mut fetch_cmd = Command::new("git");
+        fetch_cmd
             .args(["fetch", "--depth", "1", "origin", &active_branch])
-            .current_dir(&repo_dir)
-            .output()
-            .map_err(|e| SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: format!("Failed to execute git fetch: {}", e),
-            })?;
+            .current_dir(&repo_dir);
+        let fetch_output =
+            run_command_with_timeout(&mut fetch_cmd, limits.git_timeout_secs, url, "git fetch")?;
         if !fetch_output.status.success() {
             let stderr = String::from_utf8_lossy(&fetch_output.stderr);
             return Err(SearchXyzError::CrawlFailed {
@@ -215,14 +347,12 @@ pub async fn clone_and_index_repo(
         }
 
         // 4. Reset hard to FETCH_HEAD
-        let reset_output = Command::new("git")
+        let mut reset_cmd = Command::new("git");
+        reset_cmd
             .args(["reset", "--hard", "FETCH_HEAD"])
-            .current_dir(&repo_dir)
-            .output()
-            .map_err(|e| SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: format!("Failed to execute git reset: {}", e),
-            })?;
+            .current_dir(&repo_dir);
+        let reset_output =
+            run_command_with_timeout(&mut reset_cmd, limits.git_timeout_secs, url, "git reset")?;
         if !reset_output.status.success() {
             let stderr = String::from_utf8_lossy(&reset_output.stderr);
             return Err(SearchXyzError::CrawlFailed {
@@ -232,14 +362,16 @@ pub async fn clone_and_index_repo(
         }
 
         // 5. Get new commit hash
-        let new_commit_output = Command::new("git")
+        let mut rev_parse_cmd = Command::new("git");
+        rev_parse_cmd
             .args(["rev-parse", "HEAD"])
-            .current_dir(&repo_dir)
-            .output()
-            .map_err(|e| SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: format!("Failed to get new commit hash: {}", e),
-            })?;
+            .current_dir(&repo_dir);
+        let new_commit_output = run_command_with_timeout(
+            &mut rev_parse_cmd,
+            limits.git_timeout_secs,
+            url,
+            "git rev-parse",
+        )?;
         if !new_commit_output.status.success() {
             let stderr = String::from_utf8_lossy(&new_commit_output.stderr);
             return Err(SearchXyzError::CrawlFailed {
@@ -250,9 +382,16 @@ pub async fn clone_and_index_repo(
         let new_commit = String::from_utf8_lossy(&new_commit_output.stdout)
             .trim()
             .to_string();
+        if new_commit.is_empty() {
+            return Err(SearchXyzError::CrawlFailed {
+                url: url.to_string(),
+                reason: "git rev-parse HEAD (new) returned an empty commit hash".to_string(),
+            });
+        }
 
         // 6. Get diff list of files
-        let diff_output = Command::new("git")
+        let mut diff_cmd = Command::new("git");
+        diff_cmd
             .args([
                 "diff",
                 "--no-renames",
@@ -260,12 +399,9 @@ pub async fn clone_and_index_repo(
                 &old_commit,
                 &new_commit,
             ])
-            .current_dir(&repo_dir)
-            .output()
-            .map_err(|e| SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: format!("Failed to execute git diff: {}", e),
-            })?;
+            .current_dir(&repo_dir);
+        let diff_output =
+            run_command_with_timeout(&mut diff_cmd, limits.git_timeout_secs, url, "git diff")?;
         if !diff_output.status.success() {
             let stderr = String::from_utf8_lossy(&diff_output.stderr);
             return Err(SearchXyzError::CrawlFailed {
@@ -368,10 +504,7 @@ pub async fn clone_and_index_repo(
         cmd.arg(&repo_base_url).arg(&repo_dir);
 
         tracing::info!(repo = %repo_base_url, branch = ?resolved_branch, dest = ?repo_dir, "Cloning repository");
-        let output = cmd.output().map_err(|e| SearchXyzError::CrawlFailed {
-            url: url.to_string(),
-            reason: format!("Failed to spawn git command: {}", e),
-        })?;
+        let output = run_command_with_timeout(&mut cmd, limits.git_timeout_secs, url, "git clone")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -401,6 +534,9 @@ pub async fn clone_and_index_repo(
             }
         }
     }
+
+    let budget_files: Vec<PathBuf> = files_to_upsert.iter().map(PathBuf::from).collect();
+    enforce_ingest_limits(&repo_dir, &budget_files, &limits, url)?;
 
     // Process deletions
     let branch_for_url = resolved_branch.unwrap_or("main");
@@ -624,6 +760,34 @@ mod tests {
         let _ = fs::remove_dir_all(&temp);
     }
 
+    #[test]
+    fn test_enforce_ingest_limits_rejects_too_many_files() {
+        let temp = std::env::temp_dir().join(format!(
+            "test_github_ingest_limits_{}",
+            rand::rng().random::<u32>()
+        ));
+        let _ = fs::remove_dir_all(&temp);
+        fs::create_dir_all(&temp).unwrap();
+        fs::write(temp.join("a.rs"), "fn a() {}").unwrap();
+        fs::write(temp.join("b.rs"), "fn b() {}").unwrap();
+
+        let files = vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")];
+        let err = enforce_ingest_limits(
+            &temp,
+            &files,
+            &GithubIngestLimits {
+                max_files: 1,
+                max_total_bytes: 1024,
+                git_timeout_secs: 30,
+            },
+            "https://github.com/example/repo",
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("file count limit"));
+        let _ = fs::remove_dir_all(&temp);
+    }
+
     #[tokio::test]
     async fn test_incremental_git_sync() {
         // Setup temporary directories
@@ -709,7 +873,7 @@ mod tests {
 
         // First indexing (clean clone)
         let repo_url = "https://github.com/dummy-owner/dummy-repo";
-        let result = clone_and_index_repo(&index, &graph, repo_url, Some("main"), None, None)
+        let result = clone_and_index_repo(&index, &graph, repo_url, Some("main"), None, None, None)
             .await
             .unwrap();
 
@@ -751,9 +915,10 @@ mod tests {
         run_git(&["commit", "-m", "second commit"], &dummy_origin);
 
         // Run updating index
-        let result2 = clone_and_index_repo(&index, &graph, repo_url, Some("main"), None, None)
-            .await
-            .unwrap();
+        let _result2 =
+            clone_and_index_repo(&index, &graph, repo_url, Some("main"), None, None, None)
+                .await
+                .unwrap();
 
         index.reload().unwrap();
 

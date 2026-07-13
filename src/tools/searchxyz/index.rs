@@ -163,6 +163,10 @@ impl Tool for SearchXyzExportResearchTool {
                 "limit": {
                     "type": "integer",
                     "description": "Max documents to export (default: 50)."
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Optional output character budget. Truncates large JSON exports with metadata when exceeded."
                 }
             }
         })
@@ -234,9 +238,13 @@ impl Tool for SearchXyzDeleteSourceTool {
                 "url": {
                     "type": "string",
                     "description": "URL to delete."
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true to confirm this destructive deletion."
                 }
             },
-            "required": ["url"]
+            "required": ["url", "confirm"]
         })
     }
 
@@ -266,12 +274,18 @@ impl Tool for SearchXyzClearIndexTool {
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
-            "properties": {}
+            "properties": {
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true to confirm wiping all SearchXyz documents and graph data."
+                }
+            },
+            "required": ["confirm"]
         })
     }
 
-    async fn call(&self, _arguments: &Value) -> Result<Value> {
-        let req = ClearIndexRequest {};
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let req: ClearIndexRequest = serde_json::from_value(arguments.clone())?;
         let res = get_server()
             .clear_index(Parameters(req))
             .await

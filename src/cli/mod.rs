@@ -16,12 +16,12 @@ pub use agent::{archive_current_session, load_session_history};
 use anyhow::Result;
 pub use args::{ChannelAction, CliArgs, Command, SopAction};
 pub use builder::build_agent_loop;
-pub use doctor::handle_doctor;
 pub use channels::{
     handle_discord, handle_email, handle_gateway, handle_telegram, handle_whatsapp,
     is_email_configured, is_telegram_configured,
 };
 use clap::Parser;
+pub use doctor::handle_doctor;
 pub use logs::handle_logs;
 pub use sop::handle_sop;
 

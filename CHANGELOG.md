@@ -398,7 +398,17 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.46 (Latest Release)
+### v0.0.47 (Latest Release)
+*   **Fix: SearchXyz safety, persistence, and resource controls:** Hardened SearchXyz so web research, GitHub repo ingestion, and destructive maintenance tools behave safely and remain immediately searchable.
+    *   Added `max_chars` output budgets for `read_url`, `search_and_read`, `deep_research`, `read_github_repo`, and `export_research`, with explicit truncation metadata.
+    *   Added GitHub repository ingestion limits: `max_files`, `max_total_bytes`, and per-command `git_timeout_secs` with bounded defaults and caps.
+    *   Wrapped Git clone/fetch/reset/rev-parse/diff with timeout enforcement and captured stdout/stderr correctly for incremental sync.
+    *   Persisted SearchXyz graph/cache mutations and reloaded the Tantivy reader after index mutations so recall sees updates immediately.
+    *   Required explicit `confirm=true` for `searchxyz_delete_source` and `searchxyz_clear_index`.
+    *   Exposed the new SearchXyz safety knobs through OpenZ wrapper schemas.
+*   **Chore:** Bumped version to `v0.0.47`.
+
+### v0.0.46
 *   **Fix: OpenMedia SVG generation workflow:** Hardened `openmedia_create_svg` so agents can create cleaner, better-aligned SVG logos without schema guessing.
     *   Added native JSON support for `line` elements plus text `font_weight`, `text_anchor`, opacity, stroke width, and linecap attributes in the OpenMedia SVG core.
     *   Replaced the generic OpenZ `openmedia_create_svg` wrapper with a custom schema containing concrete examples for logo-style SVGs.

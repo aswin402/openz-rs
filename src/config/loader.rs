@@ -125,7 +125,10 @@ pub fn root_runtime_db_artifacts(root: &Path) -> Vec<PathBuf> {
                     continue;
                 }
                 let fname = entry.file_name().to_string_lossy().to_string();
-                if fname.ends_with(".db") || fname.ends_with(".db-wal") || fname.ends_with(".db-shm") {
+                if fname.ends_with(".db")
+                    || fname.ends_with(".db-wal")
+                    || fname.ends_with(".db-shm")
+                {
                     let p = entry.path();
                     if !found.contains(&p) {
                         found.push(p);
@@ -360,10 +363,15 @@ mod tests {
         // runtime_db_path must be derived from ~/.openz, independent of the
         // active workspace task-local, so it can never land in the repo root.
         let path = super::ACTIVE_WORKSPACE
-            .scope(workspace.clone(), async { super::runtime_db_path("memory.db") })
+            .scope(workspace.clone(), async {
+                super::runtime_db_path("memory.db")
+            })
             .await;
 
-        assert!(!path.starts_with(&workspace), "runtime DB resolved inside workspace: {path:?}");
+        assert!(
+            !path.starts_with(&workspace),
+            "runtime DB resolved inside workspace: {path:?}"
+        );
         assert!(path.ends_with("memory.db"));
         assert!(path.to_string_lossy().contains(".openz"));
         let _ = std::fs::remove_dir_all(&workspace);
@@ -396,7 +404,10 @@ mod tests {
             .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
             .collect();
 
-        assert!(names.contains(&"memory.db".to_string()), "memory.db not detected: {names:?}");
+        assert!(
+            names.contains(&"memory.db".to_string()),
+            "memory.db not detected: {names:?}"
+        );
         assert!(names.contains(&"memory.db-shm".to_string()));
         assert!(names.contains(&"memory.db-wal".to_string()));
 
@@ -409,8 +420,17 @@ mod tests {
         let gitignore = std::fs::read_to_string(format!("{manifest}/.gitignore"))
             .expect(".gitignore must exist at repo root");
         let lower = gitignore.to_lowercase();
-        assert!(lower.contains(".openz/"), ".gitignore must ignore workspace .openz/ runtime dir");
-        assert!(lower.contains("/memory.db"), ".gitignore must ignore root memory.db");
-        assert!(lower.contains(".db-wal"), ".gitignore must ignore sqlite -wal companions");
+        assert!(
+            lower.contains(".openz/"),
+            ".gitignore must ignore workspace .openz/ runtime dir"
+        );
+        assert!(
+            lower.contains("/memory.db"),
+            ".gitignore must ignore root memory.db"
+        );
+        assert!(
+            lower.contains(".db-wal"),
+            ".gitignore must ignore sqlite -wal companions"
+        );
     }
 }

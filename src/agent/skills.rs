@@ -884,7 +884,9 @@ This skill is scoped to this workspace.",
         std::env::set_current_dir(original).unwrap();
         let _ = std::fs::remove_dir_all(&temp_dir);
 
-        assert!(skills.iter().any(|skill| skill.name == "workspace_override"));
+        assert!(skills
+            .iter()
+            .any(|skill| skill.name == "workspace_override"));
     }
 
     #[test]

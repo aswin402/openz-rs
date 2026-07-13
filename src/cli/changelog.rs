@@ -168,8 +168,25 @@ pub async fn handle_changelog() -> Result<()> {
         green = AURA_GREEN,
         reset = COLOR_RESET
     );
-    println!("    • Hardened openmedia_create_svg with examples, aliases, and output_path copy support.");
-    println!("    • Added OpenMedia SVG line/text alignment attributes for cleaner logo generation.");
+    println!(
+        "    • Hardened SearchXyz with max_chars output budgets and truncation metadata."
+    );
+    println!(
+        "    • Added GitHub repo ingest limits: max_files, max_total_bytes, git_timeout_secs."
+    );
+    println!("    • Persisted SearchXyz graph/cache updates and required confirm=true for destructive tools.");
+
+    println!(
+        "  {slate}[v0.0.46]{reset}",
+        slate = AURA_SLATE,
+        reset = COLOR_RESET
+    );
+    println!(
+        "    • Hardened openmedia_create_svg with examples, aliases, and output_path copy support."
+    );
+    println!(
+        "    • Added OpenMedia SVG line/text alignment attributes for cleaner logo generation."
+    );
     println!("    • Added OpenMedia SVG-specific self-healing hints for schema mistakes.");
 
     println!(

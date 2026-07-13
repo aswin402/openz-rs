@@ -108,7 +108,7 @@ impl SearchBackend for DuckDuckGoBackend {
         };
 
         let mut results = Vec::new();
-        #[allow(unused_assignments, unused_variables)]
+        #[cfg(feature = "js-rendering")]
         let mut http_failed = false;
 
         // Try raw HTTP form POST first
@@ -125,16 +125,25 @@ impl SearchBackend for DuckDuckGoBackend {
                             results = Self::parse_results(&html_body, query.max_results);
                         }
                         Err(_) => {
-                            http_failed = true;
+                            #[cfg(feature = "js-rendering")]
+                            {
+                                http_failed = true;
+                            }
                         }
                     }
                 } else {
-                    http_failed = true;
+                    #[cfg(feature = "js-rendering")]
+                    {
+                        http_failed = true;
+                    }
                     tracing::warn!("DuckDuckGo HTTP request returned status {}", resp.status());
                 }
             }
             Err(e) => {
-                http_failed = true;
+                #[cfg(feature = "js-rendering")]
+                {
+                    http_failed = true;
+                }
                 tracing::warn!("DuckDuckGo HTTP request failed: {:?}", e);
             }
         }

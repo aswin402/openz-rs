@@ -75,6 +75,10 @@ impl Tool for SearchXyzReadUrlTool {
                 "render_js": {
                     "type": "boolean",
                     "description": "Enable headless JS rendering (default: false)."
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Optional output character budget. Truncates large Markdown responses with metadata when exceeded."
                 }
             },
             "required": ["url"]
@@ -119,6 +123,10 @@ impl Tool for SearchXyzSearchAndReadTool {
                 "render_js": {
                     "type": "boolean",
                     "description": "Enable JS rendering (default: false)."
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Optional output character budget. Truncates large Markdown responses with metadata when exceeded."
                 }
             },
             "required": ["query"]
@@ -167,6 +175,10 @@ impl Tool for SearchXyzDeepResearchTool {
                 "render_js": {
                     "type": "boolean",
                     "description": "Enable headless JS rendering (default: false)."
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Optional output character budget. Truncates large research reports with metadata when exceeded."
                 }
             },
             "required": ["query"]
