@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.45 (Latest Release)
+### v0.0.46 (Latest Release)
+*   **Fix: OpenMedia SVG generation workflow:** Hardened `openmedia_create_svg` so agents can create cleaner, better-aligned SVG logos without schema guessing.
+    *   Added native JSON support for `line` elements plus text `font_weight`, `text_anchor`, opacity, stroke width, and linecap attributes in the OpenMedia SVG core.
+    *   Replaced the generic OpenZ `openmedia_create_svg` wrapper with a custom schema containing concrete examples for logo-style SVGs.
+    *   Added argument normalization for common model mistakes: `shapes` → `elements`, text `text` → `content`, and camelCase style aliases such as `fontWeight`, `textAnchor`, and `strokeWidth`.
+    *   Added optional `output_path` copy support so generated SVGs can land directly under `~/.openz` or the requested workspace path instead of only `.openmedia/output`.
+    *   Added OpenMedia SVG-specific self-healing hints for missing `width`, `elements`, text `content`, and alignment fields.
+*   **Chore:** Bumped version to `v0.0.46`.
+
+### v0.0.45
 *   **Fix: Media tool robustness and guidance:** Hardened OpenMedia and HTML video workflows so agents stop guessing schemas and starting doomed long renders.
     *   Added a concrete valid `openmedia_video_create` / `openmedia_video_preview` scene example to the exposed schema, including required scene, text element, style, position, anchor, and transition rules.
     *   Brightened `diagnose_tool` OpenMedia placeholder scenes so video diagnostics produce visible output instead of near-black tiny text.

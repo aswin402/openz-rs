@@ -168,9 +168,9 @@ pub async fn handle_changelog() -> Result<()> {
         green = AURA_GREEN,
         reset = COLOR_RESET
     );
-    println!("    • Hardened OpenMedia video schemas with concrete examples and better self-healing hints.");
-    println!("    • Fixed scene_path loop detection by fingerprinting scene JSON file contents.");
-    println!("    • Added html_to_video render planning and clearer TUI duration/FPS/frame display.");
+    println!("    • Hardened openmedia_create_svg with examples, aliases, and output_path copy support.");
+    println!("    • Added OpenMedia SVG line/text alignment attributes for cleaner logo generation.");
+    println!("    • Added OpenMedia SVG-specific self-healing hints for schema mistakes.");
 
     println!(
         "  {slate}[v0.0.40]{reset}",

@@ -863,6 +863,8 @@ pub fn build_svg_from_json(
                 ry,
                 fill,
                 stroke,
+                stroke_width,
+                opacity,
             } => {
                 let mut rect = builder.rect(x, y, width, height);
                 if let Some(f) = fill {
@@ -870,6 +872,13 @@ pub fn build_svg_from_json(
                 }
                 if let Some(s) = stroke {
                     rect = rect.stroke(&s);
+                }
+                if let Some(sw) = stroke_width {
+                    rect = rect.stroke_width(sw);
+                }
+                if let Some(opacity) = opacity {
+                    rect.attrs
+                        .insert("opacity".to_string(), opacity.to_string());
                 }
                 if let Some(rx_val) = rx {
                     rect = rect.rx(rx_val);
@@ -885,6 +894,8 @@ pub fn build_svg_from_json(
                 r,
                 fill,
                 stroke,
+                stroke_width,
+                opacity,
             } => {
                 let mut circle = builder.circle(cx, cy, r);
                 if let Some(f) = fill {
@@ -893,7 +904,48 @@ pub fn build_svg_from_json(
                 if let Some(s) = stroke {
                     circle = circle.stroke(&s);
                 }
+                if let Some(sw) = stroke_width {
+                    circle = circle.stroke_width(sw);
+                }
+                if let Some(opacity) = opacity {
+                    circle
+                        .attrs
+                        .insert("opacity".to_string(), opacity.to_string());
+                }
                 circle.finish();
+            }
+            schema::JsonElement::Line {
+                x1,
+                y1,
+                x2,
+                y2,
+                stroke,
+                stroke_width,
+                stroke_linecap,
+                opacity,
+            } => {
+                let mut attrs = Attributes::new();
+                attrs.insert(
+                    "stroke".to_string(),
+                    stroke.unwrap_or_else(|| "#000000".to_string()),
+                );
+                attrs.insert(
+                    "stroke-width".to_string(),
+                    stroke_width.unwrap_or(1.0).to_string(),
+                );
+                if let Some(linecap) = stroke_linecap {
+                    attrs.insert("stroke-linecap".to_string(), linecap);
+                }
+                if let Some(opacity) = opacity {
+                    attrs.insert("opacity".to_string(), opacity.to_string());
+                }
+                builder.elements.push(SvgElement::Line {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    attrs,
+                });
             }
             schema::JsonElement::Text {
                 x,
@@ -902,6 +954,9 @@ pub fn build_svg_from_json(
                 fill,
                 font_size,
                 font_family,
+                font_weight,
+                text_anchor,
+                opacity,
             } => {
                 let mut text = builder.text(x, y, &content);
                 if let Some(f) = fill {
@@ -912,6 +967,17 @@ pub fn build_svg_from_json(
                 }
                 if let Some(fam) = font_family {
                     text = text.font_family(&fam);
+                }
+                if let Some(weight) = font_weight {
+                    text.attrs
+                        .insert("font-weight".to_string(), weight.to_string());
+                }
+                if let Some(anchor) = text_anchor {
+                    text.attrs.insert("text-anchor".to_string(), anchor);
+                }
+                if let Some(opacity) = opacity {
+                    text.attrs
+                        .insert("opacity".to_string(), opacity.to_string());
                 }
                 text.finish();
             }
@@ -1148,6 +1214,40 @@ mod tests {
         // Check attributes are present
         assert!(output.contains("fill=\"red\"") || output.contains("stroke=\"black\""));
         assert!(output.contains("fill=\"blue\""));
+    }
+
+    #[test]
+    fn test_build_svg_from_json_supports_line_and_text_alignment_attrs() {
+        let elements = serde_json::json!([
+            {
+                "type": "line",
+                "x1": 10.0,
+                "y1": 20.0,
+                "x2": 120.0,
+                "y2": 80.0,
+                "stroke": "#00e5ff",
+                "stroke_width": 6.0,
+                "stroke_linecap": "round"
+            },
+            {
+                "type": "text",
+                "x": 100.0,
+                "y": 140.0,
+                "content": "OpenZ",
+                "fill": "#ffffff",
+                "font_size": 42.0,
+                "font_family": "JetBrains Mono",
+                "font_weight": 800,
+                "text_anchor": "middle"
+            }
+        ]);
+
+        let svg = build_svg_from_json(200, 180, &elements).unwrap();
+        assert!(svg.contains("<line x1=\"10\" y1=\"20\" x2=\"120\" y2=\"80\""));
+        assert!(svg.contains("stroke-width=\"6\""));
+        assert!(svg.contains("stroke-linecap=\"round\""));
+        assert!(svg.contains("font-weight=\"800\""));
+        assert!(svg.contains("text-anchor=\"middle\""));
     }
 
     #[test]

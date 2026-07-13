@@ -84,12 +84,99 @@ fn parse_json_string_fields(arguments: &Value, fields: &[&str]) -> Value {
     }
 }
 
+fn normalize_create_svg_arguments(arguments: &Value) -> Value {
+    let Some(obj) = arguments.as_object() else {
+        return arguments.clone();
+    };
+
+    let mut normalized = obj.clone();
+    if !normalized.contains_key("elements") {
+        if let Some(shapes) = normalized.remove("shapes") {
+            normalized.insert("elements".to_string(), shapes);
+        }
+    } else {
+        normalized.remove("shapes");
+    }
+
+    if let Some(parsed) = normalized
+        .get("elements")
+        .and_then(parse_embedded_json_string)
+    {
+        normalized.insert("elements".to_string(), parsed);
+    }
+
+    if let Some(elements) = normalized
+        .get_mut("elements")
+        .and_then(|v| v.as_array_mut())
+    {
+        for element in elements {
+            if let Some(map) = element.as_object_mut() {
+                if map.get("type").and_then(|v| v.as_str()) == Some("text")
+                    && !map.contains_key("content")
+                {
+                    if let Some(text) = map.remove("text") {
+                        map.insert("content".to_string(), text);
+                    }
+                }
+                if let Some(stroke_width) = map.remove("strokeWidth") {
+                    map.insert("stroke_width".to_string(), stroke_width);
+                }
+                if let Some(text_anchor) = map.remove("textAnchor") {
+                    map.insert("text_anchor".to_string(), text_anchor);
+                }
+                if let Some(font_size) = map.remove("fontSize") {
+                    map.insert("font_size".to_string(), font_size);
+                }
+                if let Some(font_family) = map.remove("fontFamily") {
+                    map.insert("font_family".to_string(), font_family);
+                }
+                if let Some(font_weight) = map.remove("fontWeight") {
+                    map.insert("font_weight".to_string(), font_weight);
+                }
+                if let Some(stroke_linecap) = map.remove("strokeLinecap") {
+                    map.insert("stroke_linecap".to_string(), stroke_linecap);
+                }
+            }
+        }
+    }
+
+    Value::Object(normalized)
+}
+
+fn create_svg_parameter_schema() -> Value {
+    let example = json!([
+        {"type": "rect", "x": 0, "y": 0, "width": 800, "height": 600, "fill": "#07050a"},
+        {"type": "circle", "cx": 400, "cy": 220, "r": 96, "fill": "#111827", "stroke": "#00e5ff", "stroke_width": 4, "opacity": 0.9},
+        {"type": "line", "x1": 290, "y1": 170, "x2": 510, "y2": 270, "stroke": "#b366ff", "stroke_width": 18, "stroke_linecap": "round"},
+        {"type": "text", "x": 400, "y": 410, "content": "OpenZ", "fill": "#ffffff", "font_size": 72, "font_family": "JetBrains Mono", "font_weight": 800, "text_anchor": "middle"}
+    ]);
+    json!({
+        "type": "object",
+        "properties": {
+            "width": { "type": "integer", "minimum": 1, "description": "SVG canvas width in pixels." },
+            "height": { "type": "integer", "minimum": 1, "description": "SVG canvas height in pixels." },
+            "elements": {
+                "type": "array",
+                "description": "SVG element list. Valid type values: rect, circle, line, text. Text uses content (or alias text), x, y, fill, font_size, font_family, font_weight, text_anchor. Use line for diagonals and separators. Use centered coordinates and text_anchor=middle for aligned logos.",
+                "examples": [example]
+            },
+            "shapes": { "type": "array", "description": "Alias for elements; normalized before execution." },
+            "output_path": { "type": "string", "description": "Optional path where OpenZ should copy the generated SVG after OpenMedia creates it." }
+        },
+        "required": ["width", "height"],
+        "anyOf": [
+            { "required": ["elements"] },
+            { "required": ["shapes"] }
+        ]
+    })
+}
+
 fn normalize_openmedia_arguments(tool_name: &str, arguments: &Value) -> Value {
     match tool_name {
         "openmedia_diagram_generate_mermaid" => {
             parse_json_string_fields(arguments, &["custom_theme"])
         }
-        "openmedia_create_svg" => parse_json_string_fields(arguments, &["elements"]),
+        "openmedia_create_svg" => normalize_create_svg_arguments(arguments),
         "openmedia_image_batch_process" => parse_json_string_fields(arguments, &["operations"]),
         "openmedia_video_from_template" => parse_json_string_fields(arguments, &["parameters"]),
         "openmedia_template_create" => {
@@ -284,13 +371,63 @@ define_openmedia_tool!(
     openmedia_mcp::HtmlToImageRequest,
     html_to_image
 );
-define_openmedia_tool!(
-    OpenMediaCreateSvgTool,
-    "openmedia_create_svg",
-    "Generate custom SVG layouts from a list of shapes.",
-    openmedia_mcp::CreateSvgRequest,
-    create_svg
-);
+pub struct OpenMediaCreateSvgTool;
+
+#[async_trait::async_trait]
+impl crate::tools::Tool for OpenMediaCreateSvgTool {
+    fn name(&self) -> &str {
+        "openmedia_create_svg"
+    }
+
+    fn description(&self) -> &str {
+        "Generate custom SVG layouts from JSON elements. Supports rect, circle, line, and text; includes alias normalization for shapes and text content."
+    }
+
+    fn parameters(&self) -> Value {
+        create_svg_parameter_schema()
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let mut normalized = normalize_create_svg_arguments(arguments);
+        let output_path = normalized
+            .as_object_mut()
+            .and_then(|obj| obj.remove("output_path"))
+            .and_then(|v| v.as_str().map(|s| s.to_string()));
+
+        let req: openmedia_mcp::CreateSvgRequest = serde_json::from_value(normalized)?;
+        let Json(McpObject(mut res)) = get_server()
+            .await
+            .create_svg(Parameters(req))
+            .await
+            .map_err(map_mcp_err)?;
+
+        if let Some(output_path) = output_path {
+            if let Some(src_path) = res
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+            {
+                let target = crate::config::resolve_path(&output_path);
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&src_path, &target)?;
+                if let Some(obj) = res.as_object_mut() {
+                    obj.insert(
+                        "path".to_string(),
+                        serde_json::Value::String(target.to_string_lossy().to_string()),
+                    );
+                    obj.insert(
+                        "copied_from".to_string(),
+                        serde_json::Value::String(src_path.to_string()),
+                    );
+                }
+            }
+        }
+
+        Ok(res)
+    }
+}
 define_openmedia_tool!(
     OpenMediaCreateChartTool,
     "openmedia_create_chart",
@@ -591,6 +728,7 @@ impl crate::tools::Tool for OpenMediaPingTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::Tool;
 
     fn minimal_video_scene() -> Value {
         json!({
@@ -627,6 +765,44 @@ mod tests {
             &json!({ "width": 100, "height": 100, "elements": "[]" }),
         );
         assert!(svg["elements"].as_array().is_some());
+    }
+
+    #[test]
+    fn test_openmedia_create_svg_args_accept_aliases_and_text_content() {
+        let normalized = normalize_openmedia_arguments(
+            "openmedia_create_svg",
+            &json!({
+                "width": 800,
+                "height": 600,
+                "shapes": [
+                    {"type": "line", "x1": 10, "y1": 20, "x2": 200, "y2": 20, "stroke": "#00e5ff"},
+                    {"type": "text", "x": 400, "y": 320, "text": "OpenZ", "fill": "#ffffff"}
+                ]
+            }),
+        );
+
+        assert!(normalized.get("shapes").is_none());
+        assert_eq!(normalized["elements"][0]["type"], "line");
+        assert_eq!(normalized["elements"][1]["content"], "OpenZ");
+        assert!(normalized["elements"][1].get("text").is_none());
+    }
+
+    #[test]
+    fn test_openmedia_create_svg_schema_includes_examples_and_output_path() {
+        let tool = OpenMediaCreateSvgTool;
+        let schema = tool.parameters();
+        assert!(schema["properties"]["elements"]["examples"]
+            .as_array()
+            .is_some());
+        assert_eq!(
+            schema["properties"]["elements"]["examples"][0][0]["type"],
+            "rect"
+        );
+        assert_eq!(
+            schema["properties"]["elements"]["examples"][0][2]["type"],
+            "line"
+        );
+        assert!(schema["properties"]["output_path"].is_object());
     }
 
     #[test]

@@ -205,6 +205,18 @@ mod tests {
     }
 
     #[test]
+    fn openmedia_svg_errors_get_schema_specific_hint() {
+        let hint = generate_self_healing_hint(
+            "openmedia_create_svg",
+            "MCP Error: missing field `content`",
+        );
+        assert!(hint.contains("width"));
+        assert!(hint.contains("elements"));
+        assert!(hint.contains("content"));
+        assert!(hint.contains("text_anchor"));
+    }
+
+    #[test]
     fn openmedia_video_errors_get_schema_specific_hint() {
         let hint = generate_self_healing_hint(
             "openmedia_video_create",
@@ -281,6 +293,10 @@ pub(crate) fn generate_self_healing_hint(tool_name: &str, error_str: &str) -> St
 
     if tool_lower == "openmedia_video_create" || tool_lower == "openmedia_video_preview" {
         return "OpenMedia VideoScene schema: pass `scene` as a structured object or `scene_path` as a .json file. Top level requires width, height, fps, duration, background, scenes. Each scene requires id, start, end, elements. Text elements use type=text with content, position {x,y}, anchor, and style.font_family, style.font_size, style.font_weight (number), style.color, style.text_align. Valid transition types include crossfade, dissolve, blur, glitch, radial_wipe; do not use fade_in/fade_out as transitions or rect/circle as element types.".to_string();
+    }
+
+    if tool_lower == "openmedia_create_svg" {
+        return "OpenMedia SVG schema: pass width, height, and elements (or alias shapes). Valid element type values are rect, circle, line, and text. Text uses content (alias text is accepted by OpenZ), x, y, fill, font_size, font_family, font_weight, and text_anchor=middle for centered logos. Use line with stroke, stroke_width, and stroke_linecap for diagonals instead of unsupported path-like guesses. Optional output_path copies the generated SVG to your requested location.".to_string();
     }
 
     if err_lower.contains("mcp")
