@@ -168,9 +168,9 @@ pub async fn handle_changelog() -> Result<()> {
         green = AURA_GREEN,
         reset = COLOR_RESET
     );
-    println!("    • Added size-aware cleanup and quotas for stale OpenZ subagent worktrees.");
-    println!("    • Fixed idle Ctrl+C / exit shutdown hangs by bounding gateway cleanup.");
-    println!("    • Added structured subagent lifecycle statuses and version drift tests.");
+    println!("    • Hardened OpenMedia video schemas with concrete examples and better self-healing hints.");
+    println!("    • Fixed scene_path loop detection by fingerprinting scene JSON file contents.");
+    println!("    • Added html_to_video render planning and clearer TUI duration/FPS/frame display.");
 
     println!(
         "  {slate}[v0.0.40]{reset}",

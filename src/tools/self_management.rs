@@ -15,26 +15,26 @@ fn is_placeholder_mock_args(value: &Value) -> bool {
 
 fn minimal_openmedia_video_scene() -> Value {
     serde_json::json!({
-        "width": 320,
-        "height": 240,
+        "width": 640,
+        "height": 360,
         "fps": 1,
         "duration": 1.0,
-        "background": "#000000",
+        "background": "#1e293b",
         "scenes": [{
             "id": "scene_1",
             "start": 0.0,
             "end": 1.0,
             "elements": [{
                 "type": "text",
-                "content": "OpenMedia",
+                "content": "OpenZ",
                 "style": {
                     "font_family": "sans-serif",
-                    "font_size": 24.0,
-                    "font_weight": 400,
+                    "font_size": 48.0,
+                    "font_weight": 800,
                     "color": "#ffffff",
                     "text_align": "center"
                 },
-                "position": { "x": 160.0, "y": 120.0 },
+                "position": { "x": 320.0, "y": 180.0 },
                 "anchor": "center",
                 "timeline": null
             }]
@@ -1585,13 +1585,31 @@ mod tests {
             "openmedia_video_create",
             serde_json::json!({ "test": true }),
         );
-        assert_eq!(create_args["scene"]["width"], 320);
+        assert_eq!(create_args["scene"]["width"], 640);
         assert!(create_args.get("test").is_none());
 
         let preview_args =
             normalize_diagnose_mock_args("openmedia_video_preview", serde_json::json!({}));
         assert_eq!(preview_args["scene"]["fps"], 1);
         assert_eq!(preview_args["output_format"], "png");
+    }
+
+    #[test]
+    fn test_diagnose_openmedia_video_placeholder_is_visible() {
+        let args = normalize_diagnose_mock_args("openmedia_video_create", serde_json::json!({}));
+        assert_eq!(args["scene"]["background"], "#1e293b");
+        assert_eq!(
+            args["scene"]["scenes"][0]["elements"][0]["content"],
+            "OpenZ"
+        );
+        assert_eq!(
+            args["scene"]["scenes"][0]["elements"][0]["style"]["font_size"],
+            48.0
+        );
+        assert_eq!(
+            args["scene"]["scenes"][0]["elements"][0]["style"]["font_weight"],
+            800
+        );
     }
 
     #[test]

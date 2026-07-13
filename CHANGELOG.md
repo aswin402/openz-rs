@@ -398,7 +398,17 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.44 (Latest Release)
+### v0.0.45 (Latest Release)
+*   **Fix: Media tool robustness and guidance:** Hardened OpenMedia and HTML video workflows so agents stop guessing schemas and starting doomed long renders.
+    *   Added a concrete valid `openmedia_video_create` / `openmedia_video_preview` scene example to the exposed schema, including required scene, text element, style, position, anchor, and transition rules.
+    *   Brightened `diagnose_tool` OpenMedia placeholder scenes so video diagnostics produce visible output instead of near-black tiny text.
+    *   Added OpenMedia-specific self-healing hints for common schema errors such as missing `anchor`, invalid transition names, numeric `font_weight`, and wrong element types.
+    *   Changed loop detection to fingerprint `scene_path` file contents, preventing false duplicate blocks after a scene JSON file is edited while preserving duplicate blocking for unchanged files.
+    *   Added `html_to_video` render planning: direct renders above 300 frames now fail fast with guidance to segment, lower FPS, use OpenMedia templates, or explicitly set `allow_long_render`.
+    *   Improved TUI display for `html_to_video` calls to show duration, FPS, and total frame count.
+*   **Chore:** Bumped version to `v0.0.45`.
+
+### v0.0.44
 *   **Fix: Subagent lifecycle status output:** Compact subagent TUI status lines now show `name | model | status` for completion, cancellation, and failures instead of generic or repeated status text.
     *   Added an explicit `cancelling` lifecycle line when Esc/Ctrl+C cancellation reaches delegate task/profile runs.
     *   Kept cancellation propagation tests green for both `delegate_task` and profile-backed subagent tools.

@@ -146,6 +146,37 @@ fn normalize_video_scene_arguments(arguments: &Value) -> Value {
     arguments.clone()
 }
 
+fn minimal_video_scene_example() -> Value {
+    json!({
+        "width": 1280,
+        "height": 720,
+        "fps": 24,
+        "duration": 2.0,
+        "background": "#1e293b",
+        "scenes": [{
+            "id": "scene_1",
+            "start": 0.0,
+            "end": 2.0,
+            "elements": [{
+                "type": "text",
+                "content": "OpenZ",
+                "style": {
+                    "font_family": "sans-serif",
+                    "font_size": 72.0,
+                    "font_weight": 800,
+                    "color": "#ffffff",
+                    "text_align": "center"
+                },
+                "position": { "x": 640.0, "y": 360.0 },
+                "anchor": "center",
+                "timeline": null
+            }]
+        }],
+        "transitions": [],
+        "audio": null
+    })
+}
+
 fn video_scene_parameter_schema(include_preview_fields: bool) -> Value {
     let mut properties = serde_json::Map::new();
     properties.insert(
@@ -161,15 +192,36 @@ fn video_scene_parameter_schema(include_preview_fields: bool) -> Value {
                         "height": { "type": "integer", "minimum": 1 },
                         "fps": { "type": "integer", "minimum": 1 },
                         "duration": { "type": "number", "exclusiveMinimum": 0 },
-                        "background": { "type": "string" },
-                        "scenes": { "type": "array" },
-                        "transitions": { "type": "array" },
+                        "background": { "type": "string", "description": "Canvas background color. Prefer visible colors such as #1e293b over near-black unless the design intentionally needs it." },
+                        "scenes": {
+                            "type": "array",
+                            "description": "Timeline scenes. Each scene requires id, start, end, and elements.",
+                            "items": {
+                                "type": "object",
+                                "required": ["id", "start", "end", "elements"],
+                                "properties": {
+                                    "id": { "type": "string" },
+                                    "start": { "type": "number", "description": "Start time in seconds." },
+                                    "end": { "type": "number", "description": "End time in seconds." },
+                                    "elements": {
+                                        "type": "array",
+                                        "description": "Scene elements. Valid type values: text, image, shape, svg, group, html, code, chart. Text elements require content, style.font_family, style.font_size, style.font_weight as a number, style.color, style.text_align, position, and anchor. Do not use rect/circle as element types; use type=shape with a shape field."
+                                    },
+                                    "animations": { "type": "array" }
+                                }
+                            }
+                        },
+                        "transitions": {
+                            "type": "array",
+                            "description": "Optional scene transitions. Valid type values include none, crossfade, slide_left, slide_right, slide_up, slide_down, zoom_in, zoom_out, wipe_left, wipe_right, wipe_up, wipe_down, dissolve, iris_in, iris_out, blur, glitch, radial_wipe. Do not use fade_in/fade_out as transition types."
+                        },
                         "audio": { "type": ["object", "null"] },
                         "custom_fonts": { "type": ["array", "null"] }
                     }
                 },
                 { "type": "string" }
-            ]
+            ],
+            "examples": [minimal_video_scene_example()]
         }),
     );
     properties.insert(
@@ -575,6 +627,27 @@ mod tests {
             &json!({ "width": 100, "height": 100, "elements": "[]" }),
         );
         assert!(svg["elements"].as_array().is_some());
+    }
+
+    #[test]
+    fn test_openmedia_video_schema_includes_valid_scene_example_and_element_contract() {
+        let schema = video_scene_parameter_schema(false);
+        let scene_param_schema = &schema["properties"]["scene"];
+        assert!(scene_param_schema["examples"].as_array().is_some());
+        let example = &scene_param_schema["examples"][0];
+        let scene_schema = &scene_param_schema["anyOf"][0];
+        assert_eq!(example["scenes"][0]["id"], "scene_1");
+        assert_eq!(example["scenes"][0]["start"], 0.0);
+        assert_eq!(example["scenes"][0]["end"], 2.0);
+        assert_eq!(example["scenes"][0]["elements"][0]["type"], "text");
+        assert_eq!(example["scenes"][0]["elements"][0]["content"], "OpenZ");
+        assert_eq!(
+            example["scenes"][0]["elements"][0]["style"]["font_weight"],
+            800
+        );
+        assert!(
+            scene_schema["properties"]["scenes"]["items"]["properties"]["elements"].is_object()
+        );
     }
 
     #[test]

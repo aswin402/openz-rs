@@ -953,14 +953,23 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 result: result_val,
             });
 
-            assistant_tool_calls_json.push(serde_json::json!({
+            let mut assistant_tool_call = serde_json::json!({
                 "id": call.id,
                 "type": "function",
                 "function": {
                     "name": call.name,
                     "arguments": call.arguments.to_string()
                 }
-            }));
+            });
+            if let Some(fingerprint) = super::loop_control::tool_arg_fingerprint(&call.arguments) {
+                if let Some(obj) = assistant_tool_call.as_object_mut() {
+                    obj.insert(
+                        "_openz_arg_fingerprint".to_string(),
+                        serde_json::Value::String(fingerprint),
+                    );
+                }
+            }
+            assistant_tool_calls_json.push(assistant_tool_call);
         }
 
         super::transcript::append_assistant_tool_calls(

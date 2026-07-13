@@ -12,6 +12,60 @@ use tokio::time::sleep;
 
 pub struct HtmlToVideoTool;
 
+const DEFAULT_MAX_DIRECT_FRAMES: usize = 300;
+
+#[derive(Debug, Clone, Copy)]
+struct HtmlVideoRenderPlan {
+    total_frames: usize,
+    duration_seconds: f64,
+    fps: i64,
+    settle_ms: u64,
+    load_delay_ms: i64,
+}
+
+impl HtmlVideoRenderPlan {
+    fn new(duration_seconds: f64, fps: i64, settle_ms: u64, load_delay_ms: i64) -> Result<Self> {
+        if duration_seconds <= 0.0 {
+            return Err(anyhow!("duration_seconds must be greater than zero"));
+        }
+        if fps <= 0 {
+            return Err(anyhow!("fps must be greater than zero"));
+        }
+        let total_frames = (duration_seconds * fps as f64).round() as usize;
+        if total_frames == 0 {
+            return Err(anyhow!(
+                "Total frames cannot be zero. Adjust duration or FPS."
+            ));
+        }
+        Ok(Self {
+            total_frames,
+            duration_seconds,
+            fps,
+            settle_ms,
+            load_delay_ms,
+        })
+    }
+
+    fn exceeds_default_direct_limit(&self) -> bool {
+        self.total_frames > DEFAULT_MAX_DIRECT_FRAMES
+    }
+
+    fn minimum_settle_seconds(&self) -> f64 {
+        (self.total_frames as f64 * self.settle_ms as f64 + self.load_delay_ms.max(0) as f64)
+            / 1000.0
+    }
+
+    fn guidance(&self) -> String {
+        format!(
+            "html_to_video would capture {} frames ({:.1}s at {} FPS). Minimum settle/load wait is ~{:.1}s before screenshot and ffmpeg overhead. This likely exceeds the default tool timeout for long videos. Use render segments (for example 10s chunks), lower fps, use OpenMedia templates for long declarative videos, or set allow_long_render=true only when tool_timeout_secs is high enough.",
+            self.total_frames,
+            self.duration_seconds,
+            self.fps,
+            self.minimum_settle_seconds()
+        )
+    }
+}
+
 struct ServerGuard(Option<tokio::task::JoinHandle<()>>);
 
 impl Drop for ServerGuard {
@@ -71,6 +125,10 @@ impl Tool for HtmlToVideoTool {
                 "load_delay_ms": {
                     "type": "integer",
                     "description": "Initial delay in milliseconds to wait for the page to load before capturing frames (default: 1500)."
+                },
+                "allow_long_render": {
+                    "type": "boolean",
+                    "description": "Set true to bypass the default direct-render frame guard. Use only when tool_timeout_secs is high enough; otherwise render in <=10s segments."
                 }
             },
             "required": ["html_path"]
@@ -114,12 +172,15 @@ impl Tool for HtmlToVideoTool {
             .and_then(|v| v.as_i64())
             .unwrap_or(1500);
 
-        let total_frames = (duration_secs * fps as f64).round() as usize;
-        if total_frames == 0 {
-            return Err(anyhow!(
-                "Total frames cannot be zero. Adjust duration or FPS."
-            ));
+        let render_plan = HtmlVideoRenderPlan::new(duration_secs, fps, settle_ms, load_delay_ms)?;
+        let allow_long_render = arguments
+            .get("allow_long_render")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if render_plan.exceeds_default_direct_limit() && !allow_long_render {
+            return Err(anyhow!(render_plan.guidance()));
         }
+        let total_frames = render_plan.total_frames;
 
         let mut _server_guard = ServerGuard(None);
         let target_url =
@@ -344,4 +405,25 @@ async fn force_utf8(
         }
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_plan_flags_30_second_30fps_as_too_large_for_direct_default_render() {
+        let plan = HtmlVideoRenderPlan::new(30.0, 30, 30, 1500).unwrap();
+        assert_eq!(plan.total_frames, 900);
+        assert!(plan.exceeds_default_direct_limit());
+        assert!(plan.guidance().contains("render segments"));
+        assert!(plan.guidance().contains("900 frames"));
+    }
+
+    #[test]
+    fn render_plan_allows_10_second_30fps_direct_render() {
+        let plan = HtmlVideoRenderPlan::new(10.0, 30, 30, 1500).unwrap();
+        assert_eq!(plan.total_frames, 300);
+        assert!(!plan.exceeds_default_direct_limit());
+    }
 }

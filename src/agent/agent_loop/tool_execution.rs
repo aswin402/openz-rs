@@ -221,7 +221,21 @@ pub(crate) fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 .file_name()
                 .map(|f| f.to_string_lossy().to_string())
                 .unwrap_or_else(|| out_path.to_string());
-            format!("html: \"{}\", output: \"{}\"", html_filename, out_filename)
+            let duration = map
+                .get("duration_seconds")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(5.0);
+            let fps = map.get("fps").and_then(|v| v.as_i64()).unwrap_or(30);
+            let frames = (duration * fps as f64).round() as usize;
+            let duration_display = if duration.fract() == 0.0 {
+                format!("{:.0}", duration)
+            } else {
+                format!("{:.1}", duration)
+            };
+            format!(
+                "html: \"{}\", output: \"{}\", duration: {}s, fps: {}, frames: {}",
+                html_filename, out_filename, duration_display, fps, frames
+            )
         } else if name == "create_animated_svg" {
             let path = map
                 .get("output_path")
@@ -599,5 +613,27 @@ fn error_value_with_hint(tool_name: &str, error_str: &str) -> serde_json::Value 
             "error": error_str,
             "self_healing_suggestion": hint
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn html_to_video_formatter_shows_timeline_cost() {
+        let formatted = format_tool_args(
+            "html_to_video",
+            &json!({
+                "html_path": "/tmp/intro.html",
+                "output_path": "/tmp/intro.mp4",
+                "duration_seconds": 30,
+                "fps": 30
+            }),
+        );
+        assert!(formatted.contains("duration: 30s"));
+        assert!(formatted.contains("fps: 30"));
+        assert!(formatted.contains("frames: 900"));
     }
 }
