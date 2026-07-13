@@ -169,6 +169,19 @@ pub async fn handle_changelog() -> Result<()> {
         reset = COLOR_RESET
     );
     println!(
+        "    • Added dominant_baseline support for OpenMedia SVG and animated SVG text."
+    );
+    println!(
+        "    • Defaulted generated logo text to centered horizontal + vertical alignment."
+    );
+    println!("    • Added camelCase baseline aliases for OpenMedia SVG argument normalization.");
+
+    println!(
+        "  {slate}[v0.0.47]{reset}",
+        slate = AURA_SLATE,
+        reset = COLOR_RESET
+    );
+    println!(
         "    • Hardened SearchXyz with max_chars output budgets and truncation metadata."
     );
     println!(

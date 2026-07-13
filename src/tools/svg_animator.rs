@@ -437,6 +437,10 @@ fn parse_element(elem: &Value) -> Option<SvgElement> {
                 .get("text_anchor")
                 .and_then(|v| v.as_str())
                 .unwrap_or("middle");
+            let dominant_baseline = elem
+                .get("dominant_baseline")
+                .and_then(|v| v.as_str())
+                .unwrap_or(if text_anchor == "middle" { "middle" } else { "auto" });
             let opacity = elem.get("opacity").and_then(|v| v.as_str()).unwrap_or("1");
             SvgElement::new("text")
                 .attr("x", x)
@@ -445,6 +449,7 @@ fn parse_element(elem: &Value) -> Option<SvgElement> {
                 .attr("font-family", font_family)
                 .attr("fill", fill)
                 .attr("text-anchor", text_anchor)
+                .attr("dominant-baseline", dominant_baseline)
                 .attr("opacity", opacity)
                 .text(content)
         }
@@ -880,6 +885,7 @@ impl Tool for SvgAnimatorTool {
                             "font_size": { "type": "string" },
                             "font_family": { "type": "string" },
                             "text_anchor": { "type": "string", "description": "start | middle | end" },
+                            "dominant_baseline": { "type": "string", "description": "auto | middle | central | hanging | text-before-edge | text-after-edge" },
                             "children": {
                                 "type": "array",
                                 "description": "Child elements (for group shape)",
@@ -1054,6 +1060,7 @@ mod tests {
         assert!(content.contains("<circle"));
         assert!(content.contains("animateTransform"));
         assert!(content.contains("animate"));
+        assert!(content.contains("dominant-baseline=\"middle\""));
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())

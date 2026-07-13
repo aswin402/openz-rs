@@ -956,9 +956,13 @@ pub fn build_svg_from_json(
                 font_family,
                 font_weight,
                 text_anchor,
+                dominant_baseline,
                 opacity,
             } => {
                 let mut text = builder.text(x, y, &content);
+                let default_middle_baseline = matches!(text_anchor.as_deref(), Some("middle"));
+                let dominant_baseline = dominant_baseline
+                    .or_else(|| default_middle_baseline.then(|| "middle".to_string()));
                 if let Some(f) = fill {
                     text = text.fill(&f);
                 }
@@ -974,6 +978,10 @@ pub fn build_svg_from_json(
                 }
                 if let Some(anchor) = text_anchor {
                     text.attrs.insert("text-anchor".to_string(), anchor);
+                }
+                if let Some(baseline) = dominant_baseline {
+                    text.attrs
+                        .insert("dominant-baseline".to_string(), baseline);
                 }
                 if let Some(opacity) = opacity {
                     text.attrs
@@ -1248,6 +1256,7 @@ mod tests {
         assert!(svg.contains("stroke-linecap=\"round\""));
         assert!(svg.contains("font-weight=\"800\""));
         assert!(svg.contains("text-anchor=\"middle\""));
+        assert!(svg.contains("dominant-baseline=\"middle\""));
     }
 
     #[test]

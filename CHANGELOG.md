@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.47 (Latest Release)
+### v0.0.48 (Latest Release)
+*   **Fix: OpenMedia SVG text alignment:** Improved SVG/animated SVG logo quality by making centered text vertically align correctly by default.
+    *   Added `dominant_baseline` support to OpenMedia SVG JSON text elements and emitted it as `dominant-baseline` in SVG output.
+    *   Added OpenZ normalization for `dominantBaseline` / `alignmentBaseline` camelCase aliases.
+    *   Defaulted OpenZ `openmedia_create_svg` text elements to `text_anchor=middle` and `dominant_baseline=middle` unless explicitly overridden, improving generated logo alignment from common prompts.
+    *   Added `dominant_baseline` support to `create_animated_svg` text elements and defaulted centered animated text to a middle baseline.
+*   **Chore:** Bumped version to `v0.0.48`.
+
+### v0.0.47
 *   **Fix: SearchXyz safety, persistence, and resource controls:** Hardened SearchXyz so web research, GitHub repo ingestion, and destructive maintenance tools behave safely and remain immediately searchable.
     *   Added `max_chars` output budgets for `read_url`, `search_and_read`, `deep_research`, `read_github_repo`, and `export_research`, with explicit truncation metadata.
     *   Added GitHub repository ingestion limits: `max_files`, `max_total_bytes`, and per-command `git_timeout_secs` with bounded defaults and caps.

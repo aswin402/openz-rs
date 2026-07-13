@@ -124,6 +124,12 @@ fn normalize_create_svg_arguments(arguments: &Value) -> Value {
                 if let Some(text_anchor) = map.remove("textAnchor") {
                     map.insert("text_anchor".to_string(), text_anchor);
                 }
+                if let Some(dominant_baseline) = map.remove("dominantBaseline") {
+                    map.insert("dominant_baseline".to_string(), dominant_baseline);
+                }
+                if let Some(alignment_baseline) = map.remove("alignmentBaseline") {
+                    map.insert("dominant_baseline".to_string(), alignment_baseline);
+                }
                 if let Some(font_size) = map.remove("fontSize") {
                     map.insert("font_size".to_string(), font_size);
                 }
@@ -135,6 +141,22 @@ fn normalize_create_svg_arguments(arguments: &Value) -> Value {
                 }
                 if let Some(stroke_linecap) = map.remove("strokeLinecap") {
                     map.insert("stroke_linecap".to_string(), stroke_linecap);
+                }
+                if map.get("type").and_then(|v| v.as_str()) == Some("text") {
+                    if !map.contains_key("text_anchor") {
+                        map.insert(
+                            "text_anchor".to_string(),
+                            serde_json::Value::String("middle".to_string()),
+                        );
+                    }
+                    if !map.contains_key("dominant_baseline")
+                        && map.get("text_anchor").and_then(|v| v.as_str()) == Some("middle")
+                    {
+                        map.insert(
+                            "dominant_baseline".to_string(),
+                            serde_json::Value::String("middle".to_string()),
+                        );
+                    }
                 }
             }
         }
@@ -148,7 +170,7 @@ fn create_svg_parameter_schema() -> Value {
         {"type": "rect", "x": 0, "y": 0, "width": 800, "height": 600, "fill": "#07050a"},
         {"type": "circle", "cx": 400, "cy": 220, "r": 96, "fill": "#111827", "stroke": "#00e5ff", "stroke_width": 4, "opacity": 0.9},
         {"type": "line", "x1": 290, "y1": 170, "x2": 510, "y2": 270, "stroke": "#b366ff", "stroke_width": 18, "stroke_linecap": "round"},
-        {"type": "text", "x": 400, "y": 410, "content": "OpenZ", "fill": "#ffffff", "font_size": 72, "font_family": "JetBrains Mono", "font_weight": 800, "text_anchor": "middle"}
+        {"type": "text", "x": 400, "y": 410, "content": "OpenZ", "fill": "#ffffff", "font_size": 72, "font_family": "JetBrains Mono", "font_weight": 800, "text_anchor": "middle", "dominant_baseline": "middle"}
     ]);
     json!({
         "type": "object",
@@ -157,7 +179,7 @@ fn create_svg_parameter_schema() -> Value {
             "height": { "type": "integer", "minimum": 1, "description": "SVG canvas height in pixels." },
             "elements": {
                 "type": "array",
-                "description": "SVG element list. Valid type values: rect, circle, line, text. Text uses content (or alias text), x, y, fill, font_size, font_family, font_weight, text_anchor. Use line for diagonals and separators. Use centered coordinates and text_anchor=middle for aligned logos.",
+                "description": "SVG element list. Valid type values: rect, circle, line, text. Text uses content (or alias text), x, y, fill, font_size, font_family, font_weight, text_anchor, dominant_baseline. Use line for diagonals and separators. Use centered coordinates with text_anchor=middle and dominant_baseline=middle for aligned logos.",
                 "examples": [example]
             },
             "shapes": { "type": "array", "description": "Alias for elements; normalized before execution." },
@@ -784,6 +806,8 @@ mod tests {
         assert!(normalized.get("shapes").is_none());
         assert_eq!(normalized["elements"][0]["type"], "line");
         assert_eq!(normalized["elements"][1]["content"], "OpenZ");
+        assert_eq!(normalized["elements"][1]["text_anchor"], "middle");
+        assert_eq!(normalized["elements"][1]["dominant_baseline"], "middle");
         assert!(normalized["elements"][1].get("text").is_none());
     }
 
@@ -802,6 +826,10 @@ mod tests {
             schema["properties"]["elements"]["examples"][0][2]["type"],
             "line"
         );
+        let description = schema["properties"]["elements"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(description.contains("dominant_baseline"));
         assert!(schema["properties"]["output_path"].is_object());
     }
 

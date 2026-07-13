@@ -43,6 +43,7 @@ pub enum JsonElement {
         font_family: Option<String>,
         font_weight: Option<u16>,
         text_anchor: Option<String>,
+        dominant_baseline: Option<String>,
         opacity: Option<f64>,
     },
 }
