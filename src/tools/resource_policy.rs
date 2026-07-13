@@ -130,6 +130,21 @@ pub fn ensure_artifact_write_allowed(action: &str) -> anyhow::Result<()> {
     }
 }
 
+pub fn is_low_disk_recovery_tool(tool_name: &str, arguments: &serde_json::Value) -> bool {
+    match tool_name {
+        "manage_sessions" => matches!(
+            arguments.get("action").and_then(|v| v.as_str()),
+            Some("list" | "prune")
+        ),
+        "cache_stats" | "clear_cache" => true,
+        _ => false,
+    }
+}
+
+pub fn is_free_disk_block(reason: &str) -> bool {
+    reason.contains("free disk") && reason.contains("below required minimum")
+}
+
 impl ToolResourcePolicy {
     pub fn evaluate(
         metadata: &ToolMetadata,
@@ -214,6 +229,30 @@ mod tests {
 
     fn defaults() -> AgentDefaults {
         AgentDefaults::default()
+    }
+
+    #[test]
+    fn low_disk_recovery_allows_only_safe_cleanup_actions() {
+        assert!(is_low_disk_recovery_tool(
+            "manage_sessions",
+            &serde_json::json!({ "action": "prune" })
+        ));
+        assert!(is_low_disk_recovery_tool(
+            "manage_sessions",
+            &serde_json::json!({ "action": "list" })
+        ));
+        assert!(is_low_disk_recovery_tool(
+            "clear_cache",
+            &serde_json::json!({})
+        ));
+        assert!(!is_low_disk_recovery_tool(
+            "manage_sessions",
+            &serde_json::json!({ "action": "delete" })
+        ));
+        assert!(!is_low_disk_recovery_tool(
+            "replace_lines",
+            &serde_json::json!({})
+        ));
     }
 
     #[test]

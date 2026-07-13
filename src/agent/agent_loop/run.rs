@@ -820,6 +820,27 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             );
 
                         match policy_decision {
+                            crate::tools::resource_policy::ToolResourceDecision::Block { reason }
+                                if crate::tools::resource_policy::is_free_disk_block(&reason)
+                                    && crate::tools::resource_policy::is_low_disk_recovery_tool(
+                                        &call.name,
+                                        &call.arguments,
+                                    ) =>
+                            {
+                                execute_approved_tool(ApprovedToolExec {
+                                    tool: t,
+                                    call: &call,
+                                    metadata: &metadata,
+                                    config: &config,
+                                    formatted_args: &formatted_args,
+                                    session_key: ctx.session_key,
+                                    silent,
+                                    tool_spinner_msg: &tool_spinner_msg,
+                                    turn_cancel: &turn_cancel,
+                                    turn_errors: &mut ctx.turn_errors,
+                                })
+                                .await
+                            }
                             crate::tools::resource_policy::ToolResourceDecision::Block { reason } => {
                                 let error_str = format!(
                                     "Tool blocked by resource policy: {}. {}",

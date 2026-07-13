@@ -1105,6 +1105,8 @@ impl Tool for ManageSessionsTool {
                 }))
             }
             "prune" => {
+                crate::tools::subagent::cleanup_stale_resources();
+
                 let older_than_days = arguments
                     .get("older_than_days")
                     .and_then(|v| v.as_u64())
@@ -1138,10 +1140,11 @@ impl Tool for ManageSessionsTool {
 
                 Ok(serde_json::json!({
                     "status": "success",
-                    "message": format!("Successfully pruned {} output files.", files_removed),
+                    "message": format!("Successfully pruned {} output files and ran stale worktree cleanup.", files_removed),
                     "details": {
                         "files_removed": files_removed,
-                        "bytes_reclaimed": bytes_reclaimed
+                        "bytes_reclaimed": bytes_reclaimed,
+                        "stale_worktree_cleanup_ran": true
                     }
                 }))
             }
