@@ -73,6 +73,26 @@ cleanup_stray_runtime_dbs() {
     fi
 }
 
+repair_corrupt_cargo_registry_sources() {
+    local src_root="$HOME/.cargo/registry/src"
+    [ -d "$src_root" ] || return 0
+
+    local repaired=0
+    while IFS= read -r crate_dir; do
+        [ -d "$crate_dir" ] || continue
+        # Cargo sometimes leaves a .cargo-ok marker after a failed unpack, but no Cargo.toml.
+        # Removing only that unpacked crate dir lets Cargo re-extract it from registry/cache.
+        if [ ! -f "$crate_dir/Cargo.toml" ]; then
+            rm -rf "$crate_dir"
+            repaired=$((repaired + 1))
+        fi
+    done < <(find "$src_root" -mindepth 2 -maxdepth 2 -type d 2>/dev/null)
+
+    if [ "$repaired" -gt 0 ]; then
+        echo "✅ Repaired $repaired corrupt Cargo registry source entr$( [ "$repaired" -eq 1 ] && echo y || echo ies )."
+    fi
+}
+
 
 
 # 1. Back up global openz data if present (skipping heavy cache/log directories)
@@ -95,11 +115,15 @@ fi
 echo "🧹 Checking for stray runtime databases in the working directory..."
 cleanup_stray_runtime_dbs
 
-# 2. Run pre-install validation
+# 2. Repair partial Cargo registry unpacks before compiling
+echo "🧰 Checking Cargo registry cache health..."
+repair_corrupt_cargo_registry_sources
+
+# 3. Run pre-install validation
 echo "🧪 Running compiler checks..."
 cargo check $CARGO_FLAGS
 
-# 3. Compile and install
+# 4. Compile and install
 echo "🔄 Re-compiling and installing new binary globally..."
 if ! cargo install $CARGO_FLAGS --locked --path .; then
     echo "⚠️ Online install failed (possibly crates.io registry timeout). Retrying in offline mode..."

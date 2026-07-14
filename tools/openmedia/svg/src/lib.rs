@@ -980,8 +980,7 @@ pub fn build_svg_from_json(
                     text.attrs.insert("text-anchor".to_string(), anchor);
                 }
                 if let Some(baseline) = dominant_baseline {
-                    text.attrs
-                        .insert("dominant-baseline".to_string(), baseline);
+                    text.attrs.insert("dominant-baseline".to_string(), baseline);
                 }
                 if let Some(opacity) = opacity {
                     text.attrs

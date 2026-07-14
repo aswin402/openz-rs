@@ -398,7 +398,17 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.48 (Latest Release)
+### v0.0.49 (Latest Release)
+*   **Feature: Headroom parity and hardening:** Brought the native Headroom tools closer to the original `agentcpower`/Headroom MCP behavior while keeping OpenZ's safer native execution model.
+    *   Added `threshold`, `signatures_only`, and `model_hint` compression controls for content, file, and directory compression workflows.
+    *   Added syntax-aware signature-only code compression so agents can preserve public structure while dropping function bodies.
+    *   Added FTS5-backed cache search, optional session metadata, TTL eviction, byte-budget eviction, and environment-controlled cache limits.
+    *   Added `headroom_stats` and `headroom_usage` analytics tools for compression history and model-attributed token savings.
+    *   Hardened Headroom path handling with sensitive-file blocks, optional `HEADROOM_WORKSPACE` enforcement, safer export/import paths, SSRF URL validation, bounded `run_and_compress`, and confirmation-gated cache clearing.
+    *   Expanded Headroom tests for security, FTS search, cache eviction, analytics logging, thresholds, and signature extraction.
+*   **Chore:** Bumped version to `v0.0.49`.
+
+### v0.0.48
 *   **Fix: OpenMedia SVG text alignment:** Improved SVG/animated SVG logo quality by making centered text vertically align correctly by default.
     *   Added `dominant_baseline` support to OpenMedia SVG JSON text elements and emitted it as `dominant-baseline` in SVG output.
     *   Added OpenZ normalization for `dominantBaseline` / `alignmentBaseline` camelCase aliases.

@@ -248,6 +248,12 @@ fn register_headroom_tools(registry: &ToolRegistry) {
     registry.register(std::sync::Arc::new(crate::tools::headroom::ServerInfoTool));
     registry.register(std::sync::Arc::new(crate::tools::headroom::CountTokensTool));
     registry.register(std::sync::Arc::new(crate::tools::headroom::CacheStatsTool));
+    registry.register(std::sync::Arc::new(
+        crate::tools::headroom::HeadroomStatsTool,
+    ));
+    registry.register(std::sync::Arc::new(
+        crate::tools::headroom::HeadroomUsageTool,
+    ));
     registry.register(std::sync::Arc::new(crate::tools::headroom::ClearCacheTool));
     registry.register(std::sync::Arc::new(crate::tools::headroom::SearchCacheTool));
     registry.register(std::sync::Arc::new(crate::tools::headroom::CacheAlignTool));

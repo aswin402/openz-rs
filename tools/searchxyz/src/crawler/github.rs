@@ -306,7 +306,9 @@ pub async fn clone_and_index_repo(
 
         // 2. Get old commit hash
         let mut old_commit_cmd = Command::new("git");
-        old_commit_cmd.args(["rev-parse", "HEAD"]).current_dir(&repo_dir);
+        old_commit_cmd
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&repo_dir);
         let old_commit_output = run_command_with_timeout(
             &mut old_commit_cmd,
             limits.git_timeout_secs,

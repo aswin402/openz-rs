@@ -73,6 +73,12 @@ mod tests {
         registry.register(std::sync::Arc::new(crate::tools::headroom::ServerInfoTool));
         registry.register(std::sync::Arc::new(crate::tools::headroom::CountTokensTool));
         registry.register(std::sync::Arc::new(crate::tools::headroom::CacheStatsTool));
+        registry.register(std::sync::Arc::new(
+            crate::tools::headroom::HeadroomStatsTool,
+        ));
+        registry.register(std::sync::Arc::new(
+            crate::tools::headroom::HeadroomUsageTool,
+        ));
         registry.register(std::sync::Arc::new(crate::tools::headroom::ClearCacheTool));
         registry.register(std::sync::Arc::new(crate::tools::headroom::SearchCacheTool));
         registry.register(std::sync::Arc::new(crate::tools::headroom::CacheAlignTool));
@@ -288,6 +294,8 @@ mod tests {
             "server_info",
             "count_tokens",
             "cache_stats",
+            "headroom_stats",
+            "headroom_usage",
             "clear_cache",
             "search_cache",
             "cache_align",
@@ -374,8 +382,8 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert_eq!(
-            headroom_count, 19,
-            "Expected 19 headroom tools, got {headroom_count}"
+            headroom_count, 21,
+            "Expected 21 headroom tools, got {headroom_count}"
         );
         assert_eq!(
             graph_mem_count, 12,
@@ -391,7 +399,7 @@ mod tests {
         );
         assert_eq!(
             names.len(),
-            5 + 19 + 12 + 31 + 7,
+            5 + 21 + 12 + 31 + 7,
             "Total tool count mismatch"
         );
     }

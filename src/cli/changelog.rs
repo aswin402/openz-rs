@@ -168,12 +168,17 @@ pub async fn handle_changelog() -> Result<()> {
         green = AURA_GREEN,
         reset = COLOR_RESET
     );
+    println!("    • Added Headroom parity controls: threshold, signatures_only, and model_hint.");
+    println!("    • Added headroom_stats/headroom_usage analytics plus FTS5 cache search.");
+    println!("    • Hardened Headroom cache, path, SSRF, workspace, and run_and_compress safety.");
+
     println!(
-        "    • Added dominant_baseline support for OpenMedia SVG and animated SVG text."
+        "  {slate}[v0.0.48]{reset}",
+        slate = AURA_SLATE,
+        reset = COLOR_RESET
     );
-    println!(
-        "    • Defaulted generated logo text to centered horizontal + vertical alignment."
-    );
+    println!("    • Added dominant_baseline support for OpenMedia SVG and animated SVG text.");
+    println!("    • Defaulted generated logo text to centered horizontal + vertical alignment.");
     println!("    • Added camelCase baseline aliases for OpenMedia SVG argument normalization.");
 
     println!(
@@ -181,9 +186,7 @@ pub async fn handle_changelog() -> Result<()> {
         slate = AURA_SLATE,
         reset = COLOR_RESET
     );
-    println!(
-        "    • Hardened SearchXyz with max_chars output budgets and truncation metadata."
-    );
+    println!("    • Hardened SearchXyz with max_chars output budgets and truncation metadata.");
     println!(
         "    • Added GitHub repo ingest limits: max_files, max_total_bytes, git_timeout_secs."
     );

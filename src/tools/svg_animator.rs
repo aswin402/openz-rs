@@ -440,7 +440,11 @@ fn parse_element(elem: &Value) -> Option<SvgElement> {
             let dominant_baseline = elem
                 .get("dominant_baseline")
                 .and_then(|v| v.as_str())
-                .unwrap_or(if text_anchor == "middle" { "middle" } else { "auto" });
+                .unwrap_or(if text_anchor == "middle" {
+                    "middle"
+                } else {
+                    "auto"
+                });
             let opacity = elem.get("opacity").and_then(|v| v.as_str()).unwrap_or("1");
             SvgElement::new("text")
                 .attr("x", x)

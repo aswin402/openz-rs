@@ -1,4 +1,8 @@
-use super::cache::{cache_content, evict_lru_if_needed, generate_ccr_id, get_cache_connection};
+use super::cache::{cache_content, get_cache_connection, log_compression};
+use super::policy::{
+    command_is_allowed, ensure_path_is_safe_for_headroom, resolve_user_path, MAX_RUN_OUTPUT_BYTES,
+    MAX_RUN_TIMEOUT_SECS,
+};
 use super::{estimate_tokens, MAX_INPUT_SIZE};
 use crate::agent::context_compactor;
 use crate::tools::Tool;
@@ -8,6 +12,7 @@ use rusqlite::params;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::Duration;
 
 // ─── Diff structures ─────────────────────────────────────────────
 
@@ -621,6 +626,60 @@ pub fn parse_simple_git_diff(text: &str) -> DiffSummary {
     parse_unified_diff(text)
 }
 
+fn compress_by_type(
+    raw_text: &str,
+    content_type: &str,
+    threshold: Option<usize>,
+    signatures_only: bool,
+    extension: &str,
+) -> String {
+    match content_type {
+        "json" => compress_json_with_threshold(raw_text, threshold),
+        "code" | "yaml" | "markdown" => {
+            super::syntax::compress_code_with_options(raw_text, signatures_only, extension)
+        }
+        "csv" => compress_csv(raw_text),
+        _ => compress_logs_with_threshold(raw_text, threshold),
+    }
+}
+
+fn compress_json_with_threshold(raw_json: &str, threshold: Option<usize>) -> String {
+    let compressed =
+        context_compactor::compress_json(raw_json).unwrap_or_else(|_| raw_json.to_string());
+    if let Some(limit) = threshold {
+        safe_threshold_text(&compressed, limit)
+    } else {
+        compressed
+    }
+}
+
+fn compress_logs_with_threshold(raw_logs: &str, threshold: Option<usize>) -> String {
+    let compressed = context_compactor::compress_logs(raw_logs);
+    if let Some(limit) = threshold {
+        safe_threshold_text(&compressed, limit)
+    } else {
+        compressed
+    }
+}
+
+fn safe_threshold_text(text: &str, limit: usize) -> String {
+    if limit == 0 || text.chars().count() <= limit {
+        return text.to_string();
+    }
+    let head_len = (limit / 2).max(1);
+    let tail_len = (limit / 2).max(1);
+    let head: String = text.chars().take(head_len).collect();
+    let tail: String = text
+        .chars()
+        .rev()
+        .take(tail_len)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("{}\n... [TRUNCATED TO {} CHARS] ...\n{}", head, limit, tail)
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Tool 2: CompressContentTool
 // ═══════════════════════════════════════════════════════════════════
@@ -648,7 +707,10 @@ impl Tool for CompressContentTool {
                     "default": "auto",
                     "description": "Content type hint for optimal compression."
                 },
-                "preview": { "type": "boolean", "description": "If true, returns a preview without caching." }
+                "preview": { "type": "boolean", "description": "If true, returns a preview without caching." },
+                "threshold": { "type": "integer", "description": "Optional compression threshold override for JSON/log outputs." },
+                "signatures_only": { "type": "boolean", "description": "For code-like content, keep structural signatures and discard function bodies." },
+                "model_hint": { "type": "string", "description": "Optional active model name for usage analytics." }
             },
             "required": ["raw_text"]
         })
@@ -686,29 +748,25 @@ impl Tool for CompressContentTool {
             }
         };
 
-        let compressed = match content_type {
-            "json" => {
-                context_compactor::compress_json(&raw_text).unwrap_or_else(|_| raw_text.clone())
-            }
-            "code" | "yaml" | "markdown" => context_compactor::compress_code(&raw_text),
-            "csv" => compress_csv(&raw_text),
-            _ => context_compactor::compress_logs(&raw_text),
-        };
+        let threshold = arguments["threshold"].as_u64().map(|v| v as usize);
+        let signatures_only = arguments["signatures_only"].as_bool().unwrap_or(false);
+        let compressed = compress_by_type(&raw_text, content_type, threshold, signatures_only, "");
 
         let is_preview = arguments["preview"].as_bool().unwrap_or(false);
 
         let ccr_id = if is_preview {
             None
         } else {
-            let id = generate_ccr_id();
-            let now = Utc::now().to_rfc3339();
-            if let Ok(conn) = get_cache_connection() {
-                let _ = conn.execute(
-                    "INSERT OR REPLACE INTO cache_entries (ccr_id, content, created_at, accessed_at, size_bytes) VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![id, raw_text, now, now, raw_text.len() as i64],
-                );
-            }
-            evict_lru_if_needed();
+            let id = cache_content(&raw_text)?;
+            let _ = log_compression(
+                "compress_content",
+                raw_text.len(),
+                compressed.len(),
+                estimate_tokens(&raw_text),
+                estimate_tokens(&compressed),
+                content_type,
+                arguments["model_hint"].as_str(),
+            );
             Some(id)
         };
 
@@ -762,14 +820,8 @@ impl Tool for RetrieveOriginalTool {
             || input.contains('\\')
         {
             let path_str = input.trim_start_matches("file://");
-            let path = Path::new(path_str);
-            let absolute = if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                std::env::current_dir()
-                    .map_err(|e| anyhow!("{}", e))?
-                    .join(path)
-            };
+            let absolute = resolve_user_path(path_str)?;
+            ensure_path_is_safe_for_headroom(&absolute)?;
             let content = std::fs::read_to_string(&absolute)
                 .map_err(|e| anyhow!("Failed to read file '{}': {}", path_str, e))?;
             Ok(json!({ "content": content, "source": "file", "path": absolute.to_string_lossy() }))
@@ -875,7 +927,10 @@ impl Tool for CompressFileTool {
             "properties": {
                 "file_path": { "type": "string", "description": "Path to the file to compress (absolute or relative)." },
                 "content_type": { "type": "string", "enum": ["auto", "json", "code", "text_logs", "csv", "markdown", "yaml"], "description": "Content type hint." },
-                "preview": { "type": "boolean", "description": "If true, returns preview without caching." }
+                "preview": { "type": "boolean", "description": "If true, returns preview without caching." },
+                "threshold": { "type": "integer", "description": "Optional compression threshold override for JSON/log outputs." },
+                "signatures_only": { "type": "boolean", "description": "For code-like content, keep structural signatures and discard function bodies." },
+                "model_hint": { "type": "string", "description": "Optional active model name for usage analytics." }
             },
             "required": ["file_path"]
         })
@@ -895,6 +950,7 @@ impl Tool for CompressFileTool {
         let canonical = absolute
             .canonicalize()
             .map_err(|e| anyhow!("Failed to resolve path '{}': {}", path_str, e))?;
+        ensure_path_is_safe_for_headroom(&canonical)?;
 
         let raw_text = std::fs::read_to_string(&canonical)
             .map_err(|e| anyhow!("Failed to read file '{}': {}", path_str, e))?;
@@ -921,14 +977,9 @@ impl Tool for CompressFileTool {
             }
         };
 
-        let compressed = match content_type {
-            "json" => {
-                context_compactor::compress_json(&raw_text).unwrap_or_else(|_| raw_text.clone())
-            }
-            "code" | "yaml" | "markdown" => context_compactor::compress_code(&raw_text),
-            "csv" => compress_csv(&raw_text),
-            _ => context_compactor::compress_logs(&raw_text),
-        };
+        let threshold = arguments["threshold"].as_u64().map(|v| v as usize);
+        let signatures_only = arguments["signatures_only"].as_bool().unwrap_or(false);
+        let compressed = compress_by_type(&raw_text, content_type, threshold, signatures_only, "");
 
         let is_preview = arguments["preview"].as_bool().unwrap_or(false);
         let ccr_id = if is_preview {
@@ -965,7 +1016,10 @@ impl Tool for CompressDiffTool {
             "type": "object",
             "properties": {
                 "diff_text": { "type": "string", "description": "The unified diff text to compress." },
-                "preview": { "type": "boolean", "description": "If true, returns preview without caching." }
+                "preview": { "type": "boolean", "description": "If true, returns preview without caching." },
+                "threshold": { "type": "integer", "description": "Optional compression threshold override for JSON/log outputs." },
+                "signatures_only": { "type": "boolean", "description": "For code-like content, keep structural signatures and discard function bodies." },
+                "model_hint": { "type": "string", "description": "Optional active model name for usage analytics." }
             },
             "required": ["diff_text"]
         })
@@ -990,7 +1044,17 @@ impl Tool for CompressDiffTool {
         let ccr_id = if is_preview {
             None
         } else {
-            Some(cache_content(diff_text)?)
+            let id = cache_content(diff_text)?;
+            let _ = log_compression(
+                "compress_diff",
+                diff_text.len(),
+                compressed.len(),
+                estimate_tokens(diff_text),
+                estimate_tokens(&compressed),
+                "diff",
+                arguments["model_hint"].as_str(),
+            );
+            Some(id)
         };
 
         Ok(format_ccr_result(
@@ -1030,8 +1094,18 @@ impl Tool for CompressUrlTool {
             .as_str()
             .ok_or_else(|| anyhow!("Missing url parameter"))?;
 
+        crate::tools::web::validate_url(url).await?;
+
+        let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+            if crate::tools::web::validate_url_sync(attempt.url()).is_err() {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        });
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
+            .timeout(Duration::from_secs(10))
+            .redirect(redirect_policy)
             .build()
             .map_err(|e| anyhow!("Failed to build HTTP client: {}", e))?;
 
@@ -1098,6 +1172,15 @@ impl Tool for CompressUrlTool {
         };
 
         let ccr_id = cache_content(trimmed)?;
+        let _ = log_compression(
+            "compress_url",
+            trimmed.len(),
+            compressed.len(),
+            estimate_tokens(trimmed),
+            estimate_tokens(&compressed),
+            derived_type,
+            arguments["model_hint"].as_str(),
+        );
         let mut result = format_ccr_result(&compressed, trimmed, Some(&ccr_id), "compress_url");
         result["url"] = json!(url);
         result["content_type"] = json!(derived_type);
@@ -1117,14 +1200,16 @@ impl Tool for RunAndCompressTool {
         "run_and_compress"
     }
     fn description(&self) -> &str {
-        "Executes a shell command and returns its compressed output with a CCR reference."
+        "Executes an allowlisted command without a shell and returns compressed output with a CCR reference."
     }
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "command": { "type": "string", "description": "Command to execute." },
-                "args": { "type": "array", "items": { "type": "string" }, "description": "Command arguments." }
+                "command": { "type": "string", "description": "Allowlisted executable to run, e.g. cargo, git, rg, ls." },
+                "args": { "type": "array", "items": { "type": "string" }, "description": "Command arguments. No shell is used." },
+                "timeout_secs": { "type": "integer", "description": "Execution timeout in seconds (default 30, max 120)." },
+                "max_output_bytes": { "type": "integer", "description": "Maximum stdout+stderr bytes to keep (default/max 512000)." }
             },
             "required": ["command"]
         })
@@ -1133,23 +1218,50 @@ impl Tool for RunAndCompressTool {
         let command = arguments["command"]
             .as_str()
             .ok_or_else(|| anyhow!("Missing command parameter"))?;
+        if !command_is_allowed(command) {
+            return Err(anyhow!(
+                "command '{}' is not allowed by run_and_compress; use exec_command with approval for privileged or shell commands",
+                command
+            ));
+        }
+
         let args: Vec<String> =
             serde_json::from_value(arguments["args"].clone()).unwrap_or_default();
+        let timeout_secs = arguments["timeout_secs"]
+            .as_u64()
+            .unwrap_or(30)
+            .clamp(1, MAX_RUN_TIMEOUT_SECS);
+        let max_output_bytes = arguments["max_output_bytes"]
+            .as_u64()
+            .map(|v| v as usize)
+            .unwrap_or(MAX_RUN_OUTPUT_BYTES)
+            .min(MAX_RUN_OUTPUT_BYTES);
 
         let mut cmd = tokio::process::Command::new(command);
         cmd.env("PAGER", "cat");
+        cmd.kill_on_drop(true);
         if !args.is_empty() {
             cmd.args(&args);
         }
 
-        let output = cmd
-            .output()
+        let output = tokio::time::timeout(Duration::from_secs(timeout_secs), cmd.output())
             .await
+            .map_err(|_| {
+                anyhow!(
+                    "Command '{}' timed out after {} seconds",
+                    command,
+                    timeout_secs
+                )
+            })?
             .map_err(|e| anyhow!("Failed to execute command '{}': {}", command, e))?;
 
         let stdout_str = String::from_utf8_lossy(&output.stdout);
         let stderr_str = String::from_utf8_lossy(&output.stderr);
-        let combined = format!("{}{}", stdout_str, stderr_str);
+        let mut combined = format!("{}{}", stdout_str, stderr_str);
+        let output_truncated = combined.len() > max_output_bytes;
+        if output_truncated {
+            combined.truncate(floor_char_boundary(&combined, max_output_bytes));
+        }
         let trimmed = combined.trim();
 
         if trimmed.is_empty() {
@@ -1164,11 +1276,29 @@ impl Tool for RunAndCompressTool {
         let compressed = context_compactor::compress_logs(&filtered);
 
         let ccr_id = cache_content(trimmed)?;
+        let _ = log_compression(
+            "run_and_compress",
+            trimmed.len(),
+            compressed.len(),
+            estimate_tokens(trimmed),
+            estimate_tokens(&compressed),
+            "logs",
+            arguments["model_hint"].as_str(),
+        );
         let mut result = format_ccr_result(&compressed, trimmed, Some(&ccr_id), "run_and_compress");
         result["exit_code"] = json!(output.status.code().unwrap_or(-1));
         result["command"] = json!(command);
+        result["output_truncated"] = json!(output_truncated);
         Ok(result)
     }
+}
+
+fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
+    idx = idx.min(s.len());
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1212,6 +1342,7 @@ impl Tool for CompressDirectoryTool {
         let resolved_root = resolved_root
             .canonicalize()
             .map_err(|e| anyhow!("Failed to resolve path '{}': {}", dir_path_str, e))?;
+        ensure_path_is_safe_for_headroom(&resolved_root)?;
 
         if !resolved_root.is_dir() {
             return Err(anyhow!("'{}' is not a directory", dir_path_str));
@@ -1221,6 +1352,8 @@ impl Tool for CompressDirectoryTool {
             serde_json::from_value(arguments["extensions"].clone()).unwrap_or_default();
         let max_depth = arguments["max_depth"].as_u64().unwrap_or(4) as usize;
         let is_preview = arguments["preview"].as_bool().unwrap_or(false);
+        let threshold = arguments["threshold"].as_u64().map(|v| v as usize);
+        let signatures_only = arguments["signatures_only"].as_bool().unwrap_or(false);
         let file_limit = 500usize;
 
         let mut tree_root = CompTreeNode {
@@ -1280,6 +1413,9 @@ impl Tool for CompressDirectoryTool {
                 if is_binary_file(&path) {
                     continue;
                 }
+                if ensure_path_is_safe_for_headroom(&path).is_err() {
+                    continue;
+                }
 
                 let raw_text = match std::fs::read_to_string(&path) {
                     Ok(c) => c,
@@ -1292,18 +1428,24 @@ impl Tool for CompressDirectoryTool {
 
                 let content_type = detect_content_type_from_ext(&path)
                     .unwrap_or_else(|| auto_detect_type(&raw_text));
-                let compressed = match content_type {
-                    "json" => context_compactor::compress_json(&raw_text)
-                        .unwrap_or_else(|_| raw_text.clone()),
-                    "code" | "yaml" | "markdown" => context_compactor::compress_code(&raw_text),
-                    "csv" => compress_csv(&raw_text),
-                    _ => context_compactor::compress_logs(&raw_text),
-                };
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                let compressed =
+                    compress_by_type(&raw_text, content_type, threshold, signatures_only, ext);
 
                 let ccr_id = if is_preview {
                     "PREVIEW".to_string()
                 } else {
-                    cache_content(&raw_text)?
+                    let id = cache_content(&raw_text)?;
+                    let _ = log_compression(
+                        "compress_directory",
+                        raw_text.len(),
+                        compressed.len(),
+                        estimate_tokens(&raw_text),
+                        estimate_tokens(&compressed),
+                        content_type,
+                        arguments["model_hint"].as_str(),
+                    );
+                    id
                 };
                 let original_tokens = estimate_tokens(&raw_text);
                 let compressed_tokens = estimate_tokens(&compressed);
