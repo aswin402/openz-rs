@@ -1,11 +1,13 @@
 use crate::tools::graph_memory::{scope_from_args, with_db};
 use crate::tools::memory_extra::search::{query_fts5, text_similarity};
-use crate::tools::memory_extra::working::store_semantic_fact;
+use crate::tools::memory_extra::working::semantic_embedding_blob;
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use rusqlite::params;
 use serde_json::{json, Value};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 // ─── Tool: InvalidateFactTool ────────────────────────────────────
 
@@ -98,6 +100,213 @@ impl Tool for InvalidateFactTool {
         }
 
         Ok(json!({ "status": messages.join("\n") }))
+    }
+}
+
+// ─── Tool: ForgetMemoryTool ──────────────────────────────────────
+
+pub struct ForgetMemoryTool;
+
+fn scrub_lines_containing(text: &str, query: &str) -> (String, bool) {
+    let needle = query.to_lowercase();
+    let mut changed = false;
+    let kept = text
+        .lines()
+        .filter(|line| {
+            let remove = line.to_lowercase().contains(&needle);
+            changed |= remove;
+            !remove
+        })
+        .collect::<Vec<_>>();
+
+    if changed {
+        (kept.join("\n"), true)
+    } else {
+        (text.to_string(), false)
+    }
+}
+
+fn session_files_dir() -> PathBuf {
+    crate::config::loader::runtime_data_dir().join("sessions")
+}
+
+pub(crate) fn forget_session_metadata_memories(query: &str) -> Result<i64> {
+    let sessions_dir = session_files_dir();
+    if !sessions_dir.exists() {
+        return Ok(0);
+    }
+
+    let mut scrubbed = 0i64;
+    for entry in fs::read_dir(sessions_dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+
+        let content = fs::read_to_string(&path)?;
+        let mut value: Value = match serde_json::from_str(&content) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        let Some(memory) = value
+            .get_mut("metadata")
+            .and_then(|metadata| metadata.get_mut("memory"))
+        else {
+            continue;
+        };
+        let Some(memory_text) = memory.as_str() else {
+            continue;
+        };
+
+        let (updated, changed) = scrub_lines_containing(memory_text, query);
+        if !changed {
+            continue;
+        }
+
+        *memory = Value::String(updated);
+        fs::write(&path, serde_json::to_string_pretty(&value)?)?;
+        scrubbed += 1;
+    }
+
+    Ok(scrubbed)
+}
+
+fn scrub_skill_file(path: &Path, query: &str) -> Result<bool> {
+    if !path.is_file() {
+        return Ok(false);
+    }
+    let content = fs::read_to_string(path)?;
+    let (updated, changed) = scrub_lines_containing(&content, query);
+    if changed {
+        fs::write(path, updated)?;
+    }
+    Ok(changed)
+}
+
+fn forget_skill_files_in_dir(dir: &Path, query: &str) -> Result<i64> {
+    if !dir.exists() || !dir.is_dir() {
+        return Ok(0);
+    }
+
+    let mut scrubbed = 0i64;
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+            if scrub_skill_file(&path, query)? {
+                scrubbed += 1;
+            }
+        } else if path.is_dir() && scrub_skill_file(&path.join("SKILL.md"), query)? {
+            scrubbed += 1;
+        }
+    }
+
+    Ok(scrubbed)
+}
+
+pub(crate) fn forget_skills(query: &str) -> Result<i64> {
+    let like = format!("%{}%", query);
+    let conn = crate::agent::skills::get_connection()?;
+    let mut rows = Vec::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT name, profile, content FROM skills
+             WHERE name LIKE ?1 OR content LIKE ?1",
+        )?;
+        let matches = stmt.query_map(params![like], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in matches {
+            rows.push(row?);
+        }
+    }
+
+    let mut scrubbed = 0i64;
+    for (name, profile, content) in rows {
+        let (updated, changed) = scrub_lines_containing(&content, query);
+        if !changed {
+            continue;
+        }
+
+        if updated.trim().is_empty() {
+            if let Some(profile) = profile {
+                conn.execute(
+                    "DELETE FROM skills WHERE name = ?1 AND profile = ?2",
+                    params![name, profile],
+                )?;
+            } else {
+                conn.execute(
+                    "DELETE FROM skills WHERE name = ?1 AND profile IS NULL",
+                    params![name],
+                )?;
+            }
+        } else if let Some(profile) = profile {
+            conn.execute(
+                "UPDATE skills SET content = ?1 WHERE name = ?2 AND profile = ?3",
+                params![updated, name, profile],
+            )?;
+        } else {
+            conn.execute(
+                "UPDATE skills SET content = ?1 WHERE name = ?2 AND profile IS NULL",
+                params![updated, name],
+            )?;
+        }
+        scrubbed += 1;
+    }
+
+    scrubbed += forget_skill_files_in_dir(&crate::agent::skills::get_skills_dir(), query)?;
+    scrubbed +=
+        forget_skill_files_in_dir(&crate::agent::skills::get_workspace_skills_dir(), query)?;
+
+    Ok(scrubbed)
+}
+
+#[async_trait::async_trait]
+impl Tool for ForgetMemoryTool {
+    fn name(&self) -> &str {
+        "forget_memory"
+    }
+
+    fn description(&self) -> &str {
+        "Forget matching memory across cognitive, semantic, graph, shared, and research memory stores. Requires confirm=true."
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Text, fact, entity, or marker to forget" },
+                "confirm": { "type": "boolean", "description": "Must be true to perform deletion/tombstoning" },
+                "userId": { "type": "string" },
+                "sessionId": { "type": "string" },
+                "agentId": { "type": "string" }
+            },
+            "required": ["query", "confirm"]
+        })
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let query = arguments["query"]
+            .as_str()
+            .ok_or_else(|| anyhow!("Missing 'query'"))?
+            .trim();
+        if query.len() < 3 {
+            return Err(anyhow!("query must be at least 3 characters"));
+        }
+        if !arguments["confirm"].as_bool().unwrap_or(false) {
+            return Err(anyhow!("forget_memory requires confirm=true"));
+        }
+
+        let (uid, sid, aid) = scope_from_args(arguments);
+        let scope = crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
+        let result = crate::tools::memory_extra::coordinator::MemoryCoordinator::default()
+            .forget(query, &scope)
+            .await?;
+        Ok(result.raw)
     }
 }
 
@@ -418,18 +627,13 @@ impl Tool for SmartStoreTool {
                 }
             }
 
-            // Insert directly
-            with_db(|conn| {
-                conn.execute(
-                    "INSERT INTO graph_edges (from_name, to_name, relation_type, user_id, session_id, agent_id)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![from, to, rel_type, uid, sid, aid],
-                )?;
-                Ok(())
-            })?;
+            let scope = crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
+            let result = crate::tools::memory_extra::coordinator::MemoryCoordinator::default()
+                .write_graph_relation(from, rel_type, to, &scope)
+                .await?;
 
             return Ok(json!({
-                "action": "add",
+                "action": if result.created { "add" } else { "no-op" },
                 "layer": "graph",
                 "message": format!("Created relation '{}->{} ({})'", from, to, rel_type),
             }));
@@ -466,10 +670,11 @@ impl Tool for SmartStoreTool {
                     } else {
                         existing_text.to_string()
                     };
+                    let merged_embedding = semantic_embedding_blob(&merged);
                     with_db(|conn| {
                         conn.execute(
-                            "UPDATE semantic_metadata SET raw_text = ?1 WHERE node_id = ?2 AND user_id = ?3 AND session_id = ?4 AND agent_id = ?5",
-                            params![merged, node_id, uid, sid, aid],
+                            "UPDATE semantic_metadata SET raw_text = ?1, embedding = ?2 WHERE node_id = ?3 AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6",
+                            params![merged, merged_embedding, node_id, uid, sid, aid],
                         )?;
                         let _ = conn.execute(
                             "UPDATE semantic_fts SET raw_text = ?1 WHERE node_id = ?2",
@@ -487,15 +692,16 @@ impl Tool for SmartStoreTool {
                 }
             }
 
-            // Add as new fact
-            let fact_id = format!("fact-{}", uuid::Uuid::new_v4());
-            store_semantic_fact(&fact_id, t, 0.8, &uid, &sid, &aid)?;
+            let scope = crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
+            let written = crate::tools::memory_extra::coordinator::MemoryCoordinator::default()
+                .write_semantic(t, -1.0, &scope)
+                .await?;
 
             return Ok(json!({
                 "action": "add",
                 "layer": "semantic",
-                "message": format!("Added new fact '{}'", fact_id),
-                "winnerId": fact_id,
+                "message": format!("Added new fact '{}'", written.id),
+                "winnerId": written.id,
             }));
         }
 
@@ -537,62 +743,46 @@ impl Tool for ExtractAndStoreFactsTool {
         let (uid, sid, aid) = scope_from_args(arguments);
 
         let facts = extract_facts(text);
+        let facts_extracted = facts.len();
 
         let mut entities_created = 0;
         let mut relations_created = 0;
 
+        let scope = crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
+        let coordinator = crate::tools::memory_extra::coordinator::MemoryCoordinator::default();
         for fact in facts {
-            // Ensure entities exist
-            for name in [&fact.from, &fact.to] {
-                let exists = with_db(|conn| -> Result<bool> {
-                    let exists: bool = conn.query_row(
-                        "SELECT EXISTS(SELECT 1 FROM graph_nodes WHERE name = ?1 AND user_id = ?2 AND session_id = ?3 AND agent_id = ?4)",
-                        params![name, uid, sid, aid],
-                        |row| row.get(0),
-                    )?;
-                    Ok(exists)
-                })?;
-                if !exists {
-                    with_db(|conn| {
-                        conn.execute(
-                            "INSERT INTO graph_nodes (name, entity_type, observations, user_id, session_id, agent_id)
-                             VALUES (?1, 'Concept', '[]', ?2, ?3, ?4)",
-                            params![name, uid, sid, aid],
-                        )?;
-                        Ok(())
-                    })?;
-                    entities_created += 1;
-                }
-            }
-
-            // Create relation
-            let exists = with_db(|conn| -> Result<bool> {
-                let exists: bool = conn.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM graph_edges WHERE from_name = ?1 AND to_name = ?2 AND relation_type = ?3 AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6 AND valid_until IS NULL)",
-                    params![fact.from, fact.to, fact.relation, uid, sid, aid],
-                    |row| row.get(0),
+            let before_nodes = with_db(|conn| {
+                let count = conn.query_row(
+                    "SELECT COUNT(*) FROM graph_nodes WHERE (name = ?1 OR name = ?2) AND user_id = ?3 AND session_id = ?4 AND agent_id = ?5",
+                    params![fact.from, fact.to, scope.user_id, scope.session_id, scope.agent_id],
+                    |row| row.get::<_, i64>(0),
                 )?;
-                Ok(exists)
+                Ok(count)
             })?;
 
-            if !exists {
-                with_db(|conn| {
-                    conn.execute(
-                        "INSERT INTO graph_edges (from_name, to_name, relation_type, user_id, session_id, agent_id)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                        params![fact.from, fact.to, fact.relation, uid, sid, aid],
-                    )?;
-                    Ok(())
-                })?;
+            let result = coordinator
+                .write_graph_relation(&fact.from, &fact.relation, &fact.to, &scope)
+                .await?;
+
+            let after_nodes = with_db(|conn| {
+                let count = conn.query_row(
+                    "SELECT COUNT(*) FROM graph_nodes WHERE (name = ?1 OR name = ?2) AND user_id = ?3 AND session_id = ?4 AND agent_id = ?5",
+                    params![fact.from, fact.to, scope.user_id, scope.session_id, scope.agent_id],
+                    |row| row.get::<_, i64>(0),
+                )?;
+                Ok(count)
+            })?;
+            entities_created += (after_nodes - before_nodes).max(0) as i64;
+            if result.created {
                 relations_created += 1;
             }
         }
 
         Ok(json!({
-            "factsExtracted": 0, // Count from extractor (approximate)
+            "factsExtracted": facts_extracted,
             "entitiesCreated": entities_created,
             "relationsCreated": relations_created,
-            "status": format!("Extracted facts from text, created {} entities and {} relations", entities_created, relations_created),
+            "status": format!("Extracted {} facts from text, created {} entities and {} relations", facts_extracted, entities_created, relations_created),
         }))
     }
 }
@@ -605,41 +795,153 @@ pub(crate) struct ExtractedFact {
 }
 
 pub(crate) fn extract_facts(text: &str) -> Vec<ExtractedFact> {
-    let patterns: Vec<(regex::Regex, &str)> = vec![
-        (regex::Regex::new(r"(\w+)\s+(?:(?:is|are|was|were|am)\s+)?(?:uses?|using)\s+(\w+)").unwrap(), "uses"),
-        (regex::Regex::new(r"(\w+)\s+(?:depends\s+on|requires?)\s+(\w+)").unwrap(), "depends_on"),
-        (regex::Regex::new(r"(\w+)\s+(?:prefers?|likes?|favou?rs?)\s+(\w+)").unwrap(), "prefers"),
-        (regex::Regex::new(r"(\w+)\s+(?:is\s+a|is\s+an|is\s+the)\s+(\w+)").unwrap(), "is_a"),
-        (regex::Regex::new(r"(\w+)\s+(?:(?:is|are|was|were|am)\s+)?(?:works?|working)\s+(?:on|with|at)\s+(\w+)").unwrap(), "works_with"),
-        (regex::Regex::new(r"(\w+)\s+(?:created?|built?|wrote?)\s+(\w+)").unwrap(), "created"),
-    ];
-
     let mut facts = Vec::new();
-    // Simple sentence splitting by punctuation
+    let mut seen = std::collections::HashSet::new();
+
     for sentence in text.split(['.', '!', '?']) {
         let sentence = sentence.trim();
         if sentence.is_empty() {
             continue;
         }
-        for (pattern, rel_type) in &patterns {
-            for caps in pattern.captures_iter(sentence) {
-                let from = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-                let to = caps.get(2).map(|m| m.as_str()).unwrap_or("");
-                if !from.is_empty()
-                    && !to.is_empty()
-                    && is_valid_entity(from)
-                    && is_valid_entity(to)
-                {
-                    facts.push(ExtractedFact {
-                        from: from.to_string(),
-                        relation: rel_type.to_string(),
-                        to: to.to_string(),
-                    });
+
+        let mut carried_subject: Option<String> = None;
+        for clause in split_fact_clauses(sentence) {
+            if let Some(fact) = extract_fact_clause(&clause, carried_subject.as_deref()) {
+                carried_subject = Some(fact.from.clone());
+                let key = (
+                    fact.from.to_lowercase(),
+                    fact.relation.clone(),
+                    fact.to.to_lowercase(),
+                );
+                if seen.insert(key) {
+                    facts.push(fact);
                 }
             }
         }
     }
+
     facts
+}
+
+fn split_fact_clauses(sentence: &str) -> Vec<String> {
+    let normalized = sentence.replace(';', ".").replace(',', ".");
+    let and_split = regex::Regex::new(r"\s+and\s+").unwrap();
+    normalized
+        .split('.')
+        .flat_map(|part| and_split.split(part))
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn entity_pattern() -> &'static str {
+    r"[A-Z][A-Za-z0-9_+#.-]*(?:\s+[A-Z][A-Za-z0-9_+#.-]*){0,5}"
+}
+
+fn extract_fact_clause(clause: &str, carried_subject: Option<&str>) -> Option<ExtractedFact> {
+    let entity = entity_pattern();
+    let direct_patterns = [
+        (
+            format!(r"^({entity})'?s\s+(?:favorite|preferred)\s+.+?\s+(?:is|are)\s+({entity})$"),
+            "prefers",
+        ),
+        (
+            format!(
+                r"^({entity})\s+(?:is\s+|was\s+)?(?:built|written|implemented|made)\s+(?:with|in|using)\s+({entity})$"
+            ),
+            "built_with",
+        ),
+        (
+            format!(r"^({entity})\s+(?:lives?|resides?)\s+in\s+({entity})$"),
+            "lives_in",
+        ),
+        (
+            format!(r"^({entity})\s+(?:(?:is|are|was|were|am)\s+)?(?:uses?|using)\s+({entity})$"),
+            "uses",
+        ),
+        (
+            format!(r"^({entity})\s+(?:depends\s+on|requires?)\s+({entity})$"),
+            "depends_on",
+        ),
+        (
+            format!(r"^({entity})\s+(?:prefers?|likes?|favou?rs?)\s+({entity})$"),
+            "prefers",
+        ),
+        (
+            format!(r"^({entity})\s+(?:is\s+a|is\s+an|is\s+the)\s+({entity})$"),
+            "is_a",
+        ),
+        (
+            format!(
+                r"^({entity})\s+(?:(?:is|are|was|were|am)\s+)?(?:works?|working)\s+(?:on|with|at|for)\s+({entity})$"
+            ),
+            "works_with",
+        ),
+        (
+            format!(r"^({entity})\s+(?:created?|built?|wrote?)\s+({entity})$"),
+            "created",
+        ),
+    ];
+
+    for (pattern, relation) in direct_patterns {
+        let regex = regex::Regex::new(&pattern).unwrap();
+        if let Some(caps) = regex.captures(clause) {
+            return build_extracted_fact(caps.get(1)?.as_str(), relation, caps.get(2)?.as_str());
+        }
+    }
+
+    let subject = carried_subject?;
+    let carried_patterns = [
+        (format!(r"^(?:uses?|using)\s+({entity})$"), "uses"),
+        (
+            format!(r"^(?:depends\s+on|requires?)\s+({entity})$"),
+            "depends_on",
+        ),
+        (
+            format!(r"^(?:prefers?|likes?|favou?rs?)\s+({entity})$"),
+            "prefers",
+        ),
+        (
+            format!(r"^(?:works?|working)\s+(?:on|with|at|for)\s+({entity})$"),
+            "works_with",
+        ),
+    ];
+
+    for (pattern, relation) in carried_patterns {
+        let regex = regex::Regex::new(&pattern).unwrap();
+        if let Some(caps) = regex.captures(clause) {
+            return build_extracted_fact(subject, relation, caps.get(1)?.as_str());
+        }
+    }
+
+    None
+}
+
+fn build_extracted_fact(from: &str, relation: &str, to: &str) -> Option<ExtractedFact> {
+    let from = clean_entity(from);
+    let to = clean_entity(to);
+    if from.is_empty() || to.is_empty() || !is_valid_entity(&from) || !is_valid_entity(&to) {
+        return None;
+    }
+    Some(ExtractedFact {
+        from,
+        relation: relation.to_string(),
+        to,
+    })
+}
+
+fn clean_entity(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches(|c: char| {
+            !c.is_ascii_alphanumeric() && c != '+' && c != '#' && c != '.' && c != '-'
+        })
+        .trim_end_matches("'s")
+        .trim_end_matches("’s")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 const STOP_WORDS: &[&str] = &[

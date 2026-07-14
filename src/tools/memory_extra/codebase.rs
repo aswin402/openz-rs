@@ -261,44 +261,50 @@ impl Tool for MemoryStatsTool {
     }
 
     fn parameters(&self) -> Value {
-        json!({ "type": "object", "properties": {} })
+        json!({
+            "type": "object",
+            "properties": {
+                "userId": { "type": "string" },
+                "sessionId": { "type": "string" },
+                "agentId": { "type": "string" }
+            }
+        })
     }
 
-    async fn call(&self, _arguments: &Value) -> Result<Value> {
-        with_db(|conn| {
-            let graph_nodes: i64 =
-                conn.query_row("SELECT COUNT(*) FROM graph_nodes", [], |r| r.get(0))?;
-            let graph_edges: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM graph_edges WHERE valid_until IS NULL",
-                [],
-                |r| r.get(0),
-            )?;
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let (uid, sid, aid) = scope_from_args(arguments);
+        let scope = crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
+        let snapshot = crate::tools::memory_extra::coordinator::MemoryCoordinator::default()
+            .stats(&scope)
+            .await?;
+
+        let (episodic, reflections, tool_perf) = with_db(|conn| {
             let episodic: i64 =
                 conn.query_row("SELECT COUNT(*) FROM episodic_logs", [], |r| r.get(0))?;
             let reflections: i64 =
                 conn.query_row("SELECT COUNT(*) FROM reflection_memory", [], |r| r.get(0))?;
             let tool_perf: i64 =
                 conn.query_row("SELECT COUNT(*) FROM tool_performance", [], |r| r.get(0))?;
-            let shared: i64 =
-                conn.query_row("SELECT COUNT(*) FROM shared_agent_memory", [], |r| r.get(0))?;
-            let semantic: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM semantic_metadata WHERE valid_until IS NULL",
-                [],
-                |r| r.get(0),
-            )?;
-            let working: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM working_memory WHERE expired = 0",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap_or(0);
-            Ok(json!({
-                "graphNodes": graph_nodes, "graphEdges": graph_edges, "episodicLogs": episodic,
-                "reflections": reflections, "toolPerformance": tool_perf, "sharedMemory": shared,
-                "semanticFacts": semantic, "workingMemory": working,
-            }))
-        })
+            Ok((episodic, reflections, tool_perf))
+        })?;
+
+        Ok(json!({
+            "coordinator": true,
+            "graphNodes": snapshot.graph_nodes,
+            "graphEdges": snapshot.graph_edges,
+            "episodicLogs": episodic,
+            "reflections": reflections,
+            "toolPerformance": tool_perf,
+            "sharedMemory": snapshot.shared_memories,
+            "semanticFacts": snapshot.semantic_facts,
+            "semanticFactsWithEmbeddings": snapshot.semantic_facts_with_embeddings,
+            "cognitiveMemories": snapshot.cognitive_memories,
+            "researchEntries": snapshot.research_entries,
+            "sessionMetadataMemories": snapshot.session_metadata_memories,
+            "skillsMemories": snapshot.skills_memories,
+            "workingMemory": snapshot.working_memory,
+            "totalActive": snapshot.total_active,
+        }))
     }
 }
 
@@ -523,7 +529,9 @@ fn index_file(
     let fn_re = Regex::new(r"^\s*(public\s+|pub\s+)?(async\s+)?fn\s+([a-zA-Z_]\w*)").unwrap();
     let struct_re = Regex::new(r"^\s*(public\s+|pub\s+)?struct\s+([a-zA-Z_]\w*)").unwrap();
     let enum_re = Regex::new(r"^\s*(public\s+|pub\s+)?enum\s+([a-zA-Z_]\w*)").unwrap();
-    let impl_re = Regex::new(r"^\s*(public\s+|pub\s+)?impl\s+([a-zA-Z_]\w*)").unwrap();
+    let impl_re =
+        Regex::new(r"^\s*(public\s+|pub\s+)?impl(?:\s+([a-zA-Z_]\w*)\s+for)?\s+([a-zA-Z_]\w*)")
+            .unwrap();
     let def_re = Regex::new(r"^\s*def\s+([a-zA-Z_]\w*)").unwrap();
     let class_re = Regex::new(r"^\s*class\s+([a-zA-Z_]\w*)").unwrap();
     let func_re = Regex::new(r"^\s*func\s+([a-zA-Z_]\w*)").unwrap();
@@ -575,7 +583,7 @@ fn index_file(
                 .unwrap_or_default();
         } else if let Some(caps) = impl_re.captures(trimmed) {
             element_type = Some("ImplBlock");
-            name = caps.get(2).map(|m| format!("impl_{}", m.as_str()));
+            name = caps.get(3).map(|m| format!("impl_{}", m.as_str()));
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string())

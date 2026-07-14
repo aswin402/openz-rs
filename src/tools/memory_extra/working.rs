@@ -5,6 +5,7 @@ use chrono::Utc;
 use rusqlite::params;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
 
 // ─── Working Memory (in-memory HashMap with TTL) ─────────────────
@@ -24,6 +25,27 @@ struct WorkingEntry {
 
 fn working_scoped_key(key: &str, user_id: &str, session_id: &str, agent_id: &str) -> String {
     format!("{}:{}:{}:{}", user_id, session_id, agent_id, key)
+}
+
+pub(crate) fn active_working_memory_count(user_id: &str, session_id: &str, agent_id: &str) -> i64 {
+    let Ok(map) = working_memory_static().lock() else {
+        return 0;
+    };
+    let now = std::time::Instant::now();
+    map.iter()
+        .filter(|(key, entry)| {
+            if now.duration_since(entry.created_at).as_secs() >= entry.ttl_seconds {
+                return false;
+            }
+            let parts: Vec<&str> = key.splitn(4, ':').collect();
+            if parts.len() != 4 {
+                return false;
+            }
+            (parts[0] == user_id || parts[0] == "*" || user_id == "*")
+                && (parts[1] == session_id || parts[1] == "*" || session_id == "*")
+                && (parts[2] == agent_id || parts[2] == "*" || agent_id == "*")
+        })
+        .count() as i64
 }
 
 // ─── Tool: SetWorkingMemoryTool ──────────────────────────────────
@@ -259,6 +281,42 @@ impl Tool for PromoteWorkingMemoryTool {
 
 // ─── Semantic fact helper ────────────────────────────────────────
 
+const SEMANTIC_EMBEDDING_DIMS: usize = 384;
+
+pub(crate) fn semantic_embedding_for_text(text: &str) -> Vec<f32> {
+    let mut vector = vec![0.0f32; SEMANTIC_EMBEDDING_DIMS];
+    for token in text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.len() >= 2)
+    {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        token.to_lowercase().hash(&mut hasher);
+        let idx = (hasher.finish() as usize) % SEMANTIC_EMBEDDING_DIMS;
+        vector[idx] += 1.0;
+    }
+
+    let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for value in &mut vector {
+            *value /= norm;
+        }
+    }
+    vector
+}
+
+pub(crate) fn semantic_embedding_blob(text: &str) -> Vec<u8> {
+    semantic_embedding_for_text(text)
+        .iter()
+        .flat_map(|value| value.to_ne_bytes())
+        .collect()
+}
+
+pub(crate) fn semantic_embedding_from_blob(blob: &[u8]) -> Vec<f32> {
+    blob.chunks_exact(4)
+        .map(|chunk| f32::from_ne_bytes(chunk.try_into().unwrap_or([0; 4])))
+        .collect()
+}
+
 pub(crate) fn store_semantic_fact(
     node_id: &str,
     text: &str,
@@ -268,11 +326,12 @@ pub(crate) fn store_semantic_fact(
     agent_id: &str,
 ) -> Result<()> {
     let timestamp = Utc::now().to_rfc3339();
+    let embedding = semantic_embedding_blob(text);
     with_db(|conn| {
         conn.execute(
-            "INSERT INTO semantic_metadata (node_id, raw_text, timestamp, importance, user_id, session_id, agent_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![node_id, text, timestamp, importance, user_id, session_id, agent_id],
+            "INSERT INTO semantic_metadata (node_id, raw_text, embedding, timestamp, importance, user_id, session_id, agent_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![node_id, text, embedding, timestamp, importance, user_id, session_id, agent_id],
         )?;
         // Also insert into FTS5 index
         let _ = conn.execute(

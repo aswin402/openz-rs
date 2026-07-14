@@ -365,6 +365,9 @@ fn register_memory_extra_tools(registry: &ToolRegistry) {
         crate::tools::memory_extra::InvalidateFactTool,
     ));
     registry.register(std::sync::Arc::new(
+        crate::tools::memory_extra::ForgetMemoryTool,
+    ));
+    registry.register(std::sync::Arc::new(
         crate::tools::memory_extra::QueryFactHistoryTool,
     ));
     registry.register(std::sync::Arc::new(

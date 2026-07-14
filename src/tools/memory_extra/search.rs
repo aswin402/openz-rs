@@ -4,7 +4,6 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 
 // ─── Tool: StoreSharedTeamMemoryTool ─────────────────────────────
 
@@ -300,85 +299,10 @@ impl Tool for HybridSearchTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(10) as usize;
         let (uid, sid, aid) = scope_from_args(arguments);
-
-        let fts_results = with_db(|conn| query_fts5(conn, query, limit * 2, &uid, &sid, &aid))?;
-
-        // Simple keyword overlap scoring as a substitute for vector search
-        let query_lower = query.to_lowercase();
-        let query_words: Vec<&str> = query_lower.split_whitespace().collect();
-
-        let all_facts = with_db(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT node_id, raw_text, timestamp, importance
-                 FROM semantic_metadata
-                 WHERE valid_until IS NULL
-                   AND (?1 IS NULL OR user_id = ?1 OR user_id = '*')
-                   AND (?2 IS NULL OR session_id = ?2 OR session_id = '*')
-                   AND (?3 IS NULL OR agent_id = ?3 OR agent_id = '*')",
-            )?;
-            let mut rows = stmt.query(params![uid, sid, aid])?;
-            let mut facts = Vec::new();
-            while let Some(row) = rows.next()? {
-                facts.push(json!({
-                    "nodeId": row.get::<_, String>(0)?,
-                    "rawText": row.get::<_, String>(1)?,
-                    "timestamp": row.get::<_, String>(2)?,
-                    "importance": row.get::<_, f64>(3)?,
-                }));
-            }
-            Ok(facts)
-        })?;
-
-        // Score each fact by keyword overlap
-        let mut scored: Vec<(Value, f64)> = all_facts
-            .into_iter()
-            .map(|fact| {
-                let text = fact["rawText"].as_str().unwrap_or("").to_lowercase();
-                let overlap = query_words.iter().filter(|w| text.contains(*w)).count();
-                let score = if query_words.is_empty() {
-                    0.0
-                } else {
-                    overlap as f64 / query_words.len() as f64
-                };
-                (fact, score)
-            })
-            .filter(|(_, s)| *s > 0.0)
-            .collect();
-
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(limit * 2);
-
-        // RRF fusion with FTS5 results
-        let mut doc_scores: HashMap<String, f64> = HashMap::new();
-        let mut doc_map: HashMap<String, Value> = HashMap::new();
-
-        for (i, fact) in fts_results.iter().enumerate() {
-            let rank = (i + 1) as f64;
-            let node_id = fact["nodeId"].as_str().unwrap_or("");
-            *doc_scores.entry(node_id.to_string()).or_insert(0.0) += 1.0 / (60.0 + rank);
-            doc_map
-                .entry(node_id.to_string())
-                .or_insert_with(|| fact.clone());
-        }
-
-        for (i, (fact, _)) in scored.iter().enumerate() {
-            let rank = (i + 1) as f64;
-            let node_id = fact["nodeId"].as_str().unwrap_or("");
-            *doc_scores.entry(node_id.to_string()).or_insert(0.0) += 1.0 / (60.0 + rank);
-            doc_map
-                .entry(node_id.to_string())
-                .or_insert_with(|| fact.clone());
-        }
-
-        let mut ranked: Vec<(String, f64)> = doc_scores.into_iter().collect();
-        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        ranked.truncate(limit);
-
-        let results: Vec<Value> = ranked
-            .into_iter()
-            .filter_map(|(node_id, _)| doc_map.remove(&node_id))
-            .collect();
-
+        let scope = crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
+        let results = crate::tools::memory_extra::coordinator::MemoryCoordinator::default()
+            .recall_raw(query, limit, &scope)
+            .await?;
         Ok(json!(results))
     }
 }

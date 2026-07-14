@@ -191,7 +191,37 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     Ok(TurnState::Run)
 }
 
-async fn retrieve_cross_session_memories(_user_content: &str) -> String {
+fn memory_query_terms(text: &str) -> std::collections::HashSet<String> {
+    const STOP_WORDS: &[&str] = &[
+        "about", "after", "again", "all", "and", "any", "are", "but", "can", "did", "does", "for",
+        "from", "has", "have", "help", "how", "into", "just", "more", "now", "our", "that", "the",
+        "their", "then", "there", "these", "this", "those", "too", "use", "user", "was", "were",
+        "what", "when", "where", "which", "with", "you", "your",
+    ];
+    text.split(|c: char| !c.is_alphanumeric())
+        .map(|t| t.to_lowercase())
+        .filter(|t| t.len() >= 3 && !STOP_WORDS.contains(&t.as_str()))
+        .collect()
+}
+
+fn memory_relevance_score(query_terms: &std::collections::HashSet<String>, text: &str) -> f32 {
+    if query_terms.is_empty() {
+        return 1.0;
+    }
+    let text_terms = memory_query_terms(text);
+    if text_terms.is_empty() {
+        return 0.0;
+    }
+    let overlap = query_terms.intersection(&text_terms).count();
+    if overlap == 0 {
+        0.0
+    } else {
+        overlap as f32 / query_terms.len().max(1) as f32
+    }
+}
+
+async fn retrieve_cross_session_memories(user_content: &str) -> String {
+    let query_terms = memory_query_terms(user_content);
     let mut all_entries: Vec<(f32, String)> = Vec::new();
     let uid = "*";
     let aid = "*";
@@ -227,8 +257,11 @@ async fn retrieve_cross_session_memories(_user_content: &str) -> String {
                 )
                 .num_seconds() as f32
                 / 86400.0;
-            let score = importance * (-decay_rate * days_elapsed).exp();
-            all_entries.push((score, text));
+            let relevance = memory_relevance_score(&query_terms, &text);
+            if relevance > 0.0 {
+                let score = importance * (-decay_rate * days_elapsed).exp() * relevance;
+                all_entries.push((score, text));
+            }
         }
     }
     drop(_lock);
@@ -256,9 +289,12 @@ async fn retrieve_cross_session_memories(_user_content: &str) -> String {
     })
     .unwrap_or_default();
 
-    // Score semantic facts just below cognitive ones (base score 0.7, aged)
+    // Score semantic facts just below cognitive ones, gated by current query relevance.
     for fact in &semantic_facts {
-        all_entries.push((0.7, fact.clone()));
+        let relevance = memory_relevance_score(&query_terms, fact);
+        if relevance > 0.0 {
+            all_entries.push((0.7 * relevance, fact.clone()));
+        }
     }
 
     // 3. Query graph_nodes (entity observations)
@@ -331,7 +367,13 @@ async fn retrieve_cross_session_memories(_user_content: &str) -> String {
     // Append graph nodes
     let filtered_nodes: Vec<_> = graph_nodes
         .into_iter()
-        .filter(|(_, obs)| !obs.is_empty())
+        .filter(|(name, obs)| {
+            if obs.is_empty() {
+                return false;
+            }
+            let joined = format!("{} {}", name, obs.join(" "));
+            memory_relevance_score(&query_terms, &joined) > 0.0
+        })
         .collect();
     for (name, obs) in filtered_nodes.iter().take(5) {
         persistent_mem.push_str(&format!("- Entity '{}':\n", name));
@@ -445,6 +487,9 @@ fn get_dynamic_tools_guideline(registry: &crate::tools::ToolRegistry) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::graph_memory::test_lock;
+    use crate::tools::graph_memory::with_db;
+    use crate::tools::memory_extra::working::store_semantic_fact;
 
     #[test]
     fn test_get_version_history() {
@@ -478,5 +523,138 @@ mod tests {
         let guideline = get_dynamic_tools_guideline(&registry);
         assert!(guideline.contains("dummy_tool"));
         assert!(guideline.contains("Core Tools"));
+    }
+
+    #[tokio::test]
+    async fn test_cross_session_memory_excludes_stale_semantic_facts() {
+        let _l = test_lock().lock().await;
+        let scope = format!(
+            "test_prompt_stale_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let stale_fact = format!("stale-marker-{} Rust obsolete rule", scope);
+        let active_fact = format!("active-marker-{} Rust current rule", scope);
+
+        store_semantic_fact(
+            &format!("{}-stale", scope),
+            &stale_fact,
+            0.9,
+            "*",
+            &scope,
+            "*",
+        )
+        .unwrap();
+        store_semantic_fact(
+            &format!("{}-active", scope),
+            &active_fact,
+            0.9,
+            "*",
+            &scope,
+            "*",
+        )
+        .unwrap();
+        with_db(|conn| {
+            conn.execute(
+                "UPDATE semantic_metadata SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE node_id = ?1",
+                rusqlite::params![format!("{}-stale", scope)],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let memory = retrieve_cross_session_memories("Rust current obsolete rule").await;
+        assert!(memory.contains(&active_fact));
+        assert!(!memory.contains(&stale_fact));
+    }
+
+    #[tokio::test]
+    async fn test_cross_session_memory_is_top_k_budgeted() {
+        let _l = test_lock().lock().await;
+        let scope = format!(
+            "test_prompt_budget_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+
+        for i in 0..35 {
+            store_semantic_fact(
+                &format!("{}-fact-{}", scope, i),
+                &format!("budget-marker-{} Rust memory fact number {}", scope, i),
+                0.9,
+                "*",
+                &scope,
+                "*",
+            )
+            .unwrap();
+        }
+
+        let memory = retrieve_cross_session_memories("Rust memory budget marker").await;
+        let fact_lines = memory
+            .lines()
+            .filter(|line| line.starts_with("- budget-marker-"))
+            .count();
+        assert!(
+            fact_lines <= 30,
+            "prompt memory should stay top-30 budgeted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cross_session_memory_is_query_relevant() {
+        let _l = test_lock().lock().await;
+        let scope = format!(
+            "test_prompt_memory_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let rust_fact = format!("rust-query-marker-{} borrow checker lifetime rule", scope);
+        let cooking_fact = format!(
+            "cooking-query-marker-{} sourdough fermentation schedule",
+            scope
+        );
+
+        store_semantic_fact(
+            &format!("{}-rust", scope),
+            &rust_fact,
+            0.9,
+            "*",
+            &scope,
+            "*",
+        )
+        .unwrap();
+        store_semantic_fact(
+            &format!("{}-cooking", scope),
+            &cooking_fact,
+            0.9,
+            "*",
+            &scope,
+            "*",
+        )
+        .unwrap();
+
+        let memory =
+            retrieve_cross_session_memories("help with Rust lifetime borrow checker").await;
+
+        assert!(memory.contains(&rust_fact));
+        assert!(
+            !memory.contains(&cooking_fact),
+            "irrelevant memory should not be injected into every prompt"
+        );
+
+        with_db(|conn| {
+            conn.execute(
+                "UPDATE semantic_metadata SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE session_id = ?1",
+                rusqlite::params![scope],
+            )?;
+            Ok(())
+        })
+        .unwrap();
     }
 }

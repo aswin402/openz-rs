@@ -186,6 +186,9 @@ mod tests {
             crate::tools::memory_extra::InvalidateFactTool,
         ));
         registry.register(std::sync::Arc::new(
+            crate::tools::memory_extra::ForgetMemoryTool,
+        ));
+        registry.register(std::sync::Arc::new(
             crate::tools::memory_extra::QueryFactHistoryTool,
         ));
         registry.register(std::sync::Arc::new(
@@ -338,6 +341,7 @@ mod tests {
             "search_text",
             "hybrid_search",
             "invalidate_fact",
+            "forget_memory",
             "query_fact_history",
             "query_as_of",
             "smart_store",
@@ -390,8 +394,8 @@ mod tests {
             "Expected 12 graph memory tools, got {graph_mem_count}"
         );
         assert_eq!(
-            mem_extra_count, 31,
-            "Expected 31 memory extra tools, got {mem_extra_count}"
+            mem_extra_count, 32,
+            "Expected 32 memory extra tools, got {mem_extra_count}"
         );
         assert_eq!(
             shared_count, 7,
@@ -399,7 +403,7 @@ mod tests {
         );
         assert_eq!(
             names.len(),
-            5 + 21 + 12 + 31 + 7,
+            5 + 21 + 12 + 32 + 7,
             "Total tool count mismatch"
         );
     }

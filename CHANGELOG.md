@@ -398,7 +398,21 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.49 (Latest Release)
+### v0.0.50 (Latest Release)
+*   **Feature: Native memory coordinator and reliability overhaul:** Unified semantic, graph, recall, deletion, stats, and prompt-memory flows behind a coordinator path with regression coverage for worst-case memory behavior.
+    *   Added a native `MemoryCoordinator` for semantic writes, graph relation writes, hybrid recall, forget operations, and memory health stats.
+    *   Made semantic memory store deterministic embedding blobs and upgraded `hybrid_search` to combine FTS5 and vector similarity using reciprocal-rank fusion.
+    *   Added `forget_memory` and routed deletion through semantic metadata, FTS rows, graph nodes/edges, shared memory, cognitive memory, research archives, session metadata, and skills-derived facts.
+    *   Made cross-session prompt memory query-aware, stale-fact aware, deduplicated, and top-30 budgeted so unrelated memories do not leak into every prompt.
+    *   Ported memory_rs-inspired auto-importance scoring and conservative conflict resolution for exclusive graph relations plus semantic slots such as current job, location, and preferences.
+    *   Improved `extract_and_store_facts` to handle multi-word entities, profile-style facts, carried subjects across `and`, and richer relations like `built_with`, `lives_in`, and `prefers`.
+    *   Expanded `memory_stats` with coordinator-backed active counts, embedding coverage, cognitive memory, research archive, session metadata memory, skills memory, working memory, and total active memory metrics.
+    *   Improved codebase memory indexing for Rust trait impl blocks such as `impl Trait for Type`, preserving the implemented type and signature for code graph queries.
+    *   Added semantic similarity conflict resolution so near-duplicate lower-importance facts are expired when a stronger replacement is written.
+    *   Added regression eval tests for stale facts, contradictions, deletion, recall relevance, poisoning attempts, prompt budgeting, semantic embeddings, memory layer stats, codebase indexing, and coordinator write/forget flows.
+*   **Chore:** Bumped version to `v0.0.50`.
+
+### v0.0.49
 *   **Feature: Headroom parity and hardening:** Brought the native Headroom tools closer to the original `agentcpower`/Headroom MCP behavior while keeping OpenZ's safer native execution model.
     *   Added `threshold`, `signatures_only`, and `model_hint` compression controls for content, file, and directory compression workflows.
     *   Added syntax-aware signature-only code compression so agents can preserve public structure while dropping function bodies.
