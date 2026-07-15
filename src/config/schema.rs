@@ -151,7 +151,7 @@ fn default_warn_before_expensive_tools() -> bool {
 }
 
 fn default_tool_timeout_secs() -> u64 {
-    120
+    300
 }
 
 fn default_security_mode() -> String {

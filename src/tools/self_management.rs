@@ -287,6 +287,7 @@ impl Tool for ToolCatalogTool {
                 examples: &[],
                 when_to_use: "",
                 when_not_to_use: "",
+                recommended_timeout_secs: None,
             };
             let decision = crate::tools::resource_policy::ToolResourcePolicy::evaluate(
                 &metadata, &defaults, &runtime,

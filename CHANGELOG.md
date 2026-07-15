@@ -398,6 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
+### v0.0.51 (Unreleased)
+*   **Feature: Dynamic tool timeout — orchestrator-driven adaptive execution:** Replaced the static 120s tool timeout with a 300s default and a bounded override system that lets tool metadata and orchestrator hints adapt timeouts per task complexity.
+    *   Raised default tool timeout from 120s to 300s (`config/schema.rs`).
+    *   Added `_timeout_secs` override field with bounded execution (`5s..1800s`) so any tool call can request a custom timeout without disabling safety limits.
+    *   Added `recommended_timeout_secs` to `ToolMetadata` — tools declare their ideal timeout (delegate_task=600s, browser=600s, video=900s, crawl=600s, etc.) as hints when no explicit override is given.
+    *   Added `timeout_secs` parameter to `delegate_task`, `delegate_profile`, and `parallel_research`; subagent timeouts now raise the outer tool timeout when needed and are clamped to the shared safety range.
+    *   Replaced hardcoded 300s subagent timeouts in delegate_task.rs and delegate_profile.rs with bounded dynamic resolution.
+    *   Made `parallel_research` actually apply per-task `timeout_secs` instead of only advertising the schema field.
+
 ### v0.0.50 (Latest Release)
 *   **Feature: Native memory coordinator and reliability overhaul:** Unified semantic, graph, recall, deletion, stats, and prompt-memory flows behind a coordinator path with regression coverage for worst-case memory behavior.
     *   Added a native `MemoryCoordinator` for semantic writes, graph relation writes, hybrid recall, forget operations, and memory health stats.
@@ -412,7 +421,7 @@ Inside `openz agent`, the user can issue direct slash commands:
     *   Added regression eval tests for stale facts, contradictions, deletion, recall relevance, poisoning attempts, prompt budgeting, semantic embeddings, memory layer stats, codebase indexing, and coordinator write/forget flows.
 *   **Chore:** Bumped version to `v0.0.50`.
 
-### v0.0.49
+### v0.0.49 (Previous Release)
 *   **Feature: Headroom parity and hardening:** Brought the native Headroom tools closer to the original `agentcpower`/Headroom MCP behavior while keeping OpenZ's safer native execution model.
     *   Added `threshold`, `signatures_only`, and `model_hint` compression controls for content, file, and directory compression workflows.
     *   Added syntax-aware signature-only code compression so agents can preserve public structure while dropping function bodies.

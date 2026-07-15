@@ -13,6 +13,45 @@ fn should_cancel_turn_after_tool_error(error_str: &str) -> bool {
         || lower.contains("subagent task cancelled")
 }
 
+fn timeout_arg(arguments: &serde_json::Value, key: &str) -> Option<u64> {
+    arguments.get(key).and_then(|v| v.as_u64())
+}
+
+fn max_parallel_task_timeout(arguments: &serde_json::Value) -> Option<u64> {
+    arguments
+        .get("tasks")
+        .and_then(|v| v.as_array())
+        .and_then(|tasks| {
+            tasks
+                .iter()
+                .filter_map(|task| timeout_arg(task, "timeout_secs"))
+                .max()
+        })
+}
+
+fn resolve_tool_timeout_secs(
+    tool_name: &str,
+    arguments: &serde_json::Value,
+    recommended_timeout_secs: Option<u64>,
+    default_timeout_secs: u64,
+) -> u64 {
+    if let Some(explicit) = timeout_arg(arguments, "_timeout_secs") {
+        return crate::tools::clamp_tool_timeout_secs(explicit);
+    }
+
+    let mut timeout_secs = recommended_timeout_secs.unwrap_or(default_timeout_secs);
+    if let Some(argument_timeout) = timeout_arg(arguments, "timeout_secs") {
+        timeout_secs = timeout_secs.max(argument_timeout);
+    }
+    if tool_name == "parallel_research" {
+        if let Some(task_timeout) = max_parallel_task_timeout(arguments) {
+            timeout_secs = timeout_secs.max(task_timeout);
+        }
+    }
+
+    crate::tools::clamp_tool_timeout_secs(timeout_secs)
+}
+
 struct ApprovedToolExec<'a> {
     tool: std::sync::Arc<dyn crate::tools::Tool>,
     call: &'a crate::providers::ToolCallRequest,
@@ -55,8 +94,14 @@ async fn execute_approved_tool(params: ApprovedToolExec<'_>) -> serde_json::Valu
         None
     };
 
-    let tool_timeout =
-        std::time::Duration::from_secs(params.config.agents.defaults.tool_timeout_secs);
+    // Resolve timeout: 1) _timeout_secs override, 2) subagent task request, 3) metadata hint, 4) config default.
+    let tool_timeout_secs = resolve_tool_timeout_secs(
+        &params.call.name,
+        &params.call.arguments,
+        params.metadata.recommended_timeout_secs,
+        params.config.agents.defaults.tool_timeout_secs,
+    );
+    let tool_timeout = std::time::Duration::from_secs(tool_timeout_secs);
     let fut = params.tool.call(&params.call.arguments);
     let timed_fut = tokio::time::timeout(tool_timeout, fut);
     let tool_cancel_tx = crate::shutdown::cli_cancel_tx();
@@ -77,7 +122,7 @@ async fn execute_approved_tool(params: ApprovedToolExec<'_>) -> serde_json::Valu
                     Ok(r) => r,
                     Err(_) => Err(anyhow::anyhow!(
                         "Tool execution timed out after {}s",
-                        params.config.agents.defaults.tool_timeout_secs
+                        tool_timeout_secs
                     )),
                 }
             }
@@ -1073,9 +1118,71 @@ mod tests {
     use super::*;
 
     #[test]
+    fn resolves_tool_timeout_with_bounded_explicit_override() {
+        assert_eq!(
+            resolve_tool_timeout_secs(
+                "web_fetch",
+                &serde_json::json!({ "_timeout_secs": 1 }),
+                Some(600),
+                300,
+            ),
+            crate::tools::MIN_TOOL_TIMEOUT_SECS
+        );
+        assert_eq!(
+            resolve_tool_timeout_secs(
+                "web_fetch",
+                &serde_json::json!({ "_timeout_secs": 999_999 }),
+                Some(600),
+                300,
+            ),
+            crate::tools::MAX_TOOL_TIMEOUT_SECS
+        );
+    }
+
+    #[test]
+    fn delegate_timeout_raises_outer_tool_timeout() {
+        assert_eq!(
+            resolve_tool_timeout_secs(
+                "delegate_task",
+                &serde_json::json!({ "timeout_secs": 900 }),
+                Some(600),
+                300,
+            ),
+            900
+        );
+        assert_eq!(
+            resolve_tool_timeout_secs(
+                "reviewer",
+                &serde_json::json!({ "timeout_secs": 900 }),
+                None,
+                300,
+            ),
+            900
+        );
+    }
+
+    #[test]
+    fn parallel_research_uses_largest_task_timeout_for_outer_tool() {
+        assert_eq!(
+            resolve_tool_timeout_secs(
+                "parallel_research",
+                &serde_json::json!({
+                    "tasks": [
+                        { "goal": "quick", "timeout_secs": 120 },
+                        { "goal": "deep", "timeout_secs": 900 }
+                    ]
+                }),
+                Some(600),
+                300,
+            ),
+            900
+        );
+    }
+
+    #[test]
     fn tool_timeout_does_not_count_as_user_cancel() {
         assert!(!should_cancel_turn_after_tool_error(
-            "Tool execution timed out after 120s"
+            "Tool execution timed out after 300s"
         ));
         assert!(should_cancel_turn_after_tool_error("Cancelled by user"));
         assert!(should_cancel_turn_after_tool_error(

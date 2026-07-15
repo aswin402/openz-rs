@@ -2,8 +2,8 @@ use super::delegate_task::{
     create_isolated_workspace, current_workspace_root, ensure_markdown_images,
     run_evolution_review, sync_changes_back, WorktreeGuard,
 };
-use super::evaluator_optimizer::validate_schema;
 use super::parallel_research::get_status_from_goal;
+use super::schema_retry::{evaluate_schema_retry, SchemaRetryDecision};
 use super::{
     build_provider_for_model, cancellation_result_json, classify_subagent_error,
     compact_lifecycle_line, status_json, CancellationToken, SubagentRunStatus, DELEGATION_DEPTH,
@@ -39,6 +39,10 @@ impl Tool for DelegateProfileTool {
         &self.profile.description
     }
 
+    fn metadata(&self) -> crate::tools::ToolMetadata {
+        super::subagent_tool_metadata(self.name())
+    }
+
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -54,6 +58,10 @@ impl Tool for DelegateProfileTool {
                 "json_schema": {
                     "type": "object",
                     "description": "Optional: A JSON Schema definition that this subagent's final output summary MUST strictly conform to."
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "description": "Optional timeout in seconds for the subagent execution. Overrides the default tool timeout. Use higher values for complex multi-step tasks and lower values for quick reviews."
                 }
             },
             "required": ["goal"]
@@ -72,6 +80,7 @@ impl Tool for DelegateProfileTool {
             .ok_or_else(|| anyhow!("Missing 'goal' argument"))?;
         let context = arguments.get("context").and_then(|v| v.as_str()).unwrap_or("");
         let json_schema = arguments.get("json_schema").cloned();
+        let timeout_secs = arguments.get("timeout_secs").and_then(|v| v.as_u64());
 
         let clean_goal = ensure_markdown_images(goal);
         let clean_context = ensure_markdown_images(context);
@@ -389,10 +398,17 @@ impl Tool for DelegateProfileTool {
                         }).await
                     }).await
                 });
-                let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
+                let sub_timeout = super::resolve_subagent_timeout_secs(
+                    timeout_secs,
+                    self.config.agents.defaults.tool_timeout_secs,
+                );
+                let run_res_timeout = tokio::time::timeout(
+                    std::time::Duration::from_secs(sub_timeout),
+                    run_res_fut,
+                );
                 match with_spinner(&spinner_msg, run_res_timeout).await {
                     Ok(res) => res,
-                    Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
+                    Err(_) => Err(anyhow!("Subagent execution timed out after {sub_timeout}s")),
                 }
             };
             cancel_guard.completed = true;
@@ -400,114 +416,74 @@ impl Tool for DelegateProfileTool {
             // Enforce schema validation on child agent success
             if let Some(ref schema) = json_schema {
                 let mut attempts = 0;
-                while let Ok(ref mut res) = run_res {
-                        let text_output = res.content.trim();
-                        let clean_json_str = if text_output.starts_with("```json") {
-                            text_output.strip_prefix("```json").unwrap().strip_suffix("```").unwrap_or(text_output).trim()
-                        } else if text_output.starts_with("```") {
-                            text_output.strip_prefix("```").unwrap().strip_suffix("```").unwrap_or(text_output).trim()
-                        } else {
-                            text_output
-                        };
-
-                        let parsed_val: Result<Value, _> = serde_json::from_str(clean_json_str);
-                        match parsed_val {
-                            Ok(val) => {
-                                match validate_schema(&val, schema) {
-                                    Ok(_) => {
-                                        res.content = clean_json_str.to_string();
-                                        break;
-                                    }
-                                    Err(e) => {
-                                        if attempts >= 2 {
-                                            run_res = Err(anyhow!("Subagent output failed schema validation: {}", e));
-                                            break;
-                                        }
-                                        attempts += 1;
-                                        crate::tui_println!(
-                                            "{}▲ [Reflection] Subagent JSON schema validation failed: {}. Retrying attempt {} of 2...{}",
-                                            AURA_GOLD, e, attempts, COLOR_RESET
-                                        );
-                                        let retry_prompt = format!(
-                                            "Your previous response did not conform to the JSON Schema. Validation Error: {}\n\n\
-                                            Please correct your response. Return ONLY the raw valid JSON matching the schema.",
-                                            e
-                                        );
-                                        let p_ref = &retry_prompt;
-                                        let c_ref = &child_session_id;
-                                        let child_agent_ref = &child_agent;
-                                        let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
-                                            DELEGATION_DEPTH.scope(current_depth + 1, async {
-                                                tokio::select! {
-                                                    biased;
-                                                    _ = self.cancellation_token.wait_for_cancellation() => {
-                                                        if !crate::agent::style::is_silent() {
-                                                            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                                            let line = compact_lifecycle_line(
-                                                                &self.profile.name,
-                                                                &model_name,
-                                                                &SubagentRunStatus::Cancelling,
-                                                            );
-                                                            crate::tui_println!(
-                                                                "{}{}{}▲ {}{}",
-                                                                AURA_SLATE,
-                                                                leaf_prefix,
-                                                                AURA_GOLD,
-                                                                line,
-                                                                COLOR_RESET
-                                                            );
-                                                        }
-                                                        Err(anyhow!("Subagent task cancelled"))
-                                                    }
-                                                    res = child_agent_ref.run(p_ref, c_ref) => res,
-                                                }
-                                            }).await
-                                        });
-                                        let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
-                                        run_res = match with_spinner(&spinner_msg, run_res_timeout).await {
-                                            Ok(r) => r,
-                                            Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
-                                        };
-                                    }
-                                }
+                while run_res.is_ok() {
+                    match evaluate_schema_retry(
+                        run_res.as_ref().map(|res| res.content.as_str()).unwrap_or_default(),
+                        schema,
+                        attempts,
+                        2,
+                    ) {
+                        Ok(SchemaRetryDecision::Accepted(clean_json)) => {
+                            if let Ok(ref mut res) = run_res {
+                                res.content = clean_json;
                             }
-                            Err(e) => {
-                                if attempts >= 2 {
-                                    run_res = Err(anyhow!("Subagent output failed to parse as JSON: {}. Parse Error: {}", e, text_output));
-                                    break;
-                                }
-                                attempts += 1;
-                                crate::tui_println!(
-                                    "{}▲ [Reflection] Subagent output is not valid JSON: {}. Retrying attempt {} of 2...{}",
-                                    AURA_GOLD, e, attempts, COLOR_RESET
-                                );
-                                let retry_prompt = format!(
-                                    "Your previous response was not valid JSON. Parse Error: {}\n\n\
-                                    Please correct your response. Return ONLY the raw valid JSON matching the schema.",
-                                    e
-                                );
-                                let p_ref = &retry_prompt;
-                                let c_ref = &child_session_id;
-                                let child_agent_ref = &child_agent;
-                                let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
-                                    DELEGATION_DEPTH.scope(current_depth + 1, async {
-                                        tokio::select! {
-                                            biased;
-                                            _ = self.cancellation_token.wait_for_cancellation() => {
-                                                Err(anyhow!("Subagent task cancelled"))
+                            break;
+                        }
+                        Ok(SchemaRetryDecision::Retry { prompt, reason }) => {
+                            attempts += 1;
+                            crate::tui_println!(
+                                "{}▲ [Reflection] Subagent output needs correction: {}. Retrying attempt {} of 2...{}",
+                                AURA_GOLD, reason, attempts, COLOR_RESET
+                            );
+                            let p_ref = &prompt;
+                            let c_ref = &child_session_id;
+                            let child_agent_ref = &child_agent;
+                            let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
+                                DELEGATION_DEPTH.scope(current_depth + 1, async {
+                                    tokio::select! {
+                                        biased;
+                                        _ = self.cancellation_token.wait_for_cancellation() => {
+                                            if !crate::agent::style::is_silent() {
+                                                let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                                let line = compact_lifecycle_line(
+                                                    &self.profile.name,
+                                                    &model_name,
+                                                    &SubagentRunStatus::Cancelling,
+                                                );
+                                                crate::tui_println!(
+                                                    "{}{}{}▲ {}{}",
+                                                    AURA_SLATE,
+                                                    leaf_prefix,
+                                                    AURA_GOLD,
+                                                    line,
+                                                    COLOR_RESET
+                                                );
                                             }
-                                            res = child_agent_ref.run(p_ref, c_ref) => res,
+                                            Err(anyhow!("Subagent task cancelled"))
                                         }
-                                    }).await
-                                });
-                                let run_res_timeout = tokio::time::timeout(std::time::Duration::from_secs(300), run_res_fut);
-                                run_res = match with_spinner(&spinner_msg, run_res_timeout).await {
-                                    Ok(r) => r,
-                                    Err(_) => Err(anyhow!("Subagent execution timed out after 5 minutes")),
-                                };
-                            }
+                                        res = child_agent_ref.run(p_ref, c_ref) => res,
+                                    }
+                                }).await
+                            });
+                            let sub_timeout = super::resolve_subagent_timeout_secs(
+                                timeout_secs,
+                                self.config.agents.defaults.tool_timeout_secs,
+                            );
+                            let run_res_timeout = tokio::time::timeout(
+                                std::time::Duration::from_secs(sub_timeout),
+                                run_res_fut,
+                            );
+                            run_res = match with_spinner(&spinner_msg, run_res_timeout).await {
+                                Ok(r) => r,
+                                Err(_) => Err(anyhow!("Subagent execution timed out after {sub_timeout}s")),
+                            };
+                        }
+                        Err(e) => {
+                            run_res = Err(e);
+                            break;
                         }
                     }
+                }
             }
 
             match run_res {

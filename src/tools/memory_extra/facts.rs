@@ -1114,6 +1114,13 @@ fn is_valid_entity(word: &str) -> bool {
     true
 }
 
+fn keyword_match_count(keywords: &[String], text: &str) -> usize {
+    keywords
+        .iter()
+        .filter(|kw| text.contains(kw.as_str()))
+        .count()
+}
+
 // ─── Tool: ProactiveRecallTool ───────────────────────────────────
 
 pub struct ProactiveRecallTool;
@@ -1196,73 +1203,102 @@ impl Tool for ProactiveRecallTool {
             }
         }
 
-        // 2. Graph memory via LIKE search
-        let query_pattern = format!("%{}%", query.to_lowercase());
+        // 2. Graph memory via scoped keyword ranking over entities and relations.
+        // A full-query LIKE misses natural requests such as "what is OpenZ built with".
         let graph_results = with_db(|conn| -> Result<Vec<Value>> {
-            let mut entities = Vec::new();
-            let mut stmt = conn.prepare(
+            let mut results = Vec::new();
+
+            let mut node_stmt = conn.prepare(
                 "SELECT name, entity_type, observations FROM graph_nodes
-                 WHERE (LOWER(name) LIKE ?1 OR LOWER(entity_type) LIKE ?1 OR LOWER(observations) LIKE ?1)
-                   AND (?2 IS NULL OR user_id = ?2 OR user_id = '*')
-                   AND (?3 IS NULL OR session_id = ?3 OR session_id = '*')
-                   AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')"
+                 WHERE (?1 IS NULL OR user_id = ?1 OR user_id = '*')
+                   AND (?2 IS NULL OR session_id = ?2 OR session_id = '*')
+                   AND (?3 IS NULL OR agent_id = ?3 OR agent_id = '*')",
             )?;
-            let mut rows = stmt.query(params![query_pattern, uid, sid, aid])?;
-            while let Some(row) = rows.next()? {
+            let mut node_rows = node_stmt.query(params![uid, sid, aid])?;
+            while let Some(row) = node_rows.next()? {
                 let name: String = row.get(0)?;
                 let entity_type: String = row.get(1)?;
                 let obs_json: String = row.get(2)?;
                 let observations: Vec<String> = serde_json::from_str(&obs_json).unwrap_or_default();
-                let obs_str = if observations.is_empty() {
-                    String::new()
-                } else {
-                    format!(" - Observations: {}", observations.join(", "))
-                };
-                entities.push(json!({
-                    "name": name,
-                    "entityType": entity_type,
-                    "observations": observations,
-                    "content": format!("Entity: {} ({}){}", name, entity_type, obs_str),
-                }));
+                let searchable =
+                    format!("{} {} {}", name, entity_type, observations.join(" ")).to_lowercase();
+                let match_count = keyword_match_count(&keywords, &searchable);
+                if match_count > 0 {
+                    let obs_str = if observations.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" - Observations: {}", observations.join(", "))
+                    };
+                    results.push(json!({
+                        "kind": "entity",
+                        "name": name,
+                        "entityType": entity_type,
+                        "observations": observations,
+                        "content": format!("Entity: {} ({}){}", name, entity_type, obs_str),
+                        "matchCount": match_count,
+                    }));
+                }
             }
-            Ok(entities)
+
+            let mut edge_stmt = conn.prepare(
+                "SELECT from_name, relation_type, to_name FROM graph_edges
+                 WHERE valid_until IS NULL
+                   AND (?1 IS NULL OR user_id = ?1 OR user_id = '*')
+                   AND (?2 IS NULL OR session_id = ?2 OR session_id = '*')
+                   AND (?3 IS NULL OR agent_id = ?3 OR agent_id = '*')",
+            )?;
+            let mut edge_rows = edge_stmt.query(params![uid, sid, aid])?;
+            while let Some(row) = edge_rows.next()? {
+                let from_name: String = row.get(0)?;
+                let relation_type: String = row.get(1)?;
+                let to_name: String = row.get(2)?;
+                let relation_words = relation_type.replace('_', " ");
+                let searchable = format!(
+                    "{} {} {} {}",
+                    from_name, relation_type, relation_words, to_name
+                )
+                .to_lowercase();
+                let match_count = keyword_match_count(&keywords, &searchable);
+                if match_count > 0 {
+                    results.push(json!({
+                        "kind": "relation",
+                        "from": from_name,
+                        "relationType": relation_type,
+                        "to": to_name,
+                        "content": format!("Relation: {} -[{}]-> {}", from_name, relation_type, to_name),
+                        "matchCount": match_count,
+                    }));
+                }
+            }
+
+            Ok(results)
         })?;
 
-        for entity in graph_results {
-            let confidence = if keywords.is_empty() {
-                0.6
+        for graph_item in graph_results {
+            let match_count = graph_item["matchCount"].as_u64().unwrap_or(0) as f64;
+            let confidence = (0.6 + 0.1 * match_count).min(1.0);
+            let metadata = if graph_item["kind"] == "relation" {
+                json!({
+                    "kind": "relation",
+                    "from": graph_item["from"],
+                    "relationType": graph_item["relationType"],
+                    "to": graph_item["to"],
+                    "matchCount": graph_item["matchCount"],
+                })
             } else {
-                let lower_name = entity["name"].as_str().unwrap_or("").to_lowercase();
-                let lower_type = entity["entityType"].as_str().unwrap_or("").to_lowercase();
-                let obs_text: String = entity["observations"]
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str())
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    })
-                    .unwrap_or_default()
-                    .to_lowercase();
-                let match_count = keywords
-                    .iter()
-                    .filter(|kw| {
-                        lower_name.contains(kw.as_str())
-                            || lower_type.contains(kw.as_str())
-                            || obs_text.contains(kw.as_str())
-                    })
-                    .count();
-                (0.6 + 0.1 * match_count as f64).min(1.0)
+                json!({
+                    "kind": "entity",
+                    "name": graph_item["name"],
+                    "entityType": graph_item["entityType"],
+                    "observations": graph_item["observations"],
+                    "matchCount": graph_item["matchCount"],
+                })
             };
             items.push(json!({
                 "layer": "graph",
-                "content": entity["content"],
+                "content": graph_item["content"],
                 "confidence": confidence,
-                "metadata": {
-                    "name": entity["name"],
-                    "entityType": entity["entityType"],
-                    "observations": entity["observations"],
-                }
+                "metadata": metadata,
             }));
         }
 

@@ -36,6 +36,67 @@ impl Tool for MockTool {
 }
 
 #[test]
+fn test_resolve_subagent_timeout_uses_default_and_clamps() {
+    assert_eq!(resolve_subagent_timeout_secs(None, 300), 300);
+    assert_eq!(
+        resolve_subagent_timeout_secs(Some(1), 300),
+        crate::tools::MIN_TOOL_TIMEOUT_SECS
+    );
+    assert_eq!(
+        resolve_subagent_timeout_secs(Some(999_999), 300),
+        crate::tools::MAX_TOOL_TIMEOUT_SECS
+    );
+}
+
+#[test]
+fn test_delegate_task_metadata_is_explicit_for_router() {
+    let tool = DelegateTaskTool {
+        config: Config::default(),
+        parent_provider: Arc::new(crate::providers::openai::OpenAIProvider::new(
+            "mock_key".to_string(),
+            "mock_base".to_string(),
+            "gpt-4o-mini".to_string(),
+        )),
+        session_manager: SessionManager::new(std::env::temp_dir()),
+        parent_tools: Vec::new(),
+        cancellation_token: CancellationToken::new(),
+    };
+
+    let metadata = tool.metadata();
+
+    assert_eq!(metadata.domain, "subagent");
+    assert_eq!(metadata.risk, crate::tools::ToolRisk::Medium);
+    assert!(metadata.spawns_process);
+    assert!(!metadata.requires_approval);
+    assert_eq!(metadata.priority, 100);
+    assert_eq!(metadata.recommended_timeout_secs, Some(600));
+}
+
+#[test]
+fn test_parallel_research_metadata_is_explicit_for_router() {
+    let tool = ParallelResearchTool {
+        config: Config::default(),
+        parent_provider: Arc::new(crate::providers::openai::OpenAIProvider::new(
+            "mock_key".to_string(),
+            "mock_base".to_string(),
+            "gpt-4o-mini".to_string(),
+        )),
+        session_manager: SessionManager::new(std::env::temp_dir()),
+        parent_tools: Vec::new(),
+        cancellation_token: CancellationToken::new(),
+    };
+
+    let metadata = tool.metadata();
+
+    assert_eq!(metadata.domain, "subagent");
+    assert_eq!(metadata.risk, crate::tools::ToolRisk::Medium);
+    assert!(metadata.spawns_process);
+    assert!(!metadata.requires_approval);
+    assert_eq!(metadata.priority, 100);
+    assert_eq!(metadata.recommended_timeout_secs, Some(600));
+}
+
+#[test]
 fn test_lifecycle_status_labels_are_stable_for_tui() {
     use super::lifecycle::SubagentRunStatus;
 
@@ -52,7 +113,13 @@ fn test_lifecycle_status_labels_are_stable_for_tui() {
     );
     assert_eq!(SubagentRunStatus::Cancelling.label(), "cancelling");
     assert_eq!(SubagentRunStatus::Cancelled.label(), "cancelled");
-    assert_eq!(SubagentRunStatus::TimedOut.label(), "timed out");
+    assert_eq!(
+        SubagentRunStatus::TimedOut {
+            duration_secs: None
+        }
+        .label(),
+        "timed out"
+    );
     assert_eq!(
         SubagentRunStatus::Failed {
             error: "boom".into()
@@ -87,7 +154,53 @@ fn test_lifecycle_classifies_timeout_without_user_cancel() {
 
     assert_eq!(
         classify_subagent_error("Subagent execution timed out after 5 minutes", &token),
-        SubagentRunStatus::TimedOut
+        SubagentRunStatus::TimedOut {
+            duration_secs: Some(300)
+        }
+    );
+}
+
+#[test]
+fn test_lifecycle_classifies_timeout_duration_seconds() {
+    use super::lifecycle::{classify_subagent_error, SubagentRunStatus};
+    let token = CancellationToken::new();
+
+    assert_eq!(
+        classify_subagent_error("Subagent execution timed out after 900s", &token),
+        SubagentRunStatus::TimedOut {
+            duration_secs: Some(900)
+        }
+    );
+}
+
+#[test]
+fn test_lifecycle_timeout_status_json_includes_duration() {
+    use super::lifecycle::{status_json, SubagentRunStatus};
+
+    let value = status_json(&SubagentRunStatus::TimedOut {
+        duration_secs: Some(900),
+    });
+
+    assert_eq!(value["code"], "timed_out");
+    assert_eq!(value["label"], "timed out after 900s");
+    assert_eq!(value["durationSecs"], 900);
+}
+
+#[test]
+fn test_compact_lifecycle_line_includes_timeout_duration() {
+    use super::lifecycle::{compact_lifecycle_line, SubagentRunStatus};
+
+    let line = compact_lifecycle_line(
+        "delegate_task",
+        "deepseek/deepseek-chat",
+        &SubagentRunStatus::TimedOut {
+            duration_secs: Some(900),
+        },
+    );
+
+    assert_eq!(
+        line,
+        "delegate_task | deepseek/deepseek-chat | timed out after 900s"
     );
 }
 
@@ -313,6 +426,73 @@ async fn test_delegation_depth_limit() {
         .unwrap_err()
         .to_string()
         .contains("Delegation limit reached"));
+}
+
+#[test]
+fn test_schema_retry_accepts_valid_fenced_json() {
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": { "answer": { "type": "string" } },
+        "required": ["answer"]
+    });
+
+    let decision = schema_retry::evaluate_schema_retry(
+        r#"```json
+{"answer":"ok"}
+```"#,
+        &schema,
+        0,
+        2,
+    )
+    .unwrap();
+
+    assert_eq!(
+        decision,
+        schema_retry::SchemaRetryDecision::Accepted(r#"{"answer":"ok"}"#.to_string())
+    );
+}
+
+#[test]
+fn test_schema_retry_retries_invalid_json_before_limit() {
+    let schema = serde_json::json!({ "type": "object" });
+
+    let decision = schema_retry::evaluate_schema_retry("not json", &schema, 0, 2).unwrap();
+
+    match decision {
+        schema_retry::SchemaRetryDecision::Retry { prompt, reason } => {
+            assert!(reason.contains("Parse Error"));
+            assert!(prompt.contains("not valid JSON"));
+        }
+        other => panic!("expected retry decision, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_schema_retry_errors_invalid_json_at_limit() {
+    let schema = serde_json::json!({ "type": "object" });
+
+    let err = schema_retry::evaluate_schema_retry("not json", &schema, 2, 2).unwrap_err();
+
+    assert!(err.to_string().contains("failed to parse as JSON"));
+}
+
+#[test]
+fn test_schema_retry_retries_schema_mismatch_before_limit() {
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": { "answer": { "type": "string" } },
+        "required": ["answer"]
+    });
+
+    let decision = schema_retry::evaluate_schema_retry("{}", &schema, 0, 2).unwrap();
+
+    match decision {
+        schema_retry::SchemaRetryDecision::Retry { prompt, reason } => {
+            assert!(reason.contains("Missing required field"));
+            assert!(prompt.contains("did not conform"));
+        }
+        other => panic!("expected retry decision, got {other:?}"),
+    }
 }
 
 #[test]

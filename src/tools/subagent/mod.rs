@@ -14,6 +14,7 @@ pub mod evaluator_optimizer;
 pub mod lifecycle;
 pub mod optimize_profile;
 pub mod parallel_research;
+pub mod schema_retry;
 
 #[cfg(test)]
 mod tests;
@@ -28,6 +29,24 @@ pub use lifecycle::{
 };
 pub use optimize_profile::{CreateSubagentTool, DeleteSubagentTool, OptimizeSubagentTool};
 pub use parallel_research::ParallelResearchTool;
+
+pub fn subagent_tool_metadata(name: &str) -> crate::tools::ToolMetadata {
+    let mut metadata = crate::tools::ToolMetadata::infer(name);
+    metadata.domain = "subagent";
+    metadata.risk = crate::tools::ToolRisk::Medium;
+    metadata.spawns_process = true;
+    metadata.requires_approval = false;
+    metadata.priority = 100;
+    metadata.recommended_timeout_secs = Some(600);
+    metadata
+}
+
+pub fn resolve_subagent_timeout_secs(
+    requested_timeout_secs: Option<u64>,
+    default_timeout_secs: u64,
+) -> u64 {
+    crate::tools::clamp_tool_timeout_secs(requested_timeout_secs.unwrap_or(default_timeout_secs))
+}
 
 // Shared utility function used across tools:
 pub fn build_provider_for_model(

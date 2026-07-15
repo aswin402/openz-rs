@@ -1278,6 +1278,60 @@ fn helper() {}
     }
 
     #[tokio::test]
+    async fn test_proactive_recall_finds_graph_relations_by_query_terms() {
+        let _l = test_lock().lock().await;
+        let scope = format!(
+            "test_pr_graph_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+
+        with_db(|conn| {
+            conn.execute(
+                "INSERT OR IGNORE INTO graph_nodes (name, entity_type, observations, user_id, session_id, agent_id)
+                 VALUES ('OpenZ', 'Project', '[]', '*', ?1, '*')",
+                params![scope],
+            )?;
+            conn.execute(
+                "INSERT OR IGNORE INTO graph_nodes (name, entity_type, observations, user_id, session_id, agent_id)
+                 VALUES ('Rust', 'Language', '[]', '*', ?1, '*')",
+                params![scope],
+            )?;
+            conn.execute(
+                "INSERT INTO graph_edges (from_name, to_name, relation_type, user_id, session_id, agent_id)
+                 VALUES ('OpenZ', 'Rust', 'built_with', '*', ?1, '*')",
+                params![scope],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let tool = ProactiveRecallTool;
+        let res = tool
+            .call(&json!({
+                "query": "what is OpenZ built with",
+                "sessionId": scope
+            }))
+            .await
+            .unwrap();
+        let arr = res.as_array().unwrap();
+
+        assert!(
+            arr.iter().any(|item| {
+                item["layer"] == "graph"
+                    && item["content"].as_str().is_some_and(|content| {
+                        content.contains("OpenZ")
+                            && content.contains("built_with")
+                            && content.contains("Rust")
+                    })
+            }),
+            "proactive recall should include graph relation facts matching query terms; got {arr:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_smart_store_text() {
         let _l = test_lock().lock().await;
         let scope = format!(

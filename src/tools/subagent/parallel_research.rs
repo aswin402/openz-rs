@@ -48,6 +48,10 @@ impl Tool for ParallelResearchTool {
         "Run multiple independent research or analysis tasks concurrently in parallel using focused read-only subagents, and return their combined summaries. Use this when you have independent files/topics/searches to analyze simultaneously."
     }
 
+    fn metadata(&self) -> crate::tools::ToolMetadata {
+        super::subagent_tool_metadata("parallel_research")
+    }
+
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
@@ -68,6 +72,10 @@ impl Tool for ParallelResearchTool {
                             "model": {
                                 "type": "string",
                                 "description": "Optional model override name (e.g., 'gpt-4o-mini', 'claude-3-5-haiku') for the subagent."
+                            },
+                            "timeout_secs": {
+                                "type": "integer",
+                                "description": "Optional timeout in seconds for this subagent task. Overrides the default tool timeout."
                             }
                         },
                         "required": ["goal"]
@@ -125,6 +133,10 @@ impl Tool for ParallelResearchTool {
                 .get("model")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            let timeout_secs = super::resolve_subagent_timeout_secs(
+                task_val.get("timeout_secs").and_then(|v| v.as_u64()),
+                self.config.agents.defaults.tool_timeout_secs,
+            );
 
             let role = get_heuristic_role(idx, &goal);
 
@@ -219,7 +231,17 @@ impl Tool for ParallelResearchTool {
                         }).await
                     }).await
                 });
-                let run_res = run_res_fut.await;
+                let run_res = match tokio::time::timeout(
+                    std::time::Duration::from_secs(timeout_secs),
+                    run_res_fut,
+                )
+                .await
+                {
+                    Ok(res) => res,
+                    Err(_) => Err(anyhow::anyhow!(
+                        "Parallel research task timed out after {timeout_secs}s"
+                    )),
+                };
 
                 if !is_parent_silent {
                     let leaf_prefix =

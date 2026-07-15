@@ -24,6 +24,28 @@ pub fn resolve_api_config(config: &Config, provider_name: &str) -> (String, Stri
     (key, base)
 }
 
+fn provider_api_key_env_var(provider_name: &str) -> &'static str {
+    match provider_name {
+        "anthropic" => "ANTHROPIC_API_KEY",
+        "openai" => "OPENAI_API_KEY",
+        "openrouter" => "OPENROUTER_API_KEY",
+        "deepseek" => "DEEPSEEK_API_KEY",
+        "groq" => "GROQ_API_KEY",
+        "minimax" => "MINIMAX_API_KEY",
+        "mistral" => "MISTRAL_API_KEY",
+        "z.ai" => "Z_AI_API_KEY",
+        "nvidia" => "NVIDIA_API_KEY",
+        "opencode_zen" => "OPENCODE_ZEN_API_KEY",
+        "google_ai_studio" | "google ai studio" => "GOOGLE_AI_STUDIO_API_KEY",
+        "cerebras" => "CEREBRAS_API_KEY",
+        "cohere" => "COHERE_API_KEY",
+        "llm7" => "LLM7_API_KEY",
+        "sambanova" => "SAMBANOVA_API_KEY",
+        "huggingface" => "HUGGINGFACE_API_KEY",
+        _ => "PROVIDER_API_KEY",
+    }
+}
+
 pub fn resolve_fallback_model(target_provider: &str, original_model: &str) -> String {
     let original_lower = original_model.to_lowercase();
     match target_provider {
@@ -481,10 +503,11 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
                 format!("{}/{}", provider_name, fb_model)
             };
         } else {
+            let env_var = provider_api_key_env_var(&final_provider_name);
             return Err(anyhow!(
-                "No API key found for provider '{}'. Please set the appropriate environment variable (e.g. {}_API_KEY).",
+                "No API key found for provider '{}'. Set {} or run `openz configure` to add the provider key. No fallback key was available for OPENROUTER_API_KEY or OPENCODE_ZEN_API_KEY.",
                 final_provider_name,
-                final_provider_name.to_uppercase()
+                env_var
             ));
         }
     }
@@ -771,6 +794,48 @@ mod tests {
         let cfg = config_with("openai");
         let r = resolve_provider_full(&cfg, "some-model");
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn test_missing_openai_key_error_is_actionable() {
+        let _guard = env_lock().lock().unwrap();
+        for var in &[
+            "OPENAI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "OPENCODE_ZEN_API_KEY",
+        ] {
+            std::env::remove_var(var);
+        }
+        let cfg = config_with("openai");
+        let err = match resolve_provider_full(&cfg, "openai/gpt-4o") {
+            Ok(_) => panic!("expected missing OpenAI key error"),
+            Err(err) => err.to_string(),
+        };
+
+        assert!(err.contains("openai"));
+        assert!(err.contains("OPENAI_API_KEY"));
+        assert!(err.contains("openz configure"));
+    }
+
+    #[test]
+    fn test_missing_anthropic_key_error_is_actionable() {
+        let _guard = env_lock().lock().unwrap();
+        for var in &[
+            "ANTHROPIC_API_KEY",
+            "OPENROUTER_API_KEY",
+            "OPENCODE_ZEN_API_KEY",
+        ] {
+            std::env::remove_var(var);
+        }
+        let cfg = config_with("auto");
+        let err = match resolve_provider_full(&cfg, "anthropic/claude-3-5-sonnet") {
+            Ok(_) => panic!("expected missing Anthropic key error"),
+            Err(err) => err.to_string(),
+        };
+
+        assert!(err.contains("anthropic"));
+        assert!(err.contains("ANTHROPIC_API_KEY"));
+        assert!(err.contains("openz configure"));
     }
 
     #[test]

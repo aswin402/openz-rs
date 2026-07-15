@@ -1207,6 +1207,7 @@ mod tests {
                 examples: &[],
                 when_to_use: "",
                 when_not_to_use: "",
+                recommended_timeout_secs: None,
             }
         }
         async fn call(&self, _arguments: &serde_json::Value) -> anyhow::Result<serde_json::Value> {

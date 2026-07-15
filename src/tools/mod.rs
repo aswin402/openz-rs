@@ -6,6 +6,13 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub const MIN_TOOL_TIMEOUT_SECS: u64 = 5;
+pub const MAX_TOOL_TIMEOUT_SECS: u64 = 1_800;
+
+pub fn clamp_tool_timeout_secs(timeout_secs: u64) -> u64 {
+    timeout_secs.clamp(MIN_TOOL_TIMEOUT_SECS, MAX_TOOL_TIMEOUT_SECS)
+}
+
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
@@ -30,6 +37,9 @@ pub struct ToolMetadata {
     pub examples: &'static [&'static str],
     pub when_to_use: &'static str,
     pub when_not_to_use: &'static str,
+    /// Recommended timeout in seconds for this tool.
+    /// None = use config default. Used when the LLM doesn't explicitly pass _timeout_secs.
+    pub recommended_timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +111,7 @@ impl ToolMetadata {
             examples: tool_examples(name, domain),
             when_to_use,
             when_not_to_use,
+            recommended_timeout_secs: tool_recommended_timeout(name),
         }
     }
 
@@ -117,6 +128,7 @@ impl ToolMetadata {
             "examples": self.examples,
             "when_to_use": self.when_to_use,
             "when_not_to_use": self.when_not_to_use,
+            "recommended_timeout_secs": self.recommended_timeout_secs,
         })
     }
 }
@@ -233,6 +245,45 @@ fn tool_uses_network(name: &str) -> bool {
         || name.contains("browser")
         || name.contains("download")
         || name.contains("mcp")
+}
+
+fn tool_recommended_timeout(name: &str) -> Option<u64> {
+    // Long-running tools get recommended timeouts so the orchestrator doesn't need
+    // to explicitly set _timeout_secs on every call. These are hints; the config
+    // default or a caller-supplied _timeout_secs still take precedence.
+    match name {
+        // Subagent delegation — full LLM loop with tool execution
+        "delegate_task" | "parallel_research" | "evaluator_optimizer_loop" => Some(600),
+
+        // Browser automation — CDP sessions with page load + interaction
+        name if name.contains("browser") || name.contains("obscura") => Some(600),
+
+        // Web crawling — multi-page spider
+        "crawl_site" => Some(600),
+
+        // Video generation — Chromium rendering or Wavyte API
+        "html_video" | "generate_video" => Some(900),
+
+        // Image generation — HTML/CSS/SVG render to PNG
+        "generate_image" | "svg_animator" => Some(300),
+
+        // Semantic search — indexing codebase
+        "semantic_search" => Some(300),
+
+        // MCP tools — external process communication
+        name if name.starts_with("mcp_") => Some(180),
+
+        // Shell commands — potentially long running
+        "exec_command" | "python_sandbox" => Some(180),
+
+        // HTML rendering via Mermaid
+        "mermaid" => Some(300),
+
+        // Document conversion
+        name if name.starts_with("opendoc_") => Some(300),
+
+        _ => None,
+    }
 }
 
 fn tool_aliases(name: &str, domain: &str) -> &'static [&'static str] {
