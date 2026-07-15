@@ -235,6 +235,45 @@ pub fn get_cli_session_key() -> String {
     format!("cli:{:016x}", hasher.finish())
 }
 
+const AGENT_DEFAULTS_LEGACY_ALIASES: &[&str] = &[
+    "max_tokens",
+    "bot_name",
+    "bot_icon",
+    "max_messages",
+    "max_tool_iterations",
+    "fallback_models",
+    "caveman_mode",
+    "context_limit",
+    "security_mode",
+    "tool_output_limit",
+    "enable_sandbox",
+    "tool_timeout_secs",
+    "show_tool_router_status",
+    "min_free_disk_gb",
+    "allow_network_tools",
+    "max_concurrent_process_tools",
+    "warn_before_expensive_tools",
+];
+
+const SKILLS_LEGACY_ALIASES: &[&str] = &[
+    "workspace_skills_enabled",
+    "external_dirs",
+    "write_approval",
+];
+
+fn object_has_any_key(value: Option<&serde_json::Value>, keys: &[&str]) -> bool {
+    value
+        .and_then(|v| v.as_object())
+        .is_some_and(|object| keys.iter().any(|key| object.contains_key(*key)))
+}
+
+fn config_uses_legacy_aliases(raw: &serde_json::Value) -> bool {
+    let agent_defaults = raw.get("agents").and_then(|agents| agents.get("defaults"));
+    let skills = raw.get("skills");
+    object_has_any_key(agent_defaults, AGENT_DEFAULTS_LEGACY_ALIASES)
+        || object_has_any_key(skills, SKILLS_LEGACY_ALIASES)
+}
+
 pub fn migrate_config(config: &mut Config) -> bool {
     let mut modified = false;
     let remove_names = [
@@ -272,8 +311,8 @@ pub fn load_config() -> Result<Config> {
     let content = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read config file at {:?}", path))?;
 
-    let mut config: Config = match serde_json::from_str(&content) {
-        Ok(c) => c,
+    let raw_json: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(raw) => raw,
         Err(e) => {
             let backup_path =
                 path.with_extension(format!("corrupt.{}", chrono::Utc::now().timestamp()));
@@ -285,13 +324,23 @@ pub fn load_config() -> Result<Config> {
             );
             let default_config = Config::default();
             let _ = save_config(&default_config);
-            default_config
+            return Ok(default_config);
         }
     };
 
-    // Migrate the config in memory so the running app gets migrated settings,
-    // but do not automatically save to disk during read to avoid write side effects.
-    let _ = migrate_config(&mut config);
+    let legacy_aliases_used = config_uses_legacy_aliases(&raw_json);
+    let mut config: Config = serde_json::from_value(raw_json)
+        .with_context(|| format!("Failed to parse config file at {:?}", path))?;
+
+    let migrated = migrate_config(&mut config) || legacy_aliases_used;
+    if migrated {
+        tracing::info!(
+            path = %path.display(),
+            legacy_aliases_used,
+            "Migrating OpenZ config to the canonical schema"
+        );
+        let _ = save_config(&config);
+    }
 
     Ok(config)
 }
@@ -412,6 +461,74 @@ mod tests {
         assert!(names.contains(&"memory.db-wal".to_string()));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn load_config_rewrites_legacy_aliases_to_canonical_schema() {
+        let dir = std::env::temp_dir().join(format!(
+            "openz_cfg_alias_migration_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("config.json"),
+            serde_json::json!({
+                "agents": {
+                    "defaults": {
+                        "max_tokens": 1234,
+                        "enable_sandbox": true,
+                        "tool_timeout_secs": 77,
+                        "show_tool_router_status": true
+                    }
+                },
+                "skills": {
+                    "workspace_skills_enabled": false,
+                    "external_dirs": ["/tmp/skills"],
+                    "write_approval": true
+                },
+                "mcp_servers": {
+                    "memory": { "command": "old-memory", "args": [], "enabled": true }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let config = super::CONFIG_DIR_OVERRIDE
+            .scope(dir.clone(), async { super::load_config().unwrap() })
+            .await;
+
+        assert_eq!(config.agents.defaults.max_tokens, 1234);
+        assert!(config.agents.defaults.enable_sandbox);
+        assert_eq!(config.agents.defaults.tool_timeout_secs, 77);
+        assert!(config.agents.defaults.show_tool_router_status);
+        assert!(!config.skills.workspace_skills_enabled);
+        assert_eq!(config.skills.external_dirs, vec!["/tmp/skills".to_string()]);
+        assert!(config.skills.write_approval);
+        assert!(!config.mcp_servers.contains_key("memory"));
+
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("config.json")).unwrap())
+                .unwrap();
+        let defaults = &saved["agents"]["defaults"];
+        assert_eq!(defaults["maxTokens"], 1234);
+        assert_eq!(defaults["enableSandbox"], true);
+        assert_eq!(defaults["toolTimeoutSecs"], 77);
+        assert_eq!(defaults["showToolRouterStatus"], true);
+        assert!(defaults.get("max_tokens").is_none());
+        assert!(defaults.get("enable_sandbox").is_none());
+        assert!(defaults.get("tool_timeout_secs").is_none());
+        assert!(defaults.get("show_tool_router_status").is_none());
+
+        assert_eq!(saved["skills"]["workspaceSkillsEnabled"], false);
+        assert_eq!(saved["skills"]["externalDirs"][0], "/tmp/skills");
+        assert_eq!(saved["skills"]["writeApproval"], true);
+        assert!(saved["skills"].get("workspace_skills_enabled").is_none());
+        assert!(saved["skills"].get("external_dirs").is_none());
+        assert!(saved["skills"].get("write_approval").is_none());
+        assert!(saved["mcp_servers"].get("memory").is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
