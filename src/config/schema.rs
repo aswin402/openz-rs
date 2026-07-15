@@ -468,269 +468,260 @@ impl Default for Config {
     }
 }
 
+struct ProviderDef {
+    names: &'static [&'static str],
+    env_keys: &'static [&'static str],
+    default_base: &'static str,
+    config: fn(&ProvidersConfig) -> Option<&ProviderConfig>,
+    local: bool,
+}
+
+fn provider_openai(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.openai.as_ref()
+}
+fn provider_anthropic(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.anthropic.as_ref()
+}
+fn provider_openrouter(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.openrouter.as_ref()
+}
+fn provider_deepseek(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.deepseek.as_ref()
+}
+fn provider_groq(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.groq.as_ref()
+}
+fn provider_ollama(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.ollama.as_ref()
+}
+fn provider_minimax(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.minimax.as_ref()
+}
+fn provider_mistral(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.mistral.as_ref()
+}
+fn provider_z_ai(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.z_ai.as_ref()
+}
+fn provider_nvidia(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.nvidia.as_ref()
+}
+fn provider_opencode_zen(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.opencode_zen.as_ref()
+}
+fn provider_cerebras(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.cerebras.as_ref()
+}
+fn provider_google_ai_studio(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.google_ai_studio.as_ref()
+}
+fn provider_cohere(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.cohere.as_ref()
+}
+fn provider_llm7(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.llm7.as_ref()
+}
+fn provider_sambanova(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.sambanova.as_ref()
+}
+fn provider_huggingface(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.huggingface.as_ref()
+}
+fn provider_none(_providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    None
+}
+
+const PROVIDER_DEFS: &[ProviderDef] = &[
+    ProviderDef {
+        names: &["anthropic"],
+        env_keys: &["ANTHROPIC_API_KEY"],
+        default_base: "https://api.anthropic.com",
+        config: provider_anthropic,
+        local: false,
+    },
+    ProviderDef {
+        names: &["openai"],
+        env_keys: &["OPENAI_API_KEY"],
+        default_base: "https://api.openai.com/v1",
+        config: provider_openai,
+        local: false,
+    },
+    ProviderDef {
+        names: &["openrouter"],
+        env_keys: &["OPENROUTER_API_KEY"],
+        default_base: "https://openrouter.ai/api/v1",
+        config: provider_openrouter,
+        local: false,
+    },
+    ProviderDef {
+        names: &["deepseek"],
+        env_keys: &["DEEPSEEK_API_KEY"],
+        default_base: "https://api.deepseek.com/v1",
+        config: provider_deepseek,
+        local: false,
+    },
+    ProviderDef {
+        names: &["groq"],
+        env_keys: &["GROQ_API_KEY"],
+        default_base: "https://api.groq.com/openai/v1",
+        config: provider_groq,
+        local: false,
+    },
+    ProviderDef {
+        names: &["ollama_local"],
+        env_keys: &[],
+        default_base: "http://localhost:11434/v1",
+        config: provider_none,
+        local: true,
+    },
+    ProviderDef {
+        names: &["ollama"],
+        env_keys: &[],
+        default_base: "http://localhost:11434/v1",
+        config: provider_ollama,
+        local: true,
+    },
+    ProviderDef {
+        names: &["minimax"],
+        env_keys: &["MINIMAX_API_KEY"],
+        default_base: "https://api.minimax.io/v1",
+        config: provider_minimax,
+        local: false,
+    },
+    ProviderDef {
+        names: &["mistral"],
+        env_keys: &["MISTRAL_API_KEY"],
+        default_base: "https://api.mistral.ai/v1",
+        config: provider_mistral,
+        local: false,
+    },
+    ProviderDef {
+        names: &["z.ai", "z_ai"],
+        env_keys: &["Z_AI_API_KEY"],
+        default_base: "https://api.z.ai/api/paas/v4/",
+        config: provider_z_ai,
+        local: false,
+    },
+    ProviderDef {
+        names: &["nvidia"],
+        env_keys: &["NVIDIA_API_KEY"],
+        default_base: "https://integrate.api.nvidia.com/v1",
+        config: provider_nvidia,
+        local: false,
+    },
+    ProviderDef {
+        names: &["opencode_zen", "opencode zen"],
+        env_keys: &["OPENCODE_ZEN_API_KEY"],
+        default_base: "https://opencode.ai/zen/v1",
+        config: provider_opencode_zen,
+        local: false,
+    },
+    ProviderDef {
+        names: &["cerebras"],
+        env_keys: &["CEREBRAS_API_KEY", "CEBRAS_API_KEY"],
+        default_base: "https://api.cerebras.ai/v1",
+        config: provider_cerebras,
+        local: false,
+    },
+    ProviderDef {
+        names: &["google_ai_studio", "google ai studio"],
+        env_keys: &["GOOGLE_AI_STUDIO_API_KEY"],
+        default_base: "https://generativelanguage.googleapis.com/v1beta/openai/",
+        config: provider_google_ai_studio,
+        local: false,
+    },
+    ProviderDef {
+        names: &["cohere"],
+        env_keys: &["COHERE_API_KEY"],
+        default_base: "https://api.cohere.com/v1",
+        config: provider_cohere,
+        local: false,
+    },
+    ProviderDef {
+        names: &["llm7"],
+        env_keys: &["LLM7_API_KEY"],
+        default_base: "https://token.llm7.io/v1",
+        config: provider_llm7,
+        local: false,
+    },
+    ProviderDef {
+        names: &["sambanova"],
+        env_keys: &["SAMBANOVA_API_KEY"],
+        default_base: "https://api.sambanova.ai/v1",
+        config: provider_sambanova,
+        local: false,
+    },
+    ProviderDef {
+        names: &["huggingface"],
+        env_keys: &["HUGGINGFACE_API_KEY"],
+        default_base: "https://api-inference.huggingface.co/v1",
+        config: provider_huggingface,
+        local: false,
+    },
+];
+
+fn provider_def(provider_name: &str) -> Option<&'static ProviderDef> {
+    PROVIDER_DEFS
+        .iter()
+        .find(|def| def.names.iter().any(|name| *name == provider_name))
+}
+
+fn configured_key(provider: Option<&ProviderConfig>) -> Option<String> {
+    provider
+        .and_then(|p| p.api_key.clone())
+        .filter(|key| !key.trim().is_empty())
+}
+
+fn env_key(env_keys: &[&str]) -> Option<String> {
+    env_keys
+        .iter()
+        .find_map(|env| std::env::var(env).ok().filter(|key| !key.trim().is_empty()))
+}
+
 // ── Shared provider config resolution ─────────────────────────────────────
 // Single source of truth for resolving provider API key + base URL.
 // Used by: resolver.rs, channels/mod.rs (fetch_provider_models), cli/builder.rs.
 impl Config {
     /// Resolve API key and base URL for a provider from config + env vars.
-    /// Returns `(api_key, api_base)` — ollama may return empty key.
+    /// Returns `(api_key, api_base)` — local providers may return an empty key.
     pub fn resolve_provider_config(&self, provider_name: &str) -> (String, String) {
-        match provider_name {
-            "anthropic" => {
-                let p = self.providers.anthropic.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://api.anthropic.com".to_string());
-                (key, base)
-            }
-            "openai" => {
-                let p = self.providers.openai.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-                (key, base)
-            }
-            "openrouter" => {
-                let p = self.providers.openrouter.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
-                (key, base)
-            }
-            "deepseek" => {
-                let p = self.providers.deepseek.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("DEEPSEEK_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://api.deepseek.com/v1".to_string());
-                (key, base)
-            }
-            "groq" => {
-                let p = self.providers.groq.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("GROQ_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://api.groq.com/openai/v1".to_string());
-                (key, base)
-            }
-            "ollama_local" => (String::new(), "http://localhost:11434/v1".to_string()),
-            "ollama" => {
-                let p = self.providers.ollama.as_ref();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
-                (String::new(), base)
-            }
-            "minimax" => {
-                let p = self.providers.minimax.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("MINIMAX_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://api.minimax.io/v1".to_string());
-                (key, base)
-            }
-            "mistral" => {
-                let p = self.providers.mistral.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("MISTRAL_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://api.mistral.ai/v1".to_string());
-                (key, base)
-            }
-            "z.ai" | "z_ai" => {
-                let p = self.providers.z_ai.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("Z_AI_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://api.z.ai/api/paas/v4/".to_string());
-                (key, base)
-            }
-            "nvidia" => {
-                let p = self.providers.nvidia.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("NVIDIA_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://integrate.api.nvidia.com/v1".to_string());
-                (key, base)
-            }
-            "opencode_zen" | "opencode zen" => {
-                let p = self.providers.opencode_zen.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("OPENCODE_ZEN_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://opencode.ai/zen/v1".to_string());
-                (key, base)
-            }
-            "cerebras" => {
-                let p = self.providers.cerebras.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("CEREBRAS_API_KEY").ok())
-                    .or_else(|| std::env::var("CEBRAS_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://api.cerebras.ai/v1".to_string());
-                (key, base)
-            }
-            "google_ai_studio" | "google ai studio" => {
-                let p = self.providers.google_ai_studio.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("GOOGLE_AI_STUDIO_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p.and_then(|x| x.api_base.clone()).unwrap_or_else(|| {
-                    "https://generativelanguage.googleapis.com/v1beta/openai/".to_string()
-                });
-                (key, base)
-            }
-            "cohere" => {
-                let p = self.providers.cohere.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("COHERE_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://api.cohere.com/v1".to_string());
-                (key, base)
-            }
-            "llm7" => {
-                let p = self.providers.llm7.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("LLM7_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://token.llm7.io/v1".to_string());
-                (key, base)
-            }
-            "sambanova" => {
-                let p = self.providers.sambanova.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("SAMBANOVA_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://api.sambanova.ai/v1".to_string());
-                (key, base)
-            }
-            "huggingface" => {
-                let p = self.providers.huggingface.as_ref();
-                let key = p
-                    .and_then(|x| x.api_key.clone())
-                    .or_else(|| std::env::var("HUGGINGFACE_API_KEY").ok())
-                    .unwrap_or_default();
-                let base = p
-                    .and_then(|x| x.api_base.clone())
-                    .unwrap_or_else(|| "https://api-inference.huggingface.co/v1".to_string());
-                (key, base)
-            }
-            _ => (String::new(), String::new()),
-        }
+        let Some(def) = provider_def(provider_name) else {
+            return (String::new(), String::new());
+        };
+        let provider = (def.config)(&self.providers);
+        let key = if def.local {
+            String::new()
+        } else {
+            configured_key(provider)
+                .or_else(|| env_key(def.env_keys))
+                .unwrap_or_default()
+        };
+        let base = provider
+            .and_then(|p| p.api_base.clone())
+            .unwrap_or_else(|| def.default_base.to_string());
+        (key, base)
     }
 
     pub fn is_provider_configured(&self, provider_name: &str) -> bool {
+        let Some(def) = provider_def(provider_name) else {
+            return false;
+        };
         if provider_name == "ollama_local" {
             return true;
         }
-        let p_opt = match provider_name {
-            "anthropic" => &self.providers.anthropic,
-            "openai" => &self.providers.openai,
-            "openrouter" => &self.providers.openrouter,
-            "deepseek" => &self.providers.deepseek,
-            "groq" => &self.providers.groq,
-            "ollama" => &self.providers.ollama,
-            "minimax" => &self.providers.minimax,
-            "mistral" => &self.providers.mistral,
-            "z.ai" => &self.providers.z_ai,
-            "nvidia" => &self.providers.nvidia,
-            "opencode_zen" => &self.providers.opencode_zen,
-            "cerebras" => &self.providers.cerebras,
-            "google_ai_studio" => &self.providers.google_ai_studio,
-            "cohere" => &self.providers.cohere,
-            "llm7" => &self.providers.llm7,
-            "sambanova" => &self.providers.sambanova,
-            "huggingface" => &self.providers.huggingface,
-            _ => return false,
-        };
-        if provider_name == "ollama" {
-            p_opt.is_some()
-        } else if let Some(p) = p_opt {
-            p.api_key
-                .as_ref()
-                .map(|k| !k.trim().is_empty())
-                .unwrap_or(false)
+        let provider = (def.config)(&self.providers);
+        if def.local {
+            provider.is_some()
         } else {
-            false
+            configured_key(provider).is_some()
         }
     }
 
     pub fn is_provider_available(&self, provider_name: &str) -> bool {
-        if self.is_provider_configured(provider_name) {
-            return true;
-        }
-        if provider_name == "cerebras" {
-            return std::env::var("CEREBRAS_API_KEY").is_ok()
-                || std::env::var("CEBRAS_API_KEY").is_ok();
-        }
-        let env_var = match provider_name {
-            "anthropic" => "ANTHROPIC_API_KEY",
-            "openai" => "OPENAI_API_KEY",
-            "openrouter" => "OPENROUTER_API_KEY",
-            "deepseek" => "DEEPSEEK_API_KEY",
-            "groq" => "GROQ_API_KEY",
-            "minimax" => "MINIMAX_API_KEY",
-            "mistral" => "MISTRAL_API_KEY",
-            "z.ai" => "Z_AI_API_KEY",
-            "nvidia" => "NVIDIA_API_KEY",
-            "opencode_zen" => "OPENCODE_ZEN_API_KEY",
-            "google_ai_studio" => "GOOGLE_AI_STUDIO_API_KEY",
-            "cohere" => "COHERE_API_KEY",
-            "llm7" => "LLM7_API_KEY",
-            "sambanova" => "SAMBANOVA_API_KEY",
-            "huggingface" => "HUGGINGFACE_API_KEY",
-            _ => "",
+        let Some(def) = provider_def(provider_name) else {
+            return false;
         };
-        if !env_var.is_empty() && std::env::var(env_var).is_ok() {
-            return true;
-        }
-        false
+        self.is_provider_configured(provider_name) || env_key(def.env_keys).is_some()
     }
 
     pub fn get_dynamic_fallbacks(&self, subagent_name: &str) -> Vec<String> {
@@ -827,5 +818,79 @@ impl Config {
         }
 
         fallbacks
+    }
+}
+
+#[cfg(test)]
+mod provider_resolution_tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn blank_config() -> Config {
+        Config {
+            providers: ProvidersConfig::default(),
+            agents: AgentsConfig::default(),
+            channels: ChannelsConfig::default(),
+            mcp_servers: HashMap::new(),
+            embeddings: Some(EmbeddingsConfig::default()),
+            skills: SkillsConfig::default(),
+        }
+    }
+
+    #[test]
+    fn resolve_provider_config_uses_table_aliases_and_defaults() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::remove_var("Z_AI_API_KEY");
+        let mut config = blank_config();
+        config.providers.z_ai = Some(ProviderConfig {
+            api_key: Some("z-key".to_string()),
+            api_base: None,
+            extra: HashMap::new(),
+        });
+
+        assert_eq!(
+            config.resolve_provider_config("z_ai"),
+            (
+                "z-key".to_string(),
+                "https://api.z.ai/api/paas/v4/".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn provider_available_uses_env_keys_without_marking_unconfigured_local_available() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::remove_var("OPENAI_API_KEY");
+        std::env::remove_var("CEREBRAS_API_KEY");
+        std::env::remove_var("CEBRAS_API_KEY");
+        let config = blank_config();
+
+        assert!(config.is_provider_available("ollama_local"));
+        assert!(!config.is_provider_available("ollama"));
+        assert!(!config.is_provider_available("openai"));
+
+        std::env::set_var("OPENAI_API_KEY", "test-key");
+        assert!(config.is_provider_available("openai"));
+        std::env::remove_var("OPENAI_API_KEY");
+    }
+
+    #[test]
+    fn cerebras_legacy_env_key_still_works() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::remove_var("CEREBRAS_API_KEY");
+        std::env::set_var("CEBRAS_API_KEY", "legacy-key");
+        let config = blank_config();
+
+        assert_eq!(
+            config.resolve_provider_config("cerebras").0,
+            "legacy-key".to_string()
+        );
+        assert!(config.is_provider_available("cerebras"));
+        std::env::remove_var("CEBRAS_API_KEY");
     }
 }
