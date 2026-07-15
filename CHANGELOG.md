@@ -398,7 +398,7 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.51 (Unreleased)
+### v0.0.51 (Latest Release)
 *   **Feature: Dynamic tool timeout — orchestrator-driven adaptive execution:** Replaced the static 120s tool timeout with a 300s default and a bounded override system that lets tool metadata and orchestrator hints adapt timeouts per task complexity.
     *   Raised default tool timeout from 120s to 300s (`config/schema.rs`).
     *   Added `_timeout_secs` override field with bounded execution (`5s..1800s`) so any tool call can request a custom timeout without disabling safety limits.
@@ -406,8 +406,15 @@ Inside `openz agent`, the user can issue direct slash commands:
     *   Added `timeout_secs` parameter to `delegate_task`, `delegate_profile`, and `parallel_research`; subagent timeouts now raise the outer tool timeout when needed and are clamped to the shared safety range.
     *   Replaced hardcoded 300s subagent timeouts in delegate_task.rs and delegate_profile.rs with bounded dynamic resolution.
     *   Made `parallel_research` actually apply per-task `timeout_secs` instead of only advertising the schema field.
+*   **Fix: Runtime reliability regressions found during v0.0.50/v0.0.51 verification:** Hardened the worst-case paths that caused runtime diagnostics to disagree with source-level features.
+    *   Fixed `ast_grep_index_codebase` so it writes structural symbols into the same `code_elements` store consumed by `query_code_graph`; code graph queries now work immediately after ast-grep indexing.
+    *   Accepted both camelCase and snake_case memory scope arguments (`sessionId`/`session_id`, `userId`/`user_id`, `agentId`/`agent_id`) so scoped graph and code queries do not silently miss indexed rows.
+    *   Improved fact extraction for compound build clauses such as `Alice built AppX with Rust` and chained clauses like `Bob created ToolY and built it with Go`.
+    *   Migrated stale historical `toolTimeoutSecs: 120` config values to the new 300s default while preserving intentional custom timeout values.
+    *   Improved subagent unsafe-workspace fallback reporting with actionable guidance and `workspaceIsolation` metadata.
+*   **Chore:** Bumped version to `v0.0.51`.
 
-### v0.0.50 (Latest Release)
+### v0.0.50 (Previous Release)
 *   **Feature: Native memory coordinator and reliability overhaul:** Unified semantic, graph, recall, deletion, stats, and prompt-memory flows behind a coordinator path with regression coverage for worst-case memory behavior.
     *   Added a native `MemoryCoordinator` for semantic writes, graph relation writes, hybrid recall, forget operations, and memory health stats.
     *   Made semantic memory store deterministic embedding blobs and upgraded `hybrid_search` to combine FTS5 and vector similarity using reciprocal-rank fusion.
