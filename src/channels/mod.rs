@@ -63,6 +63,199 @@ pub fn get_active_session_targets(session_dir: &std::path::Path, prefix: &str) -
     targets
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NotificationAuth {
+    None,
+    Bearer(String),
+    Header { name: &'static str, value: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NotificationRequest {
+    channel: &'static str,
+    target: String,
+    url: String,
+    payload: serde_json::Value,
+    auth: NotificationAuth,
+}
+
+fn configured_or_env(config_value: &str, env_var: &str) -> Option<String> {
+    if config_value.trim().is_empty() {
+        std::env::var(env_var).ok().filter(|v| !v.trim().is_empty())
+    } else {
+        Some(config_value.to_string())
+    }
+}
+
+fn build_telegram_notification_requests(
+    token: String,
+    targets: Vec<String>,
+    msg: &str,
+) -> Vec<NotificationRequest> {
+    targets
+        .into_iter()
+        .filter_map(|target| {
+            let chat_id = match target.parse::<i64>() {
+                Ok(chat_id) => chat_id,
+                Err(_) => {
+                    tracing::warn!(target = %target, "Skipping invalid Telegram notification target");
+                    return None;
+                }
+            };
+            Some(NotificationRequest {
+                channel: "Telegram",
+                target,
+                url: format!("https://api.telegram.org/bot{token}/sendMessage"),
+                payload: serde_json::json!({
+                    "chat_id": chat_id,
+                    "text": msg,
+                    "parse_mode": "Markdown"
+                }),
+                auth: NotificationAuth::None,
+            })
+        })
+        .collect()
+}
+
+fn build_discord_notification_requests(
+    token: String,
+    targets: Vec<String>,
+    msg: &str,
+) -> Vec<NotificationRequest> {
+    targets
+        .into_iter()
+        .map(|target| NotificationRequest {
+            channel: "Discord",
+            url: format!("https://discord.com/api/v10/channels/{target}/messages"),
+            target,
+            payload: serde_json::json!({ "content": msg }),
+            auth: NotificationAuth::Header {
+                name: "Authorization",
+                value: format!("Bot {token}"),
+            },
+        })
+        .collect()
+}
+
+fn build_whatsapp_notification_requests(
+    api_key: String,
+    phone_number_id: &str,
+    targets: Vec<String>,
+    msg: &str,
+) -> Vec<NotificationRequest> {
+    if phone_number_id.trim().is_empty() || api_key.trim().is_empty() {
+        tracing::warn!(
+            "Skipping WhatsApp notifications because api_key or phone_number_id is empty"
+        );
+        return Vec::new();
+    }
+
+    targets
+        .into_iter()
+        .map(|target| NotificationRequest {
+            channel: "WhatsApp",
+            target: target.clone(),
+            url: format!("https://graph.facebook.com/v18.0/{phone_number_id}/messages"),
+            payload: serde_json::json!({
+                "messaging_product": "whatsapp",
+                "recipient_type": "individual",
+                "to": target,
+                "type": "text",
+                "text": { "body": msg }
+            }),
+            auth: NotificationAuth::Bearer(api_key.clone()),
+        })
+        .collect()
+}
+
+fn build_external_notification_requests(
+    config: &crate::config::schema::Config,
+    sessions_dir: &std::path::Path,
+    msg: &str,
+) -> Vec<NotificationRequest> {
+    let mut requests = Vec::new();
+
+    if let Some(tg_config) = &config.channels.telegram {
+        if tg_config.enabled {
+            if let Some(token) = configured_or_env(&tg_config.bot_token, "TELEGRAM_BOT_TOKEN") {
+                requests.extend(build_telegram_notification_requests(
+                    token,
+                    get_active_session_targets(sessions_dir, "telegram_"),
+                    msg,
+                ));
+            } else {
+                tracing::warn!(
+                    "Skipping Telegram notifications because no bot token is configured"
+                );
+            }
+        }
+    }
+
+    if let Some(dc_config) = &config.channels.discord {
+        if dc_config.enabled {
+            if let Some(token) = configured_or_env(&dc_config.bot_token, "DISCORD_BOT_TOKEN") {
+                requests.extend(build_discord_notification_requests(
+                    token,
+                    get_active_session_targets(sessions_dir, "discord_"),
+                    msg,
+                ));
+            } else {
+                tracing::warn!("Skipping Discord notifications because no bot token is configured");
+            }
+        }
+    }
+
+    if let Some(wa_config) = &config.channels.whatsapp {
+        if wa_config.enabled {
+            requests.extend(build_whatsapp_notification_requests(
+                wa_config.api_key.clone(),
+                &wa_config.phone_number_id,
+                get_active_session_targets(sessions_dir, "whatsapp_"),
+                msg,
+            ));
+        }
+    }
+
+    requests
+}
+
+async fn send_external_notification(client: &reqwest::Client, request: &NotificationRequest) {
+    let mut builder = client.post(&request.url).json(&request.payload);
+    match &request.auth {
+        NotificationAuth::None => {}
+        NotificationAuth::Bearer(token) => {
+            builder = builder.bearer_auth(token);
+        }
+        NotificationAuth::Header { name, value } => {
+            builder = builder.header(*name, value);
+        }
+    }
+
+    match builder.send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            if !status.is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                tracing::warn!(
+                    channel = request.channel,
+                    target = %request.target,
+                    status = %status,
+                    response = %body,
+                    "Failed to send external notification"
+                );
+            }
+        }
+        Err(err) => {
+            tracing::warn!(
+                channel = request.channel,
+                target = %request.target,
+                error = %err,
+                "Error sending external notification"
+            );
+        }
+    }
+}
+
 pub fn select_random_message(messages: &[&str]) -> String {
     if messages.is_empty() {
         return String::new();
@@ -374,7 +567,7 @@ pub fn send_notification(msg: &str) {
             }
         }
 
-        // Load config to check if external channels (Telegram, Discord, WhatsApp) are enabled
+        // Load config to check if external channels (Telegram, Discord, WhatsApp) are enabled.
         if let Ok(config) = crate::config::loader::load_config() {
             let sessions_dir = crate::config::loader::resolve_path("~/.openz/sessions");
             let client = reqwest::Client::builder()
@@ -384,87 +577,8 @@ pub fn send_notification(msg: &str) {
                 .build()
                 .unwrap_or_default();
 
-            // i. Telegram
-            if let Some(tg_config) = &config.channels.telegram {
-                if tg_config.enabled {
-                    let token = if tg_config.bot_token.is_empty() {
-                        std::env::var("TELEGRAM_BOT_TOKEN").ok()
-                    } else {
-                        Some(tg_config.bot_token.clone())
-                    };
-                    if let Some(token) = token {
-                        let chats = get_active_session_targets(&sessions_dir, "telegram_");
-                        for chat_str in chats {
-                            if let Ok(chat_id) = chat_str.parse::<i64>() {
-                                let send_url =
-                                    format!("https://api.telegram.org/bot{}/sendMessage", token);
-                                let payload = serde_json::json!({
-                                    "chat_id": chat_id,
-                                    "text": msg_str,
-                                    "parse_mode": "Markdown"
-                                });
-                                let _ = client.post(&send_url).json(&payload).send().await;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ii. Discord
-            if let Some(dc_config) = &config.channels.discord {
-                if dc_config.enabled {
-                    let token = if dc_config.bot_token.is_empty() {
-                        std::env::var("DISCORD_BOT_TOKEN").ok()
-                    } else {
-                        Some(dc_config.bot_token.clone())
-                    };
-                    if let Some(token) = token {
-                        let channels = get_active_session_targets(&sessions_dir, "discord_");
-                        for channel_id in channels {
-                            let send_url = format!(
-                                "https://discord.com/api/v10/channels/{}/messages",
-                                channel_id
-                            );
-                            let payload = serde_json::json!({
-                                "content": msg_str
-                            });
-                            let _ = client
-                                .post(&send_url)
-                                .header("Authorization", format!("Bot {}", token))
-                                .json(&payload)
-                                .send()
-                                .await;
-                        }
-                    }
-                }
-            }
-
-            // iii. WhatsApp
-            if let Some(wa_config) = &config.channels.whatsapp {
-                if wa_config.enabled {
-                    let targets = get_active_session_targets(&sessions_dir, "whatsapp_");
-                    for phone_number in targets {
-                        let send_url = format!(
-                            "https://graph.facebook.com/v18.0/{}/messages",
-                            wa_config.phone_number_id
-                        );
-                        let payload = serde_json::json!({
-                            "messaging_product": "whatsapp",
-                            "recipient_type": "individual",
-                            "to": phone_number,
-                            "type": "text",
-                            "text": {
-                                "body": msg_str
-                            }
-                        });
-                        let _ = client
-                            .post(&send_url)
-                            .bearer_auth(&wa_config.api_key)
-                            .json(&payload)
-                            .send()
-                            .await;
-                    }
-                }
+            for request in build_external_notification_requests(&config, &sessions_dir, &msg_str) {
+                send_external_notification(&client, &request).await;
             }
         }
     });
@@ -479,6 +593,93 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn test_build_external_notification_requests_for_enabled_channels() {
+        let dir = std::env::temp_dir().join(format!(
+            "openz_notification_targets_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("telegram_12345.json"), "{}").unwrap();
+        std::fs::write(dir.join("telegram_bad-chat.json"), "{}").unwrap();
+        std::fs::write(dir.join("discord_98765.json"), "{}").unwrap();
+        std::fs::write(dir.join("whatsapp_15551234567.json"), "{}").unwrap();
+        std::fs::write(dir.join("telegram_history.json"), "{}").unwrap();
+
+        let mut config = crate::config::schema::Config::default();
+        if let Some(tg) = config.channels.telegram.as_mut() {
+            tg.enabled = true;
+            tg.bot_token = "tg-token".to_string();
+        }
+        if let Some(dc) = config.channels.discord.as_mut() {
+            dc.enabled = true;
+            dc.bot_token = "dc-token".to_string();
+        }
+        if let Some(wa) = config.channels.whatsapp.as_mut() {
+            wa.enabled = true;
+            wa.api_key = "wa-token".to_string();
+            wa.phone_number_id = "phone-id".to_string();
+        }
+
+        let requests = build_external_notification_requests(&config, &dir, "hello");
+
+        assert_eq!(requests.len(), 3);
+        let telegram = requests
+            .iter()
+            .find(|request| request.channel == "Telegram")
+            .unwrap();
+        assert_eq!(telegram.target, "12345");
+        assert!(telegram.url.contains("tg-token"));
+        assert_eq!(telegram.payload["chat_id"], 12345);
+        assert_eq!(telegram.auth, NotificationAuth::None);
+
+        let discord = requests
+            .iter()
+            .find(|request| request.channel == "Discord")
+            .unwrap();
+        assert_eq!(discord.target, "98765");
+        assert_eq!(discord.payload["content"], "hello");
+        assert_eq!(
+            discord.auth,
+            NotificationAuth::Header {
+                name: "Authorization",
+                value: "Bot dc-token".to_string()
+            }
+        );
+
+        let whatsapp = requests
+            .iter()
+            .find(|request| request.channel == "WhatsApp")
+            .unwrap();
+        assert_eq!(whatsapp.target, "15551234567");
+        assert_eq!(whatsapp.payload["text"]["body"], "hello");
+        assert_eq!(
+            whatsapp.auth,
+            NotificationAuth::Bearer("wa-token".to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_whatsapp_notification_requires_credentials() {
+        let requests = build_whatsapp_notification_requests(
+            String::new(),
+            "phone-id",
+            vec!["15551234567".to_string()],
+            "hello",
+        );
+        assert!(requests.is_empty());
+
+        let requests = build_whatsapp_notification_requests(
+            "wa-token".to_string(),
+            "",
+            vec!["15551234567".to_string()],
+            "hello",
+        );
+        assert!(requests.is_empty());
+    }
 
     #[tokio::test]
     async fn test_ws_sender_registration_and_cleanup() {
