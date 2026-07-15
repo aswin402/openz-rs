@@ -3,7 +3,7 @@ use crate::providers::LLMProvider;
 use crate::session::SessionManager;
 use crate::tools::subagent::CancellationToken;
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub const MIN_TOOL_TIMEOUT_SECS: u64 = 5;
@@ -627,11 +627,19 @@ pub struct ToolRouteAnalysis {
     pub entries: Vec<ToolRouteEntry>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ToolRouteCacheKey {
+    prompt: String,
+    filter_scope: Option<Vec<String>>,
+    static_tool_names: Vec<String>,
+}
+
 #[derive(Clone)]
 pub struct ToolRegistry {
     static_tools: Arc<std::sync::RwLock<HashMap<String, Arc<dyn Tool>>>>,
     pub context: Option<(Config, Arc<dyn LLMProvider>, SessionManager)>,
     pub filter_scope: Arc<std::sync::Mutex<Option<Vec<String>>>>,
+    route_cache: Arc<std::sync::Mutex<Option<(ToolRouteCacheKey, ToolRouteAnalysis)>>>,
 }
 
 impl Default for ToolRegistry {
@@ -646,6 +654,7 @@ impl ToolRegistry {
             static_tools: Arc::new(std::sync::RwLock::new(HashMap::new())),
             context: None,
             filter_scope: Arc::new(std::sync::Mutex::new(None)),
+            route_cache: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -658,6 +667,7 @@ impl ToolRegistry {
             static_tools: Arc::new(std::sync::RwLock::new(HashMap::new())),
             context: Some((config, provider, session_manager)),
             filter_scope: Arc::new(std::sync::Mutex::new(None)),
+            route_cache: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -675,8 +685,15 @@ impl ToolRegistry {
         })
     }
 
+    fn clear_route_cache(&self) {
+        if let Ok(mut cache) = self.route_cache.lock() {
+            *cache = None;
+        }
+    }
+
     pub fn register(&self, tool: Arc<dyn Tool>) {
         self.write_tools().insert(tool.name().to_string(), tool);
+        self.clear_route_cache();
     }
 
     pub fn tool_names(&self) -> Vec<String> {
@@ -826,6 +843,7 @@ impl ToolRegistry {
         if let Ok(mut g) = self.filter_scope.lock() {
             *g = prefixes;
         }
+        self.clear_route_cache();
     }
 
     pub fn selected_domains_for_prompt(&self, prompt: &str) -> Vec<String> {
@@ -891,14 +909,28 @@ impl ToolRegistry {
 
     pub fn route_for_prompt(&self, prompt: &str) -> ToolRouteAnalysis {
         let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
+        let static_tools = self.read_tools();
+        let mut static_tool_names: Vec<String> = static_tools.keys().cloned().collect();
+        static_tool_names.sort();
+        let cache_key = ToolRouteCacheKey {
+            prompt: prompt.to_string(),
+            filter_scope: filter.clone(),
+            static_tool_names: static_tool_names.clone(),
+        };
+        if let Ok(cache) = self.route_cache.lock() {
+            if let Some((cached_key, cached_route)) = cache.as_ref() {
+                if cached_key == &cache_key {
+                    return cached_route.clone();
+                }
+            }
+        }
+
         let selected_domains_set = select_domains_for_prompt(prompt);
         let selected_domains: Vec<String> = selected_domains_set
             .iter()
             .map(|domain| (*domain).to_string())
             .collect();
-        let static_tools = self.read_tools();
-        let static_names: std::collections::HashSet<String> =
-            static_tools.keys().cloned().collect();
+        let static_names: HashSet<String> = static_tool_names.into_iter().collect();
         let reserved_subagents = self
             .dynamic_subagent_tools(filter.as_ref(), &static_names)
             .len()
@@ -949,12 +981,16 @@ impl ToolRegistry {
             }
         }
 
-        ToolRouteAnalysis {
+        let route = ToolRouteAnalysis {
             selected_domains,
             selected_count,
             dropped_count,
             entries,
+        };
+        if let Ok(mut cache) = self.route_cache.lock() {
+            *cache = Some((cache_key, route.clone()));
         }
+        route
     }
 
     pub fn tool_router_status_line(&self, prompt: &str) -> String {
@@ -978,8 +1014,7 @@ impl ToolRegistry {
     pub fn to_openai_format_for_prompt(&self, prompt: &str) -> Vec<serde_json::Value> {
         let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
         let static_tools = self.read_tools();
-        let static_names: std::collections::HashSet<String> =
-            static_tools.keys().cloned().collect();
+        let static_names: HashSet<String> = static_tools.keys().cloned().collect();
         drop(static_tools);
         let mut subagent_tools = self.dynamic_subagent_tools(filter.as_ref(), &static_names);
         let route = self.route_for_prompt(prompt);
@@ -1076,6 +1111,100 @@ impl ToolRegistry {
             name_a.cmp(name_b)
         });
         subagent_tools
+    }
+}
+
+#[cfg(test)]
+mod route_cache_tests {
+    use super::*;
+
+    struct CacheTestTool {
+        name: &'static str,
+        domain: &'static str,
+        priority: u8,
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for CacheTestTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn description(&self) -> &str {
+            "cache test tool"
+        }
+
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({ "type": "object" })
+        }
+
+        fn metadata(&self) -> ToolMetadata {
+            ToolMetadata {
+                domain: self.domain,
+                risk: ToolRisk::Low,
+                uses_network: false,
+                writes_disk: false,
+                spawns_process: false,
+                requires_approval: false,
+                priority: self.priority,
+                aliases: &[],
+                examples: &[],
+                when_to_use: "",
+                when_not_to_use: "",
+                recommended_timeout_secs: None,
+            }
+        }
+
+        async fn call(&self, _arguments: &serde_json::Value) -> Result<serde_json::Value> {
+            Ok(serde_json::json!({ "ok": true }))
+        }
+    }
+
+    #[test]
+    fn route_for_prompt_caches_same_prompt_filter_and_tools() {
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(CacheTestTool {
+            name: "cargo_manager",
+            domain: "code",
+            priority: 90,
+        }));
+
+        let first = registry.route_for_prompt("run cargo test");
+        let cached_after_first = registry.route_cache.lock().unwrap().clone();
+        let second = registry.route_for_prompt("run cargo test");
+        let cached_after_second = registry.route_cache.lock().unwrap().clone();
+
+        assert_eq!(first.selected_domains, second.selected_domains);
+        assert_eq!(first.selected_count, second.selected_count);
+        assert_eq!(first.dropped_count, second.dropped_count);
+        assert_eq!(
+            cached_after_first.as_ref().map(|(key, _)| key.clone()),
+            cached_after_second.as_ref().map(|(key, _)| key.clone())
+        );
+    }
+
+    #[test]
+    fn route_cache_invalidates_when_filter_scope_changes_or_tool_registers() {
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(CacheTestTool {
+            name: "cargo_manager",
+            domain: "code",
+            priority: 90,
+        }));
+        let _ = registry.route_for_prompt("run cargo test");
+        assert!(registry.route_cache.lock().unwrap().is_some());
+
+        registry.set_filter_scope(Some(vec!["cargo".to_string()]));
+        assert!(registry.route_cache.lock().unwrap().is_none());
+        let _ = registry.route_for_prompt("run cargo test");
+        assert!(registry.route_cache.lock().unwrap().is_some());
+
+        registry.register(Arc::new(CacheTestTool {
+            name: "web_fetch",
+            domain: "web",
+            priority: 80,
+        }));
+        assert!(registry.route_cache.lock().unwrap().is_none());
     }
 }
 
