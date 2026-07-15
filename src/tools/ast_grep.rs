@@ -1,5 +1,6 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
+use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 use tokio::process::Command;
 
@@ -97,6 +98,140 @@ impl Tool for AstGrepTool {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AstGrepCodeElement {
+    element_type: String,
+    name: String,
+    file_path: String,
+    signature: String,
+    start_line: i64,
+    end_line: i64,
+}
+
+fn ast_grep_element_type(pattern: &str) -> &'static str {
+    let pattern = pattern.trim_start();
+    if pattern.starts_with("fn ")
+        || pattern.starts_with("def ")
+        || pattern.starts_with("func ")
+        || pattern.starts_with("function ")
+        || pattern.contains("=>")
+    {
+        "Function"
+    } else if pattern.starts_with("struct ") || pattern.contains(" struct ") {
+        "Struct"
+    } else if pattern.starts_with("enum ") {
+        "Enum"
+    } else if pattern.starts_with("impl ") {
+        "ImplBlock"
+    } else if pattern.starts_with("class ") {
+        "Class"
+    } else if pattern.starts_with("type ") && pattern.contains(" interface ") {
+        "Interface"
+    } else if pattern.starts_with("type ") {
+        "TypeAlias"
+    } else {
+        "CodeElement"
+    }
+}
+
+fn ast_grep_symbol_name(pattern: &str, item: &Value, text: &str) -> String {
+    if let Some(name) = item["metaVariables"]["single"]["NAME"]["text"].as_str() {
+        let trimmed = name.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    let first_line = text.lines().next().unwrap_or_default().trim();
+    let kind = ast_grep_element_type(pattern);
+    if kind == "ImplBlock" {
+        if let Some(rest) = first_line.strip_prefix("impl ") {
+            let target = rest
+                .split('{')
+                .next()
+                .unwrap_or(rest)
+                .split_whitespace()
+                .last()
+                .unwrap_or("unknown")
+                .trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
+            return format!("impl_{}", target);
+        }
+    }
+
+    first_line
+        .split_whitespace()
+        .find(|part| {
+            part.chars()
+                .next()
+                .is_some_and(|c| c.is_alphabetic() || c == '_')
+        })
+        .unwrap_or("unknown_symbol")
+        .trim_matches(|c: char| !c.is_alphanumeric() && c != '_')
+        .to_string()
+}
+
+fn ast_grep_match_to_code_element(pattern: &str, item: &Value) -> Option<AstGrepCodeElement> {
+    let text = item["text"].as_str()?.to_string();
+    let file_path = item["file"].as_str()?.to_string();
+    if text.trim().is_empty() || file_path.trim().is_empty() {
+        return None;
+    }
+
+    let start_line = item["range"]["start"]["line"].as_i64().unwrap_or(0) + 1;
+    let end_line = item["range"]["end"]["line"]
+        .as_i64()
+        .map(|line| line + 1)
+        .unwrap_or(start_line)
+        .max(start_line);
+    let signature = text
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .take(240)
+        .collect::<String>();
+    let name = ast_grep_symbol_name(pattern, item, &text);
+
+    Some(AstGrepCodeElement {
+        element_type: ast_grep_element_type(pattern).to_string(),
+        name,
+        file_path,
+        signature,
+        start_line,
+        end_line,
+    })
+}
+
+fn insert_ast_grep_code_element(
+    conn: &Connection,
+    element: &AstGrepCodeElement,
+    user_id: &str,
+    session_id: &str,
+    agent_id: &str,
+) -> Result<()> {
+    let element_id = format!(
+        "{}:{}:{}:{}",
+        element.file_path, element.element_type, element.name, element.start_line
+    );
+    conn.execute(
+        "INSERT OR REPLACE INTO code_elements (element_id, file_path, element_type, name, signature, ast_json, parent_id, start_line, end_line, user_id, session_id, agent_id) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            element_id,
+            element.file_path,
+            element.element_type,
+            element.name,
+            element.signature,
+            element.start_line,
+            element.end_line,
+            user_id,
+            session_id,
+            agent_id,
+        ],
+    )?;
+    Ok(())
+}
+
 pub struct AstGrepIndexCodebaseTool;
 
 #[async_trait::async_trait]
@@ -169,8 +304,23 @@ impl Tool for AstGrepIndexCodebaseTool {
             _ => vec!["class $NAME { $$$ }", "function $NAME($$$) { $$$ }"],
         };
 
+        let (user_id, session_id, agent_id) =
+            crate::tools::graph_memory::scope_from_args(arguments);
         let mut indexed_count = 0;
+        let mut code_graph_count = 0;
         let mut entries_to_archive = Vec::new();
+
+        crate::tools::graph_memory::with_db(|conn| {
+            conn.execute(
+                "DELETE FROM code_calls WHERE caller_id IN (SELECT element_id FROM code_elements WHERE (user_id = ?1 OR user_id = '*') AND (session_id = ?2 OR session_id = '*') AND (agent_id = ?3 OR agent_id = '*'))",
+                params![user_id, session_id, agent_id],
+            )?;
+            conn.execute(
+                "DELETE FROM code_elements WHERE (user_id = ?1 OR user_id = '*') AND (session_id = ?2 OR session_id = '*') AND (agent_id = ?3 OR agent_id = '*')",
+                params![user_id, session_id, agent_id],
+            )?;
+            Ok(())
+        })?;
 
         for pattern in patterns {
             let mut cmd = Command::new(&bin_path);
@@ -199,18 +349,27 @@ impl Tool for AstGrepIndexCodebaseTool {
                 if let Ok(Value::Array(matches)) = serde_json::from_str::<Value>(&stdout) {
                     for item in matches {
                         let text = item["text"].as_str().unwrap_or_default().to_string();
-                        let file = item["file"].as_str().unwrap_or_default();
-                        let start_line = item["range"]["start"]["line"].as_u64().unwrap_or(0);
+                        let Some(element) = ast_grep_match_to_code_element(pattern, &item) else {
+                            continue;
+                        };
+                        let file = element.file_path.clone();
+                        let start_line = element.start_line;
+                        let symbol_name = element.name.clone();
 
-                        let symbol_name = item["metaVariables"]["single"]["NAME"]["text"]
-                            .as_str()
-                            .unwrap_or("unknown_symbol");
+                        crate::tools::graph_memory::with_db(|conn| {
+                            insert_ast_grep_code_element(
+                                conn,
+                                &element,
+                                &user_id,
+                                &session_id,
+                                &agent_id,
+                            )
+                        })?;
+                        code_graph_count += 1;
 
-                        let query_str = format!(
-                            "Symbol: {} | Language: {} | File: {}",
-                            symbol_name, lang, file
-                        );
-                        let source_str = format!("codebase_index: {}:{}", file, start_line + 1);
+                        let query_str =
+                            format!("Symbol: {symbol_name} | Language: {lang} | File: {file}");
+                        let source_str = format!("codebase_index: {}:{}", file, start_line);
 
                         entries_to_archive.push((query_str, text, source_str));
                         indexed_count += 1;
@@ -226,6 +385,7 @@ impl Tool for AstGrepIndexCodebaseTool {
         Ok(json!({
             "status": "success",
             "indexed_count": indexed_count,
+            "codeGraphCount": code_graph_count,
             "message": format!("Successfully scanned and indexed {} structural elements from codebase.", indexed_count)
         }))
     }
@@ -234,6 +394,49 @@ impl Tool for AstGrepIndexCodebaseTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ast_grep_match_to_code_element_parses_symbol() {
+        let item = json!({
+            "text": "fn bridge_symbol(input: String) -> String { input }",
+            "file": "src/example.rs",
+            "range": { "start": { "line": 9 }, "end": { "line": 11 } },
+            "metaVariables": { "single": { "NAME": { "text": "bridge_symbol" } } }
+        });
+
+        let element = ast_grep_match_to_code_element("fn $NAME($$$) { $$$ }", &item).unwrap();
+        assert_eq!(element.element_type, "Function");
+        assert_eq!(element.name, "bridge_symbol");
+        assert_eq!(element.file_path, "src/example.rs");
+        assert_eq!(element.start_line, 10);
+        assert_eq!(element.end_line, 12);
+        assert!(element.signature.contains("bridge_symbol"));
+    }
+
+    #[tokio::test]
+    async fn test_ast_grep_inserted_elements_are_queryable_by_code_graph() -> Result<()> {
+        let session_id = format!("ast_grep_bridge_{}", uuid::Uuid::new_v4());
+        let item = json!({
+            "text": "struct BridgeQueryable { value: String }",
+            "file": "src/bridge_queryable.rs",
+            "range": { "start": { "line": 2 }, "end": { "line": 4 } },
+            "metaVariables": { "single": { "NAME": { "text": "BridgeQueryable" } } }
+        });
+        let element = ast_grep_match_to_code_element("struct $NAME { $$$ }", &item).unwrap();
+        crate::tools::graph_memory::with_db(|conn| {
+            insert_ast_grep_code_element(conn, &element, "*", &session_id, "*")
+        })?;
+
+        let tool = crate::tools::memory_extra::QueryCodeGraphTool;
+        let results = tool
+            .call(&json!({"query": "BridgeQueryable", "session_id": session_id}))
+            .await?;
+        let items = results
+            .as_array()
+            .expect("query_code_graph returns an array");
+        assert!(items.iter().any(|item| item["name"] == "BridgeQueryable"));
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_ast_grep_status() -> Result<()> {

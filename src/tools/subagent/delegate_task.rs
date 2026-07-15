@@ -232,17 +232,25 @@ impl Tool for DelegateTaskTool {
         })
         .await;
 
+        let mut workspace_isolation = "isolated_worktree".to_string();
+        let mut workspace_isolation_reason: Option<String> = None;
         let workspace_dir = match workspace_res {
             Ok(Ok(dir)) => {
                 crate::tui_println!("{}  ✓ Isolated workspace worktree created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
                 dir
             }
             Ok(Err(e)) => {
-                crate::tui_println!("{}⚠️  Failed to create isolated workspace ({:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
+                let reason = e.to_string();
+                workspace_isolation = "fallback_active_workspace".to_string();
+                workspace_isolation_reason = Some(reason.clone());
+                crate::tui_println!("{}⚠️  Failed to create isolated workspace ({}). Running in active workspace without isolation.{}", AURA_GOLD, reason, COLOR_RESET);
                 parent_dir.clone()
             }
             Err(e) => {
-                crate::tui_println!("{}⚠️  Failed to create isolated workspace (join error: {:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
+                let reason = format!("join error: {:?}", e);
+                workspace_isolation = "fallback_active_workspace".to_string();
+                workspace_isolation_reason = Some(reason.clone());
+                crate::tui_println!("{}⚠️  Failed to create isolated workspace ({}). Running in active workspace without isolation.{}", AURA_GOLD, reason, COLOR_RESET);
                 parent_dir.clone()
             }
         };
@@ -427,6 +435,8 @@ impl Tool for DelegateTaskTool {
                     "status": "success",
                     "lifecycle": status_json(&SubagentRunStatus::Completed),
                     "session_id": child_session_id,
+                    "workspaceIsolation": workspace_isolation,
+                    "workspaceIsolationReason": workspace_isolation_reason,
                     "summary": res.content
                 }))
             }
@@ -446,13 +456,24 @@ impl Tool for DelegateTaskTool {
                             COLOR_RESET
                         );
                     }
-                    return Ok(cancellation_result_json(
+                    let mut cancelled = cancellation_result_json(
                         "delegate_task",
                         None,
                         &child_session_id,
                         &selected_model,
                         &error_text,
-                    ));
+                    );
+                    if let Some(obj) = cancelled.as_object_mut() {
+                        obj.insert(
+                            "workspaceIsolation".to_string(),
+                            serde_json::Value::String(workspace_isolation.clone()),
+                        );
+                        obj.insert(
+                            "workspaceIsolationReason".to_string(),
+                            workspace_isolation_reason.clone().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
+                        );
+                    }
+                    return Ok(cancelled);
                 }
                 if !crate::agent::style::is_silent() {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
@@ -470,6 +491,8 @@ impl Tool for DelegateTaskTool {
                 Ok(serde_json::json!({
                     "status": "error",
                     "lifecycle": status_json(&lifecycle),
+                    "workspaceIsolation": workspace_isolation,
+                    "workspaceIsolationReason": workspace_isolation_reason,
                     "error": format!("Subagent execution failed: {:?}", e)
                 }))
             }
@@ -861,7 +884,7 @@ pub fn create_isolated_workspace(parent_dir: &std::path::Path) -> Result<std::pa
 
     if !is_git && is_dangerous_fallback_copy_root(parent_dir) {
         return Err(anyhow!(
-            "Refusing to recursively copy unsafe workspace root '{}'. Launch OpenZ from a project directory or use a git repository for isolated subagent workspaces.",
+            "Refusing to recursively copy unsafe workspace root '{}'. cd into a project git repository before launching OpenZ, or set the agent workspace to a safe project directory. Running subagents in active workspace disables isolation.",
             parent_dir.display()
         ));
     }

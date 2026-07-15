@@ -200,6 +200,12 @@ impl Tool for DelegateProfileTool {
         };
 
         let parent_dir = current_workspace_root();
+        let mut workspace_isolation = if needs_workspace {
+            "isolated_worktree".to_string()
+        } else {
+            "not_required".to_string()
+        };
+        let mut workspace_isolation_reason: Option<String> = None;
         let workspace_dir = if !needs_workspace {
             parent_dir.clone()
         } else {
@@ -215,11 +221,17 @@ impl Tool for DelegateProfileTool {
                     dir
                 }
                 Ok(Err(e)) => {
-                    crate::tui_println!("{}⚠️  Failed to create isolated workspace ({:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
+                    let reason = e.to_string();
+                    workspace_isolation = "fallback_active_workspace".to_string();
+                    workspace_isolation_reason = Some(reason.clone());
+                    crate::tui_println!("{}⚠️  Failed to create isolated workspace ({}). Running in active workspace without isolation.{}", AURA_GOLD, reason, COLOR_RESET);
                     parent_dir.clone()
                 }
                 Err(e) => {
-                    crate::tui_println!("{}⚠️  Failed to create isolated workspace (join error: {:?}). Running in active workspace.{}", AURA_GOLD, e, COLOR_RESET);
+                    let reason = format!("join error: {:?}", e);
+                    workspace_isolation = "fallback_active_workspace".to_string();
+                    workspace_isolation_reason = Some(reason.clone());
+                    crate::tui_println!("{}⚠️  Failed to create isolated workspace ({}). Running in active workspace without isolation.{}", AURA_GOLD, reason, COLOR_RESET);
                     parent_dir.clone()
                 }
             }
@@ -522,6 +534,8 @@ impl Tool for DelegateProfileTool {
                         "lifecycle": status_json(&SubagentRunStatus::Completed),
                         "session_id": child_session_id,
                         "model_used": model_name,
+                        "workspaceIsolation": workspace_isolation,
+                        "workspaceIsolationReason": workspace_isolation_reason,
                         "summary": run_res.content
                     }));
                 }
@@ -544,13 +558,24 @@ impl Tool for DelegateProfileTool {
                                 COLOR_RESET
                             );
                         }
-                        return Ok(cancellation_result_json(
+                        let mut cancelled = cancellation_result_json(
                             "delegate_profile",
                             Some(&self.profile.name),
                             &child_session_id,
                             &model_name,
                             &error_text,
-                        ));
+                        );
+                        if let Some(obj) = cancelled.as_object_mut() {
+                            obj.insert(
+                                "workspaceIsolation".to_string(),
+                                serde_json::Value::String(workspace_isolation.clone()),
+                            );
+                            obj.insert(
+                                "workspaceIsolationReason".to_string(),
+                                workspace_isolation_reason.clone().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
+                            );
+                        }
+                        return Ok(cancelled);
                     }
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
@@ -576,6 +601,8 @@ impl Tool for DelegateProfileTool {
         Ok(serde_json::json!({
             "status": "error",
             "lifecycle": status_json(&lifecycle),
+            "workspaceIsolation": workspace_isolation,
+            "workspaceIsolationReason": workspace_isolation_reason,
             "error": err_msg
         }))
         }).await

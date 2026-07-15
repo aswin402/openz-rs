@@ -264,6 +264,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_extract_facts_handles_product_built_with_tooling() {
+        let facts = facts::extract_facts(
+            "Alice built AppX with Rust. Bob created ToolY and built it with Go.",
+        );
+        let triples: Vec<_> = facts
+            .iter()
+            .map(|f| (f.from.as_str(), f.relation.as_str(), f.to.as_str()))
+            .collect();
+
+        assert!(triples.contains(&("Alice", "created", "AppX")));
+        assert!(triples.contains(&("AppX", "built_with", "Rust")));
+        assert!(triples.contains(&("Bob", "created", "ToolY")));
+        assert!(triples.contains(&("ToolY", "built_with", "Go")));
+    }
+
+    #[tokio::test]
     async fn test_extract_facts_preserves_multi_word_entities() {
         let facts =
             facts::extract_facts("OpenZ uses Google AI Studio and depends on SearchXyz Index.");

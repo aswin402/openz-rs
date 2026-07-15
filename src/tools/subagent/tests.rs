@@ -338,6 +338,19 @@ async fn test_create_isolated_workspace_rejects_home_like_non_git_root() -> Resu
         res.is_err(),
         "home-like roots must not be recursively copied"
     );
+    let err = res.unwrap_err().to_string();
+    assert!(
+        err.contains("unsafe workspace root"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        err.contains("cd into a project git repository"),
+        "error should include actionable guidance: {err}"
+    );
+    assert!(
+        err.contains("disables isolation"),
+        "error should warn about fallback behavior: {err}"
+    );
     assert!(
         !config_dir.join("worktrees").exists()
             || std::fs::read_dir(config_dir.join("worktrees"))?

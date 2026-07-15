@@ -212,20 +212,16 @@ where
 // ─── Scope helpers ──────────────────────────────────────────────
 
 pub(crate) fn scope_from_args(args: &Value) -> (String, String, String) {
-    let user_id = args
-        .get("userId")
-        .and_then(|v| v.as_str())
-        .unwrap_or("*")
-        .to_string();
-    let session_id = args
-        .get("sessionId")
-        .and_then(|v| v.as_str())
-        .unwrap_or("*")
-        .to_string();
-    let agent_id = args
-        .get("agentId")
-        .and_then(|v| v.as_str())
-        .unwrap_or("*")
-        .to_string();
+    fn scoped_arg(args: &Value, camel: &str, snake: &str) -> String {
+        args.get(camel)
+            .or_else(|| args.get(snake))
+            .and_then(|v| v.as_str())
+            .unwrap_or("*")
+            .to_string()
+    }
+
+    let user_id = scoped_arg(args, "userId", "user_id");
+    let session_id = scoped_arg(args, "sessionId", "session_id");
+    let agent_id = scoped_arg(args, "agentId", "agent_id");
     (user_id, session_id, agent_id)
 }

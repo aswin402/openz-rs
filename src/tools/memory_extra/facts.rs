@@ -805,9 +805,26 @@ pub(crate) fn extract_facts(text: &str) -> Vec<ExtractedFact> {
         }
 
         let mut carried_subject: Option<String> = None;
+        let mut carried_object: Option<String> = None;
         for clause in split_fact_clauses(sentence) {
-            if let Some(fact) = extract_fact_clause(&clause, carried_subject.as_deref()) {
-                carried_subject = Some(fact.from.clone());
+            let extracted = extract_fact_clause_multi(
+                &clause,
+                carried_subject.as_deref(),
+                carried_object.as_deref(),
+            );
+            if extracted.is_empty() {
+                continue;
+            }
+
+            if let Some(first) = extracted.first() {
+                carried_subject = Some(first.from.clone());
+                carried_object = Some(first.to.clone());
+            }
+            if let Some(created) = extracted.iter().find(|fact| fact.relation == "created") {
+                carried_object = Some(created.to.clone());
+            }
+
+            for fact in extracted {
                 let key = (
                     fact.from.to_lowercase(),
                     fact.relation.clone(),
@@ -837,6 +854,52 @@ fn split_fact_clauses(sentence: &str) -> Vec<String> {
 
 fn entity_pattern() -> &'static str {
     r"[A-Z][A-Za-z0-9_+#.-]*(?:\s+[A-Z][A-Za-z0-9_+#.-]*){0,5}"
+}
+
+fn extract_fact_clause_multi(
+    clause: &str,
+    carried_subject: Option<&str>,
+    carried_object: Option<&str>,
+) -> Vec<ExtractedFact> {
+    let entity = entity_pattern();
+    let built_product_pattern = format!(
+        r"^({entity})\s+(?:created?|built?|wrote?|made)\s+({entity})\s+(?:with|in|using)\s+({entity})$"
+    );
+    let built_product_re = regex::Regex::new(&built_product_pattern).unwrap();
+    if let Some(caps) = built_product_re.captures(clause) {
+        let mut facts = Vec::new();
+        if let Some(fact) = build_extracted_fact(
+            caps.get(1).unwrap().as_str(),
+            "created",
+            caps.get(2).unwrap().as_str(),
+        ) {
+            facts.push(fact);
+        }
+        if let Some(fact) = build_extracted_fact(
+            caps.get(2).unwrap().as_str(),
+            "built_with",
+            caps.get(3).unwrap().as_str(),
+        ) {
+            facts.push(fact);
+        }
+        return facts;
+    }
+
+    if let Some(object) = carried_object {
+        let carried_build_pattern = format!(
+            r"^(?:built?|wrote?|made|implemented)\s+(?:it|that|this)\s+(?:with|in|using)\s+({entity})$"
+        );
+        let carried_build_re = regex::Regex::new(&carried_build_pattern).unwrap();
+        if let Some(caps) = carried_build_re.captures(clause) {
+            return build_extracted_fact(object, "built_with", caps.get(1).unwrap().as_str())
+                .into_iter()
+                .collect();
+        }
+    }
+
+    extract_fact_clause(clause, carried_subject)
+        .into_iter()
+        .collect()
 }
 
 fn extract_fact_clause(clause: &str, carried_subject: Option<&str>) -> Option<ExtractedFact> {

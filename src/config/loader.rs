@@ -297,6 +297,14 @@ pub fn migrate_config(config: &mut Config) -> bool {
         }
     }
 
+    // v0.0.51 raised the default tool timeout from 120s to 300s. Existing
+    // configs that still carry the historical default should inherit the new
+    // safer default, while intentionally customized values must remain intact.
+    if config.agents.defaults.tool_timeout_secs == 120 {
+        config.agents.defaults.tool_timeout_secs = 300;
+        modified = true;
+    }
+
     modified
 }
 
@@ -461,6 +469,60 @@ mod tests {
         assert!(names.contains(&"memory.db-wal".to_string()));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn load_config_migrates_historical_tool_timeout_default() {
+        let dir = std::env::temp_dir().join(format!(
+            "openz_cfg_timeout_migration_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("config.json"),
+            serde_json::json!({
+                "agents": { "defaults": { "toolTimeoutSecs": 120 } }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let config = super::CONFIG_DIR_OVERRIDE
+            .scope(dir.clone(), async { super::load_config().unwrap() })
+            .await;
+
+        assert_eq!(config.agents.defaults.tool_timeout_secs, 300);
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("config.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved["agents"]["defaults"]["toolTimeoutSecs"], 300);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn load_config_preserves_custom_tool_timeout() {
+        let dir =
+            std::env::temp_dir().join(format!("openz_cfg_timeout_custom_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("config.json"),
+            serde_json::json!({
+                "agents": { "defaults": { "toolTimeoutSecs": 60 } }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let config = super::CONFIG_DIR_OVERRIDE
+            .scope(dir.clone(), async { super::load_config().unwrap() })
+            .await;
+
+        assert_eq!(config.agents.defaults.tool_timeout_secs, 60);
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("config.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved["agents"]["defaults"]["toolTimeoutSecs"], 60);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

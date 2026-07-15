@@ -13,6 +13,18 @@ fn unique_scope(prefix: &str) -> String {
     )
 }
 
+#[test]
+fn test_scope_from_args_accepts_camel_and_snake_case() {
+    assert_eq!(
+        scope_from_args(&json!({"userId": "u1", "sessionId": "s1", "agentId": "a1"})),
+        ("u1".to_string(), "s1".to_string(), "a1".to_string())
+    );
+    assert_eq!(
+        scope_from_args(&json!({"user_id": "u2", "session_id": "s2", "agent_id": "a2"})),
+        ("u2".to_string(), "s2".to_string(), "a2".to_string())
+    );
+}
+
 #[tokio::test]
 async fn test_create_and_read_entities() {
     let _l = test_lock().lock().await;
