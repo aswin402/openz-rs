@@ -102,7 +102,7 @@ struct TelegramCallbackQuery {
     message: Option<TelegramMessage>,
 }
 
-static REMOTE_CONTROL_ACTIVE: OnceLock<Mutex<HashMap<i64, bool>>> = OnceLock::new();
+static REMOTE_CONTROL_TARGETS: OnceLock<Mutex<HashMap<i64, String>>> = OnceLock::new();
 static ACTIVE_TYPING_LOOPS: OnceLock<Mutex<HashMap<i64, oneshot::Sender<()>>>> = OnceLock::new();
 
 pub fn start_typing_indicator(chat_id: i64, token: String, client: Client) {
@@ -151,31 +151,45 @@ pub fn stop_typing_indicator(chat_id: i64) {
     }
 }
 
-fn is_remote_control_active(chat_id: i64) -> bool {
-    let map = REMOTE_CONTROL_ACTIVE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(guard) = map.lock() {
-        *guard.get(&chat_id).unwrap_or(&false)
-    } else {
-        false
+fn selected_remote_session(chat_id: i64) -> Option<String> {
+    let map = REMOTE_CONTROL_TARGETS.get_or_init(|| Mutex::new(HashMap::new()));
+    map.lock()
+        .ok()
+        .and_then(|guard| guard.get(&chat_id).cloned())
+}
+
+fn set_remote_session(chat_id: i64, session_key: String) {
+    let map = REMOTE_CONTROL_TARGETS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut guard) = map.lock() {
+        guard.insert(chat_id, session_key);
     }
 }
 
-fn toggle_remote_control(chat_id: i64) -> bool {
-    let map = REMOTE_CONTROL_ACTIVE.get_or_init(|| Mutex::new(HashMap::new()));
+fn clear_remote_session(chat_id: i64) {
+    let map = REMOTE_CONTROL_TARGETS.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(mut guard) = map.lock() {
-        let entry = guard.entry(chat_id).or_insert(false);
-        *entry = !*entry;
-        *entry
-    } else {
-        false
+        guard.remove(&chat_id);
     }
 }
 
-fn set_remote_control(chat_id: i64, active: bool) {
-    let map = REMOTE_CONTROL_ACTIVE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(mut guard) = map.lock() {
-        guard.insert(chat_id, active);
-    }
+fn remote_session_button_label(session: &crate::agent::activity::ActiveTuiSession) -> String {
+    let cwd_name = std::path::Path::new(&session.cwd)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(&session.cwd);
+    let started = chrono::DateTime::parse_from_rfc3339(&session.started_at)
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%b %d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|_| "unknown time".to_string());
+    let preview = if session.preview.trim().is_empty() {
+        "new session".to_string()
+    } else {
+        session.preview.clone()
+    };
+    format!("{} | {} | {}", cwd_name, started, preview)
 }
 
 impl TelegramChannel {
@@ -626,26 +640,60 @@ impl super::Channel for TelegramChannel {
                                             continue;
                                         }
 
-                                        let active = if cmd == "/local" || cmd == "/exit" {
-                                            set_remote_control(chat_id, false);
-                                            false
-                                        } else {
-                                            toggle_remote_control(chat_id)
-                                        };
+                                        if cmd == "/local" || cmd == "/exit" {
+                                            clear_remote_session(chat_id);
+                                            tokio::spawn(async move {
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
+                                                let payload = serde_json::json!({
+                                                    "chat_id": chat_id,
+                                                    "text": "🏠 [Local Mode Activated]\nMessages will be processed locally by the Telegram bot."
+                                                });
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
+                                            });
+                                            continue;
+                                        }
 
+                                        let sessions =
+                                            crate::agent::activity::list_active_tui_sessions();
                                         tokio::spawn(async move {
-                                            let msg = if active {
-                                                "🔌 [Remote Control Mode Activated]\nAll messages you type here will be forwarded directly to your active terminal TUI session on the laptop.\nType `/remote` or `/local` to exit."
-                                            } else {
-                                                "🏠 [Local Mode Activated]\nMessages will be processed locally by the Telegram bot."
-                                            };
                                             let send_url = format!(
                                                 "https://api.telegram.org/bot{}/sendMessage",
                                                 token
                                             );
+                                            if sessions.is_empty() {
+                                                let payload = serde_json::json!({
+                                                    "chat_id": chat_id,
+                                                    "text": "No active OpenZ TUI sessions found. Start `openz agent` in a terminal, then use /remote again."
+                                                });
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
+                                                return;
+                                            }
+
+                                            let keyboard: Vec<Vec<serde_json::Value>> = sessions
+                                                .iter()
+                                                .take(10)
+                                                .map(|session| {
+                                                    vec![serde_json::json!({
+                                                        "text": remote_session_button_label(session),
+                                                        "callback_data": format!("remote:{}", session.session_key)
+                                                    })]
+                                                })
+                                                .collect();
                                             let payload = serde_json::json!({
                                                 "chat_id": chat_id,
-                                                "text": msg
+                                                "text": "Select the OpenZ TUI session to control:",
+                                                "reply_markup": { "inline_keyboard": keyboard }
                                             });
                                             let _ =
                                                 client.post(&send_url).json(&payload).send().await;
@@ -654,7 +702,7 @@ impl super::Channel for TelegramChannel {
                                     }
                                 }
 
-                                if is_remote_control_active(chat_id) {
+                                if let Some(remote_session_key) = selected_remote_session(chat_id) {
                                     tokio::spawn(async move {
                                         let remote_sender = format!("telegram:{}", chat_id);
                                         start_typing_indicator(
@@ -663,7 +711,7 @@ impl super::Channel for TelegramChannel {
                                             client.clone(),
                                         );
                                         match crate::agent::activity::send_inbox_message(
-                                            "cli:direct",
+                                            &remote_session_key,
                                             &text,
                                             &remote_sender,
                                         ) {
@@ -674,7 +722,7 @@ impl super::Channel for TelegramChannel {
                                                 );
                                                 let payload = serde_json::json!({
                                                     "chat_id": chat_id,
-                                                    "text": "🔌 Remote command forwarded to TUI session. Executing..."
+                                                    "text": "🔌 Remote command forwarded to selected TUI session. Executing..."
                                                 });
                                                 let _ = client
                                                     .post(&send_url)
@@ -684,13 +732,14 @@ impl super::Channel for TelegramChannel {
                                             }
                                             Err(e) => {
                                                 stop_typing_indicator(chat_id);
+                                                clear_remote_session(chat_id);
                                                 let send_url = format!(
                                                     "https://api.telegram.org/bot{}/sendMessage",
                                                     token
                                                 );
                                                 let payload = serde_json::json!({
                                                     "chat_id": chat_id,
-                                                    "text": format!("❌ Failed to forward remote command: {}", e)
+                                                    "text": format!("❌ Failed to forward remote command: {}\nRemote mode was cleared. Use /remote to select a live TUI session.", e)
                                                 });
                                                 let _ = client
                                                     .post(&send_url)
@@ -758,13 +807,83 @@ impl super::Channel for TelegramChannel {
                             }
                         }
 
-                        // 2. Handle callback queries (Approval button clicks)
+                        // 2. Handle callback queries (remote picker and approval button clicks)
                         if let Some(cb) = update.callback_query {
                             if let Some(ref data) = cb.data {
                                 let parts: Vec<&str> = data.splitn(2, ':').collect();
                                 if parts.len() == 2 {
                                     let action = parts[0];
-                                    let req_id = parts[1];
+                                    let callback_value = parts[1];
+
+                                    if action == "remote" {
+                                        if let Some(ref inner_msg) = cb.message {
+                                            let chat_id = inner_msg.chat.id;
+                                            let sessions =
+                                                crate::agent::activity::list_active_tui_sessions();
+                                            let selected = sessions.iter().find(|session| {
+                                                session.session_key == callback_value
+                                            });
+
+                                            let answer_url = format!(
+                                                "https://api.telegram.org/bot{}/answerCallbackQuery",
+                                                self.bot_token
+                                            );
+                                            let answer_payload = if selected.is_some() {
+                                                set_remote_session(
+                                                    chat_id,
+                                                    callback_value.to_string(),
+                                                );
+                                                serde_json::json!({
+                                                    "callback_query_id": cb.id,
+                                                    "text": "Remote TUI selected"
+                                                })
+                                            } else {
+                                                serde_json::json!({
+                                                    "callback_query_id": cb.id,
+                                                    "text": "That TUI session is no longer active. Use /remote again.",
+                                                    "show_alert": true
+                                                })
+                                            };
+                                            let _ = self
+                                                .client
+                                                .post(&answer_url)
+                                                .json(&answer_payload)
+                                                .send()
+                                                .await;
+
+                                            if let Some(message_id) = inner_msg.message_id {
+                                                let edit_url = format!(
+                                                    "https://api.telegram.org/bot{}/editMessageText",
+                                                    self.bot_token
+                                                );
+                                                let text = selected
+                                                    .map(|session| {
+                                                        format!(
+                                                            "🔌 Remote mode active for {}\nNext messages are forwarded to that TUI. Use /local or /exit to leave remote mode.",
+                                                            remote_session_button_label(session)
+                                                        )
+                                                    })
+                                                    .unwrap_or_else(|| {
+                                                        "That TUI session is no longer active. Use /remote again."
+                                                            .to_string()
+                                                    });
+                                                let edit_payload = serde_json::json!({
+                                                    "chat_id": chat_id,
+                                                    "message_id": message_id,
+                                                    "text": text
+                                                });
+                                                let _ = self
+                                                    .client
+                                                    .post(&edit_url)
+                                                    .json(&edit_payload)
+                                                    .send()
+                                                    .await;
+                                            }
+                                        }
+                                        continue;
+                                    }
+
+                                    let req_id = callback_value;
                                     let approved = action == "approve";
 
                                     // Resolve wait condition
@@ -923,5 +1042,39 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remote_session_selection_round_trips() {
+        let chat_id = 4242;
+        clear_remote_session(chat_id);
+        assert_eq!(selected_remote_session(chat_id), None);
+
+        set_remote_session(chat_id, "cli:test-session".to_string());
+        assert_eq!(
+            selected_remote_session(chat_id).as_deref(),
+            Some("cli:test-session")
+        );
+
+        clear_remote_session(chat_id);
+        assert_eq!(selected_remote_session(chat_id), None);
+    }
+
+    #[test]
+    fn remote_session_button_label_contains_context() {
+        let session = crate::agent::activity::ActiveTuiSession {
+            session_key: "cli:test".to_string(),
+            pid: std::process::id(),
+            cwd: "/tmp/openz-client-work".to_string(),
+            started_at: "2026-07-16T08:30:00Z".to_string(),
+            last_seen_at: "2026-07-16T08:31:00Z".to_string(),
+            model: "model".to_string(),
+            provider: "provider".to_string(),
+            preview: "plan client workflow".to_string(),
+        };
+
+        let label = remote_session_button_label(&session);
+        assert!(label.contains("openz-client-work"));
+        assert!(label.contains("plan client workflow"));
     }
 }

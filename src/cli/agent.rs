@@ -114,6 +114,50 @@ pub async fn handle_agent() -> Result<()> {
     }
 
     let agent_loop = build_agent_loop(config.clone()).await?;
+    let tui_started_at = chrono::Utc::now().to_rfc3339();
+    let tui_cwd = std::env::current_dir().unwrap_or_default();
+    let initial_preview = session_manager
+        .load(&session_key)
+        .ok()
+        .map(|session| crate::agent::activity::session_preview_from_messages(&session.messages))
+        .unwrap_or_else(|| "No user prompt yet".to_string());
+    let active_tui = crate::agent::activity::make_active_tui_session(
+        &session_key,
+        &tui_cwd,
+        &tui_started_at,
+        &defaults.model,
+        &defaults.provider,
+        &initial_preview,
+    );
+    let _ = crate::agent::activity::upsert_active_tui_session(&active_tui);
+    let heartbeat_session_key = session_key.clone();
+    let heartbeat_cwd = tui_cwd.clone();
+    let heartbeat_started_at = tui_started_at.clone();
+    let heartbeat_model = defaults.model.clone();
+    let heartbeat_provider = defaults.provider.clone();
+    let heartbeat_session_manager = session_manager.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            let preview = heartbeat_session_manager
+                .load(&heartbeat_session_key)
+                .ok()
+                .map(|session| {
+                    crate::agent::activity::session_preview_from_messages(&session.messages)
+                })
+                .unwrap_or_else(|| "No user prompt yet".to_string());
+            let active_tui = crate::agent::activity::make_active_tui_session(
+                &heartbeat_session_key,
+                &heartbeat_cwd,
+                &heartbeat_started_at,
+                &heartbeat_model,
+                &heartbeat_provider,
+                &preview,
+            );
+            let _ = crate::agent::activity::upsert_active_tui_session(&active_tui);
+        }
+    });
 
     // Mark silent mode for background channels via thread-safe AtomicBool
     crate::cli::set_silent_mode(true);
@@ -223,6 +267,7 @@ pub async fn handle_agent() -> Result<()> {
         }
     }
 
+    crate::agent::activity::remove_active_tui_session(&session_key);
     crate::shutdown::trigger();
     crate::channels::shutdown_gateways_bounded(&config).await;
     Ok(())
