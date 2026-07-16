@@ -248,6 +248,30 @@ async fn receive_webhook(
                                 let text = body.to_string();
                                 let from_str = from.to_string();
 
+                                if crate::channels::is_stop_command(&text) {
+                                    crate::shutdown::trigger_cli_cancel();
+                                    let send_url = format!(
+                                        "https://graph.facebook.com/v18.0/{}/messages",
+                                        phone_number_id
+                                    );
+                                    let reply_payload = serde_json::json!({
+                                        "messaging_product": "whatsapp",
+                                        "recipient_type": "individual",
+                                        "to": from_str,
+                                        "type": "text",
+                                        "text": {
+                                            "body": "▲ Stop requested. Active OpenZ turn interrupted."
+                                        }
+                                    });
+                                    let _ = client
+                                        .post(&send_url)
+                                        .bearer_auth(&api_key)
+                                        .json(&reply_payload)
+                                        .send()
+                                        .await;
+                                    continue;
+                                }
+
                                 let concurrency_limit = state.concurrency_limit.clone();
                                 tokio::spawn(async move {
                                     let _permit = match concurrency_limit.acquire().await {
@@ -298,6 +322,12 @@ async fn receive_webhook(
 mod tests {
     use super::*;
     use axum::response::IntoResponse;
+
+    #[test]
+    fn whatsapp_uses_shared_stop_command_detection() {
+        assert!(crate::channels::is_stop_command("/stop"));
+        assert!(!crate::channels::is_stop_command("please stop"));
+    }
 
     #[tokio::test]
     async fn test_verify_webhook_success() {

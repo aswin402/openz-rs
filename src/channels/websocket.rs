@@ -230,6 +230,19 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
 
+                        if crate::channels::is_stop_command(content) {
+                            crate::shutdown::trigger_cli_cancel();
+                            let stopped_evt = serde_json::json!({
+                                "event": "stopped",
+                                "chat_id": chat_id,
+                                "detail": "Stop requested. Active OpenZ turn interrupted."
+                            });
+                            if let Ok(evt_str) = serde_json::to_string(&stopped_evt) {
+                                let _ = tx.send(Message::Text(evt_str)).await;
+                            }
+                            continue;
+                        }
+
                         let agent = state.agent_loop.clone();
                         let tx_clone = tx.clone();
                         let chat_id_clone = chat_id.clone();
@@ -588,6 +601,12 @@ async fn openai_chat_completions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn websocket_chat_uses_shared_stop_command_detection() {
+        assert!(crate::channels::is_stop_command("/stop"));
+        assert!(!crate::channels::is_stop_command("/stopwatch"));
+    }
 
     #[test]
     fn test_normalize_model_name() {

@@ -26,6 +26,10 @@ pub const ACTIVE_MESSAGES: &[&str] = &[
     "Waiting for your next idea.",
 ];
 
+pub fn is_stop_command(text: &str) -> bool {
+    text.split_whitespace().next() == Some("/stop")
+}
+
 pub const OFFLINE_MESSAGES: &[&str] = &[
     "I'm going to get some rest now.",
     "I'll catch up with you later.",
@@ -724,5 +728,19 @@ mod tests {
             assert!(!senders.contains_key(&client_id));
             assert_eq!(senders.len(), 0);
         }
+    }
+}
+
+#[cfg(test)]
+mod stop_command_tests {
+    use super::*;
+
+    #[test]
+    fn stop_command_matches_slash_stop_only() {
+        assert!(is_stop_command("/stop"));
+        assert!(is_stop_command(" /stop now"));
+        assert!(!is_stop_command("please stop"));
+        assert!(!is_stop_command("/stopped"));
+        assert!(!is_stop_command("/remote"));
     }
 }

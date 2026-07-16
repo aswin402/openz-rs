@@ -292,6 +292,23 @@ async fn connect_and_listen(
                                 if !silent {
                                     println!("💬 Discord message received: {}", payload.content);
                                 }
+                                if crate::channels::is_stop_command(&payload.content) {
+                                    crate::shutdown::trigger_cli_cancel();
+                                    let send_url = format!(
+                                        "https://discord.com/api/v10/channels/{}/messages",
+                                        payload.channel_id
+                                    );
+                                    let reply_payload = serde_json::json!({
+                                        "content": "▲ Stop requested. Active OpenZ turn interrupted."
+                                    });
+                                    let _ = client
+                                        .post(&send_url)
+                                        .header("Authorization", format!("Bot {}", bot_token))
+                                        .json(&reply_payload)
+                                        .send()
+                                        .await;
+                                    continue;
+                                }
                                 let agent = agent_loop.clone();
                                 let client_clone = client.clone();
                                 let bot_token_clone = bot_token.to_string();
@@ -386,6 +403,12 @@ fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discord_uses_shared_stop_command_detection() {
+        assert!(crate::channels::is_stop_command("/stop"));
+        assert!(!crate::channels::is_stop_command("stop"));
+    }
 
     #[test]
     fn test_deserialize_gateway_hello() {

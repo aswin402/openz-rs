@@ -199,6 +199,28 @@ impl super::Channel for EmailChannel {
                                     format!("Re: {}", subject)
                                 };
 
+                                if crate::channels::is_stop_command(&body) {
+                                    crate::shutdown::trigger_cli_cancel();
+                                    let reply_res = send_reply_email(
+                                        &smtp_server,
+                                        smtp_port,
+                                        &user_clone,
+                                        &pass_clone,
+                                        &from,
+                                        &reply_subject,
+                                        "Stop requested. Active OpenZ turn interrupted.",
+                                    )
+                                    .await;
+                                    if let Err(e) = reply_res {
+                                        tracing::error!(
+                                            "Failed to send stop reply email to {}: {:?}",
+                                            from,
+                                            e
+                                        );
+                                    }
+                                    return;
+                                }
+
                                 let session_key = format!("email_{}", from);
                                 match agent_clone.run(&body, &session_key).await {
                                     Ok(res) => {
@@ -250,5 +272,14 @@ impl super::Channel for EmailChannel {
         });
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn email_uses_shared_stop_command_detection() {
+        assert!(crate::channels::is_stop_command("/stop"));
+        assert!(!crate::channels::is_stop_command("subject says stop"));
     }
 }
