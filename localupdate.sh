@@ -16,33 +16,61 @@ echo "────────────────────────�
 
 # Parse arguments for resource limits and cache cleanup
 LOW_RESOURCE=false
+BALANCED_RESOURCE=false
 CLEAN_TARGET=false
+RUN_CHECK=true
 for arg in "$@"; do
     case "$arg" in
         --low-resource|--low-mem|-l)
             LOW_RESOURCE=true
             ;;
+        --balanced|--moderate|-b)
+            BALANCED_RESOURCE=true
+            ;;
+        --skip-check)
+            RUN_CHECK=false
+            ;;
+        --check)
+            RUN_CHECK=true
+            ;;
         --clean-target)
             CLEAN_TARGET=true
             ;;
         --help|-h)
-            echo "Usage: ./localupdate.sh [--low-resource] [--clean-target]"
-            echo "  --low-resource, --low-mem, -l  Restrict build CPU/RAM usage."
+            echo "Usage: ./localupdate.sh [--balanced] [--low-resource] [--clean-target] [--skip-check]"
+            echo "  --balanced, --moderate, -b     Moderate CPU/RAM mode: faster than low-resource, lighter than full release."
+            echo "  --low-resource, --low-mem, -l  Minimum CPU/RAM mode for weak machines."
             echo "  --clean-target                 Run cargo clean before building to reclaim target/ disk space."
+            echo "  --skip-check                   Skip pre-install cargo check (install still compiles)."
+            echo "  --check                        Force pre-install cargo check."
             exit 0
             ;;
     esac
 done
 
+CARGO_FLAGS=""
+CARGO_PROFILE_FLAG=""
+
+if [ "$LOW_RESOURCE" = true ] && [ "$BALANCED_RESOURCE" = true ]; then
+    echo "❌ Choose only one resource mode: --balanced or --low-resource."
+    exit 1
+fi
+
 if [ "$LOW_RESOURCE" = true ]; then
-    echo "⚡ Low-resource build mode active (restricting CPU cores & RAM consumption)..."
-    export CARGO_BUILD_JOBS=1
-    export RUSTFLAGS="-C codegen-units=1"
-    CARGO_FLAGS="-j 1"
+    echo "⚡ Low-resource build mode active (minimum CPU/RAM, slower build)..."
+    export CARGO_BUILD_JOBS="${OPENZ_BUILD_JOBS:-1}"
+    CARGO_FLAGS="-j $CARGO_BUILD_JOBS"
+    CARGO_PROFILE_FLAG="--profile release-low-resource"
+elif [ "$BALANCED_RESOURCE" = true ]; then
+    echo "⚖️ Balanced build mode active (moderate speed with capped CPU/RAM)..."
+    export CARGO_BUILD_JOBS="${OPENZ_BUILD_JOBS:-2}"
+    CARGO_FLAGS="-j $CARGO_BUILD_JOBS"
+    CARGO_PROFILE_FLAG="--profile release-balanced"
+    RUN_CHECK=false
 else
-    echo "💡 Tip: If compilation consumes too much RAM or CPU, run: ./localupdate.sh --low-resource"
+    echo "💡 Tip: For moderate speed with less RAM/CPU, run: ./localupdate.sh --balanced"
+    echo "💡 Tip: For minimum RAM/CPU, run: ./localupdate.sh --low-resource"
     echo "💡 Tip: If disk space is low, run: ./localupdate.sh --clean-target"
-    CARGO_FLAGS=""
 fi
 echo ""
 
@@ -203,15 +231,20 @@ repair_corrupt_cargo_registry_sources
 clean_target_if_requested
 check_target_disk_usage
 
-# 4. Run pre-install validation
-echo "🧪 Running compiler checks..."
-cargo check $CARGO_FLAGS
+# 4. Run pre-install validation when requested. Balanced mode skips this by default
+# because cargo install compiles the same graph again.
+if [ "$RUN_CHECK" = true ]; then
+    echo "🧪 Running compiler checks..."
+    cargo check $CARGO_FLAGS
+else
+    echo "⏭️ Skipping pre-install cargo check (install still compiles the project)."
+fi
 
 # 5. Compile and install
 echo "🔄 Re-compiling and installing new binary globally..."
-if ! cargo install $CARGO_FLAGS --locked --path .; then
+if ! cargo install $CARGO_FLAGS $CARGO_PROFILE_FLAG --locked --path .; then
     echo "⚠️ Online install failed (possibly crates.io registry timeout). Retrying in offline mode..."
-    cargo install $CARGO_FLAGS --locked --path . --offline
+    cargo install $CARGO_FLAGS $CARGO_PROFILE_FLAG --locked --path . --offline
 fi
 
 echo "────────────────────────────────"

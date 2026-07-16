@@ -16,33 +16,52 @@ echo "────────────────────────�
 
 # Parse arguments for resource limits and cache cleanup
 LOW_RESOURCE=false
+BALANCED_RESOURCE=false
 CLEAN_TARGET=false
 for arg in "$@"; do
     case "$arg" in
         --low-resource|--low-mem|-l)
             LOW_RESOURCE=true
             ;;
+        --balanced|--moderate|-b)
+            BALANCED_RESOURCE=true
+            ;;
+
         --clean-target)
             CLEAN_TARGET=true
             ;;
         --help|-h)
-            echo "Usage: ./localinstall.sh [--low-resource] [--clean-target]"
-            echo "  --low-resource, --low-mem, -l  Restrict build CPU/RAM usage."
+            echo "Usage: ./localinstall.sh [--balanced] [--low-resource] [--clean-target]"
+            echo "  --balanced, --moderate, -b     Moderate CPU/RAM mode: faster than low-resource, lighter than full release."
+            echo "  --low-resource, --low-mem, -l  Minimum CPU/RAM mode for weak machines."
             echo "  --clean-target                 Run cargo clean before building to reclaim target/ disk space."
             exit 0
             ;;
     esac
 done
 
+CARGO_FLAGS=""
+CARGO_PROFILE_FLAG=""
+
+if [ "$LOW_RESOURCE" = true ] && [ "$BALANCED_RESOURCE" = true ]; then
+    echo "❌ Choose only one resource mode: --balanced or --low-resource."
+    exit 1
+fi
+
 if [ "$LOW_RESOURCE" = true ]; then
-    echo "⚡ Low-resource build mode active (restricting CPU cores & RAM consumption)..."
-    export CARGO_BUILD_JOBS=1
-    export RUSTFLAGS="-C codegen-units=1"
-    CARGO_FLAGS="-j 1"
+    echo "⚡ Low-resource build mode active (minimum CPU/RAM, slower build)..."
+    export CARGO_BUILD_JOBS="${OPENZ_BUILD_JOBS:-1}"
+    CARGO_FLAGS="-j $CARGO_BUILD_JOBS"
+    CARGO_PROFILE_FLAG="--profile release-low-resource"
+elif [ "$BALANCED_RESOURCE" = true ]; then
+    echo "⚖️ Balanced build mode active (moderate speed with capped CPU/RAM)..."
+    export CARGO_BUILD_JOBS="${OPENZ_BUILD_JOBS:-2}"
+    CARGO_FLAGS="-j $CARGO_BUILD_JOBS"
+    CARGO_PROFILE_FLAG="--profile release-balanced"
 else
-    echo "💡 Tip: If compilation consumes too much RAM or CPU, run: ./localinstall.sh --low-resource"
+    echo "💡 Tip: For moderate speed with less RAM/CPU, run: ./localinstall.sh --balanced"
+    echo "💡 Tip: For minimum RAM/CPU, run: ./localinstall.sh --low-resource"
     echo "💡 Tip: If disk space is low, run: ./localinstall.sh --clean-target"
-    CARGO_FLAGS=""
 fi
 echo ""
 
@@ -180,7 +199,7 @@ check_target_disk_usage
 
 # 2. Compile and install globally via Cargo
 echo "📦 Compiling and installing openz globally via Cargo..."
-cargo install $CARGO_FLAGS --locked --path .
+cargo install $CARGO_FLAGS $CARGO_PROFILE_FLAG --locked --path .
 
 # 3. Setup folder architecture
 echo "📁 Setting up directory structures at ~/.openz..."

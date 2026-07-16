@@ -103,13 +103,27 @@ OpenZ registers native tools directly in Rust. The major tool families are:
 ./localupdate.sh
 ```
 
-### Low-resource build
+### Balanced and low-resource builds
+
+Recommended for most laptops when normal update lags the machine:
+
+```bash
+./localupdate.sh --balanced
+```
+
+Balanced mode caps Cargo to 2 jobs by default, uses the `release-balanced` profile, skips the duplicate pre-install `cargo check`, and avoids ThinLTO linker spikes. It is usually much faster than `--low-resource` while using less RAM/CPU than the full release path.
+
+For a little more speed on stronger machines:
+
+```bash
+OPENZ_BUILD_JOBS=3 ./localupdate.sh --balanced
+```
+
+Use minimum-resource mode only when the machine is still lagging or swapping:
 
 ```bash
 ./localupdate.sh --low-resource
 ```
-
-This restricts Cargo jobs and codegen units to reduce peak RAM/CPU pressure.
 
 ### Reclaim Cargo build-cache space
 

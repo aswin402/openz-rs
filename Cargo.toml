@@ -136,3 +136,19 @@ codegen-units = 1       # Reduces compiler RAM usage and yields better optimizat
 lto = "thin"            # Link-Time Optimization: reduces peak linker memory usage and final ROM size
 debug = false           # Exclude debug symbols to minimize compile RAM usage
 strip = true            # Strip symbols and debug info from the final binary (significantly reduces ROM footprint)
+
+[profile.release-balanced]
+inherits = "release"
+opt-level = 2           # Faster to compile than full release while still optimized for daily local updates
+codegen-units = 4       # More parallel codegen than full release; moderate RAM use with -j 2
+lto = false             # Avoid ThinLTO linker memory/time spikes during local updates
+strip = true
+debug = false
+
+[profile.release-low-resource]
+inherits = "release"
+opt-level = 1           # Minimize compile pressure for low-memory machines
+codegen-units = 1
+lto = false             # Low-resource mode prioritizes finishing without linker spikes
+strip = true
+debug = false

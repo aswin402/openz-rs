@@ -418,6 +418,7 @@ Inside `openz agent`, the user can issue direct slash commands:
 *   **Chore:** Bumped version to `v0.0.51`.
 *   **Optimization: Measured footprint reporting and release-size hardening:** Made local install/update scripts print installed binary size and version-command smoke time, and corrected footprint docs to report measured values instead of overclaiming a 10-15 MB binary. A `panic = "abort"` experiment was rejected because release linking conflicts with dependencies that require unwind support.
 *   **Fix: Build-cache disk pressure guard:** Added `--clean-target` to `localinstall.sh` and `localupdate.sh`, a 20 GiB `target/` warning, and an `openz doctor` disk/cache report covering repo `target/`, `~/.openz`, SearchXyz, and Cargo caches so repeated OpenZ builds/tests cannot silently consume tens of gigabytes without an explicit cleanup path.
+*   **Optimization: Balanced local update mode:** Added `--balanced`/`--moderate` to `localinstall.sh` and `localupdate.sh`, backed by `release-balanced` and `release-low-resource` Cargo profiles. Balanced mode caps jobs, skips the duplicate pre-install check during updates, and disables ThinLTO to reduce RAM/ROM pressure without the extreme slowdown of `--low-resource`.
 
 ### v0.0.50 (Previous Release)
 *   **Feature: Native memory coordinator and reliability overhaul:** Unified semantic, graph, recall, deletion, stats, and prompt-memory flows behind a coordinator path with regression coverage for worst-case memory behavior.
