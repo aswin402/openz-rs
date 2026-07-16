@@ -414,7 +414,7 @@ Inside `openz agent`, the user can issue direct slash commands:
     *   Improved subagent unsafe-workspace fallback reporting with actionable guidance and `workspaceIsolation` metadata.
 *   **Chore:** Bumped version to `v0.0.51`.
 *   **Optimization: Measured footprint reporting and release-size hardening:** Made local install/update scripts print installed binary size and version-command smoke time, and corrected footprint docs to report measured values instead of overclaiming a 10-15 MB binary. A `panic = "abort"` experiment was rejected because release linking conflicts with dependencies that require unwind support.
-*   **Fix: Build-cache disk pressure guard:** Added `--clean-target` to `localinstall.sh` and `localupdate.sh` and a 20 GiB `target/` warning so repeated OpenZ builds/tests cannot silently consume tens of gigabytes without an explicit cleanup path.
+*   **Fix: Build-cache disk pressure guard:** Added `--clean-target` to `localinstall.sh` and `localupdate.sh`, a 20 GiB `target/` warning, and an `openz doctor` disk/cache report covering repo `target/`, `~/.openz`, SearchXyz, and Cargo caches so repeated OpenZ builds/tests cannot silently consume tens of gigabytes without an explicit cleanup path.
 
 ### v0.0.50 (Previous Release)
 *   **Feature: Native memory coordinator and reliability overhaul:** Unified semantic, graph, recall, deletion, stats, and prompt-memory flows behind a coordinator path with regression coverage for worst-case memory behavior.

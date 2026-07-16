@@ -36,7 +36,7 @@ No Makefile; no CI config (GitHub Actions, etc.) present.
 | `logs` | View real-time color-coded structured logs (supports `--path <file>`, `--tail <lines>`, `--session <prefix|auto>`, and `--level <level>` filters) |
 | `changelog` | View OpenZ hardware footprint specifications and version release history |
 | `streaming` | Toggle response streaming preference via a wizard |
-| `doctor` | Verify runtime databases live under `~/.openz` and relocate any stray artifacts found in the working directory (no data is deleted) |
+| `doctor` | Verify runtime databases live under `~/.openz`, relocate stray artifacts, archive stale graph branches, and report disk/cache pressure (no data is deleted) |
 
 ---
 

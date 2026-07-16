@@ -85,7 +85,7 @@ OpenZ registers native tools directly in Rust. The major tool families are:
 | `openz logs [--tail N] [--session S] [--level L]` | View structured logs. |
 | `openz changelog` | Print footprint specs and release history. |
 | `openz streaming` | Toggle response streaming. |
-| `openz doctor` | Check and relocate stray runtime DB files. |
+| `openz doctor` | Check runtime DB placement, archive stale graph branches, and report disk/cache pressure. |
 
 ---
 
@@ -214,7 +214,7 @@ openz/
 
 ## Notes For Operators
 
-- Use `openz doctor` if runtime DB files appear in a project directory. It preserves data and relocates stray artifacts under `~/.openz`.
+- Use `openz doctor` if runtime DB files appear in a project directory or disk usage looks wrong. It preserves data, relocates stray artifacts under `~/.openz`, and reports oversized caches such as `target/`, `~/.openz`, SearchXyz, and Cargo cache.
 - Use `openz logs --tail 100` when debugging channel or provider issues.
 - Use `openz changelog` to see the version shipped in the installed binary and current measured binary size.
 - Use `./localupdate.sh --clean-target` after heavy development sessions if disk space drops unexpectedly.
