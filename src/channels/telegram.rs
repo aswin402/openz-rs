@@ -192,6 +192,21 @@ fn remote_session_button_label(session: &crate::agent::activity::ActiveTuiSessio
     format!("{} | {} | {}", cwd_name, started, preview)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TelegramCommandAction {
+    Stop,
+    RemoteMode,
+    None,
+}
+
+fn telegram_command_action(text: &str) -> TelegramCommandAction {
+    match text.split_whitespace().next().unwrap_or("") {
+        "/stop" => TelegramCommandAction::Stop,
+        "/remote" | "/remotecontrol" | "/local" | "/exit" => TelegramCommandAction::RemoteMode,
+        _ => TelegramCommandAction::None,
+    }
+}
+
 impl TelegramChannel {
     pub fn new(bot_token: String, agent_loop: AgentLoop) -> Self {
         TelegramChannel {
@@ -364,10 +379,8 @@ impl super::Channel for TelegramChannel {
 
                                 if trimmed.starts_with('/') {
                                     let cmd = trimmed.split_whitespace().next().unwrap_or("");
-                                    if cmd == "/remote"
-                                        || cmd == "/remotecontrol"
-                                        || cmd == "/local"
-                                        || cmd == "/exit"
+                                    let command_action = telegram_command_action(trimmed);
+                                    if command_action != TelegramCommandAction::None
                                         || cmd == "/new"
                                         || cmd == "/mcps"
                                         || cmd == "/memory"
@@ -378,6 +391,27 @@ impl super::Channel for TelegramChannel {
                                         || cmd == "/clear"
                                         || cmd == "/history"
                                     {
+                                        if command_action == TelegramCommandAction::Stop {
+                                            crate::shutdown::trigger_cli_cancel();
+                                            stop_typing_indicator(chat_id);
+                                            tokio::spawn(async move {
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
+                                                let payload = serde_json::json!({
+                                                    "chat_id": chat_id,
+                                                    "text": "▲ Stop requested. Active OpenZ turn interrupted."
+                                                });
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
+                                            });
+                                            continue;
+                                        }
+
                                         if cmd == "/new" {
                                             let session_manager = &agent.session_manager;
                                             let session_key = format!("telegram:{}", chat_id);
@@ -574,7 +608,8 @@ impl super::Channel for TelegramChannel {
 
                                         if cmd == "/help" {
                                             let help_text = "📖 *OpenZ Telegram Bot Commands:*\n\n\
-                                                             /remote — Toggle TUI remote control mode\n\
+                                                             /remote — Select a TUI session for remote control\n\
+                                                             /stop — Interrupt the active turn like Esc in TUI\n\
                                                              /local — Switch to local bot chat mode\n\
                                                              /new — Start a new local session\n\
                                                              /model — Show the active default model\n\
@@ -1042,6 +1077,26 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn telegram_stop_command_is_classified_as_cancel() {
+        assert_eq!(
+            telegram_command_action("/stop"),
+            TelegramCommandAction::Stop
+        );
+        assert_eq!(
+            telegram_command_action("/stop now"),
+            TelegramCommandAction::Stop
+        );
+        assert_eq!(
+            telegram_command_action("/remote"),
+            TelegramCommandAction::RemoteMode
+        );
+        assert_eq!(
+            telegram_command_action("hello"),
+            TelegramCommandAction::None
+        );
     }
 
     #[test]
