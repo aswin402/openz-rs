@@ -27,7 +27,10 @@ pub const ACTIVE_MESSAGES: &[&str] = &[
 ];
 
 pub fn is_stop_command(text: &str) -> bool {
-    text.split_whitespace().next() == Some("/stop")
+    matches!(
+        text.split_whitespace().next(),
+        Some("/stop" | "/cancel" | "/tui-esc" | "/tui-cancel")
+    )
 }
 
 pub const OFFLINE_MESSAGES: &[&str] = &[
@@ -739,6 +742,9 @@ mod stop_command_tests {
     fn stop_command_matches_slash_stop_only() {
         assert!(is_stop_command("/stop"));
         assert!(is_stop_command(" /stop now"));
+        assert!(is_stop_command("/cancel"));
+        assert!(is_stop_command("/tui-esc"));
+        assert!(is_stop_command("/tui-cancel"));
         assert!(!is_stop_command("please stop"));
         assert!(!is_stop_command("/stopped"));
         assert!(!is_stop_command("/remote"));

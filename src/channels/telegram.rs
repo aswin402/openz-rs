@@ -201,7 +201,7 @@ enum TelegramCommandAction {
 
 fn telegram_command_action(text: &str) -> TelegramCommandAction {
     match text.split_whitespace().next().unwrap_or("") {
-        "/stop" => TelegramCommandAction::Stop,
+        "/stop" | "/cancel" | "/tui-esc" | "/tui-cancel" => TelegramCommandAction::Stop,
         "/remote" | "/remotecontrol" | "/local" | "/exit" => TelegramCommandAction::RemoteMode,
         _ => TelegramCommandAction::None,
     }
@@ -610,6 +610,9 @@ impl super::Channel for TelegramChannel {
                                             let help_text = "📖 *OpenZ Telegram Bot Commands:*\n\n\
                                                              /remote — Select a TUI session for remote control\n\
                                                              /stop — Interrupt the active turn like Esc in TUI\n\
+                                                             /cancel — Alias for /stop\n\
+                                                             /tui-esc — Alias for TUI Esc\n\
+                                                             /tui-cancel — Alias for TUI cancel\n\
                                                              /local — Switch to local bot chat mode\n\
                                                              /new — Start a new local session\n\
                                                              /model — Show the active default model\n\
@@ -1087,6 +1090,18 @@ mod tests {
         );
         assert_eq!(
             telegram_command_action("/stop now"),
+            TelegramCommandAction::Stop
+        );
+        assert_eq!(
+            telegram_command_action("/cancel"),
+            TelegramCommandAction::Stop
+        );
+        assert_eq!(
+            telegram_command_action("/tui-esc"),
+            TelegramCommandAction::Stop
+        );
+        assert_eq!(
+            telegram_command_action("/tui-cancel"),
             TelegramCommandAction::Stop
         );
         assert_eq!(
