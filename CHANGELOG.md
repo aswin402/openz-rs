@@ -398,7 +398,19 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.51 (Latest Release)
+### v0.0.52 (Latest Release)
+*   **Feature: Multi-channel TUI remote control and interruption:** Hardened channel-to-TUI control so Telegram can select among live `openz agent` sessions and all remote channels can interrupt active turns.
+    *   Added an active TUI session registry and Telegram `/remote` picker so one bot can select among currently running `openz agent` terminals, route messages to the selected session, and leave remote mode with `/local` or `/exit`.
+    *   Added `/stop` interruption support across Telegram, Discord, WhatsApp, WebSocket browser chat, and Email so remote channels can cancel active turns through the same path as Esc/Ctrl+C in the TUI.
+    *   Added `/cancel`, `/tui-esc`, and `/tui-cancel` as channel aliases for `/stop`, giving remote users explicit TUI-style interrupt commands.
+*   **Feature: Channel model switching parity:** Added `/switch-model` outside the TUI so background channels can inspect configured providers and change the default provider/model without opening the terminal model picker.
+    *   Telegram now exposes `/switch-model` as inline provider/model buttons and saves the selected default.
+    *   Discord, WhatsApp, WebSocket browser chat, and Email support text commands: `/switch-model`, `/switch-model <provider>`, and `/switch-model <provider> <model>`.
+    *   Agent turns now resolve the updated provider/model from config on reload, so provider changes take effect on later channel turns.
+*   **Optimization: Balanced local update mode:** Added `--balanced`/`--moderate` to `localinstall.sh` and `localupdate.sh`, backed by `release-balanced` and `release-low-resource` Cargo profiles. Balanced mode caps jobs, skips the duplicate pre-install check during updates, and disables ThinLTO to reduce RAM/ROM pressure without the extreme slowdown of `--low-resource`.
+*   **Chore:** Bumped version to `v0.0.52`.
+
+### v0.0.51 (Previous Release)
 *   **Feature: Dynamic tool timeout — orchestrator-driven adaptive execution:** Replaced the static 120s tool timeout with a 300s default and a bounded override system that lets tool metadata and orchestrator hints adapt timeouts per task complexity.
     *   Raised default tool timeout from 120s to 300s (`config/schema.rs`).
     *   Added `_timeout_secs` override field with bounded execution (`5s..1800s`) so any tool call can request a custom timeout without disabling safety limits.
@@ -412,14 +424,9 @@ Inside `openz agent`, the user can issue direct slash commands:
     *   Improved fact extraction for compound build clauses such as `Alice built AppX with Rust` and chained clauses like `Bob created ToolY and built it with Go`.
     *   Migrated stale historical `toolTimeoutSecs: 120` config values to the new 300s default while preserving intentional custom timeout values.
     *   Improved subagent unsafe-workspace fallback reporting with actionable guidance and `workspaceIsolation` metadata.
-    *   Hardened Telegram channel startup: background Telegram logs now respect CLI silent mode/TUI-safe output, and a per-bot-token poll lock prevents `openz agent` and `openz telegram` from competing for the same bot updates.
-    *   Added an active TUI session registry and Telegram `/remote` picker so one bot can select among currently running `openz agent` terminals, route messages to the selected session, and leave remote mode with `/local` or `/exit`.
-    *   Added `/stop` interruption support across Telegram, Discord, WhatsApp, WebSocket browser chat, and Email so remote channels can cancel active turns through the same path as Esc/Ctrl+C in the TUI.
 *   **Chore:** Bumped version to `v0.0.51`.
 *   **Optimization: Measured footprint reporting and release-size hardening:** Made local install/update scripts print installed binary size and version-command smoke time, and corrected footprint docs to report measured values instead of overclaiming a 10-15 MB binary. A `panic = "abort"` experiment was rejected because release linking conflicts with dependencies that require unwind support.
 *   **Fix: Build-cache disk pressure guard:** Added `--clean-target` to `localinstall.sh` and `localupdate.sh`, a 20 GiB `target/` warning, and an `openz doctor` disk/cache report covering repo `target/`, `~/.openz`, SearchXyz, and Cargo caches so repeated OpenZ builds/tests cannot silently consume tens of gigabytes without an explicit cleanup path.
-*   **Optimization: Balanced local update mode:** Added `--balanced`/`--moderate` to `localinstall.sh` and `localupdate.sh`, backed by `release-balanced` and `release-low-resource` Cargo profiles. Balanced mode caps jobs, skips the duplicate pre-install check during updates, and disables ThinLTO to reduce RAM/ROM pressure without the extreme slowdown of `--low-resource`.
-*   **UX: Remote TUI cancel aliases:** Added `/cancel`, `/tui-esc`, and `/tui-cancel` as channel aliases for `/stop`, giving remote users explicit TUI-style interrupt commands.
 
 ### v0.0.50 (Previous Release)
 *   **Feature: Native memory coordinator and reliability overhaul:** Unified semantic, graph, recall, deletion, stats, and prompt-memory flows behind a coordinator path with regression coverage for worst-case memory behavior.

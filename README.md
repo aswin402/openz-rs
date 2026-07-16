@@ -1,4 +1,4 @@
-# OpenZ `v0.0.51`
+# OpenZ 🦊 `v0.0.52`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -12,13 +12,13 @@ OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-
 
 ---
 
-## What Changed In `v0.0.51`
+## What Changed In `v0.0.52`
 
-- **Dynamic tool timeouts:** default tool timeout is now 300s, with bounded per-call overrides from 5s to 1800s. Long-running tools such as subagents, browser automation, video generation, and crawling can request larger timeouts without disabling safety limits.
-- **Runtime reliability fixes:** `ast_grep_index_codebase` now writes into the same code graph store queried by `query_code_graph`; scoped memory/code queries accept both snake_case and camelCase scope fields; compound fact extraction handles clauses like `Alice built AppX with Rust`.
-- **Config migration:** old `toolTimeoutSecs: 120` values migrate to the new 300s default while preserving intentional custom values.
-- **Measured footprint reporting:** install/update scripts print the installed binary size and a version-command smoke time instead of relying on stale size claims.
-- **Disk-pressure guard:** `localinstall.sh` and `localupdate.sh` warn when Cargo `target/` grows past 20 GiB and support `--clean-target` for explicit cleanup.
+- **Multi-channel TUI remote control:** Telegram `/remote` now selects among live `openz agent` sessions, forwards prompts to the selected TUI, and exits remote mode with `/local` or `/exit`.
+- **Remote interruption parity:** Telegram, Discord, WhatsApp, WebSocket browser chat, and Email now support `/stop`; `/cancel`, `/tui-esc`, and `/tui-cancel` mirror TUI interrupt behavior from remote channels.
+- **Channel model switching:** Telegram supports `/switch-model` with provider/model buttons. Discord, WhatsApp, WebSocket, and Email support `/switch-model`, `/switch-model <provider>`, and `/switch-model <provider> <model>`.
+- **Balanced local update mode:** `localinstall.sh` and `localupdate.sh` now support `--balanced`/`--moderate` for lower RAM/ROM pressure without the very slow `--low-resource` path.
+- **Runtime model reload:** channel-triggered provider/model changes are resolved from config on later turns, so background channels can switch providers cleanly.
 
 ---
 
