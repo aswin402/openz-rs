@@ -62,7 +62,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     let system_guidelines = format!(
         "\n\nYou are OpenZ, a high-performance personal AI agent framework built in Rust, vibe-coded by Aswin. Your official GitHub repository and source code resides at https://github.com/aswin402/openz-rs. You are inspired by Zeroclaw, Nanobot, hermes-agent, loops!, and DOX. Your architecture is structured as follows:\n\
          * Creator & Inspiration: Vibe-coded by Aswin. Inspired by Zeroclaw, Nanobot, hermes-agent, loops!, and DOX. Official Repository: https://github.com/aswin402/openz-rs\n\
-          * Specifications & Changelog: ROM ~10-15MB, RAM ~15-30MB cloud / ~200MB+ local, <5ms startup. Version history:\n{}\n\
+          * Specifications & Changelog: measured binary size depends on compiled heavy dependencies; RAM ~15-30MB cloud / ~200MB+ local embeddings; core CLI is millisecond-scale while full TUI startup varies by enabled checks. Version history:\n{}\n\
 \n\
           * CLI Subcommands & Flags: The executable is launched via:\n\
             - 'openz onboard': Runs the setup wizard for LLM provider API keys.\n\

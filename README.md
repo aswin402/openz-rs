@@ -1,118 +1,221 @@
-# OpenZ 🦊 `v0.0.51`
+# OpenZ `v0.0.51`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
 </p>
 
-OpenZ is a high-performance, asynchronous, ultra-lightweight personal AI agent framework built entirely in Rust. 
+OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin**. It combines an interactive terminal agent, background channels, native tools, memory, SearchXyz research, Headroom compression, OpenMedia generation, OpenDoc document automation, dynamic subagents, and MCP integration in one local-first binary.
 
-**Official GitHub Repository:** [github.com/aswin402/openz-rs](https://github.com/aswin402/openz-rs)
+**Repository:** [github.com/aswin402/openz-rs](https://github.com/aswin402/openz-rs)
 
-Rebranded and migrated from `nanobot`, it maintains a clean, object-safe agent loop while packaging essential developer utilities: native console chat, WebSocket WebUI gateways, Telegram/Discord/WhatsApp channels, local tool calls, stdio-based MCP servers, and OpenAI/Anthropic/Azure LLM client routing.
-
-*Vibe coded by **Aswin**.*  
-*Inspired by **Zeroclaw**, **Nanobot**, **hermes-agent**, **loops!**, and **DOX**.*
+OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
 
-## 🚀 Key Features
+## What Changed In `v0.0.51`
 
-* **Hierarchical Context Scoping (DOX-inspired):** Built-in folder-level context management. Integrates with the `headroom` MCP server (`scope_context`) to walk up the directory tree, compile relevant `AGENTS.md` instructions, and supply localized target rules to the agent before making edits. Ensures zero context drift.
-* **Stateful SOP Workflow Engine (loops!-inspired):** Resilient, multi-step Directed Acyclic Graph (DAG) templates executing independent steps in parallel via Tokio. Contains pre-configured, default stateful closed-loop SOPs such as `ship-pr-until-green` (feature implementation, PR creation, CI verification loop, and self-healing) and `pre-commit-guard` (pre-commit testing hooks configuration and verification).
-* **Zenflow Checkpointed Transactions:** Automatically takes a directory/git snapshot before executing file edits, runs tests/compilations, attempts to self-heal errors, and automatically rolls back to the clean snapshot if compilation/healing fails.
-* **Semantic Repository Indexing:** Indexes structural code elements (structs, functions, classes) using `ast_grep` and fast vector embeddings to let agents semantically lookup dependencies instantly.
-* **Sandboxed Data Execution:** Provides a secure local Python/WASM data sandbox allowing research agents to run data analysis scripts and output visual charts.
-* **Cryptographic Merkle Hash-Chain Audit Ledger:** Every message, state transition, and tool call is hashed and linked via SHA-256 to form an immutable, tamper-evident ledger. The hash chain integrity is verified automatically on session startup, and the `/audit` slash command outputs a formatted ledger.
-* **SQLite-Backed Memory & Skill Layer:** Migrated long-term skills and facts storage from slow Markdown/JSON flat files into a dedicated SQLite database (`~/.openz/memory.db`) with auto-migration on startup.
-* **Security Guard Interceptor (BPF sandbox):** Safeguards the host environment using a Linux BPF seccomp filter on subprocesses to intercept destructive commands (`rm`, `dd`, etc.), privilege escalation (`sudo`), process controls (`kill`), system actions (`reboot`), network transfers (`curl`, `wget`, `scp`), and out-of-workspace writes. Supports `strict`, `normal`, and `loose` modes.
-* **New Specialized subagents:**
-  * **`mermaid_designer`:** Specializes in parsing code structures and rendering elegant systems flowcharts or diagrams natively.
-  * **`video_editor`:** Orchestrates and compiles video timeline compositions into final neat MP4 files.
-* **Auto-Continuation (Truncation Prevention):** Detects when model responses are cut off due to hitting output token limits (using `finish_reason: "length"`) and automatically prompts the model to continue, stitching the segments together seamlessly.
-* **Memory & Skill Self-Improvement:** Asynchronous background curator reviews chat transcripts, updates memory facts, and curates skills. Accepts GitHub repository URLs to dynamically clone, install, compile, and register them as active tools.
-* **Pluggable Channel Adapters:** Conforming to a unified `Channel` trait, offering:
-  * **Console CLI (`agent`):** Direct interactive terminal chat with full slash commands support.
-  * **WebSocket Gateway (`gateway`):** WebUI workbench connection. Includes an OpenAI-compatible local completions endpoint (`/v1/chat/completions`) with dynamic LLM routing.
-  * **Email Client (`email`):** 100% pure Rust IMAP polling and SMTP dispatch client parsing nested MIME envelopes with `mailparse` and sending replies concurrently.
-  * **Telegram Polling (`telegram`):** Bot listener with parallel loop handling.
-  * **Discord Gateway (`discord`):** Gateway client listening for events via WebSocket.
-  * **WhatsApp API (`whatsapp`):** Axum webhook receiver server verifying and processing incoming messages.
-* **Changelog & System Specifications:** The `openz changelog` command prints system hardware specifications (ROM/RAM footprint, CPU load, boot time), architectural inspirations, key capabilities, model protocol integrations, and release history directly to the terminal.
-* **Runtime DB Doctor:** The `openz doctor` command verifies that all runtime databases (`memory.db`, `graph_memory.db`, etc.) live under `~/.openz` and automatically relocates any stray artifacts found in the working directory (data is preserved, never deleted).
+- **Dynamic tool timeouts:** default tool timeout is now 300s, with bounded per-call overrides from 5s to 1800s. Long-running tools such as subagents, browser automation, video generation, and crawling can request larger timeouts without disabling safety limits.
+- **Runtime reliability fixes:** `ast_grep_index_codebase` now writes into the same code graph store queried by `query_code_graph`; scoped memory/code queries accept both snake_case and camelCase scope fields; compound fact extraction handles clauses like `Alice built AppX with Rust`.
+- **Config migration:** old `toolTimeoutSecs: 120` values migrate to the new 300s default while preserving intentional custom values.
+- **Measured footprint reporting:** install/update scripts print the installed binary size and a version-command smoke time instead of relying on stale size claims.
+- **Disk-pressure guard:** `localinstall.sh` and `localupdate.sh` warn when Cargo `target/` grows past 20 GiB and support `--clean-target` for explicit cleanup.
 
 ---
 
-## 🛠️ Core Tools Registry
+## Core Capabilities
 
-OpenZ exposes a powerful set of local tools to the LLM:
-* **Filesystem & Code Analysis:** `read_file`, `write_file`, `patch_file`, `find_files`, `replace_lines`, `zenflow_edit`, `list_dir`, `grep_search`, `code_outline`, `ast_grep`, `index_codebase`, `git_manager`, `db_inspector`, `db_write`, `doc_reader`, `rust_docs`, `compile_template`.
-* **System & Environment:** `exec_command` (sandboxed), `python_sandbox`, `clipboard`, `open_path`, `system_info`, `file_watcher`, `check_port` (localhost-only).
-* **Web, Search & Social:** `web_search` (SearchXyz Dispatcher / Tavily / Exa), `social_search` (HN/Reddit), `crawl_website` (spider-rs), `gsd_browser` (Playwright), `obscura_browser` / `firefox_browser` (CDP), `semantic_search` (vector embeddings).
-* **Integrated SearchXyz Tools:** `searchxyz_search_web`, `searchxyz_read_url`, `searchxyz_search_and_read`, `searchxyz_recall`, `searchxyz_list_sources`, `searchxyz_deep_research`, `searchxyz_index_content`, `searchxyz_site_map`, `searchxyz_index_relationship`, `searchxyz_query_graph`, `searchxyz_read_github_repo`, `searchxyz_export_research`, `searchxyz_import_research`, `searchxyz_delete_source`, `searchxyz_clear_index`.
-* **Automation & Cron:** `schedule_job`, `list_jobs`, `remove_job`, `compiler_auto_heal`.
-* **Memory & Knowledge:** `store_memory`, `recall_memory`, `clear_memory`, `archive_research`, `search_research`, `index_notes`.
-* **Subagents & Orchestration:** `delegate_task`, `parallel_research`, `evaluator_optimizer_loop`, `optimize_subagent`, `create_subagent`, `delete_subagent`, `trigger_sop`.
-* **Visuals & Graphics:** `generate_image` (HTML/CSS→PNG), `html_to_video` (HTML→MP4), `render_mermaid` (diagram→SVG), `generate_video` (JSON→MP4), `create_animated_svg`.
-* **MCP Integration:** `manage_mcp` (CRUD configs). All MCP servers use a **unified gRPC Tonic transport** + an in-process TCP port bridge with robust non-JSON noise filtering.
+### Agent Runtime
+
+- TUI chat loop with slash commands, raw-mode-safe rendering, session persistence, streaming support, and automatic continuation when a provider stops because of output length.
+- Multi-channel operation through terminal, WebSocket/WebUI gateway, Telegram, Discord, WhatsApp, and Email.
+- OpenAI-compatible local gateway endpoint through `openz gateway`.
+- Background self-improvement that can update memories and skills from completed conversations.
+- Session integrity via hash-chain verification and the `/audit` command.
+
+### Tools And Automation
+
+OpenZ registers native tools directly in Rust. The major tool families are:
+
+- **Files, shell, code, and git:** read/write/patch/list/find files, line replacement, grep, AST search, code outline, git operations, cargo operations, DB inspection/write, Rust docs, template compilation, WASM and Python sandbox execution.
+- **Research and web:** web fetch/search, SearchXyz web/research/cache/graph tools, GitHub repo ingestion, site maps, crawlers, social search, browser automation via GSD/Obscura/Firefox, and vector semantic search.
+- **Memory:** cognitive memory, graph memory, working memory, episodic reflections, shared memory, semantic facts, hybrid FTS/vector search, conflict handling, fact extraction, stale/deletion handling, code graph indexing, and memory stats.
+- **Headroom compression:** content/file/directory/diff/schema compression, signature-only code compression, CCR cache, FTS cache search, cache import/export, token estimates, stats, usage analytics, and bounded run-and-compress.
+- **Subagents:** `delegate_task`, dynamic subagent profiles, `parallel_research`, evaluator/optimizer loops, subagent creation/deletion/optimization, cancellation propagation, and bounded dynamic timeouts.
+- **OpenMedia:** SVG/image/chart/icon/video generation, video templates, animated SVG timelines, Lottie conversion, filters, resize/crop/convert/batch processing, quality scoring, and prompt refinement.
+- **OpenDoc:** read/search/convert documents, DOCX/PPTX/XLSX/PDF creation and editing, PDF splitting/merging/forms/tables, OCR checks, and archive digests.
+- **MCP:** CRUD MCP server configuration, stdio client support, and a gRPC-to-stdio bridge for MCP transport.
+
+### Memory System
+
+`v0.0.50` and `v0.0.51` made memory a first-class OpenZ subsystem:
+
+- `MemoryCoordinator` coordinates semantic, graph, recall, deletion, and stats paths.
+- Hybrid search combines FTS5 and deterministic vector embeddings with reciprocal-rank fusion.
+- `forget_memory` purges or tombstones across semantic metadata, FTS rows, graph, shared/cognitive memory, research, sessions, and skills-derived facts.
+- Prompt memory is query-aware, stale-fact aware, deduplicated, and top-30 budgeted.
+- Fact extraction supports multi-word entities, profile facts, chained clauses, `built_with`, `lives_in`, and `prefers` relations.
+- Regression coverage includes stale facts, contradictions, deletion, recall relevance, poisoning attempts, prompt budgeting, embeddings, and codebase indexing.
+
+### Safety And Resource Controls
+
+- SecurityGuard intercepts destructive shell commands, privilege escalation, process control, network transfer commands, and risky file writes before execution.
+- Optional Linux seccomp BPF sandboxing is available for subprocesses when enabled in config.
+- High-risk tools use resource policy checks and approval gates.
+- Long-running tools use recommended timeouts and bounded overrides instead of hardcoded 120s limits.
+- SearchXyz destructive operations require explicit confirmation, and web/repo ingestion supports output and repository limits.
+- Install/update scripts back up global OpenZ data, relocate stray runtime DB files, repair corrupt Cargo registry source unpacks, warn on huge build caches, and can clean `target/` explicitly.
 
 ---
 
-## 📊 Performance Benchmarks (OpenZ vs Nanobot)
+## Runtime Commands
 
-| Benchmark Category | Original Python `nanobot` | New Rust `openz` | Improvement Factor |
-| :--- | :--- | :--- | :--- |
-| **ROM (Disk Space)** | **150 MB - 250 MB** | **~10 MB - 15 MB** | **~15x smaller footprint** |
-| **Idle RAM** | **60 MB - 80 MB** | **~4 MB - 6 MB** | **~12x less memory used** |
-| **Active Loop RAM** | **120 MB - 180 MB** | **~12 MB - 20 MB** | **~8x less peak memory** |
-| **Startup Time** | **500 ms - 1500 ms** | **< 5 ms** | **100x - 300x faster boot** |
-| **CPU Overhead** | Higher (GC & GIL locks) | Negligible (Tokio work pool) | **Significantly more efficient** |
+| Command | Purpose |
+|---|---|
+| `openz onboard` | First-time provider setup wizard. |
+| `openz configure` | Configure providers, channels, gateway, sandbox, and preferences. |
+| `openz agent` | Start the terminal TUI agent. |
+| `openz gateway` | Start WebSocket/WebUI gateway and local API endpoint. |
+| `openz telegram` | Start Telegram bot listener. |
+| `openz discord` | Start Discord gateway listener. |
+| `openz whatsapp` | Start WhatsApp webhook receiver. |
+| `openz email` | Start Email IMAP/SMTP client. |
+| `openz subagent` | Manage subagent profiles. |
+| `openz sop list|instances|trigger|resume` | Manage SOP workflow instances. |
+| `openz mcp-bridge --port <N> -- <cmd> [args...]` | Bridge gRPC/TCP to stdio MCP. |
+| `openz logs [--tail N] [--session S] [--level L]` | View structured logs. |
+| `openz changelog` | Print footprint specs and release history. |
+| `openz streaming` | Toggle response streaming. |
+| `openz doctor` | Check and relocate stray runtime DB files. |
 
 ---
 
-## ⚙️ Quick Start
+## Install And Update
 
-### 1. Compile and Install Globally
+### Install
+
 ```bash
 ./localinstall.sh
 ```
 
-### 2. Configure LLM Providers & Channels
-```bash
-openz configure
-```
-*Settings are saved to `~/.openz/config.json`.*
+### Update
 
-### 3. Run Agent Chat (Terminal)
 ```bash
-openz agent
-```
-*Use `/help`, `/history`, `/clear`, `/status`, `/memory`, `/skills`, `/skill`, `/sop` slash commands.*
-
-### 4. Start WebSocket Gateway
-```bash
-openz gateway
+./localupdate.sh
 ```
 
-### 5. View System Specifications & Changelog
-```bash
-openz changelog
-```
-*View system hardware footprint specifications, design inspirations, capabilities, tools, and version release history.*
+### Low-resource build
 
-### 6. View Live Structured Logs
 ```bash
-openz logs
+./localupdate.sh --low-resource
 ```
-*Tails and streams real-time logs from `~/.openz/openz.log` with support for tail length limits and session filtering.*
+
+This restricts Cargo jobs and codegen units to reduce peak RAM/CPU pressure.
+
+### Reclaim Cargo build-cache space
+
+Repeated local builds and tests can make `target/` very large. Normal install/update runs warn when `target/` is over 20 GiB. To remove rebuildable Cargo artifacts before compiling:
+
+```bash
+./localupdate.sh --clean-target
+```
+
+or:
+
+```bash
+./localinstall.sh --clean-target
+```
+
+This is equivalent to `cargo clean` before the build. It does not delete `~/.openz` runtime data, sessions, memories, or config.
 
 ---
 
-## 📚 Documentation Directory
+## Configuration And Data Locations
 
-* **System Architecture:** [architecture.md](docs/architecture.md)
-* **Security Guard & Permissions:** [security.md](docs/security.md)
-* **Pluggable Channels & Configuration:** [channels.md](docs/channels.md)
-* **Self-Improvement & Memory Guide:** [self_improvement.md](docs/self_improvement.md)
-* **Model Context Protocol (MCP):** [mcps.md](docs/mcps.md)
-* **Tools Registry Details:** [tools.md](docs/tools.md)
-* **ZeroClaw Gap Analysis & Roadmap:** [zeroclaw_research.md](docs/zeroclaw_research.md)
+- Main config: `~/.openz/config.json` or `$OPENZ_CONFIG_DIR/config.json`
+- Sessions: `~/.openz/sessions/`
+- Memory databases: `~/.openz/memory.db`, `~/.openz/graph_memory.db`, and related SQLite files
+- Tool outputs: `~/.openz/tool_outputs/`
+- Traces/logs: `~/.openz/traces/`, `~/.openz/openz.log`
+- Subagents: `~/.openz/subagents.json`
+- Skills: `~/.openz/skills/` plus SQLite-backed skill/memory storage
+
+Key provider environment variables include `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `OPENCODE_ZEN_API_KEY`, `GOOGLE_AI_STUDIO_API_KEY`, `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, and WhatsApp credentials.
+
+---
+
+## Performance And Footprint
+
+These values are intentionally measured/qualified rather than hard-coded marketing claims:
+
+| Area | Current OpenZ Behavior |
+|---|---|
+| Binary / install size | Install/update scripts print the exact installed binary size. A recent measured dev install was about 124 MB; exact size depends on compiled heavy stacks such as ONNX embeddings, browser/media tooling, and document processing. |
+| Idle RAM | About 15-30 MB in cloud/API mode when local embedding models are not loaded. |
+| Active RAM | About 30-80 MB typical; 200 MB+ when local ONNX embeddings are loaded. |
+| CPU | Near 0% while idle; Tokio async runtime does work only when active. |
+| Startup | Core CLI paths are millisecond-scale; full TUI startup depends on config, DB checks, enabled channels, MCP/tool setup, and provider checks. |
+| Build cache | Cargo `target/` can grow into tens of GiB during development. Use `--clean-target` when disk pressure appears. |
+
+---
+
+## Development Commands
+
+| Command | Purpose |
+|---|---|
+| `cargo check` | Fast type check. |
+| `cargo test --lib -- --test-threads=1` | Run the library test suite deterministically. |
+| `cargo fmt --check` | Verify Rust formatting. |
+| `cargo clippy` | Lint. |
+| `cargo build --release` | Build optimized release binary. |
+| `cargo clean` | Remove rebuildable Cargo artifacts under `target/`. |
+
+The project has no Makefile. The local install/update scripts wrap the common build/install flow and add OpenZ-specific checks.
+
+---
+
+## Project Map
+
+```text
+openz/
+├── Cargo.toml              # Rust package metadata and dependencies
+├── build.rs                # tonic-build proto compilation
+├── CHANGELOG.md            # release history and specs
+├── localinstall.sh         # global install helper
+├── localupdate.sh          # update helper with backup, checks, and install
+├── src/
+│   ├── main.rs             # dotenv init, Tokio runtime, CLI dispatch
+│   ├── cli/                # clap commands, configure UI, logs, doctor, tool registration
+│   ├── config/             # schema, provider defaults, loader, migrations
+│   ├── providers/          # OpenAI-compatible and Anthropic provider clients
+│   ├── agent/              # agent loop, prompt build, security, skills, TUI style
+│   ├── channels/           # CLI, WebSocket, Telegram, Discord, WhatsApp, Email
+│   ├── tools/              # native tool implementations
+│   ├── cron/               # scheduler
+│   ├── sop/                # stateful SOP workflow engine
+│   └── subagents/          # profile definitions and manager
+├── docs/                   # architecture and subsystem docs
+└── assets/                 # logo and bundled assets
+```
+
+---
+
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Security Guard & Permissions](docs/security.md)
+- [Channels & Configuration](docs/channels.md)
+- [Self-Improvement & Memory](docs/self_improvement.md)
+- [Model Context Protocol](docs/mcps.md)
+- [Tools Registry](docs/tools.md)
+- [ZeroClaw Gap Analysis & Roadmap](docs/zeroclaw_research.md)
+- [Changelog](CHANGELOG.md)
+
+---
+
+## Notes For Operators
+
+- Use `openz doctor` if runtime DB files appear in a project directory. It preserves data and relocates stray artifacts under `~/.openz`.
+- Use `openz logs --tail 100` when debugging channel or provider issues.
+- Use `openz changelog` to see the version shipped in the installed binary and current measured binary size.
+- Use `./localupdate.sh --clean-target` after heavy development sessions if disk space drops unexpectedly.
+- Keep secrets in environment variables or `~/.openz/config.json`; do not commit local config, sessions, or runtime DBs.

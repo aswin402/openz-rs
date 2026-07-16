@@ -2,6 +2,17 @@ use crate::agent::style::*;
 use crate::println;
 use anyhow::Result;
 
+fn current_binary_size_label() -> String {
+    let Ok(path) = std::env::current_exe() else {
+        return "unknown".to_string();
+    };
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return "unknown".to_string();
+    };
+    let mb = metadata.len() as f64 / 1_048_576.0;
+    format!("{mb:.1} MB")
+}
+
 pub async fn handle_changelog() -> Result<()> {
     println!(
         "{purple}=== OpenZ System Specifications & Changelog ==={reset}\n",
@@ -14,8 +25,10 @@ pub async fn handle_changelog() -> Result<()> {
         bold = COLOR_BOLD,
         reset = COLOR_RESET
     );
+    let binary_size = current_binary_size_label();
     println!(
-        "  {blue}• ROM (Binary Size):{reset}   ~10 MB - 15 MB (optimized Rust binary)",
+        "  {blue}• ROM (Binary Size):{reset}   {} measured current executable",
+        binary_size,
         blue = AURA_BLUE,
         reset = COLOR_RESET
     );
@@ -27,7 +40,7 @@ pub async fn handle_changelog() -> Result<()> {
     );
     println!("  {blue}• CPU Footprint:{reset}       0% when idle (Tokio async event-driven architecture)", blue = AURA_BLUE, reset = COLOR_RESET);
     println!(
-        "  {blue}• Startup Speed:{reset}       < 5 ms boot-to-prompt speed",
+        "  {blue}• Startup Speed:{reset}       millisecond-scale core CLI; full TUI varies by enabled checks",
         blue = AURA_BLUE,
         reset = COLOR_RESET
     );

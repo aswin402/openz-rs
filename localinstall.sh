@@ -14,12 +14,24 @@ echo -e "${white}     ╚═════╝ ╚═╝     ╚══════�
 echo "🦊 OpenZ Installer: Global Setup"
 echo "────────────────────────────────"
 
-# Parse arguments for resource limits
+# Parse arguments for resource limits and cache cleanup
 LOW_RESOURCE=false
+CLEAN_TARGET=false
 for arg in "$@"; do
-    if [ "$arg" == "--low-resource" ] || [ "$arg" == "--low-mem" ] || [ "$arg" == "-l" ]; then
-        LOW_RESOURCE=true
-    fi
+    case "$arg" in
+        --low-resource|--low-mem|-l)
+            LOW_RESOURCE=true
+            ;;
+        --clean-target)
+            CLEAN_TARGET=true
+            ;;
+        --help|-h)
+            echo "Usage: ./localinstall.sh [--low-resource] [--clean-target]"
+            echo "  --low-resource, --low-mem, -l  Restrict build CPU/RAM usage."
+            echo "  --clean-target                 Run cargo clean before building to reclaim target/ disk space."
+            exit 0
+            ;;
+    esac
 done
 
 if [ "$LOW_RESOURCE" = true ]; then
@@ -29,6 +41,7 @@ if [ "$LOW_RESOURCE" = true ]; then
     CARGO_FLAGS="-j 1"
 else
     echo "💡 Tip: If compilation consumes too much RAM or CPU, run: ./localinstall.sh --low-resource"
+    echo "💡 Tip: If disk space is low, run: ./localinstall.sh --clean-target"
     CARGO_FLAGS=""
 fi
 echo ""
@@ -73,6 +86,73 @@ cleanup_stray_runtime_dbs() {
     fi
 }
 
+target_size_kib() {
+    if [ ! -d target ]; then
+        echo 0
+        return 0
+    fi
+    du -sk target 2>/dev/null | awk '{print $1}'
+}
+
+target_size_human() {
+    if [ ! -d target ]; then
+        echo "0B"
+        return 0
+    fi
+    du -sh target 2>/dev/null | awk '{print $1}'
+}
+
+check_target_disk_usage() {
+    local threshold_kib=$((20 * 1024 * 1024))
+    local size_kib
+    size_kib="$(target_size_kib)"
+    case "$size_kib" in
+        ''|*[!0-9]*) size_kib=0 ;;
+    esac
+
+    if [ "$size_kib" -ge "$threshold_kib" ]; then
+        echo "⚠️ Cargo build cache target/ is $(target_size_human)."
+        echo "   This is rebuildable compiler output. Reclaim it with: $0 --clean-target"
+    fi
+}
+
+clean_target_if_requested() {
+    if [ "$CLEAN_TARGET" != true ]; then
+        return 0
+    fi
+    if [ ! -d target ]; then
+        echo "🧹 --clean-target requested, but target/ does not exist."
+        return 0
+    fi
+
+    echo "🧹 Cleaning Cargo build cache target/ ($(target_size_human))..."
+    cargo clean
+}
+
+report_installed_binary() {
+    local bin="$HOME/.cargo/bin/openz"
+    if [ ! -x "$bin" ]; then
+        return 0
+    fi
+
+    local version
+    version="$($bin --version 2>/dev/null || true)"
+    local size_human
+    size_human="$(du -h "$bin" 2>/dev/null | awk '{print $1}')"
+    local size_bytes
+    size_bytes="$(stat -c%s "$bin" 2>/dev/null || wc -c < "$bin")"
+    local start_ns end_ns smoke_ms
+    start_ns="$(date +%s%N)"
+    "$bin" --version >/dev/null 2>&1 || true
+    end_ns="$(date +%s%N)"
+    smoke_ms=$(( (end_ns - start_ns) / 1000000 ))
+
+    echo "📦 Installed binary: $bin"
+    echo "   version: ${version:-unknown}"
+    echo "   size: ${size_human:-unknown} (${size_bytes:-unknown} bytes)"
+    echo "   version-command smoke time: ${smoke_ms}ms"
+}
+
 
 # Back up global openz data if present (skipping heavy cache/log directories)
 if [ -d "$HOME/.openz" ]; then
@@ -94,22 +174,24 @@ fi
 echo "🧹 Checking for stray runtime databases in the working directory..."
 cleanup_stray_runtime_dbs
 
-# 1. Compile and install globally via Cargo
+# 1. Clean or warn about Cargo target cache growth
+clean_target_if_requested
+check_target_disk_usage
+
+# 2. Compile and install globally via Cargo
 echo "📦 Compiling and installing openz globally via Cargo..."
 cargo install $CARGO_FLAGS --locked --path .
 
-# 2. Setup folder architecture
+# 3. Setup folder architecture
 echo "📁 Setting up directory structures at ~/.openz..."
 mkdir -p ~/.openz/workspace
 mkdir -p ~/.openz/sessions
 mkdir -p ~/.openz/skills
 mkdir -p ~/.openz/traces
 
-# 3. Initialize config if missing by running the version command once
+# 4. Initialize config if missing by running the version command once
 echo "⚙️  Verifying configuration..."
-if [ -f "$HOME/.cargo/bin/openz" ]; then
-    "$HOME/.cargo/bin/openz" --version
-fi
+report_installed_binary
 
 echo "────────────────────────────────"
 echo "🎉 OpenZ successfully installed globally!"

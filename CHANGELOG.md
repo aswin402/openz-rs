@@ -8,11 +8,11 @@ Welcome to OpenZ! This document provides an official record of the framework's a
 
 | Category | Specification | Detail |
 | :--- | :--- | :--- |
-| **ROM (Binary Size)** | **~10 MB - 15 MB** | Statically compiled release binary, optimized for fast deployment. |
-| **RAM Footprint (Cloud)** | **~15 MB - 30 MB** | Memory consumption when using Cloud-First Embeddings and remote LLM APIs. |
+| **ROM (Binary Size)** | **Recent measured dev install: ~124 MB; scripts print exact current size** | Release profile strips symbols and uses thin LTO; exact size depends on compiled optional-heavy dependencies such as ONNX/embedding/browser/media stacks. |
+| **RAM Footprint (Cloud)** | **~15 MB - 30 MB** | Expected memory consumption when using remote LLM APIs and no local embedding model loaded. |
 | **RAM Footprint (Local)** | **~200 MB+** | Memory consumption when loading local ONNX vector embeddings (`AllMiniLML6V2`) into RAM. |
-| **CPU Utilization** | **0% Idle CPU** | Event-driven architecture using Tokio thread pools ensures zero CPU waste when inactive. |
-| **Startup Speed** | **< 5 ms** | Boot-to-prompt initialization speed (excluding network API latency). |
+| **CPU Utilization** | **Near 0% Idle CPU** | Event-driven architecture using Tokio thread pools avoids busy polling when inactive. |
+| **Startup Speed** | **Millisecond-scale core CLI; full TUI varies** | Startup depends on config load, DB checks, enabled channels, MCP/tool setup, and provider checks. |
 | **Inspired By** | **hermes-agent**, **Zeroclaw**, **Nanobot**, **loops!**, **DOX**, **codegraph**, **tantivy**, **lancedb**, **surrealdb**, **petgraph**, **sentrux**, **tree-sitter-graph**, **mistral.rs**, **agentgateway**, **cowork-forge**, **openhuman**, **mcp-rust-sdk**, **wasserstein-agents**, **gsd-browser**, **chromewright**, **sediment**, **ClawDB**, **ferres-db**, **native-devtools-mcp**, **tokio-cron-scheduler**, **grpc-rust**, **mcp-searxng**, **searxng-mcp**, **opendocswork-mcp**, **slack-mcp-server**, **task-master**, **langgraph**, **crawl4ai**, **websurfx**, **headroom**, **rust-mcp-filesystem**, **novada-mcp**, **obscura**, **crawlee**, **katana**, **librefang**, **openmetadata**, **youtube-transcript-api**, **semble**, **deep-research**, **ocrs**, **agent-skills**, **superpowers**, **OpenMemory**, **SkillSpector**, **OpenHands**, **deer-flow**, **multica**, **ast-grep**, **caveman**, **graphify**, **notify**, **mcp-everything**, **mcp-memory**, **mcp-sequentialthinking**, **mcp-git**, **mcp-fetch**, **mcp-time**, and **openfang** | Synthesizes loops, workflows, code graphs, search indexers, serverless vector DBs, gateways, multi-agent teams, desktop memory, MCP SDKs, browser CDP, office parsers, stateful agent graphs, web crawlers, context scoping, native filesystems, anti-bot stealth scrapers, sandboxed agent operating systems, metadata context layers, lightweight media scrapers, token-saving hybrid search, local deep research, Rust-native machine learning OCR, lifecycle-based engineering skills, structured branch-driven workflows, self-hosted hierarchical memory engines, skill security scanning, autonomous developer agents, agent workspace management, syntax-aware structural code searches, terseness prompt optimizations, codebase knowledge graphs, filesystem file watchers, MCP reference specifications, native Git integration, and WASM execution sandboxes. |
 
 ---
@@ -413,6 +413,8 @@ Inside `openz agent`, the user can issue direct slash commands:
     *   Migrated stale historical `toolTimeoutSecs: 120` config values to the new 300s default while preserving intentional custom timeout values.
     *   Improved subagent unsafe-workspace fallback reporting with actionable guidance and `workspaceIsolation` metadata.
 *   **Chore:** Bumped version to `v0.0.51`.
+*   **Optimization: Measured footprint reporting and release-size hardening:** Made local install/update scripts print installed binary size and version-command smoke time, and corrected footprint docs to report measured values instead of overclaiming a 10-15 MB binary. A `panic = "abort"` experiment was rejected because release linking conflicts with dependencies that require unwind support.
+*   **Fix: Build-cache disk pressure guard:** Added `--clean-target` to `localinstall.sh` and `localupdate.sh` and a 20 GiB `target/` warning so repeated OpenZ builds/tests cannot silently consume tens of gigabytes without an explicit cleanup path.
 
 ### v0.0.50 (Previous Release)
 *   **Feature: Native memory coordinator and reliability overhaul:** Unified semantic, graph, recall, deletion, stats, and prompt-memory flows behind a coordinator path with regression coverage for worst-case memory behavior.

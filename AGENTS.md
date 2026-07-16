@@ -8,14 +8,14 @@ High-performance, async personal AI agent framework built in Rust. Rebranded fro
 
 | Command | Purpose |
 |---|---|
-| `cargo build --release` | Production build (~10-15MB binary) |
+| `cargo build --release` | Production build (release profile strips symbols and uses thin LTO; exact size depends on enabled heavy dependencies) |
 | `cargo build` | Debug build |
 | `cargo run -- <subcommand>` | Run from source |
 | `cargo test` | Run all unit tests (28 files with `#[cfg(test)]`) |
 | `cargo test <test_name>` | Run specific test |
 | `cargo check` | Fast type-check without codegen |
 | `cargo clippy` | Lint |
-| `cargo install --path .` | Install globally (see `localinstall.sh`) |
+| `cargo install --path .` | Install globally (see `localinstall.sh`; use `./localinstall.sh --clean-target` if Cargo `target/` fills disk) |
 
 No Makefile; no CI config (GitHub Actions, etc.) present.
 
@@ -245,7 +245,7 @@ Located at `~/.openz/config.json` (or `$OPENZ_CONFIG_DIR/config.json`). Structur
 | Section | Key fields |
 |---|---|
 | `providers` | 13 optional `{api_key, api_base, api_type}` configs |
-| `agents.defaults` | model, provider, max_tokens: 4096, temperature: 0.1, max_messages: 120, max_tool_iterations: 200, caveman_mode: true, tool_timeout_secs: 120, streaming: true |
+| `agents.defaults` | model, provider, max_tokens: 4096, temperature: 0.1, max_messages: 120, max_tool_iterations: 200, caveman_mode: true, tool_timeout_secs: 300, streaming: true |
 | `channels` | websocket {port: 8765, host: 127.0.0.1}, telegram, discord, whatsapp |
 | `mcp_servers` | Map of name → `{command, args, enabled}` |
 
