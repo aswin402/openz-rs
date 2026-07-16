@@ -243,6 +243,26 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             continue;
                         }
 
+                        if let Some(response_text) =
+                            crate::channels::model_switch_text_response(content)
+                        {
+                            let delta_evt = serde_json::json!({
+                                "event": "delta",
+                                "chat_id": chat_id,
+                                "content": response_text
+                            });
+                            if let Ok(evt_str) = serde_json::to_string(&delta_evt) {
+                                let _ = tx.send(Message::Text(evt_str)).await;
+                            }
+                            let turn_end_evt = serde_json::json!({
+                                "event": "turn_end",
+                                "chat_id": chat_id
+                            });
+                            if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
+                                let _ = tx.send(Message::Text(evt_str)).await;
+                            }
+                            continue;
+                        }
                         let agent = state.agent_loop.clone();
                         let tx_clone = tx.clone();
                         let chat_id_clone = chat_id.clone();

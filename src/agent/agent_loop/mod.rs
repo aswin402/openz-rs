@@ -377,8 +377,29 @@ impl AgentLoop {
         while state != TurnState::Done {
             // Reload configuration dynamically from disk at the start of each turn iteration
             if let Ok(latest_config) = crate::config::loader::load_config() {
-                ctx.config =
+                let old_provider = ctx.config.agents.defaults.provider.clone();
+                let old_model = ctx.config.agents.defaults.model.clone();
+                let merged =
                     merge_latest_config_for_runtime(&ctx.config, latest_config, session_key);
+                let provider_changed = merged.agents.defaults.provider != old_provider
+                    || merged.agents.defaults.model != old_model;
+                if provider_changed {
+                    match crate::providers::resolver::resolve_provider_full(
+                        &merged,
+                        &merged.agents.defaults.model,
+                    ) {
+                        Ok(resolved) => {
+                            ctx.active_provider = resolved.instance;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to resolve updated provider/model from config: {}",
+                                e
+                            );
+                        }
+                    }
+                }
+                ctx.config = merged;
             }
 
             state = match state {

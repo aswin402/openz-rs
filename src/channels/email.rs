@@ -221,6 +221,29 @@ impl super::Channel for EmailChannel {
                                     return;
                                 }
 
+                                if let Some(response_text) =
+                                    crate::channels::model_switch_text_response(&body)
+                                {
+                                    let reply_res = send_reply_email(
+                                        &smtp_server,
+                                        smtp_port,
+                                        &user_clone,
+                                        &pass_clone,
+                                        &from,
+                                        &reply_subject,
+                                        &response_text,
+                                    )
+                                    .await;
+                                    if let Err(e) = reply_res {
+                                        tracing::error!(
+                                            "Failed to send model-switch reply email to {}: {:?}",
+                                            from,
+                                            e
+                                        );
+                                    }
+                                    return;
+                                }
+
                                 let session_key = format!("email_{}", from);
                                 match agent_clone.run(&body, &session_key).await {
                                     Ok(res) => {

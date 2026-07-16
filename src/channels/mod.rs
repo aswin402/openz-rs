@@ -33,6 +33,340 @@ pub fn is_stop_command(text: &str) -> bool {
     )
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ProviderModels {
+    pub name: &'static str,
+    pub display: &'static str,
+    pub models: &'static [&'static str],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelSwitchCommand {
+    None,
+    ShowProviders,
+    ShowModels { provider: String },
+    Set { provider: String, model: String },
+}
+
+pub fn parse_model_switch_command(text: &str) -> ModelSwitchCommand {
+    let trimmed = text.trim();
+    let mut parts = trimmed.split_whitespace();
+    if parts.next() != Some("/switch-model") {
+        return ModelSwitchCommand::None;
+    }
+    match (parts.next(), parts.next()) {
+        (None, _) => ModelSwitchCommand::ShowProviders,
+        (Some(provider), None) => ModelSwitchCommand::ShowModels {
+            provider: provider.to_string(),
+        },
+        (Some(provider), Some(model)) => {
+            let mut model_name = model.to_string();
+            for rest in parts {
+                model_name.push(' ');
+                model_name.push_str(rest);
+            }
+            ModelSwitchCommand::Set {
+                provider: provider.to_string(),
+                model: model_name,
+            }
+        }
+    }
+}
+
+pub fn provider_model_catalog() -> &'static [ProviderModels] {
+    &[
+        ProviderModels {
+            name: "openai",
+            display: "OpenAI",
+            models: &[
+                "gpt-4.5",
+                "gpt-4o",
+                "gpt-4o-mini",
+                "o1",
+                "o1-mini",
+                "o3",
+                "o3-mini",
+                "o4-mini",
+            ],
+        },
+        ProviderModels {
+            name: "anthropic",
+            display: "Anthropic",
+            models: &[
+                "claude-3-5-sonnet-20241022",
+                "claude-3-5-sonnet",
+                "claude-3-5-haiku-20241022",
+                "claude-3-5-haiku",
+                "claude-3-opus-20240229",
+                "claude-3-opus",
+            ],
+        },
+        ProviderModels {
+            name: "openrouter",
+            display: "OpenRouter",
+            models: &[
+                "google/gemini-2.5-pro",
+                "google/gemini-2.5-flash",
+                "anthropic/claude-3.5-sonnet",
+                "meta-llama/llama-3.3-70b-instruct",
+                "deepseek/deepseek-r1",
+            ],
+        },
+        ProviderModels {
+            name: "deepseek",
+            display: "DeepSeek",
+            models: &["deepseek-chat", "deepseek-reasoner"],
+        },
+        ProviderModels {
+            name: "groq",
+            display: "Groq",
+            models: &[
+                "deepseek-r1-distill-llama-70b",
+                "llama-3.3-70b-versatile",
+                "llama-3.1-8b-instant",
+                "mixtral-8x7b-32768",
+                "gemma2-9b-it",
+            ],
+        },
+        ProviderModels {
+            name: "ollama_local",
+            display: "Ollama Local",
+            models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"],
+        },
+        ProviderModels {
+            name: "ollama",
+            display: "Ollama",
+            models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"],
+        },
+        ProviderModels {
+            name: "minimax",
+            display: "minimax.io",
+            models: &[
+                "MiniMax-M3",
+                "MiniMax-M2.7",
+                "MiniMax-M2.5",
+                "MiniMax-M2.1",
+                "MiniMax-M2",
+                "MiniMax-M1",
+            ],
+        },
+        ProviderModels {
+            name: "mistral",
+            display: "Mistral AI",
+            models: &[
+                "mistral-large-latest",
+                "pixtral-large-latest",
+                "mistral-moderation-latest",
+                "codestral-latest",
+                "mistral-small-latest",
+                "ministral-8b-latest",
+                "ministral-14b-latest",
+            ],
+        },
+        ProviderModels {
+            name: "z.ai",
+            display: "z.ai (Zhipu GLM)",
+            models: &[
+                "glm-5.1",
+                "glm-5",
+                "glm-5v-turbo",
+                "glm-4.7",
+                "glm-4.7-flash",
+                "glm-4-flash",
+            ],
+        },
+        ProviderModels {
+            name: "nvidia",
+            display: "NVIDIA NIM",
+            models: &[
+                "meta/llama3-70b-instruct",
+                "nvidia/llama-3.1-nemotron-70b-instruct",
+                "meta/llama-3.1-70b-instruct",
+                "mistralai/mixtral-8x22b-instruct-v0.1",
+                "google/gemma-2-27b-it",
+            ],
+        },
+        ProviderModels {
+            name: "opencode_zen",
+            display: "OpenCode Zen",
+            models: &[
+                "deepseek-v4-flash-free",
+                "mimo-v2.5-free",
+                "north-mini-code-free",
+                "nemotron-3-ultra-free",
+            ],
+        },
+        ProviderModels {
+            name: "cerebras",
+            display: "Cerebras",
+            models: &["llama-3.3-70b", "llama3.1-8b", "llama3.1-70b"],
+        },
+        ProviderModels {
+            name: "google_ai_studio",
+            display: "Google AI Studio",
+            models: &[
+                "gemini-3.5-flash",
+                "gemini-3.1-pro-preview",
+                "gemini-3.1-flash-lite",
+                "gemini-2.5-pro",
+                "gemini-2.5-flash",
+                "gemini-2.0-flash",
+                "gemini-1.5-pro",
+            ],
+        },
+        ProviderModels {
+            name: "cohere",
+            display: "Cohere",
+            models: &[
+                "command-a-plus-05-2026",
+                "command-r7b-12-2024",
+                "command-r7-12-2025",
+                "command-r-plus-08-2024",
+                "command-r-08-2024",
+            ],
+        },
+        ProviderModels {
+            name: "llm7",
+            display: "LLM7",
+            models: &["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"],
+        },
+        ProviderModels {
+            name: "sambanova",
+            display: "SambaNova",
+            models: &[
+                "DeepSeek-V3.2",
+                "Meta-Llama-3.3-70B-Instruct",
+                "Qwen2.5-72B-Instruct",
+                "QwQ-32B",
+                "gemma-4-31B-it",
+            ],
+        },
+        ProviderModels {
+            name: "huggingface",
+            display: "Hugging Face Inference",
+            models: &[
+                "meta-llama/Llama-3.3-70B-Instruct",
+                "Qwen/QwQ-32B",
+                "deepseek-ai/DeepSeek-R1",
+            ],
+        },
+    ]
+}
+
+pub fn configured_provider_models(
+    config: &crate::config::schema::Config,
+) -> Vec<&'static ProviderModels> {
+    provider_model_catalog()
+        .iter()
+        .filter(|provider| config.is_provider_available(provider.name))
+        .collect()
+}
+
+pub fn provider_models_by_name(name: &str) -> Option<&'static ProviderModels> {
+    provider_model_catalog()
+        .iter()
+        .find(|provider| provider.name == name)
+}
+
+pub fn model_switch_text_response(text: &str) -> Option<String> {
+    let command = parse_model_switch_command(text);
+    if command == ModelSwitchCommand::None {
+        return None;
+    }
+    let config = match crate::config::loader::load_config() {
+        Ok(config) => config,
+        Err(e) => return Some(format!("Failed to load OpenZ config: {e}")),
+    };
+    Some(render_model_switch_command(&config, command))
+}
+
+pub fn render_model_switch_command(
+    config: &crate::config::schema::Config,
+    command: ModelSwitchCommand,
+) -> String {
+    match command {
+        ModelSwitchCommand::None => String::new(),
+        ModelSwitchCommand::ShowProviders => render_model_switch_providers(config),
+        ModelSwitchCommand::ShowModels { provider } => {
+            render_model_switch_models(config, &provider)
+        }
+        ModelSwitchCommand::Set { provider, model } => {
+            match save_default_model_selection(config, &provider, &model) {
+                Ok(()) => format!(
+                    "Model switched to `{}` with provider `{}`. New channel turns will use this default.",
+                    model, provider
+                ),
+                Err(e) => format!("Failed to switch model: {e}"),
+            }
+        }
+    }
+}
+
+pub fn render_model_switch_providers(config: &crate::config::schema::Config) -> String {
+    let providers = configured_provider_models(config);
+    if providers.is_empty() {
+        return "No configured LLM providers found. Run `openz configure` first.".to_string();
+    }
+
+    let mut response = format!(
+        "Current default: `{}` via `{}`\n\nChoose a provider:\n",
+        config.agents.defaults.model, config.agents.defaults.provider
+    );
+    for provider in providers {
+        response.push_str(&format!("- `{}` ({})\n", provider.name, provider.display));
+    }
+    response.push_str("\nUsage: `/switch-model <provider>` to list models, then `/switch-model <provider> <model>` to switch.");
+    response
+}
+
+pub fn render_model_switch_models(
+    config: &crate::config::schema::Config,
+    provider: &str,
+) -> String {
+    let Some(provider_models) = provider_models_by_name(provider) else {
+        return format!("Unknown provider `{provider}`. Use `/switch-model` to list providers.");
+    };
+    if !config.is_provider_available(provider) {
+        return format!(
+            "Provider `{provider}` is not configured. Run `openz configure` or set its API key first."
+        );
+    }
+
+    let mut response = format!(
+        "Models for `{}` ({}):\n",
+        provider_models.name, provider_models.display
+    );
+    for model in provider_models.models {
+        response.push_str(&format!("- `{model}`\n"));
+    }
+    response.push_str(&format!(
+        "\nUsage: `/switch-model {} <model>`",
+        provider_models.name
+    ));
+    response
+}
+
+pub fn save_default_model_selection(
+    base_config: &crate::config::schema::Config,
+    provider: &str,
+    model: &str,
+) -> anyhow::Result<()> {
+    if provider_models_by_name(provider).is_none() {
+        anyhow::bail!("unknown provider `{provider}`");
+    }
+    if !base_config.is_provider_available(provider) {
+        anyhow::bail!("provider `{provider}` is not configured");
+    }
+    if model.trim().is_empty() {
+        anyhow::bail!("model cannot be empty");
+    }
+
+    let mut config = crate::config::loader::load_config().unwrap_or_else(|_| base_config.clone());
+    config.agents.defaults.provider = provider.to_string();
+    config.agents.defaults.model = model.trim().to_string();
+    crate::config::loader::save_config(&config)
+}
+
 pub const OFFLINE_MESSAGES: &[&str] = &[
     "I'm going to get some rest now.",
     "I'll catch up with you later.",
@@ -748,5 +1082,47 @@ mod stop_command_tests {
         assert!(!is_stop_command("please stop"));
         assert!(!is_stop_command("/stopped"));
         assert!(!is_stop_command("/remote"));
+    }
+}
+
+#[cfg(test)]
+mod model_switch_tests {
+    use super::*;
+
+    #[test]
+    fn parses_switch_model_provider_and_model_commands() {
+        assert_eq!(
+            parse_model_switch_command("/switch-model"),
+            ModelSwitchCommand::ShowProviders
+        );
+        assert_eq!(
+            parse_model_switch_command(" /switch-model deepseek "),
+            ModelSwitchCommand::ShowModels {
+                provider: "deepseek".to_string()
+            }
+        );
+        assert_eq!(
+            parse_model_switch_command("/switch-model opencode_zen deepseek-v4-flash-free"),
+            ModelSwitchCommand::Set {
+                provider: "opencode_zen".to_string(),
+                model: "deepseek-v4-flash-free".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn ignores_non_switch_model_commands() {
+        assert_eq!(
+            parse_model_switch_command("/model"),
+            ModelSwitchCommand::None
+        );
+        assert_eq!(
+            parse_model_switch_command("/remote"),
+            ModelSwitchCommand::None
+        );
+        assert_eq!(
+            parse_model_switch_command("/switch-models deepseek"),
+            ModelSwitchCommand::None
+        );
     }
 }

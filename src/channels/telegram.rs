@@ -276,6 +276,7 @@ impl super::Channel for TelegramChannel {
                 { "command": "local", "description": "Switch to local bot chat mode" },
                 { "command": "new", "description": "Start a new local session" },
                 { "command": "model", "description": "Show the active default model" },
+                { "command": "switch-model", "description": "Switch the default provider/model" },
                 { "command": "mcps", "description": "List configured MCP servers" },
                 { "command": "memory", "description": "View metadata memory for the session" },
                 { "command": "skill", "description": "List active skills" },
@@ -387,6 +388,7 @@ impl super::Channel for TelegramChannel {
                                         || cmd == "/skill"
                                         || cmd == "/skills"
                                         || cmd.starts_with("/model")
+                                        || cmd == "/switch-model"
                                         || cmd == "/help"
                                         || cmd == "/clear"
                                         || cmd == "/history"
@@ -579,6 +581,77 @@ impl super::Channel for TelegramChannel {
                                             continue;
                                         }
 
+                                        if cmd == "/switch-model" {
+                                            let config = match crate::config::loader::load_config()
+                                            {
+                                                Ok(config) => config,
+                                                Err(e) => {
+                                                    let response = format!(
+                                                        "Failed to load OpenZ config: {}",
+                                                        e
+                                                    );
+                                                    tokio::spawn(async move {
+                                                        let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                                                        let payload = serde_json::json!({ "chat_id": chat_id, "text": response });
+                                                        let _ = client
+                                                            .post(&send_url)
+                                                            .json(&payload)
+                                                            .send()
+                                                            .await;
+                                                    });
+                                                    continue;
+                                                }
+                                            };
+                                            let providers =
+                                                crate::channels::configured_provider_models(
+                                                    &config,
+                                                );
+                                            tokio::spawn(async move {
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
+                                                if providers.is_empty() {
+                                                    let payload = serde_json::json!({
+                                                        "chat_id": chat_id,
+                                                        "text": "No configured LLM providers found. Run `openz configure` first."
+                                                    });
+                                                    let _ = client
+                                                        .post(&send_url)
+                                                        .json(&payload)
+                                                        .send()
+                                                        .await;
+                                                    return;
+                                                }
+
+                                                let keyboard: Vec<Vec<serde_json::Value>> = providers
+                                                    .iter()
+                                                    .enumerate()
+                                                    .map(|(idx, provider)| {
+                                                        vec![serde_json::json!({
+                                                            "text": format!("{} ({})", provider.display, provider.name),
+                                                            "callback_data": format!("model_provider:{}", idx)
+                                                        })]
+                                                    })
+                                                    .collect();
+                                                let payload = serde_json::json!({
+                                                    "chat_id": chat_id,
+                                                    "text": format!(
+                                                        "Current default: {} via {}\nSelect a provider:",
+                                                        config.agents.defaults.model,
+                                                        config.agents.defaults.provider
+                                                    ),
+                                                    "reply_markup": { "inline_keyboard": keyboard }
+                                                });
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
+                                            });
+                                            continue;
+                                        }
+
                                         if cmd.starts_with("/model") {
                                             let model = &agent.config.agents.defaults.model;
                                             let provider = &agent.config.agents.defaults.provider;
@@ -616,6 +689,7 @@ impl super::Channel for TelegramChannel {
                                                              /local — Switch to local bot chat mode\n\
                                                              /new — Start a new local session\n\
                                                              /model — Show the active default model\n\
+                                                             /switch-model — Choose and save default provider/model\n\
                                                              /mcps — List configured MCP servers\n\
                                                              /memory — View metadata memory\n\
                                                              /skill — List active skills\n\
@@ -852,6 +926,160 @@ impl super::Channel for TelegramChannel {
                                 if parts.len() == 2 {
                                     let action = parts[0];
                                     let callback_value = parts[1];
+
+                                    if action == "model_provider" {
+                                        if let Some(ref inner_msg) = cb.message {
+                                            let chat_id = inner_msg.chat.id;
+                                            let selected_idx = callback_value.parse::<usize>().ok();
+                                            let config = crate::config::loader::load_config()
+                                                .unwrap_or_else(|_| self.agent_loop.config.clone());
+                                            let providers =
+                                                crate::channels::configured_provider_models(
+                                                    &config,
+                                                );
+                                            let provider = selected_idx
+                                                .and_then(|idx| providers.get(idx).copied());
+
+                                            let answer_url = format!(
+                                                "https://api.telegram.org/bot{}/answerCallbackQuery",
+                                                self.bot_token
+                                            );
+                                            let answer_payload = serde_json::json!({
+                                                "callback_query_id": cb.id,
+                                                "text": if provider.is_some() { "Provider selected" } else { "Provider no longer available" },
+                                                "show_alert": provider.is_none()
+                                            });
+                                            let _ = self
+                                                .client
+                                                .post(&answer_url)
+                                                .json(&answer_payload)
+                                                .send()
+                                                .await;
+
+                                            if let Some(message_id) = inner_msg.message_id {
+                                                let edit_url = format!(
+                                                    "https://api.telegram.org/bot{}/editMessageText",
+                                                    self.bot_token
+                                                );
+                                                let edit_payload = if let Some(provider) = provider
+                                                {
+                                                    let keyboard: Vec<Vec<serde_json::Value>> = provider
+                                                        .models
+                                                        .iter()
+                                                        .enumerate()
+                                                        .map(|(model_idx, model)| {
+                                                            vec![serde_json::json!({
+                                                                "text": model,
+                                                                "callback_data": format!("model_select:{}:{}", selected_idx.unwrap_or(0), model_idx)
+                                                            })]
+                                                        })
+                                                        .collect();
+                                                    serde_json::json!({
+                                                        "chat_id": chat_id,
+                                                        "message_id": message_id,
+                                                        "text": format!("Select a model for {} ({})", provider.display, provider.name),
+                                                        "reply_markup": { "inline_keyboard": keyboard }
+                                                    })
+                                                } else {
+                                                    serde_json::json!({
+                                                        "chat_id": chat_id,
+                                                        "message_id": message_id,
+                                                        "text": "That provider is no longer available. Use /switch-model again."
+                                                    })
+                                                };
+                                                let _ = self
+                                                    .client
+                                                    .post(&edit_url)
+                                                    .json(&edit_payload)
+                                                    .send()
+                                                    .await;
+                                            }
+                                        }
+                                        continue;
+                                    }
+
+                                    if action == "model_select" {
+                                        if let Some(ref inner_msg) = cb.message {
+                                            let chat_id = inner_msg.chat.id;
+                                            let indexes: Vec<&str> =
+                                                callback_value.split(':').collect();
+                                            let provider_idx = indexes
+                                                .first()
+                                                .and_then(|v| v.parse::<usize>().ok());
+                                            let model_idx = indexes
+                                                .get(1)
+                                                .and_then(|v| v.parse::<usize>().ok());
+                                            let config = crate::config::loader::load_config()
+                                                .unwrap_or_else(|_| self.agent_loop.config.clone());
+                                            let providers =
+                                                crate::channels::configured_provider_models(
+                                                    &config,
+                                                );
+                                            let selection = provider_idx
+                                                .and_then(|pidx| {
+                                                    providers.get(pidx).copied().map(|p| (pidx, p))
+                                                })
+                                                .and_then(|(_, provider)| {
+                                                    model_idx
+                                                        .and_then(|midx| {
+                                                            provider.models.get(midx).copied()
+                                                        })
+                                                        .map(|model| (provider, model))
+                                                });
+
+                                            let result_text = if let Some((provider, model)) =
+                                                selection
+                                            {
+                                                match crate::channels::save_default_model_selection(
+                                                    &config,
+                                                    provider.name,
+                                                    model,
+                                                ) {
+                                                    Ok(()) => format!(
+                                                        "Model switched to {} with provider {}. New channel turns will use this default.",
+                                                        model, provider.name
+                                                    ),
+                                                    Err(e) => format!("Failed to switch model: {}", e),
+                                                }
+                                            } else {
+                                                "That model selection is no longer available. Use /switch-model again.".to_string()
+                                            };
+
+                                            let answer_url = format!(
+                                                "https://api.telegram.org/bot{}/answerCallbackQuery",
+                                                self.bot_token
+                                            );
+                                            let answer_payload = serde_json::json!({
+                                                "callback_query_id": cb.id,
+                                                "text": "Model switch handled"
+                                            });
+                                            let _ = self
+                                                .client
+                                                .post(&answer_url)
+                                                .json(&answer_payload)
+                                                .send()
+                                                .await;
+
+                                            if let Some(message_id) = inner_msg.message_id {
+                                                let edit_url = format!(
+                                                    "https://api.telegram.org/bot{}/editMessageText",
+                                                    self.bot_token
+                                                );
+                                                let edit_payload = serde_json::json!({
+                                                    "chat_id": chat_id,
+                                                    "message_id": message_id,
+                                                    "text": result_text
+                                                });
+                                                let _ = self
+                                                    .client
+                                                    .post(&edit_url)
+                                                    .json(&edit_payload)
+                                                    .send()
+                                                    .await;
+                                            }
+                                        }
+                                        continue;
+                                    }
 
                                     if action == "remote" {
                                         if let Some(ref inner_msg) = cb.message {

@@ -272,6 +272,30 @@ async fn receive_webhook(
                                     continue;
                                 }
 
+                                if let Some(response_text) =
+                                    crate::channels::model_switch_text_response(&text)
+                                {
+                                    let send_url = format!(
+                                        "https://graph.facebook.com/v18.0/{}/messages",
+                                        phone_number_id
+                                    );
+                                    for chunk in chunk_message(&response_text, 65536) {
+                                        let reply_payload = serde_json::json!({
+                                            "messaging_product": "whatsapp",
+                                            "recipient_type": "individual",
+                                            "to": from_str,
+                                            "type": "text",
+                                            "text": { "body": chunk }
+                                        });
+                                        let _ = client
+                                            .post(&send_url)
+                                            .bearer_auth(&api_key)
+                                            .json(&reply_payload)
+                                            .send()
+                                            .await;
+                                    }
+                                    continue;
+                                }
                                 let concurrency_limit = state.concurrency_limit.clone();
                                 tokio::spawn(async move {
                                     let _permit = match concurrency_limit.acquire().await {
