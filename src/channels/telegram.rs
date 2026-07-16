@@ -1,11 +1,51 @@
 use crate::agent::AgentLoop;
+use fs2::FileExt;
 use reqwest::Client;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration};
+
+fn telegram_channel_silent() -> bool {
+    std::env::var("OPENZ_SILENT").is_ok() || crate::cli::is_silent_mode()
+}
+
+fn telegram_lock_path_in(data_dir: &std::path::Path, bot_token: &str) -> std::path::PathBuf {
+    let mut hasher = Sha256::new();
+    hasher.update(bot_token.as_bytes());
+    let fingerprint = hex::encode(&hasher.finalize()[..8]);
+    data_dir
+        .join("locks")
+        .join(format!("telegram-{fingerprint}.lock"))
+}
+
+fn acquire_telegram_poll_lock_at(
+    data_dir: &std::path::Path,
+    bot_token: &str,
+) -> anyhow::Result<Option<File>> {
+    let lock_path = telegram_lock_path_in(data_dir, bot_token);
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)?;
+    match file.try_lock_exclusive() {
+        Ok(()) => Ok(Some(file)),
+        Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn acquire_telegram_poll_lock(bot_token: &str) -> anyhow::Result<Option<File>> {
+    acquire_telegram_poll_lock_at(&crate::config::loader::runtime_data_dir(), bot_token)
+}
 
 static TELEGRAM_BOT_INFO: OnceLock<(String, Client)> = OnceLock::new();
 static APPROVAL_CALLBACKS: OnceLock<Mutex<HashMap<String, oneshot::Sender<bool>>>> =
@@ -161,10 +201,22 @@ impl super::Channel for TelegramChannel {
 
     async fn start(&self) -> anyhow::Result<()> {
         let _ = TELEGRAM_BOT_INFO.set((self.bot_token.clone(), self.client.clone()));
+        let _poll_lock = match acquire_telegram_poll_lock(&self.bot_token)? {
+            Some(lock) => lock,
+            None => {
+                if !telegram_channel_silent() {
+                    crate::tui_println!(
+                        "⚠️ Telegram bot polling is already active in another OpenZ process. Skipping duplicate poller."
+                    );
+                }
+                tracing::warn!("Telegram bot polling already active; skipping duplicate poller");
+                return Ok(());
+            }
+        };
         let mut offset = 0;
-        let silent = std::env::var("OPENZ_SILENT").is_ok();
+        let silent = telegram_channel_silent();
         if !silent {
-            println!("🤖 Telegram Channel bot polling started...");
+            crate::tui_println!("🤖 Telegram Channel bot polling started...");
         }
 
         let session_dir = self.agent_loop.session_manager.dir.clone();
@@ -223,7 +275,7 @@ impl super::Channel for TelegramChannel {
                             );
                         }
                     } else if !silent_clone {
-                        println!("✓ Telegram slash commands registered successfully.");
+                        crate::tui_println!("✓ Telegram slash commands registered successfully.");
                     }
                 }
                 Err(e) => {
@@ -657,11 +709,12 @@ impl super::Channel for TelegramChannel {
                                         Ok(p) => p,
                                         Err(_) => return,
                                     };
-                                    let silent = std::env::var("OPENZ_SILENT").is_ok();
+                                    let silent = telegram_channel_silent();
                                     if !silent {
-                                        println!(
+                                        crate::tui_println!(
                                             "💬 Telegram message from chat {}: {}",
-                                            chat_id, text
+                                            chat_id,
+                                            text
                                         );
                                     }
                                     let session_key = format!("telegram:{}", chat_id);
@@ -828,4 +881,47 @@ fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
         remaining = remaining[final_split..].trim_start_matches('\n');
     }
     chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn telegram_lock_path_does_not_leak_bot_token() {
+        let token = "123456:secret-token-value";
+        let dir =
+            std::env::temp_dir().join(format!("openz_telegram_path_test_{}", uuid::Uuid::new_v4()));
+        let path = telegram_lock_path_in(&dir, token);
+        let path_str = path.to_string_lossy();
+
+        assert!(path_str.contains("telegram-"));
+        assert!(!path_str.contains(token));
+        assert!(!path_str.contains("secret-token-value"));
+    }
+
+    #[test]
+    fn telegram_poll_lock_rejects_duplicate_holder() {
+        let dir =
+            std::env::temp_dir().join(format!("openz_telegram_lock_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let token = "123456:test-lock-token";
+        let first = acquire_telegram_poll_lock_at(&dir, token)
+            .expect("first lock attempt should not error")
+            .expect("first lock should be acquired");
+        let second = acquire_telegram_poll_lock_at(&dir, token)
+            .expect("second lock attempt should not error");
+        assert!(second.is_none(), "duplicate poll lock should be rejected");
+
+        drop(first);
+        let third = acquire_telegram_poll_lock_at(&dir, token)
+            .expect("third lock attempt should not error");
+        assert!(
+            third.is_some(),
+            "lock should be reusable after first holder drops"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -412,6 +412,7 @@ Inside `openz agent`, the user can issue direct slash commands:
     *   Improved fact extraction for compound build clauses such as `Alice built AppX with Rust` and chained clauses like `Bob created ToolY and built it with Go`.
     *   Migrated stale historical `toolTimeoutSecs: 120` config values to the new 300s default while preserving intentional custom timeout values.
     *   Improved subagent unsafe-workspace fallback reporting with actionable guidance and `workspaceIsolation` metadata.
+    *   Hardened Telegram channel startup: background Telegram logs now respect CLI silent mode/TUI-safe output, and a per-bot-token poll lock prevents `openz agent` and `openz telegram` from competing for the same bot updates.
 *   **Chore:** Bumped version to `v0.0.51`.
 *   **Optimization: Measured footprint reporting and release-size hardening:** Made local install/update scripts print installed binary size and version-command smoke time, and corrected footprint docs to report measured values instead of overclaiming a 10-15 MB binary. A `panic = "abort"` experiment was rejected because release linking conflicts with dependencies that require unwind support.
 *   **Fix: Build-cache disk pressure guard:** Added `--clean-target` to `localinstall.sh` and `localupdate.sh`, a 20 GiB `target/` warning, and an `openz doctor` disk/cache report covering repo `target/`, `~/.openz`, SearchXyz, and Cargo caches so repeated OpenZ builds/tests cannot silently consume tens of gigabytes without an explicit cleanup path.
