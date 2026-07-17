@@ -317,15 +317,19 @@ fn format_source_context_items(items: &[crate::tools::shared_memory::SourceBookm
     let mut out = String::from("
 
 [Relevant Saved Sources]
-Use these known links, repos, docs, paths, or profiles before broad searching. Refresh stale/volatile sources when needed:
+Use these ranked links, repos, docs, paths, or profiles before broad searching. If freshness=stale or the user asks for latest/current data, refresh the specific saved source first and then answer:
 ");
     for item in items.iter().take(4) {
         let line = format!(
-            "- {} [{}] {} | aliases: {} | summary: {}
+            "- {} [{}] {} | freshness={} ttl={}s trust={:.2} score={:.2} | aliases: {} | summary: {}
 ",
             item.label,
             item.kind,
             item.uri,
+            item.freshness,
+            item.stale_after_secs,
+            item.trust_score,
+            item.score,
             item.aliases.join(", "),
             item.summary
         );
@@ -339,7 +343,15 @@ Use these known links, repos, docs, paths, or profiles before broad searching. R
 
 async fn retrieve_source_context(user_content: &str) -> String {
     match crate::tools::shared_memory::search_source_bookmarks(user_content, 4).await {
-        Ok(items) => format_source_context_items(&items),
+        Ok(items) => {
+            if let Some(best) = items.first().filter(|item| item.score >= 4.0) {
+                crate::channels::cli::send_notification(&format!(
+                    "◇ Sources matched: {} ({})",
+                    best.label, best.freshness
+                ));
+            }
+            format_source_context_items(&items)
+        }
         Err(err) => {
             tracing::debug!(error = ?err, "source context retrieval skipped");
             String::new()
@@ -347,29 +359,61 @@ async fn retrieve_source_context(user_content: &str) -> String {
     }
 }
 
+fn summarize_workflow_steps(steps: &serde_json::Value) -> String {
+    let Some(arr) = steps.as_array() else {
+        return String::new();
+    };
+    arr.iter()
+        .take(5)
+        .enumerate()
+        .map(|(idx, step)| {
+            if let Some(obj) = step.as_object() {
+                let tool = obj
+                    .get("tool")
+                    .or_else(|| obj.get("name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("step");
+                let note = obj
+                    .get("note")
+                    .or_else(|| obj.get("description"))
+                    .or_else(|| obj.get("action"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if note.is_empty() {
+                    format!("{}. {}", idx + 1, tool)
+                } else {
+                    format!("{}. {} ({})", idx + 1, tool, note)
+                }
+            } else {
+                format!("{}. {}", idx + 1, step)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn format_workflow_context_items(items: &[crate::tools::shared_memory::WorkflowCard]) -> String {
     if items.is_empty() {
         return String::new();
     }
-    let mut out = String::from("
-
-[Relevant Reusable Workflows]
-If the user asks for a similar task, follow these proven procedures before rediscovering the steps. For high-risk workflows, request approval before execution:
-");
+    let mut out = String::from("\n\n[Relevant Reusable Workflows]\nUse these matched procedures automatically for similar tasks instead of rediscovering steps. Follow preconditions, execute the steps, verify the result, then record success/failure with workflow_memory.record_run. For high-risk workflows, request approval before execution:\n");
     for item in items.iter().take(3) {
+        let steps = summarize_workflow_steps(&item.steps);
         let line = format!(
-            "- {} [{}] risk={} success={} failure={} | triggers: {} | summary: {} | verify: {}
-",
+            "- {} [{}] risk={} score={:.2} success={} failure={} | triggers: {} | preconditions: {} | summary: {} | steps: {} | verify: {}\n",
             item.name,
             item.status,
             item.risk,
+            item.score,
             item.success_count,
             item.failure_count,
             item.triggers.join(", "),
+            item.preconditions.join(", "),
             item.summary,
+            steps,
             item.verification.join(", ")
         );
-        if out.chars().count() + line.chars().count() > 3000 {
+        if out.chars().count() + line.chars().count() > 3600 {
             break;
         }
         out.push_str(&line);
@@ -379,7 +423,15 @@ If the user asks for a similar task, follow these proven procedures before redis
 
 async fn retrieve_workflow_context(user_content: &str) -> String {
     match crate::tools::shared_memory::search_workflow_cards(user_content, 3, true).await {
-        Ok(items) => format_workflow_context_items(&items),
+        Ok(items) => {
+            if let Some(best) = items.first().filter(|item| item.score >= 4.0) {
+                crate::channels::cli::send_notification(&format!(
+                    "◇ Workflow matched: {}",
+                    best.name
+                ));
+            }
+            format_workflow_context_items(&items)
+        }
         Err(err) => {
             tracing::debug!(error = ?err, "workflow context retrieval skipped");
             String::new()
@@ -801,6 +853,31 @@ mod tests {
         assert!(is_weak_or_risky_model("mimo-v2.5-free"));
         assert!(is_weak_or_risky_model("gemini-3.1-flash-lite"));
         assert!(!is_weak_or_risky_model("deepseek-v4-flash-free"));
+    }
+
+    #[test]
+    fn workflow_context_includes_reusable_steps() {
+        let item = crate::tools::shared_memory::WorkflowCard {
+            id: "id".to_string(),
+            name: "screenshot_to_telegram".to_string(),
+            triggers: vec!["send screenshot to telegram".to_string()],
+            summary: "Capture active window and send it through Telegram".to_string(),
+            steps: serde_json::json!([{ "tool": "exec_command", "note": "capture active window" }]),
+            preconditions: vec!["Telegram configured".to_string()],
+            verification: vec!["Telegram API ok=true".to_string()],
+            risk: "normal".to_string(),
+            status: "active".to_string(),
+            success_count: 2,
+            failure_count: 0,
+            last_used: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+            score: 7.5,
+        };
+        let block = format_workflow_context_items(&[item]);
+        assert!(block.contains("steps:"));
+        assert!(block.contains("exec_command"));
+        assert!(block.contains("workflow_memory.record_run"));
     }
 
     #[test]

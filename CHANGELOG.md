@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.53 (Latest Release)
+### v0.0.54 (Latest Release)
+
+*   **Feature: freshness-aware source memory:** Source bookmarks now carry `fresh`, `stale`, or `unknown` status from TTL-aware timestamps. Newly saved sources are marked checked, volatile source types get shorter default TTLs, and stale/current-sensitive sources are injected with explicit refresh guidance.
+*   **Feature: deterministic source ranking:** Automatic source retrieval now prefers exact label/alias matches, official docs/repos/local paths, higher trust, higher reuse, and fresh sources. `/sources` remains only an inspection/debug command; the prompt uses ranked sources automatically.
+*   **Feature: stronger reusable workflow prompting:** Workflow matches now inject preconditions, concise steps, verification, risk, score, and instructions to record success/failure with `workflow_memory.record_run`, helping weak models reuse proven procedures instead of rediscovering tools.
+*   **UX: compact automatic context notices:** TUI now emits small `Sources matched` and `Workflow matched` notifications when saved context is automatically injected.
+*   **Chore:** Bumped version to `v0.0.54`.
+
+### v0.0.53
 
 *   **Bugfix: TUI answer formatting restored:** Fixed the `<think>` sanitizer so it preserves markdown, bullets, and newlines in normal assistant answers instead of collapsing output into one long wrapped line.
 *   **Cleanup: canonical new-session command:** Removed duplicate `/new` slash command from TUI and Telegram. `/new-session` is now the single command for starting a clean session.

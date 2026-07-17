@@ -60,6 +60,55 @@ fn score_text(query: &str, fields: &[&str]) -> f64 {
     score
 }
 
+fn normalized_terms(text: &str) -> std::collections::HashSet<String> {
+    const STOP_WORDS: &[&str] = &[
+        "about", "again", "also", "and", "any", "are", "can", "did", "for", "from", "how", "into",
+        "now", "please", "that", "the", "then", "this", "to", "use", "using", "was", "were",
+        "what", "when", "where", "with", "you", "your",
+    ];
+    text.split(|c: char| !c.is_alphanumeric())
+        .map(|t| t.to_lowercase())
+        .filter(|t| t.len() >= 3 && !STOP_WORDS.contains(&t.as_str()))
+        .collect()
+}
+
+fn workflow_rank_score(query: &str, item: &WorkflowCard) -> f64 {
+    let triggers = item.triggers.join(" ");
+    let mut score = score_text(query, &[&item.name, &triggers, &item.summary]);
+    if score <= 0.0 && !query.trim().is_empty() {
+        return 0.0;
+    }
+    let q = query.trim().to_lowercase();
+    if !q.is_empty() {
+        if item.name.trim().eq_ignore_ascii_case(query.trim()) {
+            score += 8.0;
+        }
+        if item
+            .triggers
+            .iter()
+            .any(|trigger| trigger.trim().eq_ignore_ascii_case(query.trim()))
+        {
+            score += 7.0;
+        }
+        let query_terms = normalized_terms(query);
+        let workflow_terms =
+            normalized_terms(&format!("{} {} {}", item.name, triggers, item.summary));
+        if !query_terms.is_empty() {
+            let overlap = query_terms.intersection(&workflow_terms).count();
+            score += overlap as f64 * 0.7;
+        }
+    }
+    if item.status == "active" {
+        score += 1.0;
+    }
+    score += (item.success_count.max(0) as f64 + 1.0).ln() * 0.8;
+    score -= (item.failure_count.max(0) as f64) * 0.35;
+    if item.risk.eq_ignore_ascii_case("high") {
+        score -= 0.5;
+    }
+    score
+}
+
 fn string_contains_secret(raw: &str) -> bool {
     let lower = raw.to_lowercase();
     lower.contains("token=")
@@ -187,10 +236,7 @@ pub async fn search_workflow_cards(
         Ok(out)
     })?;
     for item in &mut rows {
-        let triggers = item.triggers.join(" ");
-        item.score = score_text(query, &[&item.name, &triggers, &item.summary])
-            + (item.success_count as f64 * 0.2)
-            - (item.failure_count as f64 * 0.1);
+        item.score = workflow_rank_score(query, item);
     }
     rows.retain(|item| item.score > 0.0 || query.trim().is_empty());
     rows.sort_by(|a, b| {
@@ -332,6 +378,28 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn workflow_search_does_not_return_unrelated_active_workflows() {
+        let name = format!("active_unrelated_workflow_{}", uuid::Uuid::new_v4());
+        add_workflow_card(
+            &name,
+            vec!["send screenshot to telegram".to_string()],
+            "Capture active window and send image through Telegram",
+            json!([]),
+            vec![],
+            vec![],
+            "normal",
+            "active",
+        )
+        .await
+        .unwrap();
+        let matches = search_workflow_cards("cook pasta dinner", 5, true)
+            .await
+            .unwrap();
+        assert!(matches.iter().all(|m| m.name != name));
+        assert_eq!(delete_workflow(&name).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
     async fn workflow_memory_search_and_record_run() {
         let name = format!(
             "screenshot_active_window_to_telegram_{}",
@@ -352,7 +420,10 @@ mod tests {
         let matches = search_workflow_cards("take screenshot and send it to telegram", 5, true)
             .await
             .unwrap();
-        assert!(matches.iter().any(|m| m.name == name));
+        assert_eq!(
+            matches.first().map(|m| m.name.as_str()),
+            Some(name.as_str())
+        );
         let updated = record_workflow_run(&name, "test", "send screenshot", true, None)
             .await
             .unwrap();

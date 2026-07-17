@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.53`
+# OpenZ 🦊 `v0.0.54`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -12,14 +12,13 @@ OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-
 
 ---
 
-## What Changed In `v0.0.53`
+## What Changed In `v0.0.54`
 
-- **TUI formatting fix:** preserved markdown/newlines while stripping provider `<think>...</think>` leaks, restoring readable multi-line answers in the terminal.
-- **Canonical session command:** replaced duplicate `/new` command with `/new-session` across TUI and Telegram command menus.
-- **Selectable session resume:** Telegram `/resume` now shows inline buttons for previous sessions plus a `Continue current session` option. TUI uses `/history` as the single interactive session restore command.
-- **Model reliability hardening:** risky/unknown/free/small models are warned about, smoke-tested in the background, and tracked in `~/.openz/model_registry.json`.
-- **Weak-model context hardening:** pinned identity/persona memory and recent-session context are injected so small models behave better on identity and “what were we discussing” questions.
-- **Knowledge and workflow memory:** saved source bookmarks, research briefs, and reusable workflow cards help repeated research/tasks reuse known links, paths, repos, and successful procedures. Inspect them with `/sources <query>` and `/workflows <query>`.
+- **Automatic source ranking:** saved source bookmarks now rank by exact label/alias match, trusted source type, trust score, use count, and freshness, so repeated research starts from the best known links without manual `/sources` lookup.
+- **Freshness-aware research memory:** source bookmarks and research briefs expose `fresh`, `stale`, or `unknown` status with TTLs. Stale/current-sensitive sources are injected with explicit refresh guidance before answering.
+- **Reusable workflow guidance:** matched workflow cards now inject preconditions, concise steps, verification, risk, and record-run instructions into the prompt, making repeated tasks easier for weak and strong models.
+- **Minimal TUI match notices:** when ranked source/workflow context is automatically injected, the TUI shows compact `Sources matched` / `Workflow matched` notices.
+- **Release baseline:** v0.0.53 remains the cleanup baseline for canonical session commands, selectable history/resume UX, TUI formatting, model reliability, and the first knowledge/workflow memory storage.
 
 ---
 

@@ -17,6 +17,7 @@ pub struct SourceBookmark {
     pub trust_score: f64,
     pub last_checked: Option<String>,
     pub stale_after_secs: i64,
+    pub freshness: String,
     pub created_at: String,
     pub updated_at: String,
     pub use_count: i64,
@@ -31,6 +32,7 @@ pub struct ResearchBrief {
     pub source_ids: Vec<String>,
     pub confidence: f64,
     pub stale_after_secs: i64,
+    pub freshness: String,
     pub created_at: String,
     pub updated_at: String,
     pub use_count: i64,
@@ -39,6 +41,110 @@ pub struct ResearchBrief {
 
 fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+fn default_source_stale_after_secs(kind: &str, requested: i64) -> i64 {
+    if requested > 0 {
+        return requested.max(60);
+    }
+    match kind.trim().to_lowercase().as_str() {
+        "news" | "social" | "feed" | "market" | "price" => 21_600,
+        "api" | "status" => 3_600,
+        "repo" | "docs" | "doc" | "website" => 604_800,
+        "path" | "file" | "local" => 86_400,
+        _ => 604_800,
+    }
+}
+
+fn freshness_status(timestamp: Option<&str>, stale_after_secs: i64) -> &'static str {
+    let Some(raw) = timestamp.map(str::trim).filter(|s| !s.is_empty()) else {
+        return "unknown";
+    };
+    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(raw) else {
+        return "unknown";
+    };
+    let age = chrono::Utc::now()
+        .signed_duration_since(parsed.with_timezone(&chrono::Utc))
+        .num_seconds();
+    if age > stale_after_secs.max(60) {
+        "stale"
+    } else {
+        "fresh"
+    }
+}
+
+fn source_kind_bonus(kind: &str) -> f64 {
+    match kind.trim().to_lowercase().as_str() {
+        "docs" | "doc" | "repo" | "path" | "file" | "local" => 1.0,
+        "website" | "api" => 0.7,
+        "news" | "social" | "feed" => 0.25,
+        _ => 0.0,
+    }
+}
+
+fn freshness_bonus(freshness: &str) -> f64 {
+    match freshness {
+        "fresh" => 0.7,
+        "unknown" => -0.15,
+        "stale" => -0.45,
+        _ => 0.0,
+    }
+}
+
+fn exact_field_match(query: &str, fields: &[&str]) -> bool {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return false;
+    }
+    fields
+        .iter()
+        .any(|field| field.trim().eq_ignore_ascii_case(&q))
+}
+
+fn source_rank_score(query: &str, item: &SourceBookmark) -> f64 {
+    let aliases = item.aliases.join(" ");
+    let mut score = score_text(
+        query,
+        &[&item.label, &item.kind, &item.uri, &aliases, &item.summary],
+    );
+    if score <= 0.0 && !query.trim().is_empty() {
+        return 0.0;
+    }
+    if exact_field_match(query, &[&item.label, &item.uri])
+        || item
+            .aliases
+            .iter()
+            .any(|alias| alias.trim().eq_ignore_ascii_case(query.trim()))
+    {
+        score += 8.0;
+    }
+    if !query.trim().is_empty()
+        && item
+            .uri
+            .to_lowercase()
+            .contains(&query.trim().to_lowercase())
+    {
+        score += 3.0;
+    }
+    score += item.trust_score.clamp(0.0, 1.0) * 2.0;
+    score += source_kind_bonus(&item.kind);
+    score += (item.use_count.max(0) as f64 + 1.0).ln() * 0.35;
+    score += freshness_bonus(&item.freshness);
+    score
+}
+
+fn brief_rank_score(query: &str, item: &ResearchBrief) -> f64 {
+    let mut score = score_text(query, &[&item.topic, &item.summary]);
+    if score <= 0.0 && !query.trim().is_empty() {
+        return 0.0;
+    }
+    if item.topic.trim().eq_ignore_ascii_case(query.trim()) {
+        score += 8.0;
+    }
+    score += item.confidence.clamp(0.0, 1.0) * 1.5;
+    score += (item.use_count.max(0) as f64 + 1.0).ln() * 0.3;
+    score += freshness_bonus(&item.freshness);
+    score
 }
 
 fn json_string_array(value: Option<&Value>) -> Vec<String> {
@@ -75,6 +181,9 @@ fn score_text(query: &str, fields: &[&str]) -> f64 {
 
 fn source_from_row(row: &rusqlite::Row<'_>, score: f64) -> rusqlite::Result<SourceBookmark> {
     let aliases: String = row.get(4)?;
+    let last_checked: Option<String> = row.get(7)?;
+    let stale_after_secs: i64 = row.get(8)?;
+    let freshness = freshness_status(last_checked.as_deref(), stale_after_secs).to_string();
     Ok(SourceBookmark {
         id: row.get(0)?,
         label: row.get(1)?,
@@ -83,8 +192,9 @@ fn source_from_row(row: &rusqlite::Row<'_>, score: f64) -> rusqlite::Result<Sour
         aliases: parse_string_array(&aliases),
         summary: row.get(5)?,
         trust_score: row.get(6)?,
-        last_checked: row.get(7)?,
-        stale_after_secs: row.get(8)?,
+        last_checked,
+        stale_after_secs,
+        freshness,
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
         use_count: row.get(11)?,
@@ -106,15 +216,16 @@ pub async fn add_source_bookmark(
     }
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_rfc3339();
+    let ttl = default_source_stale_after_secs(kind, stale_after_secs);
     let aliases_json = serde_json::to_string(&aliases)?;
     {
         let _lock = get_db_mutex().lock().await;
         with_db(|conn| {
             conn.execute(
-                "INSERT INTO source_bookmarks (id, label, kind, uri, aliases, summary, trust_score, stale_after_secs, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
-                 ON CONFLICT(uri) DO UPDATE SET label=excluded.label, kind=excluded.kind, aliases=excluded.aliases, summary=excluded.summary, trust_score=excluded.trust_score, stale_after_secs=excluded.stale_after_secs, updated_at=excluded.updated_at",
-                params![id, label.trim(), kind.trim(), uri.trim(), aliases_json, summary.trim(), trust_score.clamp(0.0, 1.0), stale_after_secs.max(60), now],
+                "INSERT INTO source_bookmarks (id, label, kind, uri, aliases, summary, trust_score, last_checked, stale_after_secs, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?9, ?8, ?9, ?9)
+                 ON CONFLICT(uri) DO UPDATE SET label=excluded.label, kind=excluded.kind, aliases=excluded.aliases, summary=excluded.summary, trust_score=excluded.trust_score, last_checked=excluded.last_checked, stale_after_secs=excluded.stale_after_secs, updated_at=excluded.updated_at",
+                params![id, label.trim(), kind.trim(), uri.trim(), aliases_json, summary.trim(), trust_score.clamp(0.0, 1.0), ttl, now],
             )?;
             Ok(())
         })?;
@@ -156,11 +267,7 @@ pub async fn search_source_bookmarks(query: &str, limit: usize) -> Result<Vec<So
         Ok(out)
     })?;
     for item in &mut rows {
-        let aliases = item.aliases.join(" ");
-        item.score = score_text(
-            query,
-            &[&item.label, &item.kind, &item.uri, &aliases, &item.summary],
-        ) + item.trust_score;
+        item.score = source_rank_score(query, item);
     }
     rows.retain(|item| item.score > 0.0 || query.trim().is_empty());
     rows.sort_by(|a, b| {
@@ -192,15 +299,19 @@ pub async fn mark_source_checked(id_or_uri: &str) -> Result<usize> {
 
 fn brief_from_row(row: &rusqlite::Row<'_>, score: f64) -> rusqlite::Result<ResearchBrief> {
     let source_ids: String = row.get(3)?;
+    let stale_after_secs: i64 = row.get(5)?;
+    let updated_at: String = row.get(7)?;
+    let freshness = freshness_status(Some(&updated_at), stale_after_secs).to_string();
     Ok(ResearchBrief {
         id: row.get(0)?,
         topic: row.get(1)?,
         summary: row.get(2)?,
         source_ids: parse_string_array(&source_ids),
         confidence: row.get(4)?,
-        stale_after_secs: row.get(5)?,
+        stale_after_secs,
+        freshness,
         created_at: row.get(6)?,
-        updated_at: row.get(7)?,
+        updated_at,
         use_count: row.get(8)?,
         score,
     })
@@ -250,7 +361,7 @@ pub async fn search_research_briefs(query: &str, limit: usize) -> Result<Vec<Res
         Ok(out)
     })?;
     for item in &mut rows {
-        item.score = score_text(query, &[&item.topic, &item.summary]) + item.confidence;
+        item.score = brief_rank_score(query, item);
     }
     rows.retain(|item| item.score > 0.0 || query.trim().is_empty());
     rows.sort_by(|a, b| {
@@ -392,6 +503,77 @@ mod tests {
         .unwrap();
         let matches = search_source_bookmarks("whats hermes", 5).await.unwrap();
         assert!(matches.iter().any(|m| m.id == item.id));
+        assert_eq!(
+            matches.iter().find(|m| m.id == item.id).unwrap().freshness,
+            "fresh"
+        );
         assert_eq!(delete_source(&item.id).await.unwrap(), 1);
+    }
+
+    #[test]
+    fn freshness_status_marks_old_sources_stale() {
+        let old = (chrono::Utc::now() - chrono::Duration::seconds(120)).to_rfc3339();
+        assert_eq!(freshness_status(Some(&old), 60), "stale");
+        assert_eq!(freshness_status(None, 60), "unknown");
+    }
+
+    #[tokio::test]
+    async fn source_search_does_not_return_unrelated_trusted_sources() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let item = add_source_bookmark(
+            &format!("Rust docs {}", marker),
+            "docs",
+            &format!("https://doc.rust-lang.org/{}", marker),
+            vec![format!("rust {}", marker)],
+            "Official Rust documentation",
+            1.0,
+            604800,
+        )
+        .await
+        .unwrap();
+        let matches = search_source_bookmarks("unrelated banana pasta", 5)
+            .await
+            .unwrap();
+        assert!(matches.iter().all(|m| m.id != item.id));
+        assert_eq!(delete_source(&item.id).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn source_ranking_prefers_exact_official_sources() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let low = add_source_bookmark(
+            &format!("Hermes fan note {}", marker),
+            "social",
+            &format!("https://example.com/hermes-social-{}", marker),
+            vec!["hermes".to_string()],
+            "Unofficial community mention",
+            0.2,
+            21600,
+        )
+        .await
+        .unwrap();
+        let official = add_source_bookmark(
+            &format!("Hermes Agent {}", marker),
+            "docs",
+            &format!(
+                "https://hermes-agent.nousresearch.com/docs/official-{}",
+                marker
+            ),
+            vec![format!("hermes official {}", marker)],
+            "Official Hermes Agent docs",
+            0.95,
+            604800,
+        )
+        .await
+        .unwrap();
+        let matches = search_source_bookmarks(&format!("Hermes Agent {}", marker), 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            matches.first().map(|m| m.id.as_str()),
+            Some(official.id.as_str())
+        );
+        assert_eq!(delete_source(&low.id).await.unwrap(), 1);
+        assert_eq!(delete_source(&official.id).await.unwrap(), 1);
     }
 }
