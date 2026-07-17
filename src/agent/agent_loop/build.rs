@@ -121,6 +121,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
     let pinned_memory = retrieve_pinned_identity_memories().await;
     let recent_session_part = recent_session_context(&ctx.session.messages, 2000);
+    let brief_context = retrieve_research_brief_context(ctx.user_content).await;
     let source_context = retrieve_source_context(ctx.user_content).await;
     let workflow_context = retrieve_workflow_context(ctx.user_content).await;
     let weak_model_rules = weak_model_operating_rules(&config.agents.defaults.model);
@@ -142,6 +143,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         + memory_part.chars().count()
         + pinned_memory.chars().count()
         + recent_session_part.chars().count()
+        + brief_context.chars().count()
         + source_context.chars().count()
         + workflow_context.chars().count()
         + weak_model_rules.chars().count()
@@ -186,7 +188,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     }
 
     ctx.system_prompt = format!(
-        "{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
         header,
         system_guidelines,
         activity_part,
@@ -194,6 +196,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         memory_part,
         pinned_memory,
         recent_session_part,
+        brief_context,
         source_context,
         workflow_context,
         weak_model_rules,
@@ -308,6 +311,76 @@ fn weak_model_operating_rules(model: &str) -> String {
         return String::new();
     }
     "\n\n[Small Model Operating Rules]\n- Use [Recent Session Context] before saying you do not know what this session discussed.\n- Use [Pinned Memory] before answering identity, persona, or preference questions.\n- For tool-heavy tasks, keep steps short and prefer exact tool schemas over guessing.\n- For broad tasks, research first, then make an implementation plan and todo list before editing.\n".to_string()
+}
+
+fn is_current_or_latest_query(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    [
+        "latest",
+        "current",
+        "today",
+        "now",
+        "new",
+        "recent",
+        "2026",
+        "price",
+        "version",
+        "news",
+        "what's new",
+        "whats new",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn format_research_brief_context_items(
+    items: &[crate::tools::shared_memory::ResearchBrief],
+    user_content: &str,
+) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    let current_sensitive = is_current_or_latest_query(user_content);
+    let mut out = String::from("\n\n[Relevant Research Briefs]\nUse these saved briefs first for simple definition/comparison questions. Do not call web/search tools when a fresh brief answers the question. Only refresh if freshness=stale or the user asks for latest/current data:\n");
+    if current_sensitive {
+        out.push_str("- Current/latest intent detected: verify against saved sources or web before final answer.\n");
+    } else {
+        out.push_str("- Current/latest intent not detected: prefer answering from fresh briefs/sources without extra fetching.\n");
+    }
+    for item in items.iter().take(3) {
+        let line = format!(
+            "- {} | freshness={} ttl={}s confidence={:.2} score={:.2} | summary: {}\n",
+            item.topic,
+            item.freshness,
+            item.stale_after_secs,
+            item.confidence,
+            item.score,
+            item.summary
+        );
+        if out.chars().count() + line.chars().count() > 3600 {
+            break;
+        }
+        out.push_str(&line);
+    }
+    out
+}
+
+async fn retrieve_research_brief_context(user_content: &str) -> String {
+    match crate::tools::shared_memory::search_research_briefs(user_content, 3).await {
+        Ok(items) => {
+            if let Some(best) = items.first().filter(|item| item.score >= 4.0) {
+                crate::channels::cli::send_notification(&format!(
+                    "◇ Research brief matched: {} ({})",
+                    best.topic, best.freshness
+                ));
+            }
+            format_research_brief_context_items(&items, user_content)
+        }
+        Err(err) => {
+            tracing::debug!(error = ?err, "research brief context retrieval skipped");
+            String::new()
+        }
+    }
 }
 
 fn format_source_context_items(items: &[crate::tools::shared_memory::SourceBookmark]) -> String {
@@ -853,6 +926,26 @@ mod tests {
         assert!(is_weak_or_risky_model("mimo-v2.5-free"));
         assert!(is_weak_or_risky_model("gemini-3.1-flash-lite"));
         assert!(!is_weak_or_risky_model("deepseek-v4-flash-free"));
+    }
+
+    #[test]
+    fn research_brief_context_discourages_unneeded_fetches() {
+        let item = crate::tools::shared_memory::ResearchBrief {
+            id: "id".to_string(),
+            topic: "mem0".to_string(),
+            summary: "Mem0 is a memory layer for AI agents.".to_string(),
+            source_ids: vec![],
+            confidence: 0.8,
+            stale_after_secs: 86400,
+            freshness: "fresh".to_string(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+            use_count: 0,
+            score: 9.0,
+        };
+        let block = format_research_brief_context_items(&[item], "what is mem0");
+        assert!(block.contains("Do not call web/search tools"));
+        assert!(block.contains("Current/latest intent not detected"));
     }
 
     #[test]

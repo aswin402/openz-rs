@@ -404,7 +404,9 @@ Inside `openz agent`, the user can issue direct slash commands:
 *   **Feature: deterministic source ranking:** Automatic source retrieval now prefers exact label/alias matches, official docs/repos/local paths, higher trust, higher reuse, and fresh sources. `/sources` remains only an inspection/debug command; the prompt uses ranked sources automatically.
 *   **Feature: stronger reusable workflow prompting:** Workflow matches now inject preconditions, concise steps, verification, risk, score, and instructions to record success/failure with `workflow_memory.record_run`, helping weak models reuse proven procedures instead of rediscovering tools.
 *   **UX: compact automatic context notices:** TUI now emits small `Sources matched` and `Workflow matched` notifications when saved context is automatically injected.
-*   **Feature: automatic research capture:** Successful web/search/research tool calls now save discovered URLs as `knowledge_source` bookmarks and persist a `research_brief` keyed to the user prompt, so repeated questions can reuse sources without manual commands.
+*   **Feature: automatic research capture:** Successful web/search/research tool calls now save discovered URLs as `knowledge_source` bookmarks and persist a canonical `research_brief`, so repeated questions can reuse sources without manual commands.
+*   **Feature: brief-first recall:** Fresh research briefs are injected before saved sources with explicit no-fetch guidance for simple definition/comparison prompts, so saved memory reduces unnecessary web calls.
+*   **UX: batched auto-capture notices:** Multiple research tool calls in one iteration now emit one compact auto-save notification instead of one notice per tool.
 *   **Hardening: forgiving research brief tool args:** `research_brief` now accepts weak-model aliases like `goal`, `context`, and `content`, and infers save/search action when `action` is omitted.
 *   **Chore:** Bumped version to `v0.0.54`.
 

@@ -730,6 +730,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         let mut should_halt = false;
         let mut tool_results = Vec::new();
         let mut assistant_tool_calls_json = Vec::new();
+        let mut capture_summaries: Vec<crate::tools::shared_memory::AutoCaptureSummary> =
+            Vec::new();
 
         for call in resp.tool_calls {
             // Break early if already cancelled (e.g. previous tool in batch was cancelled)
@@ -1004,10 +1006,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 )
                 .await
             {
-                crate::channels::cli::send_notification(&format!(
-                    "◇ [Knowledge] Auto-saved research: {} source(s), brief={} | {}",
-                    capture.sources_saved, capture.brief_saved, capture.topic
-                ));
+                capture_summaries.push(capture);
             }
             crate::agent::activity::update_activity(
                 ctx.session_key,
@@ -1038,6 +1037,21 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 }
             }
             assistant_tool_calls_json.push(assistant_tool_call);
+        }
+
+        if !capture_summaries.is_empty() {
+            let sources_saved: usize = capture_summaries.iter().map(|c| c.sources_saved).sum();
+            let briefs_saved = capture_summaries.iter().filter(|c| c.brief_saved).count();
+            let topics = capture_summaries
+                .iter()
+                .map(|c| c.topic.as_str())
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(", ");
+            crate::channels::cli::send_notification(&format!(
+                "◇ [Knowledge] Auto-saved research: {} source(s), {} brief(s) | {}",
+                sources_saved, briefs_saved, topics
+            ));
         }
 
         super::transcript::append_assistant_tool_calls(

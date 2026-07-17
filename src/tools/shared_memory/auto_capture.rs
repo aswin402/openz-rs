@@ -49,12 +49,53 @@ fn first_str<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
         .find_map(|key| value.get(*key).and_then(|v| v.as_str()))
 }
 
+pub fn canonical_research_topic(raw: &str) -> String {
+    let mut text = raw.trim().to_lowercase();
+    if let Ok(parsed) = reqwest::Url::parse(&text) {
+        if let Some(host) = parsed.host_str() {
+            let host = host.trim_start_matches("www.");
+            let path = parsed.path().trim_matches('/');
+            text = if host == "github.com" {
+                path.split('/').take(2).collect::<Vec<_>>().join("/")
+            } else if path.is_empty() {
+                host.to_string()
+            } else {
+                format!("{} {}", host, path.replace(['-', '_', '/'], " "))
+            };
+        }
+    }
+    for prefix in [
+        "what is ",
+        "whats ",
+        "what's ",
+        "tell me about ",
+        "research about ",
+        "research ",
+        "compare ",
+    ] {
+        if let Some(rest) = text.strip_prefix(prefix) {
+            text = rest.trim().to_string();
+        }
+    }
+    let stop = ["please", "and", "with", "from", "latest", "current"];
+    let words = text
+        .split(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '-')
+        .filter(|w| !w.is_empty() && !stop.contains(w))
+        .take(8)
+        .collect::<Vec<_>>();
+    if words.is_empty() {
+        raw.trim().chars().take(160).collect()
+    } else {
+        words.join(" ").chars().take(160).collect()
+    }
+}
+
 fn topic_from(tool_name: &str, args: &Value, user_content: &str) -> String {
     if let Some(topic) = first_str(
         args,
         &["query", "topic", "goal", "url", "repo", "repository"],
     ) {
-        return topic.trim().chars().take(160).collect();
+        return canonical_research_topic(topic);
     }
     if tool_name == "parallel_research" {
         if let Some(tasks) = args.get("tasks").and_then(|v| v.as_array()) {
@@ -65,11 +106,11 @@ fn topic_from(tool_name: &str, args: &Value, user_content: &str) -> String {
                 .collect::<Vec<_>>()
                 .join("; ");
             if !joined.trim().is_empty() {
-                return joined.chars().take(160).collect();
+                return canonical_research_topic(&joined);
             }
         }
     }
-    user_content.trim().chars().take(160).collect()
+    canonical_research_topic(user_content)
 }
 
 fn kind_for_url(url: &str) -> (&'static str, f64) {
@@ -200,13 +241,56 @@ fn dedupe_candidates(candidates: Vec<SourceCandidate>) -> Vec<SourceCandidate> {
 }
 
 fn result_summary(result: &Value) -> String {
-    match result {
-        Value::String(text) => text_excerpt(text, 1200),
-        Value::Array(items) => {
-            text_excerpt(&serde_json::to_string(items).unwrap_or_default(), 1200)
+    let mut parts = Vec::new();
+    fn collect(value: &Value, parts: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                let title = object_str(map, &["title", "name", "label"]).unwrap_or("");
+                let snippet = object_str(
+                    map,
+                    &["snippet", "summary", "description", "content", "text"],
+                )
+                .unwrap_or("");
+                let url = object_str(map, &["url", "uri", "link", "href"]).unwrap_or("");
+                if !title.is_empty() || !snippet.is_empty() {
+                    let mut line = String::new();
+                    if !title.is_empty() {
+                        line.push_str(title.trim());
+                    }
+                    if !snippet.is_empty() {
+                        if !line.is_empty() {
+                            line.push_str(": ");
+                        }
+                        line.push_str(&text_excerpt(snippet, 220));
+                    }
+                    if !url.is_empty() {
+                        line.push_str(" (");
+                        line.push_str(url);
+                        line.push(')');
+                    }
+                    parts.push(line);
+                }
+                for child in map.values() {
+                    collect(child, parts);
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|item| collect(item, parts)),
+            Value::String(text) => {
+                if parts.is_empty() {
+                    parts.push(text_excerpt(text, 900));
+                }
+            }
+            _ => {}
         }
-        Value::Object(_) => text_excerpt(&serde_json::to_string(result).unwrap_or_default(), 1200),
-        _ => String::new(),
+    }
+    collect(result, &mut parts);
+    if parts.is_empty() {
+        text_excerpt(&serde_json::to_string(result).unwrap_or_default(), 900)
+    } else {
+        text_excerpt(
+            &parts.into_iter().take(8).collect::<Vec<_>>().join("; "),
+            1200,
+        )
     }
 }
 
@@ -293,6 +377,11 @@ mod tests {
         .unwrap();
         assert_eq!(summary.sources_saved, 1);
         assert!(summary.brief_saved);
+        assert_eq!(
+            canonical_research_topic("https://github.com/mem0ai/mem0?utm_source=chatgpt.com"),
+            "mem0ai/mem0"
+        );
+        assert_eq!(canonical_research_topic("what is mem0"), "mem0");
         let matches = crate::tools::shared_memory::search_source_bookmarks(&marker, 5)
             .await
             .unwrap();

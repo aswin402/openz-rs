@@ -4,6 +4,7 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use super::auto_capture::canonical_research_topic;
 use super::db::{get_db_mutex, with_db};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -327,6 +328,7 @@ pub async fn save_research_brief(
     if topic.trim().is_empty() || summary.trim().is_empty() {
         return Err(anyhow!("topic and summary are required"));
     }
+    let canonical_topic = canonical_research_topic(topic);
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_rfc3339();
     let source_ids_json = serde_json::to_string(&source_ids)?;
@@ -337,12 +339,12 @@ pub async fn save_research_brief(
                 "INSERT INTO research_briefs (id, topic, summary, source_ids, confidence, stale_after_secs, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
                  ON CONFLICT(topic) DO UPDATE SET summary=excluded.summary, source_ids=excluded.source_ids, confidence=excluded.confidence, stale_after_secs=excluded.stale_after_secs, updated_at=excluded.updated_at",
-                params![id, topic.trim(), summary.trim(), source_ids_json, confidence.clamp(0.0, 1.0), stale_after_secs.max(60), now],
+                params![id, canonical_topic, summary.trim(), source_ids_json, confidence.clamp(0.0, 1.0), stale_after_secs.max(60), now],
             )?;
             Ok(())
         })?;
     }
-    search_research_briefs(topic, 1)
+    search_research_briefs(&canonical_topic, 1)
         .await?
         .into_iter()
         .next()
@@ -350,6 +352,12 @@ pub async fn save_research_brief(
 }
 
 pub async fn search_research_briefs(query: &str, limit: usize) -> Result<Vec<ResearchBrief>> {
+    let canonical_query = canonical_research_topic(query);
+    let search_query = if canonical_query.trim().is_empty() {
+        query
+    } else {
+        &canonical_query
+    };
     let _lock = get_db_mutex().lock().await;
     let mut rows = with_db(|conn| {
         let mut stmt = conn.prepare("SELECT id, topic, summary, source_ids, confidence, stale_after_secs, created_at, updated_at, use_count FROM research_briefs ORDER BY confidence DESC, use_count DESC, updated_at DESC LIMIT 1000")?;
@@ -361,7 +369,7 @@ pub async fn search_research_briefs(query: &str, limit: usize) -> Result<Vec<Res
         Ok(out)
     })?;
     for item in &mut rows {
-        item.score = brief_rank_score(query, item);
+        item.score = brief_rank_score(search_query, item);
     }
     rows.retain(|item| item.score > 0.0 || query.trim().is_empty());
     rows.sort_by(|a, b| {
@@ -374,11 +382,12 @@ pub async fn search_research_briefs(query: &str, limit: usize) -> Result<Vec<Res
 }
 
 pub async fn delete_research_brief(id_or_topic: &str) -> Result<usize> {
+    let canonical = canonical_research_topic(id_or_topic);
     let _lock = get_db_mutex().lock().await;
     with_db(|conn| {
         Ok(conn.execute(
-            "DELETE FROM research_briefs WHERE id = ?1 OR topic = ?1",
-            params![id_or_topic],
+            "DELETE FROM research_briefs WHERE id = ?1 OR topic = ?1 OR topic = ?2",
+            params![id_or_topic, canonical],
         )?)
     })
 }
@@ -524,9 +533,38 @@ mod tests {
             .unwrap();
         assert_eq!(res.get("status").and_then(|v| v.as_str()), Some("success"));
         let topic = format!("Hermes Agent comparison {}", marker);
+        let canonical = canonical_research_topic(&topic);
         let matches = search_research_briefs(&topic, 1).await.unwrap();
-        assert!(matches.iter().any(|m| m.topic == topic));
+        assert!(matches.iter().any(|m| m.topic == canonical));
         assert_eq!(delete_research_brief(&topic).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn research_brief_uses_canonical_topic_for_url_and_question() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let url_topic = format!("https://github.com/example/{marker}?utm_source=chatgpt.com");
+        save_research_brief(&url_topic, "First summary", vec![], 0.7, 86400)
+            .await
+            .unwrap();
+        save_research_brief(
+            &format!("what is {marker}"),
+            "Second summary",
+            vec![],
+            0.8,
+            86400,
+        )
+        .await
+        .unwrap();
+        let url_matches = search_research_briefs(&url_topic, 5).await.unwrap();
+        assert!(url_matches
+            .iter()
+            .any(|m| m.topic == format!("example/{marker}")));
+        let question_matches = search_research_briefs(&format!("what is {marker}"), 5)
+            .await
+            .unwrap();
+        assert!(question_matches.iter().any(|m| m.topic == marker));
+        let _ = delete_research_brief(&url_topic).await;
+        let _ = delete_research_brief(&marker).await;
     }
 
     #[tokio::test]

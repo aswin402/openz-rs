@@ -18,7 +18,9 @@ OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-
 - **Freshness-aware research memory:** source bookmarks and research briefs expose `fresh`, `stale`, or `unknown` status with TTLs. Stale/current-sensitive sources are injected with explicit refresh guidance before answering.
 - **Reusable workflow guidance:** matched workflow cards now inject preconditions, concise steps, verification, risk, and record-run instructions into the prompt, making repeated tasks easier for weak and strong models.
 - **Minimal TUI match notices:** when ranked source/workflow context is automatically injected, the TUI shows compact `Sources matched` / `Workflow matched` notices.
-- **Automatic research capture:** successful web/search/research tool calls now save discovered URLs as source bookmarks and store a research brief without waiting for the model to call `/sources` or `research_brief` manually.
+- **Automatic research capture:** successful web/search/research tool calls now save discovered URLs as source bookmarks and store a canonical research brief without waiting for the model to call `/sources` or `research_brief` manually.
+- **Brief-first recall:** fresh research briefs are injected before source links with explicit no-fetch guidance for simple “what is X” questions, reducing repeated web calls.
+- **Batched capture notices:** multiple research tool calls now produce one compact auto-save notice per tool iteration instead of spamming the TUI.
 - **Weak-model argument recovery:** `research_brief` accepts `goal`/`context`/`content` aliases and infers save/search action when weaker models omit `action`.
 - **Release baseline:** v0.0.53 remains the cleanup baseline for canonical session commands, selectable history/resume UX, TUI formatting, model reliability, and the first knowledge/workflow memory storage.
 
