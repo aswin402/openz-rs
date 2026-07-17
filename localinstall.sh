@@ -148,6 +148,19 @@ clean_target_if_requested() {
     cargo clean
 }
 
+
+openz_version_line() {
+    local bin="$1"
+    local output line
+    output="$($bin --version 2>/dev/null || true)"
+    output="$(printf '%s\n' "$output" | tr -d '\r' | sed 's/\x1b\[[0-9;]*[A-Za-z]//g')"
+    line="$(printf '%s\n' "$output" | grep -E 'openz v[0-9]+\.[0-9]+\.[0-9]+' | tail -n 1 || true)"
+    if [ -z "$line" ]; then
+        line="$(printf '%s\n' "$output" | sed -n '/[^[:space:]]/p' | tail -n 1)"
+    fi
+    printf '%s' "${line:-unknown}"
+}
+
 report_installed_binary() {
     local bin="$HOME/.cargo/bin/openz"
     if [ ! -x "$bin" ]; then
@@ -155,7 +168,7 @@ report_installed_binary() {
     fi
 
     local version
-    version="$($bin --version 2>/dev/null || true)"
+    version="$(openz_version_line "$bin")"
     local size_human
     size_human="$(du -h "$bin" 2>/dev/null | awk '{print $1}')"
     local size_bytes

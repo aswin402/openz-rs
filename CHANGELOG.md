@@ -402,7 +402,8 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 *   **Bugfix: TUI answer formatting restored:** Fixed the `<think>` sanitizer so it preserves markdown, bullets, and newlines in normal assistant answers instead of collapsing output into one long wrapped line.
 *   **Cleanup: canonical new-session command:** Removed duplicate `/new` slash command from TUI and Telegram. `/new-session` is now the single command for starting a clean session.
-*   **Feature: selectable resume UX:** Telegram `/resume` now presents inline buttons for previous sessions and a `Continue current session` option. TUI `/resume` now labels the first picker option as `Continue Current Session`.
+*   **Feature: selectable resume UX:** Telegram `/resume` now presents inline buttons for previous sessions and a `Continue current session` option. TUI now uses `/history` as the single interactive session restore command with a `Continue Current Session` option.
+*   **Bugfix: installer/update version reporting:** Local install/update scripts now extract a single plain `openz vX.Y.Z` line from `openz --version` so the post-install report no longer embeds a misaligned second ASCII logo.
 *   **Feature: model reliability registry:** Added persistent `~/.openz/model_registry.json` health tracking for model risk, failures, blank replies, think leaks, and fallback success.
 *   **Hardening: weak-model context support:** Added pinned identity/persona memory, recent session context, small-model operating rules, reasoning tag normalization, and self-improvement curator debounce.
 

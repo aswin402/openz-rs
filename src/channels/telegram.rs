@@ -780,6 +780,7 @@ impl super::Channel for TelegramChannel {
                                                              /tui-cancel — Alias for TUI cancel\n\
                                                              /local — Switch to local bot chat mode\n\
                                                              /new-session — Start a new local session\n\
+                                                             /resume — Resume a previous local session\n\
                                                              /model — Show the active default model\n\
                                                              /switch-model — Choose and save default provider/model\n\
                                                              /mcps — List configured MCP servers\n\

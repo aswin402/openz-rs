@@ -38,6 +38,14 @@ pub fn format_friendly_time(time: DateTime<Utc>) -> String {
 }
 
 pub fn select_menu_with_history(prompt: &str, history: &[HistoryItem]) -> Result<usize> {
+    select_menu_with_history_first_option(prompt, history, "Start New")
+}
+
+pub fn select_menu_with_history_first_option(
+    prompt: &str,
+    history: &[HistoryItem],
+    first_option: &str,
+) -> Result<usize> {
     use crossterm::event::{self, Event, KeyCode, KeyEventKind};
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     use std::io::stdout;
@@ -56,12 +64,6 @@ pub fn select_menu_with_history(prompt: &str, history: &[HistoryItem]) -> Result
     };
 
     print!("{}\r\n", prompt);
-
-    let first_option = if prompt.to_lowercase().contains("resume") {
-        "Continue Current Session"
-    } else {
-        "Start New"
-    };
 
     let draw_menu = |selected_idx: usize| {
         if selected_idx == 0 {

@@ -16,7 +16,7 @@ OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-
 
 - **TUI formatting fix:** preserved markdown/newlines while stripping provider `<think>...</think>` leaks, restoring readable multi-line answers in the terminal.
 - **Canonical session command:** replaced duplicate `/new` command with `/new-session` across TUI and Telegram command menus.
-- **Selectable session resume:** Telegram `/resume` now shows inline buttons for previous sessions plus a `Continue current session` option. TUI `/resume` now labels the first option as `Continue Current Session`.
+- **Selectable session resume:** Telegram `/resume` now shows inline buttons for previous sessions plus a `Continue current session` option. TUI uses `/history` as the single interactive session restore command.
 - **Model reliability hardening:** risky/unknown/free/small models are warned about, smoke-tested in the background, and tracked in `~/.openz/model_registry.json`.
 - **Weak-model context hardening:** pinned identity/persona memory and recent-session context are injected so small models behave better on identity and “what were we discussing” questions.
 

@@ -787,7 +787,7 @@ impl CliChannel {
                 continue;
             }
 
-            if trimmed == "/history" || trimmed == "/resume" {
+            if trimmed == "/history" {
                 let session_manager = {
                     let agent_loop = self.agent_loop.lock().await;
                     agent_loop.session_manager.clone()
@@ -797,19 +797,15 @@ impl CliChannel {
                         if history.is_empty() {
                             println!("No session history found.");
                         } else {
-                            match select_menu_with_history(
-                                "Resume previous session or continue current:",
+                            match select_menu_with_history_first_option(
+                                "Select a previous session or continue current:",
                                 &history,
+                                "Continue Current Session",
                             ) {
                                 Ok(selected) => {
                                     if selected == 0 {
-                                        let _ = crate::cli::archive_current_session(
-                                            &session_manager,
-                                            &session_key,
-                                        )
-                                        .await;
                                         println!(
-                                            "{}✓ Started new session.{}",
+                                            "{}✓ Continuing current session.{}",
                                             EMERALD_GREEN, COLOR_RESET
                                         );
                                     } else {

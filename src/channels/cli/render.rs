@@ -12,7 +12,6 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/exit", "Exit OpenZ"),
     ("/help", "List slash commands"),
     ("/history", "Restore/switch sessions using selection menu"),
-    ("/resume", "Resume a previous session"),
     ("/mcps", "List configured MCP servers"),
     ("/memory", "View metadata memory"),
     ("/model", "Show or change active default model"),
