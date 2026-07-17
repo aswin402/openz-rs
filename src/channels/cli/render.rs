@@ -17,6 +17,8 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/model", "Show or change active default model"),
     ("/new-session", "Start a new session"),
     ("/skill", "List active skills"),
+    ("/sources", "Search saved source bookmarks"),
+    ("/workflows", "Search reusable workflows"),
 ];
 
 fn char_display_width(c: char) -> usize {

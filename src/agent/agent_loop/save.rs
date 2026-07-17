@@ -166,10 +166,43 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             }
 
             #[derive(Deserialize)]
+            struct ReviewSource {
+                label: String,
+                kind: Option<String>,
+                uri: String,
+                #[serde(default)]
+                aliases: Vec<String>,
+                summary: Option<String>,
+                trust_score: Option<f64>,
+                stale_after_secs: Option<i64>,
+            }
+
+            #[derive(Deserialize)]
+            struct ReviewWorkflow {
+                name: String,
+                #[serde(default)]
+                triggers: Vec<String>,
+                summary: String,
+                #[serde(default)]
+                steps: serde_json::Value,
+                #[serde(default)]
+                preconditions: Vec<String>,
+                #[serde(default)]
+                verification: Vec<String>,
+                risk: Option<String>,
+                status: Option<String>,
+            }
+
+            #[derive(Deserialize)]
             struct ReviewResponse {
                 memory_updated: bool,
                 memory_content: String,
+                #[serde(default)]
                 skills_to_save: Vec<ReviewSkill>,
+                #[serde(default)]
+                sources_to_save: Vec<ReviewSource>,
+                #[serde(default)]
+                workflows_to_save: Vec<ReviewWorkflow>,
             }
 
             let recent_interactions = crate::tools::shared_memory::get_recent_interactions(15)
@@ -529,6 +562,63 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                 "{}◇ [Self-Improvement] Skill '{}' updated/created based on recent conversation.{}",
                                                 AURA_BLUE, skill.name, COLOR_RESET
                                             ));
+                                        }
+                                    }
+                                }
+
+                                for source in review.sources_to_save {
+                                    if !source.label.trim().is_empty()
+                                        && !source.uri.trim().is_empty()
+                                    {
+                                        match crate::tools::shared_memory::add_source_bookmark(
+                                            &source.label,
+                                            source.kind.as_deref().unwrap_or("other"),
+                                            &source.uri,
+                                            source.aliases,
+                                            source.summary.as_deref().unwrap_or(""),
+                                            source.trust_score.unwrap_or(0.6),
+                                            source.stale_after_secs.unwrap_or(604800),
+                                        )
+                                        .await
+                                        {
+                                            Ok(saved) => {
+                                                crate::channels::cli::send_notification(&format!(
+                                                    "{}◇ [Knowledge] Source saved: {}{}",
+                                                    AURA_BLUE, saved.label, COLOR_RESET
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!(session = %session_key, source = %source.label, error = %e, "Self-improvement curator failed to save source bookmark");
+                                            }
+                                        }
+                                    }
+                                }
+
+                                for workflow in review.workflows_to_save {
+                                    if !workflow.name.trim().is_empty()
+                                        && !workflow.summary.trim().is_empty()
+                                    {
+                                        match crate::tools::shared_memory::add_workflow_card(
+                                            &workflow.name,
+                                            workflow.triggers,
+                                            &workflow.summary,
+                                            workflow.steps,
+                                            workflow.preconditions,
+                                            workflow.verification,
+                                            workflow.risk.as_deref().unwrap_or("normal"),
+                                            workflow.status.as_deref().unwrap_or("draft"),
+                                        )
+                                        .await
+                                        {
+                                            Ok(saved) => {
+                                                crate::channels::cli::send_notification(&format!(
+                                                    "{}◇ [Workflow] Workflow saved: {}{}",
+                                                    AURA_BLUE, saved.name, COLOR_RESET
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!(session = %session_key, workflow = %workflow.name, error = %e, "Self-improvement curator failed to save workflow card");
+                                            }
                                         }
                                     }
                                 }

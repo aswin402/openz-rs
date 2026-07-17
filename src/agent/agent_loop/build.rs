@@ -121,6 +121,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
     let pinned_memory = retrieve_pinned_identity_memories().await;
     let recent_session_part = recent_session_context(&ctx.session.messages, 2000);
+    let source_context = retrieve_source_context(ctx.user_content).await;
+    let workflow_context = retrieve_workflow_context(ctx.user_content).await;
     let weak_model_rules = weak_model_operating_rules(&config.agents.defaults.model);
     let mut cross_session_memory = retrieve_cross_session_memories(ctx.user_content).await;
 
@@ -140,6 +142,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         + memory_part.chars().count()
         + pinned_memory.chars().count()
         + recent_session_part.chars().count()
+        + source_context.chars().count()
+        + workflow_context.chars().count()
         + weak_model_rules.chars().count()
         + vision_instruction.chars().count()
         + caveman_rules.chars().count();
@@ -182,7 +186,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     }
 
     ctx.system_prompt = format!(
-        "{}{}{}{}{}{}{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
         header,
         system_guidelines,
         activity_part,
@@ -190,6 +194,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         memory_part,
         pinned_memory,
         recent_session_part,
+        source_context,
+        workflow_context,
         weak_model_rules,
         cross_session_memory,
         vision_instruction,
@@ -302,6 +308,83 @@ fn weak_model_operating_rules(model: &str) -> String {
         return String::new();
     }
     "\n\n[Small Model Operating Rules]\n- Use [Recent Session Context] before saying you do not know what this session discussed.\n- Use [Pinned Memory] before answering identity, persona, or preference questions.\n- For tool-heavy tasks, keep steps short and prefer exact tool schemas over guessing.\n- For broad tasks, research first, then make an implementation plan and todo list before editing.\n".to_string()
+}
+
+fn format_source_context_items(items: &[crate::tools::shared_memory::SourceBookmark]) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("
+
+[Relevant Saved Sources]
+Use these known links, repos, docs, paths, or profiles before broad searching. Refresh stale/volatile sources when needed:
+");
+    for item in items.iter().take(4) {
+        let line = format!(
+            "- {} [{}] {} | aliases: {} | summary: {}
+",
+            item.label,
+            item.kind,
+            item.uri,
+            item.aliases.join(", "),
+            item.summary
+        );
+        if out.chars().count() + line.chars().count() > 3000 {
+            break;
+        }
+        out.push_str(&line);
+    }
+    out
+}
+
+async fn retrieve_source_context(user_content: &str) -> String {
+    match crate::tools::shared_memory::search_source_bookmarks(user_content, 4).await {
+        Ok(items) => format_source_context_items(&items),
+        Err(err) => {
+            tracing::debug!(error = ?err, "source context retrieval skipped");
+            String::new()
+        }
+    }
+}
+
+fn format_workflow_context_items(items: &[crate::tools::shared_memory::WorkflowCard]) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("
+
+[Relevant Reusable Workflows]
+If the user asks for a similar task, follow these proven procedures before rediscovering the steps. For high-risk workflows, request approval before execution:
+");
+    for item in items.iter().take(3) {
+        let line = format!(
+            "- {} [{}] risk={} success={} failure={} | triggers: {} | summary: {} | verify: {}
+",
+            item.name,
+            item.status,
+            item.risk,
+            item.success_count,
+            item.failure_count,
+            item.triggers.join(", "),
+            item.summary,
+            item.verification.join(", ")
+        );
+        if out.chars().count() + line.chars().count() > 3000 {
+            break;
+        }
+        out.push_str(&line);
+    }
+    out
+}
+
+async fn retrieve_workflow_context(user_content: &str) -> String {
+    match crate::tools::shared_memory::search_workflow_cards(user_content, 3, true).await {
+        Ok(items) => format_workflow_context_items(&items),
+        Err(err) => {
+            tracing::debug!(error = ?err, "workflow context retrieval skipped");
+            String::new()
+        }
+    }
 }
 
 async fn retrieve_pinned_identity_memories() -> String {

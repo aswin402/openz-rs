@@ -114,6 +114,74 @@ fn create_schema(conn: &Connection) -> Result<()> {
         )",
         [],
     )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS source_bookmarks (
+            id TEXT PRIMARY KEY,
+            label TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            uri TEXT NOT NULL,
+            aliases TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            trust_score REAL NOT NULL DEFAULT 0.5,
+            last_checked TEXT,
+            stale_after_secs INTEGER NOT NULL DEFAULT 604800,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            use_count INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(uri)
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_source_bookmarks_label ON source_bookmarks(label)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS research_briefs (
+            id TEXT PRIMARY KEY,
+            topic TEXT NOT NULL UNIQUE,
+            summary TEXT NOT NULL,
+            source_ids TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            stale_after_secs INTEGER NOT NULL DEFAULT 86400,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            use_count INTEGER NOT NULL DEFAULT 0
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS workflow_cards (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            triggers TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            steps_json TEXT NOT NULL,
+            preconditions TEXT NOT NULL,
+            verification TEXT NOT NULL,
+            risk TEXT NOT NULL DEFAULT 'normal',
+            status TEXT NOT NULL DEFAULT 'draft',
+            success_count INTEGER NOT NULL DEFAULT 0,
+            failure_count INTEGER NOT NULL DEFAULT 0,
+            last_used TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS workflow_runs (
+            id TEXT PRIMARY KEY,
+            workflow_id TEXT NOT NULL,
+            session_key TEXT NOT NULL,
+            task TEXT NOT NULL,
+            success INTEGER NOT NULL,
+            error TEXT,
+            timestamp TEXT NOT NULL,
+            FOREIGN KEY(workflow_id) REFERENCES workflow_cards(id)
+        )",
+        [],
+    )?;
     Ok(())
 }
 

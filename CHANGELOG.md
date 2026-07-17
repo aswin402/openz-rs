@@ -406,6 +406,7 @@ Inside `openz agent`, the user can issue direct slash commands:
 *   **Bugfix: installer/update version reporting:** Local install/update scripts now extract a single plain `openz vX.Y.Z` line from `openz --version` so the post-install report no longer embeds a misaligned second ASCII logo.
 *   **Feature: model reliability registry:** Added persistent `~/.openz/model_registry.json` health tracking for model risk, failures, blank replies, think leaks, and fallback success.
 *   **Hardening: weak-model context support:** Added pinned identity/persona memory, recent session context, small-model operating rules, reasoning tag normalization, and self-improvement curator debounce.
+*   **Feature: knowledge and workflow memory:** Added source bookmarks, research briefs, reusable workflow cards, CRUD tools (`knowledge_source`, `research_brief`, `workflow_memory`), prompt retrieval, curator learning hooks, and `/sources` + `/workflows` inspection commands.
 
 ### v0.0.52
 *   **Feature: Multi-channel TUI remote control and interruption:** Hardened channel-to-TUI control so Telegram can select among live `openz agent` sessions and all remote channels can interrupt active turns.

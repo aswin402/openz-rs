@@ -443,6 +443,98 @@ pub fn format_tool_outcome_summary(
                 format!("replace with {}", first_line)
             }
         }
+        "knowledge_source" => {
+            let action = arguments
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            match action {
+                "add" => {
+                    let label = res
+                        .get("source")
+                        .and_then(|v| v.get("label"))
+                        .and_then(|v| v.as_str())
+                        .or_else(|| arguments.get("label").and_then(|v| v.as_str()))
+                        .unwrap_or("source");
+                    format!("Source saved: {}", label)
+                }
+                "search" => {
+                    let count = res
+                        .get("matches")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.len())
+                        .unwrap_or(0);
+                    format!("Sources matched: {}", count)
+                }
+                "delete" => "Source deleted".to_string(),
+                "mark_checked" => "Source refreshed".to_string(),
+                _ => "Source memory updated".to_string(),
+            }
+        }
+        "research_brief" => {
+            let action = arguments
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            match action {
+                "save" => {
+                    let topic = res
+                        .get("brief")
+                        .and_then(|v| v.get("topic"))
+                        .and_then(|v| v.as_str())
+                        .or_else(|| arguments.get("topic").and_then(|v| v.as_str()))
+                        .unwrap_or("brief");
+                    format!("Research brief saved: {}", topic)
+                }
+                "search" => {
+                    let count = res
+                        .get("matches")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.len())
+                        .unwrap_or(0);
+                    format!("Research briefs matched: {}", count)
+                }
+                "delete" => "Research brief deleted".to_string(),
+                _ => "Research brief updated".to_string(),
+            }
+        }
+        "workflow_memory" => {
+            let action = arguments
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            match action {
+                "add" => {
+                    let name = res
+                        .get("workflow")
+                        .and_then(|v| v.get("name"))
+                        .and_then(|v| v.as_str())
+                        .or_else(|| arguments.get("name").and_then(|v| v.as_str()))
+                        .unwrap_or("workflow");
+                    format!("Workflow saved: {}", name)
+                }
+                "search" => {
+                    let count = res
+                        .get("matches")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.len())
+                        .unwrap_or(0);
+                    format!("Workflows matched: {}", count)
+                }
+                "record_run" => {
+                    let success_count = res
+                        .get("workflow")
+                        .and_then(|v| v.get("success_count"))
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    format!("Workflow updated: success {}", success_count)
+                }
+                "activate" => "Workflow activated".to_string(),
+                "deactivate" => "Workflow disabled".to_string(),
+                "delete" => "Workflow deleted".to_string(),
+                _ => "Workflow memory updated".to_string(),
+            }
+        }
         "exec_command" => {
             let status_code = res.get("status_code").and_then(|v| v.as_i64()).unwrap_or(0);
             let command_str = arguments

@@ -281,6 +281,8 @@ impl super::Channel for TelegramChannel {
                 { "command": "mcps", "description": "List configured MCP servers" },
                 { "command": "memory", "description": "View metadata memory for the session" },
                 { "command": "skill", "description": "List active skills" },
+                { "command": "sources", "description": "Search saved source bookmarks" },
+                { "command": "workflows", "description": "Search reusable workflows" },
                 { "command": "help", "description": "List available commands" },
                 { "command": "exit", "description": "Exit remote control mode" }
             ]
@@ -389,6 +391,8 @@ impl super::Channel for TelegramChannel {
                                         || cmd == "/memory"
                                         || cmd == "/skill"
                                         || cmd == "/skills"
+                                        || cmd == "/sources"
+                                        || cmd == "/workflows"
                                         || cmd.starts_with("/model")
                                         || cmd == "/switch-model"
                                         || cmd == "/help"
@@ -577,6 +581,76 @@ impl super::Channel for TelegramChannel {
                                                     "text": response,
                                                     "parse_mode": "Markdown"
                                                 });
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
+                                            });
+                                            continue;
+                                        }
+
+                                        if cmd == "/sources" {
+                                            let query = trimmed
+                                                .strip_prefix("/sources")
+                                                .unwrap_or("")
+                                                .trim()
+                                                .to_string();
+                                            let response = match crate::tools::shared_memory::search_source_bookmarks(&query, 10).await {
+                                                Ok(items) if items.is_empty() => "No saved sources matched.".to_string(),
+                                                Ok(items) => {
+                                                    let mut out = String::from("Saved sources:
+");
+                                                    for item in items {
+                                                        out.push_str(&format!("- {} [{}]
+  {}
+", item.label, item.kind, item.uri));
+                                                    }
+                                                    out
+                                                }
+                                                Err(e) => format!("Failed to search sources: {e}"),
+                                            };
+                                            tokio::spawn(async move {
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
+                                                let payload = serde_json::json!({"chat_id": chat_id, "text": response});
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
+                                            });
+                                            continue;
+                                        }
+
+                                        if cmd == "/workflows" {
+                                            let query = trimmed
+                                                .strip_prefix("/workflows")
+                                                .unwrap_or("")
+                                                .trim()
+                                                .to_string();
+                                            let response = match crate::tools::shared_memory::search_workflow_cards(&query, 10, false).await {
+                                                Ok(items) if items.is_empty() => "No reusable workflows matched.".to_string(),
+                                                Ok(items) => {
+                                                    let mut out = String::from("Reusable workflows:
+");
+                                                    for item in items {
+                                                        out.push_str(&format!("- {} [{}] success={} failure={}
+  {}
+", item.name, item.status, item.success_count, item.failure_count, item.summary));
+                                                    }
+                                                    out
+                                                }
+                                                Err(e) => format!("Failed to search workflows: {e}"),
+                                            };
+                                            tokio::spawn(async move {
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
+                                                let payload = serde_json::json!({"chat_id": chat_id, "text": response});
                                                 let _ = client
                                                     .post(&send_url)
                                                     .json(&payload)

@@ -765,6 +765,57 @@ impl CliChannel {
                 continue;
             }
 
+            if trimmed.starts_with("/sources") {
+                let query = trimmed.strip_prefix("/sources").unwrap_or("").trim();
+                match crate::tools::shared_memory::search_source_bookmarks(query, 10).await {
+                    Ok(items) if items.is_empty() => println!("No saved sources matched."),
+                    Ok(items) => {
+                        println!("{}Saved sources:{}", COLOR_BOLD, COLOR_RESET);
+                        for item in items {
+                            println!("  • {} [{}] {}", item.label, item.kind, item.uri);
+                            if !item.summary.trim().is_empty() {
+                                println!("    {}", item.summary.trim());
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!(
+                        "{}✕ Error searching sources: {}{}",
+                        ERROR_RED, e, COLOR_RESET
+                    ),
+                }
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
+                continue;
+            }
+
+            if trimmed.starts_with("/workflows") {
+                let query = trimmed.strip_prefix("/workflows").unwrap_or("").trim();
+                match crate::tools::shared_memory::search_workflow_cards(query, 10, false).await {
+                    Ok(items) if items.is_empty() => println!("No reusable workflows matched."),
+                    Ok(items) => {
+                        println!("{}Reusable workflows:{}", COLOR_BOLD, COLOR_RESET);
+                        for item in items {
+                            println!(
+                                "  • {} [{}] success={} failure={}",
+                                item.name, item.status, item.success_count, item.failure_count
+                            );
+                            println!("    {}", item.summary.trim());
+                        }
+                    }
+                    Err(e) => eprintln!(
+                        "{}✕ Error searching workflows: {}{}",
+                        ERROR_RED, e, COLOR_RESET
+                    ),
+                }
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
+                continue;
+            }
+
             if trimmed == "/mcps" {
                 let agent_loop = self.agent_loop.lock().await;
                 println!("{}Configured MCP Servers:{}", COLOR_BOLD, COLOR_RESET);

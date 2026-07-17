@@ -20,8 +20,8 @@ use crate::tools::remote::SendRemoteInputTool;
 use crate::tools::rust_docs::RustDocsTool;
 use crate::tools::semantic_search::SemanticSearchTool;
 use crate::tools::shared_memory::{
-    ArchiveResearchTool, ClearMemoryTool, DeleteMemoryTool, RecallMemoryTool, SearchResearchTool,
-    StoreMemoryTool, UpdateMemoryTool,
+    ArchiveResearchTool, ClearMemoryTool, DeleteMemoryTool, KnowledgeSourceTool, RecallMemoryTool,
+    ResearchBriefTool, SearchResearchTool, StoreMemoryTool, UpdateMemoryTool, WorkflowMemoryTool,
 };
 use crate::tools::shell::{ExecCommandTool, PythonSandboxTool};
 use crate::tools::social_search::SocialSearchTool;
@@ -73,6 +73,9 @@ fn register_core_tools(
     registry.register(std::sync::Arc::new(UpdateMemoryTool));
     registry.register(std::sync::Arc::new(ArchiveResearchTool));
     registry.register(std::sync::Arc::new(SearchResearchTool));
+    registry.register(std::sync::Arc::new(KnowledgeSourceTool));
+    registry.register(std::sync::Arc::new(ResearchBriefTool));
+    registry.register(std::sync::Arc::new(WorkflowMemoryTool));
     registry.register(std::sync::Arc::new(ZenflowEditTool {
         provider: provider.clone(),
     }));

@@ -262,6 +262,15 @@ mod tests {
         registry.register(std::sync::Arc::new(
             crate::tools::shared_memory::SearchResearchTool,
         ));
+        registry.register(std::sync::Arc::new(
+            crate::tools::shared_memory::KnowledgeSourceTool,
+        ));
+        registry.register(std::sync::Arc::new(
+            crate::tools::shared_memory::ResearchBriefTool,
+        ));
+        registry.register(std::sync::Arc::new(
+            crate::tools::shared_memory::WorkflowMemoryTool,
+        ));
 
         // Collect all registered tool names
         let tools = registry.to_openai_format();
@@ -368,6 +377,9 @@ mod tests {
             "update_memory",
             "archive_research",
             "search_research",
+            "knowledge_source",
+            "research_brief",
+            "workflow_memory",
         ];
 
         let seq_count = names.iter().filter(|n| seq_names.contains(n)).count();
@@ -398,12 +410,12 @@ mod tests {
             "Expected 32 memory extra tools, got {mem_extra_count}"
         );
         assert_eq!(
-            shared_count, 7,
-            "Expected 7 shared memory tools, got {shared_count}"
+            shared_count, 10,
+            "Expected 10 shared memory tools, got {shared_count}"
         );
         assert_eq!(
             names.len(),
-            5 + 21 + 12 + 32 + 7,
+            5 + 21 + 12 + 32 + 10,
             "Total tool count mismatch"
         );
     }

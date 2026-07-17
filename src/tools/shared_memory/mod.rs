@@ -3,7 +3,9 @@ pub mod consolidation;
 pub mod db;
 pub mod embeddings;
 pub mod interaction;
+pub mod knowledge;
 pub mod research;
+pub mod workflows;
 
 #[cfg(test)]
 pub mod tests;
@@ -24,3 +26,13 @@ pub use research::{
 
 pub use consolidation::consolidate_shared_memory;
 pub use interaction::{get_recent_interactions, log_interaction, update_interaction_errors};
+
+pub use knowledge::{
+    add_source_bookmark, delete_research_brief, delete_source, mark_source_checked,
+    save_research_brief, search_research_briefs, search_source_bookmarks, KnowledgeSourceTool,
+    ResearchBrief, ResearchBriefTool, SourceBookmark,
+};
+pub use workflows::{
+    add_workflow_card, delete_workflow, get_workflow_by_name, record_workflow_run,
+    search_workflow_cards, set_workflow_status, WorkflowCard, WorkflowMemoryTool,
+};
