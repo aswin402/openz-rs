@@ -995,6 +995,19 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             if let Some(err_val) = result_val.get("error").and_then(|v| v.as_str()) {
                 ctx.turn_errors
                     .push(format!("Tool {} returned error: {}", call.name, err_val));
+            } else if let Ok(Some(capture)) =
+                crate::tools::shared_memory::auto_capture_research_memory(
+                    &call.name,
+                    &call.arguments,
+                    &result_val,
+                    ctx.user_content,
+                )
+                .await
+            {
+                crate::channels::cli::send_notification(&format!(
+                    "◇ [Knowledge] Auto-saved research: {} source(s), brief={} | {}",
+                    capture.sources_saved, capture.brief_saved, capture.topic
+                ));
             }
             crate::agent::activity::update_activity(
                 ctx.session_key,

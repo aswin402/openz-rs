@@ -454,19 +454,45 @@ impl Tool for ResearchBriefTool {
         "CRUD and search topic-level research briefs that summarize prior research and link to saved source bookmarks."
     }
     fn parameters(&self) -> Value {
-        json!({"type":"object","properties":{"action":{"type":"string","enum":["save","search","delete"]},"topic":{"type":"string"},"summary":{"type":"string"},"source_ids":{"type":"array","items":{"type":"string"}},"confidence":{"type":"number"},"stale_after_secs":{"type":"integer"},"query":{"type":"string"},"id":{"type":"string"},"limit":{"type":"integer"}},"required":["action"]})
+        json!({"type":"object","properties":{"action":{"type":"string","enum":["save","search","delete"]},"topic":{"type":"string"},"goal":{"type":"string","description":"Alias for topic when saving a research brief."},"summary":{"type":"string"},"context":{"type":"string","description":"Alias for summary when saving a research brief."},"content":{"type":"string","description":"Alias for summary when saving a research brief."},"source_ids":{"type":"array","items":{"type":"string"}},"sources":{"type":"array","items":{"type":"string"}},"confidence":{"type":"number"},"stale_after_secs":{"type":"integer"},"query":{"type":"string"},"id":{"type":"string"},"limit":{"type":"integer"}},"required":[]})
     }
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments
-            .get("action")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing action"))?;
-        match action {
-            "save" => Ok(
-                json!({"status":"success","brief":save_research_brief(arguments.get("topic").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("Missing topic"))?, arguments.get("summary").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("Missing summary"))?, json_string_array(arguments.get("source_ids")), arguments.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.5), arguments.get("stale_after_secs").and_then(|v| v.as_i64()).unwrap_or(86400)).await?}),
-            ),
+        let inferred_action = if let Some(action) = arguments.get("action").and_then(|v| v.as_str())
+        {
+            action
+        } else if arguments.get("summary").is_some()
+            || arguments.get("context").is_some()
+            || arguments.get("content").is_some()
+        {
+            "save"
+        } else {
+            "search"
+        };
+        match inferred_action {
+            "save" => {
+                let topic = arguments
+                    .get("topic")
+                    .or_else(|| arguments.get("goal"))
+                    .or_else(|| arguments.get("query"))
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing topic/goal"))?;
+                let summary = arguments
+                    .get("summary")
+                    .or_else(|| arguments.get("context"))
+                    .or_else(|| arguments.get("content"))
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing summary/context"))?;
+                let source_ids = if arguments.get("source_ids").is_some() {
+                    json_string_array(arguments.get("source_ids"))
+                } else {
+                    json_string_array(arguments.get("sources"))
+                };
+                Ok(
+                    json!({"status":"success","brief":save_research_brief(topic, summary, source_ids, arguments.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.5), arguments.get("stale_after_secs").and_then(|v| v.as_i64()).unwrap_or(86400)).await?}),
+                )
+            }
             "search" => Ok(
-                json!({"status":"success","matches":search_research_briefs(arguments.get("query").and_then(|v| v.as_str()).unwrap_or(""), arguments.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize).await?}),
+                json!({"status":"success","matches":search_research_briefs(arguments.get("query").or_else(|| arguments.get("topic")).or_else(|| arguments.get("goal")).and_then(|v| v.as_str()).unwrap_or(""), arguments.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize).await?}),
             ),
             "delete" => {
                 let key = arguments
@@ -484,6 +510,24 @@ impl Tool for ResearchBriefTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn research_brief_accepts_goal_context_without_action() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let tool = ResearchBriefTool;
+        let res = tool
+            .call(&json!({
+                "goal": format!("Hermes Agent comparison {}", marker),
+                "context": "Hermes Agent is a Python/TypeScript self-improving AI agent framework."
+            }))
+            .await
+            .unwrap();
+        assert_eq!(res.get("status").and_then(|v| v.as_str()), Some("success"));
+        let topic = format!("Hermes Agent comparison {}", marker);
+        let matches = search_research_briefs(&topic, 1).await.unwrap();
+        assert!(matches.iter().any(|m| m.topic == topic));
+        assert_eq!(delete_research_brief(&topic).await.unwrap(), 1);
+    }
 
     #[tokio::test]
     async fn knowledge_source_crud_searches_aliases() {

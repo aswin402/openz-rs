@@ -1,0 +1,307 @@
+use anyhow::Result;
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use super::{add_source_bookmark, save_research_brief};
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AutoCaptureSummary {
+    pub sources_saved: usize,
+    pub brief_saved: bool,
+    pub topic: String,
+}
+
+#[derive(Debug, Clone)]
+struct SourceCandidate {
+    url: String,
+    label: String,
+    summary: String,
+    kind: String,
+    trust: f64,
+}
+
+fn url_regex() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"https?://[^\s\]\)>'\"}]+"#).unwrap())
+}
+
+fn is_research_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "web_search"
+            | "web_fetch"
+            | "crawl"
+            | "crawl_site"
+            | "parallel_research"
+            | "searchxyz_search_web"
+            | "searchxyz_read_url"
+            | "searchxyz_search_and_read"
+            | "searchxyz_deep_research"
+            | "searchxyz_site_map"
+            | "searchxyz_read_github_repo"
+            | "social_search"
+    )
+}
+
+fn first_str<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(|v| v.as_str()))
+}
+
+fn topic_from(tool_name: &str, args: &Value, user_content: &str) -> String {
+    if let Some(topic) = first_str(
+        args,
+        &["query", "topic", "goal", "url", "repo", "repository"],
+    ) {
+        return topic.trim().chars().take(160).collect();
+    }
+    if tool_name == "parallel_research" {
+        if let Some(tasks) = args.get("tasks").and_then(|v| v.as_array()) {
+            let joined = tasks
+                .iter()
+                .filter_map(|task| task.get("goal").and_then(|v| v.as_str()))
+                .take(3)
+                .collect::<Vec<_>>()
+                .join("; ");
+            if !joined.trim().is_empty() {
+                return joined.chars().take(160).collect();
+            }
+        }
+    }
+    user_content.trim().chars().take(160).collect()
+}
+
+fn kind_for_url(url: &str) -> (&'static str, f64) {
+    let lower = url.to_lowercase();
+    if lower.contains("github.com") || lower.contains("gitlab.com") {
+        ("repo", 0.85)
+    } else if lower.contains("/docs") || lower.contains("docs.") || lower.contains("documentation")
+    {
+        ("docs", 0.8)
+    } else if lower.contains("twitter.com")
+        || lower.contains("x.com")
+        || lower.contains("reddit.com")
+        || lower.contains("youtube.com")
+        || lower.contains("linkedin.com")
+    {
+        ("social", 0.55)
+    } else {
+        ("website", 0.65)
+    }
+}
+
+fn label_for_url(url: &str) -> String {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| {
+            let host = parsed.host_str()?.trim_start_matches("www.");
+            let path = parsed.path().trim_matches('/');
+            if path.is_empty() {
+                Some(host.to_string())
+            } else {
+                let last = path
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(path)
+                    .replace(['-', '_'], " ");
+                Some(format!("{} - {}", host, last))
+            }
+        })
+        .unwrap_or_else(|| url.chars().take(80).collect())
+}
+
+fn text_excerpt(text: &str, max_chars: usize) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(max_chars)
+        .collect()
+}
+
+fn object_str<'a>(obj: &'a serde_json::Map<String, Value>, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| obj.get(*key).and_then(|v| v.as_str()))
+}
+
+fn candidate_from_object(obj: &serde_json::Map<String, Value>) -> Option<SourceCandidate> {
+    let url = object_str(obj, &["url", "uri", "link", "href", "source"])?;
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return None;
+    }
+    let label = object_str(obj, &["title", "name", "label"])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| label_for_url(url));
+    let summary = object_str(
+        obj,
+        &["snippet", "summary", "content", "text", "description"],
+    )
+    .map(|s| text_excerpt(s, 240))
+    .unwrap_or_default();
+    let (kind, trust) = kind_for_url(url);
+    Some(SourceCandidate {
+        url: url.to_string(),
+        label,
+        summary,
+        kind: kind.to_string(),
+        trust,
+    })
+}
+
+fn collect_candidates(value: &Value, out: &mut Vec<SourceCandidate>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(candidate) = candidate_from_object(map) {
+                out.push(candidate);
+            }
+            for child in map.values() {
+                collect_candidates(child, out);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_candidates(item, out);
+            }
+        }
+        Value::String(text) => {
+            for mat in url_regex().find_iter(text) {
+                let url = mat
+                    .as_str()
+                    .trim_end_matches(['.', ',', ';', ':'])
+                    .to_string();
+                let (kind, trust) = kind_for_url(&url);
+                out.push(SourceCandidate {
+                    label: label_for_url(&url),
+                    summary: String::new(),
+                    kind: kind.to_string(),
+                    trust,
+                    url,
+                });
+            }
+        }
+        _ => {}
+    }
+}
+
+fn dedupe_candidates(candidates: Vec<SourceCandidate>) -> Vec<SourceCandidate> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for candidate in candidates {
+        if seen.insert(candidate.url.clone()) {
+            out.push(candidate);
+        }
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+fn result_summary(result: &Value) -> String {
+    match result {
+        Value::String(text) => text_excerpt(text, 1200),
+        Value::Array(items) => {
+            text_excerpt(&serde_json::to_string(items).unwrap_or_default(), 1200)
+        }
+        Value::Object(_) => text_excerpt(&serde_json::to_string(result).unwrap_or_default(), 1200),
+        _ => String::new(),
+    }
+}
+
+pub async fn auto_capture_research_memory(
+    tool_name: &str,
+    arguments: &Value,
+    result: &Value,
+    user_content: &str,
+) -> Result<Option<AutoCaptureSummary>> {
+    if !is_research_tool(tool_name) || result.get("error").is_some() {
+        return Ok(None);
+    }
+
+    let topic = topic_from(tool_name, arguments, user_content);
+    if topic.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let mut candidates = Vec::new();
+    collect_candidates(arguments, &mut candidates);
+    collect_candidates(result, &mut candidates);
+    let candidates = dedupe_candidates(candidates);
+
+    let mut source_ids = Vec::new();
+    for candidate in candidates {
+        if let Ok(saved) = add_source_bookmark(
+            &candidate.label,
+            &candidate.kind,
+            &candidate.url,
+            vec![topic.clone()],
+            &candidate.summary,
+            candidate.trust,
+            0,
+        )
+        .await
+        {
+            source_ids.push(saved.id);
+        }
+    }
+
+    let summary = result_summary(result);
+    let brief_saved = if !summary.trim().is_empty() {
+        save_research_brief(&topic, &summary, source_ids.clone(), 0.65, 0)
+            .await
+            .is_ok()
+    } else {
+        false
+    };
+
+    if source_ids.is_empty() && !brief_saved {
+        return Ok(None);
+    }
+
+    Ok(Some(AutoCaptureSummary {
+        sources_saved: source_ids.len(),
+        brief_saved,
+        topic,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn auto_capture_saves_sources_and_brief_from_search_results() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let topic = format!("Hermes Agent {}", marker);
+        let result = serde_json::json!([
+            {
+                "title": format!("Hermes Agent docs {}", marker),
+                "url": format!("https://hermes-agent.nousresearch.com/docs/{}", marker),
+                "snippet": "Official Hermes Agent documentation"
+            }
+        ]);
+        let summary = auto_capture_research_memory(
+            "web_search",
+            &serde_json::json!({"query": topic}),
+            &result,
+            "what is hermes agent",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(summary.sources_saved, 1);
+        assert!(summary.brief_saved);
+        let matches = crate::tools::shared_memory::search_source_bookmarks(&marker, 5)
+            .await
+            .unwrap();
+        assert!(matches.iter().any(|m| m.uri.contains(&marker)));
+        for item in matches.into_iter().filter(|m| m.uri.contains(&marker)) {
+            let _ = crate::tools::shared_memory::delete_source(&item.id).await;
+        }
+        let _ =
+            crate::tools::shared_memory::delete_research_brief(&format!("Hermes Agent {}", marker))
+                .await;
+    }
+}
