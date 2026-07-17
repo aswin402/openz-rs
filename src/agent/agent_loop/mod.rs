@@ -192,6 +192,22 @@ impl AgentLoop {
             cancel_aware_with_spinner(activity_msg, cwf_cancel_initial, chat_fut).await;
 
         if chat_result.is_err() {
+            if let Err(ref err) = chat_result {
+                let provider_name = self.config.agents.defaults.provider.as_str();
+                let model_name = self.config.agents.defaults.model.as_str();
+                let risk = crate::channels::classify_model_risk(provider_name, model_name);
+                let _ = crate::model_registry::record_model_failure(
+                    provider_name,
+                    model_name,
+                    risk.tier,
+                    risk.risky,
+                    risk.reasons
+                        .iter()
+                        .map(|reason| reason.to_string())
+                        .collect(),
+                    &err.to_string(),
+                );
+            }
             if is_cancelled() {
                 return Err(anyhow::anyhow!("Cancelled by user"));
             }
@@ -228,6 +244,27 @@ impl AgentLoop {
                         cancel_aware_with_spinner(activity_msg, cwf_cancel_initial, chat_fut).await;
                     if chat_result.is_ok() {
                         resolved_fallback = true;
+                        let fallback_provider_name = fallback_model
+                            .split_once('/')
+                            .map(|(provider, _)| provider)
+                            .unwrap_or("auto");
+                        let risk = crate::channels::classify_model_risk(
+                            fallback_provider_name,
+                            &fallback_model,
+                        );
+                        let _ = crate::model_registry::record_model_success(
+                            fallback_provider_name,
+                            &fallback_model,
+                            risk.tier,
+                            risk.risky,
+                            risk.reasons
+                                .iter()
+                                .map(|reason| reason.to_string())
+                                .collect(),
+                            false,
+                            false,
+                            true,
+                        );
                         *active_provider = fallback_provider;
                         break;
                     }
@@ -269,6 +306,22 @@ impl AgentLoop {
             cancel_aware_with_spinner(activity_msg, csf_cancel_initial, chat_fut).await;
 
         if chat_result.is_err() {
+            if let Err(ref err) = chat_result {
+                let provider_name = self.config.agents.defaults.provider.as_str();
+                let model_name = self.config.agents.defaults.model.as_str();
+                let risk = crate::channels::classify_model_risk(provider_name, model_name);
+                let _ = crate::model_registry::record_model_failure(
+                    provider_name,
+                    model_name,
+                    risk.tier,
+                    risk.risky,
+                    risk.reasons
+                        .iter()
+                        .map(|reason| reason.to_string())
+                        .collect(),
+                    &err.to_string(),
+                );
+            }
             let mut fallbacks = Vec::new();
             for fallback in &self.config.agents.defaults.fallback_models {
                 if let Some(s) = fallback.as_str() {
@@ -301,6 +354,27 @@ impl AgentLoop {
                         cancel_aware_with_spinner(activity_msg, csf_cancel_initial, chat_fut).await;
                     if chat_result.is_ok() {
                         resolved_fallback = true;
+                        let fallback_provider_name = fallback_model
+                            .split_once('/')
+                            .map(|(provider, _)| provider)
+                            .unwrap_or("auto");
+                        let risk = crate::channels::classify_model_risk(
+                            fallback_provider_name,
+                            &fallback_model,
+                        );
+                        let _ = crate::model_registry::record_model_success(
+                            fallback_provider_name,
+                            &fallback_model,
+                            risk.tier,
+                            risk.risky,
+                            risk.reasons
+                                .iter()
+                                .map(|reason| reason.to_string())
+                                .collect(),
+                            false,
+                            false,
+                            true,
+                        );
                         *active_provider = fallback_provider;
                         break;
                     }

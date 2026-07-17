@@ -409,6 +409,12 @@ impl LLMProvider for OpenAIProvider {
         }).unwrap_or_default();
 
         let mut content = choice.message.content.clone();
+        let mut reasoning_content = choice.message.reasoning_content.clone();
+        if let Some(text) = content.take() {
+            let (clean_content, extracted_reasoning) = split_think_blocks(&text);
+            content = clean_content;
+            reasoning_content = merge_reasoning(reasoning_content, extracted_reasoning);
+        }
 
         if tool_calls.is_empty() {
             if let Some(ref text) = content {
@@ -427,7 +433,7 @@ impl LLMProvider for OpenAIProvider {
                 .finish_reason
                 .clone()
                 .unwrap_or_else(|| "stop".to_string()),
-            reasoning_content: choice.message.reasoning_content.clone(),
+            reasoning_content,
         })
     }
 
@@ -693,6 +699,80 @@ impl LLMProvider for OpenAIProvider {
     }
 }
 
+pub fn split_think_blocks(content: &str) -> (Option<String>, Option<String>) {
+    if !content.contains("<think>") {
+        return (
+            if content.trim().is_empty() {
+                None
+            } else {
+                Some(content.to_string())
+            },
+            None,
+        );
+    }
+
+    let mut visible = String::new();
+    let mut reasoning_parts: Vec<String> = Vec::new();
+    let mut rest = content;
+
+    loop {
+        let Some(start) = rest.find("<think>") else {
+            visible.push_str(rest);
+            break;
+        };
+        visible.push_str(&rest[..start]);
+        let after_start = &rest[start + "<think>".len()..];
+        let Some(end) = after_start.find("</think>") else {
+            visible.push_str(rest);
+            break;
+        };
+        let reasoning = after_start[..end].trim();
+        if !reasoning.is_empty() {
+            reasoning_parts.push(reasoning.to_string());
+        }
+        rest = &after_start[end + "</think>".len()..];
+    }
+
+    let mut normalized_visible = String::new();
+    let mut last_was_horizontal_space = false;
+    for ch in visible.trim().chars() {
+        if ch == ' ' || ch == '\t' {
+            if !last_was_horizontal_space {
+                normalized_visible.push(' ');
+            }
+            last_was_horizontal_space = true;
+        } else {
+            normalized_visible.push(ch);
+            last_was_horizontal_space = false;
+        }
+    }
+    let visible = normalized_visible;
+    let reasoning = reasoning_parts.join("\n\n---\n\n");
+
+    let visible = if visible.is_empty() {
+        None
+    } else {
+        Some(visible)
+    };
+    let reasoning = if reasoning.trim().is_empty() {
+        None
+    } else {
+        Some(reasoning)
+    };
+    (visible, reasoning)
+}
+
+pub fn merge_reasoning(existing: Option<String>, extracted: Option<String>) -> Option<String> {
+    match (existing, extracted) {
+        (Some(a), Some(b)) if !a.trim().is_empty() && !b.trim().is_empty() => {
+            Some(format!("{}\n\n---\n\n{}", a.trim(), b.trim()))
+        }
+        (Some(a), _) if !a.trim().is_empty() => Some(a),
+        (_, Some(b)) if !b.trim().is_empty() => Some(b),
+        _ => None,
+    }
+}
+
 pub fn parse_fallback_tool_calls(content: &str) -> Vec<ToolCallRequest> {
     let mut tool_calls = Vec::new();
 
@@ -761,6 +841,37 @@ fn extract_tool_call(val: &serde_json::Value) -> Option<ToolCallRequest> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_think_blocks_preserves_markdown_without_think_tags() {
+        let markdown = "## Title\n\n- one\n- two\n\nFinal paragraph.";
+        let (content, reasoning) = split_think_blocks(markdown);
+        assert_eq!(content.as_deref(), Some(markdown));
+        assert_eq!(reasoning, None);
+    }
+
+    #[test]
+    fn split_think_blocks_strips_single_block_from_visible_content() {
+        let (content, reasoning) =
+            split_think_blocks("<think>private reasoning</think>\n\nfinal answer");
+        assert_eq!(content.as_deref(), Some("final answer"));
+        assert_eq!(reasoning.as_deref(), Some("private reasoning"));
+    }
+
+    #[test]
+    fn split_think_blocks_strips_multiple_blocks_and_preserves_answer() {
+        let (content, reasoning) =
+            split_think_blocks("before <think>one</think> middle <think>two</think> after");
+        assert_eq!(content.as_deref(), Some("before middle after"));
+        assert_eq!(reasoning.as_deref(), Some("one\n\n---\n\ntwo"));
+    }
+
+    #[test]
+    fn split_think_blocks_handles_think_only_content() {
+        let (content, reasoning) = split_think_blocks("<think>private only</think>");
+        assert_eq!(content, None);
+        assert_eq!(reasoning.as_deref(), Some("private only"));
+    }
 
     #[tokio::test]
     async fn test_serialize_messages_vision_fallback() {

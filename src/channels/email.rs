@@ -221,6 +221,35 @@ impl super::Channel for EmailChannel {
                                     return;
                                 }
 
+                                let session_key = format!("email_{}", from);
+                                if let Some(response_text) =
+                                    crate::channels::session_command_text_response(
+                                        &agent_clone.session_manager,
+                                        &session_key,
+                                        &body,
+                                    )
+                                    .await
+                                {
+                                    let reply_res = send_reply_email(
+                                        &smtp_server,
+                                        smtp_port,
+                                        &user_clone,
+                                        &pass_clone,
+                                        &from,
+                                        &reply_subject,
+                                        &response_text,
+                                    )
+                                    .await;
+                                    if let Err(e) = reply_res {
+                                        tracing::error!(
+                                            "Failed to send session-command reply email to {}: {:?}",
+                                            from,
+                                            e
+                                        );
+                                    }
+                                    return;
+                                }
+
                                 if let Some(response_text) =
                                     crate::channels::model_switch_text_response(&body)
                                 {
@@ -244,7 +273,6 @@ impl super::Channel for EmailChannel {
                                     return;
                                 }
 
-                                let session_key = format!("email_{}", from);
                                 match agent_clone.run(&body, &session_key).await {
                                     Ok(res) => {
                                         let reply_res = send_reply_email(

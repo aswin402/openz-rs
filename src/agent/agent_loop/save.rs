@@ -2,6 +2,26 @@ use super::{get_session_lock, AgentLoop, TurnContext, TurnState};
 use crate::agent::style::*;
 use anyhow::Result;
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+static CURATOR_LAST_SPAWN: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+
+fn should_spawn_curator(session_key: &str, debounce: Duration) -> bool {
+    let now = Instant::now();
+    let registry = CURATOR_LAST_SPAWN.get_or_init(|| Mutex::new(HashMap::new()));
+    let Ok(mut guard) = registry.lock() else {
+        return true;
+    };
+    if let Some(last) = guard.get(session_key) {
+        if now.duration_since(*last) < debounce {
+            return false;
+        }
+    }
+    guard.insert(session_key.to_string(), now);
+    true
+}
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
     let config = &ctx.config;
@@ -42,6 +62,13 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     }
 
     if !ctx.user_content.starts_with('/') {
+        if !should_spawn_curator(ctx.session_key, Duration::from_secs(20)) {
+            tracing::debug!(
+                session = %ctx.session_key,
+                "Skipping self-improvement curator spawn during debounce window"
+            );
+            return Ok(TurnState::Done);
+        }
         let session_manager = loop_ref.session_manager.clone();
         let session_key = ctx.session_key.to_string();
         let provider = ctx.active_provider.clone();
@@ -385,12 +412,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                         if latest_session.updated_at != initial_updated_at
                                             || latest_session.messages.len() != initial_msg_count
                                         {
-                                            let msg = "Aborted memory update: session was modified concurrently".to_string();
+                                            let msg = "Skipped memory update: session was modified concurrently".to_string();
                                             error_msg = Some(msg.clone());
-                                            crate::channels::cli::send_notification(&format!(
-                                                "{}▲ [Self-Improvement] Curator update aborted: session was modified concurrently.{}",
-                                                AURA_GOLD, COLOR_RESET
-                                            ));
+                                            tracing::debug!(
+                                                session = %session_key,
+                                                "Self-improvement curator skipped stale write because session changed concurrently"
+                                            );
                                         } else {
                                             latest_session.metadata.insert(
                                                 "memory".to_string(),
@@ -537,4 +564,22 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     }
 
     Ok(TurnState::Done)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn curator_spawn_debounces_fast_repeated_session() {
+        let key = format!(
+            "test-curator-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        assert!(should_spawn_curator(&key, Duration::from_secs(20)));
+        assert!(!should_spawn_curator(&key, Duration::from_secs(20)));
+    }
 }

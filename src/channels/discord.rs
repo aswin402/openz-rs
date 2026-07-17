@@ -309,6 +309,31 @@ async fn connect_and_listen(
                                         .await;
                                     continue;
                                 }
+                                let discord_session_key = format!("discord:{}", payload.channel_id);
+                                if let Some(response_text) =
+                                    crate::channels::session_command_text_response(
+                                        &agent_loop.session_manager,
+                                        &discord_session_key,
+                                        &payload.content,
+                                    )
+                                    .await
+                                {
+                                    let send_url = format!(
+                                        "https://discord.com/api/v10/channels/{}/messages",
+                                        payload.channel_id
+                                    );
+                                    for chunk in chunk_message(&response_text, 2000) {
+                                        let reply_payload = serde_json::json!({ "content": chunk });
+                                        let _ = client
+                                            .post(&send_url)
+                                            .header("Authorization", format!("Bot {}", bot_token))
+                                            .json(&reply_payload)
+                                            .send()
+                                            .await;
+                                    }
+                                    continue;
+                                }
+
                                 if let Some(response_text) =
                                     crate::channels::model_switch_text_response(&payload.content)
                                 {

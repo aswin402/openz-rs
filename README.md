@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.52`
+# OpenZ 🦊 `v0.0.53`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -12,13 +12,13 @@ OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-
 
 ---
 
-## What Changed In `v0.0.52`
+## What Changed In `v0.0.53`
 
-- **Multi-channel TUI remote control:** Telegram `/remote` now selects among live `openz agent` sessions, forwards prompts to the selected TUI, and exits remote mode with `/local` or `/exit`.
-- **Remote interruption parity:** Telegram, Discord, WhatsApp, WebSocket browser chat, and Email now support `/stop`; `/cancel`, `/tui-esc`, and `/tui-cancel` mirror TUI interrupt behavior from remote channels.
-- **Channel model switching:** Telegram supports `/switch-model` with provider/model buttons. Discord, WhatsApp, WebSocket, and Email support `/switch-model`, `/switch-model <provider>`, and `/switch-model <provider> <model>`.
-- **Balanced local update mode:** `localinstall.sh` and `localupdate.sh` now support `--balanced`/`--moderate` for lower RAM/ROM pressure without the very slow `--low-resource` path.
-- **Runtime model reload:** channel-triggered provider/model changes are resolved from config on later turns, so background channels can switch providers cleanly.
+- **TUI formatting fix:** preserved markdown/newlines while stripping provider `<think>...</think>` leaks, restoring readable multi-line answers in the terminal.
+- **Canonical session command:** replaced duplicate `/new` command with `/new-session` across TUI and Telegram command menus.
+- **Selectable session resume:** Telegram `/resume` now shows inline buttons for previous sessions plus a `Continue current session` option. TUI `/resume` now labels the first option as `Continue Current Session`.
+- **Model reliability hardening:** risky/unknown/free/small models are warned about, smoke-tested in the background, and tracked in `~/.openz/model_registry.json`.
+- **Weak-model context hardening:** pinned identity/persona memory and recent-session context are injected so small models behave better on identity and “what were we discussing” questions.
 
 ---
 

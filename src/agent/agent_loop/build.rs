@@ -119,6 +119,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         ""
     };
 
+    let pinned_memory = retrieve_pinned_identity_memories().await;
+    let recent_session_part = recent_session_context(&ctx.session.messages, 2000);
+    let weak_model_rules = weak_model_operating_rules(&config.agents.defaults.model);
     let mut cross_session_memory = retrieve_cross_session_memories(ctx.user_content).await;
 
     // Calculate total character limit and base length
@@ -135,6 +138,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         + activity_part.chars().count()
         + summary_part.chars().count()
         + memory_part.chars().count()
+        + pinned_memory.chars().count()
+        + recent_session_part.chars().count()
+        + weak_model_rules.chars().count()
         + vision_instruction.chars().count()
         + caveman_rules.chars().count();
 
@@ -176,12 +182,15 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     }
 
     ctx.system_prompt = format!(
-        "{}{}{}{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}{}{}{}{}",
         header,
         system_guidelines,
         activity_part,
         summary_part,
         memory_part,
+        pinned_memory,
+        recent_session_part,
+        weak_model_rules,
         cross_session_memory,
         vision_instruction,
         skills_part,
@@ -189,6 +198,170 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     );
     ctx.messages = ctx.session.messages.clone();
     Ok(TurnState::Run)
+}
+
+fn recent_session_context(messages: &[crate::session::Message], max_chars: usize) -> String {
+    let mut lines: Vec<String> = messages
+        .iter()
+        .rev()
+        .filter(|msg| msg.role == "user" || msg.role == "assistant")
+        .take(6)
+        .map(|msg| {
+            let content = msg.content.split_whitespace().collect::<Vec<_>>().join(" ");
+            let label = if msg.role == "user" {
+                "User"
+            } else {
+                "Assistant"
+            };
+            format!("- {}: {}", label, content)
+        })
+        .collect();
+    lines.reverse();
+    if lines.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\n\n[Recent Session Context]\nUse these latest turns before claiming there is no current-session context:\n");
+    for line in lines {
+        if out.chars().count() + line.chars().count() + 1 > max_chars {
+            break;
+        }
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out
+}
+
+fn is_identity_or_persona_query(text: &str) -> bool {
+    let normalized = text.to_lowercase();
+    [
+        "my name",
+        "who am i",
+        "what am i called",
+        "what do you know about me",
+        "remember about me",
+        "your name",
+        "who are you",
+        "what are you called",
+        "persona",
+        "personality",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn identity_memory_candidate(text: &str) -> bool {
+    let normalized = text.to_lowercase();
+    [
+        "name",
+        "called",
+        "aswin",
+        "mivi",
+        "persona",
+        "personality",
+        "friend",
+        "preference",
+        "prefers",
+        "wants",
+        "likes",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn is_weak_or_risky_model(model: &str) -> bool {
+    let m = model.to_lowercase();
+    if m == "deepseek-v4-flash-free" {
+        return false;
+    }
+    [
+        "1b",
+        "2b",
+        "3b",
+        "4b",
+        "6b",
+        "7b",
+        "8b",
+        "9b",
+        "small",
+        "mini",
+        "lite",
+        "free",
+        "preview",
+        "experimental",
+        "beta",
+        "pickle",
+        "mimo",
+        "hy3",
+    ]
+    .iter()
+    .any(|needle| m.contains(needle))
+}
+
+fn weak_model_operating_rules(model: &str) -> String {
+    if !is_weak_or_risky_model(model) {
+        return String::new();
+    }
+    "\n\n[Small Model Operating Rules]\n- Use [Recent Session Context] before saying you do not know what this session discussed.\n- Use [Pinned Memory] before answering identity, persona, or preference questions.\n- For tool-heavy tasks, keep steps short and prefer exact tool schemas over guessing.\n- For broad tasks, research first, then make an implementation plan and todo list before editing.\n".to_string()
+}
+
+async fn retrieve_pinned_identity_memories() -> String {
+    let mut entries: Vec<String> = Vec::new();
+
+    let _lock = crate::tools::shared_memory::get_db_mutex().lock().await;
+    let cognitive_rows = crate::tools::shared_memory::with_db(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT text FROM cognitive_memory WHERE importance >= 0.85 ORDER BY importance DESC, last_accessed DESC LIMIT 24",
+        )?;
+        let mapped = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut collected = Vec::new();
+        for item in mapped {
+            collected.push(item?);
+        }
+        Ok(collected)
+    });
+    if let Ok(rows) = cognitive_rows {
+        entries.extend(
+            rows.into_iter()
+                .filter(|text| identity_memory_candidate(text)),
+        );
+    }
+    drop(_lock);
+
+    let semantic_rows = crate::tools::graph_memory::with_db(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT raw_text FROM semantic_metadata WHERE valid_until IS NULL AND importance >= 0.85 ORDER BY timestamp DESC LIMIT 48",
+        )?;
+        let mapped = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut collected = Vec::new();
+        for item in mapped {
+            collected.push(item?);
+        }
+        Ok(collected)
+    })
+    .unwrap_or_default();
+    entries.extend(
+        semantic_rows
+            .into_iter()
+            .filter(|text| identity_memory_candidate(text)),
+    );
+
+    let mut seen = std::collections::HashSet::new();
+    let mut out = String::new();
+    for entry in entries {
+        let normalized = entry.trim().to_lowercase();
+        if normalized.is_empty() || !seen.insert(normalized) {
+            continue;
+        }
+        if out.is_empty() {
+            out.push_str("\n\n[Pinned Memory]\nUse these stable identity/persona/preference facts before guessing:\n");
+        }
+        let line = format!("- {}\n", entry.trim());
+        if out.chars().count() + line.chars().count() > 1500 {
+            break;
+        }
+        out.push_str(&line);
+    }
+    out
 }
 
 fn memory_query_terms(text: &str) -> std::collections::HashSet<String> {
@@ -222,6 +395,7 @@ fn memory_relevance_score(query_terms: &std::collections::HashSet<String>, text:
 
 async fn retrieve_cross_session_memories(user_content: &str) -> String {
     let query_terms = memory_query_terms(user_content);
+    let wants_identity = is_identity_or_persona_query(user_content);
     let mut all_entries: Vec<(f32, String)> = Vec::new();
     let uid = "*";
     let aid = "*";
@@ -257,7 +431,10 @@ async fn retrieve_cross_session_memories(user_content: &str) -> String {
                 )
                 .num_seconds() as f32
                 / 86400.0;
-            let relevance = memory_relevance_score(&query_terms, &text);
+            let mut relevance = memory_relevance_score(&query_terms, &text);
+            if relevance == 0.0 && wants_identity && identity_memory_candidate(&text) {
+                relevance = 1.0;
+            }
             if relevance > 0.0 {
                 let score = importance * (-decay_rate * days_elapsed).exp() * relevance;
                 all_entries.push((score, text));
@@ -291,7 +468,10 @@ async fn retrieve_cross_session_memories(user_content: &str) -> String {
 
     // Score semantic facts just below cognitive ones, gated by current query relevance.
     for fact in &semantic_facts {
-        let relevance = memory_relevance_score(&query_terms, fact);
+        let mut relevance = memory_relevance_score(&query_terms, fact);
+        if relevance == 0.0 && wants_identity && identity_memory_candidate(fact) {
+            relevance = 1.0;
+        }
         if relevance > 0.0 {
             all_entries.push((0.7 * relevance, fact.clone()));
         }
@@ -490,6 +670,55 @@ mod tests {
     use crate::tools::graph_memory::test_lock;
     use crate::tools::graph_memory::with_db;
     use crate::tools::memory_extra::working::store_semantic_fact;
+
+    #[test]
+    fn recent_session_context_prioritizes_latest_user_assistant_turns() {
+        let messages = vec![
+            crate::session::Message {
+                role: "user".to_string(),
+                content: "old topic".to_string(),
+                timestamp: None,
+                extra: serde_json::Map::new(),
+            },
+            crate::session::Message {
+                role: "assistant".to_string(),
+                content: "old answer".to_string(),
+                timestamp: None,
+                extra: serde_json::Map::new(),
+            },
+            crate::session::Message {
+                role: "user".to_string(),
+                content: "we are testing model switching".to_string(),
+                timestamp: None,
+                extra: serde_json::Map::new(),
+            },
+            crate::session::Message {
+                role: "assistant".to_string(),
+                content: "listed weak model failures".to_string(),
+                timestamp: None,
+                extra: serde_json::Map::new(),
+            },
+        ];
+        let block = recent_session_context(&messages, 500);
+        assert!(block.contains("testing model switching"));
+        assert!(block.contains("weak model failures"));
+    }
+
+    #[test]
+    fn identity_query_detection_catches_name_and_persona_questions() {
+        assert!(is_identity_or_persona_query("what is my name"));
+        assert!(is_identity_or_persona_query("who are you"));
+        assert!(is_identity_or_persona_query("what is your persona"));
+        assert!(!is_identity_or_persona_query("fix the cargo build"));
+    }
+
+    #[test]
+    fn weak_model_detection_catches_small_or_free_models() {
+        assert!(is_weak_or_risky_model("llama-3.1-8b-instant"));
+        assert!(is_weak_or_risky_model("mimo-v2.5-free"));
+        assert!(is_weak_or_risky_model("gemini-3.1-flash-lite"));
+        assert!(!is_weak_or_risky_model("deepseek-v4-flash-free"));
+    }
 
     #[test]
     fn test_get_version_history() {

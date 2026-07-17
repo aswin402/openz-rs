@@ -274,7 +274,8 @@ impl super::Channel for TelegramChannel {
             "commands": [
                 { "command": "remote", "description": "Toggle TUI remote control mode" },
                 { "command": "local", "description": "Switch to local bot chat mode" },
-                { "command": "new", "description": "Start a new local session" },
+                { "command": "new-session", "description": "Start a new local session" },
+                { "command": "resume", "description": "Resume a previous local session" },
                 { "command": "model", "description": "Show the active default model" },
                 { "command": "switch-model", "description": "Switch the default provider/model" },
                 { "command": "mcps", "description": "List configured MCP servers" },
@@ -382,7 +383,8 @@ impl super::Channel for TelegramChannel {
                                     let cmd = trimmed.split_whitespace().next().unwrap_or("");
                                     let command_action = telegram_command_action(trimmed);
                                     if command_action != TelegramCommandAction::None
-                                        || cmd == "/new"
+                                        || cmd == "/new-session"
+                                        || cmd == "/resume"
                                         || cmd == "/mcps"
                                         || cmd == "/memory"
                                         || cmd == "/skill"
@@ -414,29 +416,24 @@ impl super::Channel for TelegramChannel {
                                             continue;
                                         }
 
-                                        if cmd == "/new" {
+                                        if cmd == "/new-session" {
                                             let session_manager = &agent.session_manager;
                                             let session_key = format!("telegram:{}", chat_id);
-                                            if let Ok(mut current_session) =
-                                                session_manager.load(&session_key)
-                                            {
-                                                if !current_session.messages.is_empty() {
-                                                    let timestamp = chrono::Utc::now()
-                                                        .format("%Y%m%d_%H%M%S")
-                                                        .to_string();
-                                                    let archive_key =
-                                                        format!("telegram:history_{}", timestamp);
-                                                    current_session.key = archive_key;
-                                                    let _ = session_manager
-                                                        .save(&current_session)
-                                                        .await;
-
-                                                    let empty_session =
-                                                        crate::session::Session::new(&session_key);
-                                                    let _ =
-                                                        session_manager.save(&empty_session).await;
-                                                }
-                                            }
+                                            let response =
+                                                match crate::channels::start_new_channel_session(
+                                                    session_manager,
+                                                    &session_key,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(_) => {
+                                                        "✓ Session reset. Starting a new session."
+                                                            .to_string()
+                                                    }
+                                                    Err(e) => {
+                                                        format!("Failed to start new session: {e}")
+                                                    }
+                                                };
                                             tokio::spawn(async move {
                                                 let send_url = format!(
                                                     "https://api.telegram.org/bot{}/sendMessage",
@@ -444,7 +441,7 @@ impl super::Channel for TelegramChannel {
                                                 );
                                                 let payload = serde_json::json!({
                                                     "chat_id": chat_id,
-                                                    "text": "✓ Session reset. Starting a new session."
+                                                    "text": response
                                                 });
                                                 let _ = client
                                                     .post(&send_url)
@@ -452,6 +449,101 @@ impl super::Channel for TelegramChannel {
                                                     .send()
                                                     .await;
                                             });
+                                            continue;
+                                        }
+
+                                        if cmd == "/resume" {
+                                            let session_manager = &agent.session_manager;
+                                            let session_key = format!("telegram:{}", chat_id);
+                                            let args: Vec<&str> =
+                                                trimmed.split_whitespace().collect();
+                                            let sessions = crate::channels::list_channel_sessions(
+                                                &session_manager.dir,
+                                                &session_key,
+                                                10,
+                                            );
+                                            if args.len() > 1 {
+                                                let response = if let Ok(index) =
+                                                    args[1].parse::<usize>()
+                                                {
+                                                    if index == 0 || index > sessions.len() {
+                                                        format!("Invalid session number. Use /resume to list 1..{}.", sessions.len())
+                                                    } else {
+                                                        match crate::channels::resume_channel_session(
+                                                            session_manager,
+                                                            &session_key,
+                                                            &sessions[index - 1].key,
+                                                        )
+                                                        .await
+                                                        {
+                                                            Ok(msg) => msg,
+                                                            Err(e) => {
+                                                                format!("Failed to resume session: {e}")
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    "Usage: /resume or /resume <number>".to_string()
+                                                };
+                                                tokio::spawn(async move {
+                                                    let send_url = format!(
+                                                        "https://api.telegram.org/bot{}/sendMessage",
+                                                        token
+                                                    );
+                                                    let payload = serde_json::json!({
+                                                        "chat_id": chat_id,
+                                                        "text": response
+                                                    });
+                                                    let _ = client
+                                                        .post(&send_url)
+                                                        .json(&payload)
+                                                        .send()
+                                                        .await;
+                                                });
+                                            } else {
+                                                let keyboard: Vec<Vec<serde_json::Value>> = sessions
+                                                    .iter()
+                                                    .enumerate()
+                                                    .map(|(idx, item)| {
+                                                        vec![serde_json::json!({
+                                                            "text": format!(
+                                                                "{} | {} msgs | {}",
+                                                                item.updated_at.format("%Y-%m-%d %H:%M"),
+                                                                item.message_count,
+                                                                item.display_title
+                                                            ),
+                                                            "callback_data": format!("resume_select:{}", idx)
+                                                        })]
+                                                    })
+                                                    .chain(std::iter::once(vec![serde_json::json!({
+                                                        "text": "Continue current session",
+                                                        "callback_data": "resume_cancel:0"
+                                                    })]))
+                                                    .collect();
+                                                tokio::spawn(async move {
+                                                    let send_url = format!(
+                                                        "https://api.telegram.org/bot{}/sendMessage",
+                                                        token
+                                                    );
+                                                    let payload = if sessions.is_empty() {
+                                                        serde_json::json!({
+                                                            "chat_id": chat_id,
+                                                            "text": "No previous sessions found for this Telegram chat."
+                                                        })
+                                                    } else {
+                                                        serde_json::json!({
+                                                            "chat_id": chat_id,
+                                                            "text": "Select a previous session to resume, or continue current session:",
+                                                            "reply_markup": { "inline_keyboard": keyboard }
+                                                        })
+                                                    };
+                                                    let _ = client
+                                                        .post(&send_url)
+                                                        .json(&payload)
+                                                        .send()
+                                                        .await;
+                                                });
+                                            }
                                             continue;
                                         }
 
@@ -687,7 +779,7 @@ impl super::Channel for TelegramChannel {
                                                              /tui-esc — Alias for TUI Esc\n\
                                                              /tui-cancel — Alias for TUI cancel\n\
                                                              /local — Switch to local bot chat mode\n\
-                                                             /new — Start a new local session\n\
+                                                             /new-session — Start a new local session\n\
                                                              /model — Show the active default model\n\
                                                              /switch-model — Choose and save default provider/model\n\
                                                              /mcps — List configured MCP servers\n\
@@ -741,7 +833,7 @@ impl super::Channel for TelegramChannel {
                                                 );
                                                 let payload = serde_json::json!({
                                                     "chat_id": chat_id,
-                                                    "text": "🗂️ `/history` interactive menu is a TUI-only command. To reset/clear history, use `/new`."
+                                                    "text": "🗂️ `/history` interactive menu is a TUI-only command. To reset/clear history, use `/new-session`."
                                                 });
                                                 let _ = client
                                                     .post(&send_url)
@@ -1060,6 +1152,110 @@ impl super::Channel for TelegramChannel {
                                                 .send()
                                                 .await;
 
+                                            if let Some(message_id) = inner_msg.message_id {
+                                                let edit_url = format!(
+                                                    "https://api.telegram.org/bot{}/editMessageText",
+                                                    self.bot_token
+                                                );
+                                                let edit_payload = serde_json::json!({
+                                                    "chat_id": chat_id,
+                                                    "message_id": message_id,
+                                                    "text": result_text
+                                                });
+                                                let _ = self
+                                                    .client
+                                                    .post(&edit_url)
+                                                    .json(&edit_payload)
+                                                    .send()
+                                                    .await;
+                                            }
+                                        }
+                                        continue;
+                                    }
+
+                                    if action == "resume_cancel" {
+                                        if let Some(ref inner_msg) = cb.message {
+                                            let chat_id = inner_msg.chat.id;
+                                            let answer_url = format!(
+                                                "https://api.telegram.org/bot{}/answerCallbackQuery",
+                                                self.bot_token
+                                            );
+                                            let answer_payload = serde_json::json!({
+                                                "callback_query_id": cb.id,
+                                                "text": "Continuing current session"
+                                            });
+                                            let _ = self
+                                                .client
+                                                .post(&answer_url)
+                                                .json(&answer_payload)
+                                                .send()
+                                                .await;
+                                            if let Some(message_id) = inner_msg.message_id {
+                                                let edit_url = format!(
+                                                    "https://api.telegram.org/bot{}/editMessageText",
+                                                    self.bot_token
+                                                );
+                                                let edit_payload = serde_json::json!({
+                                                    "chat_id": chat_id,
+                                                    "message_id": message_id,
+                                                    "text": "Continuing current session. No session was changed."
+                                                });
+                                                let _ = self
+                                                    .client
+                                                    .post(&edit_url)
+                                                    .json(&edit_payload)
+                                                    .send()
+                                                    .await;
+                                            }
+                                        }
+                                        continue;
+                                    }
+
+                                    if action == "resume_select" {
+                                        if let Some(ref inner_msg) = cb.message {
+                                            let chat_id = inner_msg.chat.id;
+                                            let idx = callback_value.parse::<usize>().ok();
+                                            let session_key = format!("telegram:{}", chat_id);
+                                            let sessions = crate::channels::list_channel_sessions(
+                                                &self.agent_loop.session_manager.dir,
+                                                &session_key,
+                                                10,
+                                            );
+                                            let result_text = if let Some(idx) = idx {
+                                                if let Some(item) = sessions.get(idx) {
+                                                    match crate::channels::resume_channel_session(
+                                                        &self.agent_loop.session_manager,
+                                                        &session_key,
+                                                        &item.key,
+                                                    )
+                                                    .await
+                                                    {
+                                                        Ok(msg) => msg,
+                                                        Err(e) => {
+                                                            format!("Failed to resume session: {e}")
+                                                        }
+                                                    }
+                                                } else {
+                                                    "That session is no longer available. Use /resume again.".to_string()
+                                                }
+                                            } else {
+                                                "Invalid resume selection. Use /resume again."
+                                                    .to_string()
+                                            };
+                                            let answer_url = format!(
+                                                "https://api.telegram.org/bot{}/answerCallbackQuery",
+                                                self.bot_token
+                                            );
+                                            let answer_payload = serde_json::json!({
+                                                "callback_query_id": cb.id,
+                                                "text": "Resume selection handled"
+                                            });
+                                            let _ = self
+                                                .client
+                                                .post(&answer_url)
+                                                .json(&answer_payload)
+                                                .send()
+                                                .await;
                                             if let Some(message_id) = inner_msg.message_id {
                                                 let edit_url = format!(
                                                     "https://api.telegram.org/bot{}/editMessageText",

@@ -48,6 +48,93 @@ pub enum ModelSwitchCommand {
     Set { provider: String, model: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelRisk {
+    pub risky: bool,
+    pub tier: &'static str,
+    pub reasons: Vec<&'static str>,
+}
+
+pub fn classify_model_risk(provider: &str, model: &str) -> ModelRisk {
+    let model_lc = model.trim().to_lowercase();
+    let known = provider_models_by_name(provider)
+        .map(|p| {
+            p.models
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case(model.trim()))
+        })
+        .unwrap_or(false);
+
+    let mut reasons = Vec::new();
+    if !known {
+        reasons.push("not in OpenZ curated model catalog");
+    }
+    if model_lc.contains("free") && model_lc != "deepseek-v4-flash-free" {
+        reasons.push("free-tier model may be rate-limited or unstable");
+    }
+    if [
+        "1b", "2b", "3b", "4b", "6b", "7b", "8b", "9b", "small", "mini", "lite",
+    ]
+    .iter()
+    .any(|needle| model_lc.contains(needle))
+    {
+        reasons.push("small/weak model may ignore context or tool instructions");
+    }
+    if ["preview", "experimental", "beta", "pickle", "mimo", "hy3"]
+        .iter()
+        .any(|needle| model_lc.contains(needle))
+    {
+        reasons.push("model name suggests experimental or unknown behavior");
+    }
+
+    let risky = !reasons.is_empty();
+    let tier = if risky {
+        "risky"
+    } else if model_lc.contains("70b")
+        || model_lc.contains("deepseek-v4")
+        || model_lc.contains("claude")
+        || model_lc.contains("gpt-4")
+    {
+        "strong"
+    } else {
+        "standard"
+    };
+
+    ModelRisk {
+        risky,
+        tier,
+        reasons,
+    }
+}
+
+pub fn render_model_risk_warning(provider: &str, model: &str) -> String {
+    let risk = classify_model_risk(provider, model);
+    if !risk.risky {
+        return String::new();
+    }
+    let registry = crate::model_registry::ModelRegistry::load();
+    let health = registry.get(provider, model);
+    let mut out = format!(
+        "\n\nWarning: `{model}` via `{provider}` is marked `{}`. OpenZ will still allow it, but weak-model prompt safeguards will be used when applicable.",
+        risk.tier
+    );
+    for reason in risk.reasons {
+        out.push_str(&format!("\n- {reason}"));
+    }
+    if let Some(record) = health {
+        if record.failure_count > 0
+            || record.blank_response_count > 0
+            || record.think_leak_count > 0
+        {
+            out.push_str(&format!(
+                "\n- prior health: {} failures, {} blank replies, {} think leaks",
+                record.failure_count, record.blank_response_count, record.think_leak_count
+            ));
+        }
+    }
+    out
+}
+
 pub fn parse_model_switch_command(text: &str) -> ModelSwitchCommand {
     let trimmed = text.trim();
     let mut parts = trimmed.split_whitespace();
@@ -293,8 +380,10 @@ pub fn render_model_switch_command(
         ModelSwitchCommand::Set { provider, model } => {
             match save_default_model_selection(config, &provider, &model) {
                 Ok(()) => format!(
-                    "Model switched to `{}` with provider `{}`. New channel turns will use this default.",
-                    model, provider
+                    "Model switched to `{}` with provider `{}`. New channel turns will use this default.{}",
+                    model,
+                    provider,
+                    render_model_risk_warning(&provider, &model)
                 ),
                 Err(e) => format!("Failed to switch model: {e}"),
             }
@@ -346,6 +435,102 @@ pub fn render_model_switch_models(
     response
 }
 
+fn spawn_model_smoke_test(mut config: crate::config::schema::Config, provider: &str, model: &str) {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let provider = provider.to_string();
+    let model = model.trim().to_string();
+    config.agents.defaults.provider = provider.clone();
+    config.agents.defaults.model = model.clone();
+    handle.spawn(async move {
+        let risk = classify_model_risk(&provider, &model);
+        let reasons: Vec<String> = risk
+            .reasons
+            .iter()
+            .map(|reason| reason.to_string())
+            .collect();
+        let provider_instance =
+            match crate::providers::resolver::resolve_provider_full(&config, &model) {
+                Ok(resolved) => resolved.instance,
+                Err(err) => {
+                    let _ = crate::model_registry::record_model_failure(
+                        &provider,
+                        &model,
+                        risk.tier,
+                        risk.risky,
+                        reasons,
+                        &format!("resolve failed during smoke test: {err}"),
+                    );
+                    return;
+                }
+            };
+        let settings = crate::providers::GenerationSettings {
+            temperature: 0.0,
+            max_tokens: 32,
+            reasoning_effort: None,
+        };
+        let messages = vec![crate::session::Message {
+            role: "user".to_string(),
+            content: "Reply exactly: OPENZ_MODEL_OK".to_string(),
+            timestamp: None,
+            extra: serde_json::Map::new(),
+        }];
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(12),
+            provider_instance.chat(
+                "You are OpenZ model validation. Reply exactly with the requested token.",
+                &messages,
+                &[],
+                &settings,
+            ),
+        )
+        .await;
+        match result {
+            Ok(Ok(resp)) => {
+                let content = resp.content.unwrap_or_default();
+                let blank = content.trim().is_empty();
+                let think_leak = content.contains("<think>") || content.contains("</think>");
+                let ok = content.trim().contains("OPENZ_MODEL_OK") && !blank;
+                if ok {
+                    let _ = crate::model_registry::record_model_success(
+                        &provider, &model, risk.tier, risk.risky, reasons, blank, think_leak, false,
+                    );
+                } else {
+                    let _ = crate::model_registry::record_model_failure(
+                        &provider,
+                        &model,
+                        risk.tier,
+                        risk.risky,
+                        reasons,
+                        &format!("smoke test unexpected response: {}", content.trim()),
+                    );
+                }
+            }
+            Ok(Err(err)) => {
+                let _ = crate::model_registry::record_model_failure(
+                    &provider,
+                    &model,
+                    risk.tier,
+                    risk.risky,
+                    reasons,
+                    &format!("smoke test provider error: {err}"),
+                );
+            }
+            Err(_) => {
+                let _ = crate::model_registry::record_model_failure(
+                    &provider,
+                    &model,
+                    risk.tier,
+                    risk.risky,
+                    reasons,
+                    "smoke test timed out after 12s",
+                );
+            }
+        }
+    });
+}
+
 pub fn save_default_model_selection(
     base_config: &crate::config::schema::Config,
     provider: &str,
@@ -361,10 +546,190 @@ pub fn save_default_model_selection(
         anyhow::bail!("model cannot be empty");
     }
 
+    let risk = classify_model_risk(provider, model);
+    let _ = crate::model_registry::record_model_risk(
+        provider,
+        model.trim(),
+        risk.tier,
+        risk.risky,
+        risk.reasons
+            .iter()
+            .map(|reason| reason.to_string())
+            .collect(),
+    );
+
     let mut config = crate::config::loader::load_config().unwrap_or_else(|_| base_config.clone());
     config.agents.defaults.provider = provider.to_string();
     config.agents.defaults.model = model.trim().to_string();
-    crate::config::loader::save_config(&config)
+    crate::config::loader::save_config(&config)?;
+    spawn_model_smoke_test(config, provider, model);
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct ChannelSessionItem {
+    pub key: String,
+    pub display_title: String,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub message_count: usize,
+}
+
+#[derive(serde::Deserialize)]
+struct ChannelSessionMetadataOnly {
+    key: String,
+    updated_at: chrono::DateTime<chrono::Utc>,
+    messages: Vec<ChannelMessageMetadataOnly>,
+}
+
+#[derive(serde::Deserialize)]
+struct ChannelMessageMetadataOnly {
+    role: String,
+    content: String,
+}
+
+fn channel_session_preview(messages: &[ChannelMessageMetadataOnly]) -> String {
+    messages
+        .iter()
+        .find(|m| m.role == "user")
+        .map(|m| {
+            let mut text = m.content.split_whitespace().collect::<Vec<_>>().join(" ");
+            if text.chars().count() > 70 {
+                text = text.chars().take(67).collect::<String>();
+                text.push_str("...");
+            }
+            text
+        })
+        .unwrap_or_else(|| "Empty session".to_string())
+}
+
+pub fn list_channel_sessions(
+    session_dir: &std::path::Path,
+    prefix: &str,
+    limit: usize,
+) -> Vec<ChannelSessionItem> {
+    let mut items = Vec::new();
+    let Ok(entries) = std::fs::read_dir(session_dir) else {
+        return items;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(session) = serde_json::from_str::<ChannelSessionMetadataOnly>(&content) else {
+            continue;
+        };
+        if !session.key.starts_with(prefix) || session.messages.is_empty() {
+            continue;
+        }
+        items.push(ChannelSessionItem {
+            key: session.key,
+            display_title: channel_session_preview(&session.messages),
+            updated_at: session.updated_at,
+            message_count: session.messages.len(),
+        });
+    }
+    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    items.truncate(limit);
+    items
+}
+
+pub fn render_resume_list(items: &[ChannelSessionItem], command_name: &str) -> String {
+    if items.is_empty() {
+        return "No previous sessions found for this channel.".to_string();
+    }
+    let mut out = String::from("Previous sessions:\n");
+    for (idx, item) in items.iter().enumerate() {
+        out.push_str(&format!(
+            "{}. {} | {} msgs | {}\n",
+            idx + 1,
+            item.updated_at.format("%Y-%m-%d %H:%M"),
+            item.message_count,
+            item.display_title
+        ));
+    }
+    out.push_str(&format!(
+        "\nUse `{command_name} <number>` to resume, for example `{command_name} 1`."
+    ));
+    out
+}
+
+pub async fn start_new_channel_session(
+    session_manager: &crate::session::SessionManager,
+    active_key: &str,
+) -> anyhow::Result<bool> {
+    if let Ok(mut current_session) = session_manager.load(active_key) {
+        if !current_session.messages.is_empty() {
+            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+            current_session.key = format!("{}:history_{}", active_key, timestamp);
+            session_manager.save(&current_session).await?;
+        }
+    }
+    let empty_session = crate::session::Session::new(active_key);
+    session_manager.save(&empty_session).await?;
+    Ok(true)
+}
+
+pub async fn resume_channel_session(
+    session_manager: &crate::session::SessionManager,
+    active_key: &str,
+    selected_key: &str,
+) -> anyhow::Result<String> {
+    if selected_key == active_key {
+        return Ok("Already using that session.".to_string());
+    }
+    let mut selected = session_manager.load(selected_key)?;
+    start_new_channel_session(session_manager, active_key).await?;
+    selected.key = active_key.to_string();
+    let title = crate::agent::activity::session_preview_from_messages(&selected.messages);
+    session_manager.save(&selected).await?;
+    Ok(format!("Resumed session: {title}"))
+}
+
+pub async fn session_command_text_response(
+    session_manager: &crate::session::SessionManager,
+    active_key: &str,
+    text: &str,
+) -> Option<String> {
+    let trimmed = text.trim();
+    let cmd = trimmed.split_whitespace().next().unwrap_or("");
+    if cmd != "/new-session" && cmd != "/resume" {
+        return None;
+    }
+    if cmd == "/new-session" {
+        return Some(
+            match start_new_channel_session(session_manager, active_key).await {
+                Ok(_) => "Session reset. Starting a new session.".to_string(),
+                Err(e) => format!("Failed to start new session: {e}"),
+            },
+        );
+    }
+
+    let args: Vec<&str> = trimmed.split_whitespace().collect();
+    let sessions = list_channel_sessions(&session_manager.dir, active_key, 10);
+    if args.len() == 1 {
+        return Some(render_resume_list(&sessions, "/resume"));
+    }
+    Some(if let Ok(index) = args[1].parse::<usize>() {
+        if index == 0 || index > sessions.len() {
+            format!(
+                "Invalid session number. Use /resume to list 1..{}.",
+                sessions.len()
+            )
+        } else {
+            match resume_channel_session(session_manager, active_key, &sessions[index - 1].key)
+                .await
+            {
+                Ok(msg) => msg,
+                Err(e) => format!("Failed to resume session: {e}"),
+            }
+        }
+    } else {
+        "Usage: /resume or /resume <number>".to_string()
+    })
 }
 
 pub const OFFLINE_MESSAGES: &[&str] = &[
@@ -1086,8 +1451,55 @@ mod stop_command_tests {
 }
 
 #[cfg(test)]
+mod channel_session_tests {
+    use super::*;
+
+    #[test]
+    fn render_resume_list_shows_numbered_sessions() {
+        let item = ChannelSessionItem {
+            key: "telegram:1:history_20260717_100000".to_string(),
+            display_title: "hello from old session".to_string(),
+            updated_at: chrono::DateTime::parse_from_rfc3339("2026-07-17T10:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            message_count: 4,
+        };
+        let out = render_resume_list(&[item], "/resume");
+        assert!(out.contains("1. 2026-07-17 10:00"));
+        assert!(out.contains("/resume 1"));
+    }
+}
+
+#[cfg(test)]
 mod model_switch_tests {
     use super::*;
+
+    #[test]
+    fn model_risk_marks_unknown_free_models() {
+        let risk = classify_model_risk("opencode_zen", "big-pickle");
+        assert!(risk.risky);
+        assert!(risk
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("not in OpenZ curated")));
+    }
+
+    #[test]
+    fn model_risk_allows_known_strong_default() {
+        let risk = classify_model_risk("opencode_zen", "deepseek-v4-flash-free");
+        assert!(!risk.risky);
+        assert_eq!(risk.tier, "strong");
+    }
+
+    #[test]
+    fn model_risk_warns_for_small_models() {
+        let risk = classify_model_risk("groq", "llama-3.1-8b-instant");
+        assert!(risk.risky);
+        assert!(risk
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("small/weak")));
+    }
 
     #[test]
     fn parses_switch_model_provider_and_model_commands() {

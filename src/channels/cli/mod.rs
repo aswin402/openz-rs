@@ -615,6 +615,10 @@ impl CliChannel {
                                                         }
                                                         *self.defaults.lock().await = new_defaults;
                                                         println!("{}✓ Model updated to {} (provider: {}){}", EMERALD_GREEN, mdl, prov, COLOR_RESET);
+                                                        let warning = crate::channels::render_model_risk_warning(prov, &mdl);
+                                                        if !warning.is_empty() {
+                                                            println!("{}{}{}", AURA_GOLD, warning, COLOR_RESET);
+                                                        }
                                                     }
                                                     Err(e) => {
                                                         eprintln!("{}✕ Error: Failed to initialize new model: {}{}", ERROR_RED, e, COLOR_RESET);
@@ -681,6 +685,11 @@ impl CliChannel {
                                             "{}✓ Model updated to {} (provider: {}){}",
                                             EMERALD_GREEN, mdl, prov, COLOR_RESET
                                         );
+                                        let warning =
+                                            crate::channels::render_model_risk_warning(prov, mdl);
+                                        if !warning.is_empty() {
+                                            println!("{}{}{}", AURA_GOLD, warning, COLOR_RESET);
+                                        }
                                     }
                                     Err(e) => {
                                         eprintln!(
@@ -706,7 +715,7 @@ impl CliChannel {
                 continue;
             }
 
-            if trimmed == "/new" {
+            if trimmed == "/new-session" {
                 let session_manager = {
                     let agent_loop = self.agent_loop.lock().await;
                     agent_loop.session_manager.clone()
@@ -778,7 +787,7 @@ impl CliChannel {
                 continue;
             }
 
-            if trimmed == "/history" {
+            if trimmed == "/history" || trimmed == "/resume" {
                 let session_manager = {
                     let agent_loop = self.agent_loop.lock().await;
                     agent_loop.session_manager.clone()
@@ -788,7 +797,10 @@ impl CliChannel {
                         if history.is_empty() {
                             println!("No session history found.");
                         } else {
-                            match select_menu_with_history("Select a session to load:", &history) {
+                            match select_menu_with_history(
+                                "Resume previous session or continue current:",
+                                &history,
+                            ) {
                                 Ok(selected) => {
                                     if selected == 0 {
                                         let _ = crate::cli::archive_current_session(

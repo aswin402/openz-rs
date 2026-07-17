@@ -540,15 +540,25 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
             resp.content = accumulated_content;
             resp.finish_reason = finish_reason;
+        }
 
-            // If tool_calls is empty, try to parse tool calls from the fully completed accumulated content
-            if resp.tool_calls.is_empty() {
-                if let Some(ref text) = resp.content {
-                    let parsed = crate::providers::openai::parse_fallback_tool_calls(text);
-                    if !parsed.is_empty() {
-                        resp.tool_calls = parsed;
-                        resp.content = None;
-                    }
+        if let Some(text) = resp.content.take() {
+            let (clean_content, extracted_reasoning) =
+                crate::providers::openai::split_think_blocks(&text);
+            resp.content = clean_content;
+            resp.reasoning_content = crate::providers::openai::merge_reasoning(
+                resp.reasoning_content.take(),
+                extracted_reasoning,
+            );
+        }
+
+        // If tool_calls is empty, try to parse tool calls from cleaned content.
+        if resp.tool_calls.is_empty() {
+            if let Some(ref text) = resp.content {
+                let parsed = crate::providers::openai::parse_fallback_tool_calls(text);
+                if !parsed.is_empty() {
+                    resp.tool_calls = parsed;
+                    resp.content = None;
                 }
             }
         }

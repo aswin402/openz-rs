@@ -57,11 +57,20 @@ pub fn select_menu_with_history(prompt: &str, history: &[HistoryItem]) -> Result
 
     print!("{}\r\n", prompt);
 
+    let first_option = if prompt.to_lowercase().contains("resume") {
+        "Continue Current Session"
+    } else {
+        "Start New"
+    };
+
     let draw_menu = |selected_idx: usize| {
         if selected_idx == 0 {
-            print!("▸ {}{}Start New{}\r\n", COLOR_BOLD, RED_ORANGE, COLOR_RESET);
+            print!(
+                "▸ {}{}{}{}\r\n",
+                COLOR_BOLD, RED_ORANGE, first_option, COLOR_RESET
+            );
         } else {
-            print!("  Start New\r\n");
+            print!("  {}\r\n", first_option);
         }
 
         print!("\r\n");

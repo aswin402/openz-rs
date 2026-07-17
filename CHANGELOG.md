@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.52 (Latest Release)
+### v0.0.53 (Latest Release)
+
+*   **Bugfix: TUI answer formatting restored:** Fixed the `<think>` sanitizer so it preserves markdown, bullets, and newlines in normal assistant answers instead of collapsing output into one long wrapped line.
+*   **Cleanup: canonical new-session command:** Removed duplicate `/new` slash command from TUI and Telegram. `/new-session` is now the single command for starting a clean session.
+*   **Feature: selectable resume UX:** Telegram `/resume` now presents inline buttons for previous sessions and a `Continue current session` option. TUI `/resume` now labels the first picker option as `Continue Current Session`.
+*   **Feature: model reliability registry:** Added persistent `~/.openz/model_registry.json` health tracking for model risk, failures, blank replies, think leaks, and fallback success.
+*   **Hardening: weak-model context support:** Added pinned identity/persona memory, recent session context, small-model operating rules, reasoning tag normalization, and self-improvement curator debounce.
+
+### v0.0.52
 *   **Feature: Multi-channel TUI remote control and interruption:** Hardened channel-to-TUI control so Telegram can select among live `openz agent` sessions and all remote channels can interrupt active turns.
     *   Added an active TUI session registry and Telegram `/remote` picker so one bot can select among currently running `openz agent` terminals, route messages to the selected session, and leave remote mode with `/local` or `/exit`.
     *   Added `/stop` interruption support across Telegram, Discord, WhatsApp, WebSocket browser chat, and Email so remote channels can cancel active turns through the same path as Esc/Ctrl+C in the TUI.

@@ -272,6 +272,37 @@ async fn receive_webhook(
                                     continue;
                                 }
 
+                                let whatsapp_session_key = format!("whatsapp:{}", from_str);
+                                if let Some(response_text) =
+                                    crate::channels::session_command_text_response(
+                                        &agent.session_manager,
+                                        &whatsapp_session_key,
+                                        &text,
+                                    )
+                                    .await
+                                {
+                                    let send_url = format!(
+                                        "https://graph.facebook.com/v18.0/{}/messages",
+                                        phone_number_id
+                                    );
+                                    for chunk in chunk_message(&response_text, 65536) {
+                                        let reply_payload = serde_json::json!({
+                                            "messaging_product": "whatsapp",
+                                            "recipient_type": "individual",
+                                            "to": from_str,
+                                            "type": "text",
+                                            "text": { "body": chunk }
+                                        });
+                                        let _ = client
+                                            .post(&send_url)
+                                            .bearer_auth(&api_key)
+                                            .json(&reply_payload)
+                                            .send()
+                                            .await;
+                                    }
+                                    continue;
+                                }
+
                                 if let Some(response_text) =
                                     crate::channels::model_switch_text_response(&text)
                                 {
