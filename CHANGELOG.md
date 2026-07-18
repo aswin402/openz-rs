@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.57 (Latest Release)
+### v0.0.58 (Latest Release)
+
+*   **Feature: live OpenZ inventory:** Added the native `openz_inventory` tool so agents can report exact running-version capabilities, registered tools by domain, channels, commands, subagents, and active managed servers without guessing from memory.
+*   **Hardening: automatic server lifecycle behavior:** Elevated `manage_servers` to a high-priority core tool and updated runtime prompt discipline so OpenZ uses it automatically for registered dev-server cleanup instead of relying on user slash commands or shell `pkill` guesses.
+*   **Hardening: reusable generation workflows:** The self-improvement curator now documents and accepts `sources_to_save` and `workflows_to_save`, with explicit patterns for chunked website writes, segmented HTML-video rendering, managed server cleanup, and live inventory answers.
+*   **Skill: generated media/site procedures:** Added built-in skills for chunked static-site generation and segmented HTML video rendering so future website/video tasks reuse verified workflows instead of rediscovering them.
+*   **Chore:** Bumped version to `v0.0.58`.
+
+### v0.0.57
 
 *   **Feature: managed background servers:** Detached dev-server commands are now registered with id, pid, command, kind, and start time metadata so they can be inspected and stopped later.
 *   **Feature: server lifecycle controls:** Added `/servers` and `/stop-server <id|all>` in TUI and Telegram, plus a native `manage_servers` tool so OpenZ can list or stop its own launched servers automatically.

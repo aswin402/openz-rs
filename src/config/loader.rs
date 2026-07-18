@@ -388,6 +388,33 @@ pub fn save_config(config: &Config) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    struct TestEnvLock;
+
+    impl TestEnvLock {
+        fn acquire() -> Self {
+            let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
+            loop {
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&lock_path)
+                {
+                    Ok(_) => break,
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+                }
+            }
+            TestEnvLock
+        }
+    }
+
+    impl Drop for TestEnvLock {
+        fn drop(&mut self) {
+            let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
+            let _ = std::fs::remove_file(lock_path);
+        }
+    }
+
     #[test]
     fn cli_session_key_changes_with_current_directory() {
         let original = std::env::current_dir().unwrap();
@@ -436,6 +463,7 @@ mod tests {
 
     #[test]
     fn openz_config_dir_moves_db_location() {
+        let _env_lock = TestEnvLock::acquire();
         let custom = std::env::temp_dir().join(format!("openz_cfg_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&custom).unwrap();
         std::env::set_var("OPENZ_CONFIG_DIR", &custom);

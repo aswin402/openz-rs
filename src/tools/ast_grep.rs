@@ -415,6 +415,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ast_grep_inserted_elements_are_queryable_by_code_graph() -> Result<()> {
+        let _lock = crate::tools::graph_memory::test_lock().lock().await;
         let session_id = format!("ast_grep_bridge_{}", uuid::Uuid::new_v4());
         let item = json!({
             "text": "struct BridgeQueryable { value: String }",

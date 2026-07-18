@@ -297,6 +297,24 @@ Before finalizing any frontend design, verify that the code passes these tests:
 * **Responsive Breakpoints**: Design to scale fluidly across 375px (mobile), 768px (tablet), 1024px (desktop), and 1440px (wide screen).
 * **A11y Motion**: Wrap complex animations to respect `prefers-reduced-motion`."),
 
+        ("frontend_architect", "chunked_static_site_generation", "# Skill: Chunked Static Site Generation
+
+Use this when creating complete HTML/CSS/JS websites or large generated source files:
+1. Do not send a huge `write_file` payload. Keep each file-write or append chunk under about 8KB of content.
+2. Prefer creating the directory, writing the document shell, then appending CSS, body sections, and scripts as separate chunks.
+3. After writing, verify with `read_file`, `tail`, or a line/byte count that the file starts with the expected header and ends with the expected closing tags.
+4. Only open the page after verification succeeds. If a chunk fails, inspect the partial file before appending or rewriting.
+5. Save any new reusable pattern with `workflow_memory` or `curate_skill` after the task succeeds."),
+
+        ("media_designer", "segmented_html_video_rendering", "# Skill: Segmented HTML Video Rendering
+
+Use this when rendering HTML/CSS/JS animation videos longer than roughly 20 seconds:
+1. Avoid one long 900+ frame render if the renderer warns about timeout risk.
+2. Split the timeline into shorter HTML segment files, usually 8-10 seconds each.
+3. Render each segment independently, then concatenate with ffmpeg's concat demuxer.
+4. Verify final duration and file size before opening the video for the user.
+5. Keep intermediate segment files until the final video is confirmed so failed segments can be re-rendered without restarting from scratch."),
+
         ("docs_lookup_agent", "documentation_synthesis", "# Skill: Documentation Synthesis
 
 Retrieve and synthesize API usage guides:

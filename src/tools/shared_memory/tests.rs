@@ -279,25 +279,34 @@ async fn test_interaction_history_workflow() -> Result<()> {
     std::fs::create_dir_all(&temp_dir)?;
     std::env::set_var("OPENZ_CONFIG_DIR", &temp_dir);
 
-    // 1. Log interaction
-    let id = log_interaction("test_session", "build the web UI dashboard").await?;
+    // 1. Log interaction with a unique marker. The shared-memory SQLite
+    // connection is process-global, so this test must not assume the history
+    // table is otherwise empty when the full suite runs in parallel.
+    let marker = uuid::Uuid::new_v4().to_string();
+    let query = format!("build the web UI dashboard {marker}");
+    let id = log_interaction("test_session", &query).await?;
     assert!(!id.is_empty());
 
-    // 2. Fetch recent interactions
-    let history = get_recent_interactions(5).await?;
-    assert_eq!(history.len(), 1);
-    assert_eq!(history[0]["query"], "build the web UI dashboard");
-    assert_eq!(history[0]["success"], true);
+    // 2. Fetch recent interactions and find our unique row
+    let history = get_recent_interactions(20).await?;
+    let entry = history
+        .iter()
+        .find(|item| item["query"] == query)
+        .expect("unique interaction row should be present");
+    assert_eq!(entry["success"], true);
 
     // 3. Update errors
     update_interaction_errors(&id, "Cargo build failed with exit status 101").await?;
 
     // 4. Verify updated history
-    let history2 = get_recent_interactions(5).await?;
-    assert_eq!(history2.len(), 1);
-    assert_eq!(history2[0]["success"], false);
+    let history2 = get_recent_interactions(20).await?;
+    let updated = history2
+        .iter()
+        .find(|item| item["query"] == query)
+        .expect("updated unique interaction row should be present");
+    assert_eq!(updated["success"], false);
     assert_eq!(
-        history2[0]["errors"].as_str().unwrap(),
+        updated["errors"].as_str().unwrap(),
         "Cargo build failed with exit status 101"
     );
 

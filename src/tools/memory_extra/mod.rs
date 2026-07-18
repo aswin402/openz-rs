@@ -39,6 +39,32 @@ mod tests {
     use rusqlite::params;
     use serde_json::json;
 
+    struct TestEnvLock;
+
+    impl TestEnvLock {
+        fn acquire() -> Self {
+            let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
+            loop {
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&lock_path)
+                {
+                    Ok(_) => break,
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+                }
+            }
+            TestEnvLock
+        }
+    }
+
+    impl Drop for TestEnvLock {
+        fn drop(&mut self) {
+            let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
+            let _ = std::fs::remove_file(lock_path);
+        }
+    }
+
     #[tokio::test]
     async fn test_set_get_working_memory() {
         let _l = test_lock().lock().await;
@@ -623,6 +649,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_forget_memory_scrubs_sessions_and_skills() {
+        let _env_lock = TestEnvLock::acquire();
         let _l = test_lock().lock().await;
         let previous_config_dir = std::env::var("OPENZ_CONFIG_DIR").ok();
         let config_dir = std::env::temp_dir().join(format!(
@@ -1194,6 +1221,7 @@ fn helper() {}
 
     #[tokio::test]
     async fn test_memory_stats_counts_session_skills_and_working_layers() {
+        let _env_lock = TestEnvLock::acquire();
         let _l = test_lock().lock().await;
         let previous_config_dir = std::env::var("OPENZ_CONFIG_DIR").ok();
         let config_dir = std::env::temp_dir().join(format!(

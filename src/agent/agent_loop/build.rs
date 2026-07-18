@@ -80,6 +80,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             - 'openz sop <list | instances | trigger <id> | resume <id> | simulate <id>>': Controls the stateful SOP workflow engine.\n\
           * Pluggable Gateway Channels: You can receive messages and reply over CLI terminal, WebSocket gateway (serving the WebUI workbench), Telegram bot polling, Discord bot polling, WhatsApp Business API, and pure Rust IMAP/SMTP Email client.\n\
           * Local Tools & MCP: {}\n\
+          * Runtime Tool Discipline:\n\
+            - When asked what OpenZ can do, what features/tools exist, or how OpenZ compares, call 'openz_inventory' (and 'tool_catalog' only for deeper schema/routing details) before giving exact counts. Do not guess feature/tool counts from memory.\n\
+            - When 'exec_command' launches a dev server/background server and returns server_registered=true, treat the launch as complete. Do not retry with pkill/ps guesses. Use 'manage_servers' automatically to list or stop registered servers when the task is finished, when the user says done/stop/cleanup, or before finalizing a verification-only server. If the user is actively previewing a server, report the server id and leave it running until no longer needed.\n\
+            - When creating large websites, generated source files, or video timelines, avoid one huge 'write_file' payload. Prefer chunked file creation/append steps or smaller artifacts, then verify file exists. For 20s+ HTML videos, render in shorter segments and concatenate. After a repeated successful workaround, save it with 'workflow_memory' or 'curate_skill'.\n\
 \n\
           * Context Scoping & Compression: You have native tools for context management:\n\
             - 'scope_context' (with target_path): Walks up the tree and compiles relevant AGENTS.md instructions. Use this BEFORE editing files to retrieve rules.\n\

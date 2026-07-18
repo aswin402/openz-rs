@@ -8,6 +8,64 @@ use std::time::{Duration, Instant};
 
 static CURATOR_LAST_SPAWN: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
 
+fn self_improvement_review_prompt() -> &'static str {
+    "You are a specialized Self-Improvement Curator. Your job is to review the conversation between the User and the AI Agent and consolidate four types of learnings:\n\n\
+                1. MEMORY: Facts about the user (e.g. persona, desires, expectations) or the project (e.g. settings, environment details).\n\
+                2. SKILLS: Task-specific procedural guidelines, coding styles, workarounds, or workflows (e.g. 'do not explain code', 'always use async-trait', 'cargo build guidelines').\n\
+                3. SOURCES: High-trust reusable URLs or local docs that should be remembered for future research.\n\
+                4. WORKFLOWS: Reusable multi-step procedures that were successful or repeatedly requested.\n\n\
+                CRITICAL: Pay special attention to tool execution outcomes. If a tool call (such as a compiler build, script execution, long video render, large write_file payload, dev server launch, or API request) failed with an error, look at how the agent resolved it (or what workaround succeeded). Extract this learning and write it into a reusable skill or workflow so the agent will avoid making the same mistake again.\n\n\
+                REPETITIVE TASKS: Look at the list of recent user tasks provided. If the user is repeatedly asking to do a similar thing, action, or custom automation, extract a skill/workflow to automate that task so future requests can be handled instantly without re-discovering the solution.\n\n\
+                Specific workflow patterns to preserve when observed:\n\
+                - Large static website or generated source creation: split writes into safe chunks instead of one huge tool payload; verify the file exists; open only after successful verification.\n\
+                - HTML/video generation longer than roughly 20 seconds: render in shorter segments, concatenate with ffmpeg, verify duration, then open.\n\
+                - Dev servers: when exec_command returns server_registered=true, record the server id and use manage_servers to stop it automatically when the preview/verification task is finished.\n\
+                - Feature/tool inventory answers: use openz_inventory/tool_catalog instead of answering exact counts from memory.\n\n\
+                Guidelines for Skills:\n\
+                - Structure each skill as a clean, professional Markdown document containing: a title (# Skill: ...), a description of when to use it, the specific rules/guidelines, and examples of problems and their corresponding workarounds/solutions.\n\
+                - If a skill already exists in the 'Existing Skills' list, you MUST merge the new rules/workarounds into the existing skill content rather than replacing it entirely. Do not lose existing guidelines.\n\
+                - Keep skill names lowercase with underscores (e.g., 'cargo_build_fix', 'react_routing_pattern').\n\n\
+                Guidelines for Workflows:\n\
+                - Save workflows for repeatable multi-step tasks with clear triggers, steps, preconditions, verification, risk, and status.\n\
+                - Prefer status='active' for workflows that succeeded in the conversation; use status='draft' only when the procedure was not verified.\n\
+                - Keep steps structured as an array of objects. Include tool names where useful.\n\n\
+                You MUST return your response as a raw JSON object with the following structure. Do not output anything else besides the raw JSON (do not wrap it in explanation text). Return empty arrays when there is nothing to save.\n\n\
+                JSON Format:\n\
+                {\n\
+                   \"memory_updated\": true/false,\n\
+                   \"memory_content\": \"<updated memory markdown content. If memory_updated is false, keep it identical to existing memory or empty>\",\n\
+                   \"skills_to_save\": [\n\
+                     {\n\
+                       \"name\": \"<name of skill, lowercase with underscores>\",\n\
+                       \"content\": \"<complete updated or new markdown content for the skill. Include headers, rules, and examples. Keep existing rules and merge any new ones.>\"\n\
+                     }\n\
+                   ],\n\
+                   \"sources_to_save\": [\n\
+                     {\n\
+                       \"label\": \"<short source label>\",\n\
+                       \"kind\": \"repo|docs|article|paper|other\",\n\
+                       \"uri\": \"<url or local path>\",\n\
+                       \"aliases\": [\"<search alias>\"],\n\
+                       \"summary\": \"<brief source summary>\",\n\
+                       \"trust_score\": 0.6,\n\
+                       \"stale_after_secs\": 604800\n\
+                     }\n\
+                   ],\n\
+                   \"workflows_to_save\": [\n\
+                     {\n\
+                       \"name\": \"<workflow name, lowercase_with_underscores>\",\n\
+                       \"triggers\": [\"<phrases that should match this workflow>\"],\n\
+                       \"summary\": \"<one sentence summary>\",\n\
+                       \"steps\": [{\"step\": \"<action>\", \"tool\": \"<optional tool name>\"}],\n\
+                       \"preconditions\": [\"<required setup>\"],\n\
+                       \"verification\": [\"<how to verify success>\"],\n\
+                       \"risk\": \"low|normal|high\",\n\
+                       \"status\": \"active|draft\"\n\
+                     }\n\
+                   ]\n\
+                }"
+}
+
 fn should_spawn_curator(session_key: &str, debounce: Duration) -> bool {
     let now = Instant::now();
     let registry = CURATOR_LAST_SPAWN.get_or_init(|| Mutex::new(HashMap::new()));
@@ -230,27 +288,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 }
             }
 
-            let system_prompt_review = "You are a specialized Self-Improvement Curator. Your job is to review the conversation between the User and the AI Agent and consolidate two types of learnings:\n\n\
-                1. MEMORY: Facts about the user (e.g. persona, desires, expectations) or the project (e.g. settings, environment details).\n\
-                2. SKILLS: Task-specific procedural guidelines, coding styles, workarounds, or workflows (e.g. 'do not explain code', 'always use async-trait', 'cargo build guidelines').\n\n\
-                CRITICAL: Pay special attention to tool execution outcomes. If a tool call (such as a compiler build, script execution, or API request) failed with an error, look at how the agent resolved it (or what workaround succeeded). Extract this learning and write it into a reusable 'skill' file so the agent will avoid making the same mistake again.\n\n\
-                REPETITIVE TASKS: Look at the list of recent user tasks provided. If the user is repeatedly asking to do a similar thing, action, or custom automation, extract a skill/workflow to automate that task so future requests can be handled instantly without re-discovering the solution.\n\n\
-                Guidelines for Skills:\n\
-                - Structure each skill as a clean, professional Markdown document containing: a title (# Skill: ...), a description of when to use it, the specific rules/guidelines, and examples of problems and their corresponding workarounds/solutions.\n\
-                - If a skill already exists in the 'Existing Skills' list, you MUST merge the new rules/workarounds into the existing skill content rather than replacing it entirely. Do not lose existing guidelines.\n\
-                - Keep skill names lowercase with underscores (e.g., 'cargo_build_fix', 'react_routing_pattern').\n\n\
-                You MUST return your response as a raw JSON object with the following structure. Do not output anything else besides the raw JSON (do not wrap it in explanation text).\n\n\
-                JSON Format:\n\
-                {\n\
-                   \"memory_updated\": true/false,\n\
-                   \"memory_content\": \"<updated memory markdown content. If memory_updated is false, keep it identical to existing memory or empty>\",\n\
-                   \"skills_to_save\": [\n\
-                     {\n\
-                       \"name\": \"<name of skill, lowercase with underscores>\",\n\
-                       \"content\": \"<complete updated or new markdown content for the skill. Include headers, rules, and examples. Keep existing rules and merge any new ones.>\"\n\
-                     }\n\
-                   ]\n\
-                }";
+            let system_prompt_review = self_improvement_review_prompt();
 
             let mut prompt_content = String::new();
 
@@ -658,6 +696,17 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn self_improvement_prompt_documents_workflow_outputs() {
+        let prompt = self_improvement_review_prompt();
+        assert!(prompt.contains("workflows_to_save"));
+        assert!(prompt.contains("sources_to_save"));
+        assert!(prompt.contains("Large static website"));
+        assert!(prompt.contains("render in shorter segments"));
+        assert!(prompt.contains("manage_servers"));
+        assert!(prompt.contains("openz_inventory"));
+    }
 
     #[test]
     fn curator_spawn_debounces_fast_repeated_session() {

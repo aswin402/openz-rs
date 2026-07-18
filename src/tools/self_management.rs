@@ -350,6 +350,165 @@ impl Tool for ToolCatalogTool {
     }
 }
 
+pub struct OpenZInventoryTool {
+    registry: crate::tools::ToolRegistry,
+}
+
+impl OpenZInventoryTool {
+    pub fn new(registry: crate::tools::ToolRegistry) -> Self {
+        Self { registry }
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for OpenZInventoryTool {
+    fn name(&self) -> &str {
+        "openz_inventory"
+    }
+
+    fn description(&self) -> &str {
+        "Return a live OpenZ capability inventory from the running binary: version, channels, registered tools by domain, subagents, server state, and exact counts. Use this before answering feature/tool questions."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "include_tools": {
+                    "type": "boolean",
+                    "description": "Include the full registered tool name list. Default true."
+                },
+                "include_subagents": {
+                    "type": "boolean",
+                    "description": "Include loaded subagent profile names. Default true."
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Optional user prompt for prompt-aware exposed-tool routing analysis."
+                }
+            }
+        })
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let include_tools = arguments
+            .get("include_tools")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let include_subagents = arguments
+            .get("include_subagents")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let prompt = arguments
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let entries = self.registry.catalog_entries_for_prompt(false, prompt);
+        let mut domains = std::collections::BTreeMap::<String, usize>::new();
+        let mut risks = std::collections::BTreeMap::<String, usize>::new();
+        let mut tools_by_domain = std::collections::BTreeMap::<String, Vec<String>>::new();
+        let mut exposed_count = 0usize;
+        for entry in &entries {
+            let name = entry["name"].as_str().unwrap_or("unknown").to_string();
+            let domain = entry["domain"].as_str().unwrap_or("general").to_string();
+            let risk = entry["risk"].as_str().unwrap_or("low").to_string();
+            if entry["exposed_to_model"].as_bool().unwrap_or(false) {
+                exposed_count += 1;
+            }
+            *domains.entry(domain.clone()).or_default() += 1;
+            *risks.entry(risk).or_default() += 1;
+            tools_by_domain.entry(domain).or_default().push(name);
+        }
+        for names in tools_by_domain.values_mut() {
+            names.sort();
+        }
+
+        let subagents = if include_subagents {
+            crate::subagents::load_profiles()
+                .map(|profiles| profiles.into_iter().map(|p| p.name).collect::<Vec<_>>())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let active_servers = crate::shutdown::list_registered_children();
+
+        let channels = vec![
+            "cli_tui",
+            "websocket_webui",
+            "telegram",
+            "discord",
+            "whatsapp",
+            "email_imap_smtp",
+        ];
+        let commands = vec![
+            "onboard",
+            "configure",
+            "agent",
+            "gateway",
+            "telegram",
+            "discord",
+            "whatsapp",
+            "subagent",
+            "sop",
+            "mcp-bridge",
+            "logs",
+            "changelog",
+            "streaming",
+            "doctor",
+        ];
+        let core_capabilities = vec![
+            "agent_loop",
+            "prompt_aware_tool_router",
+            "managed_dev_server_lifecycle",
+            "self_improvement_curator",
+            "persistent_skills",
+            "workflow_memory",
+            "knowledge_graph_memory",
+            "working_memory_ttl",
+            "semantic_search",
+            "context_compression_ccr",
+            "subagent_delegation",
+            "sop_workflows",
+            "security_guard",
+            "optional_seccomp_bpf_sandbox",
+            "audit_ledger",
+            "mcp_bridge",
+            "browser_automation",
+            "document_tools",
+            "media_tools",
+            "rust_cargo_tools",
+        ];
+
+        Ok(serde_json::json!({
+            "success": true,
+            "version": env!("CARGO_PKG_VERSION"),
+            "tool_count": entries.len(),
+            "exposed_count": exposed_count,
+            "domains": domains,
+            "risks": risks,
+            "selected_domains": self.registry.selected_domains_for_prompt(prompt),
+            "channels": channels,
+            "channel_count": channels.len(),
+            "commands": commands,
+            "command_count": commands.len(),
+            "core_capabilities": core_capabilities,
+            "subagent_count": subagents.len(),
+            "subagents": if include_subagents { serde_json::json!(subagents) } else { serde_json::Value::Null },
+            "active_server_count": active_servers.len(),
+            "active_servers": active_servers.iter().map(|s| serde_json::json!({
+                "id": s.id,
+                "pid": s.pid,
+                "kind": s.kind,
+                "command": s.command,
+                "started_at": s.started_at,
+            })).collect::<Vec<_>>(),
+            "tools_by_domain": if include_tools { serde_json::json!(tools_by_domain) } else { serde_json::Value::Null },
+            "guidance": "Use this live inventory instead of guessing feature/tool counts from memory."
+        }))
+    }
+}
+
 pub struct CurateSkillTool;
 
 #[async_trait::async_trait]
@@ -1453,6 +1612,32 @@ impl Tool for ManageBackupsTool {
 mod tests {
     use super::*;
 
+    struct TestEnvLock;
+
+    impl TestEnvLock {
+        fn acquire() -> Self {
+            let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
+            loop {
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&lock_path)
+                {
+                    Ok(_) => break,
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+                }
+            }
+            TestEnvLock
+        }
+    }
+
+    impl Drop for TestEnvLock {
+        fn drop(&mut self) {
+            let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
+            let _ = std::fs::remove_file(lock_path);
+        }
+    }
+
     #[test]
     fn test_tool_catalog_reports_metadata_and_exposure() {
         let registry = crate::tools::ToolRegistry::new();
@@ -1835,16 +2020,24 @@ mod tests {
 
     #[test]
     fn test_manage_sessions() {
+        let _env_lock = TestEnvLock::acquire();
+        let previous_config_dir = std::env::var("OPENZ_CONFIG_DIR").ok();
+        let openz_dir =
+            std::env::temp_dir().join(format!("openz_manage_sessions_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&openz_dir).unwrap();
+        std::env::set_var("OPENZ_CONFIG_DIR", &openz_dir);
+
         let tool = ManageSessionsTool;
         let rt = tokio::runtime::Runtime::new().unwrap();
 
-        let openz_dir = crate::config::loader::runtime_data_dir();
         let sessions_dir = openz_dir.join("sessions");
         std::fs::create_dir_all(&sessions_dir).unwrap();
 
-        // 1. Create a dummy session file for testing
-        let test_session_key = "test_session_xyz_999";
+        // 1. Create a dummy session file for testing. Use a unique key because
+        // the full lib test suite runs session-management tests in parallel.
+        let test_session_key = format!("test_session_xyz_{}", uuid::Uuid::new_v4());
         let session_file = sessions_dir.join(format!("{}.json", test_session_key));
+        let _ = std::fs::remove_file(&session_file);
         std::fs::write(
             &session_file,
             serde_json::json!({
@@ -1876,7 +2069,7 @@ mod tests {
         let archive_res = rt
             .block_on(tool.call(&serde_json::json!({
                 "action": "archive",
-                "session_key": test_session_key
+                "session_key": &test_session_key
             })))
             .unwrap();
         assert_eq!(archive_res["status"].as_str().unwrap(), "success");
@@ -1888,7 +2081,7 @@ mod tests {
             for entry in entries.flatten() {
                 let name = entry.file_name();
                 let name_str = name.to_str().unwrap_or("");
-                if name_str.starts_with(test_session_key) {
+                if name_str.starts_with(&test_session_key) {
                     let _ = std::fs::remove_file(entry.path());
                 }
             }
@@ -1901,7 +2094,7 @@ mod tests {
         let delete_res = rt
             .block_on(tool.call(&serde_json::json!({
                 "action": "delete",
-                "session_key": test_session_key
+                "session_key": &test_session_key
             })))
             .unwrap();
         assert_eq!(delete_res["status"].as_str().unwrap(), "success");
@@ -1916,6 +2109,13 @@ mod tests {
             .unwrap();
         assert_eq!(prune_res["status"].as_str().unwrap(), "success");
         assert!(prune_res["details"]["files_removed"].as_u64().is_some());
+
+        if let Some(prev) = previous_config_dir {
+            std::env::set_var("OPENZ_CONFIG_DIR", prev);
+        } else {
+            std::env::remove_var("OPENZ_CONFIG_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&openz_dir);
     }
 
     #[test]

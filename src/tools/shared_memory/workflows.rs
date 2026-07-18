@@ -401,14 +401,16 @@ mod tests {
 
     #[tokio::test]
     async fn workflow_memory_search_and_record_run() {
-        let name = format!(
-            "screenshot_active_window_to_telegram_{}",
-            uuid::Uuid::new_v4()
+        let unique = uuid::Uuid::new_v4().to_string();
+        let name = format!("screenshot_active_window_to_telegram_{unique}");
+        let trigger = format!("send screenshot to telegram {unique}");
+        let summary = format!(
+            "Capture active window and send image through configured Telegram bot {unique}"
         );
         add_workflow_card(
             &name,
-            vec!["send screenshot to telegram".to_string()],
-            "Capture active window and send image through configured Telegram bot",
+            vec![trigger.clone()],
+            &summary,
             json!([{"tool":"exec_command","args":{"cmd":"curl -F bot_token=12345"}}]),
             vec!["Telegram configured".to_string()],
             vec!["Telegram API returns ok=true".to_string()],
@@ -417,9 +419,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let matches = search_workflow_cards("take screenshot and send it to telegram", 5, true)
-            .await
-            .unwrap();
+        let matches = search_workflow_cards(&trigger, 5, true).await.unwrap();
         assert_eq!(
             matches.first().map(|m| m.name.as_str()),
             Some(name.as_str())

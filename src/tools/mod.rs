@@ -136,6 +136,11 @@ impl ToolMetadata {
 fn infer_tool_domain(name: &str) -> &'static str {
     if matches!(
         name,
+        "manage_servers" | "openz_inventory" | "workflow_memory" | "curate_skill"
+    ) {
+        "self_management"
+    } else if matches!(
+        name,
         "delegate_task" | "parallel_research" | "evaluator_optimizer_loop"
     ) || name.contains("subagent")
     {
@@ -303,6 +308,19 @@ fn tool_aliases(name: &str, domain: &str) -> &'static [&'static str] {
         "delegate_task" => &["subagent", "delegate", "specialist agent"],
         "git_manager" => &["git status", "git diff", "git commit", "git log"],
         "tool_catalog" => &["list tools", "tool help", "available tools"],
+        "openz_inventory" => &["features", "capabilities", "what can you do", "inventory"],
+        "manage_servers" => &[
+            "stop server",
+            "list servers",
+            "dev server",
+            "background process",
+        ],
+        "workflow_memory" => &[
+            "save workflow",
+            "reuse workflow",
+            "record run",
+            "procedure memory",
+        ],
         _ => match domain {
             "code" => &["code search", "compile", "test", "refactor"],
             "filesystem" => &["file", "directory", "edit file"],
@@ -338,6 +356,18 @@ fn tool_examples(name: &str, domain: &str) -> &'static [&'static str] {
         "tool_catalog" => &[
             "List tools for a website research task",
             "Explain why tools were hidden",
+        ],
+        "openz_inventory" => &[
+            "Answer exactly what OpenZ features and tools are currently registered",
+            "Compare claimed features against live tool inventory",
+        ],
+        "manage_servers" => &[
+            "List active dev servers after launching npm run dev",
+            "Stop all OpenZ-launched servers when the task is done",
+        ],
+        "workflow_memory" => &[
+            "Save a repeated website/video generation procedure",
+            "Record whether a reused workflow succeeded",
         ],
         _ => match domain {
             "code" => &["Analyze or modify source code"],
@@ -375,6 +405,18 @@ fn tool_usage_hints(name: &str, domain: &str) -> (&'static str, &'static str) {
         "web_search" => (
             "Use when current or external web information is required.",
             "Avoid when the answer is fully available from local project files.",
+        ),
+        "openz_inventory" => (
+            "Use before answering questions about OpenZ's exact features, commands, channels, subagents, and registered tools.",
+            "Avoid guessing feature counts from memory when live registry data is available.",
+        ),
+        "manage_servers" => (
+            "Use to inspect or stop dev servers/background processes launched by OpenZ; call it automatically when cleanup is needed.",
+            "Avoid shell pkill guesses for servers OpenZ registered itself.",
+        ),
+        "workflow_memory" => (
+            "Use to save, search, or record reusable procedures after repeated successful tasks or tool-workaround discoveries.",
+            "Avoid leaving repeated multi-step workflows only in chat history.",
         ),
         "delegate_task" => (
             "Use for independent specialist work, reviews, research, or multimodal routing.",
@@ -447,6 +489,10 @@ fn is_core_tool(name: &str) -> bool {
     matches!(
         name,
         "tool_catalog"
+            | "openz_inventory"
+            | "manage_servers"
+            | "workflow_memory"
+            | "curate_skill"
             | "optimize_tool_scope"
             | "diagnose_tool"
             | "delegate_task"

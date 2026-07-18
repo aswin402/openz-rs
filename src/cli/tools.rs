@@ -163,6 +163,9 @@ fn register_core_tools(
         crate::tools::self_management::ToolCatalogTool::new(registry.clone()),
     ));
     registry.register(std::sync::Arc::new(
+        crate::tools::self_management::OpenZInventoryTool::new(registry.clone()),
+    ));
+    registry.register(std::sync::Arc::new(
         crate::tools::self_management::CurateSkillTool,
     ));
     registry.register(std::sync::Arc::new(
@@ -968,6 +971,9 @@ mod tests {
         assert!(names.contains(&"exec_command".to_string()));
         assert!(names.contains(&"delegate_task".to_string()));
         assert!(names.contains(&"tool_catalog".to_string()));
+        assert!(names.contains(&"openz_inventory".to_string()));
+        assert!(names.contains(&"manage_servers".to_string()));
+        assert!(names.contains(&"workflow_memory".to_string()));
         assert!(names.contains(&"sequentialthinking".to_string()));
         assert!(names.contains(&"scope_context".to_string()));
         assert!(names.contains(&"create_entities".to_string()));
@@ -1017,6 +1023,48 @@ mod tests {
             !names.contains(&"low_tool_139".to_string()),
             "low priority unrelated tools should be dropped first"
         );
+    }
+
+    #[test]
+    fn runtime_management_tools_stay_exposed_under_tool_limit() {
+        let registry = ToolRegistry::new();
+        for i in 0..180 {
+            registry.register(Arc::new(MetaTestTool {
+                name: format!("low_tool_{i:03}"),
+                domain: "general",
+                priority: 1,
+                risk: crate::tools::ToolRisk::Low,
+            }));
+        }
+        registry.register(Arc::new(MetaTestTool {
+            name: "openz_inventory".to_string(),
+            domain: "self_management",
+            priority: 85,
+            risk: crate::tools::ToolRisk::Low,
+        }));
+        registry.register(Arc::new(MetaTestTool {
+            name: "manage_servers".to_string(),
+            domain: "self_management",
+            priority: 85,
+            risk: crate::tools::ToolRisk::Medium,
+        }));
+        registry.register(Arc::new(MetaTestTool {
+            name: "workflow_memory".to_string(),
+            domain: "self_management",
+            priority: 85,
+            risk: crate::tools::ToolRisk::Medium,
+        }));
+
+        let tools = registry.to_openai_format_for_prompt(
+            "what features do you have and stop the dev server after preview",
+        );
+        let names: Vec<_> = tools
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(names.contains(&"openz_inventory".to_string()));
+        assert!(names.contains(&"manage_servers".to_string()));
+        assert!(names.contains(&"workflow_memory".to_string()));
     }
 
     #[test]

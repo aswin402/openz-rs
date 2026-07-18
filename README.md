@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.57`
+# OpenZ 🦊 `v0.0.58`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.58`
+
+- **Agent-managed server lifecycle:** OpenZ now prompts itself to use `manage_servers` automatically for OpenZ-launched dev servers instead of relying on users to type `/stop-server` or guessing with `pkill`.
+- **Live feature inventory:** new `openz_inventory` tool reports the running binary's exact version, commands, channels, registered tools, domains, subagents, and active server state so feature answers come from live data instead of memory.
+- **Reusable generation workflows:** self-improvement now explicitly saves `workflows_to_save`, and built-in skills teach chunked static-site creation plus segmented long HTML-video rendering.
 
 ## What Changed In `v0.0.57`
 
