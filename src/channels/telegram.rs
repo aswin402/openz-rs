@@ -393,6 +393,8 @@ impl super::Channel for TelegramChannel {
                                         || cmd == "/skills"
                                         || cmd == "/sources"
                                         || cmd == "/workflows"
+                                        || cmd == "/servers"
+                                        || cmd == "/stop-server"
                                         || cmd.starts_with("/model")
                                         || cmd == "/switch-model"
                                         || cmd == "/help"
@@ -420,6 +422,87 @@ impl super::Channel for TelegramChannel {
                                             continue;
                                         }
 
+                                        if cmd == "/servers" {
+                                            let servers =
+                                                crate::shutdown::list_registered_children();
+                                            let response = if servers.is_empty() {
+                                                "No OpenZ-launched background servers running."
+                                                    .to_string()
+                                            } else {
+                                                let mut lines =
+                                                    vec!["OpenZ background servers:".to_string()];
+                                                for server in servers {
+                                                    lines.push(format!(
+                                                        "#{} pid={} {} - {}",
+                                                        server.id,
+                                                        server.pid,
+                                                        server.kind,
+                                                        server.command
+                                                    ));
+                                                }
+                                                lines.push(
+                                                    "Use /stop-server <id> or /stop-server all."
+                                                        .to_string(),
+                                                );
+                                                lines.join("\n")
+                                            };
+                                            tokio::spawn(async move {
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
+                                                let payload = serde_json::json!({
+                                                    "chat_id": chat_id,
+                                                    "text": response
+                                                });
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
+                                            });
+                                            continue;
+                                        }
+
+                                        if cmd == "/stop-server" {
+                                            let target = trimmed
+                                                .split_whitespace()
+                                                .nth(1)
+                                                .unwrap_or("")
+                                                .trim();
+                                            let response = if target.is_empty() {
+                                                "Usage: /stop-server <id|all>".to_string()
+                                            } else {
+                                                match crate::shutdown::stop_registered_child(target)
+                                                {
+                                                    Ok(0) => "No matching background server found."
+                                                        .to_string(),
+                                                    Ok(count) => format!(
+                                                        "✓ Stopped {} background server(s).",
+                                                        count
+                                                    ),
+                                                    Err(e) => {
+                                                        format!("✕ Failed to stop server: {}", e)
+                                                    }
+                                                }
+                                            };
+                                            tokio::spawn(async move {
+                                                let send_url = format!(
+                                                    "https://api.telegram.org/bot{}/sendMessage",
+                                                    token
+                                                );
+                                                let payload = serde_json::json!({
+                                                    "chat_id": chat_id,
+                                                    "text": response
+                                                });
+                                                let _ = client
+                                                    .post(&send_url)
+                                                    .json(&payload)
+                                                    .send()
+                                                    .await;
+                                            });
+                                            continue;
+                                        }
                                         if cmd == "/new-session" {
                                             let session_manager = &agent.session_manager;
                                             let session_key = format!("telegram:{}", chat_id);

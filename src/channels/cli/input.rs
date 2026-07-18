@@ -137,6 +137,14 @@ pub fn read_line_raw(
         if let Some(inbox_msg) = crate::agent::activity::pop_inbox_message(session_key)
             .or_else(|| crate::agent::activity::pop_inbox_message("cli:direct"))
         {
+            if lines_printed > 1 {
+                for _ in 0..(lines_printed - 1) {
+                    print!("\r\n\x1b[2K");
+                }
+                print!("\x1b[{}A\r", lines_printed - 1);
+            }
+            print!("\r\x1b[2K");
+            let _ = stdout().flush();
             let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
             let _ = disable_raw_mode();
             println!(

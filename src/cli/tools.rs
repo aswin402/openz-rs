@@ -23,7 +23,7 @@ use crate::tools::shared_memory::{
     ArchiveResearchTool, ClearMemoryTool, DeleteMemoryTool, KnowledgeSourceTool, RecallMemoryTool,
     ResearchBriefTool, SearchResearchTool, StoreMemoryTool, UpdateMemoryTool, WorkflowMemoryTool,
 };
-use crate::tools::shell::{ExecCommandTool, PythonSandboxTool};
+use crate::tools::shell::{ExecCommandTool, ManageServersTool, PythonSandboxTool};
 use crate::tools::social_search::SocialSearchTool;
 use crate::tools::subagent::{
     CreateSubagentTool, DelegateTaskTool, DeleteSubagentTool, OptimizeSubagentTool,
@@ -86,6 +86,7 @@ fn register_core_tools(
     registry.register(std::sync::Arc::new(ReplaceLinesTool));
     registry.register(std::sync::Arc::new(ListDirTool));
     registry.register(std::sync::Arc::new(ExecCommandTool));
+    registry.register(std::sync::Arc::new(ManageServersTool));
     registry.register(std::sync::Arc::new(WebFetchTool::new()));
     registry.register(std::sync::Arc::new(DelegateTaskTool {
         config: config.clone(),

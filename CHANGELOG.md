@@ -398,7 +398,14 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.56 (Latest Release)
+### v0.0.57 (Latest Release)
+
+*   **Feature: managed background servers:** Detached dev-server commands are now registered with id, pid, command, kind, and start time metadata so they can be inspected and stopped later.
+*   **Feature: server lifecycle controls:** Added `/servers` and `/stop-server <id|all>` in TUI and Telegram, plus a native `manage_servers` tool so OpenZ can list or stop its own launched servers automatically.
+*   **Bugfix: approval menu responsiveness:** TUI menus now drain stale key events after enabling raw mode, reducing delayed `Enter`/arrow handling after cancellations and long tool turns.
+*   **Chore:** Bumped version to `v0.0.57`.
+
+### v0.0.56
 
 *   **Bugfix: TUI cancellation cleanup:** Esc/Ctrl+C turn cancellation now gives the keyboard watcher a short clean shutdown window so stale terminal readers do not keep stealing keystrokes from the next prompt or security approval menu.
 *   **Bugfix: detached desktop/server launches:** `exec_command` now detects common GUI launchers, browsers, media players, editors, and dev-server commands and starts them detached, preventing OpenZ from sitting forever on `bash command running...` after the app opens.

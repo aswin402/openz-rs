@@ -48,10 +48,14 @@ pub fn select_menu_with_history_first_option(
 ) -> Result<usize> {
     use crossterm::event::{self, Event, KeyCode, KeyEventKind};
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+    use crossterm::ExecutableCommand;
     use std::io::stdout;
     use std::io::Write;
 
+    let mut stdout = stdout();
+    let _ = stdout.execute(crossterm::cursor::Hide);
     enable_raw_mode()?;
+    drain_pending_key_events();
     let mut selected = 0;
     let num_options = 1 + history.len();
 
@@ -65,7 +69,7 @@ pub fn select_menu_with_history_first_option(
 
     print!("{}\r\n", prompt);
 
-    let draw_menu = |selected_idx: usize| {
+    let mut draw_menu = |selected_idx: usize| {
         if selected_idx == 0 {
             print!(
                 "▸ {}{}{}{}\r\n",
@@ -127,7 +131,7 @@ pub fn select_menu_with_history_first_option(
                 print!("\r\n");
             }
         }
-        let _ = stdout().flush();
+        let _ = stdout.flush();
     };
 
     draw_menu(selected);
@@ -163,7 +167,7 @@ pub fn select_menu_with_history_first_option(
                         }
                         print!("\r\x1b[1A\x1b[2K");
                         print!("\r");
-                        stdout().flush()?;
+                        stdout.flush()?;
                         disable_raw_mode()?;
                         return Ok(selected);
                     }
@@ -177,7 +181,8 @@ pub fn select_menu_with_history_first_option(
                         }
                         print!("\r\x1b[1A\x1b[2K");
                         print!("\r");
-                        let _ = stdout().flush();
+                        let _ = stdout.execute(crossterm::cursor::Show);
+                        let _ = stdout.flush();
                         disable_raw_mode()?;
                         return Err(anyhow::anyhow!("Ctrl-C"));
                     }
@@ -211,6 +216,7 @@ pub fn select_menu_custom(
     let _ = stdout.execute(crossterm::cursor::Hide);
 
     enable_raw_mode()?;
+    drain_pending_key_events();
     let mut selected = 0;
     let num_options = options.len();
     let max_display = 5;
@@ -447,6 +453,20 @@ pub fn select_menu_custom(
     }
 }
 
+fn drain_pending_key_events() {
+    use crossterm::event::{self, Event, KeyEventKind};
+    for _ in 0..64 {
+        match event::poll(std::time::Duration::from_millis(0)) {
+            Ok(true) => match event::read() {
+                Ok(Event::Key(key)) if key.kind == KeyEventKind::Release => continue,
+                Ok(_) => continue,
+                Err(_) => break,
+            },
+            _ => break,
+        }
+    }
+}
+
 pub fn select_menu_horizontal(options: &[String]) -> Result<Option<usize>> {
     use crossterm::event::{self, Event, KeyCode, KeyEventKind};
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
@@ -457,6 +477,7 @@ pub fn select_menu_horizontal(options: &[String]) -> Result<Option<usize>> {
     let _ = stdout.execute(crossterm::cursor::Hide);
 
     enable_raw_mode()?;
+    drain_pending_key_events();
     let mut selected = 0;
     let num_options = options.len();
 

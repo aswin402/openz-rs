@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.56`
+# OpenZ 🦊 `v0.0.57`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.57`
+
+- **Managed background servers:** dev-server launches such as `npm run dev`, `bun run dev`, `npx vite`, and `python -m http.server` are tracked with id/pid/command metadata instead of becoming invisible background work.
+- **Server controls:** use `/servers` to list OpenZ-launched background servers and `/stop-server <id|all>` to stop them from the TUI or Telegram. Models can also use the new `manage_servers` tool.
+- **Permission menu responsiveness:** TUI selection menus drain stale key events before drawing so approval prompts reliably accept the first real `Enter`.
 
 ## What Changed In `v0.0.56`
 

@@ -142,7 +142,7 @@ impl Tool for WriteFileTool {
     }
 
     fn description(&self) -> &str {
-        "Write content to a file, overwriting it if it exists."
+        "Write content to a file, overwriting it if it exists. Keep content payloads small. For large generated files (roughly over 8KB), write in smaller chunks with shell redirection/heredoc or patch_file to avoid malformed/truncated JSON tool calls."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -150,7 +150,7 @@ impl Tool for WriteFileTool {
             "type": "object",
             "properties": {
                 "path": { "type": "string", "description": "Absolute or relative path to the file" },
-                "content": { "type": "string", "description": "File content to write" }
+                "content": { "type": "string", "description": "File content to write. Keep under roughly 8KB per tool call; for larger files, write in chunks or use a command-line heredoc approach." }
             },
             "required": ["path", "content"]
         })

@@ -398,14 +398,20 @@ impl Tool for ExecCommandTool {
 
         if let Some(detach_kind) = detach_command_kind(command_str) {
             spawn_detached_command(command_str, detach_kind)?;
+            let is_server = matches!(detach_kind, DetachedCommandKind::DevServer);
             return Ok(serde_json::json!({
                 "status_code": 0,
                 "stdout": "",
                 "stderr": "",
                 "detached": true,
+                "server_registered": is_server,
                 "user_visible": true,
                 "do_not_retry": true,
-                "message": "Command launched in the background because it opens a desktop app or long-running server. Treat this as complete; do not try alternate launch methods unless the user says it failed."
+                "message": if is_server {
+                    "Dev server launched in the background and registered. Use manage_servers or /stop-server to stop it when finished. Treat launch as complete unless the user says it failed."
+                } else {
+                    "Command launched in the background because it opens a desktop app. Treat this as complete; do not try alternate launch methods unless the user says it failed."
+                }
             }));
         }
 
@@ -533,8 +539,8 @@ fn contains_shell_control_operator(command_line: &str) -> bool {
         match c {
             '"' if !in_single_quote => in_double_quote = !in_double_quote,
             '\'' if !in_double_quote => in_single_quote = !in_single_quote,
-            ';' | '|' | '&' | '`' | '$' | '<' | '>' | '\n'
-                if !in_double_quote && !in_single_quote =>
+            ';' | '|' | '&' | '`' | '$' | '<' | '>' | '(' | ')' | '\\' | '\n'
+                if !in_single_quote =>
             {
                 return true;
             }
@@ -620,7 +626,14 @@ fn spawn_detached_command(command_line: &str, kind: DetachedCommandKind) -> Resu
                 let _ = child.wait();
             });
         }
-        DetachedCommandKind::DevServer => crate::shutdown::register_child(child),
+        DetachedCommandKind::DevServer => {
+            let id = crate::shutdown::register_child_group_with_metadata(
+                child,
+                command_line.to_string(),
+                "dev_server",
+            );
+            tracing::info!(server_id = id, command = %command_line, "Registered detached dev server");
+        }
     }
     Ok(())
 }
@@ -749,6 +762,79 @@ mod exec_command_tests {
             "xdg-open /tmp/demo.svg; rm -rf /tmp/nope"
         ));
         assert!(!should_detach_command("gio info /tmp/demo.svg"));
+        assert!(!should_detach_command(
+            r#"xdg-open "http://example.com/$(whoami)""#
+        ));
+        assert!(should_detach_command(
+            r#"xdg-open "file name with spaces.svg""#
+        ));
+    }
+}
+
+pub struct ManageServersTool;
+
+#[async_trait::async_trait]
+impl Tool for ManageServersTool {
+    fn name(&self) -> &str {
+        "manage_servers"
+    }
+
+    fn description(&self) -> &str {
+        "List or stop dev servers/background processes launched by OpenZ, such as npm run dev, bun run dev, vite, or python -m http.server."
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["list", "stop"],
+                    "description": "Use list to inspect active servers, stop to terminate one server or all servers."
+                },
+                "target": {
+                    "type": "string",
+                    "description": "Server id to stop, or 'all'. Required for action=stop."
+                }
+            },
+            "required": ["action"]
+        })
+    }
+
+    async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
+        let action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("list");
+        match action {
+            "list" => {
+                let servers = crate::shutdown::list_registered_children();
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "servers": servers.iter().map(|s| serde_json::json!({
+                        "id": s.id,
+                        "pid": s.pid,
+                        "kind": s.kind,
+                        "command": s.command,
+                        "started_at": s.started_at,
+                    })).collect::<Vec<_>>()
+                }))
+            }
+            "stop" => {
+                let target = arguments
+                    .get("target")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing 'target' for stop action"))?;
+                let stopped =
+                    crate::shutdown::stop_registered_child(target).map_err(|e| anyhow!(e))?;
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "stopped": stopped,
+                    "target": target
+                }))
+            }
+            other => Err(anyhow!("Unsupported action '{}'. Use list or stop.", other)),
+        }
     }
 }
 

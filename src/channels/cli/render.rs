@@ -16,8 +16,10 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/memory", "View metadata memory"),
     ("/model", "Show or change active default model"),
     ("/new-session", "Start a new session"),
+    ("/servers", "List OpenZ-launched background servers"),
     ("/skill", "List active skills"),
     ("/sources", "Search saved source bookmarks"),
+    ("/stop-server", "Stop a background server by id, or all"),
     ("/workflows", "Search reusable workflows"),
 ];
 

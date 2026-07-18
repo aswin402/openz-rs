@@ -263,6 +263,57 @@ impl CliChannel {
                 continue;
             }
 
+            if trimmed == "/servers" {
+                let servers = crate::shutdown::list_registered_children();
+                if servers.is_empty() {
+                    println!("No OpenZ-launched background servers running.");
+                } else {
+                    println!("{}OpenZ background servers:{}", COLOR_BOLD, COLOR_RESET);
+                    for server in servers {
+                        println!(
+                            "  {}#{}{} pid={} {} - {}",
+                            RED_ORANGE,
+                            server.id,
+                            COLOR_RESET,
+                            server.pid,
+                            server.kind,
+                            server.command
+                        );
+                    }
+                    println!(
+                        "Use {} /stop-server <id>{} or {} /stop-server all{}.",
+                        RED_ORANGE, COLOR_RESET, RED_ORANGE, COLOR_RESET
+                    );
+                }
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
+                continue;
+            }
+
+            if let Some(stripped) = trimmed.strip_prefix("/stop-server") {
+                let target = stripped.trim();
+                if target.is_empty() {
+                    println!("Usage: /stop-server <id|all>");
+                } else {
+                    match crate::shutdown::stop_registered_child(target) {
+                        Ok(0) => println!("No matching background server found."),
+                        Ok(count) => println!(
+                            "{}✓ Stopped {} background server(s).{}",
+                            EMERALD_GREEN, count, COLOR_RESET
+                        ),
+                        Err(e) => {
+                            println!("{}✕ Failed to stop server: {}{}", ERROR_RED, e, COLOR_RESET)
+                        }
+                    }
+                }
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
+                continue;
+            }
             if let Some(stripped) = trimmed.strip_prefix("/model") {
                 let arg = stripped.trim();
                 if arg.is_empty() {
