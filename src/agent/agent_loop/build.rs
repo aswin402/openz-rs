@@ -1,6 +1,8 @@
 use super::{AgentLoop, TurnContext, TurnState};
 use anyhow::Result;
 
+pub const MIN_MATCH_SCORE: f64 = 6.0;
+
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
     let config = &ctx.config;
     let mut summary_part = String::new();
@@ -368,7 +370,7 @@ fn format_research_brief_context_items(
 async fn retrieve_research_brief_context(user_content: &str) -> String {
     match crate::tools::shared_memory::search_research_briefs(user_content, 3).await {
         Ok(items) => {
-            if let Some(best) = items.first().filter(|item| item.score >= 4.0) {
+            if let Some(best) = items.first().filter(|item| item.score >= MIN_MATCH_SCORE) {
                 crate::channels::cli::send_notification(&format!(
                     "◇ Research brief matched: {} ({})",
                     best.topic, best.freshness
@@ -417,7 +419,7 @@ Use these ranked links, repos, docs, paths, or profiles before broad searching. 
 async fn retrieve_source_context(user_content: &str) -> String {
     match crate::tools::shared_memory::search_source_bookmarks(user_content, 4).await {
         Ok(items) => {
-            if let Some(best) = items.first().filter(|item| item.score >= 4.0) {
+            if let Some(best) = items.first().filter(|item| item.score >= MIN_MATCH_SCORE) {
                 crate::channels::cli::send_notification(&format!(
                     "◇ Sources matched: {} ({})",
                     best.label, best.freshness

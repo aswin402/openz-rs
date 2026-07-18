@@ -64,20 +64,39 @@ pub fn canonical_research_topic(raw: &str) -> String {
             };
         }
     }
-    for prefix in [
-        "what is ",
-        "whats ",
-        "what's ",
-        "tell me about ",
-        "research about ",
-        "research ",
-        "compare ",
-    ] {
-        if let Some(rest) = text.strip_prefix(prefix) {
-            text = rest.trim().to_string();
+    for _ in 0..3 {
+        let before = text.clone();
+        for prefix in [
+            "hey ",
+            "hi ",
+            "hello ",
+            "yo ",
+            "ok ",
+            "okay ",
+            "so ",
+            "now ",
+            "can you ",
+            "could you ",
+            "please ",
+            "what is ",
+            "whats ",
+            "what's ",
+            "tell me about ",
+            "research about ",
+            "research ",
+            "compare ",
+        ] {
+            if let Some(rest) = text.strip_prefix(prefix) {
+                text = rest.trim().to_string();
+            }
+        }
+        if text == before {
+            break;
         }
     }
-    let stop = ["please", "and", "with", "from", "latest", "current"];
+    let stop = [
+        "please", "and", "with", "from", "latest", "current", "about", "tell", "me",
+    ];
     let words = text
         .split(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '-')
         .filter(|w| !w.is_empty() && !stop.contains(w))
@@ -233,7 +252,7 @@ fn dedupe_candidates(candidates: Vec<SourceCandidate>) -> Vec<SourceCandidate> {
         if seen.insert(candidate.url.clone()) {
             out.push(candidate);
         }
-        if out.len() >= 8 {
+        if out.len() >= 5 {
             break;
         }
     }
@@ -304,7 +323,13 @@ pub async fn auto_capture_research_memory(
         return Ok(None);
     }
 
-    let topic = topic_from(tool_name, arguments, user_content);
+    // Derive topic consistently from user_content so all tool calls in the
+    // same turn share the same canonical topic (avoiding duplicate briefs).
+    let topic = if user_content.trim().is_empty() {
+        topic_from(tool_name, arguments, user_content)
+    } else {
+        canonical_research_topic(user_content)
+    };
     if topic.trim().is_empty() {
         return Ok(None);
     }
@@ -382,6 +407,11 @@ mod tests {
             "mem0ai/mem0"
         );
         assert_eq!(canonical_research_topic("what is mem0"), "mem0");
+        assert_eq!(canonical_research_topic("hey whats hermes"), "hermes");
+        assert_eq!(
+            canonical_research_topic("ok now tell me about mem0"),
+            "mem0"
+        );
         let matches = crate::tools::shared_memory::search_source_bookmarks(&marker, 5)
             .await
             .unwrap();

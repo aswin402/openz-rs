@@ -407,6 +407,7 @@ Inside `openz agent`, the user can issue direct slash commands:
 *   **Feature: automatic research capture:** Successful web/search/research tool calls now save discovered URLs as `knowledge_source` bookmarks and persist a canonical `research_brief`, so repeated questions can reuse sources without manual commands.
 *   **Feature: brief-first recall:** Fresh research briefs are injected before saved sources with explicit no-fetch guidance for simple definition/comparison prompts, so saved memory reduces unnecessary web calls.
 *   **UX: batched auto-capture notices:** Multiple research tool calls in one iteration now emit one compact auto-save notification instead of one notice per tool.
+*   **Hardening: research memory cleanup:** Casual prompt prefixes like `hey whats` are stripped from saved research topics, duplicate auto-capture topics are collapsed in TUI notices, source/brief match thresholds are stricter, and the self-improvement curator is debounced for fast repeated turns.
 *   **Hardening: forgiving research brief tool args:** `research_brief` now accepts weak-model aliases like `goal`, `context`, and `content`, and infers save/search action when `action` is omitted.
 *   **Chore:** Bumped version to `v0.0.54`.
 

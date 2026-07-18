@@ -92,6 +92,41 @@ fn freshness_bonus(freshness: &str) -> f64 {
     }
 }
 
+const STOP_WORDS: &[&str] = &[
+    "the", "a", "an", "is", "it", "this", "that", "to", "in", "for", "of", "on", "and", "or", "be",
+    "was", "are", "what", "how", "why", "who", "when", "where", "which", "with", "from", "about",
+    "do", "does", "did", "can", "could", "will", "would", "should", "may", "might", "shall", "has",
+    "have", "had", "been", "being", "not", "no", "nor", "but", "so", "if", "than", "too", "very",
+    "just", "get", "got", "let", "make", "made", "use", "used", "using", "like", "also", "new",
+    "set", "get", "say", "said", "see", "way", "part", "top", "own",
+];
+
+fn tokenize(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() > 2 && !STOP_WORDS.contains(w))
+        .map(|w| w.to_string())
+        .collect()
+}
+
+fn matching_term_count(query: &str, fields: &[&str]) -> (usize, usize) {
+    if query.trim().is_empty() {
+        return (0, 0);
+    }
+    let query_tokens = tokenize(query);
+    if query_tokens.is_empty() {
+        return (0, 0);
+    }
+    let total_terms = query_tokens.len();
+    let doc_tokens: std::collections::BTreeSet<String> =
+        tokenize(&fields.join(" ")).into_iter().collect();
+    let matching = query_tokens
+        .iter()
+        .filter(|t| doc_tokens.contains(t.as_str()))
+        .count();
+    (matching, total_terms)
+}
+
 fn exact_field_match(query: &str, fields: &[&str]) -> bool {
     let q = query.trim().to_lowercase();
     if q.is_empty() {
@@ -102,48 +137,113 @@ fn exact_field_match(query: &str, fields: &[&str]) -> bool {
         .any(|field| field.trim().eq_ignore_ascii_case(&q))
 }
 
-fn source_rank_score(query: &str, item: &SourceBookmark) -> f64 {
-    let aliases = item.aliases.join(" ");
-    let mut score = score_text(
-        query,
-        &[&item.label, &item.kind, &item.uri, &aliases, &item.summary],
-    );
-    if score <= 0.0 && !query.trim().is_empty() {
+/// Term-frequency based scoring: returns ratio of query tokens that appear as
+/// whole words in the document fields, scaled to a 0..10 range.
+fn tf_ratio_score(query: &str, fields: &[&str]) -> f64 {
+    let (matching, total) = matching_term_count(query, fields);
+    if total == 0 || matching == 0 {
         return 0.0;
     }
-    if exact_field_match(query, &[&item.label, &item.uri])
-        || item
-            .aliases
-            .iter()
-            .any(|alias| alias.trim().eq_ignore_ascii_case(query.trim()))
-    {
-        score += 8.0;
+    let ratio = matching as f64 / total as f64;
+    // Scale by sqrt(matching) so a single common-word match doesn't dominate,
+    // but meaningful partial matches still score well.
+    // Examples:
+    //   1/2 match → 0.50 * 10.0 * sqrt(1) / sqrt(3) = 2.89
+    //   2/2 match → 1.00 * 10.0 * sqrt(2) / sqrt(3) = 8.16
+    //   1/3 match → 0.33 * 10.0 * sqrt(1) / sqrt(3) = 1.92
+    //   2/3 match → 0.67 * 10.0 * sqrt(2) / sqrt(3) = 5.44
+    //   3/3 match → 1.00 * 10.0 * sqrt(3) / sqrt(3) = 10.00
+    ratio * 10.0 * (matching as f64).sqrt() / 3.0f64.sqrt()
+}
+
+fn source_rank_score(query: &str, item: &SourceBookmark) -> f64 {
+    let aliases: Vec<&str> = item.aliases.iter().map(|s| s.as_str()).collect();
+    let fields: Vec<&str> = [item.label.as_str(), item.kind.as_str(), item.uri.as_str()]
+        .into_iter()
+        .chain(aliases.iter().copied())
+        .chain(std::iter::once(item.summary.as_str()))
+        .collect();
+    let (matching_terms, _) = matching_term_count(query, &fields);
+
+    // If no tokens overlap, check URI substring + exact-field fallback
+    if matching_terms == 0 {
+        // Exact full-query match on label, URI, or alias → high confidence
+        if exact_field_match(query, &[&item.label, &item.uri])
+            || item
+                .aliases
+                .iter()
+                .any(|alias| alias.trim().eq_ignore_ascii_case(query.trim()))
+        {
+            let mut s = 8.0;
+            s += item.trust_score.clamp(0.0, 1.0) * 1.0;
+            s += source_kind_bonus(&item.kind);
+            s += freshness_bonus(&item.freshness);
+            return s;
+        }
+        // URI substring match
+        if !query.trim().is_empty()
+            && item
+                .uri
+                .to_lowercase()
+                .contains(&query.trim().to_lowercase())
+        {
+            let mut s = 3.0;
+            s += item.trust_score.clamp(0.0, 1.0) * 1.0;
+            s += source_kind_bonus(&item.kind);
+            s += freshness_bonus(&item.freshness);
+            return s;
+        }
+        return 0.0;
     }
+
+    // At least 1 token matched — compute base from token overlap
+    let mut score = tf_ratio_score(query, &fields);
+
+    // Bonus: each query token that exact-matches label, URI, or an alias
+    for term in tokenize(query) {
+        if exact_field_match(&term, &[item.label.as_str(), item.uri.as_str()])
+            || item
+                .aliases
+                .iter()
+                .any(|a| a.trim().eq_ignore_ascii_case(&term))
+        {
+            score += 2.0;
+        }
+    }
+
+    // URI substring bonus
     if !query.trim().is_empty()
         && item
             .uri
             .to_lowercase()
             .contains(&query.trim().to_lowercase())
     {
-        score += 3.0;
+        score += 2.0;
     }
-    score += item.trust_score.clamp(0.0, 1.0) * 2.0;
+
+    score += item.trust_score.clamp(0.0, 1.0) * 1.0;
     score += source_kind_bonus(&item.kind);
-    score += (item.use_count.max(0) as f64 + 1.0).ln() * 0.35;
+    score += (item.use_count.max(0) as f64 + 1.0).ln() * 0.25;
     score += freshness_bonus(&item.freshness);
     score
 }
 
 fn brief_rank_score(query: &str, item: &ResearchBrief) -> f64 {
-    let mut score = score_text(query, &[&item.topic, &item.summary]);
-    if score <= 0.0 && !query.trim().is_empty() {
+    let fields = [item.topic.as_str(), item.summary.as_str()];
+    let (matching_terms, _) = matching_term_count(query, &fields);
+    let mut score = if matching_terms >= 1 {
+        tf_ratio_score(query, &fields)
+    } else {
+        0.0
+    };
+    if score <= 0.0 && !query.trim().is_empty() && matching_terms == 0 {
         return 0.0;
     }
     if item.topic.trim().eq_ignore_ascii_case(query.trim()) {
         score += 8.0;
     }
-    score += item.confidence.clamp(0.0, 1.0) * 1.5;
-    score += (item.use_count.max(0) as f64 + 1.0).ln() * 0.3;
+    score += item.confidence.clamp(0.0, 1.0) * 1.0;
+    score += (item.use_count.max(0) as f64 + 1.0).ln() * 0.2;
     score += freshness_bonus(&item.freshness);
     score
 }
@@ -162,22 +262,6 @@ fn json_string_array(value: Option<&Value>) -> Vec<String> {
 
 fn parse_string_array(raw: &str) -> Vec<String> {
     serde_json::from_str(raw).unwrap_or_default()
-}
-
-fn score_text(query: &str, fields: &[&str]) -> f64 {
-    let query = query.trim().to_lowercase();
-    if query.is_empty() {
-        return 0.0;
-    }
-    let terms: Vec<&str> = query.split_whitespace().filter(|s| s.len() > 1).collect();
-    let joined = fields.join(" ").to_lowercase();
-    let mut score = if joined.contains(&query) { 4.0 } else { 0.0 };
-    for term in terms {
-        if joined.contains(term) {
-            score += 1.0;
-        }
-    }
-    score
 }
 
 fn source_from_row(row: &rusqlite::Row<'_>, score: f64) -> rusqlite::Result<SourceBookmark> {

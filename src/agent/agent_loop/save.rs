@@ -122,11 +122,13 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             let mut should_run = false;
             let total_chars: usize = messages.iter().map(|m| m.content.len()).sum();
             let estimated_tokens = total_chars / 4;
-            if estimated_tokens >= 4000 {
+            if estimated_tokens >= 4000 && tools_used.len() >= 3 {
                 should_run = true;
             } else {
                 for tool in &tools_used {
                     let t = tool.to_lowercase();
+                    // Only trigger curator for state-modifying tools, not
+                    // research-only tools (web_search, web_fetch, crawl).
                     if t.contains("write_file")
                         || t.contains("patch_file")
                         || t.contains("replace_lines")
@@ -134,9 +136,6 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         || t.contains("db_write")
                         || t.contains("cargo")
                         || t.contains("exec_command")
-                        || t.contains("web_fetch")
-                        || t.contains("web_search")
-                        || t.contains("crawl")
                         || t.contains("obscura")
                         || t.contains("gsd_browser")
                         || t.contains("remote_input")

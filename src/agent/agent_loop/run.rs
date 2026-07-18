@@ -29,6 +29,37 @@ fn max_parallel_task_timeout(arguments: &serde_json::Value) -> Option<u64> {
         })
 }
 
+fn summarize_auto_capture_topics(
+    capture_summaries: &[crate::tools::shared_memory::AutoCaptureSummary],
+) -> String {
+    let mut seen = std::collections::HashSet::new();
+    capture_summaries
+        .iter()
+        .filter_map(|c| {
+            let topic = c.topic.trim();
+            if topic.is_empty() || !seen.insert(topic.to_string()) {
+                None
+            } else {
+                Some(topic.to_string())
+            }
+        })
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn count_unique_auto_capture_brief_topics(
+    capture_summaries: &[crate::tools::shared_memory::AutoCaptureSummary],
+) -> usize {
+    capture_summaries
+        .iter()
+        .filter(|c| c.brief_saved)
+        .map(|c| c.topic.trim())
+        .filter(|topic| !topic.is_empty())
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+}
+
 fn resolve_tool_timeout_secs(
     tool_name: &str,
     arguments: &serde_json::Value,
@@ -1041,13 +1072,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
         if !capture_summaries.is_empty() {
             let sources_saved: usize = capture_summaries.iter().map(|c| c.sources_saved).sum();
-            let briefs_saved = capture_summaries.iter().filter(|c| c.brief_saved).count();
-            let topics = capture_summaries
-                .iter()
-                .map(|c| c.topic.as_str())
-                .take(3)
-                .collect::<Vec<_>>()
-                .join(", ");
+            let briefs_saved = count_unique_auto_capture_brief_topics(&capture_summaries);
+            let topics = summarize_auto_capture_topics(&capture_summaries);
             crate::channels::cli::send_notification(&format!(
                 "◇ [Knowledge] Auto-saved research: {} source(s), {} brief(s) | {}",
                 sources_saved, briefs_saved, topics
@@ -1153,6 +1179,29 @@ fn format_markdown_line(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_capture_notice_dedupes_topics() {
+        let summaries = vec![
+            crate::tools::shared_memory::AutoCaptureSummary {
+                sources_saved: 5,
+                brief_saved: true,
+                topic: "hermes".to_string(),
+            },
+            crate::tools::shared_memory::AutoCaptureSummary {
+                sources_saved: 5,
+                brief_saved: true,
+                topic: "hermes".to_string(),
+            },
+            crate::tools::shared_memory::AutoCaptureSummary {
+                sources_saved: 1,
+                brief_saved: false,
+                topic: "mem0".to_string(),
+            },
+        ];
+        assert_eq!(summarize_auto_capture_topics(&summaries), "hermes, mem0");
+        assert_eq!(count_unique_auto_capture_brief_topics(&summaries), 1);
+    }
 
     #[test]
     fn resolves_tool_timeout_with_bounded_explicit_override() {
