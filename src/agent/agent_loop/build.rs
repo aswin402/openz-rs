@@ -360,6 +360,56 @@ fn concrete_research_topic_terms(text: &str) -> Vec<String> {
         .collect()
 }
 
+fn is_local_operational_or_ack_query(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let normalized = lower.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    let action_start = [
+        "open ", "play ", "show ", "launch ", "run ", "stop ", "close ", "start ",
+    ]
+    .iter()
+    .any(|prefix| normalized.starts_with(prefix));
+    let local_target = [
+        "website",
+        "web site",
+        "video",
+        "browser",
+        "firefox",
+        "chrome",
+        "vlc",
+        "media player",
+        "server",
+        "servers",
+        "file",
+        "folder",
+        "directory",
+        "html",
+        "mp4",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    if action_start && local_target {
+        return true;
+    }
+
+    let ack = [
+        "good",
+        "good one",
+        "thats good",
+        "that's good",
+        "nice",
+        "ok",
+        "okay",
+        "thanks",
+        "thank you",
+        "done",
+        "works",
+        "worked",
+    ];
+    ack.iter()
+        .any(|phrase| normalized == *phrase || normalized.starts_with(&format!("{} ", phrase)))
+}
+
 fn is_openz_self_inventory_query(text: &str) -> bool {
     let lower = text.to_lowercase();
     let asks_inventory = [
@@ -403,7 +453,9 @@ fn is_openz_self_inventory_query(text: &str) -> bool {
 }
 
 fn should_skip_research_memory_for_generic_query(text: &str) -> bool {
-    is_openz_self_inventory_query(text) || concrete_research_topic_terms(text).is_empty()
+    is_openz_self_inventory_query(text)
+        || is_local_operational_or_ack_query(text)
+        || concrete_research_topic_terms(text).is_empty()
 }
 
 fn format_research_brief_context_items(
@@ -1027,6 +1079,15 @@ mod tests {
         ));
         assert!(should_skip_research_memory_for_generic_query(
             "what features do you have"
+        ));
+        assert!(should_skip_research_memory_for_generic_query(
+            "open the website in firefox"
+        ));
+        assert!(should_skip_research_memory_for_generic_query(
+            "play the video"
+        ));
+        assert!(should_skip_research_memory_for_generic_query(
+            "thats good one"
         ));
         assert!(!should_skip_research_memory_for_generic_query(
             "what features do you have vs hermes"

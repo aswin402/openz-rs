@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.61`
+# OpenZ 🦊 `v0.0.62`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,11 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.62`
+
+- **Operational source suppression:** local action prompts like “open the website in Firefox”, “play the video”, and simple feedback like “that’s good one” now skip saved research/source matching, preventing unrelated source footers on non-research turns.
+- **Regression coverage:** added transcript-shaped tests so operational prompts still avoid source-memory injection while explicit comparisons/research prompts continue to use saved sources.
 
 ## What Changed In `v0.0.61`
 

@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.61 (Latest Release)
+### v0.0.62 (Latest Release)
+
+**Operational Source-Context Guard:**
+*   **Fix:** Local operational prompts such as opening a generated website/video now skip research/source-memory retrieval, so unrelated saved source footers do not appear during app/file launch turns.
+*   **Fix:** Acknowledgement-only replies such as “that’s good one” now skip research/source matching instead of pulling arbitrary fresh sources.
+*   **Tests:** Added regression coverage for the v0.0.60 transcript pattern while preserving saved-source retrieval for explicit external comparisons and research questions.
+*   **Chore:** Bumped version to `v0.0.62`.
+
+### v0.0.61
+
 
 **Documentation & Inventory Alignment:**
 *   **Docs:** Refreshed ONPKG PRD/design/implementation/todo docs with concrete OpenZ runtime requirements and backlog items instead of skeleton placeholders.
