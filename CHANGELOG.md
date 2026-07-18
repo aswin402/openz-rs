@@ -398,7 +398,14 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.55 (Latest Release)
+### v0.0.56 (Latest Release)
+
+*   **Bugfix: TUI cancellation cleanup:** Esc/Ctrl+C turn cancellation now gives the keyboard watcher a short clean shutdown window so stale terminal readers do not keep stealing keystrokes from the next prompt or security approval menu.
+*   **Bugfix: detached desktop/server launches:** `exec_command` now detects common GUI launchers, browsers, media players, editors, and dev-server commands and starts them detached, preventing OpenZ from sitting forever on `bash command running...` after the app opens.
+*   **Bugfix: viewer retry suppression:** `open_path` and detached shell launches now return `user_visible` and `do_not_retry` guidance so models stop retrying with browser/VLC/alternate viewers after a file or app has already been shown.
+*   **Chore:** Bumped version to `v0.0.56`.
+
+### v0.0.55
 
 *   **Hardening: research memory reliability:** Simple follow-up prompts now reuse fresh canonical research briefs without repeated web calls, while explicit research/link-analysis prompts bypass the no-fetch gate so OpenZ can fetch README/docs/site pages when the user asks for research.
 *   **Hardening: canonical research topics:** URL-plus-instruction prompts, GitHub links, and raw GitHub URLs now save under stable repo topics like `agent0ai/dox` and `tinyhumansai/openhuman` instead of weak aliases like `dox` or `openhuman`.

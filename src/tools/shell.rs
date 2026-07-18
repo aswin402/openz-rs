@@ -1,6 +1,6 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -396,6 +396,19 @@ impl Tool for ExecCommandTool {
             }
         }
 
+        if let Some(detach_kind) = detach_command_kind(command_str) {
+            spawn_detached_command(command_str, detach_kind)?;
+            return Ok(serde_json::json!({
+                "status_code": 0,
+                "stdout": "",
+                "stderr": "",
+                "detached": true,
+                "user_visible": true,
+                "do_not_retry": true,
+                "message": "Command launched in the background because it opens a desktop app or long-running server. Treat this as complete; do not try alternate launch methods unless the user says it failed."
+            }));
+        }
+
         // 2. Fallback to standard raw host shell execution
         let mut std_cmd = if cfg!(target_os = "windows") {
             let mut c = std::process::Command::new("cmd");
@@ -447,6 +460,169 @@ impl Tool for ExecCommandTool {
             "stderr": stderr
         }))
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DetachedCommandKind {
+    DesktopApp,
+    DevServer,
+}
+
+#[cfg(test)]
+fn should_detach_command(command_line: &str) -> bool {
+    detach_command_kind(command_line).is_some()
+}
+
+fn detach_command_kind(command_line: &str) -> Option<DetachedCommandKind> {
+    let trimmed = command_line.trim();
+    if trimmed.is_empty() || contains_shell_control_operator(trimmed) {
+        return None;
+    }
+    let args = parse_command_line(trimmed);
+    let first_idx = first_program_arg_index(&args)?;
+    let first = command_basename(&args[first_idx]);
+    let second = args
+        .get(first_idx + 1)
+        .map(|s| s.as_str())
+        .unwrap_or_default();
+
+    if (first == "gio" && second == "open")
+        || matches!(
+            first.as_str(),
+            "xdg-open"
+                | "gnome-open"
+                | "kde-open"
+                | "kioclient5"
+                | "kioclient"
+                | "open"
+                | "start"
+                | "firefox"
+                | "google-chrome"
+                | "google-chrome-stable"
+                | "chromium"
+                | "chromium-browser"
+                | "brave"
+                | "brave-browser"
+                | "vlc"
+                | "mpv"
+                | "totem"
+                | "eog"
+                | "loupe"
+                | "ristretto"
+                | "feh"
+                | "display"
+                | "code"
+                | "libreoffice"
+                | "soffice"
+        )
+    {
+        return Some(DetachedCommandKind::DesktopApp);
+    }
+
+    if is_long_running_dev_server(&args[first_idx..]) {
+        return Some(DetachedCommandKind::DevServer);
+    }
+
+    None
+}
+
+fn contains_shell_control_operator(command_line: &str) -> bool {
+    let mut in_double_quote = false;
+    let mut in_single_quote = false;
+    for c in command_line.chars() {
+        match c {
+            '"' if !in_single_quote => in_double_quote = !in_double_quote,
+            '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+            ';' | '|' | '&' | '`' | '$' | '<' | '>' | '\n'
+                if !in_double_quote && !in_single_quote =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn first_program_arg_index(args: &[String]) -> Option<usize> {
+    args.iter().position(|arg| !looks_like_env_assignment(arg))
+}
+
+fn looks_like_env_assignment(arg: &str) -> bool {
+    let Some((name, _)) = arg.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
+}
+
+fn command_basename(program: &str) -> String {
+    program
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(program)
+        .to_ascii_lowercase()
+}
+
+fn is_long_running_dev_server(args: &[String]) -> bool {
+    if args.is_empty() {
+        return false;
+    }
+    let first = command_basename(&args[0]);
+    let rest: Vec<String> = args
+        .iter()
+        .skip(1)
+        .map(|s| s.to_ascii_lowercase())
+        .collect();
+
+    matches!(first.as_str(), "vite" | "next" | "astro")
+        || first == "npx"
+            && rest
+                .iter()
+                .any(|s| matches!(s.as_str(), "vite" | "next" | "astro"))
+        || (matches!(first.as_str(), "npm" | "pnpm" | "yarn" | "bun")
+            && rest
+                .iter()
+                .any(|s| matches!(s.as_str(), "dev" | "start" | "preview" | "serve")))
+        || ((first == "python3" || first == "python")
+            && rest
+                .windows(2)
+                .any(|w| w[0] == "-m" && w[1] == "http.server"))
+}
+
+fn spawn_detached_command(command_line: &str, kind: DetachedCommandKind) -> Result<()> {
+    let mut cmd = if cfg!(target_os = "windows") {
+        let mut c = Command::new("cmd");
+        c.args(["/C", command_line]);
+        c
+    } else {
+        let mut c = Command::new("sh");
+        c.args(["-c", command_line]);
+        c
+    };
+    crate::config::loader::set_command_cwd(&mut cmd);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let child = cmd.spawn()?;
+    match kind {
+        DetachedCommandKind::DesktopApp => {
+            std::thread::spawn(move || {
+                let mut child = child;
+                let _ = child.wait();
+            });
+        }
+        DetachedCommandKind::DevServer => crate::shutdown::register_child(child),
+    }
+    Ok(())
 }
 
 fn parse_command_line(cmd: &str) -> Vec<String> {
@@ -538,6 +714,42 @@ fn find_wasm_file(program: &str) -> Option<std::path::PathBuf> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod exec_command_tests {
+    use super::*;
+
+    #[test]
+    fn detects_desktop_launchers() {
+        assert!(should_detach_command("xdg-open /tmp/demo.svg"));
+        assert!(should_detach_command("gio open /tmp/demo.svg"));
+        assert!(should_detach_command("vlc /tmp/video.mp4"));
+        assert!(should_detach_command("firefox https://example.com"));
+        assert!(should_detach_command("code ."));
+    }
+
+    #[test]
+    fn detects_dev_servers_without_detaching_normal_commands() {
+        assert!(should_detach_command("bun run dev --host 127.0.0.1"));
+        assert!(should_detach_command("npm run preview"));
+        assert!(should_detach_command("python3 -m http.server 5173"));
+        assert!(should_detach_command("PORT=5173 npm run dev"));
+        assert!(should_detach_command("npx vite --host 127.0.0.1"));
+        assert!(!should_detach_command("cargo test"));
+        assert!(!should_detach_command("python3 script.py"));
+    }
+
+    #[test]
+    fn does_not_detach_shell_control_chains() {
+        assert!(!should_detach_command(
+            "firefox https://example.com && echo done"
+        ));
+        assert!(!should_detach_command(
+            "xdg-open /tmp/demo.svg; rm -rf /tmp/nope"
+        ));
+        assert!(!should_detach_command("gio info /tmp/demo.svg"));
+    }
 }
 
 pub struct PythonSandboxTool;

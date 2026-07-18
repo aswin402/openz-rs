@@ -987,7 +987,6 @@ impl CliChannel {
             let runner = self.agent_loop.lock().await;
 
             let run_res = {
-                let _raw_mode = RawModeGuard::new().ok();
                 let run_fut: std::pin::Pin<
                     Box<
                         dyn std::future::Future<Output = anyhow::Result<crate::agent::RunResult>>
@@ -1022,16 +1021,19 @@ impl CliChannel {
                 // the tokio runtime if run inside tokio::task::spawn.
                 let keyboard_done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                 let keyboard_done_for_thread = keyboard_done.clone();
-                let _keyboard_thread = std::thread::spawn(move || {
+                let keyboard_thread = std::thread::spawn(move || {
                     loop {
-                        // Check if the main task told us to stop. The thread is detached below,
-                        // so cancellation never waits on a possibly-blocking terminal read.
+                        // Check if the main task told us to stop. The main thread only waits
+                        // briefly, so cancellation never hangs on terminal polling.
                         if keyboard_done_for_thread.load(std::sync::atomic::Ordering::SeqCst) {
                             break;
                         }
                         if let Ok(true) =
-                            crossterm::event::poll(std::time::Duration::from_millis(100))
+                            crossterm::event::poll(std::time::Duration::from_millis(25))
                         {
+                            if keyboard_done_for_thread.load(std::sync::atomic::Ordering::SeqCst) {
+                                break;
+                            }
                             if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read()
                             {
                                 if key.kind == crossterm::event::KeyEventKind::Press {
@@ -1068,9 +1070,16 @@ impl CliChannel {
                     }
                 };
 
-                // Signal the keyboard thread to stop. Do not join: crossterm::event::read()
-                // can block after a poll/read race, and joining here makes Esc/Ctrl+C look hung.
+                // Signal the keyboard thread to stop. Give it a very short cleanup window so it
+                // does not keep consuming keys from the next input prompt or approval menu.
                 keyboard_done.store(true, std::sync::atomic::Ordering::SeqCst);
+                for _ in 0..10 {
+                    if keyboard_thread.is_finished() {
+                        let _ = keyboard_thread.join();
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
 
                 result
             };

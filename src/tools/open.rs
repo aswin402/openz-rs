@@ -57,7 +57,10 @@ impl Tool for OpenTool {
             match status {
                 Ok(_) => Ok(json!({
                     "status": "success",
-                    "message": format!("Successfully opened '{}'", resolved)
+                    "message": format!("Successfully opened '{}'", resolved),
+                    "user_visible": true,
+                    "do_not_retry": true,
+                    "instruction": "The target was handed to the user's default application. Treat this as complete and do not try another viewer unless the user says it failed."
                 })),
                 Err(e) => Err(anyhow!("Failed to open '{}': {}", resolved, e)),
             }
@@ -71,7 +74,10 @@ impl Tool for OpenTool {
             match status {
                 Ok(_) => Ok(json!({
                     "status": "success",
-                    "message": format!("Successfully opened '{}'", resolved)
+                    "message": format!("Successfully opened '{}'", resolved),
+                    "user_visible": true,
+                    "do_not_retry": true,
+                    "instruction": "The target was handed to the user's default application. Treat this as complete and do not try another viewer unless the user says it failed."
                 })),
                 Err(e) => Err(anyhow!("Failed to open '{}': {}", resolved, e)),
             }

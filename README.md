@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.55`
+# OpenZ 🦊 `v0.0.56`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.56`
+
+- **TUI cancellation cleanup:** Esc/Ctrl+C cancellation now gives the turn keyboard watcher a short clean shutdown window so stale terminal readers do not steal keystrokes from the next input prompt or approval menu.
+- **Desktop app launch handling:** `exec_command` now detects common GUI launchers, browsers, media viewers, editors, and dev-server commands and detaches them instead of waiting forever after the window opens.
+- **Viewer retry guard:** `open_path` and detached launches now return `user_visible`/`do_not_retry` guidance so the model treats a successful file/app display as complete instead of trying alternate viewers after you close the first app.
 
 ## What Changed In `v0.0.55`
 
