@@ -382,6 +382,46 @@ pub async fn mark_source_checked(id_or_uri: &str) -> Result<usize> {
     })
 }
 
+fn resolve_brief_topic_alias(conn: &rusqlite::Connection, topic: &str) -> Result<String> {
+    let canonical = canonical_research_topic(topic);
+    if canonical.trim().is_empty() || canonical.contains('/') {
+        return Ok(canonical);
+    }
+    let pattern = format!("%/{canonical}");
+    let existing = conn
+        .query_row(
+            "SELECT topic FROM research_briefs WHERE topic LIKE ?1 ORDER BY confidence DESC, use_count DESC, updated_at DESC LIMIT 1",
+            params![pattern],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    Ok(existing.unwrap_or(canonical))
+}
+
+fn resolve_brief_stale_after_secs(
+    conn: &rusqlite::Connection,
+    source_ids: &[String],
+    requested: i64,
+) -> Result<i64> {
+    if requested > 0 {
+        return Ok(requested.max(60));
+    }
+    let mut ttl_values = Vec::new();
+    for source_id in source_ids {
+        if let Some(ttl) = conn
+            .query_row(
+                "SELECT stale_after_secs FROM source_bookmarks WHERE id = ?1",
+                params![source_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+        {
+            ttl_values.push(ttl.max(60));
+        }
+    }
+    Ok(ttl_values.into_iter().min().unwrap_or(604_800))
+}
+
 fn brief_from_row(row: &rusqlite::Row<'_>, score: f64) -> rusqlite::Result<ResearchBrief> {
     let source_ids: String = row.get(3)?;
     let stale_after_secs: i64 = row.get(5)?;
@@ -412,22 +452,24 @@ pub async fn save_research_brief(
     if topic.trim().is_empty() || summary.trim().is_empty() {
         return Err(anyhow!("topic and summary are required"));
     }
-    let canonical_topic = canonical_research_topic(topic);
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_rfc3339();
     let source_ids_json = serde_json::to_string(&source_ids)?;
-    {
+    let canonical_topic = {
         let _lock = get_db_mutex().lock().await;
         with_db(|conn| {
+            let canonical_topic = resolve_brief_topic_alias(conn, topic)?;
+            let resolved_stale_after_secs =
+                resolve_brief_stale_after_secs(conn, &source_ids, stale_after_secs)?;
             conn.execute(
                 "INSERT INTO research_briefs (id, topic, summary, source_ids, confidence, stale_after_secs, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
                  ON CONFLICT(topic) DO UPDATE SET summary=excluded.summary, source_ids=excluded.source_ids, confidence=excluded.confidence, stale_after_secs=excluded.stale_after_secs, updated_at=excluded.updated_at",
-                params![id, canonical_topic, summary.trim(), source_ids_json, confidence.clamp(0.0, 1.0), stale_after_secs.max(60), now],
+                params![id, canonical_topic, summary.trim(), source_ids_json, confidence.clamp(0.0, 1.0), resolved_stale_after_secs, now],
             )?;
-            Ok(())
-        })?;
-    }
+            Ok(canonical_topic)
+        })?
+    };
     search_research_briefs(&canonical_topic, 1)
         .await?
         .into_iter()
@@ -624,7 +666,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn research_brief_uses_canonical_topic_for_url_and_question() {
+    async fn research_brief_merges_question_alias_into_existing_repo_topic() {
         let marker = uuid::Uuid::new_v4().to_string();
         let url_topic = format!("https://github.com/example/{marker}?utm_source=chatgpt.com");
         save_research_brief(&url_topic, "First summary", vec![], 0.7, 86400)
@@ -646,7 +688,10 @@ mod tests {
         let question_matches = search_research_briefs(&format!("what is {marker}"), 5)
             .await
             .unwrap();
-        assert!(question_matches.iter().any(|m| m.topic == marker));
+        let canonical_topic = format!("example/{marker}");
+        assert!(question_matches
+            .iter()
+            .any(|m| { m.topic == canonical_topic && m.summary == "Second summary" }));
         let _ = delete_research_brief(&url_topic).await;
         let _ = delete_research_brief(&marker).await;
     }

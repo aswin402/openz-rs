@@ -337,10 +337,18 @@ pub async fn auto_capture_research_memory(
 
     // Derive topic consistently from user_content so all tool calls in the
     // same turn share the same canonical topic (avoiding duplicate briefs).
+    // If a vague follow-up like "what is dox" is attached to a concrete repo/docs
+    // URL in tool args, preserve the canonical URL topic (e.g. agent0ai/dox).
     let topic = if user_content.trim().is_empty() {
         topic_from(tool_name, arguments, user_content)
     } else {
-        canonical_research_topic(user_content)
+        let user_topic = canonical_research_topic(user_content);
+        let arg_topic = topic_from(tool_name, arguments, "");
+        if !user_topic.contains('/') && arg_topic.contains('/') {
+            arg_topic
+        } else {
+            user_topic
+        }
     };
     if topic.trim().is_empty() {
         return Ok(None);
@@ -438,5 +446,80 @@ mod tests {
         let _ =
             crate::tools::shared_memory::delete_research_brief(&format!("Hermes Agent {}", marker))
                 .await;
+    }
+    #[tokio::test]
+    async fn auto_capture_repo_brief_uses_week_ttl() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let url = format!("https://github.com/example/dox-{marker}");
+        let user_content = format!("{url} hey research about this and tell me about this");
+        let result = serde_json::json!({
+            "title": format!("DOX {marker}"),
+            "url": url,
+            "content": "DOX is a self-documenting AGENTS.md framework for AI coding agents."
+        });
+
+        let summary = auto_capture_research_memory(
+            "web_fetch",
+            &serde_json::json!({"url": url}),
+            &result,
+            &user_content,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(summary.topic, format!("example/dox-{marker}"));
+        let briefs = crate::tools::shared_memory::search_research_briefs(&summary.topic, 1)
+            .await
+            .unwrap();
+        assert_eq!(briefs[0].topic, summary.topic);
+        assert!(briefs[0].stale_after_secs >= 604_800);
+
+        let sources = crate::tools::shared_memory::search_source_bookmarks(&marker, 5)
+            .await
+            .unwrap();
+        for source in sources.into_iter().filter(|s| s.uri.contains(&marker)) {
+            let _ = crate::tools::shared_memory::delete_source(&source.id).await;
+        }
+        let _ = crate::tools::shared_memory::delete_research_brief(&summary.topic).await;
+    }
+
+    #[tokio::test]
+    async fn auto_capture_followup_with_repo_url_keeps_canonical_repo_topic() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let url = format!("https://github.com/example/dox-{marker}");
+        let result = serde_json::json!({
+            "title": format!("DOX {marker}"),
+            "url": url,
+            "content": "DOX is a self-documenting AGENTS.md framework for AI coding agents."
+        });
+
+        let summary = auto_capture_research_memory(
+            "web_fetch",
+            &serde_json::json!({"url": url}),
+            &result,
+            &format!("hey whats dox-{marker}"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(summary.topic, format!("example/dox-{marker}"));
+        let generic = crate::tools::shared_memory::search_research_briefs(
+            &format!("what is dox-{marker}"),
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(generic[0].topic, summary.topic);
+
+        let sources = crate::tools::shared_memory::search_source_bookmarks(&marker, 5)
+            .await
+            .unwrap();
+        for source in sources.into_iter().filter(|s| s.uri.contains(&marker)) {
+            let _ = crate::tools::shared_memory::delete_source(&source.id).await;
+        }
+        let _ = crate::tools::shared_memory::delete_research_brief(&summary.topic).await;
+        let _ = crate::tools::shared_memory::delete_research_brief(&format!("dox-{marker}")).await;
     }
 }
