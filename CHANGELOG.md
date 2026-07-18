@@ -23,7 +23,7 @@ OpenZ synthesizes patterns from several state-of-the-art developer tools to keep
 
 ### 1. [`codegraph`](https://github.com/suatkocar/codegraph) & [`codegraph-rust`](https://github.com/Jakedismo/codegraph-rust) (Code Relationship Mapping)
 *   **The Concept:** Map code structures (imports, functions, structs, classes) to represent relationships and dependencies.
-*   **In OpenZ:** We employ `code_outline` (`src/tools/outline.rs`) and `ast_grep` to build structural syntax indexes. Furthermore, the `memory` MCP server (`openmemory_rs`) compiles entity-relationship graphs of the codebase so OpenZ can query dependencies and connections (e.g. "what implements this trait?") semantically without loading whole files.
+*   **In OpenZ:** We employ `code_outline` (`src/tools/outline.rs`) and `ast_grep` to build structural syntax indexes. Furthermore, native graph-memory and code-indexing tools compile entity-relationship views of the codebase so OpenZ can query dependencies and connections (e.g. "what implements this trait?") semantically without loading whole files.
 
 ### 2. [`quickwit-oss/tantivy`](https://github.com/quickwit-oss/tantivy) (High-Performance Local Indexing)
 *   **The Concept:** A fast, low-memory local text indexer written in pure Rust.
@@ -35,11 +35,11 @@ OpenZ synthesizes patterns from several state-of-the-art developer tools to keep
 
 ### 4. [`surrealdb/surrealdb`](https://github.com/surrealdb/surrealdb) (Embedded Multi-Model Database)
 *   **The Concept:** Embedded, serverless, multi-model (document, graph, relational) database engine in Rust.
-*   **In OpenZ:** OpenZ's memory system combines structured document logs, relational columns (SQLite), and entity-relationship links. The `memory` MCP (`openmemory_rs`) mimics this multi-model philosophy, executing embedded document and graph queries co-located on disk (`~/.openz/memory.db`) without requiring external database servers.
+*   **In OpenZ:** OpenZ's memory system combines structured document logs, relational columns (SQLite), and entity-relationship links. Native memory tools mimic this multi-model philosophy, executing embedded document and graph queries co-located on disk (`~/.openz/memory.db`) without requiring external database servers.
 
 ### 5. [`petgraph/petgraph`](https://github.com/petgraph/petgraph) (Graph Structures & DAG Workflows)
 *   **The Concept:** Standard Rust graph representation, manipulation, and traversal library.
-*   **In OpenZ:** The **SOP Workflow Engine** (`src/sop/`) represents tasks and workflows as Directed Acyclic Graphs (DAGs) and executes independent steps in parallel. It uses topological sorting and performs graph dependency cycle detection on startup. Additionally, `openmemory_rs` utilizes graph traversals (BFS/DFS) to explore code relationships.
+*   **In OpenZ:** The **SOP Workflow Engine** (`src/sop/`) represents tasks and workflows as Directed Acyclic Graphs (DAGs) and executes independent steps in parallel. It uses topological sorting and performs graph dependency cycle detection on startup. Additionally, native graph-memory tools use graph traversals (BFS/DFS) to explore code relationships.
 
 ### 6. [`sentrux/sentrux`](https://github.com/sentrux/sentrux) (Architectural Sensors & Quality Gates)
 *   **The Concept:** Real-time codebase quality sensing, dependency analysis, and quality gates to prevent code decay.
@@ -47,7 +47,7 @@ OpenZ synthesizes patterns from several state-of-the-art developer tools to keep
 
 ### 7. [`tree-sitter/tree-sitter-graph`](https://github.com/tree-sitter/tree-sitter-graph) (Syntactic-to-Semantic Graph Mapping)
 *   **The Concept:** Constructing arbitrary graph structures directly from AST parsing syntax trees.
-*   **In OpenZ:** We leverage `ast_grep` (built on `tree-sitter`) and `code_outline` to parse files structurally. The `openmemory_rs` MCP server transforms these syntax trees into relational code graphs, mapping callers, interfaces, and implementations dynamically.
+*   **In OpenZ:** We leverage `ast_grep` (built on `tree-sitter`) and `code_outline` to parse files structurally. Native code-graph indexing transforms these syntax trees into relational code graphs, mapping callers, interfaces, and implementations dynamically.
 
 ### 8. [`EricLBuehler/mistral.rs`](https://github.com/EricLBuehler/mistral.rs) (Local LLM & Embedding Inference)
 *   **The Concept:** Fast, local LLM and embedding inference engine written in Rust.
@@ -127,7 +127,7 @@ OpenZ synthesizes patterns from several state-of-the-art developer tools to keep
 
 ### 27. [`chopratejas/headroom`](https://github.com/chopratejas/headroom) (Context Compression & Scope Management)
 *   **The Concept:** Walking directory paths to resolve local guidelines (`AGENTS.md`) and compressing logs to respect token limits.
-*   **In OpenZ:** We register the `headroom-mcp` server as a default local tool, running the `scope_context` command before file edits to compile folder-specific `AGENTS.md` guidelines, and we compress tool outputs >4000 characters using context compactor states (`src/agent/context_compactor.rs`) to prevent prompt token drift.
+*   **In OpenZ:** OpenZ registers native Headroom-style tools such as `scope_context`, `compress_content`, and `retrieve_original`. These compile folder-specific `AGENTS.md` guidelines before file edits and compress tool outputs >4000 characters using context compactor states (`src/agent/context_compactor.rs`) to prevent prompt token drift.
 
 ### 28. [`rust-mcp-stack/rust-mcp-filesystem`](https://github.com/rust-mcp-stack/rust-mcp-filesystem) (Native Rust MCP Filesystems)
 *   **The Concept:** Safe, standard filesystem manipulation tools implemented as MCP servers in Rust.
@@ -211,7 +211,7 @@ OpenZ synthesizes patterns from several state-of-the-art developer tools to keep
 
 ### 48. [`safishamsi/graphify`](https://github.com/safishamsi/graphify) (Codebase-to-Knowledge-Graph Builder)
 *   **The Concept:** An agentic skill that processes codebases and document folders to compile queryable entity-relationship knowledge graphs.
-*   **In OpenZ:** OpenZ incorporates this capability. It pre-configures a local `graphify` skill and bridges it with the `openmemory_rs` MCP server, mapping structural code imports and file hierarchies into queryable graph nodes (JSON/HTML outputs).
+*   **In OpenZ:** OpenZ incorporates this capability through native code indexing, graph-memory tools, and reusable skills, mapping structural code imports and file hierarchies into queryable graph nodes.
 
 ### 49. [`notify-rs/notify`](https://github.com/notify-rs/notify) (Cross-Platform File Watching)
 *   **The Concept:** A standard cross-platform file system monitoring library in Rust that watches files/directories for modifications, creations, and deletions.
@@ -223,11 +223,11 @@ OpenZ synthesizes patterns from several state-of-the-art developer tools to keep
 
 ### 51. [`modelcontextprotocol/servers/src/memory`](https://github.com/modelcontextprotocol/servers/tree/main/src/memory) (MCP Graph-Based Semantic Memory)
 *   **The Concept:** An MCP server that maintains persistent semantic entity-relationship graphs.
-*   **In OpenZ:** We leverage this exact pattern to build entity-relation indices. OpenZ interfaces with the `openmemory_rs` MCP server to maintain knowledge graphs and execute semantic context traversals.
+*   **In OpenZ:** We leverage this exact pattern to build entity-relation indices. OpenZ uses native graph-memory tools to maintain knowledge graphs and execute semantic context traversals.
 
 ### 52. [`modelcontextprotocol/servers/src/sequentialthinking`](https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking) (MCP Sequential Planning)
 *   **The Concept:** An MCP server designed to support step-by-step reasoning and logical progression before code execution.
-*   **In OpenZ:** OpenZ pre-configures and defaults to `mcp-server-sequential-thinking` (compiled locally) to help the model plan structural edits and reason systematically in complex files.
+*   **In OpenZ:** OpenZ ships native sequential-thinking tools to help the model plan structural edits and reason systematically in complex files without requiring a separate MCP server.
 
 ### 53. [`modelcontextprotocol/servers/src/git`](https://github.com/modelcontextprotocol/servers/tree/main/src/git) (MCP Git Integration)
 *   **The Concept:** An MCP server exposing git repository tools (status, diff, log, commit).
@@ -259,7 +259,7 @@ OpenZ synthesizes patterns from several state-of-the-art developer tools to keep
 
 ### 60. [`agent0ai/dox`](https://github.com/agent0ai/dox) (Hierarchical Context Resolution)
 *   **The Concept:** A token-efficient codebase context framework that establishes a hierarchical tree of `AGENTS.md` files (from project-level down to folder-specific instructions) so AI agents can navigate directories dynamically.
-*   **In OpenZ:** We natively support this hierarchical folder rules resolution. By utilizing the `headroom-mcp` (`scope_context`) server, OpenZ automatically traverses directory structures to parse local `AGENTS.md` context layers and scope-limits code files during workspace edits.
+*   **In OpenZ:** We natively support this hierarchical folder rules resolution. By utilizing the native `scope_context` tool, OpenZ automatically traverses directory structures to parse local `AGENTS.md` context layers and scope-limits code files during workspace edits.
 
 ### 61. [`loops!`](https://github.com/agent-skills) (Iterative Loop Engineering)
 *   **The Concept:** Designing autonomous AI workflows as persistent feedback loops (Action → Observation → Decision/Refinement → Repeat) that iteratively test and self-heal code execution rather than single-shot prompts.
@@ -294,12 +294,12 @@ OpenZ communicates with external tool servers using the Model Context Protocol (
 1.  **Stdio JSON-RPC:** Spawns external processes with standard pipe redirection (`stdin`/`stdout`).
 2.  **Unified gRPC (Tonic):** To prevent third-party logging output ("stdio pollution") from breaking the JSON-RPC parser, OpenZ runs an automatic in-process bridge. It maps stdio-based servers to an ephemeral gRPC port on localhost, automatically filtering out non-JSON log lines.
 
-### Pre-Configured Rust-Native MCP Servers
-OpenZ prioritizes high-performance, cargo-installed Rust MCP servers located in `~/.cargo/bin/` (or resolved via the `AI_AGENT_TOOLS_BASE` workspace env var):
-*   **`headroom`** (`headroom-mcp`): Implements `scope_context` to scan directory trees for `AGENTS.md` guidelines and inject local rules, preventing context drift. Also compresses long tool outputs.
-*   **`office`** (`opendocswork-mcp`): Direct text, table, and structure extractor for `.docx`, `.xlsx`, and `.pptx` documents.
-*   **`sequential-thinking`** (`mcp-server-sequential-thinking`): Reasoning server allowing the model to perform sequential, multi-step structured thinking before executing changes.
-*   **`memory`** (`openmemory_rs`): Persistent semantic entity-relationship graph database for storing knowledge graphs.
+### Native Tool Replacements And External MCP Servers
+OpenZ prioritizes native Rust tools for core capabilities that used to live behind MCP servers:
+*   **Headroom/context compression:** Native `scope_context`, `compress_content`, `retrieve_original`, and CCR/cache tools scan `AGENTS.md` context and compress long outputs.
+*   **Sequential thinking:** Native `sequentialthinking`, `analyze_graph`, `export_session`, `summarize_reasoning`, and `reasoning_templates` tools support structured planning.
+*   **Memory graph:** Native graph-memory, extended memory, research brief, knowledge source, and workflow tools store persistent knowledge in SQLite.
+*   **External MCP:** OpenZ still supports stdio/gRPC MCP servers for optional integrations and tools that remain external.
 
 ### MCP Management:
 *   **Dynamic configuration:** The agent manages server registrations via the `manage_mcp` tool.
@@ -398,7 +398,17 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.60 (Latest Release)
+### v0.0.61 (Latest Release)
+
+**Documentation & Inventory Alignment:**
+*   **Docs:** Refreshed ONPKG PRD/design/implementation/todo docs with concrete OpenZ runtime requirements and backlog items instead of skeleton placeholders.
+*   **Docs:** Updated MCP documentation to distinguish native Rust tools from external MCP servers, avoiding stale claims that Headroom, sequential thinking, and memory graph are default MCP servers.
+*   **Docs:** Updated channel and tool-usage guidance for Email, 300s default tool timeout, managed server lifecycle, and detached GUI launches.
+*   **Metadata:** Updated ONPKG self-management tool inventory to include `tool_catalog`, `openz_inventory`, `manage_servers`, `workflow_memory`, `manage_config`, `diagnose_system`, `manage_sessions`, and `manage_backups`.
+*   **Chore:** Bumped version to `v0.0.61`.
+
+### v0.0.60
+
 
 *   **Fix: runtime model identity grounding:** `openz_inventory` now reports live runtime identity fields including configured model, configured provider, resolved effective provider/model when available, vision support, caveman mode, and streaming status.
 *   **Prompt hardening:** Model/provider identity questions such as “what model are you?” and model-capability questions such as “which programming language are you best at?” now require `openz_inventory` before answering and explicitly forbid guessing hidden architecture, training data, parameter count, or benchmark ranking.

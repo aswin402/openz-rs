@@ -30,6 +30,7 @@ pub trait Channel: Send + Sync {
 * **`telegram`** ([src/channels/telegram.rs](../src/channels/telegram.rs)): Standard long-polling bot polling messenger messages.
 * **`discord`** ([src/channels/discord.rs](../src/channels/discord.rs)): Active bot gateway client using WebSocket (`tokio-tungstenite`) to connect and listen for message events, execute them, and reply.
 * **`whatsapp`** ([src/channels/whatsapp.rs](../src/channels/whatsapp.rs)): Active Axum-based HTTP webhook receiver server that handles Meta webhook verification GET challenge and parses POST message streams.
+* **`email`** ([src/channels/email.rs](../src/channels/email.rs)): Pure-Rust IMAP/SMTP channel that polls incoming mail and sends replies through the configured SMTP server.
 
 ---
 

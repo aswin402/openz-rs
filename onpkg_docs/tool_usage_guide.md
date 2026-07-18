@@ -11,9 +11,11 @@ This guide details the conventions, boundaries, and error recovery protocols for
 ---
 
 ## 2. Command & Process Execution (`exec_command`)
-* **Resource Limits:** Restrict execution cores and memory on memory-constrained systems (e.g. `export CARGO_BUILD_JOBS=1`).
-* **Timeout Limits:** Shell commands have a strict 120-second timeout. Break long script executions into separate smaller commands.
-* **Sandbox EPERM:** On Linux, a BPF seccomp filter blocks dangerous system calls (network, mounting, etc.). If a compiler tool or command returns `EPERM`, disable `enableSandbox` temporarily via `openz configure`.
+* **Resource Limits:** Restrict execution cores and memory on memory-constrained systems (e.g. `CARGO_BUILD_JOBS=1 cargo test --lib`).
+* **Timeout Limits:** The default tool timeout is 300 seconds unless the user config overrides it. Preserve custom timeout values and split long work into smaller verified steps when possible.
+* **Managed Servers:** Dev-server commands such as `npm run dev`, `bun run dev`, `npx vite`, and `python -m http.server` are registered as background servers. Use `manage_servers` automatically to list or stop OpenZ-launched servers when the preview or verification task is finished.
+* **Detached GUI Apps:** Browser, viewer, editor, and media-player launches should be treated as complete when the command reports a visible app launch. Do not retry alternate viewers unless the user says the launch failed.
+* **Sandbox EPERM:** On Linux, optional BPF seccomp filtering can block commands that need broader system calls. If compiler/browser tooling returns `EPERM`, inspect `enableSandbox` in config and use the least permissive mode that still works.
 
 ---
 

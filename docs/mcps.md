@@ -31,13 +31,14 @@ Since `McpToolWrapper` implements the `Tool` trait, the agent can call external 
 
 ---
 
-## 3. Rust-Native Defaults
+## 3. Native Tools vs MCP Defaults
 
-By default, OpenZ is pre-configured to utilize high-performance, lightweight Rust-native MCP servers resolved at runtime from `~/.cargo/bin/`, bypassing Node.js/npx runtimes completely:
-*   **`office`**: compiled local-first parser (`opendocswork-mcp` under `~/.cargo/bin/`) to extract text and tables from `.docx`, `.xlsx`, and `.pptx` documents.
-*   **`headroom`**: context compression and directory scoping server (`headroom-mcp` under `~/.cargo/bin/`) to optimize context windows dynamically. Employs `scope_context` to compile hierarchical `AGENTS.md` instructions and `compress_content` / `retrieve_original` for token budget optimizations.
-*   **`sequential-thinking`**: sequential reasoning server (`mcp-server-sequential-thinking` under `~/.cargo/bin/`) to plan and double check execution paths.
-*   **`memory`**: memory graph database (`openmemory_rs` under `~/.cargo/bin/`) for storing semantic entity relationships.
+OpenZ now ships many former MCP capabilities as native Rust tools registered directly in the tool registry:
+*   **Headroom/context compression**: `scope_context`, `compress_content`, `retrieve_original`, `compress_file`, `compress_diff`, `compress_url`, and related CCR/cache tools are native.
+*   **Sequential thinking**: `sequentialthinking`, `analyze_graph`, `export_session`, `summarize_reasoning`, and `reasoning_templates` are native.
+*   **Memory graph and extended memory**: graph nodes/relations, working memory, semantic facts, fact history, workflow memory, research briefs, and knowledge sources are native SQLite-backed tools.
+
+MCP remains supported for external servers. Default MCP entries focus on tools that are still external or optional, while native replacements should not be duplicated as default MCP servers.
 
 ---
 
