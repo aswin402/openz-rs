@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.59`
+# OpenZ 🦊 `v0.0.60`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,11 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.60`
+
+- **Runtime model identity grounding:** `openz_inventory` now reports configured model/provider, resolved effective provider/model when available, vision support, caveman mode, and streaming status.
+- **No model guessing:** questions like “what model are you?” or “which language are you best at?” now require live runtime inventory first and must disclose uncertainty instead of inventing hidden model architecture or benchmark facts.
 
 ## What Changed In `v0.0.59`
 

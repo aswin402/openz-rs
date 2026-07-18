@@ -398,7 +398,13 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.59 (Latest Release)
+### v0.0.60 (Latest Release)
+
+*   **Fix: runtime model identity grounding:** `openz_inventory` now reports live runtime identity fields including configured model, configured provider, resolved effective provider/model when available, vision support, caveman mode, and streaming status.
+*   **Prompt hardening:** Model/provider identity questions such as “what model are you?” and model-capability questions such as “which programming language are you best at?” now require `openz_inventory` before answering and explicitly forbid guessing hidden architecture, training data, parameter count, or benchmark ranking.
+*   **Chore:** Bumped version to `v0.0.60`.
+
+### v0.0.59
 
 *   **Fix: self-inventory source suppression:** OpenZ now treats prompts like “what tools do you have?” and “what features do you have?” as internal inventory questions, so saved external research sources such as OpenHuman/Hermes are not injected or shown in the source footer.
 *   **Guard: comparison prompts still use sources:** Explicit comparison prompts such as “what features do you have vs Hermes?” continue to allow saved source/research context.

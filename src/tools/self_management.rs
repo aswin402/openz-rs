@@ -367,7 +367,7 @@ impl Tool for OpenZInventoryTool {
     }
 
     fn description(&self) -> &str {
-        "Return a live OpenZ capability inventory from the running binary: version, channels, registered tools by domain, subagents, server state, and exact counts. Use this before answering feature/tool questions."
+        "Return a live OpenZ capability inventory from the running binary: version, runtime model/provider identity, channels, registered tools by domain, subagents, server state, and exact counts. Use this before answering feature/tool/model identity questions."
     }
 
     fn parameters(&self) -> Value {
@@ -433,6 +433,39 @@ impl Tool for OpenZInventoryTool {
         };
         let active_servers = crate::shutdown::list_registered_children();
 
+        let runtime_identity = match crate::config::loader::load_config() {
+            Ok(config) => {
+                let configured_model = config.agents.defaults.model.clone();
+                let configured_provider = config.agents.defaults.provider.clone();
+                let resolved =
+                    crate::providers::resolver::resolve_provider_full(&config, &configured_model);
+                let (effective_provider, effective_model, provider_resolution_error) =
+                    match resolved {
+                        Ok(resolved) => (
+                            Some(resolved.provider_name),
+                            Some(resolved.model),
+                            serde_json::Value::Null,
+                        ),
+                        Err(err) => (None, None, serde_json::json!(err.to_string())),
+                    };
+                serde_json::json!({
+                    "configured_model": configured_model,
+                    "configured_provider": configured_provider,
+                    "effective_provider": effective_provider,
+                    "effective_model": effective_model,
+                    "provider_resolution_error": provider_resolution_error,
+                    "model_supports_vision": crate::providers::model_supports_vision(&config.agents.defaults.model),
+                    "caveman_mode": config.agents.defaults.caveman_mode,
+                    "streaming": config.agents.defaults.streaming,
+                    "note": "Runtime config exposes model/provider labels, not hidden architecture, training data, parameter count, or benchmark ranking."
+                })
+            }
+            Err(err) => serde_json::json!({
+                "error": err.to_string(),
+                "note": "Runtime config could not be loaded; do not guess model/provider identity."
+            }),
+        };
+
         let channels = vec![
             "cli_tui",
             "websocket_webui",
@@ -483,6 +516,7 @@ impl Tool for OpenZInventoryTool {
         Ok(serde_json::json!({
             "success": true,
             "version": env!("CARGO_PKG_VERSION"),
+            "runtime_identity": runtime_identity,
             "tool_count": entries.len(),
             "exposed_count": exposed_count,
             "domains": domains,
@@ -504,7 +538,7 @@ impl Tool for OpenZInventoryTool {
                 "started_at": s.started_at,
             })).collect::<Vec<_>>(),
             "tools_by_domain": if include_tools { serde_json::json!(tools_by_domain) } else { serde_json::Value::Null },
-            "guidance": "Use this live inventory instead of guessing feature/tool counts from memory."
+            "guidance": "Use this live inventory instead of guessing feature/tool counts or model/provider identity from memory."
         }))
     }
 }
@@ -1704,6 +1738,40 @@ mod tests {
         assert_eq!(read_file["domain"].as_str().unwrap(), "filesystem");
         assert_eq!(read_file["risk"].as_str().unwrap(), "low");
         assert_eq!(read_file["writes_disk"].as_bool().unwrap(), false);
+    }
+
+    #[test]
+    fn test_openz_inventory_reports_runtime_identity() {
+        let registry = crate::tools::ToolRegistry::new();
+        registry.register(std::sync::Arc::new(
+            crate::tools::self_management::ManageConfigTool,
+        ));
+
+        let inventory = OpenZInventoryTool::new(registry);
+        let res = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(inventory.call(&serde_json::json!({
+                "include_tools": false,
+                "include_subagents": false,
+                "prompt": "what model are you and which language are you best at"
+            })))
+            .unwrap();
+
+        assert_eq!(res["success"].as_bool().unwrap(), true);
+        assert!(res["runtime_identity"].is_object());
+        assert!(res["runtime_identity"]["configured_model"]
+            .as_str()
+            .is_some());
+        assert!(res["runtime_identity"]["configured_provider"]
+            .as_str()
+            .is_some());
+        assert!(res["runtime_identity"]["model_supports_vision"]
+            .as_bool()
+            .is_some());
+        assert!(res["guidance"]
+            .as_str()
+            .unwrap()
+            .contains("model/provider identity"));
     }
 
     #[test]

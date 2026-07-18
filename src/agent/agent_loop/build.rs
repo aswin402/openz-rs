@@ -81,10 +81,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
           * Pluggable Gateway Channels: You can receive messages and reply over CLI terminal, WebSocket gateway (serving the WebUI workbench), Telegram bot polling, Discord bot polling, WhatsApp Business API, and pure Rust IMAP/SMTP Email client.\n\
           * Local Tools & MCP: {}\n\
           * Runtime Tool Discipline:\n\
-            - When asked what OpenZ can do, what features/tools exist, or how OpenZ compares, call 'openz_inventory' (and 'tool_catalog' only for deeper schema/routing details) before giving exact counts. Do not guess feature/tool counts from memory.\n\
-            - When 'exec_command' launches a dev server/background server and returns server_registered=true, treat the launch as complete. Do not retry with pkill/ps guesses. Use 'manage_servers' automatically to list or stop registered servers when the task is finished, when the user says done/stop/cleanup, or before finalizing a verification-only server. If the user is actively previewing a server, report the server id and leave it running until no longer needed.\n\
-            - When creating large websites, generated source files, or video timelines, avoid one huge 'write_file' payload. Prefer chunked file creation/append steps or smaller artifacts, then verify file exists. For 20s+ HTML videos, render in shorter segments and concatenate. After a repeated successful workaround, save it with 'workflow_memory' or 'curate_skill'.\n\
-\n\
+{}\n\
           * Context Scoping & Compression: You have native tools for context management:\n\
             - 'scope_context' (with target_path): Walks up the tree and compiles relevant AGENTS.md instructions. Use this BEFORE editing files to retrieve rules.\n\
             - 'compress_content' (with raw_text and content_type): Compresses logs/code/JSON and registers a CCR reference token (CCR ID).\n\
@@ -100,6 +97,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
           * Self-Improvement System: An asynchronous background curator refines your memory facts and procedural skills stored under ~/.openz/skills/ and SQLite database (~/.openz/memory.db).",
         get_version_history(),
         get_dynamic_tools_guideline(&loop_ref.tools),
+        runtime_tool_discipline_rules(),
         subagents_list
     );
 
@@ -282,6 +280,13 @@ fn identity_memory_candidate(text: &str) -> bool {
     ]
     .iter()
     .any(|needle| normalized.contains(needle))
+}
+
+fn runtime_tool_discipline_rules() -> &'static str {
+    "- When asked what OpenZ can do, what features/tools exist, or how OpenZ compares, call 'openz_inventory' (and 'tool_catalog' only for deeper schema/routing details) before giving exact counts. Do not guess feature/tool counts from memory.\n\
+            - When asked model/provider identity questions such as 'what model are you', 'are you DeepSeek', 'which provider are you using', or model capability questions such as 'which programming language are you best at', call 'openz_inventory' first and answer from runtime_identity. Do not guess hidden model architecture, training data, parameter count, or benchmark ranking. State uncertainty when the live config only exposes a model label/provider.\n\
+            - When 'exec_command' launches a dev server/background server and returns server_registered=true, treat the launch as complete. Do not retry with pkill/ps guesses. Use 'manage_servers' automatically to list or stop registered servers when the task is finished, when the user says done/stop/cleanup, or before finalizing a verification-only server. If the user is actively previewing a server, report the server id and leave it running until no longer needed.\n\
+            - When creating large websites, generated source files, or video timelines, avoid one huge 'write_file' payload. Prefer chunked file creation/append steps or smaller artifacts, then verify file exists. For 20s+ HTML videos, render in shorter segments and concatenate. After a repeated successful workaround, save it with 'workflow_memory' or 'curate_skill'."
 }
 
 fn is_weak_or_risky_model(model: &str) -> bool {
@@ -1000,6 +1005,14 @@ mod tests {
         assert!(is_weak_or_risky_model("mimo-v2.5-free"));
         assert!(is_weak_or_risky_model("gemini-3.1-flash-lite"));
         assert!(!is_weak_or_risky_model("deepseek-v4-flash-free"));
+    }
+
+    #[test]
+    fn runtime_tool_discipline_requires_live_identity_for_model_questions() {
+        let rule = runtime_tool_discipline_rules();
+        assert!(rule.contains("model/provider identity"));
+        assert!(rule.contains("openz_inventory"));
+        assert!(rule.contains("Do not guess"));
     }
 
     #[test]
