@@ -363,7 +363,7 @@ fn format_research_brief_context_items(
         return String::new();
     }
     let current_sensitive = is_current_or_latest_query(user_content);
-    let mut out = String::from("\n\n[Relevant Research Briefs]\nUse these saved briefs first for simple definition/comparison questions. Do not call web/search tools when a fresh brief answers the question. Only refresh if freshness=stale or the user asks for latest/current data:\n");
+    let mut out = String::from("\n\n[Relevant Research Briefs]\nUse these saved briefs first for simple definition/comparison questions. Do not call web/search tools when a fresh brief answers the question. Only refresh if freshness=stale or the user asks for latest/current data. Only state facts present in the briefs or saved sources; say unknown if a requested detail is missing. Do not guess licenses, channels, release numbers, integrations, or comparisons from memory alone:\n");
     if current_sensitive {
         out.push_str("- Current/latest intent detected: verify against saved sources or web before final answer.\n");
     } else {
@@ -996,6 +996,8 @@ mod tests {
         let block = format_research_brief_context_items(&[item], "what is mem0");
         assert!(block.contains("Do not call web/search tools"));
         assert!(block.contains("Current/latest intent not detected"));
+        assert!(block.contains("Only state facts present"));
+        assert!(block.contains("say unknown"));
     }
 
     #[test]

@@ -331,7 +331,10 @@ pub async fn auto_capture_research_memory(
     result: &Value,
     user_content: &str,
 ) -> Result<Option<AutoCaptureSummary>> {
-    if !is_research_tool(tool_name) || result.get("error").is_some() {
+    if !is_research_tool(tool_name)
+        || result.get("error").is_some()
+        || result.get("status").and_then(|v| v.as_str()) == Some("skipped")
+    {
         return Ok(None);
     }
 
@@ -447,6 +450,30 @@ mod tests {
             crate::tools::shared_memory::delete_research_brief(&format!("Hermes Agent {}", marker))
                 .await;
     }
+    #[tokio::test]
+    async fn auto_capture_ignores_skipped_saved_brief_results() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let result = serde_json::json!({
+            "status": "skipped",
+            "reason": "Skipped web/search lookup: a fresh saved research brief already matches this non-latest query."
+        });
+
+        let summary = auto_capture_research_memory(
+            "web_fetch",
+            &serde_json::json!({"url": format!("https://github.com/example/{marker}")}),
+            &result,
+            &format!("hey whats {marker}"),
+        )
+        .await
+        .unwrap();
+
+        assert!(summary.is_none());
+        let matches = crate::tools::shared_memory::search_research_briefs(&marker, 5)
+            .await
+            .unwrap();
+        assert!(!matches.iter().any(|item| item.topic.contains(&marker)));
+    }
+
     #[tokio::test]
     async fn auto_capture_repo_brief_uses_week_ttl() {
         let marker = uuid::Uuid::new_v4().to_string();

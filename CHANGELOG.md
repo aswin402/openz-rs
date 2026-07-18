@@ -412,6 +412,7 @@ Inside `openz agent`, the user can issue direct slash commands:
 *   **Hardening: research reuse enforcement:** URL-plus-instruction prompts now canonicalize to the first concrete URL/repo, auto-capture notices aggregate once per turn, and fresh matching research briefs block redundant web/search tool calls for non-latest questions.
 *   **Hardening: explicit research bypass:** Fresh research briefs no longer block web/search tools during explicit research or link-analysis prompts, so OpenZ can still fetch README/docs/site pages while creating the first complete brief.
 *   **Hardening: canonical research brief quality:** Auto-saved repo/docs briefs now inherit source TTLs instead of expiring after 60 seconds, and URL-backed follow-up captures keep canonical repo topics like `agent0ai/dox` instead of creating weak aliases like `dox`.
+*   **Hardening: skipped lookup capture guard:** Fresh-brief skip responses are no longer auto-saved as new research briefs, preventing generic duplicate topics after simple follow-up questions. Saved-brief prompt context now tells models to state only supported facts and say unknown for missing details.
 *   **Hardening: forgiving research brief tool args:** `research_brief` now accepts weak-model aliases like `goal`, `context`, and `content`, and infers save/search action when `action` is omitted.
 *   **Chore:** Bumped version to `v0.0.54`.
 
