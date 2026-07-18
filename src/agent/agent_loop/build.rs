@@ -335,6 +335,25 @@ fn is_current_or_latest_query(text: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
+fn concrete_research_topic_terms(text: &str) -> Vec<String> {
+    let canonical = crate::tools::shared_memory::auto_capture::canonical_research_topic(text);
+    const GENERIC_TERMS: &[&str] = &[
+        "new", "news", "latest", "current", "recent", "update", "updates", "today", "now", "what",
+        "whats", "what's", "happened", "anything", "any", "fresh", "version", "in", "on", "for",
+        "about",
+    ];
+    canonical
+        .split(|c: char| !c.is_alphanumeric() && c != '/' && c != '.' && c != '-')
+        .map(str::trim)
+        .filter(|term| term.len() > 1 && !GENERIC_TERMS.contains(term))
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn should_skip_research_memory_for_generic_query(text: &str) -> bool {
+    concrete_research_topic_terms(text).is_empty()
+}
+
 fn format_research_brief_context_items(
     items: &[crate::tools::shared_memory::ResearchBrief],
     user_content: &str,
@@ -368,6 +387,9 @@ fn format_research_brief_context_items(
 }
 
 async fn retrieve_research_brief_context(user_content: &str) -> String {
+    if should_skip_research_memory_for_generic_query(user_content) {
+        return String::new();
+    }
     match crate::tools::shared_memory::search_research_briefs(user_content, 3).await {
         Ok(items) => {
             if let Some(best) = items.first().filter(|item| item.score >= MIN_MATCH_SCORE) {
@@ -417,6 +439,9 @@ Use these ranked links, repos, docs, paths, or profiles before broad searching. 
 }
 
 async fn retrieve_source_context(user_content: &str) -> String {
+    if should_skip_research_memory_for_generic_query(user_content) {
+        return String::new();
+    }
     match crate::tools::shared_memory::search_source_bookmarks(user_content, 4).await {
         Ok(items) => {
             if let Some(best) = items.first().filter(|item| item.score >= MIN_MATCH_SCORE) {
@@ -928,6 +953,28 @@ mod tests {
         assert!(is_weak_or_risky_model("mimo-v2.5-free"));
         assert!(is_weak_or_risky_model("gemini-3.1-flash-lite"));
         assert!(!is_weak_or_risky_model("deepseek-v4-flash-free"));
+    }
+
+    #[test]
+    fn generic_research_memory_guard_skips_topicless_update_queries() {
+        assert!(should_skip_research_memory_for_generic_query(
+            "hey whats new"
+        ));
+        assert!(should_skip_research_memory_for_generic_query("latest"));
+        assert!(should_skip_research_memory_for_generic_query("any updates"));
+        assert!(!should_skip_research_memory_for_generic_query(
+            "whats new in hermes"
+        ));
+        assert!(!should_skip_research_memory_for_generic_query(
+            "latest mem0 release"
+        ));
+        assert!(!should_skip_research_memory_for_generic_query(
+            "what is mem0"
+        ));
+        assert_eq!(
+            concrete_research_topic_terms("whats new in hermes"),
+            vec!["hermes"]
+        );
     }
 
     #[test]
