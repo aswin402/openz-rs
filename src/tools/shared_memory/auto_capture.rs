@@ -192,6 +192,116 @@ fn text_excerpt(text: &str, max_chars: usize) -> String {
         .collect()
 }
 
+fn clean_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_navigation_noise(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let nav_terms = [
+        "overview",
+        "getting started",
+        "troubleshooting",
+        "pricing",
+        "billing",
+        "legal",
+        "terms",
+        "discord",
+        "github",
+        "website",
+        "twitter",
+        "x/twitter",
+        "features",
+        "docs",
+        "more",
+    ];
+    let hits = nav_terms
+        .iter()
+        .filter(|term| lower.contains(**term))
+        .count();
+    hits >= 5 && !lower.contains(" is ") && !lower.contains(" built")
+}
+
+fn trim_leading_noise_to_definition(text: &str) -> String {
+    let cleaned = clean_text(text);
+    let lower = cleaned.to_lowercase();
+    for marker in [" is ", " are ", " was ", " built "] {
+        if let Some(idx) = lower.find(marker) {
+            let prefix = &cleaned[..idx];
+            let start = prefix.rfind(' ').map(|pos| pos + 1).unwrap_or(0);
+            let trimmed = cleaned[start..].trim();
+            if trimmed.chars().filter(|c| c.is_alphabetic()).count() >= 40 {
+                return trimmed.to_string();
+            }
+        }
+    }
+    cleaned
+}
+
+fn sentence_chunks(text: &str) -> Vec<String> {
+    trim_leading_noise_to_definition(text)
+        .split(['.', '!', '?'])
+        .map(str::trim)
+        .filter(|s| s.chars().filter(|c| c.is_alphabetic()).count() >= 40)
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn signal_score(text: &str) -> i32 {
+    let lower = text.to_lowercase();
+    let mut score = 0;
+    for term in [
+        " is ",
+        " built",
+        " open-source",
+        " local-first",
+        " memory",
+        " workflow",
+        " agent",
+        " research",
+        " orchestrat",
+        " privacy",
+        " rust",
+        " typescript",
+    ] {
+        if lower.contains(term) {
+            score += 2;
+        }
+    }
+    if is_navigation_noise(text) {
+        score -= 10;
+    }
+    score
+}
+
+fn signal_excerpt(text: &str, max_chars: usize) -> String {
+    let mut chunks = sentence_chunks(text);
+    chunks.sort_by(|a, b| signal_score(b).cmp(&signal_score(a)));
+    let mut out = Vec::new();
+    for chunk in chunks.into_iter().filter(|c| signal_score(c) > 0) {
+        if out.iter().any(|existing: &String| existing == &chunk) {
+            continue;
+        }
+        let candidate = if out.is_empty() {
+            chunk.clone()
+        } else {
+            format!("{}. {}", out.join(". "), chunk)
+        };
+        if candidate.chars().count() > max_chars {
+            break;
+        }
+        out.push(chunk);
+        if out.len() >= 3 {
+            break;
+        }
+    }
+    if out.is_empty() {
+        text_excerpt(text, max_chars)
+    } else {
+        out.join(". ")
+    }
+}
+
 fn object_str<'a>(obj: &'a serde_json::Map<String, Value>, keys: &[&str]) -> Option<&'a str> {
     keys.iter()
         .find_map(|key| obj.get(*key).and_then(|v| v.as_str()))
@@ -210,7 +320,7 @@ fn candidate_from_object(obj: &serde_json::Map<String, Value>) -> Option<SourceC
         obj,
         &["snippet", "summary", "content", "text", "description"],
     )
-    .map(|s| text_excerpt(s, 240))
+    .map(|s| signal_excerpt(s, 360))
     .unwrap_or_default();
     let (kind, trust) = kind_for_url(url);
     Some(SourceCandidate {
@@ -303,7 +413,7 @@ fn result_summary(result: &Value) -> String {
                         if !line.is_empty() {
                             line.push_str(": ");
                         }
-                        line.push_str(&text_excerpt(snippet, 220));
+                        line.push_str(&signal_excerpt(snippet, 420));
                     }
                     if !url.is_empty() {
                         line.push_str(" (");
@@ -319,7 +429,7 @@ fn result_summary(result: &Value) -> String {
             Value::Array(items) => items.iter().for_each(|item| collect(item, parts)),
             Value::String(text) => {
                 if parts.is_empty() {
-                    parts.push(text_excerpt(text, 900));
+                    parts.push(signal_excerpt(text, 900));
                 }
             }
             _ => {}
@@ -327,7 +437,7 @@ fn result_summary(result: &Value) -> String {
     }
     collect(result, &mut parts);
     if parts.is_empty() {
-        text_excerpt(&serde_json::to_string(result).unwrap_or_default(), 900)
+        signal_excerpt(&serde_json::to_string(result).unwrap_or_default(), 900)
     } else {
         text_excerpt(
             &parts.into_iter().take(8).collect::<Vec<_>>().join("; "),
@@ -417,6 +527,21 @@ pub async fn auto_capture_research_memory(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn result_summary_prefers_signal_over_navigation_noise() {
+        let result = serde_json::json!({
+            "url": "https://github.com/example/openhuman",
+            "title": "OpenHuman",
+            "content": "OpenHuman GitHub Website Discord More English Overview Getting Started Troubleshooting Features Realtime Mascot Memory Third-party Integrations The Orchestrator Workflows Pricing Billing Legal Terms OpenHuman is a local-first personal AI agent that builds persistent memory, coordinates workflows, and performs deep research across your files and web sources. It stores user context locally and keeps automation approval-gated."
+        });
+
+        let summary = result_summary(&result);
+        assert!(summary.contains("OpenHuman is a local-first personal AI agent"));
+        assert!(summary.contains("persistent memory"));
+        assert!(!summary.contains("GitHub Website Discord More English Overview"));
+        assert!(!summary.contains("Pricing Billing Legal Terms"));
+    }
 
     #[tokio::test]
     async fn auto_capture_saves_sources_and_brief_from_search_results() {
