@@ -228,6 +228,23 @@ fn source_rank_score(query: &str, item: &SourceBookmark) -> f64 {
     score
 }
 
+fn is_useful_research_brief_summary(summary: &str) -> bool {
+    let normalized = summary.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lower = normalized.to_lowercase();
+    if lower.is_empty() {
+        return false;
+    }
+    if matches!(lower.as_str(), "skipped" | "skip" | "none" | "n/a") {
+        return false;
+    }
+    if lower.starts_with("skipped web/search lookup:")
+        || lower.contains("fresh saved research brief already matches")
+    {
+        return false;
+    }
+    normalized.chars().filter(|c| c.is_alphabetic()).count() >= 24
+}
+
 fn brief_rank_score(query: &str, item: &ResearchBrief) -> f64 {
     let fields = [item.topic.as_str(), item.summary.as_str()];
     let (matching_terms, _) = matching_term_count(query, &fields);
@@ -452,6 +469,9 @@ pub async fn save_research_brief(
     if topic.trim().is_empty() || summary.trim().is_empty() {
         return Err(anyhow!("topic and summary are required"));
     }
+    if !is_useful_research_brief_summary(summary) {
+        return Err(anyhow!("research brief summary is not useful"));
+    }
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_rfc3339();
     let source_ids_json = serde_json::to_string(&source_ids)?;
@@ -494,6 +514,7 @@ pub async fn search_research_briefs(query: &str, limit: usize) -> Result<Vec<Res
         }
         Ok(out)
     })?;
+    rows.retain(|item| is_useful_research_brief_summary(&item.summary));
     for item in &mut rows {
         item.score = brief_rank_score(search_query, item);
     }
@@ -669,12 +690,18 @@ mod tests {
     async fn research_brief_merges_question_alias_into_existing_repo_topic() {
         let marker = uuid::Uuid::new_v4().to_string();
         let url_topic = format!("https://github.com/example/{marker}?utm_source=chatgpt.com");
-        save_research_brief(&url_topic, "First summary", vec![], 0.7, 86400)
-            .await
-            .unwrap();
+        save_research_brief(
+            &url_topic,
+            "Example repository documentation explains the project purpose and setup workflow.",
+            vec![],
+            0.7,
+            86400,
+        )
+        .await
+        .unwrap();
         save_research_brief(
             &format!("what is {marker}"),
-            "Second summary",
+            "Example repository alias update contains a useful description from a follow-up question.",
             vec![],
             0.8,
             86400,
@@ -691,9 +718,36 @@ mod tests {
         let canonical_topic = format!("example/{marker}");
         assert!(question_matches
             .iter()
-            .any(|m| { m.topic == canonical_topic && m.summary == "Second summary" }));
+            .any(|m| { m.topic == canonical_topic && m.summary == "Example repository alias update contains a useful description from a follow-up question." }));
         let _ = delete_research_brief(&url_topic).await;
         let _ = delete_research_brief(&marker).await;
+    }
+
+    #[tokio::test]
+    async fn research_brief_search_ignores_skipped_placeholder_summaries() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let topic = format!("tinyhumansai/openhuman-{marker}");
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = now_rfc3339();
+        {
+            let _lock = get_db_mutex().lock().await;
+            with_db(|conn| {
+                conn.execute(
+                    "INSERT INTO research_briefs (id, topic, summary, source_ids, confidence, stale_after_secs, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                    params![id, topic, "skipped", "[]", 0.65, 604_800, now],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        let matches = search_research_briefs(&format!("what is openhuman-{marker}"), 5)
+            .await
+            .unwrap();
+        assert!(!matches.iter().any(|item| item.topic == topic));
+
+        let _ = delete_research_brief(&topic).await;
     }
 
     #[tokio::test]
