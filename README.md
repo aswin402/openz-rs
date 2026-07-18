@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.58`
+# OpenZ 🦊 `v0.0.59`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,11 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.59`
+
+- **Self-inventory source suppression:** prompts like “what tools do you have?” and “what features do you have?” now skip saved external research/source matching, so unrelated OpenHuman/Hermes source footers should not appear.
+- **Comparison-safe guard:** explicit comparison prompts such as “what features do you have vs Hermes?” still allow saved source/research context.
 
 ## What Changed In `v0.0.58`
 

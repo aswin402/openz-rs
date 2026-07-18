@@ -355,8 +355,50 @@ fn concrete_research_topic_terms(text: &str) -> Vec<String> {
         .collect()
 }
 
+fn is_openz_self_inventory_query(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let asks_inventory = [
+        "tool",
+        "tools",
+        "feature",
+        "features",
+        "capability",
+        "capabilities",
+        "what can you do",
+        "what do you have",
+        "what are u",
+        "what are you",
+        "inventory",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    if !asks_inventory {
+        return false;
+    }
+
+    let mentions_external_project = [
+        "hermes",
+        "openhuman",
+        "openfang",
+        "openclaw",
+        "dox",
+        "claude",
+        "chatgpt",
+        "cursor",
+        "compare",
+        " vs ",
+        " versus ",
+        "different from",
+        "difference",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+
+    !mentions_external_project
+}
+
 fn should_skip_research_memory_for_generic_query(text: &str) -> bool {
-    concrete_research_topic_terms(text).is_empty()
+    is_openz_self_inventory_query(text) || concrete_research_topic_terms(text).is_empty()
 }
 
 fn format_research_brief_context_items(
@@ -967,6 +1009,15 @@ mod tests {
         ));
         assert!(should_skip_research_memory_for_generic_query("latest"));
         assert!(should_skip_research_memory_for_generic_query("any updates"));
+        assert!(should_skip_research_memory_for_generic_query(
+            "what are the tools u have"
+        ));
+        assert!(should_skip_research_memory_for_generic_query(
+            "what features do you have"
+        ));
+        assert!(!should_skip_research_memory_for_generic_query(
+            "what features do you have vs hermes"
+        ));
         assert!(!should_skip_research_memory_for_generic_query(
             "whats new in hermes"
         ));

@@ -398,7 +398,13 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.58 (Latest Release)
+### v0.0.59 (Latest Release)
+
+*   **Fix: self-inventory source suppression:** OpenZ now treats prompts like “what tools do you have?” and “what features do you have?” as internal inventory questions, so saved external research sources such as OpenHuman/Hermes are not injected or shown in the source footer.
+*   **Guard: comparison prompts still use sources:** Explicit comparison prompts such as “what features do you have vs Hermes?” continue to allow saved source/research context.
+*   **Chore:** Bumped version to `v0.0.59`.
+
+### v0.0.58
 
 *   **Feature: live OpenZ inventory:** Added the native `openz_inventory` tool so agents can report exact running-version capabilities, registered tools by domain, channels, commands, subagents, and active managed servers without guessing from memory.
 *   **Hardening: automatic server lifecycle behavior:** Elevated `manage_servers` to a high-priority core tool and updated runtime prompt discipline so OpenZ uses it automatically for registered dev-server cleanup instead of relying on user slash commands or shell `pkill` guesses.
