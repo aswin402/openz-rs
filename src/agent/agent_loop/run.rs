@@ -99,8 +99,35 @@ fn is_current_or_latest_query(text: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
+fn is_explicit_research_request(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let has_url = lower.contains("http://") || lower.contains("https://");
+    let has_research_verb = [
+        "research",
+        "look up",
+        "lookup",
+        "search",
+        "find",
+        "dig into",
+        "investigate",
+        "analyze this",
+        "analyse this",
+        "read this",
+        "check this",
+        "tell me about this",
+        "deep dive",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+
+    has_research_verb || (has_url && lower.contains("tell me"))
+}
+
 async fn fresh_research_brief_blocks_lookup(user_content: &str, tool_name: &str) -> bool {
-    if !is_research_lookup_tool(tool_name) || is_current_or_latest_query(user_content) {
+    if !is_research_lookup_tool(tool_name)
+        || is_current_or_latest_query(user_content)
+        || is_explicit_research_request(user_content)
+    {
         return false;
     }
     match crate::tools::shared_memory::search_research_briefs(user_content, 1).await {
@@ -1282,7 +1309,26 @@ mod tests {
             )
             .await
         );
+        assert!(
+            !fresh_research_brief_blocks_lookup(
+                &format!("research about openhuman {marker} and tell me about this"),
+                "web_fetch"
+            )
+            .await
+        );
         let _ = crate::tools::shared_memory::delete_research_brief(&topic).await;
+    }
+
+    #[test]
+    fn explicit_research_request_detection_catches_link_analysis() {
+        assert!(is_explicit_research_request(
+            "research about this https://github.com/tinyhumansai/openhuman and tell me about this"
+        ));
+        assert!(is_explicit_research_request(
+            "please read this https://github.com/mem0ai/mem0"
+        ));
+        assert!(!is_explicit_research_request("what is openhuman"));
+        assert!(!is_explicit_research_request("hey whats new"));
     }
 
     #[test]

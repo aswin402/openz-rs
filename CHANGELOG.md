@@ -410,6 +410,7 @@ Inside `openz agent`, the user can issue direct slash commands:
 *   **Hardening: research memory cleanup:** Casual prompt prefixes like `hey whats` are stripped from saved research topics, duplicate auto-capture topics are collapsed in TUI notices, source/brief match thresholds are stricter, and the self-improvement curator is debounced for fast repeated turns.
 *   **Hardening: generic research guard:** Topicless update prompts like `hey whats new` no longer inject saved research/source memory, preventing unrelated source notices on fresh sessions. Topic-specific prompts like `whats new in hermes` still use saved context.
 *   **Hardening: research reuse enforcement:** URL-plus-instruction prompts now canonicalize to the first concrete URL/repo, auto-capture notices aggregate once per turn, and fresh matching research briefs block redundant web/search tool calls for non-latest questions.
+*   **Hardening: explicit research bypass:** Fresh research briefs no longer block web/search tools during explicit research or link-analysis prompts, so OpenZ can still fetch README/docs/site pages while creating the first complete brief.
 *   **Hardening: forgiving research brief tool args:** `research_brief` now accepts weak-model aliases like `goal`, `context`, and `content`, and infers save/search action when `action` is omitted.
 *   **Chore:** Bumped version to `v0.0.54`.
 
