@@ -59,7 +59,7 @@ pub fn canonical_research_topic(raw: &str) -> String {
         if let Some(host) = parsed.host_str() {
             let host = host.trim_start_matches("www.");
             let path = parsed.path().trim_matches('/');
-            text = if host == "github.com" {
+            text = if host == "github.com" || host == "raw.githubusercontent.com" {
                 path.split('/')
                     .take(2)
                     .filter(|part| !part.is_empty())
@@ -257,6 +257,17 @@ fn collect_candidates(value: &Value, out: &mut Vec<SourceCandidate>) {
     }
 }
 
+fn repo_topic_from_candidates(candidates: &[SourceCandidate]) -> Option<String> {
+    candidates.iter().find_map(|candidate| {
+        let topic = canonical_research_topic(&candidate.url);
+        if topic.contains('/') {
+            Some(topic)
+        } else {
+            None
+        }
+    })
+}
+
 fn dedupe_candidates(candidates: Vec<SourceCandidate>) -> Vec<SourceCandidate> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -338,10 +349,17 @@ pub async fn auto_capture_research_memory(
         return Ok(None);
     }
 
+    let mut candidates = Vec::new();
+    collect_candidates(arguments, &mut candidates);
+    collect_candidates(result, &mut candidates);
+    let candidates = dedupe_candidates(candidates);
+    let candidate_repo_topic = repo_topic_from_candidates(&candidates);
+
     // Derive topic consistently from user_content so all tool calls in the
     // same turn share the same canonical topic (avoiding duplicate briefs).
     // If a vague follow-up like "what is dox" is attached to a concrete repo/docs
-    // URL in tool args, preserve the canonical URL topic (e.g. agent0ai/dox).
+    // URL in tool args or result candidates, preserve the canonical URL topic
+    // (e.g. agent0ai/dox).
     let topic = if user_content.trim().is_empty() {
         topic_from(tool_name, arguments, user_content)
     } else {
@@ -349,6 +367,8 @@ pub async fn auto_capture_research_memory(
         let arg_topic = topic_from(tool_name, arguments, "");
         if !user_topic.contains('/') && arg_topic.contains('/') {
             arg_topic
+        } else if !user_topic.contains('/') {
+            candidate_repo_topic.unwrap_or(user_topic)
         } else {
             user_topic
         }
@@ -356,11 +376,6 @@ pub async fn auto_capture_research_memory(
     if topic.trim().is_empty() {
         return Ok(None);
     }
-
-    let mut candidates = Vec::new();
-    collect_candidates(arguments, &mut candidates);
-    collect_candidates(result, &mut candidates);
-    let candidates = dedupe_candidates(candidates);
 
     let mut source_ids = Vec::new();
     for candidate in candidates {
@@ -509,6 +524,47 @@ mod tests {
             let _ = crate::tools::shared_memory::delete_source(&source.id).await;
         }
         let _ = crate::tools::shared_memory::delete_research_brief(&summary.topic).await;
+    }
+
+    #[tokio::test]
+    async fn auto_capture_uses_repo_topic_from_result_url_for_simple_followup() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let repo = format!("openhuman-{marker}");
+        let repo_url = format!("https://github.com/tinyhumansai/{repo}");
+        let result = serde_json::json!({
+            "title": format!("OpenHuman {marker}"),
+            "url": repo_url,
+            "content": "OpenHuman is a local-first personal AI agent platform with memory, workflows, integrations, and research tools."
+        });
+
+        let summary = auto_capture_research_memory(
+            "web_fetch",
+            &serde_json::json!({"query": format!("what is openhuman-{marker}")}),
+            &result,
+            &format!("hey whats openhuman-{marker}"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(summary.topic, format!("tinyhumansai/{repo}"));
+        let generic = crate::tools::shared_memory::search_research_briefs(
+            &format!("what is openhuman-{marker}"),
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(generic[0].topic, summary.topic);
+
+        let sources = crate::tools::shared_memory::search_source_bookmarks(&marker, 5)
+            .await
+            .unwrap();
+        for source in sources.into_iter().filter(|s| s.uri.contains(&marker)) {
+            let _ = crate::tools::shared_memory::delete_source(&source.id).await;
+        }
+        let _ = crate::tools::shared_memory::delete_research_brief(&summary.topic).await;
+        let _ = crate::tools::shared_memory::delete_research_brief(&format!("openhuman-{marker}"))
+            .await;
     }
 
     #[tokio::test]
