@@ -398,7 +398,17 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.54 (Latest Release)
+### v0.0.55 (Latest Release)
+
+*   **Hardening: research memory reliability:** Simple follow-up prompts now reuse fresh canonical research briefs without repeated web calls, while explicit research/link-analysis prompts bypass the no-fetch gate so OpenZ can fetch README/docs/site pages when the user asks for research.
+*   **Hardening: canonical research topics:** URL-plus-instruction prompts, GitHub links, and raw GitHub URLs now save under stable repo topics like `agent0ai/dox` and `tinyhumansai/openhuman` instead of weak aliases like `dox` or `openhuman`.
+*   **Hardening: repo/docs brief freshness:** Auto-saved repo/docs briefs now inherit source TTLs instead of expiring after 60 seconds, keeping useful repository and documentation research fresh for about a week by default.
+*   **Hardening: skipped and invalid brief protection:** Fresh-brief skip responses are no longer auto-saved, and placeholder summaries such as `skipped` are rejected on save and ignored during retrieval so corrupted rows cannot block needed refreshes.
+*   **Hardening: high-signal research summaries:** Auto-captured research briefs now prefer definition/architecture sentences and trim leading navigation/sidebar/legal noise before saving summaries.
+*   **Hardening: source-strict saved-brief prompting:** Saved research context now instructs models to state only facts present in briefs/sources and say `unknown` for missing details instead of guessing licenses, channels, releases, integrations, or comparisons.
+*   **Chore:** Bumped version to `v0.0.55`.
+
+### v0.0.54
 
 *   **Feature: freshness-aware source memory:** Source bookmarks now carry `fresh`, `stale`, or `unknown` status from TTL-aware timestamps. Newly saved sources are marked checked, volatile source types get shorter default TTLs, and stale/current-sensitive sources are injected with explicit refresh guidance.
 *   **Feature: deterministic source ranking:** Automatic source retrieval now prefers exact label/alias matches, official docs/repos/local paths, higher trust, higher reuse, and fresh sources. `/sources` remains only an inspection/debug command; the prompt uses ranked sources automatically.
@@ -409,13 +419,6 @@ Inside `openz agent`, the user can issue direct slash commands:
 *   **UX: batched auto-capture notices:** Multiple research tool calls in one iteration now emit one compact auto-save notification instead of one notice per tool.
 *   **Hardening: research memory cleanup:** Casual prompt prefixes like `hey whats` are stripped from saved research topics, duplicate auto-capture topics are collapsed in TUI notices, source/brief match thresholds are stricter, and the self-improvement curator is debounced for fast repeated turns.
 *   **Hardening: generic research guard:** Topicless update prompts like `hey whats new` no longer inject saved research/source memory, preventing unrelated source notices on fresh sessions. Topic-specific prompts like `whats new in hermes` still use saved context.
-*   **Hardening: research reuse enforcement:** URL-plus-instruction prompts now canonicalize to the first concrete URL/repo, auto-capture notices aggregate once per turn, and fresh matching research briefs block redundant web/search tool calls for non-latest questions.
-*   **Hardening: explicit research bypass:** Fresh research briefs no longer block web/search tools during explicit research or link-analysis prompts, so OpenZ can still fetch README/docs/site pages while creating the first complete brief.
-*   **Hardening: canonical research brief quality:** Auto-saved repo/docs briefs now inherit source TTLs instead of expiring after 60 seconds, and URL-backed follow-up captures keep canonical repo topics like `agent0ai/dox` instead of creating weak aliases like `dox`.
-*   **Hardening: skipped lookup capture guard:** Fresh-brief skip responses are no longer auto-saved as new research briefs, preventing generic duplicate topics after simple follow-up questions. Saved-brief prompt context now tells models to state only supported facts and say unknown for missing details.
-*   **Hardening: invalid research brief filter:** Placeholder briefs such as `skipped` are rejected on save and ignored during retrieval, so old corrupted memory rows cannot block needed refreshes or degrade follow-up answers.
-*   **Hardening: result URL topic canonicalization:** Auto-capture now promotes high-trust GitHub/raw GitHub result URLs to canonical repo topics, so simple follow-ups like `hey whats openhuman` save under `tinyhumansai/openhuman` instead of weak aliases.
-*   **Hardening: high-signal research summaries:** Auto-captured research briefs now prefer definition/architecture sentences and trim leading navigation/sidebar/legal noise before saving summaries.
 *   **Hardening: forgiving research brief tool args:** `research_brief` now accepts weak-model aliases like `goal`, `context`, and `content`, and infers save/search action when `action` is omitted.
 *   **Chore:** Bumped version to `v0.0.54`.
 

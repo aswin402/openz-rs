@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.54`
+# OpenZ 🦊 `v0.0.55`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -12,17 +12,16 @@ OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-
 
 ---
 
-## What Changed In `v0.0.54`
+## What Changed In `v0.0.55`
 
-- **Automatic source ranking:** saved source bookmarks now rank by exact label/alias match, trusted source type, trust score, use count, and freshness, so repeated research starts from the best known links without manual `/sources` lookup.
-- **Freshness-aware research memory:** source bookmarks and research briefs expose `fresh`, `stale`, or `unknown` status with TTLs. Stale/current-sensitive sources are injected with explicit refresh guidance before answering.
-- **Reusable workflow guidance:** matched workflow cards now inject preconditions, concise steps, verification, risk, and record-run instructions into the prompt, making repeated tasks easier for weak and strong models.
-- **Minimal TUI match notices:** when ranked source/workflow context is automatically injected, the TUI shows compact `Sources matched` / `Workflow matched` notices.
-- **Automatic research capture:** successful web/search/research tool calls now save discovered URLs as source bookmarks and store a canonical research brief without waiting for the model to call `/sources` or `research_brief` manually.
-- **Brief-first recall:** fresh research briefs are injected before source links with explicit no-fetch guidance for simple “what is X” questions, reducing repeated web calls.
-- **Batched capture notices:** multiple research tool calls now produce one compact auto-save notice per tool iteration instead of spamming the TUI.
-- **Weak-model argument recovery:** `research_brief` accepts `goal`/`context`/`content` aliases and infers save/search action when weaker models omit `action`.
-- **Release baseline:** v0.0.53 remains the cleanup baseline for canonical session commands, selectable history/resume UX, TUI formatting, model reliability, and the first knowledge/workflow memory storage.
+- **Research memory reliability:** simple follow-up questions now reuse fresh canonical research briefs without repeated web calls, while explicit research/link-analysis prompts still fetch README/docs/site pages as needed.
+- **Canonical research topics:** URL-plus-instruction prompts, GitHub links, and raw GitHub URLs now save under stable repo topics like `agent0ai/dox` and `tinyhumansai/openhuman` instead of weak aliases like `dox` or `openhuman`.
+- **Better brief freshness:** auto-saved repo/docs briefs inherit source TTLs instead of expiring after 60 seconds, so useful research stays fresh for about a week by default.
+- **Invalid brief protection:** placeholder summaries such as `skipped` are rejected on save and ignored during retrieval, preventing old corrupted rows from blocking needed refreshes.
+- **Skipped lookup guard:** no-fetch responses from the fresh-brief gate are no longer auto-saved as new research briefs.
+- **High-signal brief summaries:** auto-capture now prefers definition/architecture sentences and trims leading navigation/sidebar/legal noise before saving summaries.
+- **Source-strict answer prompting:** saved-brief context tells models to state only facts present in briefs/sources and say `unknown` for missing details instead of guessing licenses, channels, releases, or integrations.
+- **Release baseline:** v0.0.54 introduced automatic source ranking, freshness-aware source memory, reusable workflow guidance, compact TUI match notices, and automatic research capture.
 
 ---
 
