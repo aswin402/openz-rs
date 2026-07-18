@@ -60,6 +60,60 @@ fn count_unique_auto_capture_brief_topics(
         .len()
 }
 
+fn is_research_lookup_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "web_search"
+            | "web_fetch"
+            | "crawl"
+            | "crawl_site"
+            | "parallel_research"
+            | "searchxyz_search_web"
+            | "searchxyz_read_url"
+            | "searchxyz_search_and_read"
+            | "searchxyz_deep_research"
+            | "searchxyz_site_map"
+            | "searchxyz_read_github_repo"
+            | "social_search"
+    )
+}
+
+fn is_current_or_latest_query(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    [
+        "latest",
+        "current",
+        "today",
+        "now",
+        "new",
+        "recent",
+        "2026",
+        "price",
+        "version",
+        "release",
+        "news",
+        "what's new",
+        "whats new",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+async fn fresh_research_brief_blocks_lookup(user_content: &str, tool_name: &str) -> bool {
+    if !is_research_lookup_tool(tool_name) || is_current_or_latest_query(user_content) {
+        return false;
+    }
+    match crate::tools::shared_memory::search_research_briefs(user_content, 1).await {
+        Ok(items) => items.first().is_some_and(|item| {
+            item.score >= super::build::MIN_MATCH_SCORE && item.freshness == "fresh"
+        }),
+        Err(err) => {
+            tracing::debug!(error = ?err, "fresh research brief lookup gate skipped");
+            false
+        }
+    }
+}
+
 fn resolve_tool_timeout_secs(
     tool_name: &str,
     arguments: &serde_json::Value,
@@ -195,6 +249,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     let mut iterations = 0;
     let mut loop_blocked_count = 0;
     let max_iterations = ctx.config.agents.defaults.max_tool_iterations;
+    let mut turn_capture_summaries: Vec<crate::tools::shared_memory::AutoCaptureSummary> =
+        Vec::new();
 
     // Build a turn-level cancellation token from the current CLI context.
     // This provides early cancellation detection even before the CLI select! drops run_fut.
@@ -761,8 +817,6 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         let mut should_halt = false;
         let mut tool_results = Vec::new();
         let mut assistant_tool_calls_json = Vec::new();
-        let mut capture_summaries: Vec<crate::tools::shared_memory::AutoCaptureSummary> =
-            Vec::new();
 
         for call in resp.tool_calls {
             // Break early if already cancelled (e.g. previous tool in batch was cancelled)
@@ -795,6 +849,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 arguments = %call.arguments,
                 "Executing tool call"
             );
+            let fresh_brief_blocks_lookup =
+                fresh_research_brief_blocks_lookup(ctx.user_content, &call.name).await;
             let approval = super::security_approval::evaluate_tool_approval(
                 &call,
                 &ctx.messages,
@@ -808,7 +864,22 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 should_halt = true;
             }
 
-            let result_val = if let Some(err_msg) = approval.parse_error.as_deref() {
+            let result_val = if fresh_brief_blocks_lookup {
+                let skip_msg = "Skipped web/search lookup: a fresh saved research brief already matches this non-latest query. Answer from [Relevant Research Briefs] unless the user asks for latest/current data.";
+                super::tool_execution::send_progress_update(ctx.session_key, skip_msg).await;
+                if !silent {
+                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                    crate::tui_println!(
+                        "{}{}{}↳ {}{}",
+                        AURA_SLATE,
+                        leaf_prefix,
+                        AURA_BLUE,
+                        skip_msg,
+                        COLOR_RESET
+                    );
+                }
+                serde_json::json!({ "status": "skipped", "reason": skip_msg })
+            } else if let Some(err_msg) = approval.parse_error.as_deref() {
                 let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, err_msg);
                 super::tool_execution::send_progress_update(ctx.session_key, &fail_msg).await;
                 if !silent {
@@ -1037,7 +1108,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 )
                 .await
             {
-                capture_summaries.push(capture);
+                turn_capture_summaries.push(capture);
             }
             crate::agent::activity::update_activity(
                 ctx.session_key,
@@ -1068,16 +1139,6 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 }
             }
             assistant_tool_calls_json.push(assistant_tool_call);
-        }
-
-        if !capture_summaries.is_empty() {
-            let sources_saved: usize = capture_summaries.iter().map(|c| c.sources_saved).sum();
-            let briefs_saved = count_unique_auto_capture_brief_topics(&capture_summaries);
-            let topics = summarize_auto_capture_topics(&capture_summaries);
-            crate::channels::cli::send_notification(&format!(
-                "◇ [Knowledge] Auto-saved research: {} source(s), {} brief(s) | {}",
-                sources_saved, briefs_saved, topics
-            ));
         }
 
         super::transcript::append_assistant_tool_calls(
@@ -1111,6 +1172,16 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             });
             break;
         }
+    }
+
+    if !turn_capture_summaries.is_empty() {
+        let sources_saved: usize = turn_capture_summaries.iter().map(|c| c.sources_saved).sum();
+        let briefs_saved = count_unique_auto_capture_brief_topics(&turn_capture_summaries);
+        let topics = summarize_auto_capture_topics(&turn_capture_summaries);
+        crate::channels::cli::send_notification(&format!(
+            "◇ [Knowledge] Auto-saved research: {} source(s), {} brief(s) | {}",
+            sources_saved, briefs_saved, topics
+        ));
     }
 
     ctx.session.messages = ctx.messages.clone();
@@ -1179,6 +1250,40 @@ fn format_markdown_line(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn fresh_brief_blocks_non_latest_research_tools() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let topic = format!("OpenHuman {marker}");
+        crate::tools::shared_memory::save_research_brief(
+            &topic,
+            "OpenHuman is a local-first personal AI agent.",
+            vec![],
+            0.8,
+            86400,
+        )
+        .await
+        .unwrap();
+        assert!(
+            fresh_research_brief_blocks_lookup(&format!("what is openhuman {marker}"), "web_fetch")
+                .await
+        );
+        assert!(
+            !fresh_research_brief_blocks_lookup(
+                &format!("latest openhuman {marker} release"),
+                "web_fetch"
+            )
+            .await
+        );
+        assert!(
+            !fresh_research_brief_blocks_lookup(
+                &format!("what is openhuman {marker}"),
+                "read_file"
+            )
+            .await
+        );
+        let _ = crate::tools::shared_memory::delete_research_brief(&topic).await;
+    }
 
     #[test]
     fn auto_capture_notice_dedupes_topics() {

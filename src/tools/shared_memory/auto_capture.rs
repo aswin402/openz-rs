@@ -51,12 +51,20 @@ fn first_str<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
 
 pub fn canonical_research_topic(raw: &str) -> String {
     let mut text = raw.trim().to_lowercase();
-    if let Ok(parsed) = reqwest::Url::parse(&text) {
+    let parse_target = url_regex()
+        .find(&text)
+        .map(|m| m.as_str())
+        .unwrap_or(text.as_str());
+    if let Ok(parsed) = reqwest::Url::parse(parse_target) {
         if let Some(host) = parsed.host_str() {
             let host = host.trim_start_matches("www.");
             let path = parsed.path().trim_matches('/');
             text = if host == "github.com" {
-                path.split('/').take(2).collect::<Vec<_>>().join("/")
+                path.split('/')
+                    .take(2)
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("/")
             } else if path.is_empty() {
                 host.to_string()
             } else {
@@ -64,6 +72,10 @@ pub fn canonical_research_topic(raw: &str) -> String {
             };
         }
     }
+    text = text
+        .replace("%20", " ")
+        .replace("+", " ")
+        .replace(" 20", " ");
     for _ in 0..3 {
         let before = text.clone();
         for prefix in [
@@ -411,6 +423,10 @@ mod tests {
         assert_eq!(
             canonical_research_topic("ok now tell me about mem0"),
             "mem0"
+        );
+        assert_eq!(
+            canonical_research_topic("https://github.com/tinyhumansai/openhuman research about this and tell me about this"),
+            "tinyhumansai/openhuman"
         );
         let matches = crate::tools::shared_memory::search_source_bookmarks(&marker, 5)
             .await
