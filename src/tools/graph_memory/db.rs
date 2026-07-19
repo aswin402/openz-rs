@@ -162,12 +162,30 @@ pub(crate) fn init_db() -> Result<Connection> {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let conn = Connection::open(&path).unwrap_or_else(|_| Connection::open_in_memory().unwrap());
+    let conn = Connection::open(&path).or_else(|file_err| {
+        Connection::open_in_memory().map_err(|memory_err| {
+            anyhow!(
+                "Failed to open graph memory database at '{}' ({}) and failed to open fallback in-memory database ({})",
+                path.display(),
+                file_err,
+                memory_err
+            )
+        })
+    })?;
     conn.execute_batch(&format!(
         "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; {}",
         SCHEMA_DDL
     ))?;
     Ok(conn)
+}
+
+pub(crate) fn db_mutex() -> Result<&'static Mutex<Connection>> {
+    if let Some(mtx) = db_static().get() {
+        return Ok(mtx);
+    }
+
+    let conn = init_db()?;
+    Ok(db_static().get_or_init(|| Mutex::new(conn)))
 }
 
 // ─── DB helpers ─────────────────────────────────────────────────
@@ -195,14 +213,7 @@ pub(crate) fn with_db<F, T>(f: F) -> Result<T>
 where
     F: FnOnce(&Connection) -> Result<T>,
 {
-    if let Some(mtx) = db_static().get() {
-        let guard = mtx
-            .lock()
-            .map_err(|e| anyhow!("Graph memory lock error: {}", e))?;
-        return f(&guard);
-    }
-    let conn = init_db()?;
-    let mtx = db_static().get_or_init(|| Mutex::new(conn));
+    let mtx = db_mutex()?;
     let guard = mtx
         .lock()
         .map_err(|e| anyhow!("Graph memory lock error: {}", e))?;

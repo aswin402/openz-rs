@@ -43,14 +43,14 @@ impl Tool for CreateDatabaseBranchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        if arguments["branchId"].as_str().is_none() {
-            return Err(anyhow!("Missing 'branchId'"));
-        }
-        let branch_id = arguments["branchId"].as_str().unwrap();
+        let branch_id = arguments
+            .get("branchId")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| anyhow!("Missing 'branchId'"))?;
 
         // Lock static db connection first
-        let db_mutex =
-            db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()));
+        let db_mutex = db_mutex()?;
         let mut db_guard = db_mutex.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
 
         // Then lock active branch state
@@ -112,8 +112,7 @@ impl Tool for CommitDatabaseBranchTool {
 
     async fn call(&self, _arguments: &Value) -> Result<Value> {
         // Lock static db connection first
-        let db_mutex =
-            db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()));
+        let db_mutex = db_mutex()?;
         let mut db_guard = db_mutex.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
 
         // Then lock active branch state
@@ -172,8 +171,7 @@ impl Tool for RollbackDatabaseBranchTool {
 
     async fn call(&self, _arguments: &Value) -> Result<Value> {
         // Lock static db connection first
-        let db_mutex =
-            db_static().get_or_init(|| Mutex::new(Connection::open_in_memory().unwrap()));
+        let db_mutex = db_mutex()?;
         let mut db_guard = db_mutex.lock().map_err(|e| anyhow!("Lock error: {}", e))?;
 
         // Then lock active branch state
