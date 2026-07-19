@@ -7,6 +7,15 @@ use serde_json::Value;
 use std::sync::Arc;
 
 static TEST_CANCEL_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+static TEST_WORKTREE_REGISTRY_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
+
+fn worktree_registry_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    TEST_WORKTREE_REGISTRY_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 async fn cancel_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
     TEST_CANCEL_LOCK
@@ -214,6 +223,78 @@ fn test_lifecycle_classifies_user_cancel_from_token() {
         classify_subagent_error("provider returned 429", &token),
         SubagentRunStatus::Cancelled
     );
+}
+
+#[test]
+fn test_worktree_guard_unregisters_on_drop() -> Result<()> {
+    let _guard = worktree_registry_test_guard();
+    let parent = std::env::temp_dir().join(format!(
+        "openz_worktree_guard_parent_{}",
+        uuid::Uuid::new_v4()
+    ));
+    let worktree = std::env::temp_dir().join(format!(
+        "openz_worktree_guard_child_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&parent)?;
+    std::fs::create_dir_all(&worktree)?;
+
+    {
+        let _guard = delegate_task::WorktreeGuard::new(parent.clone(), worktree.clone());
+        assert!(
+            delegate_task::has_registered_worktree_cleanup_for_test(&worktree),
+            "guard should register shutdown cleanup"
+        );
+    }
+
+    assert!(
+        !worktree.exists(),
+        "normal guard drop should clean the worktree"
+    );
+    assert!(
+        !delegate_task::has_registered_worktree_cleanup_for_test(&worktree),
+        "normal drop should unregister shutdown cleanup"
+    );
+
+    let _ = std::fs::remove_dir_all(&parent);
+    Ok(())
+}
+
+#[test]
+fn test_registered_worktree_cleanup_handles_forced_shutdown_path() -> Result<()> {
+    let _guard = worktree_registry_test_guard();
+    let parent = std::env::temp_dir().join(format!(
+        "openz_worktree_forced_parent_{}",
+        uuid::Uuid::new_v4()
+    ));
+    let worktree = std::env::temp_dir().join(format!(
+        "openz_worktree_forced_child_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&parent)?;
+    std::fs::create_dir_all(&worktree)?;
+
+    let mut guard = delegate_task::WorktreeGuard::new(parent.clone(), worktree.clone());
+    assert!(
+        delegate_task::has_registered_worktree_cleanup_for_test(&worktree),
+        "guard should register shutdown cleanup"
+    );
+
+    delegate_task::cleanup_registered_worktrees();
+
+    assert!(
+        !worktree.exists(),
+        "shutdown cleanup should remove registered worktree before guard drop"
+    );
+    assert!(
+        !delegate_task::has_registered_worktree_cleanup_for_test(&worktree),
+        "shutdown cleanup should drain registry entry"
+    );
+
+    guard.deactivate();
+    drop(guard);
+    let _ = std::fs::remove_dir_all(&parent);
+    Ok(())
 }
 
 #[test]

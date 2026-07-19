@@ -12,7 +12,10 @@ use crate::tools::Tool;
 use crate::tools::ToolRegistry;
 use anyhow::{anyhow, Result};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex, OnceLock,
+};
 
 pub struct DelegateTaskTool {
     pub config: Config,
@@ -538,24 +541,95 @@ pub struct WorktreeGuard {
     pub parent_dir: std::path::PathBuf,
     pub worktree_dir: std::path::PathBuf,
     pub active: bool,
+    cleanup_id: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct RegisteredWorktreeCleanup {
+    id: u64,
+    parent_dir: std::path::PathBuf,
+    worktree_dir: std::path::PathBuf,
+}
+
+static ACTIVE_WORKTREE_CLEANUPS: OnceLock<Mutex<Vec<RegisteredWorktreeCleanup>>> = OnceLock::new();
+static NEXT_WORKTREE_CLEANUP_ID: AtomicU64 = AtomicU64::new(1);
+
+fn worktree_cleanup_registry() -> &'static Mutex<Vec<RegisteredWorktreeCleanup>> {
+    ACTIVE_WORKTREE_CLEANUPS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn register_worktree_cleanup(
+    parent_dir: std::path::PathBuf,
+    worktree_dir: std::path::PathBuf,
+) -> Option<u64> {
+    if parent_dir == worktree_dir {
+        return None;
+    }
+    let id = NEXT_WORKTREE_CLEANUP_ID.fetch_add(1, Ordering::SeqCst);
+    let cleanup = RegisteredWorktreeCleanup {
+        id,
+        parent_dir,
+        worktree_dir,
+    };
+    let mut guard = worktree_cleanup_registry()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.push(cleanup);
+    Some(id)
+}
+
+fn unregister_worktree_cleanup(id: Option<u64>) {
+    let Some(id) = id else {
+        return;
+    };
+    let mut guard = worktree_cleanup_registry()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.retain(|cleanup| cleanup.id != id);
+}
+
+#[cfg(test)]
+pub fn has_registered_worktree_cleanup_for_test(worktree_dir: &std::path::Path) -> bool {
+    worktree_cleanup_registry()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .any(|cleanup| cleanup.worktree_dir == worktree_dir)
+}
+
+pub fn cleanup_registered_worktrees() {
+    let cleanups = {
+        let mut guard = worktree_cleanup_registry()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        std::mem::take(&mut *guard)
+    };
+
+    for cleanup in cleanups {
+        cleanup_isolated_workspace(&cleanup.parent_dir, &cleanup.worktree_dir);
+    }
 }
 
 impl WorktreeGuard {
     pub fn new(parent_dir: std::path::PathBuf, worktree_dir: std::path::PathBuf) -> Self {
+        let cleanup_id = register_worktree_cleanup(parent_dir.clone(), worktree_dir.clone());
         Self {
             parent_dir,
             worktree_dir,
             active: true,
+            cleanup_id,
         }
     }
 
     pub fn deactivate(&mut self) {
+        unregister_worktree_cleanup(self.cleanup_id.take());
         self.active = false;
     }
 }
 
 impl Drop for WorktreeGuard {
     fn drop(&mut self) {
+        unregister_worktree_cleanup(self.cleanup_id.take());
         if self.active && self.worktree_dir != self.parent_dir {
             cleanup_isolated_workspace(&self.parent_dir, &self.worktree_dir);
         }

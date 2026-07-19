@@ -21,7 +21,7 @@ mod tests;
 
 pub use cancellation_token::CancellationToken;
 pub use delegate_profile::DelegateProfileTool;
-pub use delegate_task::{cleanup_stale_resources, DelegateTaskTool};
+pub use delegate_task::{cleanup_registered_worktrees, cleanup_stale_resources, DelegateTaskTool};
 pub use evaluator_optimizer::EvaluatorOptimizerLoopTool;
 pub use lifecycle::{
     cancellation_result_json, classify_subagent_error, compact_lifecycle_line, status_json,

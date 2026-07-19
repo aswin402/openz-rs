@@ -196,6 +196,7 @@ pub fn trigger() {
         let _ = tx.send(true);
     }
     kill_all_registered_children();
+    crate::tools::subagent::cleanup_registered_worktrees();
 
     tokio::spawn(async {
         crate::tools::mcp::terminate_all_mcp_clients().await;
