@@ -526,18 +526,17 @@ fn index_file(
     let mut elements: Vec<(String, String, String, String, i64, i64)> = Vec::new(); // id, type, name, signature, start, end
 
     // Patterns for function/struct/enum/class definitions
-    let fn_re = Regex::new(r"^\s*(public\s+|pub\s+)?(async\s+)?fn\s+([a-zA-Z_]\w*)").unwrap();
-    let struct_re = Regex::new(r"^\s*(public\s+|pub\s+)?struct\s+([a-zA-Z_]\w*)").unwrap();
-    let enum_re = Regex::new(r"^\s*(public\s+|pub\s+)?enum\s+([a-zA-Z_]\w*)").unwrap();
+    let fn_re = Regex::new(r"^\s*(public\s+|pub\s+)?(async\s+)?fn\s+([a-zA-Z_]\w*)")?;
+    let struct_re = Regex::new(r"^\s*(public\s+|pub\s+)?struct\s+([a-zA-Z_]\w*)")?;
+    let enum_re = Regex::new(r"^\s*(public\s+|pub\s+)?enum\s+([a-zA-Z_]\w*)")?;
     let impl_re =
-        Regex::new(r"^\s*(public\s+|pub\s+)?impl(?:\s+([a-zA-Z_]\w*)\s+for)?\s+([a-zA-Z_]\w*)")
-            .unwrap();
-    let def_re = Regex::new(r"^\s*def\s+([a-zA-Z_]\w*)").unwrap();
-    let class_re = Regex::new(r"^\s*class\s+([a-zA-Z_]\w*)").unwrap();
-    let func_re = Regex::new(r"^\s*func\s+([a-zA-Z_]\w*)").unwrap();
-    let type_re = Regex::new(r"^\s*type\s+([a-zA-Z_]\w*)").unwrap();
-    let trait_re = Regex::new(r"^\s*(public\s+|pub\s+)?trait\s+([a-zA-Z_]\w*)").unwrap();
-    let interface_re = Regex::new(r"^\s*interface\s+([a-zA-Z_]\w*)").unwrap();
+        Regex::new(r"^\s*(public\s+|pub\s+)?impl(?:\s+([a-zA-Z_]\w*)\s+for)?\s+([a-zA-Z_]\w*)")?;
+    let def_re = Regex::new(r"^\s*def\s+([a-zA-Z_]\w*)")?;
+    let class_re = Regex::new(r"^\s*class\s+([a-zA-Z_]\w*)")?;
+    let func_re = Regex::new(r"^\s*func\s+([a-zA-Z_]\w*)")?;
+    let type_re = Regex::new(r"^\s*type\s+([a-zA-Z_]\w*)")?;
+    let trait_re = Regex::new(r"^\s*(public\s+|pub\s+)?trait\s+([a-zA-Z_]\w*)")?;
+    let interface_re = Regex::new(r"^\s*interface\s+([a-zA-Z_]\w*)")?;
 
     for (idx, line) in lines.iter().enumerate() {
         let line_num = (idx + 1) as i64;
@@ -637,7 +636,7 @@ fn index_file(
     }
 
     // Call detection: find `name(` patterns that match known element names
-    let call_re = Regex::new(r"([a-zA-Z_]\w*)\s*\(").unwrap();
+    let call_re = Regex::new(r"([a-zA-Z_]\w*)\s*\(")?;
     let known_names: HashSet<String> = elements.iter().map(|e| e.1.clone()).collect();
     for (idx, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
@@ -650,7 +649,9 @@ fn index_file(
             continue;
         }
         for cap in call_re.captures_iter(trimmed) {
-            let callee_name = cap.get(1).unwrap().as_str().to_string();
+            let Some(callee_name) = cap.get(1).map(|m| m.as_str().to_string()) else {
+                continue;
+            };
             // Skip keywords
             if matches!(
                 callee_name.as_str(),
