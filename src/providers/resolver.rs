@@ -81,20 +81,8 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
     let mut clean_model = model;
 
     let model_lower = model.to_lowercase();
-    let has_openrouter_key = config
-        .providers
-        .openrouter
-        .as_ref()
-        .and_then(|p| p.api_key.as_ref())
-        .is_some()
-        || std::env::var("OPENROUTER_API_KEY").is_ok();
-    let has_nvidia_key = config
-        .providers
-        .nvidia
-        .as_ref()
-        .and_then(|p| p.api_key.as_ref())
-        .is_some()
-        || std::env::var("NVIDIA_API_KEY").is_ok();
+    let has_openrouter_key = config.is_provider_available("openrouter");
+    let has_nvidia_key = config.is_provider_available("nvidia");
 
     // 1. Explicit provider prefixes
     if model_lower.starts_with("openrouter/") {
@@ -181,156 +169,7 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
         clean_model = &model["huggingface/".len()..];
     } else if provider_name == "auto" {
         // 2. Auto-detect from keywords
-        let has_key = |prov: &str| -> bool {
-            match prov {
-                "anthropic" => {
-                    config
-                        .providers
-                        .anthropic
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("ANTHROPIC_API_KEY").is_ok()
-                }
-                "openai" => {
-                    config
-                        .providers
-                        .openai
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("OPENAI_API_KEY").is_ok()
-                }
-                "deepseek" => {
-                    config
-                        .providers
-                        .deepseek
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("DEEPSEEK_API_KEY").is_ok()
-                }
-                "groq" => {
-                    config
-                        .providers
-                        .groq
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("GROQ_API_KEY").is_ok()
-                }
-                "openrouter" => {
-                    config
-                        .providers
-                        .openrouter
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("OPENROUTER_API_KEY").is_ok()
-                }
-                "opencode_zen" => {
-                    config
-                        .providers
-                        .opencode_zen
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("OPENCODE_ZEN_API_KEY").is_ok()
-                }
-                "google_ai_studio" => {
-                    config
-                        .providers
-                        .google_ai_studio
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("GOOGLE_AI_STUDIO_API_KEY").is_ok()
-                }
-                "z.ai" => {
-                    config
-                        .providers
-                        .z_ai
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("Z_AI_API_KEY").is_ok()
-                }
-                "nvidia" => {
-                    config
-                        .providers
-                        .nvidia
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("NVIDIA_API_KEY").is_ok()
-                }
-                "minimax" => {
-                    config
-                        .providers
-                        .minimax
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("MINIMAX_API_KEY").is_ok()
-                }
-                "mistral" => {
-                    config
-                        .providers
-                        .mistral
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("MISTRAL_API_KEY").is_ok()
-                }
-                "cerebras" => {
-                    config
-                        .providers
-                        .cerebras
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("CEREBRAS_API_KEY").is_ok()
-                        || std::env::var("CEBRAS_API_KEY").is_ok()
-                }
-                "cohere" => {
-                    config
-                        .providers
-                        .cohere
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("COHERE_API_KEY").is_ok()
-                }
-                "llm7" => {
-                    config
-                        .providers
-                        .llm7
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("LLM7_API_KEY").is_ok()
-                }
-                "sambanova" => {
-                    config
-                        .providers
-                        .sambanova
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("SAMBANOVA_API_KEY").is_ok()
-                }
-                "huggingface" => {
-                    config
-                        .providers
-                        .huggingface
-                        .as_ref()
-                        .and_then(|p| p.api_key.as_ref())
-                        .is_some()
-                        || std::env::var("HUGGINGFACE_API_KEY").is_ok()
-                }
-                _ => false,
-            }
-        };
+        let has_key = |prov: &str| -> bool { config.is_provider_available(prov) };
 
         if model_lower.contains("claude") {
             if has_key("anthropic") {
@@ -455,30 +294,11 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
         && final_provider_name != "ollama_local"
         && final_api_key.is_empty()
     {
-        let has_openrouter = config
-            .providers
-            .openrouter
-            .as_ref()
-            .and_then(|p| p.api_key.as_ref())
-            .is_some()
-            || std::env::var("OPENROUTER_API_KEY").is_ok();
-        let has_opencode_zen = config
-            .providers
-            .opencode_zen
-            .as_ref()
-            .and_then(|p| p.api_key.as_ref())
-            .is_some()
-            || std::env::var("OPENCODE_ZEN_API_KEY").is_ok();
+        let has_openrouter = config.is_provider_available("openrouter");
+        let has_opencode_zen = config.is_provider_available("opencode_zen");
 
         if has_openrouter {
-            let p = config.providers.openrouter.as_ref();
-            final_api_key = p
-                .and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("OPENROUTER_API_KEY").ok())
-                .unwrap_or_default();
-            final_api_base = p
-                .and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string());
+            (final_api_key, final_api_base) = resolve_api_config(config, "openrouter");
             final_provider_name = "openrouter".to_string();
             let fb_model = resolve_fallback_model("openrouter", clean_model);
             final_model = if fb_model.contains('/') {
@@ -487,14 +307,7 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
                 format!("{}/{}", provider_name, fb_model)
             };
         } else if has_opencode_zen {
-            let p = config.providers.opencode_zen.as_ref();
-            final_api_key = p
-                .and_then(|x| x.api_key.clone())
-                .or_else(|| std::env::var("OPENCODE_ZEN_API_KEY").ok())
-                .unwrap_or_default();
-            final_api_base = p
-                .and_then(|x| x.api_base.clone())
-                .unwrap_or_else(|| "https://opencode.ai/zen/v1".to_string());
+            (final_api_key, final_api_base) = resolve_api_config(config, "opencode_zen");
             final_provider_name = "opencode_zen".to_string();
             let fb_model = resolve_fallback_model("opencode_zen", clean_model);
             final_model = if fb_model.contains('/') {
@@ -628,7 +441,7 @@ mod tests {
         static ENV_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
         ENV_LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
-    use crate::config::schema::{AgentDefaults, AgentsConfig, Config};
+    use crate::config::schema::{AgentDefaults, AgentsConfig, Config, ProviderConfig};
 
     fn config_with(provider: &str) -> Config {
         Config {
@@ -676,6 +489,85 @@ mod tests {
         assert_eq!(r.model, "google/gemma-4-31b-it:free");
         std::env::remove_var("OPENROUTER_API_KEY");
         std::env::remove_var("OPENAI_API_KEY");
+    }
+
+    #[test]
+    fn test_empty_configured_openrouter_key_is_not_available_for_free_model_routing() {
+        let _guard = env_lock().lock().unwrap();
+        for var in &[
+            "OPENAI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "OPENCODE_ZEN_API_KEY",
+        ] {
+            std::env::remove_var(var);
+        }
+        let mut cfg = config_with("openai");
+        cfg.providers.openrouter = Some(ProviderConfig {
+            api_key: Some(String::new()),
+            api_base: None,
+            extra: Default::default(),
+        });
+
+        let err = match resolve_provider_full(&cfg, "google/gemma-4-31b-it:free") {
+            Ok(r) => panic!("expected missing OpenAI key error, got {}", r.provider_name),
+            Err(err) => err.to_string(),
+        };
+
+        assert!(err.contains("openai"), "unexpected error: {err}");
+        assert!(err.contains("OPENAI_API_KEY"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_empty_configured_openrouter_key_is_not_used_as_fallback() {
+        let _guard = env_lock().lock().unwrap();
+        for var in &[
+            "DEEPSEEK_API_KEY",
+            "OPENROUTER_API_KEY",
+            "OPENCODE_ZEN_API_KEY",
+        ] {
+            std::env::remove_var(var);
+        }
+        let mut cfg = config_with("auto");
+        cfg.providers.openrouter = Some(ProviderConfig {
+            api_key: Some(String::new()),
+            api_base: None,
+            extra: Default::default(),
+        });
+
+        let err = match resolve_provider_full(&cfg, "deepseek-chat") {
+            Ok(r) => panic!(
+                "expected missing DeepSeek key error, got {}",
+                r.provider_name
+            ),
+            Err(err) => err.to_string(),
+        };
+
+        assert!(err.contains("deepseek"), "unexpected error: {err}");
+        assert!(err.contains("DEEPSEEK_API_KEY"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_empty_configured_nvidia_key_does_not_block_openrouter_free_routing() {
+        let _guard = env_lock().lock().unwrap();
+        for var in &["OPENAI_API_KEY", "OPENROUTER_API_KEY", "NVIDIA_API_KEY"] {
+            std::env::remove_var(var);
+        }
+        let mut cfg = config_with("openai");
+        cfg.providers.openrouter = Some(ProviderConfig {
+            api_key: Some("rk".to_string()),
+            api_base: None,
+            extra: Default::default(),
+        });
+        cfg.providers.nvidia = Some(ProviderConfig {
+            api_key: Some(String::new()),
+            api_base: None,
+            extra: Default::default(),
+        });
+
+        let r = resolve_provider_full(&cfg, "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free")
+            .unwrap();
+        assert_eq!(r.provider_name, "openrouter");
+        assert_eq!(r.api_key, "rk");
     }
 
     #[test]
