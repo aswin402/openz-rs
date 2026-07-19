@@ -842,7 +842,14 @@ pub(crate) fn extract_facts(text: &str) -> Vec<ExtractedFact> {
 
 fn split_fact_clauses(sentence: &str) -> Vec<String> {
     let normalized = sentence.replace(';', ".").replace(',', ".");
-    let and_split = regex::Regex::new(r"\s+and\s+").unwrap();
+    let Some(and_split) = regex::Regex::new(r"\s+and\s+").ok() else {
+        return normalized
+            .split('.')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(ToString::to_string)
+            .collect();
+    };
     normalized
         .split('.')
         .flat_map(|part| and_split.split(part))
@@ -865,35 +872,41 @@ fn extract_fact_clause_multi(
     let built_product_pattern = format!(
         r"^({entity})\s+(?:created?|built?|wrote?|made)\s+({entity})\s+(?:with|in|using)\s+({entity})$"
     );
-    let built_product_re = regex::Regex::new(&built_product_pattern).unwrap();
-    if let Some(caps) = built_product_re.captures(clause) {
-        let mut facts = Vec::new();
-        if let Some(fact) = build_extracted_fact(
-            caps.get(1).unwrap().as_str(),
-            "created",
-            caps.get(2).unwrap().as_str(),
-        ) {
-            facts.push(fact);
+    if let Ok(built_product_re) = regex::Regex::new(&built_product_pattern) {
+        if let Some(caps) = built_product_re.captures(clause) {
+            let Some(subject) = caps.get(1).map(|m| m.as_str()) else {
+                return Vec::new();
+            };
+            let Some(product) = caps.get(2).map(|m| m.as_str()) else {
+                return Vec::new();
+            };
+            let Some(tooling) = caps.get(3).map(|m| m.as_str()) else {
+                return Vec::new();
+            };
+
+            let mut facts = Vec::new();
+            if let Some(fact) = build_extracted_fact(subject, "created", product) {
+                facts.push(fact);
+            }
+            if let Some(fact) = build_extracted_fact(product, "built_with", tooling) {
+                facts.push(fact);
+            }
+            return facts;
         }
-        if let Some(fact) = build_extracted_fact(
-            caps.get(2).unwrap().as_str(),
-            "built_with",
-            caps.get(3).unwrap().as_str(),
-        ) {
-            facts.push(fact);
-        }
-        return facts;
     }
 
     if let Some(object) = carried_object {
         let carried_build_pattern = format!(
             r"^(?:built?|wrote?|made|implemented)\s+(?:it|that|this)\s+(?:with|in|using)\s+({entity})$"
         );
-        let carried_build_re = regex::Regex::new(&carried_build_pattern).unwrap();
-        if let Some(caps) = carried_build_re.captures(clause) {
-            return build_extracted_fact(object, "built_with", caps.get(1).unwrap().as_str())
-                .into_iter()
-                .collect();
+        if let Ok(carried_build_re) = regex::Regex::new(&carried_build_pattern) {
+            if let Some(caps) = carried_build_re.captures(clause) {
+                return caps
+                    .get(1)
+                    .and_then(|m| build_extracted_fact(object, "built_with", m.as_str()))
+                    .into_iter()
+                    .collect();
+            }
         }
     }
 
@@ -948,7 +961,9 @@ fn extract_fact_clause(clause: &str, carried_subject: Option<&str>) -> Option<Ex
     ];
 
     for (pattern, relation) in direct_patterns {
-        let regex = regex::Regex::new(&pattern).unwrap();
+        let Ok(regex) = regex::Regex::new(&pattern) else {
+            continue;
+        };
         if let Some(caps) = regex.captures(clause) {
             return build_extracted_fact(caps.get(1)?.as_str(), relation, caps.get(2)?.as_str());
         }
@@ -972,7 +987,9 @@ fn extract_fact_clause(clause: &str, carried_subject: Option<&str>) -> Option<Ex
     ];
 
     for (pattern, relation) in carried_patterns {
-        let regex = regex::Regex::new(&pattern).unwrap();
+        let Ok(regex) = regex::Regex::new(&pattern) else {
+            continue;
+        };
         if let Some(caps) = regex.captures(clause) {
             return build_extracted_fact(subject, relation, caps.get(1)?.as_str());
         }
