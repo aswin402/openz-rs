@@ -9,10 +9,10 @@ use serde_json::{json, Value};
 pub fn get_server() -> &'static DocsMcpServer {
     static SERVER: std::sync::OnceLock<DocsMcpServer> = std::sync::OnceLock::new();
     SERVER.get_or_init(|| {
-        let home = dirs::home_dir().expect("Could not find home directory");
-        let openz_dir = home.join(".openz");
-        let _ = std::fs::create_dir_all(&openz_dir);
-        let db_path = openz_dir.join("docs.db");
+        let db_path = crate::config::loader::runtime_db_path("docs.db");
+        if let Some(parent) = db_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         let _ = init_db(&db_path);
         DocsMcpServer::new(db_path)
     })
