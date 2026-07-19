@@ -37,55 +37,77 @@ pub fn compress_json(raw_json: &str) -> anyhow::Result<String> {
     }
 }
 
-fn re_block() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?s)/\*.*?\*/").unwrap())
+fn re_block() -> Option<&'static Regex> {
+    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?s)/\*.*?\*/").ok())
+        .as_ref()
 }
 
-fn re_line() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?m)(^|[^:])//.*").unwrap())
+fn re_line() -> Option<&'static Regex> {
+    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?m)(^|[^:])//.*").ok())
+        .as_ref()
 }
 
-fn re_lines() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\n\s*\n").unwrap())
+fn re_lines() -> Option<&'static Regex> {
+    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\n\s*\n").ok()).as_ref()
 }
 
-fn re_ansi() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").unwrap())
+fn re_ansi() -> Option<&'static Regex> {
+    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").ok())
+        .as_ref()
 }
 
-fn re_backtrace_line() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"^\s*at\s+|^\s*\d+:\s+").unwrap())
+fn re_backtrace_line() -> Option<&'static Regex> {
+    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"^\s*at\s+|^\s*\d+:\s+").ok())
+        .as_ref()
 }
 
-fn re_rust_backtrace() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"stack backtrace:|backtrace::").unwrap())
+fn re_rust_backtrace() -> Option<&'static Regex> {
+    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"stack backtrace:|backtrace::").ok())
+        .as_ref()
 }
 
-fn re_cargo_warning() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?i)warning:").unwrap())
+fn re_cargo_warning() -> Option<&'static Regex> {
+    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)warning:").ok()).as_ref()
 }
 
-fn re_cargo_error() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?i)error\[E\d+\]:|error:").unwrap())
+fn re_cargo_error() -> Option<&'static Regex> {
+    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)error\[E\d+\]:|error:").ok())
+        .as_ref()
 }
 
 pub fn compress_code(raw_code: &str) -> String {
-    let no_blocks = re_block().replace_all(raw_code, "");
-    let no_comments = re_line().replace_all(&no_blocks, "$1");
-    let collapsed = re_lines().replace_all(&no_comments, "\n");
+    let no_blocks = if let Some(re) = re_block() {
+        re.replace_all(raw_code, "").into_owned()
+    } else {
+        raw_code.to_string()
+    };
+    let no_comments = if let Some(re) = re_line() {
+        re.replace_all(&no_blocks, "$1").into_owned()
+    } else {
+        no_blocks
+    };
+    let collapsed = if let Some(re) = re_lines() {
+        re.replace_all(&no_comments, "\n").into_owned()
+    } else {
+        no_comments
+    };
     collapsed.trim().to_string()
 }
 
 pub fn compress_logs(raw_logs: &str) -> String {
-    let clean_logs = re_ansi().replace_all(raw_logs, "");
+    let clean_logs = if let Some(re) = re_ansi() {
+        re.replace_all(raw_logs, "").into_owned()
+    } else {
+        raw_logs.to_string()
+    };
 
     let mut filtered_lines = Vec::new();
     let mut warning_count = 0;
@@ -100,7 +122,10 @@ pub fn compress_logs(raw_logs: &str) -> String {
     for line in clean_logs.lines() {
         let trimmed = line.trim();
 
-        if re_rust_backtrace.is_match(trimmed) {
+        if re_rust_backtrace
+            .map(|re| re.is_match(trimmed))
+            .unwrap_or(false)
+        {
             is_backtrace = true;
             filtered_lines.push(
                 "[Backtrace detected - stripping stack frames for token reduction]".to_string(),
@@ -110,7 +135,9 @@ pub fn compress_logs(raw_logs: &str) -> String {
         if is_backtrace {
             if trimmed.is_empty() {
                 is_backtrace = false;
-            } else if re_backtrace_line.is_match(trimmed)
+            } else if re_backtrace_line
+                .map(|re| re.is_match(trimmed))
+                .unwrap_or(false)
                 || trimmed.starts_with("frame #")
                 || trimmed.starts_with("at ")
             {
@@ -118,14 +145,20 @@ pub fn compress_logs(raw_logs: &str) -> String {
             }
         }
 
-        if re_cargo_warning.is_match(trimmed) {
+        if re_cargo_warning
+            .map(|re| re.is_match(trimmed))
+            .unwrap_or(false)
+        {
             warning_count += 1;
             if warning_count > 10 {
                 continue;
             }
         }
 
-        if re_cargo_error.is_match(trimmed) {
+        if re_cargo_error
+            .map(|re| re.is_match(trimmed))
+            .unwrap_or(false)
+        {
             error_count += 1;
             if error_count > 5 {
                 continue;
