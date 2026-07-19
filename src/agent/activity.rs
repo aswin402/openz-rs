@@ -2,6 +2,8 @@ use crate::config::loader::{resolve_path, runtime_data_dir};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AgentActivity {
@@ -11,27 +13,43 @@ pub struct AgentActivity {
     pub timestamp: String,
 }
 
-pub fn update_activity(session_id: &str, status: &str, current_tool: Option<&str>) {
-    let path = resolve_path("~/.openz/activity.json");
-    let activity = AgentActivity {
-        session_id: session_id.to_string(),
-        status: status.to_string(),
-        current_tool: current_tool.map(|s| s.to_string()),
-        timestamp: chrono::Utc::now().to_rfc3339(),
-    };
+const ACTIVITY_WRITE_THROTTLE: Duration = Duration::from_millis(200);
+
+#[derive(Debug, Default)]
+struct ActivityWriteState {
+    last_written_at: Option<Instant>,
+    pending: Option<AgentActivity>,
+    flush_scheduled: bool,
+}
+
+static ACTIVITY_WRITE_STATE: OnceLock<Mutex<ActivityWriteState>> = OnceLock::new();
+
+fn activity_write_state() -> &'static Mutex<ActivityWriteState> {
+    ACTIVITY_WRITE_STATE.get_or_init(|| Mutex::new(ActivityWriteState::default()))
+}
+
+fn activity_status_forces_write(status: &str) -> bool {
+    let lower = status.to_lowercase();
+    status == "Idle"
+        || lower.contains("cancel")
+        || lower.contains("error")
+        || lower.contains("failed")
+}
+
+fn write_activity_file(path: &Path, activity: &AgentActivity) {
     if let Some(parent) = path.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
             tracing::warn!("Failed to create activity directory: {}", e);
             return;
         }
     }
-    match serde_json::to_string_pretty(&activity) {
+    match serde_json::to_string_pretty(activity) {
         Ok(content) => {
-            // Atomic write: write to temp file then rename to prevent partial reads
-            let tmp_path = path.with_extension("json.tmp");
+            // Atomic write: write to a unique temp file then rename to prevent partial reads.
+            let tmp_path = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
             match fs::write(&tmp_path, &content) {
                 Ok(()) => {
-                    if let Err(e) = fs::rename(&tmp_path, &path) {
+                    if let Err(e) = fs::rename(&tmp_path, path) {
                         tracing::warn!("Failed to rename activity file {:?}: {}", tmp_path, e);
                         let _ = fs::remove_file(&tmp_path);
                     }
@@ -45,6 +63,75 @@ pub fn update_activity(session_id: &str, status: &str, current_tool: Option<&str
             tracing::warn!("Failed to serialize activity: {}", e);
         }
     }
+}
+
+fn schedule_activity_flush(path: PathBuf, delay: Duration) {
+    std::thread::spawn(move || {
+        std::thread::sleep(delay);
+        let pending = {
+            let mut state = activity_write_state()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.flush_scheduled = false;
+            let pending = state.pending.take();
+            if pending.is_some() {
+                state.last_written_at = Some(Instant::now());
+            }
+            pending
+        };
+        if let Some(activity) = pending {
+            write_activity_file(&path, &activity);
+        }
+    });
+}
+
+fn update_activity_at_path(path: PathBuf, activity: AgentActivity) {
+    let force_write = activity_status_forces_write(&activity.status);
+    let now = Instant::now();
+    let mut write_now = None;
+    let mut schedule_after = None;
+
+    {
+        let mut state = activity_write_state()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let elapsed = state
+            .last_written_at
+            .map(|last| now.saturating_duration_since(last));
+        let due = elapsed
+            .map(|elapsed| elapsed >= ACTIVITY_WRITE_THROTTLE)
+            .unwrap_or(true);
+
+        if force_write || due {
+            state.last_written_at = Some(now);
+            state.pending = None;
+            write_now = Some(activity);
+        } else {
+            state.pending = Some(activity);
+            if !state.flush_scheduled {
+                state.flush_scheduled = true;
+                schedule_after = Some(ACTIVITY_WRITE_THROTTLE - elapsed.unwrap_or_default());
+            }
+        }
+    }
+
+    if let Some(activity) = write_now {
+        write_activity_file(&path, &activity);
+    }
+    if let Some(delay) = schedule_after {
+        schedule_activity_flush(path, delay);
+    }
+}
+
+pub fn update_activity(session_id: &str, status: &str, current_tool: Option<&str>) {
+    let path = resolve_path("~/.openz/activity.json");
+    let activity = AgentActivity {
+        session_id: session_id.to_string(),
+        status: status.to_string(),
+        current_tool: current_tool.map(|s| s.to_string()),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    };
+    update_activity_at_path(path, activity);
 }
 
 pub fn get_activity() -> Option<AgentActivity> {
@@ -235,6 +322,73 @@ pub fn make_active_tui_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn reset_activity_write_state_for_test() {
+        let mut state = activity_write_state()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.last_written_at = None;
+        state.pending = None;
+        state.flush_scheduled = false;
+    }
+
+    fn temp_activity_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "openz_activity_{}_{}.json",
+            name,
+            uuid::Uuid::new_v4()
+        ))
+    }
+
+    fn activity(session_id: &str, status: &str, current_tool: Option<&str>) -> AgentActivity {
+        AgentActivity {
+            session_id: session_id.to_string(),
+            status: status.to_string(),
+            current_tool: current_tool.map(|tool| tool.to_string()),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+
+    fn read_activity_at(path: &Path) -> AgentActivity {
+        let content = fs::read_to_string(path).expect("activity file should exist");
+        serde_json::from_str(&content).expect("activity file should deserialize")
+    }
+
+    #[test]
+    fn activity_updates_are_throttled_and_coalesced() {
+        reset_activity_write_state_for_test();
+        let path = temp_activity_path("coalesce");
+
+        update_activity_at_path(path.clone(), activity("s1", "Processing user prompt", None));
+        assert_eq!(read_activity_at(&path).status, "Processing user prompt");
+
+        update_activity_at_path(
+            path.clone(),
+            activity("s1", "Executing tool", Some("grep_search")),
+        );
+        let immediate = read_activity_at(&path);
+        assert_eq!(immediate.status, "Processing user prompt");
+        assert_eq!(immediate.current_tool, None);
+
+        std::thread::sleep(ACTIVITY_WRITE_THROTTLE + Duration::from_millis(80));
+        let flushed = read_activity_at(&path);
+        assert_eq!(flushed.status, "Executing tool");
+        assert_eq!(flushed.current_tool.as_deref(), Some("grep_search"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn idle_activity_forces_immediate_write() {
+        reset_activity_write_state_for_test();
+        let path = temp_activity_path("idle");
+
+        update_activity_at_path(path.clone(), activity("s1", "Processing user prompt", None));
+        update_activity_at_path(path.clone(), activity("s1", "Idle", None));
+
+        assert_eq!(read_activity_at(&path).status, "Idle");
+        let _ = fs::remove_file(path);
+    }
 
     #[test]
     fn session_preview_uses_latest_user_message_and_truncates() {
