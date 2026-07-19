@@ -1267,13 +1267,19 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 }
 
 fn format_markdown_line(line: &str) -> String {
-    static RE_BOLD: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    static RE_CODE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    static RE_ITALIC: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static RE_BOLD: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
+    static RE_CODE: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
+    static RE_ITALIC: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
 
-    let re_bold = RE_BOLD.get_or_init(|| regex::Regex::new(r"\*\*(.*?)\*\*").unwrap());
-    let re_code = RE_CODE.get_or_init(|| regex::Regex::new(r"`(.*?)`").unwrap());
-    let re_italic = RE_ITALIC.get_or_init(|| regex::Regex::new(r"\*(.*?)\*").unwrap());
+    let re_bold = RE_BOLD
+        .get_or_init(|| regex::Regex::new(r"\*\*(.*?)\*\*").ok())
+        .as_ref();
+    let re_code = RE_CODE
+        .get_or_init(|| regex::Regex::new(r"`(.*?)`").ok())
+        .as_ref();
+    let re_italic = RE_ITALIC
+        .get_or_init(|| regex::Regex::new(r"\*(.*?)\*").ok())
+        .as_ref();
 
     let light_blue = "\x1b[38;2;135;206;250m";
 
@@ -1295,18 +1301,24 @@ fn format_markdown_line(line: &str) -> String {
         .replace("❌", &format!("{}{}{}", ERROR_RED, "❌", COLOR_RESET))
         .replace('✗', &format!("{}{}{}", ERROR_RED, "✗", COLOR_RESET));
 
-    formatted = re_bold
-        .replace_all(
-            &formatted,
-            &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET),
-        )
-        .to_string();
-    formatted = re_code
-        .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
-        .to_string();
-    formatted = re_italic
-        .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
-        .to_string();
+    if let Some(re_bold) = re_bold {
+        formatted = re_bold
+            .replace_all(
+                &formatted,
+                &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET),
+            )
+            .to_string();
+    }
+    if let Some(re_code) = re_code {
+        formatted = re_code
+            .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
+            .to_string();
+    }
+    if let Some(re_italic) = re_italic {
+        formatted = re_italic
+            .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
+            .to_string();
+    }
 
     formatted
 }

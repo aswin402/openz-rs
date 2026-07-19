@@ -318,9 +318,8 @@ pub fn get_command_error_summary(stdout: &str, stderr: &str) -> String {
                 let msg = &trimmed[pos + 3..];
                 return replace_with_em_dash(&format!("compiler error \u{2014} {} {}", code, msg));
             }
-        } else if trimmed.starts_with("error:") {
-            let msg = trimmed.strip_prefix("error:").unwrap().trim();
-            return replace_with_em_dash(&format!("compiler error \u{2014} {}", msg));
+        } else if let Some(msg) = trimmed.strip_prefix("error:") {
+            return replace_with_em_dash(&format!("compiler error \u{2014} {}", msg.trim()));
         }
     }
     for line in stderr.lines().chain(stdout.lines()) {
