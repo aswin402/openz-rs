@@ -1,6 +1,6 @@
 use std::future::Future;
 use std::io::Write;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -35,10 +35,7 @@ struct SpinnerGuard {
 
 impl Drop for SpinnerGuard {
     fn drop(&mut self) {
-        let mut active = ACTIVE_SPINNERS
-            .get_or_init(|| Mutex::new(Vec::new()))
-            .lock()
-            .unwrap();
+        let mut active = active_spinners_lock();
         active.retain(|s| s.id != self.id);
 
         // If there's another spinner on the stack, restore it immediately
@@ -53,15 +50,27 @@ impl Drop for SpinnerGuard {
 static STDOUT_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
 static ACTIVE_SPINNERS: OnceLock<Mutex<Vec<ActiveSpinner>>> = OnceLock::new();
 
-pub fn stdout_lock() -> std::sync::MutexGuard<'static, ()> {
-    STDOUT_MUTEX.get_or_init(|| Mutex::new(())).lock().unwrap()
+fn recover_lock<T>(lock: std::sync::LockResult<MutexGuard<'static, T>>) -> MutexGuard<'static, T> {
+    match lock {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+pub fn stdout_lock() -> MutexGuard<'static, ()> {
+    recover_lock(STDOUT_MUTEX.get_or_init(|| Mutex::new(())).lock())
+}
+
+fn active_spinners_lock() -> MutexGuard<'static, Vec<ActiveSpinner>> {
+    recover_lock(
+        ACTIVE_SPINNERS
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock(),
+    )
 }
 
 pub fn is_spinner_active() -> bool {
-    let active = ACTIVE_SPINNERS
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .unwrap();
+    let active = active_spinners_lock();
     !active.is_empty()
 }
 
@@ -88,10 +97,7 @@ where
 
     // Push this spinner onto the stack
     {
-        let mut active = ACTIVE_SPINNERS
-            .get_or_init(|| Mutex::new(Vec::new()))
-            .lock()
-            .unwrap();
+        let mut active = active_spinners_lock();
         active.push(ActiveSpinner {
             id: spinner_id,
             prefix: prefix.clone(),
@@ -121,10 +127,7 @@ where
                 _ = &mut rx => break,
                 _ = sleep(Duration::from_millis(85)) => {
                     let _stdout_guard = stdout_lock();
-                    let active = ACTIVE_SPINNERS
-                        .get_or_init(|| Mutex::new(Vec::new()))
-                        .lock()
-                        .unwrap();
+                    let active = active_spinners_lock();
                     // Only draw if this spinner is the currently active (deepest) one in the stack
                     if active.last().map(|s| s.id == spinner_id).unwrap_or(false) {
                         print!("\r\x1b[2K{}{} {}", prefix_clone, msg_clone, frames[idx]);
@@ -136,10 +139,7 @@ where
         }
         // Clear the line when done, but only if we were the active spinner
         let _stdout_guard = stdout_lock();
-        let active = ACTIVE_SPINNERS
-            .get_or_init(|| Mutex::new(Vec::new()))
-            .lock()
-            .unwrap();
+        let active = active_spinners_lock();
         if active.last().map(|s| s.id == spinner_id).unwrap_or(true) {
             print!("\r\x1b[2K");
             let _ = std::io::stdout().flush();

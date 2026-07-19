@@ -47,19 +47,22 @@ async fn main() -> anyhow::Result<()> {
     rotate_logs(&log_path);
 
     let log_path_clone = log_path.clone();
-    let make_writer = move || -> FlushWriter {
-        FlushWriter(
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path_clone)
-                .unwrap_or_else(|_| {
-                    OpenOptions::new()
-                        .write(true)
-                        .open("/dev/null")
-                        .expect("/dev/null must be openable")
-                }),
-        )
+    let make_writer = move || -> Box<dyn Write + Send> {
+        match OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path_clone)
+        {
+            Ok(file) => Box::new(FlushWriter(file)),
+            Err(e) => {
+                eprintln!(
+                    "openz: failed to open log file {}: {}; logs will be discarded",
+                    log_path_clone.display(),
+                    e
+                );
+                Box::new(std::io::sink())
+            }
+        }
     };
 
     use tracing_subscriber::prelude::*;
@@ -114,28 +117,63 @@ async fn main() -> anyhow::Result<()> {
         #[cfg(unix)]
         {
             use tokio::signal::unix::{signal, SignalKind};
-            let mut sigterm =
-                signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler");
-            let mut sigint =
-                signal(SignalKind::interrupt()).expect("Failed to register SIGINT handler");
-            loop {
-                tokio::select! {
-                    _ = sigint.recv() => {
-                        tracing::info!("Received SIGINT/Ctrl+C");
-                        match openz::shutdown::sigint_action(
-                            openz::shutdown::is_cli_active(),
-                            openz::channels::cli::is_raw_input_active(),
-                        ) {
-                            openz::shutdown::SigintAction::CancelTurn => {
-                                openz::shutdown::trigger_cli_cancel();
+
+            let mut sigterm = match signal(SignalKind::terminate()) {
+                Ok(signal) => Some(signal),
+                Err(e) => {
+                    tracing::error!("Failed to register SIGTERM handler: {}", e);
+                    None
+                }
+            };
+            let mut sigint = match signal(SignalKind::interrupt()) {
+                Ok(signal) => Some(signal),
+                Err(e) => {
+                    tracing::error!("Failed to register SIGINT handler: {}", e);
+                    None
+                }
+            };
+
+            match (sigint.as_mut(), sigterm.as_mut()) {
+                (Some(sigint), Some(sigterm)) => loop {
+                    tokio::select! {
+                        _ = sigint.recv() => {
+                            tracing::info!("Received SIGINT/Ctrl+C");
+                            match openz::shutdown::sigint_action(
+                                openz::shutdown::is_cli_active(),
+                                openz::channels::cli::is_raw_input_active(),
+                            ) {
+                                openz::shutdown::SigintAction::CancelTurn => {
+                                    openz::shutdown::trigger_cli_cancel();
+                                }
+                                openz::shutdown::SigintAction::Shutdown => break,
                             }
-                            openz::shutdown::SigintAction::Shutdown => break,
+                        },
+                        _ = sigterm.recv() => {
+                            tracing::info!("Received SIGTERM");
+                            break;
+                        },
+                    }
+                },
+                (Some(sigint), None) => loop {
+                    sigint.recv().await;
+                    tracing::info!("Received SIGINT/Ctrl+C");
+                    match openz::shutdown::sigint_action(
+                        openz::shutdown::is_cli_active(),
+                        openz::channels::cli::is_raw_input_active(),
+                    ) {
+                        openz::shutdown::SigintAction::CancelTurn => {
+                            openz::shutdown::trigger_cli_cancel();
                         }
-                    },
-                    _ = sigterm.recv() => {
-                        tracing::info!("Received SIGTERM");
-                        break;
-                    },
+                        openz::shutdown::SigintAction::Shutdown => break,
+                    }
+                },
+                (None, Some(sigterm)) => {
+                    sigterm.recv().await;
+                    tracing::info!("Received SIGTERM");
+                }
+                (None, None) => {
+                    tracing::error!("No Unix shutdown signal handlers registered");
+                    return;
                 }
             }
         }
