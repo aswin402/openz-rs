@@ -4,11 +4,21 @@ use serde::{Deserialize, Serialize};
 
 static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
 
+const MULTIMODAL_CONNECT_TIMEOUT_SECS: u64 = 10;
+const MULTIMODAL_READ_TIMEOUT_SECS: u64 = 30;
+const MULTIMODAL_TOTAL_TIMEOUT_SECS: u64 = 60;
+
 fn get_http_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .use_rustls_tls()
-            .timeout(std::time::Duration::from_secs(10))
+            .connect_timeout(std::time::Duration::from_secs(
+                MULTIMODAL_CONNECT_TIMEOUT_SECS,
+            ))
+            .read_timeout(std::time::Duration::from_secs(MULTIMODAL_READ_TIMEOUT_SECS))
+            .timeout(std::time::Duration::from_secs(
+                MULTIMODAL_TOTAL_TIMEOUT_SECS,
+            ))
             .build()
             .unwrap_or_default()
     })

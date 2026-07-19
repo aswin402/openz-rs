@@ -6,6 +6,10 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+const PROVIDER_CONNECT_TIMEOUT_SECS: u64 = 15;
+const PROVIDER_READ_TIMEOUT_SECS: u64 = 120;
+const PROVIDER_TOTAL_TIMEOUT_SECS: u64 = 300;
+
 pub struct OpenAIProvider {
     pub client: Client,
     pub api_key: String,
@@ -84,7 +88,9 @@ impl OpenAIProvider {
         OpenAIProvider {
             client: Client::builder()
                 .use_rustls_tls()
-                .timeout(Duration::from_secs(300))
+                .connect_timeout(Duration::from_secs(PROVIDER_CONNECT_TIMEOUT_SECS))
+                .read_timeout(Duration::from_secs(PROVIDER_READ_TIMEOUT_SECS))
+                .timeout(Duration::from_secs(PROVIDER_TOTAL_TIMEOUT_SECS))
                 .build()
                 .unwrap_or_default(),
             api_key,

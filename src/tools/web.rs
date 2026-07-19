@@ -7,6 +7,10 @@ use scraper::node::Node;
 use scraper::Html;
 use std::time::Duration;
 
+const WEB_CONNECT_TIMEOUT_SECS: u64 = 10;
+const WEB_READ_TIMEOUT_SECS: u64 = 30;
+const WEB_TOTAL_TIMEOUT_SECS: u64 = 45;
+
 fn web_re_whitespace() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     RE.get_or_init(|| Regex::new(r" +").unwrap())
@@ -137,6 +141,9 @@ impl WebFetchTool {
             client: Client::builder()
                 .use_rustls_tls()
                 .redirect(redirect_policy)
+                .connect_timeout(Duration::from_secs(WEB_CONNECT_TIMEOUT_SECS))
+                .read_timeout(Duration::from_secs(WEB_READ_TIMEOUT_SECS))
+                .timeout(Duration::from_secs(WEB_TOTAL_TIMEOUT_SECS))
                 .build()
                 .unwrap_or_default(),
         }
@@ -236,12 +243,14 @@ impl Tool for WebFetchTool {
             .use_rustls_tls()
             .redirect(redirect_policy)
             .resolve(&host, socket_addr)
+            .connect_timeout(Duration::from_secs(WEB_CONNECT_TIMEOUT_SECS))
+            .read_timeout(Duration::from_secs(WEB_READ_TIMEOUT_SECS))
+            .timeout(Duration::from_secs(WEB_TOTAL_TIMEOUT_SECS))
             .build()?;
 
         let res = client
             .get(url_str)
             .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            .timeout(Duration::from_secs(30))
             .send()
             .await?;
 
