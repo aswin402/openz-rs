@@ -1258,10 +1258,10 @@ pub async fn run_evolution_review(
 
     // Parse JSON
     let mut clean_json = content.trim();
-    if clean_json.starts_with("```json") {
-        clean_json = clean_json.strip_prefix("```json").unwrap();
-    } else if clean_json.starts_with("```") {
-        clean_json = clean_json.strip_prefix("```").unwrap();
+    if let Some(stripped) = clean_json.strip_prefix("```json") {
+        clean_json = stripped;
+    } else if let Some(stripped) = clean_json.strip_prefix("```") {
+        clean_json = stripped;
     }
     if clean_json.ends_with("```") {
         clean_json = clean_suffix_ticks(clean_json);
