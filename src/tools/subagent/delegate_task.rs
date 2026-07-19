@@ -974,7 +974,8 @@ pub fn create_isolated_workspace(parent_dir: &std::path::Path) -> Result<std::pa
     if is_git {
         // 2. Create git worktree
         let worktree_add = std::process::Command::new("git")
-            .args(["worktree", "add", "--detach", temp_dir.to_str().unwrap()])
+            .args(["worktree", "add", "--detach"])
+            .arg(&temp_dir)
             .current_dir(parent_dir)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -1102,7 +1103,9 @@ pub fn copy_dir_recursive_filtered(src: &std::path::Path, dst: &std::path::Path)
         for entry in std::fs::read_dir(src)? {
             let entry = entry?;
             let entry_path = entry.path();
-            let entry_name = entry_path.file_name().unwrap();
+            let Some(entry_name) = entry_path.file_name() else {
+                continue;
+            };
             copy_dir_recursive_filtered(&entry_path, &dst.join(entry_name))?;
         }
     } else {
@@ -1124,19 +1127,16 @@ pub fn cleanup_isolated_workspace(parent_dir: &std::path::Path, worktree_dir: &s
     let is_worktree = match git_check {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            stdout.contains(worktree_dir.to_str().unwrap_or("____invalid____"))
+            let worktree_display = worktree_dir.to_string_lossy();
+            stdout.contains(worktree_display.as_ref())
         }
         Err(_) => false,
     };
 
     if is_worktree {
         let _ = std::process::Command::new("git")
-            .args([
-                "worktree",
-                "remove",
-                "--force",
-                worktree_dir.to_str().unwrap(),
-            ])
+            .args(["worktree", "remove", "--force"])
+            .arg(worktree_dir)
             .current_dir(parent_dir)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
