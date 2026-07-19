@@ -77,10 +77,10 @@ pub(crate) fn count_previous_tool_calls(
                                 && scene_file_arg_path(tool_args).is_some()
                             {
                                 false
-                            } else if args_val.is_string() {
-                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(
-                                    args_val.as_str().unwrap(),
-                                ) {
+                            } else if let Some(args_str) = args_val.as_str() {
+                                if let Ok(parsed) =
+                                    serde_json::from_str::<serde_json::Value>(args_str)
+                                {
                                     parsed == *tool_args
                                 } else {
                                     false
