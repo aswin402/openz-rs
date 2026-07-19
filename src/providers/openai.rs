@@ -145,7 +145,7 @@ impl OpenAIProvider {
                     if found {
                         let mut sanitized_msg = msg.clone();
                         let current_name = sanitized_msg.extra.get("name").and_then(|v| v.as_str());
-                        if current_name.is_none() || current_name.unwrap().trim().is_empty() {
+                        if current_name.is_none_or(|name| name.trim().is_empty()) {
                             if let Some(name_str) = tool_name {
                                 sanitized_msg.extra.insert(
                                     "name".to_string(),

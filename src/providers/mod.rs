@@ -72,13 +72,21 @@ pub enum ContentPart {
 
 pub async fn parse_multimodal_content(text: &str) -> Vec<ContentPart> {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| regex::Regex::new(r"!\[.*?\]\((.*?)\)").unwrap());
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"!\[.*?\]\((.*?)\)")
+            .expect("static multimodal image markdown regex must compile")
+    });
     let mut parts = Vec::new();
     let mut last_index = 0;
 
     for cap in re.captures_iter(text) {
-        let mat = cap.get(0).unwrap();
-        let path_or_url = cap.get(1).unwrap().as_str();
+        let Some(mat) = cap.get(0) else {
+            continue;
+        };
+        let Some(path_match) = cap.get(1) else {
+            continue;
+        };
+        let path_or_url = path_match.as_str();
 
         // Push text preceding the match
         let before = &text[last_index..mat.start()];
