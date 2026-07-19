@@ -177,99 +177,136 @@ struct ApprovedToolExec<'a> {
     turn_errors: &'a mut Vec<String>,
 }
 
-async fn execute_approved_tool(params: ApprovedToolExec<'_>) -> serde_json::Value {
-    let _process_guard = if params.metadata.spawns_process {
-        match crate::tools::resource_policy::try_acquire_process_tool(
-            params.config.agents.defaults.max_concurrent_process_tools,
-        ) {
-            Ok(guard) => Some(guard),
-            Err(reason) => {
-                let error_str = format!(
-                    "Tool blocked by resource policy: {}. {}",
-                    params.call.name, reason
-                );
-                params.turn_errors.push(format!(
-                    "Tool {} blocked by process resource policy: {}",
-                    params.call.name, reason
-                ));
-                return super::tool_execution::render_tool_failure(
-                    params.call,
-                    params.formatted_args,
-                    params.session_key,
-                    params.silent,
-                    &error_str,
-                )
-                .await;
-            }
-        }
-    } else {
-        None
-    };
+struct ToolExecutionPipeline<'a> {
+    params: ApprovedToolExec<'a>,
+}
 
-    // Resolve timeout: 1) _timeout_secs override, 2) subagent task request, 3) metadata hint, 4) config default.
-    let tool_timeout_secs = resolve_tool_timeout_secs(
-        &params.call.name,
-        &params.call.arguments,
-        params.metadata.recommended_timeout_secs,
-        params.config.agents.defaults.tool_timeout_secs,
-    );
-    let tool_timeout = std::time::Duration::from_secs(tool_timeout_secs);
-    let fut = params.tool.call(&params.call.arguments);
-    let timed_fut = tokio::time::timeout(tool_timeout, fut);
-    let tool_cancel_tx = crate::shutdown::cli_cancel_tx();
-    let mut tool_cancel_rx = tool_cancel_tx.subscribe();
-    let tool_cancel_initial = *tool_cancel_rx.borrow();
-    let cancel_aware_fut = async {
-        tokio::select! {
-            biased;
-            _ = async {
-                while *tool_cancel_rx.borrow() == tool_cancel_initial {
-                    if tool_cancel_rx.changed().await.is_err() { break; }
-                }
-            } => {
-                Err(anyhow::anyhow!("Cancelled by user"))
-            }
-            res = timed_fut => {
-                match res {
-                    Ok(r) => r,
-                    Err(_) => Err(anyhow::anyhow!(
-                        "Tool execution timed out after {}s",
-                        tool_timeout_secs
-                    )),
-                }
-            }
-        }
-    };
+impl<'a> ToolExecutionPipeline<'a> {
+    fn new(params: ApprovedToolExec<'a>) -> Self {
+        Self { params }
+    }
 
-    match with_spinner(params.tool_spinner_msg, cancel_aware_fut).await {
-        Ok(res) => {
-            super::tool_execution::render_tool_success(
-                params.call,
-                params.formatted_args,
-                params.session_key,
-                params.silent,
-                res,
-            )
-            .await
-        }
-        Err(e) => {
-            let error_str = e.to_string();
-            if should_cancel_turn_after_tool_error(&error_str) {
-                params.turn_cancel.cancel();
-            }
-            params
-                .turn_errors
-                .push(format!("Tool {} failed: {}", params.call.name, error_str));
-            super::tool_execution::render_tool_failure(
-                params.call,
-                params.formatted_args,
-                params.session_key,
-                params.silent,
-                &error_str,
-            )
-            .await
+    async fn execute(&mut self) -> serde_json::Value {
+        let _process_guard = match self.acquire_process_guard() {
+            Ok(guard) => guard,
+            Err(reason) => return self.render_process_policy_block(&reason).await,
+        };
+
+        let tool_timeout_secs = self.resolve_timeout_secs();
+        match self.run_with_spinner(tool_timeout_secs).await {
+            Ok(res) => self.render_success(res).await,
+            Err(err) => self.render_error(err).await,
         }
     }
+
+    fn acquire_process_guard(
+        &self,
+    ) -> Result<Option<crate::tools::resource_policy::ProcessToolGuard>, String> {
+        if !self.params.metadata.spawns_process {
+            return Ok(None);
+        }
+
+        crate::tools::resource_policy::try_acquire_process_tool(
+            self.params
+                .config
+                .agents
+                .defaults
+                .max_concurrent_process_tools,
+        )
+        .map(Some)
+    }
+
+    fn resolve_timeout_secs(&self) -> u64 {
+        resolve_tool_timeout_secs(
+            &self.params.call.name,
+            &self.params.call.arguments,
+            self.params.metadata.recommended_timeout_secs,
+            self.params.config.agents.defaults.tool_timeout_secs,
+        )
+    }
+
+    async fn run_with_spinner(&self, timeout_secs: u64) -> anyhow::Result<serde_json::Value> {
+        let tool_timeout = std::time::Duration::from_secs(timeout_secs);
+        let fut = self.params.tool.call(&self.params.call.arguments);
+        let timed_fut = tokio::time::timeout(tool_timeout, fut);
+        let tool_cancel_tx = crate::shutdown::cli_cancel_tx();
+        let mut tool_cancel_rx = tool_cancel_tx.subscribe();
+        let tool_cancel_initial = *tool_cancel_rx.borrow();
+
+        let cancel_aware_fut = async {
+            tokio::select! {
+                biased;
+                _ = async {
+                    while *tool_cancel_rx.borrow() == tool_cancel_initial {
+                        if tool_cancel_rx.changed().await.is_err() { break; }
+                    }
+                } => {
+                    Err(anyhow::anyhow!("Cancelled by user"))
+                }
+                res = timed_fut => {
+                    match res {
+                        Ok(r) => r,
+                        Err(_) => Err(anyhow::anyhow!(
+                            "Tool execution timed out after {}s",
+                            timeout_secs
+                        )),
+                    }
+                }
+            }
+        };
+
+        with_spinner(self.params.tool_spinner_msg, cancel_aware_fut).await
+    }
+
+    async fn render_process_policy_block(&mut self, reason: &str) -> serde_json::Value {
+        let error_str = format!(
+            "Tool blocked by resource policy: {}. {}",
+            self.params.call.name, reason
+        );
+        self.params.turn_errors.push(format!(
+            "Tool {} blocked by process resource policy: {}",
+            self.params.call.name, reason
+        ));
+        self.render_failure(&error_str).await
+    }
+
+    async fn render_success(&self, res: serde_json::Value) -> serde_json::Value {
+        super::tool_execution::render_tool_success(
+            self.params.call,
+            self.params.formatted_args,
+            self.params.session_key,
+            self.params.silent,
+            res,
+        )
+        .await
+    }
+
+    async fn render_error(&mut self, err: anyhow::Error) -> serde_json::Value {
+        let error_str = err.to_string();
+        if should_cancel_turn_after_tool_error(&error_str) {
+            self.params.turn_cancel.cancel();
+        }
+        self.params.turn_errors.push(format!(
+            "Tool {} failed: {}",
+            self.params.call.name, error_str
+        ));
+        self.render_failure(&error_str).await
+    }
+
+    async fn render_failure(&self, error_str: &str) -> serde_json::Value {
+        super::tool_execution::render_tool_failure(
+            self.params.call,
+            self.params.formatted_args,
+            self.params.session_key,
+            self.params.silent,
+            error_str,
+        )
+        .await
+    }
+}
+
+async fn execute_approved_tool(params: ApprovedToolExec<'_>) -> serde_json::Value {
+    ToolExecutionPipeline::new(params).execute().await
 }
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
@@ -1425,5 +1462,16 @@ mod tests {
         assert!(should_cancel_turn_after_tool_error(
             "Subagent task cancelled"
         ));
+    }
+
+    #[test]
+    fn process_tool_guard_respects_resource_limit() {
+        let first = crate::tools::resource_policy::try_acquire_process_tool(1)
+            .expect("first process slot should be available");
+        let err = crate::tools::resource_policy::try_acquire_process_tool(1)
+            .expect_err("second process slot should be blocked");
+        assert!(err.contains("process tool limit reached"));
+        drop(first);
+        assert!(crate::tools::resource_policy::try_acquire_process_tool(1).is_ok());
     }
 }
