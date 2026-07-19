@@ -4,17 +4,23 @@ use openmedia_mcp::{McpObject, OpenMediaServer};
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use serde_json::{json, Value};
 
-pub async fn get_server() -> &'static OpenMediaServer {
+pub async fn get_server() -> Result<&'static OpenMediaServer> {
     static SERVER: std::sync::OnceLock<OpenMediaServer> = std::sync::OnceLock::new();
     if let Some(server) = SERVER.get() {
-        server
-    } else {
-        let config = Config::load().unwrap_or_default();
-        let server = OpenMediaServer::new(config)
-            .await
-            .expect("Failed to initialize OpenMediaServer");
-        let _ = SERVER.set(server);
-        SERVER.get().unwrap()
+        return Ok(server);
+    }
+
+    let config = Config::load().unwrap_or_default();
+    match OpenMediaServer::new(config).await {
+        Ok(server) => {
+            let _ = SERVER.set(server);
+            SERVER
+                .get()
+                .ok_or_else(|| anyhow!("OpenMediaServer initialization did not complete"))
+        }
+        Err(e) => SERVER
+            .get()
+            .ok_or_else(|| anyhow!("Failed to initialize OpenMediaServer: {}", e)),
     }
 }
 
@@ -45,7 +51,7 @@ macro_rules! define_openmedia_tool {
                 let normalized = normalize_openmedia_arguments($tool_name, arguments);
                 let req: $request_type = serde_json::from_value(normalized)?;
                 let Json(McpObject(res)) = get_server()
-                    .await
+                    .await?
                     .$server_method(Parameters(req))
                     .await
                     .map_err(map_mcp_err)?;
@@ -418,7 +424,7 @@ impl crate::tools::Tool for OpenMediaCreateSvgTool {
 
         let req: openmedia_mcp::CreateSvgRequest = serde_json::from_value(normalized)?;
         let Json(McpObject(mut res)) = get_server()
-            .await
+            .await?
             .create_svg(Parameters(req))
             .await
             .map_err(map_mcp_err)?;
@@ -575,7 +581,7 @@ impl crate::tools::Tool for OpenMediaVideoCreateTool {
         let normalized = normalize_openmedia_arguments(self.name(), &normalized);
         let req: openmedia_mcp::VideoCreateRequest = serde_json::from_value(normalized)?;
         let Json(McpObject(res)) = get_server()
-            .await
+            .await?
             .video_create(Parameters(req))
             .await
             .map_err(map_mcp_err)?;
@@ -604,7 +610,7 @@ impl crate::tools::Tool for OpenMediaVideoPreviewTool {
         let normalized = normalize_openmedia_arguments(self.name(), &normalized);
         let req: openmedia_mcp::VideoPreviewRequest = serde_json::from_value(normalized)?;
         let Json(McpObject(res)) = get_server()
-            .await
+            .await?
             .video_preview(Parameters(req))
             .await
             .map_err(map_mcp_err)?;
@@ -742,7 +748,7 @@ impl crate::tools::Tool for OpenMediaPingTool {
     }
 
     async fn call(&self, _arguments: &Value) -> Result<Value> {
-        let res = get_server().await.ping().await;
+        let res = get_server().await?.ping().await;
         Ok(json!({ "status": res }))
     }
 }
@@ -880,7 +886,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_openmedia_server_ping() {
-        let res = get_server().await.ping().await;
+        let res = get_server().await.unwrap().ping().await;
         assert!(res.contains("pong"));
     }
 }
