@@ -151,10 +151,11 @@ impl super::Channel for DiscordChannel {
                         tracing::error!("Discord gateway connection error: {}. Reconnecting in {}s... (attempt {}/{})", err_msg, backoff.as_secs(), retry_count, MAX_RETRIES);
                     }
                     tokio::select! {
-                        _ = sleep(backoff) => {}
+                        biased;
                         _ = shutdown_rx.changed() => {
                             break;
                         }
+                        _ = sleep(backoff) => {}
                     }
                     backoff = std::cmp::min(backoff * 2, Duration::from_secs(60));
                 }
@@ -266,10 +267,11 @@ async fn connect_and_listen(
 
         let msg_fut = read.next();
         let msg_opt = tokio::select! {
-            opt = msg_fut => opt,
+            biased;
             _ = shutdown_rx.changed() => {
                 break;
             }
+            opt = msg_fut => opt,
         };
 
         let text = match msg_opt {

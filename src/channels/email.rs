@@ -314,10 +314,11 @@ impl super::Channel for EmailChannel {
                 }
 
                 tokio::select! {
-                    _ = tokio::time::sleep(poll_interval) => {}
+                    biased;
                     _ = shutdown_rx.changed() => {
                         break;
                     }
+                    _ = tokio::time::sleep(poll_interval) => {}
                 }
             }
         });

@@ -257,13 +257,14 @@ pub async fn handle_agent() -> Result<()> {
     };
 
     tokio::select! {
+        biased;
+        _ = shutdown_rx.changed() => {
+            println!("\r\nExiting OpenZ...");
+        }
         res = channel.start() => {
             if let Err(e) = res {
                 eprintln!("TUI error: {}", e);
             }
-        }
-        _ = shutdown_rx.changed() => {
-            println!("\r\nExiting OpenZ...");
         }
     }
 

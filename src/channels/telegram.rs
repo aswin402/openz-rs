@@ -130,6 +130,7 @@ pub fn start_typing_indicator(chat_id: i64, token: String, client: Client) {
             let mut rx = rx;
             loop {
                 tokio::select! {
+                    biased;
                     _ = &mut rx => {
                         break;
                     }
@@ -340,6 +341,10 @@ impl super::Channel for TelegramChannel {
 
             let send_fut = self.client.get(&url).send();
             let res = tokio::select! {
+                biased;
+                _ = shutdown_rx.changed() => {
+                    break;
+                }
                 res = send_fut => {
                     match res {
                         Ok(r) => r,
@@ -347,17 +352,15 @@ impl super::Channel for TelegramChannel {
                             let err_msg = e.to_string().replace(&self.bot_token, "[REDACTED_TELEGRAM_TOKEN]");
                             tracing::error!("Telegram poll error: {}", err_msg);
                             tokio::select! {
-                                _ = sleep(Duration::from_secs(5)) => {}
+                                biased;
                                 _ = shutdown_rx.changed() => {
                                     break;
                                 }
+                                _ = sleep(Duration::from_secs(5)) => {}
                             }
                             continue;
                         }
                     }
-                }
-                _ = shutdown_rx.changed() => {
-                    break;
                 }
             };
 

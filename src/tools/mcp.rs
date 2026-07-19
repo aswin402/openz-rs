@@ -517,10 +517,11 @@ pub fn start_mcp_health_checks() {
             }
 
             tokio::select! {
-                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+                biased;
                 _ = shutdown_rx.changed() => {
                     break;
                 }
+                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
             }
 
             let cell = if let Some(cell) = SPAWNED_MCP_CLIENTS.get() {
@@ -871,6 +872,10 @@ pub async fn run_mcp_bridge(
 
     let cmd_shutdown = command.to_string();
     tokio::select! {
+        biased;
+        _ = &mut shutdown_rx => {
+            tracing::info!("gRPC MCP Bridge shutdown signal received for {}", cmd_shutdown);
+        }
         res = server_fut => {
             res?;
         }
@@ -878,9 +883,6 @@ pub async fn run_mcp_bridge(
             if let Err(e) = res {
                 tracing::error!("MCP child process '{}' wait error: {}", command, e);
             }
-        }
-        _ = &mut shutdown_rx => {
-            tracing::info!("gRPC MCP Bridge shutdown signal received for {}", cmd_shutdown);
         }
     }
 

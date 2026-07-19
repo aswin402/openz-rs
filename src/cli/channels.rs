@@ -44,13 +44,14 @@ pub async fn handle_telegram() -> Result<()> {
     let channel = TelegramChannel::new(token, agent_loop);
 
     tokio::select! {
+        biased;
+        _ = tokio::signal::ctrl_c() => {
+            println!("\r\nExiting Telegram channel...");
+        }
         res = channel.start() => {
             if let Err(e) = res {
                 eprintln!("Telegram error: {}", e);
             }
-        }
-        _ = tokio::signal::ctrl_c() => {
-            println!("\r\nExiting Telegram channel...");
         }
     }
 
@@ -75,13 +76,14 @@ pub async fn handle_discord() -> Result<()> {
     let channel = DiscordChannel::new(token, agent_loop);
 
     tokio::select! {
+        biased;
+        _ = tokio::signal::ctrl_c() => {
+            println!("\r\nExiting Discord channel...");
+        }
         res = channel.start() => {
             if let Err(e) = res {
                 eprintln!("Discord error: {}", e);
             }
-        }
-        _ = tokio::signal::ctrl_c() => {
-            println!("\r\nExiting Discord channel...");
         }
     }
 
@@ -114,13 +116,14 @@ pub async fn handle_whatsapp() -> Result<()> {
     let channel = WhatsAppChannel::new(key, phone_id, agent_loop);
 
     tokio::select! {
+        biased;
+        _ = tokio::signal::ctrl_c() => {
+            println!("\r\nExiting WhatsApp channel...");
+        }
         res = channel.start() => {
             if let Err(e) = res {
                 eprintln!("WhatsApp error: {}", e);
             }
-        }
-        _ = tokio::signal::ctrl_c() => {
-            println!("\r\nExiting WhatsApp channel...");
         }
     }
 
@@ -135,13 +138,14 @@ pub async fn handle_email() -> Result<()> {
     let channel = EmailChannel::new(agent_loop);
 
     tokio::select! {
+        biased;
+        _ = tokio::signal::ctrl_c() => {
+            println!("\r\nExiting Email channel...");
+        }
         res = channel.start() => {
             if let Err(e) = res {
                 eprintln!("Email error: {}", e);
             }
-        }
-        _ = tokio::signal::ctrl_c() => {
-            println!("\r\nExiting Email channel...");
         }
     }
 

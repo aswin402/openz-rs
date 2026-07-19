@@ -134,6 +134,7 @@ impl Tool for FileWatcherTool {
 
                     loop {
                         tokio::select! {
+                            biased;
                             _ = shutdown_rx.recv() => {
                                 crate::channels::cli::send_notification("Watcher task shutdown signal received.");
                                 break;

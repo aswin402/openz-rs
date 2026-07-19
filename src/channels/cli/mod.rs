@@ -1106,9 +1106,7 @@ impl CliChannel {
                 tokio::pin!(cancel_fut);
 
                 let result = tokio::select! {
-                    res = &mut run_fut => {
-                        Some(res)
-                    }
+                    biased;
                     _ = &mut cancel_fut => {
                         crate::shutdown::trigger_cli_cancel();
                         crate::tui_println!("\r\n{}▲ Execution cancelled by user (Ctrl+C / Esc).{}", AURA_GOLD, COLOR_RESET);
@@ -1118,6 +1116,9 @@ impl CliChannel {
                         )
                         .await;
                         None
+                    }
+                    res = &mut run_fut => {
+                        Some(res)
                     }
                 };
 

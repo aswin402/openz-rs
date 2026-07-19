@@ -84,6 +84,7 @@ impl CancellationToken {
         };
 
         tokio::select! {
+            biased;
             _ = wait_notify => {},
             _ = wait_shutdown => {},
             _ = wait_cli_cancel => {},

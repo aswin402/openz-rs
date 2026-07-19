@@ -30,10 +30,11 @@ pub fn start_scheduler(config: Config) -> tokio::task::JoinHandle<()> {
             }
 
             tokio::select! {
-                _ = sleep(Duration::from_secs(10)) => {}
+                biased;
                 _ = shutdown_rx.changed() => {
                     break;
                 }
+                _ = sleep(Duration::from_secs(10)) => {}
             }
         }
     })
