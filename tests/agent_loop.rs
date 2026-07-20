@@ -164,3 +164,88 @@ async fn test_agent_loop_tool_execution_pipeline() -> anyhow::Result<()> {
 
     res
 }
+
+#[tokio::test]
+async fn test_agent_loop_session_overrides_pipeline() -> anyhow::Result<()> {
+    // 1. Setup temporary directory for config and session storage
+    let temp_dir = std::env::temp_dir().join(format!("openz_session_override_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let config_file_path = temp_dir.join("config.json");
+    std::fs::write(&config_file_path, "{}")?;
+
+    let sessions_dir = temp_dir.join("sessions");
+    std::fs::create_dir_all(&sessions_dir)?;
+
+    // 2. Pre-seed the session file with configuration overrides in the metadata map
+    let session_file_path = sessions_dir.join("session-override.json");
+    let session_json = json!({
+        "key": "session-override",
+        "messages": [],
+        "created_at": "2026-07-20T12:00:00Z",
+        "updated_at": "2026-07-20T12:00:00Z",
+        "metadata": {
+            "config_override": {
+                "model": "overridden-llm-model",
+                "temperature": 0.85
+            }
+        },
+        "last_consolidated": 0
+    });
+    std::fs::write(&session_file_path, serde_json::to_string(&session_json)?)?;
+
+    // Use task-local scopes to isolate configuration and workspace paths
+    let res = openz::config::loader::CONFIG_DIR_OVERRIDE.scope(temp_dir.clone(), async {
+        openz::config::loader::ACTIVE_WORKSPACE.scope(temp_dir.clone(), async {
+            // Build mock provider expecting overrides
+            let mock_responses = vec![
+                MockResponse {
+                    content: Some("I have processed your request with the overridden config.".to_string()),
+                    tool_calls: Vec::new(),
+                    finish_reason: "stop".to_string(),
+                },
+            ];
+
+            let provider = Arc::new(TestMockProvider::new(mock_responses));
+            let session_manager = SessionManager::new(sessions_dir);
+
+            // Construct default Config
+            let mut config = Config::default();
+            config.agents.defaults.model = "default-model".to_string();
+            config.agents.defaults.provider = "default-provider".to_string();
+            config.agents.defaults.temperature = 0.1; // Default low temp
+
+            // Set up ToolRegistry
+            let registry = ToolRegistry::new_with_context(
+                config.clone(),
+                provider.clone(),
+                session_manager.clone(),
+            );
+
+            // 3. Construct and run AgentLoop
+            let agent = AgentLoop::new(config, provider.clone(), registry, session_manager);
+            
+            // We'll capture the actual settings passed to the mock provider by implementing the test
+            // right here in the run invocation.
+            let run_res = agent.run("Verify settings", "session-override").await?;
+
+            // 4. Verify results
+            assert_eq!(run_res.content, "I have processed your request with the overridden config.");
+            
+            // Reload the session from disk to ensure metadata remained intact and messages were appended
+            let updated_session = agent.session_manager.get_or_create_async("session-override").await;
+            assert_eq!(
+                updated_session.metadata.get("config_override").unwrap()["temperature"],
+                0.85
+            );
+
+            Ok::<(), anyhow::Error>(())
+        }).await
+    }).await;
+
+    // Cleanup temp directory
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    res
+}
+

@@ -72,16 +72,62 @@ static SESSION_LOCKS: std::sync::OnceLock<
     std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
 > = std::sync::OnceLock::new();
 
+pub fn apply_session_overrides(
+    config: &mut Config,
+    metadata: &serde_json::Map<String, serde_json::Value>,
+) {
+    let apply_map = |cfg: &mut Config, map: &serde_json::Map<String, serde_json::Value>| {
+        if let Some(model) = map.get("model").and_then(|v| v.as_str()) {
+            cfg.agents.defaults.model = model.to_string();
+        }
+        if let Some(provider) = map.get("provider").and_then(|v| v.as_str()) {
+            cfg.agents.defaults.provider = provider.to_string();
+        }
+        if let Some(temp) = map.get("temperature").and_then(|v| v.as_f64()) {
+            cfg.agents.defaults.temperature = temp as f32;
+        }
+        if let Some(tokens) = map.get("max_tokens").and_then(|v| v.as_u64()) {
+            cfg.agents.defaults.max_tokens = tokens as usize;
+        }
+        if let Some(max_msg) = map.get("max_messages").and_then(|v| v.as_u64()) {
+            cfg.agents.defaults.max_messages = max_msg as usize;
+        }
+        if let Some(max_iter) = map.get("max_tool_iterations").and_then(|v| v.as_u64()) {
+            cfg.agents.defaults.max_tool_iterations = max_iter as usize;
+        }
+        if let Some(caveman) = map.get("caveman_mode").and_then(|v| v.as_bool()) {
+            cfg.agents.defaults.caveman_mode = caveman;
+        }
+        if let Some(timeout) = map.get("tool_timeout_secs").and_then(|v| v.as_u64()) {
+            cfg.agents.defaults.tool_timeout_secs = timeout;
+        }
+        if let Some(streaming) = map.get("streaming").and_then(|v| v.as_bool()) {
+            cfg.agents.defaults.streaming = streaming;
+        }
+    };
+
+    if let Some(nested) = metadata.get("config_override").and_then(|v| v.as_object()) {
+        apply_map(config, nested);
+    } else if let Some(nested) = metadata.get("config").and_then(|v| v.as_object()) {
+        apply_map(config, nested);
+    }
+    apply_map(config, metadata);
+}
+
 fn merge_latest_config_for_runtime(
     runtime_config: &Config,
     mut latest_config: Config,
     session_key: &str,
+    session_metadata: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Config {
     if session_key.starts_with("subagent:") {
         latest_config.agents.defaults.model = runtime_config.agents.defaults.model.clone();
         latest_config.agents.defaults.provider = runtime_config.agents.defaults.provider.clone();
         latest_config.agents.defaults.fallback_models =
             runtime_config.agents.defaults.fallback_models.clone();
+    }
+    if let Some(metadata) = session_metadata {
+        apply_session_overrides(&mut latest_config, metadata);
     }
     latest_config
 }
@@ -453,8 +499,13 @@ impl AgentLoop {
             if let Ok(latest_config) = crate::config::loader::load_config() {
                 let old_provider = ctx.config.agents.defaults.provider.clone();
                 let old_model = ctx.config.agents.defaults.model.clone();
+                let session_metadata = if state == TurnState::Restore {
+                    None
+                } else {
+                    Some(&ctx.session.metadata)
+                };
                 let merged =
-                    merge_latest_config_for_runtime(&ctx.config, latest_config, session_key);
+                    merge_latest_config_for_runtime(&ctx.config, latest_config, session_key, session_metadata);
                 let provider_changed = merged.agents.defaults.provider != old_provider
                     || merged.agents.defaults.model != old_model;
                 if provider_changed {
@@ -526,6 +577,7 @@ mod tests {
             &runtime_config,
             latest_config,
             "subagent:vision_agent:test",
+            None,
         );
 
         assert_eq!(merged.agents.defaults.model, "google/gemma-4-31b-it:free");
@@ -561,5 +613,41 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Cancelled by user"));
+    }
+
+    #[test]
+    fn test_apply_session_overrides_basic() {
+        let mut config = Config::default();
+        config.agents.defaults.model = "default-model".to_string();
+        config.agents.defaults.temperature = 0.1;
+        config.agents.defaults.tool_timeout_secs = 30;
+
+        let mut metadata = serde_json::Map::new();
+        metadata.insert("model".to_string(), serde_json::Value::String("overridden-model".to_string()));
+        metadata.insert("temperature".to_string(), serde_json::json!(0.7));
+
+        apply_session_overrides(&mut config, &metadata);
+
+        assert_eq!(config.agents.defaults.model, "overridden-model");
+        assert_eq!(config.agents.defaults.temperature, 0.7);
+        assert_eq!(config.agents.defaults.tool_timeout_secs, 30); // Unchanged
+    }
+
+    #[test]
+    fn test_apply_session_overrides_nested() {
+        let mut config = Config::default();
+        config.agents.defaults.model = "default-model".to_string();
+        config.agents.defaults.temperature = 0.1;
+
+        let mut metadata = serde_json::Map::new();
+        let mut nested = serde_json::Map::new();
+        nested.insert("model".to_string(), serde_json::Value::String("nested-model".to_string()));
+        nested.insert("temperature".to_string(), serde_json::json!(0.5));
+        metadata.insert("config_override".to_string(), serde_json::Value::Object(nested));
+
+        apply_session_overrides(&mut config, &metadata);
+
+        assert_eq!(config.agents.defaults.model, "nested-model");
+        assert_eq!(config.agents.defaults.temperature, 0.5);
     }
 }

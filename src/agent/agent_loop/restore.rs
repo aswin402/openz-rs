@@ -2,7 +2,6 @@ use super::{AgentLoop, TurnContext, TurnState};
 use anyhow::{anyhow, Result};
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
-    let config = &ctx.config;
     ctx.session_file_lock = Some(
         loop_ref
             .session_manager
@@ -14,6 +13,23 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         .session_manager
         .get_or_create_async(ctx.session_key)
         .await;
+
+    let old_provider = ctx.config.agents.defaults.provider.clone();
+    let old_model = ctx.config.agents.defaults.model.clone();
+
+    super::apply_session_overrides(&mut ctx.config, &ctx.session.metadata);
+
+    let provider_changed = ctx.config.agents.defaults.provider != old_provider
+        || ctx.config.agents.defaults.model != old_model;
+    if provider_changed {
+        if let Ok(resolved) = crate::providers::resolver::resolve_provider_full(
+            &ctx.config,
+            &ctx.config.agents.defaults.model,
+        ) {
+            ctx.active_provider = resolved.instance;
+        }
+    }
+
     if !ctx.user_content.starts_with('/') {
         ctx.interaction_id =
             crate::tools::shared_memory::log_interaction(ctx.session_key, ctx.user_content)
@@ -27,13 +43,13 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     let has_images = parts
         .iter()
         .any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
-    let supports_vision = crate::providers::model_supports_vision(&config.agents.defaults.model);
+    let supports_vision = crate::providers::model_supports_vision(&ctx.config.agents.defaults.model);
     let silent = crate::agent::style::spinner::is_silent();
     if has_images && !supports_vision && !silent {
         crate::tui_println!(
             "{}▲ Image unsupported: The active model '{}' does not support images. Images will be ignored.{}",
             crate::agent::style::AURA_GOLD,
-            config.agents.defaults.model,
+            ctx.config.agents.defaults.model,
             crate::agent::style::COLOR_RESET
         );
     }
