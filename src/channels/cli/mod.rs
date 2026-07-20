@@ -263,6 +263,39 @@ impl CliChannel {
                 continue;
             }
 
+            if trimmed == "/settings" {
+                let defaults = self.defaults.lock().await;
+                println!("{}Active Settings:{}", COLOR_BOLD, COLOR_RESET);
+                println!("  {}Model:{}          {}", RED_ORANGE, COLOR_RESET, defaults.model);
+                println!("  {}Provider:{}       {}", RED_ORANGE, COLOR_RESET, defaults.provider);
+                println!("  {}Security Mode:{}  {}", RED_ORANGE, COLOR_RESET, defaults.security_mode);
+                println!("  {}Sandbox:{}        {}", RED_ORANGE, COLOR_RESET, if defaults.enable_sandbox { "Enabled" } else { "Disabled" });
+                
+                println!("  {}Whitelisted Command Prefixes:{}", RED_ORANGE, COLOR_RESET);
+                if defaults.whitelisted_command_prefixes.is_empty() {
+                    println!("    (None)");
+                } else {
+                    for prefix in &defaults.whitelisted_command_prefixes {
+                        println!("    • {}", prefix);
+                    }
+                }
+
+                println!("  {}Whitelisted Paths:{}", RED_ORANGE, COLOR_RESET);
+                if defaults.whitelisted_paths.is_empty() {
+                    println!("    (None)");
+                } else {
+                    for path in &defaults.whitelisted_paths {
+                        println!("    • {}", path);
+                    }
+                }
+                
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
+                continue;
+            }
+
             if trimmed == "/servers" {
                 let servers = crate::shutdown::list_registered_children();
                 if servers.is_empty() {
