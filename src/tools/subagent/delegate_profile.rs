@@ -6,7 +6,8 @@ use super::parallel_research::get_status_from_goal;
 use super::schema_retry::{evaluate_schema_retry, SchemaRetryDecision};
 use super::{
     build_provider_for_model, cancellation_result_json, classify_subagent_error,
-    compact_lifecycle_line, status_json, CancellationToken, SubagentRunStatus, DELEGATION_DEPTH,
+    compact_lifecycle_line, execute_subagent_run, scan_for_images, status_json,
+    CancellationToken, SubagentRunStatus, DELEGATION_DEPTH,
 };
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
@@ -136,49 +137,7 @@ impl Tool for DelegateProfileTool {
         );
 
         // Automatically scan goal and context for image paths and append markdown image links
-        let mut image_paths = Vec::new();
-        if let Ok(path_regex) = regex::Regex::new(r"(?:file://)?(/[a-zA-Z0-9_\-\./]+|~/[a-zA-Z0-9_\-\./]+)") {
-            for cap in path_regex.captures_iter(&format!("{} {}", clean_goal, clean_context)) {
-                if let Some(mat) = cap.get(1) {
-                    let path_str = mat.as_str();
-                    let resolved_path = crate::config::resolve_path(path_str);
-
-                    let mut final_path = None;
-                    if resolved_path.exists() && resolved_path.is_file() {
-                        final_path = Some(resolved_path);
-                    } else {
-                        for ext in &["png", "jpg", "jpeg", "webp", "gif"] {
-                            let path_with_ext = resolved_path.with_extension(ext);
-                            if path_with_ext.exists() && path_with_ext.is_file() {
-                                final_path = Some(path_with_ext);
-                                break;
-                            }
-                        }
-                    }
-
-                    if let Some(path) = final_path {
-                        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-                        if ["png", "jpg", "jpeg", "webp", "gif"].contains(&ext.as_str()) {
-                            let canonical = path.to_string_lossy().to_string();
-                            if !image_paths.contains(&canonical) {
-                                image_paths.push(canonical);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // Fallback to default clipboard image if no specific path was found but task mentions an image
-        if image_paths.is_empty() {
-            let default_clip = crate::config::resolve_path("~/.openz/clipboard_image_0.png");
-            if default_clip.exists() && default_clip.is_file() {
-                let text_lower = format!("{} {}", clean_goal, clean_context).to_lowercase();
-                if text_lower.contains("image") || text_lower.contains("picture") || text_lower.contains("screenshot") {
-                    image_paths.push(default_clip.to_string_lossy().to_string());
-                }
-            }
-        }
-
+        let image_paths = scan_for_images(&clean_goal, &clean_context);
         for img in image_paths {
             subagent_prompt.push_str(&format!(" ![](file://{})", img));
         }
@@ -377,52 +336,19 @@ impl Tool for DelegateProfileTool {
                 completed: false,
             };
 
-            let mut run_res = {
-                let p_ref = &final_prompt;
-                let c_ref = &child_session_id;
-                let child_agent_ref = &child_agent;
-                let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
-                    DELEGATION_DEPTH.scope(current_depth + 1, async {
-                        crate::tools::subagent::ACTIVE_SUBAGENT.scope(self.profile.name.clone(), async {
-                            tokio::select! {
-                                biased;
-                                _ = self.cancellation_token.wait_for_cancellation() => {
-                                    if !crate::agent::style::is_silent() {
-                                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                        let line = compact_lifecycle_line(
-                                            &self.profile.name,
-                                            &model_name,
-                                            &SubagentRunStatus::Cancelling,
-                                        );
-                                        crate::tui_println!(
-                                            "{}{}{}▲ {}{}",
-                                            AURA_SLATE,
-                                            leaf_prefix,
-                                            AURA_GOLD,
-                                            line,
-                                            COLOR_RESET
-                                        );
-                                    }
-                                    Err(anyhow!("Subagent task cancelled"))
-                                }
-                                res = child_agent_ref.run(p_ref, c_ref) => res,
-                            }
-                        }).await
-                    }).await
-                });
-                let sub_timeout = super::resolve_subagent_timeout_secs(
-                    timeout_secs,
-                    self.config.agents.defaults.tool_timeout_secs,
-                );
-                let run_res_timeout = tokio::time::timeout(
-                    std::time::Duration::from_secs(sub_timeout),
-                    run_res_fut,
-                );
-                match with_spinner(&spinner_msg, run_res_timeout).await {
-                    Ok(res) => res,
-                    Err(_) => Err(anyhow!("Subagent execution timed out after {sub_timeout}s")),
-                }
-            };
+            let mut run_res = execute_subagent_run(
+                &child_agent,
+                &final_prompt,
+                &child_session_id,
+                &self.profile.name,
+                model_name,
+                workspace_dir.clone(),
+                current_depth,
+                &self.cancellation_token,
+                timeout_secs,
+                self.config.agents.defaults.tool_timeout_secs,
+                &spinner_msg,
+            ).await;
             cancel_guard.completed = true;
 
             // Enforce schema validation on child agent success
@@ -447,48 +373,19 @@ impl Tool for DelegateProfileTool {
                                 "{}▲ [Reflection] Subagent output needs correction: {}. Retrying attempt {} of 2...{}",
                                 AURA_GOLD, reason, attempts, COLOR_RESET
                             );
-                            let p_ref = &prompt;
-                            let c_ref = &child_session_id;
-                            let child_agent_ref = &child_agent;
-                            let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir.clone(), async {
-                                DELEGATION_DEPTH.scope(current_depth + 1, async {
-                                    tokio::select! {
-                                        biased;
-                                        _ = self.cancellation_token.wait_for_cancellation() => {
-                                            if !crate::agent::style::is_silent() {
-                                                let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                                let line = compact_lifecycle_line(
-                                                    &self.profile.name,
-                                                    &model_name,
-                                                    &SubagentRunStatus::Cancelling,
-                                                );
-                                                crate::tui_println!(
-                                                    "{}{}{}▲ {}{}",
-                                                    AURA_SLATE,
-                                                    leaf_prefix,
-                                                    AURA_GOLD,
-                                                    line,
-                                                    COLOR_RESET
-                                                );
-                                            }
-                                            Err(anyhow!("Subagent task cancelled"))
-                                        }
-                                        res = child_agent_ref.run(p_ref, c_ref) => res,
-                                    }
-                                }).await
-                            });
-                            let sub_timeout = super::resolve_subagent_timeout_secs(
+                            run_res = execute_subagent_run(
+                                &child_agent,
+                                &prompt,
+                                &child_session_id,
+                                &self.profile.name,
+                                model_name,
+                                workspace_dir.clone(),
+                                current_depth,
+                                &self.cancellation_token,
                                 timeout_secs,
                                 self.config.agents.defaults.tool_timeout_secs,
-                            );
-                            let run_res_timeout = tokio::time::timeout(
-                                std::time::Duration::from_secs(sub_timeout),
-                                run_res_fut,
-                            );
-                            run_res = match with_spinner(&spinner_msg, run_res_timeout).await {
-                                Ok(r) => r,
-                                Err(_) => Err(anyhow!("Subagent execution timed out after {sub_timeout}s")),
-                            };
+                                &spinner_msg,
+                            ).await;
                         }
                         Err(e) => {
                             run_res = Err(e);

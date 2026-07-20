@@ -1,6 +1,5 @@
 pub mod scheduler;
 
-use crate::config::resolve_path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -19,7 +18,7 @@ pub struct CronJob {
 }
 
 pub fn cron_file_path() -> PathBuf {
-    resolve_path("~/.openz/cron_jobs.json")
+    crate::config::loader::config_dir().join("cron_jobs.json")
 }
 
 pub struct FileLock {
@@ -68,7 +67,7 @@ impl Drop for FileLock {
 }
 
 pub fn acquire_cron_lock() -> FileLock {
-    let lock_path = resolve_path("~/.openz/cron_jobs.lock");
+    let lock_path = crate::config::loader::config_dir().join("cron_jobs.lock");
     FileLock::acquire(lock_path)
 }
 

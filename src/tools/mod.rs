@@ -133,7 +133,249 @@ impl ToolMetadata {
     }
 }
 
+struct StaticToolDef {
+    name: &'static str,
+    domain: &'static str,
+    writes_disk: bool,
+    uses_network: bool,
+    recommended_timeout_secs: Option<u64>,
+    aliases: &'static [&'static str],
+    examples: &'static [&'static str],
+    when_to_use: &'static str,
+    when_not_to_use: &'static str,
+}
+
+static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
+    StaticToolDef {
+        name: "cargo_manager",
+        domain: "code",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &[
+            "cargo test",
+            "cargo check",
+            "cargo build",
+            "clippy",
+            "rust tests",
+        ],
+        examples: &["Run cargo test --lib", "Run cargo check after Rust edits"],
+        when_to_use: "Use for Rust cargo build, check, test, clippy, and compiler-fix workflows.",
+        when_not_to_use: "Avoid when only reading files or searching source text.",
+    },
+    StaticToolDef {
+        name: "exec_command",
+        domain: "shell",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: Some(180),
+        aliases: &["shell command", "terminal", "bash", "run command"],
+        examples: &[
+            "Run ls to inspect generated files",
+            "Run a safe project-local command",
+        ],
+        when_to_use: "Use for shell commands that cannot be handled by a safer native tool.",
+        when_not_to_use: "Avoid for file reads, code search, or destructive commands without approval.",
+    },
+    StaticToolDef {
+        name: "read_file",
+        domain: "filesystem",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &["open file", "inspect file", "view file"],
+        examples: &["Read src/main.rs before editing", "Inspect a config file"],
+        when_to_use: "Use to inspect known text files before editing or explaining code.",
+        when_not_to_use: "Avoid for broad searches; use grep or find tools instead.",
+    },
+    StaticToolDef {
+        name: "grep_search",
+        domain: "code",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &["search code", "find text", "ripgrep"],
+        examples: &["Find all uses of a function", "Search for a symbol in src"],
+        when_to_use: "Use to find symbols, text, TODOs, and call sites across a project.",
+        when_not_to_use: "Avoid when the exact file is already known and only needs reading.",
+    },
+    StaticToolDef {
+        name: "web_fetch",
+        domain: "web",
+        writes_disk: false,
+        uses_network: true,
+        recommended_timeout_secs: None,
+        aliases: &["fetch url", "read webpage", "download page"],
+        examples: &["Fetch a documentation URL", "Read one webpage"],
+        when_to_use: "Use to read a specific URL supplied by the user or found by search.",
+        when_not_to_use: "Avoid for open-ended research; search first.",
+    },
+    StaticToolDef {
+        name: "web_search",
+        domain: "web",
+        writes_disk: false,
+        uses_network: true,
+        recommended_timeout_secs: None,
+        aliases: &["internet search", "search web", "lookup online"],
+        examples: &[
+            "Search current public documentation",
+            "Look up recent release info",
+        ],
+        when_to_use: "Use when current or external web information is required.",
+        when_not_to_use: "Avoid when the answer is fully available from local project files.",
+    },
+    StaticToolDef {
+        name: "delegate_task",
+        domain: "subagent",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: Some(600),
+        aliases: &["subagent", "delegate", "specialist agent"],
+        examples: &[
+            "Ask a reviewer subagent to inspect changes",
+            "Route image analysis to a vision subagent",
+        ],
+        when_to_use: "Use for independent specialist work, reviews, research, or multimodal routing.",
+        when_not_to_use: "Avoid for simple direct actions the orchestrator can complete itself.",
+    },
+    StaticToolDef {
+        name: "git_manager",
+        domain: "git",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &["git status", "git diff", "git commit", "git log"],
+        examples: &["Check git status", "Review a diff before commit"],
+        when_to_use: "Use for git status, diffs, commit history, and repository state checks.",
+        when_not_to_use: "Avoid for GitHub API operations; use GitHub tools for remote provider actions.",
+    },
+    StaticToolDef {
+        name: "tool_catalog",
+        domain: "self_management",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &["list tools", "tool help", "available tools"],
+        examples: &[
+            "List tools for a website research task",
+            "Explain why tools were hidden",
+        ],
+        when_to_use: "Use to inspect available tools, routing decisions, and hidden tool reasons.",
+        when_not_to_use: "Avoid when the correct tool is already obvious and exposed.",
+    },
+    StaticToolDef {
+        name: "openz_inventory",
+        domain: "self_management",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &["features", "capabilities", "what can you do", "inventory"],
+        examples: &[
+            "Answer exactly what OpenZ features and tools are currently registered",
+            "Compare claimed features against live tool inventory",
+        ],
+        when_to_use: "Use before answering questions about OpenZ's exact features, commands, channels, subagents, and registered tools.",
+        when_not_to_use: "Avoid guessing feature counts from memory when live registry data is available.",
+    },
+    StaticToolDef {
+        name: "manage_servers",
+        domain: "self_management",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &[
+            "stop server",
+            "list servers",
+            "dev server",
+            "background process",
+        ],
+        examples: &[
+            "List active dev servers after launching npm run dev",
+            "Stop all OpenZ-launched servers when the task is done",
+        ],
+        when_to_use: "Use to inspect or stop dev servers/background processes launched by OpenZ; call it automatically when cleanup is needed.",
+        when_not_to_use: "Avoid shell pkill guesses for servers OpenZ registered itself.",
+    },
+    StaticToolDef {
+        name: "schedule_job",
+        domain: "self_management",
+        writes_disk: true,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &[
+            "cron",
+            "cron job",
+            "schedule job",
+            "timer",
+            "run later",
+            "automated task",
+        ],
+        examples: &[
+            "Schedule a prompt to run every 5 minutes",
+            "Create a timer for an automated reminder or action",
+        ],
+        when_to_use: "Use to schedule automated prompts, reminders, timers, and cron-style future tasks from chat.",
+        when_not_to_use: "Avoid shell cron, systemd-run, or sleep loops unless the native scheduler cannot express the request.",
+    },
+    StaticToolDef {
+        name: "list_jobs",
+        domain: "self_management",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &["list cron jobs", "scheduled jobs", "timers", "cron status"],
+        examples: &["List active scheduled cron jobs", "Check timer status"],
+        when_to_use: "Use to inspect OpenZ-managed scheduled jobs before reporting cron/timer status.",
+        when_not_to_use: "Avoid shell crontab or systemctl listing for jobs created by OpenZ.",
+    },
+    StaticToolDef {
+        name: "remove_job",
+        domain: "self_management",
+        writes_disk: true,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &[
+            "remove cron job",
+            "delete scheduled job",
+            "cancel timer",
+            "stop scheduled job",
+        ],
+        examples: &[
+            "Cancel a scheduled job by id",
+            "Remove a timer after it has fired",
+        ],
+        when_to_use: "Use to cancel or delete OpenZ-managed scheduled jobs by id when cleanup is requested.",
+        when_not_to_use: "Avoid shell systemctl, crontab editing, or pkill guesses for OpenZ scheduler cleanup.",
+    },
+    StaticToolDef {
+        name: "workflow_memory",
+        domain: "self_management",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &[
+            "save workflow",
+            "reuse workflow",
+            "record run",
+            "procedure memory",
+        ],
+        examples: &[
+            "Save a repeated website/video generation procedure",
+            "Record whether a reused workflow succeeded",
+        ],
+        when_to_use: "Use to save, search, or record reusable procedures after repeated successful tasks or tool-workaround discoveries.",
+        when_not_to_use: "Avoid leaving repeated multi-step workflows only in chat history.",
+    },
+];
+
+fn get_static_tool_def(name: &str) -> Option<&'static StaticToolDef> {
+    STATIC_TOOL_DEFS.iter().find(|def| def.name == name)
+}
+
 fn infer_tool_domain(name: &str) -> &'static str {
+    if let Some(def) = get_static_tool_def(name) {
+        return def.domain;
+    }
     if matches!(
         name,
         "manage_servers"
@@ -223,6 +465,9 @@ fn infer_tool_domain(name: &str) -> &'static str {
 }
 
 fn tool_writes_disk(name: &str) -> bool {
+    if let Some(def) = get_static_tool_def(name) {
+        return def.writes_disk;
+    }
     matches!(
         name,
         "write_file"
@@ -248,6 +493,9 @@ fn tool_writes_disk(name: &str) -> bool {
 }
 
 fn tool_uses_network(name: &str) -> bool {
+    if let Some(def) = get_static_tool_def(name) {
+        return def.uses_network;
+    }
     matches!(
         name,
         "web_fetch" | "web_search" | "crawl_site" | "social_search" | "check_port"
@@ -260,9 +508,11 @@ fn tool_uses_network(name: &str) -> bool {
 }
 
 fn tool_recommended_timeout(name: &str) -> Option<u64> {
-    // Long-running tools get recommended timeouts so the orchestrator doesn't need
-    // to explicitly set _timeout_secs on every call. These are hints; the config
-    // default or a caller-supplied _timeout_secs still take precedence.
+    if let Some(def) = get_static_tool_def(name) {
+        if def.recommended_timeout_secs.is_some() {
+            return def.recommended_timeout_secs;
+        }
+    }
     match name {
         // Subagent delegation — full LLM loop with tool execution
         "delegate_task" | "parallel_research" | "evaluator_optimizer_loop" => Some(600),
@@ -299,215 +549,73 @@ fn tool_recommended_timeout(name: &str) -> Option<u64> {
 }
 
 fn tool_aliases(name: &str, domain: &str) -> &'static [&'static str] {
-    match name {
-        "cargo_manager" => &[
-            "cargo test",
-            "cargo check",
-            "cargo build",
-            "clippy",
-            "rust tests",
-        ],
-        "exec_command" => &["shell command", "terminal", "bash", "run command"],
-        "read_file" => &["open file", "inspect file", "view file"],
-        "grep_search" => &["search code", "find text", "ripgrep"],
-        "web_fetch" => &["fetch url", "read webpage", "download page"],
-        "web_search" => &["internet search", "search web", "lookup online"],
-        "delegate_task" => &["subagent", "delegate", "specialist agent"],
-        "git_manager" => &["git status", "git diff", "git commit", "git log"],
-        "tool_catalog" => &["list tools", "tool help", "available tools"],
-        "openz_inventory" => &["features", "capabilities", "what can you do", "inventory"],
-        "manage_servers" => &[
-            "stop server",
-            "list servers",
-            "dev server",
-            "background process",
-        ],
-        "schedule_job" => &[
-            "cron",
-            "cron job",
-            "schedule job",
-            "timer",
-            "run later",
-            "automated task",
-        ],
-        "list_jobs" => &["list cron jobs", "scheduled jobs", "timers", "cron status"],
-        "remove_job" => &[
-            "remove cron job",
-            "delete scheduled job",
-            "cancel timer",
-            "stop scheduled job",
-        ],
-        "workflow_memory" => &[
-            "save workflow",
-            "reuse workflow",
-            "record run",
-            "procedure memory",
-        ],
-        _ => match domain {
-            "code" => &["code search", "compile", "test", "refactor"],
-            "filesystem" => &["file", "directory", "edit file"],
-            "web" => &["website", "browser", "research online"],
-            "media" => &["image", "video", "svg", "diagram"],
-            "document" => &["pdf", "docx", "xlsx", "document"],
-            "memory" => &["remember", "recall", "knowledge graph"],
-            "subagent" => &["delegate", "worker", "specialist"],
-            _ => &[],
-        },
+    if let Some(def) = get_static_tool_def(name) {
+        return def.aliases;
+    }
+    match domain {
+        "code" => &["code search", "compile", "test", "refactor"],
+        "filesystem" => &["file", "directory", "edit file"],
+        "web" => &["website", "browser", "research online"],
+        "media" => &["image", "video", "svg", "diagram"],
+        "document" => &["pdf", "docx", "xlsx", "document"],
+        "memory" => &["remember", "recall", "knowledge graph"],
+        "subagent" => &["delegate", "worker", "specialist"],
+        _ => &[],
     }
 }
 
 fn tool_examples(name: &str, domain: &str) -> &'static [&'static str] {
-    match name {
-        "cargo_manager" => &["Run cargo test --lib", "Run cargo check after Rust edits"],
-        "exec_command" => &[
-            "Run ls to inspect generated files",
-            "Run a safe project-local command",
-        ],
-        "read_file" => &["Read src/main.rs before editing", "Inspect a config file"],
-        "grep_search" => &["Find all uses of a function", "Search for a symbol in src"],
-        "web_fetch" => &["Fetch a documentation URL", "Read one webpage"],
-        "web_search" => &[
-            "Search current public documentation",
-            "Look up recent release info",
-        ],
-        "delegate_task" => &[
-            "Ask a reviewer subagent to inspect changes",
-            "Route image analysis to a vision subagent",
-        ],
-        "git_manager" => &["Check git status", "Review a diff before commit"],
-        "tool_catalog" => &[
-            "List tools for a website research task",
-            "Explain why tools were hidden",
-        ],
-        "openz_inventory" => &[
-            "Answer exactly what OpenZ features and tools are currently registered",
-            "Compare claimed features against live tool inventory",
-        ],
-        "manage_servers" => &[
-            "List active dev servers after launching npm run dev",
-            "Stop all OpenZ-launched servers when the task is done",
-        ],
-        "schedule_job" => &[
-            "Schedule a prompt to run every 5 minutes",
-            "Create a timer for an automated reminder or action",
-        ],
-        "list_jobs" => &["List active scheduled cron jobs", "Check timer status"],
-        "remove_job" => &[
-            "Cancel a scheduled job by id",
-            "Remove a timer after it has fired",
-        ],
-        "workflow_memory" => &[
-            "Save a repeated website/video generation procedure",
-            "Record whether a reused workflow succeeded",
-        ],
-        _ => match domain {
-            "code" => &["Analyze or modify source code"],
-            "web" => &["Research a website or URL"],
-            "media" => &["Create or transform visual media"],
-            "document" => &["Read, convert, or edit documents"],
-            "memory" => &["Store or retrieve durable facts"],
-            _ => &[],
-        },
+    if let Some(def) = get_static_tool_def(name) {
+        return def.examples;
+    }
+    match domain {
+        "code" => &["Analyze or modify source code"],
+        "web" => &["Research a website or URL"],
+        "media" => &["Create or transform visual media"],
+        "document" => &["Read, convert, or edit documents"],
+        "memory" => &["Store or retrieve durable facts"],
+        _ => &[],
     }
 }
 
 fn tool_usage_hints(name: &str, domain: &str) -> (&'static str, &'static str) {
-    match name {
-        "cargo_manager" => (
-            "Use for Rust cargo build, check, test, clippy, and compiler-fix workflows.",
-            "Avoid when only reading files or searching source text.",
+    if let Some(def) = get_static_tool_def(name) {
+        return (def.when_to_use, def.when_not_to_use);
+    }
+    match domain {
+        "code" => (
+            "Use for source-code analysis, build, test, or refactor tasks.",
+            "Avoid for non-code document or media tasks.",
         ),
-        "exec_command" => (
-            "Use for shell commands that cannot be handled by a safer native tool.",
-            "Avoid for file reads, code search, or destructive commands without approval.",
+        "filesystem" => (
+            "Use for project-local file and directory operations.",
+            "Avoid for web or provider operations.",
         ),
-        "read_file" => (
-            "Use to inspect known text files before editing or explaining code.",
-            "Avoid for broad searches; use grep or find tools instead.",
+        "web" => (
+            "Use for URLs, browsers, crawling, and online research.",
+            "Avoid for local-only codebase questions.",
         ),
-        "grep_search" => (
-            "Use to find symbols, text, TODOs, and call sites across a project.",
-            "Avoid when the exact file is already known and only needs reading.",
+        "media" => (
+            "Use for image, video, SVG, Mermaid, and rendering tasks.",
+            "Avoid for plain text or source-code edits.",
         ),
-        "web_fetch" => (
-            "Use to read a specific URL supplied by the user or found by search.",
-            "Avoid for open-ended research; search first.",
+        "document" => (
+            "Use for PDF, DOCX, XLSX, PPTX, and document conversion tasks.",
+            "Avoid for source-code builds or shell commands.",
         ),
-        "web_search" => (
-            "Use when current or external web information is required.",
-            "Avoid when the answer is fully available from local project files.",
+        "memory" => (
+            "Use for durable facts, recall, graph memory, and knowledge retrieval.",
+            "Avoid for transient one-turn calculations.",
         ),
-        "openz_inventory" => (
-            "Use before answering questions about OpenZ's exact features, commands, channels, subagents, and registered tools.",
-            "Avoid guessing feature counts from memory when live registry data is available.",
+        "subagent" => (
+            "Use for delegated specialist tasks and parallel work.",
+            "Avoid for simple single-step local tool calls.",
         ),
-        "manage_servers" => (
-            "Use to inspect or stop dev servers/background processes launched by OpenZ; call it automatically when cleanup is needed.",
-            "Avoid shell pkill guesses for servers OpenZ registered itself.",
+        "self_management" => (
+            "Use for OpenZ diagnostics, config, sessions, and tool routing introspection.",
+            "Avoid for user project modifications.",
         ),
-        "schedule_job" => (
-            "Use to schedule automated prompts, reminders, timers, and cron-style future tasks from chat.",
-            "Avoid shell cron, systemd-run, or sleep loops unless the native scheduler cannot express the request.",
-        ),
-        "list_jobs" => (
-            "Use to inspect OpenZ-managed scheduled jobs before reporting cron/timer status.",
-            "Avoid shell crontab or systemctl listing for jobs created by OpenZ.",
-        ),
-        "remove_job" => (
-            "Use to cancel or delete OpenZ-managed scheduled jobs by id when cleanup is requested.",
-            "Avoid shell systemctl, crontab editing, or pkill guesses for OpenZ scheduler cleanup.",
-        ),
-        "workflow_memory" => (
-            "Use to save, search, or record reusable procedures after repeated successful tasks or tool-workaround discoveries.",
-            "Avoid leaving repeated multi-step workflows only in chat history.",
-        ),
-        "delegate_task" => (
-            "Use for independent specialist work, reviews, research, or multimodal routing.",
-            "Avoid for simple direct actions the orchestrator can complete itself.",
-        ),
-        "git_manager" => (
-            "Use for git status, diffs, commit history, and repository state checks.",
-            "Avoid for GitHub API operations; use GitHub tools for remote provider actions.",
-        ),
-        "tool_catalog" => (
-            "Use to inspect available tools, routing decisions, and hidden tool reasons.",
-            "Avoid when the correct tool is already obvious and exposed.",
-        ),
-        _ => match domain {
-            "code" => (
-                "Use for source-code analysis, build, test, or refactor tasks.",
-                "Avoid for non-code document or media tasks.",
-            ),
-            "filesystem" => (
-                "Use for project-local file and directory operations.",
-                "Avoid for web or provider operations.",
-            ),
-            "web" => (
-                "Use for URLs, browsers, crawling, and online research.",
-                "Avoid for local-only codebase questions.",
-            ),
-            "media" => (
-                "Use for image, video, SVG, Mermaid, and rendering tasks.",
-                "Avoid for plain text or source-code edits.",
-            ),
-            "document" => (
-                "Use for PDF, DOCX, XLSX, PPTX, and document conversion tasks.",
-                "Avoid for source-code builds or shell commands.",
-            ),
-            "memory" => (
-                "Use for durable facts, recall, graph memory, and knowledge retrieval.",
-                "Avoid for transient one-turn calculations.",
-            ),
-            "subagent" => (
-                "Use for delegated specialist tasks and parallel work.",
-                "Avoid for simple single-step local tool calls.",
-            ),
-            "self_management" => (
-                "Use for OpenZ diagnostics, config, sessions, and tool routing introspection.",
-                "Avoid for user project modifications.",
-            ),
-            _ => ("", ""),
-        },
+        _ => ("", ""),
     }
 }
 
