@@ -317,12 +317,43 @@ pub fn migrate_config(config: &mut Config) -> bool {
     modified
 }
 
+struct ConfigCache {
+    config: Config,
+    last_modified: std::time::SystemTime,
+    path: PathBuf,
+}
+
+static CONFIG_CACHE: std::sync::Mutex<Option<ConfigCache>> = std::sync::Mutex::new(None);
+
 pub fn load_config() -> Result<Config> {
     let path = config_path();
-    if !path.exists() {
+    
+    // Check modification time if file exists
+    let current_modified = if path.exists() {
+        fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .unwrap_or_else(|_| std::time::SystemTime::now())
+    } else {
         let default_config = Config::default();
         let _ = save_config(&default_config);
+        
+        let mut cache = CONFIG_CACHE.lock().unwrap();
+        *cache = Some(ConfigCache {
+            config: default_config.clone(),
+            last_modified: std::time::SystemTime::now(),
+            path: path.clone(),
+        });
         return Ok(default_config);
+    };
+
+    // Try to retrieve from cache
+    {
+        let cache = CONFIG_CACHE.lock().unwrap();
+        if let Some(ref c) = *cache {
+            if c.path == path && c.last_modified == current_modified {
+                return Ok(c.config.clone());
+            }
+        }
     }
 
     let content = fs::read_to_string(&path)
@@ -341,6 +372,13 @@ pub fn load_config() -> Result<Config> {
             );
             let default_config = Config::default();
             let _ = save_config(&default_config);
+
+            let mut cache = CONFIG_CACHE.lock().unwrap();
+            *cache = Some(ConfigCache {
+                config: default_config.clone(),
+                last_modified: std::time::SystemTime::now(),
+                path: path.clone(),
+            });
             return Ok(default_config);
         }
     };
@@ -357,6 +395,16 @@ pub fn load_config() -> Result<Config> {
             "Migrating OpenZ config to the canonical schema"
         );
         let _ = save_config(&config);
+    }
+
+    // Update cache
+    {
+        let mut cache = CONFIG_CACHE.lock().unwrap();
+        *cache = Some(ConfigCache {
+            config: config.clone(),
+            last_modified: current_modified,
+            path: path.clone(),
+        });
     }
 
     Ok(config)
@@ -390,6 +438,12 @@ pub fn save_config(config: &Config) -> Result<()> {
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    // Invalidate the cache so the next load gets the newly saved file
+    {
+        let mut cache = CONFIG_CACHE.lock().unwrap();
+        *cache = None;
     }
 
     Ok(())
@@ -648,5 +702,40 @@ mod tests {
             lower.contains(".db-wal"),
             ".gitignore must ignore sqlite -wal companions"
         );
+    }
+
+    #[tokio::test]
+    async fn test_config_caching_with_modification_time() {
+        let dir = std::env::temp_dir().join(format!(
+            "openz_cfg_cache_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // 1. Initial load constructs defaults
+        let config1 = super::CONFIG_DIR_OVERRIDE
+            .scope(dir.clone(), async { super::load_config().unwrap() })
+            .await;
+
+        // 2. Load again, must hit cache
+        let config2 = super::CONFIG_DIR_OVERRIDE
+            .scope(dir.clone(), async { super::load_config().unwrap() })
+            .await;
+        assert_eq!(config1.agents.defaults.tool_timeout_secs, config2.agents.defaults.tool_timeout_secs);
+
+        // 3. Write directly to file (simulating external edit)
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let mut modified_config = config1.clone();
+        modified_config.agents.defaults.tool_timeout_secs = 42;
+        let content = serde_json::to_string_pretty(&modified_config).unwrap();
+        std::fs::write(dir.join("config.json"), content).unwrap();
+
+        // 4. Load again, must detect modification and load updated value
+        let config3 = super::CONFIG_DIR_OVERRIDE
+            .scope(dir.clone(), async { super::load_config().unwrap() })
+            .await;
+        assert_eq!(config3.agents.defaults.tool_timeout_secs, 42);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
