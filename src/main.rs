@@ -80,35 +80,43 @@ async fn main() -> anyhow::Result<()> {
             .with(env_filter)
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::sink))
             .init();
-    } else if is_agent {
-        let file_layer = tracing_subscriber::fmt::layer()
-            .with_writer(make_writer)
-            .with_ansi(false)
-            .with_target(true)
-            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
-
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(file_layer)
-            .init();
     } else {
-        let file_layer = tracing_subscriber::fmt::layer()
-            .with_writer(make_writer)
-            .with_ansi(false)
-            .with_target(true)
-            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let _ = openz::logs::LOG_TX.set(tx);
+        tokio::spawn(openz::logs::init_db_writer(rx));
 
-        let stderr_layer = tracing_subscriber::fmt::layer()
-            .with_writer(std::io::stderr)
-            .with_ansi(true)
-            .with_target(true)
-            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
+        if is_agent {
+            let file_layer = tracing_subscriber::fmt::layer()
+                .with_writer(make_writer)
+                .with_ansi(false)
+                .with_target(true)
+                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
 
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(file_layer)
-            .with(stderr_layer)
-            .init();
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(file_layer)
+                .with(openz::logs::SqliteLogLayer)
+                .init();
+        } else {
+            let file_layer = tracing_subscriber::fmt::layer()
+                .with_writer(make_writer)
+                .with_ansi(false)
+                .with_target(true)
+                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
+
+            let stderr_layer = tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_ansi(true)
+                .with_target(true)
+                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
+
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(file_layer)
+                .with(stderr_layer)
+                .with(openz::logs::SqliteLogLayer)
+                .init();
+        }
     }
 
     let _shutdown_rx = openz::shutdown::init();

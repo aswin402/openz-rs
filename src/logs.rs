@@ -21,6 +21,130 @@ const WHITE: &str = "\x1b[38;2;220;220;220m"; // LIGHT_WHITE  — message body
 const ORANGE: &str = "\x1b[38;2;255;133;75m"; // warm accent  — DEBUG
 const CYAN: &str = "\x1b[38;2;137;221;255m"; // AURA_CYAN    — session tag
 
+use std::sync::OnceLock;
+
+pub struct LogEntry {
+    pub timestamp: String,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+    pub session: Option<String>,
+}
+
+pub static LOG_TX: OnceLock<tokio::sync::mpsc::UnboundedSender<LogEntry>> = OnceLock::new();
+
+pub fn default_db_path() -> PathBuf {
+    crate::config::config_dir().join("logs.db")
+}
+
+pub async fn init_db_writer(mut rx: tokio::sync::mpsc::UnboundedReceiver<LogEntry>) {
+    let db_path = default_db_path();
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    tokio::task::spawn_blocking(move || {
+        let conn = match rusqlite::Connection::open(&db_path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to open logs.db: {}", e);
+                return;
+            }
+        };
+
+        if let Err(e) = conn.execute(
+            "CREATE TABLE IF NOT EXISTS logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                level TEXT NOT NULL,
+                target TEXT NOT NULL,
+                message TEXT NOT NULL,
+                session TEXT
+            )",
+            [],
+        ) {
+            eprintln!("Failed to create logs table: {}", e);
+            return;
+        }
+
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_session ON logs (session)", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs (timestamp)", []);
+
+        while let Some(entry) = rx.blocking_recv() {
+            let _ = conn.execute(
+                "INSERT INTO logs (timestamp, level, target, message, session) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    entry.timestamp,
+                    entry.level,
+                    entry.target,
+                    entry.message,
+                    entry.session,
+                ],
+            );
+        }
+    });
+}
+
+pub struct SqliteLogLayer;
+
+impl<S> tracing_subscriber::Layer<S> for SqliteLogLayer
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+        let metadata = event.metadata();
+        let level = metadata.level().to_string();
+        let target = metadata.target().to_string();
+
+        let mut visitor = EventFieldVisitor {
+            message: String::new(),
+            session: None,
+        };
+        event.record(&mut visitor);
+
+        let session = visitor.session.or_else(|| crate::agent::style::spinner::get_current_session_key());
+        let timestamp = chrono::Utc::now().to_rfc3339();
+
+        if let Some(tx) = LOG_TX.get() {
+            let _ = tx.send(LogEntry {
+                timestamp,
+                level,
+                target,
+                message: visitor.message,
+                session,
+            });
+        }
+    }
+}
+
+struct EventFieldVisitor {
+    message: String,
+    session: Option<String>,
+}
+
+impl tracing::field::Visit for EventFieldVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        let val_str = format!("{:?}", value);
+        let cleaned = if val_str.starts_with('"') && val_str.ends_with('"') && val_str.len() >= 2 {
+            val_str[1..val_str.len() - 1].to_string()
+        } else {
+            val_str
+        };
+        if field.name() == "message" {
+            self.message = cleaned;
+        } else if field.name() == "session" {
+            self.session = Some(cleaned);
+        }
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "message" {
+            self.message = value.to_string();
+        } else if field.name() == "session" {
+            self.session = Some(value.to_string());
+        }
+    }
+}
+
 /// Resolve the default log file path: ~/.openz/openz.log (or OPENZ_CONFIG_DIR/openz.log)
 pub fn default_log_path() -> PathBuf {
     crate::config::config_dir().join("openz.log")
@@ -938,6 +1062,214 @@ pub fn detect_active_session() -> Option<String> {
     None
 }
 
+pub fn print_row(
+    timestamp: &str,
+    level: &str,
+    target: &str,
+    message: &str,
+    session: Option<&str>,
+    filter: &SessionFilter,
+    level_filter: &LogLevelFilter,
+) {
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+
+    // Check session filter
+    let sessions_vec = session.map(|s| vec![s.to_string()]).unwrap_or_default();
+    if !session_matches(&sessions_vec, filter) {
+        return;
+    }
+
+    // Check level filter
+    if !level_filter.matches(level) {
+        return;
+    }
+
+    // Shorten timestamp: HH:MM:SS (chars 11..19 of RFC3339)
+    let ts = if timestamp.len() >= 19 {
+        &timestamp[11..19]
+    } else {
+        timestamp
+    };
+
+    let (level_col, level_label) = match level {
+        "ERROR" => (ROSE, "ERROR"),
+        "WARN" => (GOLD, "WARN "),
+        "INFO" => (GREEN, "INFO "),
+        "DEBUG" => (ORANGE, "DEBUG"),
+        "TRACE" => (SLATE, "TRACE"),
+        other => (SLATE, other),
+    };
+
+    let msg_col = match level {
+        "ERROR" => ROSE,
+        "WARN" => GOLD,
+        _ => WHITE,
+    };
+
+    let target_str = if target.len() > 35 {
+        format!("…{}", &target[target.len().saturating_sub(34)..])
+    } else {
+        target.to_string()
+    };
+
+    let target_col = if target.starts_with("openz::agent::") {
+        PURPLE
+    } else if target.starts_with("openz::providers::") {
+        CYAN
+    } else if target.starts_with("openz::tools::") {
+        GOLD
+    } else if target.starts_with("openz::channels::") {
+        GREEN
+    } else {
+        BLUE
+    };
+
+    let session_badge = match session {
+        Some(s) => {
+            let short = s.split(':').next().unwrap_or(s);
+            format!("  {CYAN}{DIM}[{short}]{RESET}")
+        }
+        None => String::new(),
+    };
+
+    if let Some((icon, label, formatted_msg, color)) = pretty_format_log(message) {
+        let highlighted = highlight_message(&formatted_msg);
+        let _ = writeln!(
+            out,
+            "{SLATE}{DIM}{ts}{RESET}  {BOLD}{level_col}{level_label}{RESET}  {target_col}{target_str:<35}{RESET}  {icon} {BOLD}{color}[{label}]{RESET} {color}{}{RESET}{session_badge}",
+            highlighted,
+            ts = ts,
+            level_col = level_col,
+            level_label = level_label,
+            target_str = &target_str,
+            target_col = target_col,
+            icon = icon,
+            label = label,
+            color = color,
+            session_badge = session_badge,
+        );
+    } else {
+        let highlighted_msg = highlight_message(message);
+        let _ = writeln!(
+            out,
+            "{SLATE}{DIM}{ts}{RESET}  {BOLD}{level_col}{level_label}{RESET}  {target_col}{target_str:<35}{RESET}  {msg_col}{}{RESET}{session_badge}",
+            highlighted_msg,
+            ts = ts,
+            level_col = level_col,
+            level_label = level_label,
+            target_str = &target_str,
+            target_col = target_col,
+            msg_col = msg_col,
+            session_badge = session_badge,
+        );
+    }
+}
+
+fn print_tail_sqlite(
+    db_path: &std::path::Path,
+    tail: usize,
+    filter: &SessionFilter,
+    level_filter: &LogLevelFilter,
+) -> Result<i64> {
+    let conn = rusqlite::Connection::open(db_path)?;
+    let mut stmt = conn.prepare(
+        "SELECT id, timestamp, level, target, message, session FROM logs ORDER BY id DESC LIMIT ?1"
+    )?;
+
+    struct DbRow {
+        id: i64,
+        timestamp: String,
+        level: String,
+        target: String,
+        message: String,
+        session: Option<String>,
+    }
+
+    let rows_iter = stmt.query_map([tail], |row| {
+        Ok(DbRow {
+            id: row.get(0)?,
+            timestamp: row.get(1)?,
+            level: row.get(2)?,
+            target: row.get(3)?,
+            message: row.get(4)?,
+            session: row.get(5)?,
+        })
+    })?;
+
+    let mut rows: Vec<DbRow> = Vec::new();
+    for row in rows_iter {
+        if let Ok(r) = row {
+            rows.push(r);
+        }
+    }
+
+    rows.reverse();
+
+    let mut last_id = 0;
+    for r in &rows {
+        print_row(&r.timestamp, &r.level, &r.target, &r.message, r.session.as_deref(), filter, level_filter);
+        last_id = r.id;
+    }
+
+    Ok(last_id)
+}
+
+async fn follow_sqlite(
+    db_path: &std::path::Path,
+    mut last_id: i64,
+    mut filter: SessionFilter,
+    level_filter: LogLevelFilter,
+) -> Result<()> {
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
+
+    let mut interval = tokio::time::interval(Duration::from_millis(100));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    let mut last_session_check = std::time::Instant::now();
+
+    loop {
+        tokio::select! {
+            biased;
+            _ = &mut ctrl_c => {
+                println!("\n\n  {SLATE}{DIM}── openz logs stopped{RESET}\n");
+                break Ok(());
+            }
+            _ = interval.tick() => {
+                if let Ok(conn) = rusqlite::Connection::open(db_path) {
+                    if let Ok(mut stmt) = conn.prepare(
+                        "SELECT id, timestamp, level, target, message, session FROM logs WHERE id > ?1 ORDER BY id ASC"
+                    ) {
+                        if let Ok(rows_iter) = stmt.query_map([last_id], |row| {
+                            Ok((
+                                row.get::<_, i64>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, String>(3)?,
+                                row.get::<_, String>(4)?,
+                                row.get::<_, Option<String>>(5)?,
+                            ))
+                        }) {
+                            for row in rows_iter {
+                                if let Ok((id, timestamp, level, target, message, session)) = row {
+                                    print_row(&timestamp, &level, &target, &message, session.as_deref(), &filter, &level_filter);
+                                    last_id = id;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if last_session_check.elapsed() >= Duration::from_secs(1) {
+                    last_session_check = std::time::Instant::now();
+                    update_auto_session(&mut filter);
+                }
+            }
+        }
+    }
+}
+
 // ── Public entrypoint ────────────────────────────────────────────────────────
 
 pub async fn run_logs_viewer(
@@ -946,15 +1278,14 @@ pub async fn run_logs_viewer(
     filter: SessionFilter,
     level_filter: LogLevelFilter,
 ) -> Result<()> {
-    let path = log_path.unwrap_or_else(default_log_path);
+    let path = log_path.unwrap_or_else(default_db_path);
 
-    // If filtering by a specific session, say so in the header.
-    // If All, check activity.json to see if there is a hot session to highlight.
+    let is_sqlite = path.extension().map_or(false, |ext| ext == "db");
+
     let effective_filter = match &filter {
         SessionFilter::Only(_) => filter.clone(),
         SessionFilter::Auto(_) => filter.clone(),
         SessionFilter::All => {
-            // We still show all lines; just note if something is active.
             if let Some(active) = detect_active_session() {
                 println!("\n  {CYAN}{DIM}◉ active session detected: {active}{RESET}");
             }
@@ -962,12 +1293,71 @@ pub async fn run_logs_viewer(
         }
     };
 
-    print_header(&path, tail, &effective_filter, &level_filter);
+    if is_sqlite {
+        print_header(&path, tail, &effective_filter, &level_filter);
+        let last_id = print_tail_sqlite(&path, tail, &effective_filter, &level_filter)?;
+        println!("\n  {PURPLE}{DIM}── live ──{RESET}\n");
+        follow_sqlite(&path, last_id, effective_filter, level_filter).await
+    } else {
+        print_header(&path, tail, &effective_filter, &level_filter);
+        let pos = print_tail(&path, tail, &effective_filter, &level_filter)?;
+        println!("\n  {PURPLE}{DIM}── live ──{RESET}\n");
+        follow(&path, pos, effective_filter, level_filter).await
+    }
+}
 
-    let pos = print_tail(&path, tail, &effective_filter, &level_filter)?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    // Print live-follow separator
-    println!("\n  {PURPLE}{DIM}── live ──{RESET}\n");
+    #[tokio::test]
+    async fn test_sqlite_logging_workflow() {
+        let db_path = std::env::temp_dir().join(format!("logs_test_{}.db", uuid::Uuid::new_v4()));
 
-    follow(&path, pos, effective_filter, level_filter).await
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                level TEXT NOT NULL,
+                target TEXT NOT NULL,
+                message TEXT NOT NULL,
+                session TEXT
+            )",
+            [],
+        ).unwrap();
+
+        conn.execute(
+            "INSERT INTO logs (timestamp, level, target, message, session) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                "2026-07-20T12:00:00Z",
+                "INFO",
+                "openz::test",
+                "Test message 1",
+                Some("session-123"),
+            ],
+        ).unwrap();
+
+        conn.execute(
+            "INSERT INTO logs (timestamp, level, target, message, session) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                "2026-07-20T12:01:00Z",
+                "ERROR",
+                "openz::test",
+                "Test message 2",
+                Some("session-123"),
+            ],
+        ).unwrap();
+
+        let filter = SessionFilter::Only("session-123".to_string());
+        let level_filter = LogLevelFilter::Trace;
+        let last_id = print_tail_sqlite(&db_path, 10, &filter, &level_filter).unwrap();
+        assert_eq!(last_id, 2);
+
+        let error_level_filter = LogLevelFilter::Error;
+        let last_id_error = print_tail_sqlite(&db_path, 10, &filter, &error_level_filter).unwrap();
+        assert_eq!(last_id_error, 2);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
 }
