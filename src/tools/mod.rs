@@ -136,7 +136,13 @@ impl ToolMetadata {
 fn infer_tool_domain(name: &str) -> &'static str {
     if matches!(
         name,
-        "manage_servers" | "openz_inventory" | "workflow_memory" | "curate_skill"
+        "manage_servers"
+            | "openz_inventory"
+            | "workflow_memory"
+            | "curate_skill"
+            | "schedule_job"
+            | "list_jobs"
+            | "remove_job"
     ) {
         "self_management"
     } else if matches!(
@@ -228,6 +234,7 @@ fn tool_writes_disk(name: &str) -> bool {
             | "manage_sessions"
             | "manage_backups"
             | "curate_skill"
+            | "schedule_job"
             | "create_subagent"
             | "delete_subagent"
             | "optimize_subagent"
@@ -315,6 +322,21 @@ fn tool_aliases(name: &str, domain: &str) -> &'static [&'static str] {
             "dev server",
             "background process",
         ],
+        "schedule_job" => &[
+            "cron",
+            "cron job",
+            "schedule job",
+            "timer",
+            "run later",
+            "automated task",
+        ],
+        "list_jobs" => &["list cron jobs", "scheduled jobs", "timers", "cron status"],
+        "remove_job" => &[
+            "remove cron job",
+            "delete scheduled job",
+            "cancel timer",
+            "stop scheduled job",
+        ],
         "workflow_memory" => &[
             "save workflow",
             "reuse workflow",
@@ -365,6 +387,15 @@ fn tool_examples(name: &str, domain: &str) -> &'static [&'static str] {
             "List active dev servers after launching npm run dev",
             "Stop all OpenZ-launched servers when the task is done",
         ],
+        "schedule_job" => &[
+            "Schedule a prompt to run every 5 minutes",
+            "Create a timer for an automated reminder or action",
+        ],
+        "list_jobs" => &["List active scheduled cron jobs", "Check timer status"],
+        "remove_job" => &[
+            "Cancel a scheduled job by id",
+            "Remove a timer after it has fired",
+        ],
         "workflow_memory" => &[
             "Save a repeated website/video generation procedure",
             "Record whether a reused workflow succeeded",
@@ -413,6 +444,18 @@ fn tool_usage_hints(name: &str, domain: &str) -> (&'static str, &'static str) {
         "manage_servers" => (
             "Use to inspect or stop dev servers/background processes launched by OpenZ; call it automatically when cleanup is needed.",
             "Avoid shell pkill guesses for servers OpenZ registered itself.",
+        ),
+        "schedule_job" => (
+            "Use to schedule automated prompts, reminders, timers, and cron-style future tasks from chat.",
+            "Avoid shell cron, systemd-run, or sleep loops unless the native scheduler cannot express the request.",
+        ),
+        "list_jobs" => (
+            "Use to inspect OpenZ-managed scheduled jobs before reporting cron/timer status.",
+            "Avoid shell crontab or systemctl listing for jobs created by OpenZ.",
+        ),
+        "remove_job" => (
+            "Use to cancel or delete OpenZ-managed scheduled jobs by id when cleanup is requested.",
+            "Avoid shell systemctl, crontab editing, or pkill guesses for OpenZ scheduler cleanup.",
         ),
         "workflow_memory" => (
             "Use to save, search, or record reusable procedures after repeated successful tasks or tool-workaround discoveries.",
@@ -491,6 +534,9 @@ fn is_core_tool(name: &str) -> bool {
         "tool_catalog"
             | "openz_inventory"
             | "manage_servers"
+            | "schedule_job"
+            | "list_jobs"
+            | "remove_job"
             | "workflow_memory"
             | "curate_skill"
             | "optimize_tool_scope"

@@ -12,7 +12,7 @@ impl Tool for ScheduleJobTool {
     }
 
     fn description(&self) -> &str {
-        "Schedule a new automated cron job or update an existing one. Schedules use format: 10s, 1m, 5m, 1h, 1d."
+        "Schedule a new automated cron job or update an existing one. Schedules support simple durations like 10s, 1m, 5m, 1h, 1d and Unix cron expressions like '0 18 * * *'."
     }
 
     fn parameters(&self) -> Value {
@@ -25,7 +25,7 @@ impl Tool for ScheduleJobTool {
                 },
                 "schedule": {
                     "type": "string",
-                    "description": "Frequency interval. Supported formats: s (seconds), m (minutes), h (hours), d (days). E.g. '30s', '5m', '12h'."
+                    "description": "When to run. Supported formats: simple durations like '30s', '5m', '12h' or standard 5-field Unix cron like '0 18 * * *'."
                 },
                 "prompt": {
                     "type": "string",

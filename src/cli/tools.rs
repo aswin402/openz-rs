@@ -1068,6 +1068,38 @@ mod tests {
     }
 
     #[test]
+    fn cron_scheduler_tools_stay_exposed_under_tool_limit() {
+        let registry = ToolRegistry::new();
+        for i in 0..180 {
+            registry.register(Arc::new(MetaTestTool {
+                name: format!("low_tool_{i:03}"),
+                domain: "general",
+                priority: 1,
+                risk: crate::tools::ToolRisk::Low,
+            }));
+        }
+        registry.register(Arc::new(crate::tools::cron::ScheduleJobTool));
+        registry.register(Arc::new(crate::tools::cron::ListJobsTool));
+        registry.register(Arc::new(crate::tools::cron::RemoveJobTool));
+
+        let tools = registry.to_openai_format_for_prompt(
+            "test the cronjob: at 18:00 open browser and play a song, then remove that cronjob",
+        );
+        let names: Vec<_> = tools
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(names.contains(&"schedule_job".to_string()));
+        assert!(names.contains(&"list_jobs".to_string()));
+        assert!(names.contains(&"remove_job".to_string()));
+
+        let schedule_metadata = crate::tools::ToolMetadata::infer("schedule_job");
+        assert_eq!(schedule_metadata.domain, "self_management");
+        assert!(schedule_metadata.aliases.contains(&"cron job"));
+        assert!(schedule_metadata.when_to_use.contains("schedule"));
+    }
+
+    #[test]
     fn metadata_includes_aliases_and_examples_for_tool_choice() {
         let metadata = crate::tools::ToolMetadata::infer("cargo_manager");
         assert!(metadata.aliases.contains(&"cargo test"));
