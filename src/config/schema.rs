@@ -120,6 +120,10 @@ pub struct AgentDefaults {
         alias = "warn_before_expensive_tools"
     )]
     pub warn_before_expensive_tools: bool,
+    #[serde(default, alias = "whitelisted_command_prefixes")]
+    pub whitelisted_command_prefixes: Vec<String>,
+    #[serde(default, alias = "whitelisted_paths")]
+    pub whitelisted_paths: Vec<String>,
 }
 
 fn default_enable_sandbox() -> bool {
@@ -223,6 +227,8 @@ impl Default for AgentDefaults {
             max_concurrent_process_tools: default_max_concurrent_process_tools(),
             warn_before_expensive_tools: default_warn_before_expensive_tools(),
             streaming: default_streaming(),
+            whitelisted_command_prefixes: Vec::new(),
+            whitelisted_paths: Vec::new(),
         }
     }
 }

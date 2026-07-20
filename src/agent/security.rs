@@ -47,7 +47,71 @@ impl SecurityGuard {
         }
     }
 
+    fn matches_whitelisted_prefix(cmd: &str, prefix: &str) -> bool {
+        let cmd_trimmed = cmd.trim();
+        let prefix_trimmed = prefix.trim();
+        if cmd_trimmed.starts_with(prefix_trimmed) {
+            let next_char = cmd_trimmed.as_bytes().get(prefix_trimmed.len());
+            match next_char {
+                None => true,
+                Some(&c) => (c as char).is_whitespace() || c == b';' || c == b'|' || c == b'&' || c == b'`',
+            }
+        } else {
+            false
+        }
+    }
+
+    fn is_in_whitelisted_paths(path_str: &str, whitelisted: &[String]) -> bool {
+        let path = std::path::Path::new(path_str);
+        let abs_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            let workspace = match crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
+                Ok(w) => w,
+                Err(_) => match std::env::current_dir() {
+                    Ok(cwd) => cwd,
+                    Err(_) => return false,
+                },
+            };
+            workspace.join(path)
+        };
+
+        let check_path = Self::canonicalize_path(&abs_path);
+
+        for wl_path_str in whitelisted {
+            let wl_path = std::path::Path::new(wl_path_str);
+            let wl_abs = if wl_path.is_absolute() {
+                wl_path.to_path_buf()
+            } else {
+                let workspace = match crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
+                    Ok(w) => w,
+                    Err(_) => match std::env::current_dir() {
+                        Ok(cwd) => cwd,
+                        Err(_) => continue,
+                    },
+                };
+                workspace.join(wl_path)
+            };
+
+            if let Ok(wl_canon) = wl_abs.canonicalize() {
+                if check_path.starts_with(&wl_canon) {
+                    return true;
+                }
+            } else {
+                if check_path.starts_with(&wl_abs) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn is_safe_path(path_str: &str) -> bool {
+        if let Ok(config) = crate::config::loader::load_config() {
+            if Self::is_in_whitelisted_paths(path_str, &config.agents.defaults.whitelisted_paths) {
+                return true;
+            }
+        }
         let path = std::path::Path::new(path_str);
 
         let abs_path = if path.is_absolute() {
@@ -399,6 +463,14 @@ impl SecurityGuard {
         let mode = security_mode.to_lowercase();
         if tool_name == "exec_command" {
             if let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) {
+                if let Ok(config) = crate::config::loader::load_config() {
+                    for prefix in &config.agents.defaults.whitelisted_command_prefixes {
+                        if Self::matches_whitelisted_prefix(cmd, prefix) {
+                            return false;
+                        }
+                    }
+                }
+
                 let cmd_lower = cmd.to_lowercase();
 
                 // Always block privilege escalation and system control regardless of mode
@@ -1122,5 +1194,59 @@ mod tests {
             "exec_command",
             &json!({"command": "git rm src/temp.rs"})
         )); // subcommand of git is not raw rm
+    }
+
+    #[test]
+    fn test_matches_whitelisted_prefix() {
+        assert!(SecurityGuard::matches_whitelisted_prefix("cargo check", "cargo check"));
+        assert!(SecurityGuard::matches_whitelisted_prefix("cargo check --tests", "cargo check"));
+        assert!(SecurityGuard::matches_whitelisted_prefix("cargo check; echo hello", "cargo check"));
+        
+        // Should not match without word boundary
+        assert!(!SecurityGuard::matches_whitelisted_prefix("cargo check-tests", "cargo check"));
+        assert!(!SecurityGuard::matches_whitelisted_prefix("cargo", "cargo check"));
+    }
+
+    #[tokio::test]
+    async fn test_security_guard_with_whitelisted_config() {
+        let temp_dir = std::env::temp_dir().join(format!("openz_sec_whitelist_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let config_json = json!({
+            "providers": {},
+            "agents": {
+                "defaults": {
+                    "whitelistedCommandPrefixes": ["cargo check", "git status"],
+                    "whitelistedPaths": ["/tmp/safe_zone", "./local_safe_zone"]
+                }
+            }
+        });
+        std::fs::write(temp_dir.join("config.json"), serde_json::to_string(&config_json).unwrap()).unwrap();
+
+        crate::config::loader::CONFIG_DIR_OVERRIDE.scope(temp_dir.clone(), async {
+            assert!(!SecurityGuard::is_sensitive_with_mode(
+                "exec_command",
+                &json!({"command": "cargo check --tests"}),
+                "strict"
+            ));
+            assert!(!SecurityGuard::is_sensitive_with_mode(
+                "exec_command",
+                &json!({"command": "git status"}),
+                "strict"
+            ));
+
+            assert!(SecurityGuard::is_sensitive_with_mode(
+                "exec_command",
+                &json!({"command": "rm -rf /some/path"}),
+                "strict"
+            ));
+
+            assert!(SecurityGuard::is_safe_path("/tmp/safe_zone/file.txt"));
+            assert!(SecurityGuard::is_safe_path("./local_safe_zone/another.txt"));
+
+            assert!(!SecurityGuard::is_safe_path("/etc/hosts"));
+        }).await;
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
