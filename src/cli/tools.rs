@@ -88,6 +88,7 @@ fn register_core_tools(
     registry.register(std::sync::Arc::new(ExecCommandTool));
     registry.register(std::sync::Arc::new(ManageServersTool));
     registry.register(std::sync::Arc::new(WebFetchTool::new()));
+    registry.register(std::sync::Arc::new(crate::tools::get_logs::GetLogsTool));
     registry.register(std::sync::Arc::new(DelegateTaskTool {
         config: config.clone(),
         parent_provider: provider.clone(),

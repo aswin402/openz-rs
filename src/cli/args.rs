@@ -50,10 +50,12 @@ pub enum Command {
         path: Option<PathBuf>,
         #[arg(long, short, default_value = "0")]
         tail: usize,
-        #[arg(long, short)]
+        #[arg(index = 1)]
         session: Option<String>,
         #[arg(long, short)]
         level: Option<String>,
+        #[arg(long, short)]
+        global: bool,
     },
     Changelog,
     Streaming,

@@ -77,31 +77,31 @@ pub async fn run_cli() -> Result<()> {
         }
         Command::Gateway { action } => match action {
             Some(ChannelAction::Logs { tail }) => {
-                logs::handle_logs(None, tail, Some("gateway".to_string()), None).await?;
+                logs::handle_logs(None, tail, Some("gateway".to_string()), None, false).await?;
             }
             None => channels::handle_gateway().await?,
         },
         Command::Telegram { action } => match action {
             Some(ChannelAction::Logs { tail }) => {
-                logs::handle_logs(None, tail, Some("telegram".to_string()), None).await?;
+                logs::handle_logs(None, tail, Some("telegram".to_string()), None, false).await?;
             }
             None => channels::handle_telegram().await?,
         },
         Command::Discord { action } => match action {
             Some(ChannelAction::Logs { tail }) => {
-                logs::handle_logs(None, tail, Some("discord".to_string()), None).await?;
+                logs::handle_logs(None, tail, Some("discord".to_string()), None, false).await?;
             }
             None => channels::handle_discord().await?,
         },
         Command::Whatsapp { action } => match action {
             Some(ChannelAction::Logs { tail }) => {
-                logs::handle_logs(None, tail, Some("whatsapp".to_string()), None).await?;
+                logs::handle_logs(None, tail, Some("whatsapp".to_string()), None, false).await?;
             }
             None => channels::handle_whatsapp().await?,
         },
         Command::Email { action } => match action {
             Some(ChannelAction::Logs { tail }) => {
-                logs::handle_logs(None, tail, Some("email".to_string()), None).await?;
+                logs::handle_logs(None, tail, Some("email".to_string()), None, false).await?;
             }
             None => channels::handle_email().await?,
         },
@@ -131,8 +131,9 @@ pub async fn run_cli() -> Result<()> {
             tail,
             session,
             level,
+            global,
         } => {
-            logs::handle_logs(path, tail, session, level).await?;
+            logs::handle_logs(path, tail, session, level, global).await?;
         }
         Command::Changelog => {
             changelog::handle_changelog().await?;

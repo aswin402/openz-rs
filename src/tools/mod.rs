@@ -1506,3 +1506,4 @@ pub mod wasm_sandbox;
 pub mod watcher;
 pub mod web;
 pub mod web_search;
+pub mod get_logs;

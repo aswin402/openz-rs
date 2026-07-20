@@ -1306,6 +1306,126 @@ pub async fn run_logs_viewer(
     }
 }
 
+pub fn print_session_recent_logs(
+    tail: usize,
+    session: Option<String>,
+    level: Option<String>,
+) -> Result<()> {
+    let path = default_db_path();
+    let is_sqlite = path.extension().map_or(false, |ext| ext == "db");
+
+    let filter = match session {
+        Some(s) if s.to_lowercase() == "all" => SessionFilter::All,
+        Some(s) => SessionFilter::Only(s),
+        None => SessionFilter::All,
+    };
+
+    let level_filter = match level {
+        Some(l) => match l.to_lowercase().as_str() {
+            "trace" => LogLevelFilter::Trace,
+            "debug" => LogLevelFilter::Debug,
+            "info" => LogLevelFilter::Info,
+            "warn" => LogLevelFilter::Warn,
+            "error" => LogLevelFilter::Error,
+            _ => LogLevelFilter::Debug,
+        },
+        None => LogLevelFilter::Debug,
+    };
+
+    if is_sqlite {
+        let _ = print_tail_sqlite(&path, tail, &filter, &level_filter)?;
+    } else {
+        let _ = print_tail(&path, tail, &filter, &level_filter)?;
+    }
+    Ok(())
+}
+
+pub struct RunningSession {
+    pub session_id: String,
+    pub session_type: String,
+    pub last_log_message: String,
+    pub last_seen: String,
+}
+
+pub fn get_running_sessions() -> Result<Vec<RunningSession>> {
+    let db_path = default_db_path();
+    let conn = rusqlite::Connection::open(&db_path)?;
+
+    let mut stmt = conn.prepare(
+        "SELECT session, MAX(timestamp) as last_seen, COUNT(*) as log_count 
+         FROM logs 
+         WHERE session IS NOT NULL 
+         GROUP BY session 
+         ORDER BY last_seen DESC 
+         LIMIT 15"
+    )?;
+
+    struct SessionMeta {
+        session_id: String,
+        last_seen: String,
+    }
+
+    let rows_iter = stmt.query_map([], |row| {
+        Ok(SessionMeta {
+            session_id: row.get(0)?,
+            last_seen: row.get(1)?,
+        })
+    })?;
+
+    let mut sessions = Vec::new();
+    for row in rows_iter {
+        if let Ok(meta) = row {
+            let mut type_stmt = conn.prepare(
+                "SELECT target, message FROM logs WHERE session = ?1 ORDER BY id DESC LIMIT 5"
+            )?;
+
+            let mut target_type = "Agent".to_string();
+            let mut last_msg = String::new();
+
+            if let Ok(mut type_rows) = type_stmt.query([&meta.session_id]) {
+                while let Ok(Some(r)) = type_rows.next() {
+                    let target: String = r.get(0)?;
+                    let message: String = r.get(1)?;
+
+                    if last_msg.is_empty() {
+                        last_msg = message.clone();
+                    }
+
+                    if target.contains("websocket") || target.contains("gateway") {
+                        target_type = "Gateway".to_string();
+                    } else if target.contains("telegram") {
+                        target_type = "Telegram Bot".to_string();
+                    } else if target.contains("discord") {
+                        target_type = "Discord Bot".to_string();
+                    } else if target.contains("whatsapp") {
+                        target_type = "WhatsApp Bot".to_string();
+                    } else if target.contains("email") {
+                        target_type = "Email Handler".to_string();
+                    } else if target.contains("cli") {
+                        target_type = "CLI Agent".to_string();
+                    }
+                }
+            }
+
+            sessions.push(RunningSession {
+                session_id: meta.session_id,
+                session_type: target_type,
+                last_log_message: last_msg,
+                last_seen: meta.last_seen,
+            });
+        }
+    }
+
+    Ok(sessions)
+}
+
+pub fn get_latest_session_id() -> Option<String> {
+    let db_path = default_db_path();
+    let conn = rusqlite::Connection::open(&db_path).ok()?;
+    let mut stmt = conn.prepare("SELECT session FROM logs WHERE session IS NOT NULL ORDER BY id DESC LIMIT 1").ok()?;
+    stmt.query_row([], |row| row.get(0)).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
