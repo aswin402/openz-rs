@@ -12,7 +12,7 @@ impl Tool for ScheduleJobTool {
     }
 
     fn description(&self) -> &str {
-        "Schedule a new automated cron job or update an existing one. Schedules support simple durations like 10s, 1m, 5m, 1h, 1d and Unix cron expressions like '0 18 * * *'."
+        "Schedule a new automated cron job or update an existing one. Schedules support simple durations like 10s, 1m, 5m, 1h, 1d, local clock times like '18:00', and local-time Unix cron expressions like '0 18 * * *'."
     }
 
     fn parameters(&self) -> Value {
@@ -25,7 +25,11 @@ impl Tool for ScheduleJobTool {
                 },
                 "schedule": {
                     "type": "string",
-                    "description": "When to run. Supported formats: simple durations like '30s', '5m', '12h' or standard 5-field Unix cron like '0 18 * * *'."
+                    "description": "When to run. Supported formats: simple durations like '30s', '5m', '12h', local clock times like '18:00', or standard 5-field local-time Unix cron like '0 18 * * *'."
+                },
+                "run_once": {
+                    "type": "boolean",
+                    "description": "When true, disable the job after its next execution. Use for one-time reminders and 'at HH:MM do X' tasks."
                 },
                 "prompt": {
                     "type": "string",
@@ -49,9 +53,13 @@ impl Tool for ScheduleJobTool {
             .get("prompt")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'prompt' argument"))?;
+        let run_once = arguments
+            .get("run_once")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         if crate::cron::calculate_next_run(schedule, None).is_none() {
-            return Err(anyhow!("Invalid schedule format: {}. Use simple duration like '10s', '5m', '1h' OR standard Unix cron like '*/5 * * * *'", schedule));
+            return Err(anyhow!("Invalid schedule format: {}. Use simple duration like '10s', '5m', '1h', local clock time like '18:00', or standard Unix cron like '*/5 * * * *'", schedule));
         }
 
         let mut found = false;
@@ -64,6 +72,7 @@ impl Tool for ScheduleJobTool {
                 if job.id == id_str {
                     job.schedule = schedule_str.clone();
                     job.prompt = prompt_str.clone();
+                    job.run_once = run_once;
                     job.next_run = None; // Reset next run calculation
                     found = true;
                     break;
@@ -76,6 +85,7 @@ impl Tool for ScheduleJobTool {
                     schedule: schedule_str,
                     prompt: prompt_str,
                     enabled: true,
+                    run_once,
                     last_run: None,
                     next_run: None,
                 });
@@ -84,7 +94,8 @@ impl Tool for ScheduleJobTool {
 
         Ok(serde_json::json!({
             "status": "success",
-            "message": format!("Job '{}' successfully scheduled/updated.", id)
+            "message": format!("Job '{}' successfully scheduled/updated.", id),
+            "run_once": run_once
         }))
     }
 }

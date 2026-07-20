@@ -87,9 +87,14 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
                     if let Err(e) = crate::cron::with_cron_jobs_mut(|jobs| {
                         if let Some(j) = jobs.iter_mut().find(|j| j.id == job_clone.id) {
                             j.last_run = Some(completed_at.to_rfc3339());
-                            let next = calculate_next_run(&j.schedule, Some(completed_at))
-                                .unwrap_or_else(|| completed_at + chrono::Duration::minutes(5));
-                            j.next_run = Some(next.to_rfc3339());
+                            if j.run_once {
+                                j.enabled = false;
+                                j.next_run = None;
+                            } else {
+                                let next = calculate_next_run(&j.schedule, Some(completed_at))
+                                    .unwrap_or_else(|| completed_at + chrono::Duration::minutes(5));
+                                j.next_run = Some(next.to_rfc3339());
+                            }
                         }
                     }) {
                         tracing::error!("Failed to update cron jobs metadata: {:?}", e);
@@ -103,9 +108,14 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
                     if let Err(err) = crate::cron::with_cron_jobs_mut(|jobs| {
                         if let Some(j) = jobs.iter_mut().find(|j| j.id == job_clone.id) {
                             j.last_run = Some(completed_at.to_rfc3339());
-                            let next = calculate_next_run(&j.schedule, Some(completed_at))
-                                .unwrap_or_else(|| completed_at + chrono::Duration::minutes(5));
-                            j.next_run = Some(next.to_rfc3339());
+                            if j.run_once {
+                                j.enabled = false;
+                                j.next_run = None;
+                            } else {
+                                let next = calculate_next_run(&j.schedule, Some(completed_at))
+                                    .unwrap_or_else(|| completed_at + chrono::Duration::minutes(5));
+                                j.next_run = Some(next.to_rfc3339());
+                            }
                         }
                     }) {
                         tracing::error!(

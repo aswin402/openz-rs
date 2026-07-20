@@ -12,6 +12,8 @@ pub struct CronJob {
     pub schedule: String, // e.g. "1m", "5m", "1h", "1d"
     pub prompt: String,
     pub enabled: bool,
+    #[serde(default)]
+    pub run_once: bool,
     pub last_run: Option<String>,
     pub next_run: Option<String>,
 }
@@ -130,7 +132,7 @@ pub fn parse_schedule(s: &str) -> Option<chrono::Duration> {
     }
 }
 
-use chrono::Utc;
+use chrono::{Local, TimeZone, Utc};
 use std::str::FromStr;
 
 pub fn calculate_next_run(
@@ -145,8 +147,15 @@ pub fn calculate_next_run(
         return Some(base_time + duration);
     }
 
-    // 2. Try standard Unix cron parsing (5-field or 6-field)
     let s_clean = s.trim();
+
+    // 2. Try a plain local clock time, e.g. "18:00" or "18:00:30".
+    // Users read wall-clock times in the TUI, so store the next local occurrence as UTC.
+    if let Some(next_local_time) = next_local_clock_time(s_clean) {
+        return Some(next_local_time);
+    }
+
+    // 3. Try standard Unix cron parsing (5-field or 6-field) in local time.
     let cron_str = if s_clean.split_whitespace().count() == 5 {
         format!("0 {}", s_clean)
     } else {
@@ -154,10 +163,27 @@ pub fn calculate_next_run(
     };
 
     if let Ok(schedule) = cron::Schedule::from_str(&cron_str) {
-        return schedule.upcoming(Utc).next();
+        return schedule
+            .upcoming(Local)
+            .next()
+            .map(|dt| dt.with_timezone(&Utc));
     }
 
     None
+}
+
+fn next_local_clock_time(s: &str) -> Option<chrono::DateTime<Utc>> {
+    let time = chrono::NaiveTime::parse_from_str(s, "%H:%M")
+        .or_else(|_| chrono::NaiveTime::parse_from_str(s, "%H:%M:%S"))
+        .ok()?;
+    let now = Local::now();
+    let today = now.date_naive().and_time(time);
+    let mut candidate = Local.from_local_datetime(&today).earliest()?;
+    if candidate <= now {
+        let tomorrow = now.date_naive().succ_opt()?.and_time(time);
+        candidate = Local.from_local_datetime(&tomorrow).earliest()?;
+    }
+    Some(candidate.with_timezone(&Utc))
 }
 
 #[cfg(test)]
@@ -182,9 +208,30 @@ mod tests {
         assert!(next.is_some());
         assert_eq!(next.unwrap(), now + chrono::Duration::minutes(5));
 
-        // Test standard cron (every minute)
+        // Test standard local-time cron (every minute)
         let next_cron = calculate_next_run("* * * * *", Some(now));
         assert!(next_cron.is_some());
         assert!(next_cron.unwrap() > now);
+
+        // Test local wall-clock time accepted for one-shot style prompts.
+        let next_clock = calculate_next_run("18:00", None);
+        assert!(next_clock.is_some());
+        let next_clock = next_clock.unwrap();
+        assert!(next_clock > Utc::now());
+        assert!(next_clock <= Utc::now() + chrono::Duration::days(1));
+    }
+
+    #[test]
+    fn cron_job_deserializes_run_once_default() {
+        let job: CronJob = serde_json::from_value(serde_json::json!({
+            "id": "legacy",
+            "schedule": "5m",
+            "prompt": "do work",
+            "enabled": true,
+            "last_run": null,
+            "next_run": null
+        }))
+        .unwrap();
+        assert!(!job.run_once);
     }
 }
