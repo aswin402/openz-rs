@@ -249,3 +249,93 @@ async fn test_agent_loop_session_overrides_pipeline() -> anyhow::Result<()> {
     res
 }
 
+struct TransientFailureTool {
+    call_count: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl Tool for TransientFailureTool {
+    fn name(&self) -> &str {
+        "transient_tool"
+    }
+
+    fn description(&self) -> &str {
+        "A tool that fails transiently first, then succeeds."
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {}
+        })
+    }
+
+    async fn call(&self, _arguments: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let count = self.call_count.fetch_add(1, Ordering::SeqCst);
+        if count == 0 {
+            Err(anyhow::anyhow!("Rate limit exceeded (HTTP 429)"))
+        } else {
+            Ok(json!({ "result": "recovered" }))
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_tool_retry_on_transient_error() -> anyhow::Result<()> {
+    let temp_dir = std::env::temp_dir().join(format!("openz_retry_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let config_file_path = temp_dir.join("config.json");
+    std::fs::write(&config_file_path, "{}")?;
+
+    let sessions_dir = temp_dir.join("sessions");
+    std::fs::create_dir_all(&sessions_dir)?;
+
+    let res = openz::config::loader::CONFIG_DIR_OVERRIDE.scope(temp_dir.clone(), async {
+        openz::config::loader::ACTIVE_WORKSPACE.scope(temp_dir.clone(), async {
+            let mock_responses = vec![
+                MockResponse {
+                    content: None,
+                    tool_calls: vec![ToolCallRequest {
+                        id: "call_abc".to_string(),
+                        name: "transient_tool".to_string(),
+                        arguments: json!({}),
+                    }],
+                    finish_reason: "tool_calls".to_string(),
+                },
+                MockResponse {
+                    content: Some("Successfully recovered.".to_string()),
+                    tool_calls: Vec::new(),
+                    finish_reason: "stop".to_string(),
+                },
+            ];
+
+            let provider = Arc::new(TestMockProvider::new(mock_responses));
+            let session_manager = SessionManager::new(sessions_dir);
+
+            let mut config = Config::default();
+            config.agents.defaults.model = "mock-model".to_string();
+            config.agents.defaults.provider = "mock-provider".to_string();
+
+            let tool_count = Arc::new(AtomicUsize::new(0));
+            let registry = ToolRegistry::new_with_context(
+                config.clone(),
+                provider.clone(),
+                session_manager.clone(),
+            );
+            registry.register(Arc::new(TransientFailureTool { call_count: tool_count.clone() }));
+
+            let agent = AgentLoop::new(config, provider.clone(), registry, session_manager);
+            let run_res = agent.run("Run retry", "session-xyz").await?;
+
+            assert_eq!(run_res.content, "Successfully recovered.");
+            assert_eq!(tool_count.load(Ordering::SeqCst), 2);
+
+            Ok::<(), anyhow::Error>(())
+        }).await
+    }).await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    res
+}
+

@@ -193,9 +193,30 @@ impl<'a> ToolExecutionPipeline<'a> {
         };
 
         let tool_timeout_secs = self.resolve_timeout_secs();
-        match self.run_with_spinner(tool_timeout_secs).await {
-            Ok(res) => self.render_success(res).await,
-            Err(err) => self.render_error(err).await,
+        let mut attempts = 0;
+        let max_attempts = 3;
+        let mut delay = std::time::Duration::from_secs(1);
+
+        loop {
+            attempts += 1;
+            match self.run_with_spinner(tool_timeout_secs).await {
+                Ok(res) => return self.render_success(res).await,
+                Err(err) => {
+                    if attempts < max_attempts && is_transient_error(&err) {
+                        tracing::warn!(
+                            tool = %self.params.call.name,
+                            attempt = attempts,
+                            error = %err,
+                            "Transient tool error encountered. Retrying in {:?}",
+                            delay
+                        );
+                        tokio::time::sleep(delay).await;
+                        delay *= 2;
+                    } else {
+                        return self.render_error(err).await;
+                    }
+                }
+            }
         }
     }
 
@@ -305,6 +326,29 @@ impl<'a> ToolExecutionPipeline<'a> {
         )
         .await
     }
+}
+
+fn is_transient_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string().to_lowercase();
+    if msg.contains("cancelled by user") || msg.contains("tool execution timed out") {
+        return false;
+    }
+    msg.contains("rate limit")
+        || msg.contains("429")
+        || msg.contains("too many requests")
+        || msg.contains("timeout")
+        || msg.contains("timed out")
+        || msg.contains("connection")
+        || msg.contains("connect")
+        || msg.contains("network")
+        || msg.contains("dns")
+        || msg.contains("host unreachable")
+        || msg.contains("temporary failure")
+        || msg.contains("502")
+        || msg.contains("503")
+        || msg.contains("504")
+        || msg.contains("bad gateway")
+        || msg.contains("service unavailable")
 }
 
 async fn execute_approved_tool(params: ApprovedToolExec<'_>) -> serde_json::Value {
