@@ -59,3 +59,24 @@ This document captures all the architectural upgrades, performance optimizations
 * **Changes**:
   - Registered `/settings` under `SLASH_COMMANDS` in `src/channels/cli/render.rs`.
   - Implemented the command handler in the CLI raw mode input loop (`src/channels/cli/mod.rs`), locking `self.defaults` to print a clean summary of configurations without exiting the session.
+
+## 9. Automatic Log Pruning (7-day Cutoff)
+* **Objective**: Maintain database performance and prevent disk space bloat.
+* **Changes**:
+  - Wired an automatic deletion query inside `init_db_writer` in `src/logs.rs` that runs whenever `openz` starts.
+  - Deletes all log entries with a timestamp older than 7 days using timezone-safe RFC3339 comparison strings.
+
+## 10. `manage_whitelist` Native Agent Tool
+* **Objective**: Allow users to configure the agent's whitelist settings directly in conversation.
+* **Changes**:
+  - Implemented `ManageWhitelistTool` (`src/tools/manage_whitelist.rs`) which accepts actions (`add_command`, `remove_command`, `add_path`, `remove_path`, `list`).
+  - Automatically loads and modifies the active configurations, writes back to `config.json`, and updates/invalidates loader cache.
+  - Added full unit test coverage confirming addition, removal, and listing features.
+
+## 11. CLI Logs Search & Real-time Filter (`openz logs --search <query>`)
+* **Objective**: Rapidly find relevant log entries by keyword directly from the terminal.
+* **Changes**:
+  - Added `search` argument (`--search` / `-s`) to Clap subcommand definition `Logs` inside `src/cli/args.rs`.
+  - Propagated keyword search parameter into all internal query loops (`print_tail_sqlite`, `follow_sqlite`, `print_tail`, `follow`).
+  - Added keyword filters within print layers (`print_row`, `print_line_filtered`) to filter both historical dumps and real-time incoming streaming lines.
+
