@@ -79,6 +79,7 @@ pub const RUNTIME_DB_FILENAMES: &[&str] = &[
     "thoughts.db",
     "ccr_cache.db",
     "embeddings_cache.json",
+    "embeddings_cache.db",
 ];
 
 /// Directory where all global runtime state (databases, caches, sessions,

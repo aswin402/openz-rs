@@ -1,29 +1,11 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
-use serde::{Deserialize, Serialize};
+
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 pub struct SemanticSearchTool;
-
-#[derive(Serialize, Deserialize, Clone)]
-struct CachedChunk {
-    index: usize,
-    text: String,
-    embedding: Vec<f32>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct CachedFile {
-    mtime_secs: u64,
-    chunks: Vec<CachedChunk>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Default)]
-struct EmbeddingsCache {
-    files: std::collections::HashMap<String, CachedFile>,
-}
 
 #[derive(Clone)]
 struct ChunkRef {
@@ -92,25 +74,57 @@ fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
     }
 }
 
-fn load_cache() -> EmbeddingsCache {
-    let cache_path = crate::config::loader::runtime_db_path("embeddings_cache.json");
-    if cache_path.exists() {
-        if let Ok(content) = fs::read_to_string(&cache_path) {
-            if let Ok(cache) = serde_json::from_str::<EmbeddingsCache>(&content) {
-                return cache;
+fn get_db_conn() -> Result<rusqlite::Connection> {
+    let db_path = crate::config::loader::runtime_db_path("embeddings_cache.db");
+    if let Some(parent) = db_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let conn = rusqlite::Connection::open(&db_path)?;
+    conn.execute("PRAGMA foreign_keys = ON", [])?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS file_cache (
+            file_path TEXT PRIMARY KEY,
+            mtime_secs INTEGER NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS chunk_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            chunk_text TEXT NOT NULL,
+            embedding BLOB NOT NULL,
+            FOREIGN KEY(file_path) REFERENCES file_cache(file_path) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chunk_file_path ON chunk_cache(file_path)",
+        [],
+    )?;
+    Ok(conn)
+}
+
+fn prune_deleted_files(conn: &rusqlite::Connection) -> Result<()> {
+    let mut stmt = conn.prepare("SELECT file_path FROM file_cache")?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    
+    let mut to_delete = Vec::new();
+    for row in rows {
+        if let Ok(path_str) = row {
+            if !Path::new(&path_str).exists() {
+                to_delete.push(path_str);
             }
         }
     }
-    EmbeddingsCache::default()
-}
 
-fn save_cache(cache: &EmbeddingsCache) -> Result<()> {
-    let cache_path = crate::config::loader::runtime_db_path("embeddings_cache.json");
-    if let Some(parent) = cache_path.parent() {
-        fs::create_dir_all(parent)?;
+    if !to_delete.is_empty() {
+        let mut del_stmt = conn.prepare("DELETE FROM file_cache WHERE file_path = ?1")?;
+        for path_str in to_delete {
+            let _ = del_stmt.execute([path_str]);
+        }
     }
-    let content = serde_json::to_string(cache)?;
-    fs::write(cache_path, content)?;
     Ok(())
 }
 
@@ -173,55 +187,69 @@ impl Tool for SemanticSearchTool {
             return Err(anyhow!("No files found to index in the specified paths."));
         }
 
-        let mut cache = load_cache();
-        let mut cache_updated = false;
-
-        // Prune deleted files from cache to prevent unbounded growth
-        let initial_cache_len = cache.files.len();
-        cache
-            .files
-            .retain(|path_str, _| Path::new(path_str).exists());
-        if cache.files.len() != initial_cache_len {
-            cache_updated = true;
-        }
-
         let mut dirty_files = Vec::new();
         let mut final_chunks = Vec::new();
 
         // 1. Separate files into cached and dirty (missing or changed mtime)
-        for file_path in &files {
-            let path_str = file_path.to_string_lossy().to_string();
-            let mtime_secs = match fs::metadata(file_path).and_then(|m| m.modified()) {
-                Ok(time) => time
-                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                Err(_) => 0,
-            };
+        // Scope the database connection and statements so they are dropped before the await point
+        {
+            let conn = get_db_conn()?;
+            let _ = prune_deleted_files(&conn);
 
-            let is_cached = if let Some(cached_file) = cache.files.get(&path_str) {
-                cached_file.mtime_secs == mtime_secs
-            } else {
-                false
-            };
+            let mut mtime_stmt = conn.prepare("SELECT mtime_secs FROM file_cache WHERE file_path = ?1")?;
+            let mut chunks_stmt = conn.prepare("SELECT chunk_index, chunk_text, embedding FROM chunk_cache WHERE file_path = ?1")?;
 
-            if is_cached {
-                if let Some(cached_file) = cache.files.get(&path_str) {
-                    for chunk in &cached_file.chunks {
-                        final_chunks.push(ChunkRef {
-                            file_path: path_str.clone(),
-                            text: chunk.text.clone(),
-                            index: chunk.index,
-                            embedding: chunk.embedding.clone(),
-                        });
+            for file_path in &files {
+                let path_str = file_path.to_string_lossy().to_string();
+                let mtime_secs = match fs::metadata(file_path).and_then(|m| m.modified()) {
+                    Ok(time) => time
+                        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                    Err(_) => 0,
+                };
+
+                let mut is_cached = false;
+                if let Ok(mut rows) = mtime_stmt.query([&path_str]) {
+                    if let Ok(Some(row)) = rows.next() {
+                        let cached_mtime: u64 = row.get(0)?;
+                        if cached_mtime == mtime_secs {
+                            is_cached = true;
+                        }
                     }
                 }
-            } else {
-                if let Ok(text) = fs::read_to_string(file_path) {
-                    if !text.trim().is_empty() && text.len() <= 1024 * 1024 {
-                        let file_chunks = chunk_text(&text, 600, 100);
-                        if !file_chunks.is_empty() {
-                            dirty_files.push((path_str, mtime_secs, file_chunks));
+
+                if is_cached {
+                    if let Ok(rows) = chunks_stmt.query_map([&path_str], |row| {
+                        let idx: usize = row.get(0)?;
+                        let text: String = row.get(1)?;
+                        let bytes: Vec<u8> = row.get(2)?;
+                        
+                        let mut embedding = Vec::with_capacity(bytes.len() / 4);
+                        for chunk in bytes.chunks_exact(4) {
+                            let array: [u8; 4] = chunk.try_into().unwrap_or([0; 4]);
+                            embedding.push(f32::from_ne_bytes(array));
+                        }
+                        Ok(ChunkRef {
+                            file_path: path_str.clone(),
+                            text,
+                            index: idx,
+                            embedding,
+                        })
+                    }) {
+                        for chunk_res in rows {
+                            if let Ok(chunk) = chunk_res {
+                                final_chunks.push(chunk);
+                            }
+                        }
+                    }
+                } else {
+                    if let Ok(text) = fs::read_to_string(file_path) {
+                        if !text.trim().is_empty() && text.len() <= 1024 * 1024 {
+                            let file_chunks = chunk_text(&text, 600, 100);
+                            if !file_chunks.is_empty() {
+                                dirty_files.push((path_str, mtime_secs, file_chunks));
+                            }
                         }
                     }
                 }
@@ -264,18 +292,27 @@ impl Tool for SemanticSearchTool {
 
         // 3. Merge new embeddings back into cache and final list
         if !dirty_files.is_empty() {
+            let mut tx_conn = get_db_conn()?;
+            let tx = tx_conn.transaction()?;
+
             let mut embed_idx = 0;
             for (path_str, mtime_secs, chunks) in dirty_files {
-                let mut cached_chunks = Vec::new();
+                tx.execute("DELETE FROM file_cache WHERE file_path = ?1", [&path_str])?;
+                tx.execute("INSERT INTO file_cache (file_path, mtime_secs) VALUES (?1, ?2)", rusqlite::params![&path_str, mtime_secs])?;
+
                 for (idx, text) in chunks.into_iter().enumerate() {
                     let embedding = new_embeds[embed_idx].clone();
                     embed_idx += 1;
 
-                    cached_chunks.push(CachedChunk {
-                        index: idx,
-                        text: text.clone(),
-                        embedding: embedding.clone(),
-                    });
+                    let mut bytes = Vec::with_capacity(embedding.len() * 4);
+                    for val in &embedding {
+                        bytes.extend_from_slice(&val.to_ne_bytes());
+                    }
+
+                    tx.execute(
+                        "INSERT INTO chunk_cache (file_path, chunk_index, chunk_text, embedding) VALUES (?1, ?2, ?3, ?4)",
+                        rusqlite::params![&path_str, idx, &text, bytes],
+                    )?;
 
                     final_chunks.push(ChunkRef {
                         file_path: path_str.clone(),
@@ -284,20 +321,8 @@ impl Tool for SemanticSearchTool {
                         embedding,
                     });
                 }
-
-                cache.files.insert(
-                    path_str,
-                    CachedFile {
-                        mtime_secs,
-                        chunks: cached_chunks,
-                    },
-                );
-                cache_updated = true;
             }
-        }
-
-        if cache_updated {
-            let _ = save_cache(&cache);
+            tx.commit()?;
         }
 
         if final_chunks.is_empty() {
@@ -313,7 +338,7 @@ impl Tool for SemanticSearchTool {
             results.push((similarity, chunk));
         }
 
-        // Sort descending by similarity — handle NaN by treating it as lowest value
+        // Sort descending by similarity
         results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
         let mut matches = Vec::new();
@@ -330,5 +355,72 @@ impl Tool for SemanticSearchTool {
             "status": "success",
             "matches": matches
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_sqlite_cache_storage_and_pruning() {
+        let temp_dir = std::env::temp_dir().join(format!("openz_embed_cache_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let _db_path = temp_dir.join("embeddings_cache.db");
+        
+        let conn = crate::config::loader::CONFIG_DIR_OVERRIDE.scope(temp_dir.clone(), async {
+            get_db_conn().unwrap()
+        }).await;
+
+        let fake_file = temp_dir.join("test_file.txt");
+        std::fs::write(&fake_file, b"hello world").unwrap();
+        let path_str = fake_file.to_string_lossy().to_string();
+
+        conn.execute(
+            "INSERT INTO file_cache (file_path, mtime_secs) VALUES (?1, ?2)",
+            rusqlite::params![&path_str, 12345u64],
+        ).unwrap();
+
+        let dummy_emb = vec![0.1f32, 0.2f32, 0.3f32];
+        let mut bytes = Vec::new();
+        for val in &dummy_emb {
+            bytes.extend_from_slice(&val.to_ne_bytes());
+        }
+
+        conn.execute(
+            "INSERT INTO chunk_cache (file_path, chunk_index, chunk_text, embedding) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![&path_str, 0usize, "hello world", bytes],
+        ).unwrap();
+
+        let mut stmt = conn.prepare("SELECT chunk_index, chunk_text, embedding FROM chunk_cache WHERE file_path = ?1").unwrap();
+        let mut rows = stmt.query_map([&path_str], |row: &rusqlite::Row<'_>| {
+            let idx: usize = row.get(0)?;
+            let text: String = row.get(1)?;
+            let bytes: Vec<u8> = row.get(2)?;
+            let mut embedding = Vec::new();
+            for chunk in bytes.chunks_exact(4) {
+                let array: [u8; 4] = [chunk[0], chunk[1], chunk[2], chunk[3]];
+                embedding.push(f32::from_ne_bytes(array));
+            }
+            Ok((idx, text, embedding))
+        }).unwrap();
+
+        let (idx, text, emb) = rows.next().unwrap().unwrap();
+        assert_eq!(idx, 0);
+        assert_eq!(text, "hello world");
+        assert_eq!(emb, dummy_emb);
+
+        std::fs::remove_file(&fake_file).unwrap();
+
+        prune_deleted_files(&conn).unwrap();
+
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM file_cache", [], |row: &rusqlite::Row<'_>| row.get(0)).unwrap();
+        assert_eq!(count, 0);
+
+        let chunk_count: i64 = conn.query_row("SELECT COUNT(*) FROM chunk_cache", [], |row: &rusqlite::Row<'_>| row.get(0)).unwrap();
+        assert_eq!(chunk_count, 0);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
