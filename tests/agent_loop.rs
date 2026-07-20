@@ -1,0 +1,166 @@
+use openz::agent::AgentLoop;
+use openz::config::schema::Config;
+use openz::session::SessionManager;
+use openz::tools::{Tool, ToolRegistry};
+use openz::providers::{LLMProvider, LLMResponse, ToolCallRequest, GenerationSettings};
+use openz::session::Message;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use serde_json::json;
+
+#[derive(Debug, Clone)]
+struct MockResponse {
+    content: Option<String>,
+    tool_calls: Vec<ToolCallRequest>,
+    finish_reason: String,
+}
+
+struct TestMockProvider {
+    responses: Mutex<Vec<MockResponse>>,
+    call_count: AtomicUsize,
+}
+
+impl TestMockProvider {
+    fn new(responses: Vec<MockResponse>) -> Self {
+        Self {
+            responses: Mutex::new(responses),
+            call_count: AtomicUsize::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMProvider for TestMockProvider {
+    async fn chat(
+        &self,
+        _system_prompt: &str,
+        _messages: &[Message],
+        _tools: &[serde_json::Value],
+        _settings: &GenerationSettings,
+    ) -> anyhow::Result<LLMResponse> {
+        let count = self.call_count.fetch_add(1, Ordering::SeqCst);
+        let responses = self.responses.lock().unwrap();
+        let resp = if count < responses.len() {
+            responses[count].clone()
+        } else {
+            MockResponse {
+                content: Some("Default fallback".to_string()),
+                tool_calls: Vec::new(),
+                finish_reason: "stop".to_string(),
+            }
+        };
+        Ok(LLMResponse {
+            content: resp.content,
+            tool_calls: resp.tool_calls,
+            finish_reason: resp.finish_reason,
+            reasoning_content: None,
+        })
+    }
+}
+
+struct CalculatorTool;
+
+#[async_trait::async_trait]
+impl Tool for CalculatorTool {
+    fn name(&self) -> &str {
+        "calculator"
+    }
+
+    fn description(&self) -> &str {
+        "Evaluate simple mathematical expressions."
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "expression": {
+                    "type": "string",
+                    "description": "Expression to evaluate, e.g., '2 + 2'."
+                }
+            },
+            "required": ["expression"]
+        })
+    }
+
+    async fn call(&self, arguments: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let expr = arguments.get("expression").and_then(|e| e.as_str()).unwrap_or("");
+        if expr == "2 + 2" {
+            Ok(json!({ "result": "4" }))
+        } else {
+            Ok(json!({ "error": "unsupported expression" }))
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_agent_loop_tool_execution_pipeline() -> anyhow::Result<()> {
+    // 1. Setup temporary directory for config and session storage
+    let temp_dir = std::env::temp_dir().join(format!("openz_agent_loop_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let config_file_path = temp_dir.join("config.json");
+    std::fs::write(&config_file_path, "{}")?;
+
+    let sessions_dir = temp_dir.join("sessions");
+    std::fs::create_dir_all(&sessions_dir)?;
+
+    // Use task-local scopes to isolate configuration and workspace paths
+    let res = openz::config::loader::CONFIG_DIR_OVERRIDE.scope(temp_dir.clone(), async {
+        openz::config::loader::ACTIVE_WORKSPACE.scope(temp_dir.clone(), async {
+            // 2. Build mock provider response sequence:
+            // First turn: requests a tool call to 'calculator' with argument '2 + 2'
+            // Second turn: returns the final answer with result
+            let mock_responses = vec![
+                MockResponse {
+                    content: None,
+                    tool_calls: vec![ToolCallRequest {
+                        id: "call_999".to_string(),
+                        name: "calculator".to_string(),
+                        arguments: json!({ "expression": "2 + 2" }),
+                    }],
+                    finish_reason: "tool_calls".to_string(),
+                },
+                MockResponse {
+                    content: Some("The result of 2 + 2 is 4.".to_string()),
+                    tool_calls: Vec::new(),
+                    finish_reason: "stop".to_string(),
+                },
+            ];
+
+            let provider = Arc::new(TestMockProvider::new(mock_responses));
+            let session_manager = SessionManager::new(sessions_dir);
+
+            // Construct Config
+            let mut config = Config::default();
+            config.agents.defaults.model = "mock-model".to_string();
+            config.agents.defaults.provider = "mock-provider".to_string();
+
+            // Set up ToolRegistry and register our CalculatorTool
+            let registry = ToolRegistry::new_with_context(
+                config.clone(),
+                provider.clone(),
+                session_manager.clone(),
+            );
+            registry.register(Arc::new(CalculatorTool));
+
+            // 3. Construct and run AgentLoop
+            let agent = AgentLoop::new(config, provider.clone(), registry, session_manager);
+            let run_res = agent.run("What is 2 + 2?", "session-abc").await?;
+
+            // 4. Verify results
+            assert_eq!(run_res.content, "The result of 2 + 2 is 4.");
+            assert_eq!(run_res.tools_used, vec!["calculator"]);
+            
+            // Check that the provider was queried exactly twice
+            assert_eq!(provider.call_count.load(Ordering::SeqCst), 2);
+
+            Ok::<(), anyhow::Error>(())
+        }).await
+    }).await;
+
+    // Cleanup temp directory
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    res
+}

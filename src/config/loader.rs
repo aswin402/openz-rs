@@ -12,7 +12,14 @@ tokio::task_local! {
 pub fn resolve_path(path_str: &str) -> PathBuf {
     let base = ACTIVE_WORKSPACE.try_with(|w| w.clone()).ok();
 
-    let path = if path_str.starts_with("~/") || path_str == "~" {
+    let path = if path_str.starts_with("~/.openz/") || path_str == "~/.openz" {
+        let runtime_dir = config_dir();
+        if path_str == "~/.openz" {
+            runtime_dir
+        } else {
+            runtime_dir.join(&path_str["~/.openz/".len()..])
+        }
+    } else if path_str.starts_with("~/") || path_str == "~" {
         if let Some(home) = dirs::home_dir() {
             if path_str == "~" {
                 home
@@ -53,7 +60,9 @@ pub fn config_dir() -> PathBuf {
     } else if let Ok(override_dir) = std::env::var("OPENZ_CONFIG_DIR") {
         PathBuf::from(override_dir)
     } else {
-        resolve_path("~/.openz")
+        dirs::home_dir()
+            .map(|h| h.join(".openz"))
+            .unwrap_or_else(|| PathBuf::from("~/.openz"))
     }
 }
 
