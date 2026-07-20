@@ -47,32 +47,44 @@ fn str_display_width(s: &str) -> usize {
     s.chars().map(char_display_width).sum()
 }
 
-fn cli_re_ansi() -> &'static regex::Regex {
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").unwrap())
+fn cli_re_ansi() -> Option<&'static regex::Regex> {
+    static RE: OnceLock<Option<regex::Regex>> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").ok())
+        .as_ref()
 }
 
-fn cli_re_bold() -> &'static regex::Regex {
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"\*\*(.*?)\*\*").unwrap())
+fn cli_re_bold() -> Option<&'static regex::Regex> {
+    static RE: OnceLock<Option<regex::Regex>> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"\*\*(.*?)\*\*").ok())
+        .as_ref()
 }
 
-fn cli_re_code() -> &'static regex::Regex {
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"`(.*?)`").unwrap())
+fn cli_re_code() -> Option<&'static regex::Regex> {
+    static RE: OnceLock<Option<regex::Regex>> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"`(.*?)`").ok())
+        .as_ref()
 }
 
-fn cli_re_italic() -> &'static regex::Regex {
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"\*(.*?)\*").unwrap())
+fn cli_re_italic() -> Option<&'static regex::Regex> {
+    static RE: OnceLock<Option<regex::Regex>> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"\*(.*?)\*").ok())
+        .as_ref()
 }
 
 fn text_display_width(text: &str) -> usize {
     let mut cleaned = text.to_string();
-    cleaned = cli_re_ansi().replace_all(&cleaned, "").to_string();
-    cleaned = cli_re_bold().replace_all(&cleaned, "$1").to_string();
-    cleaned = cli_re_code().replace_all(&cleaned, "$1").to_string();
-    cleaned = cli_re_italic().replace_all(&cleaned, "$1").to_string();
+    if let Some(re) = cli_re_ansi() {
+        cleaned = re.replace_all(&cleaned, "").to_string();
+    }
+    if let Some(re) = cli_re_bold() {
+        cleaned = re.replace_all(&cleaned, "$1").to_string();
+    }
+    if let Some(re) = cli_re_code() {
+        cleaned = re.replace_all(&cleaned, "$1").to_string();
+    }
+    if let Some(re) = cli_re_italic() {
+        cleaned = re.replace_all(&cleaned, "$1").to_string();
+    }
     str_display_width(&cleaned)
 }
 
@@ -222,18 +234,24 @@ fn format_cell_text(text: &str) -> String {
         .replace("❌", &format!("{}{}{}", ERROR_RED, "❌", COLOR_RESET))
         .replace("✗", &format!("{}{}{}", ERROR_RED, "✗", COLOR_RESET));
 
-    formatted = cli_re_bold()
-        .replace_all(
-            &formatted,
-            &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET),
-        )
-        .to_string();
-    formatted = cli_re_code()
-        .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
-        .to_string();
-    formatted = cli_re_italic()
-        .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
-        .to_string();
+    if let Some(re) = cli_re_bold() {
+        formatted = re
+            .replace_all(
+                &formatted,
+                &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET),
+            )
+            .to_string();
+    }
+    if let Some(re) = cli_re_code() {
+        formatted = re
+            .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
+            .to_string();
+    }
+    if let Some(re) = cli_re_italic() {
+        formatted = re
+            .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
+            .to_string();
+    }
 
     formatted
 }
@@ -259,18 +277,24 @@ fn print_normal_line(line: &str) {
             .replace("❌", &format!("{}{}{}", ERROR_RED, "❌", COLOR_RESET))
             .replace("✗", &format!("{}{}{}", ERROR_RED, "✗", COLOR_RESET));
 
-        formatted = cli_re_bold()
-            .replace_all(
-                &formatted,
-                &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET),
-            )
-            .to_string();
-        formatted = cli_re_code()
-            .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
-            .to_string();
-        formatted = cli_re_italic()
-            .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
-            .to_string();
+        if let Some(re) = cli_re_bold() {
+            formatted = re
+                .replace_all(
+                    &formatted,
+                    &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET),
+                )
+                .to_string();
+        }
+        if let Some(re) = cli_re_code() {
+            formatted = re
+                .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
+                .to_string();
+        }
+        if let Some(re) = cli_re_italic() {
+            formatted = re
+                .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
+                .to_string();
+        }
 
         println!("{}", formatted);
     }
