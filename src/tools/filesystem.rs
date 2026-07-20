@@ -84,10 +84,6 @@ impl Tool for ReadFileTool {
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
         let path_str = arguments
             .get("path")
-            .or(arguments.get("TargetFile"))
-            .or(arguments.get("filepath"))
-            .or(arguments.get("file"))
-            .or(arguments.get("Path"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
         let path = resolve_path(path_str);
@@ -159,17 +155,10 @@ impl Tool for WriteFileTool {
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
         let path_str = arguments
             .get("path")
-            .or(arguments.get("TargetFile"))
-            .or(arguments.get("filepath"))
-            .or(arguments.get("file"))
-            .or(arguments.get("Path"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
         let content = arguments
             .get("content")
-            .or(arguments.get("code"))
-            .or(arguments.get("text"))
-            .or(arguments.get("content_str"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'content' argument"))?;
 
@@ -211,10 +200,6 @@ impl Tool for ListDirTool {
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
         let path_str = arguments
             .get("path")
-            .or(arguments.get("TargetFile"))
-            .or(arguments.get("filepath"))
-            .or(arguments.get("file"))
-            .or(arguments.get("Path"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
         let path = resolve_path(path_str);
@@ -267,17 +252,11 @@ impl Tool for PatchFileTool {
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
         let path_str = arguments
             .get("path")
-            .or(arguments.get("TargetFile"))
-            .or(arguments.get("filepath"))
-            .or(arguments.get("file"))
-            .or(arguments.get("Path"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
 
         let patch_str = arguments
             .get("patch")
-            .or(arguments.get("content"))
-            .or(arguments.get("diff"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'patch' argument"))?;
 
@@ -328,10 +307,6 @@ impl Tool for ReplaceLinesTool {
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
         let path_str = arguments
             .get("path")
-            .or(arguments.get("TargetFile"))
-            .or(arguments.get("filepath"))
-            .or(arguments.get("file"))
-            .or(arguments.get("Path"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
 
@@ -568,7 +543,6 @@ impl Tool for ZenflowEditTool {
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
         let path_str = arguments
             .get("path")
-            .or(arguments.get("TargetFile"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' parameter"))?;
         let content = arguments

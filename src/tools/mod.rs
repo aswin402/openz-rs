@@ -13,6 +13,49 @@ pub fn clamp_tool_timeout_secs(timeout_secs: u64) -> u64 {
     timeout_secs.clamp(MIN_TOOL_TIMEOUT_SECS, MAX_TOOL_TIMEOUT_SECS)
 }
 
+pub fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c.is_uppercase() {
+            if !result.is_empty() && !result.ends_with('_') {
+                result.push('_');
+            }
+            result.extend(c.to_lowercase());
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+pub fn normalize_tool_args(args: &serde_json::Value) -> serde_json::Value {
+    match args {
+        serde_json::Value::Object(map) => {
+            let mut new_map = serde_json::Map::new();
+            for (k, v) in map {
+                let normalized_k = match k.as_str() {
+                    "TargetFile" | "filepath" | "file" | "Path" | "AbsolutePath" | "DirectoryPath" => "path".to_string(),
+                    "CommandLine" | "Command" | "command_line" => "command".to_string(),
+                    "Query" => "query".to_string(),
+                    "Url" | "UrlContent" => "url".to_string(),
+                    "Action" => "action".to_string(),
+                    "text" | "content_str" => "content".to_string(),
+                    "diff" => "patch".to_string(),
+                    "ImageName" | "OutputPath" => "output_path".to_string(),
+                    other => to_snake_case(other),
+                };
+                new_map.insert(normalized_k, normalize_tool_args(v));
+            }
+            serde_json::Value::Object(new_map)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(normalize_tool_args).collect())
+        }
+        other => other.clone(),
+    }
+}
+
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &str;

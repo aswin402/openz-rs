@@ -11,7 +11,8 @@ pub(crate) struct ToolExecutionOutcome {
     pub should_halt: bool,
 }
 
-pub(crate) fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
+pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> String {
+    let args = crate::tools::normalize_tool_args(raw_args);
     let friendly_name = match name {
         "grep_search" => "Search",
         "read_file" | "view_file" => "Read",
@@ -45,13 +46,9 @@ pub(crate) fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
         other => other,
     };
 
-    let details = if let serde_json::Value::Object(map) = args {
+    let details = if let serde_json::Value::Object(map) = &args {
         if name == "grep_search" {
-            if let Some(q) = map
-                .get("query")
-                .or_else(|| map.get("Query"))
-                .and_then(|v| v.as_str())
-            {
+            if let Some(q) = map.get("query").and_then(|v| v.as_str()) {
                 if q.len() > 35 {
                     format!("query: \"{}...\"", q.chars().take(32).collect::<String>())
                 } else {
@@ -61,12 +58,7 @@ pub(crate) fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 String::new()
             }
         } else if name == "read_file" || name == "view_file" {
-            if let Some(path) = map
-                .get("path")
-                .or_else(|| map.get("Path"))
-                .or_else(|| map.get("AbsolutePath"))
-                .and_then(|v| v.as_str())
-            {
+            if let Some(path) = map.get("path").and_then(|v| v.as_str()) {
                 if let Some(filename) = std::path::Path::new(path).file_name() {
                     filename.to_string_lossy().to_string()
                 } else {
@@ -82,12 +74,7 @@ pub(crate) fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
             || name == "patch_file"
             || name == "replace_lines"
         {
-            if let Some(path) = map
-                .get("path")
-                .or_else(|| map.get("TargetFile"))
-                .or_else(|| map.get("Path"))
-                .and_then(|v| v.as_str())
-            {
+            if let Some(path) = map.get("path").and_then(|v| v.as_str()) {
                 if let Some(filename) = std::path::Path::new(path).file_name() {
                     filename.to_string_lossy().to_string()
                 } else {
@@ -97,13 +84,7 @@ pub(crate) fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 String::new()
             }
         } else if name == "run_command" || name == "exec_command" {
-            if let Some(cmd) = map
-                .get("CommandLine")
-                .or_else(|| map.get("Command"))
-                .or_else(|| map.get("command"))
-                .or_else(|| map.get("command_line"))
-                .and_then(|v| v.as_str())
-            {
+            if let Some(cmd) = map.get("command").and_then(|v| v.as_str()) {
                 let first_line = cmd.lines().next().unwrap_or("").trim();
                 if first_line.len() > 40 {
                     format!("{}...", first_line.chars().take(37).collect::<String>())
@@ -114,12 +95,7 @@ pub(crate) fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 String::new()
             }
         } else if name == "list_dir" {
-            if let Some(path) = map
-                .get("path")
-                .or_else(|| map.get("DirectoryPath"))
-                .or_else(|| map.get("Path"))
-                .and_then(|v| v.as_str())
-            {
+            if let Some(path) = map.get("path").and_then(|v| v.as_str()) {
                 if let Some(filename) = std::path::Path::new(path).file_name() {
                     filename.to_string_lossy().to_string()
                 } else {
@@ -129,23 +105,19 @@ pub(crate) fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 String::new()
             }
         } else if name == "git_manager" {
-            if let Some(action) = map.get("Action").and_then(|v| v.as_str()) {
+            if let Some(action) = map.get("action").and_then(|v| v.as_str()) {
                 action.to_string()
             } else {
                 String::new()
             }
         } else if name == "cargo_manager" {
-            if let Some(command) = map.get("Command").and_then(|v| v.as_str()) {
+            if let Some(command) = map.get("command").and_then(|v| v.as_str()) {
                 command.to_string()
             } else {
                 String::new()
             }
         } else if name == "web_search" {
-            if let Some(q) = map
-                .get("query")
-                .or_else(|| map.get("Query"))
-                .and_then(|v| v.as_str())
-            {
+            if let Some(q) = map.get("query").and_then(|v| v.as_str()) {
                 if q.len() > 35 {
                     format!("query: \"{}...\"", q.chars().take(32).collect::<String>())
                 } else {
@@ -155,11 +127,7 @@ pub(crate) fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 String::new()
             }
         } else if name == "web_fetch" || name == "read_url_content" || name == "read_url" {
-            if let Some(url) = map
-                .get("Url")
-                .or_else(|| map.get("url"))
-                .and_then(|v| v.as_str())
-            {
+            if let Some(url) = map.get("url").and_then(|v| v.as_str()) {
                 if url.len() > 35 {
                     format!("\"{}...\"", url.chars().take(32).collect::<String>())
                 } else {
@@ -169,11 +137,7 @@ pub(crate) fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 String::new()
             }
         } else if name == "generate_image" {
-            let path = map
-                .get("output_path")
-                .or_else(|| map.get("ImageName"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("output.png");
+            let path = map.get("output_path").and_then(|v| v.as_str()).unwrap_or("output.png");
             let filename = std::path::Path::new(path)
                 .file_name()
                 .map(|f| f.to_string_lossy().to_string())
@@ -329,12 +293,7 @@ pub(crate) fn format_tool_args(name: &str, args: &serde_json::Value) -> String {
                 format!("query: \"{}\"", query)
             }
         } else if name == "doc_reader" {
-            let path = map
-                .get("path")
-                .or_else(|| map.get("file_path"))
-                .or_else(|| map.get("Path"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let path = map.get("path").and_then(|v| v.as_str()).unwrap_or("");
             let filename = std::path::Path::new(path)
                 .file_name()
                 .map(|f| f.to_string_lossy().to_string())

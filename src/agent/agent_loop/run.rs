@@ -217,9 +217,10 @@ impl<'a> ToolExecutionPipeline<'a> {
     }
 
     fn resolve_timeout_secs(&self) -> u64 {
+        let normalized = crate::tools::normalize_tool_args(&self.params.call.arguments);
         resolve_tool_timeout_secs(
             &self.params.call.name,
-            &self.params.call.arguments,
+            &normalized,
             self.params.metadata.recommended_timeout_secs,
             self.params.config.agents.defaults.tool_timeout_secs,
         )
@@ -227,7 +228,8 @@ impl<'a> ToolExecutionPipeline<'a> {
 
     async fn run_with_spinner(&self, timeout_secs: u64) -> anyhow::Result<serde_json::Value> {
         let tool_timeout = std::time::Duration::from_secs(timeout_secs);
-        let fut = self.params.tool.call(&self.params.call.arguments);
+        let normalized = crate::tools::normalize_tool_args(&self.params.call.arguments);
+        let fut = self.params.tool.call(&normalized);
         let timed_fut = tokio::time::timeout(tool_timeout, fut);
         let tool_cancel_tx = crate::shutdown::cli_cancel_tx();
         let mut tool_cancel_rx = tool_cancel_tx.subscribe();

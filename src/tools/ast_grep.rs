@@ -63,10 +63,6 @@ impl Tool for AstGrepTool {
         let lang_for_spawn = lang.to_string();
         let path_arg = arguments
             .get("path")
-            .or(arguments.get("TargetFile"))
-            .or(arguments.get("filepath"))
-            .or(arguments.get("file"))
-            .or(arguments.get("Path"))
             .and_then(|v| v.as_str())
             .map(crate::config::resolve_path);
 
@@ -332,10 +328,6 @@ impl Tool for AstGrepIndexCodebaseTool {
 
             if let Some(path_str) = arguments
                 .get("path")
-                .or(arguments.get("TargetFile"))
-                .or(arguments.get("filepath"))
-                .or(arguments.get("file"))
-                .or(arguments.get("Path"))
                 .and_then(|v| v.as_str())
             {
                 let resolved = crate::config::resolve_path(path_str);
