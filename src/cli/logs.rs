@@ -7,6 +7,7 @@ pub async fn handle_logs(
     session: Option<String>,
     level: Option<String>,
     global: bool,
+    search: Option<String>,
 ) -> Result<()> {
     let is_global = global || session.as_deref() == Some("global");
 
@@ -63,5 +64,5 @@ pub async fn handle_logs(
 
     let filter = crate::logs::SessionFilter::from_opt(Some(&target_session));
     let level_filter = crate::logs::LogLevelFilter::from_opt(level.as_deref());
-    crate::logs::run_logs_viewer(path, effective_tail, filter, level_filter).await
+    crate::logs::run_logs_viewer(path, effective_tail, filter, level_filter, search).await
 }

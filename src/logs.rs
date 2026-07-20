@@ -69,6 +69,10 @@ pub async fn init_db_writer(mut rx: tokio::sync::mpsc::UnboundedReceiver<LogEntr
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_session ON logs (session)", []);
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs (timestamp)", []);
 
+        // Purge logs older than 7 days on startup
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
+        let _ = conn.execute("DELETE FROM logs WHERE timestamp < ?1", [&cutoff]);
+
         while let Some(entry) = rx.blocking_recv() {
             let _ = conn.execute(
                 "INSERT INTO logs (timestamp, level, target, message, session) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -680,7 +684,7 @@ fn extract_quoted_field(text: &str, field_prefix: &str) -> Option<String> {
     None
 }
 
-fn print_line_filtered(raw: &str, filter: &SessionFilter, level_filter: &LogLevelFilter) {
+fn print_line_filtered(raw: &str, filter: &SessionFilter, level_filter: &LogLevelFilter, search: Option<&str>) {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
@@ -696,6 +700,15 @@ fn print_line_filtered(raw: &str, filter: &SessionFilter, level_filter: &LogLeve
 
     if !level_filter.matches(p.level) {
         return;
+    }
+
+    if let Some(q) = search {
+        let q_lower = q.to_lowercase();
+        let msg_lower = p.message.to_lowercase();
+        let target_lower = p.target.to_lowercase();
+        if !msg_lower.contains(&q_lower) && !target_lower.contains(&q_lower) {
+            return;
+        }
     }
 
     // Shorten timestamp: keep "HH:MM:SS" only (chars 11..19)
@@ -814,6 +827,7 @@ fn print_tail(
     tail: usize,
     filter: &SessionFilter,
     level_filter: &LogLevelFilter,
+    search: Option<&str>,
 ) -> Result<u64> {
     let mut f = match File::open(path) {
         Ok(f) => f,
@@ -878,7 +892,7 @@ fn print_tail(
     lines.reverse();
 
     for line in &lines {
-        print_line_filtered(line, filter, level_filter);
+        print_line_filtered(line, filter, level_filter, search);
     }
 
     Ok(file_len)
@@ -904,6 +918,7 @@ fn read_new_bytes(
     filter: &SessionFilter,
     level_filter: &LogLevelFilter,
     current_file_id: &mut Option<u64>,
+    search: Option<&str>,
 ) {
     if let Ok(mut f) = File::open(path) {
         if let Ok(metadata) = f.metadata() {
@@ -936,7 +951,7 @@ fn read_new_bytes(
                         let complete_bytes = &buffer[..=last_newline_idx];
                         let text = String::from_utf8_lossy(complete_bytes);
                         for line in text.lines() {
-                            print_line_filtered(line, filter, level_filter);
+                            print_line_filtered(line, filter, level_filter, search);
                         }
                         *buffer = buffer[last_newline_idx + 1..].to_vec();
                         let _ = std::io::stdout().flush();
@@ -969,6 +984,7 @@ async fn follow(
     mut pos: u64,
     mut filter: SessionFilter,
     level_filter: LogLevelFilter,
+    search: Option<&str>,
 ) -> Result<()> {
     let ctrl_c = tokio::signal::ctrl_c();
     tokio::pin!(ctrl_c);
@@ -1023,7 +1039,7 @@ async fn follow(
                 break Ok(());
             }
             _ = notify_rx.recv(), if notify_available => {
-                read_new_bytes(path, &mut pos, &mut buffer, &filter, &level_filter, &mut current_file_id);
+                read_new_bytes(path, &mut pos, &mut buffer, &filter, &level_filter, &mut current_file_id, search);
                 if last_session_check.elapsed() >= Duration::from_secs(1) {
                     last_session_check = std::time::Instant::now();
                     update_auto_session(&mut filter);
@@ -1031,7 +1047,7 @@ async fn follow(
             }
             _ = interval.tick() => {
                 if !notify_available {
-                    read_new_bytes(path, &mut pos, &mut buffer, &filter, &level_filter, &mut current_file_id);
+                    read_new_bytes(path, &mut pos, &mut buffer, &filter, &level_filter, &mut current_file_id, search);
                 }
                 if last_session_check.elapsed() >= Duration::from_secs(1) {
                     last_session_check = std::time::Instant::now();
@@ -1070,6 +1086,7 @@ pub fn print_row(
     session: Option<&str>,
     filter: &SessionFilter,
     level_filter: &LogLevelFilter,
+    search: Option<&str>,
 ) {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -1083,6 +1100,15 @@ pub fn print_row(
     // Check level filter
     if !level_filter.matches(level) {
         return;
+    }
+
+    if let Some(q) = search {
+        let q_lower = q.to_lowercase();
+        let msg_lower = message.to_lowercase();
+        let target_lower = target.to_lowercase();
+        if !msg_lower.contains(&q_lower) && !target_lower.contains(&q_lower) {
+            return;
+        }
     }
 
     // Shorten timestamp: HH:MM:SS (chars 11..19 of RFC3339)
@@ -1171,6 +1197,7 @@ fn print_tail_sqlite(
     tail: usize,
     filter: &SessionFilter,
     level_filter: &LogLevelFilter,
+    search: Option<&str>,
 ) -> Result<i64> {
     let conn = rusqlite::Connection::open(db_path)?;
     let mut stmt = conn.prepare(
@@ -1208,7 +1235,7 @@ fn print_tail_sqlite(
 
     let mut last_id = 0;
     for r in &rows {
-        print_row(&r.timestamp, &r.level, &r.target, &r.message, r.session.as_deref(), filter, level_filter);
+        print_row(&r.timestamp, &r.level, &r.target, &r.message, r.session.as_deref(), filter, level_filter, search);
         last_id = r.id;
     }
 
@@ -1220,6 +1247,7 @@ async fn follow_sqlite(
     mut last_id: i64,
     mut filter: SessionFilter,
     level_filter: LogLevelFilter,
+    search: Option<&str>,
 ) -> Result<()> {
     let ctrl_c = tokio::signal::ctrl_c();
     tokio::pin!(ctrl_c);
@@ -1253,7 +1281,7 @@ async fn follow_sqlite(
                         }) {
                             for row in rows_iter {
                                 if let Ok((id, timestamp, level, target, message, session)) = row {
-                                    print_row(&timestamp, &level, &target, &message, session.as_deref(), &filter, &level_filter);
+                                    print_row(&timestamp, &level, &target, &message, session.as_deref(), &filter, &level_filter, search);
                                     last_id = id;
                                 }
                             }
@@ -1277,6 +1305,7 @@ pub async fn run_logs_viewer(
     tail: usize,
     filter: SessionFilter,
     level_filter: LogLevelFilter,
+    search: Option<String>,
 ) -> Result<()> {
     let path = log_path.unwrap_or_else(default_db_path);
 
@@ -1295,14 +1324,14 @@ pub async fn run_logs_viewer(
 
     if is_sqlite {
         print_header(&path, tail, &effective_filter, &level_filter);
-        let last_id = print_tail_sqlite(&path, tail, &effective_filter, &level_filter)?;
+        let last_id = print_tail_sqlite(&path, tail, &effective_filter, &level_filter, search.as_deref())?;
         println!("\n  {PURPLE}{DIM}── live ──{RESET}\n");
-        follow_sqlite(&path, last_id, effective_filter, level_filter).await
+        follow_sqlite(&path, last_id, effective_filter, level_filter, search.as_deref()).await
     } else {
         print_header(&path, tail, &effective_filter, &level_filter);
-        let pos = print_tail(&path, tail, &effective_filter, &level_filter)?;
+        let pos = print_tail(&path, tail, &effective_filter, &level_filter, search.as_deref())?;
         println!("\n  {PURPLE}{DIM}── live ──{RESET}\n");
-        follow(&path, pos, effective_filter, level_filter).await
+        follow(&path, pos, effective_filter, level_filter, search.as_deref()).await
     }
 }
 
@@ -1333,9 +1362,9 @@ pub fn print_session_recent_logs(
     };
 
     if is_sqlite {
-        let _ = print_tail_sqlite(&path, tail, &filter, &level_filter)?;
+        let _ = print_tail_sqlite(&path, tail, &filter, &level_filter, None)?;
     } else {
-        let _ = print_tail(&path, tail, &filter, &level_filter)?;
+        let _ = print_tail(&path, tail, &filter, &level_filter, None)?;
     }
     Ok(())
 }
@@ -1471,11 +1500,11 @@ mod tests {
 
         let filter = SessionFilter::Only("session-123".to_string());
         let level_filter = LogLevelFilter::Trace;
-        let last_id = print_tail_sqlite(&db_path, 10, &filter, &level_filter).unwrap();
+        let last_id = print_tail_sqlite(&db_path, 10, &filter, &level_filter, None).unwrap();
         assert_eq!(last_id, 2);
 
         let error_level_filter = LogLevelFilter::Error;
-        let last_id_error = print_tail_sqlite(&db_path, 10, &filter, &error_level_filter).unwrap();
+        let last_id_error = print_tail_sqlite(&db_path, 10, &filter, &error_level_filter, None).unwrap();
         assert_eq!(last_id_error, 2);
 
         let _ = std::fs::remove_file(&db_path);

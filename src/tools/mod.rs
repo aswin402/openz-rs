@@ -1507,3 +1507,5 @@ pub mod watcher;
 pub mod web;
 pub mod web_search;
 pub mod get_logs;
+pub mod manage_whitelist;
+

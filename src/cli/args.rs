@@ -56,6 +56,8 @@ pub enum Command {
         level: Option<String>,
         #[arg(long, short)]
         global: bool,
+        #[arg(long, short)]
+        search: Option<String>,
     },
     Changelog,
     Streaming,
