@@ -219,16 +219,20 @@ fn session_matches(line_sessions: &[String], filter: &SessionFilter) -> bool {
 // ── Pretty-print a single line ──────────────────────────────────────────────
 
 fn highlight_message(msg: &str) -> String {
-    static RE_KEY: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re_key = RE_KEY.get_or_init(|| regex::Regex::new(r#""([^"]+)":\s*"#).unwrap());
+    static RE_KEY: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
+    let re_key = RE_KEY
+        .get_or_init(|| regex::Regex::new(r#""([^"]+)":\s*"#).ok())
+        .as_ref();
 
-    static RE_VAL_NUM: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static RE_VAL_NUM: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
     let re_val_num = RE_VAL_NUM
-        .get_or_init(|| regex::Regex::new(r#"\b(true|false|null|\d+(\.\d+)?)\b"#).unwrap());
+        .get_or_init(|| regex::Regex::new(r#"\b(true|false|null|\d+(\.\d+)?)\b"#).ok())
+        .as_ref();
 
-    static RE_STR_LITERAL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re_str_literal =
-        RE_STR_LITERAL.get_or_init(|| regex::Regex::new(r#""([^\x1b"]+)""#).unwrap());
+    static RE_STR_LITERAL: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
+    let re_str_literal = RE_STR_LITERAL
+        .get_or_init(|| regex::Regex::new(r#""([^\x1b"]+)""#).ok())
+        .as_ref();
 
     if !msg.contains('{') && !msg.contains('[') {
         return msg.to_string();
@@ -238,24 +242,30 @@ fn highlight_message(msg: &str) -> String {
     let prefix = &msg[..start_idx];
     let json_part = &msg[start_idx..];
 
-    let highlighted_json = json_part.to_string();
-    let highlighted_json = re_key
-        .replace_all(&highlighted_json, |caps: &regex::Captures| {
-            format!("\"{}{}{}\": ", CYAN, &caps[1], RESET)
-        })
-        .to_string();
+    let mut highlighted_json = json_part.to_string();
+    if let Some(re_key) = re_key {
+        highlighted_json = re_key
+            .replace_all(&highlighted_json, |caps: &regex::Captures| {
+                format!("\"{}{}{}\": ", CYAN, &caps[1], RESET)
+            })
+            .to_string();
+    }
 
-    let highlighted_json = re_val_num
-        .replace_all(&highlighted_json, |caps: &regex::Captures| {
-            format!("{}{}{}", ORANGE, &caps[1], RESET)
-        })
-        .to_string();
+    if let Some(re_val_num) = re_val_num {
+        highlighted_json = re_val_num
+            .replace_all(&highlighted_json, |caps: &regex::Captures| {
+                format!("{}{}{}", ORANGE, &caps[1], RESET)
+            })
+            .to_string();
+    }
 
-    let highlighted_json = re_str_literal
-        .replace_all(&highlighted_json, |caps: &regex::Captures| {
-            format!("\"{}{}{}\"", GREEN, &caps[1], RESET)
-        })
-        .to_string();
+    if let Some(re_str_literal) = re_str_literal {
+        highlighted_json = re_str_literal
+            .replace_all(&highlighted_json, |caps: &regex::Captures| {
+                format!("\"{}{}{}\"", GREEN, &caps[1], RESET)
+            })
+            .to_string();
+    }
 
     format!("{}{}", prefix, highlighted_json)
 }
@@ -520,7 +530,9 @@ fn extract_quoted_field(text: &str, field_prefix: &str) -> Option<String> {
                 if c == '\\' {
                     if let Some(&next_c) = chars.peek() {
                         if next_c == '"' || next_c == '\\' {
-                            val.push(chars.next().unwrap());
+                            if let Some(escaped) = chars.next() {
+                                val.push(escaped);
+                            }
                         } else {
                             val.push(c);
                         }
