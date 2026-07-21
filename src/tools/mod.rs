@@ -1453,6 +1453,7 @@ mod route_cache_tests {
 
 pub mod ast_grep;
 pub mod browser_common;
+pub mod browser_status;
 pub mod cargo_manager;
 pub mod clipboard;
 pub mod compiler_auto_heal;

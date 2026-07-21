@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.62`
+# OpenZ 🦊 `v0.0.63`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.63`
+
+- **Native Browser Status Inspection Tool (`inspect_browsers`)**: Added a native diagnostic tool to inspect running Firefox GeckoDriver (port 4444), Chrome CDP (port 9222), `gsd-browser` daemon health/pages, and `logs.db` recent browser errors.
+- **De-duplicated Subagent Orchestration**: Consolidated workspace setup, git worktree lifecycle, database branch simulation spaces, cancel guards, schema validation reflection, and evolution review into a shared `SubagentRunContext` helper module.
+- **Tool Metadata Architecture Refactor**: Refactored `ToolMetadata` into a clean builder pattern, defined dynamic domain keyword matching, overrode `metadata()` directly on core tools, and eliminated 800+ lines of duplicate match statements in `src/tools/mod.rs`.
 
 ## What Changed In `v0.0.62`
 

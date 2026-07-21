@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.62 (Latest Release)
+### v0.0.63 (Latest Release)
+
+**Native Browser Status Inspection & Subagent Orchestration Consolidation:**
+*   **Feature:** Built native `inspect_browsers` tool for OpenZ to monitor running browser sessions (Firefox GeckoDriver port 4444, Chrome CDP port 9222), `gsd-browser` background daemons/pages, and recent browser error logs from `logs.db`.
+*   **Architecture:** De-duplicated subagent orchestration into `SubagentRunContext` and `CancelGuard`, removing 800+ lines of duplicate workspace, git worktree, database branch, and reflection loop boilerplate.
+*   **Architecture:** Refactored `ToolMetadata` into a clean builder pattern, defined dynamic domain keyword matching, and overrode `metadata()` directly on tool implementations in `src/tools/mod.rs`.
+*   **Chore:** Bumped version to `v0.0.63`.
+
+### v0.0.62
 
 **Operational Source-Context Guard:**
 *   **Fix:** Local operational prompts such as opening a generated website/video now skip research/source-memory retrieval, so unrelated saved source footers do not appear during app/file launch turns.

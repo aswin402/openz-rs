@@ -6,6 +6,7 @@ use anyhow::Result;
 use std::sync::Arc;
 
 use crate::cli::is_silent_mode;
+use crate::tools::browser_status::InspectBrowsersTool;
 use crate::tools::cron::{ListJobsTool, RemoveJobTool, ScheduleJobTool};
 use crate::tools::db_inspector::{DbInspectorTool, DbWriteTool};
 use crate::tools::doc_reader::DocReaderTool;
@@ -90,6 +91,7 @@ fn register_core_tools(
     registry.register(std::sync::Arc::new(WebFetchTool::new()));
     registry.register(std::sync::Arc::new(crate::tools::get_logs::GetLogsTool));
     registry.register(std::sync::Arc::new(crate::tools::manage_whitelist::ManageWhitelistTool));
+    registry.register(std::sync::Arc::new(InspectBrowsersTool));
     registry.register(std::sync::Arc::new(DelegateTaskTool {
         config: config.clone(),
         parent_provider: provider.clone(),
