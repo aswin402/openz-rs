@@ -271,5 +271,7 @@ pub async fn handle_agent() -> Result<()> {
     crate::agent::activity::remove_active_tui_session(&session_key);
     crate::shutdown::trigger();
     crate::channels::shutdown_gateways_bounded(&config).await;
-    Ok(())
+    let _ = crossterm::terminal::disable_raw_mode();
+    std::process::exit(0);
 }
+

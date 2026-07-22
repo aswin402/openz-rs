@@ -218,9 +218,9 @@ async fn async_main() -> anyhow::Result<()> {
         tracing::info!("Shutdown signal received — initiating graceful exit");
         openz::shutdown::trigger();
 
-        // Give in-flight tools up to 5 seconds to finish, then force exit
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        tracing::warn!("Forced exit after 5s graceful window");
+        // Give in-flight tools up to 2 seconds to finish, then force exit
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tracing::warn!("Forced exit after 2s graceful window");
         let _ = crossterm::terminal::disable_raw_mode();
         std::process::exit(0);
     });

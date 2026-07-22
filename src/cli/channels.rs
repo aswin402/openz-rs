@@ -56,7 +56,7 @@ pub async fn handle_telegram() -> Result<()> {
     }
 
     crate::channels::shutdown_gateways_bounded(&config).await;
-    Ok(())
+    std::process::exit(0);
 }
 
 pub async fn handle_discord() -> Result<()> {
@@ -88,7 +88,7 @@ pub async fn handle_discord() -> Result<()> {
     }
 
     crate::channels::shutdown_gateways_bounded(&config).await;
-    Ok(())
+    std::process::exit(0);
 }
 
 pub async fn handle_whatsapp() -> Result<()> {
@@ -128,7 +128,7 @@ pub async fn handle_whatsapp() -> Result<()> {
     }
 
     crate::channels::shutdown_gateways_bounded(&config).await;
-    Ok(())
+    std::process::exit(0);
 }
 
 pub async fn handle_email() -> Result<()> {
@@ -150,7 +150,7 @@ pub async fn handle_email() -> Result<()> {
     }
 
     crate::channels::shutdown_gateways_bounded(&config).await;
-    Ok(())
+    std::process::exit(0);
 }
 
 pub fn is_telegram_configured(config: &Config) -> bool {
