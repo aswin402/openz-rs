@@ -658,6 +658,23 @@ fn available_bytes(_path: &std::path::Path) -> Option<u64> {
     None
 }
 
+fn safely_remove_worktree_dir(path: &std::path::Path) {
+    if !path.exists() {
+        return;
+    }
+    // Attempt git worktree remove --force first to unregister cleanly from git index
+    let _ = std::process::Command::new("git")
+        .args(["worktree", "remove", "--force", &path.to_string_lossy()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    if path.exists() {
+        let _ = std::fs::remove_dir_all(path);
+    }
+}
+
 pub fn cleanup_worktrees_dir(worktrees_dir: &std::path::Path, policy: WorktreeCleanupPolicy) {
     if !worktrees_dir.exists() || !worktrees_dir.is_dir() {
         return;
@@ -676,7 +693,7 @@ pub fn cleanup_worktrees_dir(worktrees_dir: &std::path::Path, policy: WorktreeCl
                 path = %candidate.path.display(),
                 "Removing expired OpenZ subagent worktree"
             );
-            let _ = std::fs::remove_dir_all(&candidate.path);
+            safely_remove_worktree_dir(&candidate.path);
         }
     }
 
@@ -687,7 +704,7 @@ pub fn cleanup_worktrees_dir(worktrees_dir: &std::path::Path, policy: WorktreeCl
                 path = %candidate.path.display(),
                 "Removing oldest OpenZ subagent worktree to satisfy count quota"
             );
-            let _ = std::fs::remove_dir_all(&candidate.path);
+            safely_remove_worktree_dir(&candidate.path);
         }
         candidates = collect_worktree_candidates(worktrees_dir);
     }
@@ -709,7 +726,7 @@ pub fn cleanup_worktrees_dir(worktrees_dir: &std::path::Path, policy: WorktreeCl
                 total_bytes,
                 "Removing oldest OpenZ subagent worktree to satisfy disk quota"
             );
-            let _ = std::fs::remove_dir_all(&candidate.path);
+            safely_remove_worktree_dir(&candidate.path);
         } else {
             break;
         }
@@ -770,21 +787,26 @@ fn enforce_disk_quota() {
 }
 
 pub fn cleanup_stale_resources() {
-    // 1. Run git worktree prune in current directory if it's a git repo
-    let parent_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let git_check = std::process::Command::new("git")
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .current_dir(&parent_dir)
-        .output();
-    if let Ok(out) = git_check {
-        if out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "true" {
-            let _ = std::process::Command::new("git")
-                .args(["worktree", "prune"])
-                .current_dir(&parent_dir)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+    // 1. Run git worktree prune in both workspace root and current directory if it's a git repo
+    let target_dirs = [
+        current_workspace_root(),
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+    ];
+    for dir in &target_dirs {
+        let git_check = std::process::Command::new("git")
+            .args(["rev-parse", "--is-inside-work-tree"])
+            .current_dir(dir)
+            .output();
+        if let Ok(out) = git_check {
+            if out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "true" {
+                let _ = std::process::Command::new("git")
+                    .args(["worktree", "prune"])
+                    .current_dir(dir)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
         }
     }
 
@@ -802,7 +824,7 @@ pub fn cleanup_stale_resources() {
             if path.is_dir() {
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 if name.starts_with("openz_worktree_") && is_older_than(&path, ttl_seconds) {
-                    let _ = std::fs::remove_dir_all(&path);
+                    safely_remove_worktree_dir(&path);
                 }
             }
         }
