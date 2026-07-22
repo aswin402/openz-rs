@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.63`
+# OpenZ 🦊 `v0.0.64`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -12,7 +12,11 @@ OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-
 
 ---
 
-## What Changed In `v0.0.63`
+## What Changed In `v0.0.64`
+
+- **Performance & Footprint Optimization**: Integrated `tikv-jemallocator` global allocator, capped SQLite memory caches, 5-minute FastEmbed idle eviction, and automatic DB WAL vacuum on startup.
+- **SecurityGuard Hardening**: Added recursive shell subcommand unnesting (`sh -c`, `bash -c`, `eval`, `python -c`) and quote delimiter support to prevent security rule evasion.
+- **Resilience & Network Stability**: Subagent git worktrees now unregister cleanly before disk removal, and disconnected WebSocket Gateway clients are safely cleaned up via RAII guard.
 
 - **Native Browser Status Inspection Tool (`inspect_browsers`)**: Added a native diagnostic tool to inspect running Firefox GeckoDriver (port 4444), Chrome CDP (port 9222), `gsd-browser` daemon health/pages, and `logs.db` recent browser errors.
 - **De-duplicated Subagent Orchestration**: Consolidated workspace setup, git worktree lifecycle, database branch simulation spaces, cancel guards, schema validation reflection, and evolution review into a shared `SubagentRunContext` helper module.

@@ -24,6 +24,8 @@ impl SecurityGuard {
                     || prev == '`'
                     || prev == '$'
                     || prev == '('
+                    || prev == '\''
+                    || prev == '"'
             };
 
             let after_idx = idx + bin.len();
@@ -39,6 +41,8 @@ impl SecurityGuard {
                     || next == ')'
                     || next == ','
                     || next == '.'
+                    || next == '\''
+                    || next == '"'
             };
 
             before && after
@@ -375,6 +379,83 @@ impl SecurityGuard {
         commands
     }
 
+    /// Recursively unwraps command strings wrapped in shell runners (sh -c, bash -c, eval, python -c, etc.)
+    /// returning all command strings (both outer wrapper and unwrapped inner payloads).
+    pub fn unwrap_command_payloads(cmd: &str) -> Vec<String> {
+        let mut results = Vec::new();
+        let mut stack = vec![(cmd.to_string(), 0)];
+
+        while let Some((current_cmd, depth)) = stack.pop() {
+            let trimmed = current_cmd.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if !results.iter().any(|r: &String| r == trimmed) {
+                results.push(trimmed.to_string());
+            }
+
+            if depth >= 5 {
+                continue;
+            }
+
+            let args = Self::parse_arguments(trimmed);
+            let commands = Self::split_commands(&args);
+
+            for command in commands {
+                if command.is_empty() {
+                    continue;
+                }
+
+                let mut exec_idx = None;
+                for (i, word) in command.iter().enumerate() {
+                    let is_env = word.contains('=')
+                        && !word.starts_with('-')
+                        && !word.starts_with('/')
+                        && !word.starts_with('.')
+                        && !word.starts_with('\\');
+                    if !is_env {
+                        exec_idx = Some(i);
+                        break;
+                    }
+                }
+
+                if let Some(idx) = exec_idx {
+                    let exec_name = command[idx].to_lowercase();
+                    let bin_name = exec_name.split('/').last().unwrap_or(&exec_name);
+
+                    if matches!(bin_name, "sh" | "bash" | "zsh" | "dash" | "ksh" | "su" | "sudo") {
+                        let mut i = idx + 1;
+                        while i < command.len() {
+                            let arg = &command[i];
+                            if (arg == "-c" || arg == "-lc" || arg == "--command") && i + 1 < command.len() {
+                                stack.push((command[i + 1].clone(), depth + 1));
+                                break;
+                            }
+                            i += 1;
+                        }
+                    } else if bin_name == "eval" || bin_name == "exec" {
+                        if idx + 1 < command.len() {
+                            let inner = command[idx + 1..].join(" ");
+                            stack.push((inner, depth + 1));
+                        }
+                    } else if matches!(bin_name, "python" | "python3" | "perl" | "ruby") {
+                        let mut i = idx + 1;
+                        while i < command.len() {
+                            let arg = &command[i];
+                            if (arg == "-c" || arg == "-e") && i + 1 < command.len() {
+                                stack.push((command[i + 1].clone(), depth + 1));
+                                break;
+                            }
+                            i += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        results
+    }
+
     /// Check if a tool call is sensitive and needs user approval.
     pub fn is_sensitive(tool_name: &str, arguments: &Value) -> bool {
         Self::is_sensitive_with_mode(tool_name, arguments, "strict")
@@ -384,70 +465,73 @@ impl SecurityGuard {
     pub fn is_forbidden(tool_name: &str, arguments: &Value) -> bool {
         if tool_name == "exec_command" {
             if let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) {
-                let cmd_lower = cmd.to_lowercase();
+                let payloads = Self::unwrap_command_payloads(cmd);
+                for payload in payloads {
+                    let cmd_lower = payload.to_lowercase();
 
-                let has_raw_rm_root = Self::has_bin(&cmd_lower, "rm")
-                    && (cmd_lower.contains(" /")
-                        || cmd_lower.contains("rm -rf /")
-                        || cmd_lower.contains("rm -rf ~")
-                        || cmd_lower.contains("rm -rf $home"));
-                let has_destructive_device = Self::has_bin(&cmd_lower, "dd")
-                    || Self::has_bin(&cmd_lower, "mkfs")
-                    || Self::has_bin(&cmd_lower, "fdisk")
-                    || Self::has_bin(&cmd_lower, "format")
-                    || Self::has_bin(&cmd_lower, "parted");
-                let has_system_kill = Self::has_bin(&cmd_lower, "shutdown")
-                    || Self::has_bin(&cmd_lower, "reboot")
-                    || Self::has_bin(&cmd_lower, "poweroff")
-                    || Self::has_bin(&cmd_lower, "halt");
+                    let has_raw_rm_root = Self::has_bin(&cmd_lower, "rm")
+                        && (cmd_lower.contains(" /")
+                            || cmd_lower.contains("rm -rf /")
+                            || cmd_lower.contains("rm -rf ~")
+                            || cmd_lower.contains("rm -rf $home"));
+                    let has_destructive_device = Self::has_bin(&cmd_lower, "dd")
+                        || Self::has_bin(&cmd_lower, "mkfs")
+                        || Self::has_bin(&cmd_lower, "fdisk")
+                        || Self::has_bin(&cmd_lower, "format")
+                        || Self::has_bin(&cmd_lower, "parted");
+                    let has_system_kill = Self::has_bin(&cmd_lower, "shutdown")
+                        || Self::has_bin(&cmd_lower, "reboot")
+                        || Self::has_bin(&cmd_lower, "poweroff")
+                        || Self::has_bin(&cmd_lower, "halt");
 
-                if has_raw_rm_root || has_destructive_device || has_system_kill {
-                    return true;
-                }
-
-                let args = Self::parse_arguments(cmd);
-                let commands = Self::split_commands(&args);
-                for command in commands {
-                    let mut exec_idx = None;
-                    for (i, word) in command.iter().enumerate() {
-                        let is_env = word.contains('=')
-                            && !word.starts_with('-')
-                            && !word.starts_with('/')
-                            && !word.starts_with('.')
-                            && !word.starts_with('\\');
-                        if !is_env {
-                            exec_idx = Some(i);
-                            break;
-                        }
+                    if has_raw_rm_root || has_destructive_device || has_system_kill {
+                        return true;
                     }
 
-                    if let Some(idx) = exec_idx {
-                        let exec = &command[idx];
-                        let exec_lower = exec.to_lowercase();
-                        let is_rm = exec_lower == "rm" || exec_lower.ends_with("/rm");
-                        let is_rmdir = exec_lower == "rmdir" || exec_lower.ends_with("/rmdir");
-                        let is_unlink = exec_lower == "unlink" || exec_lower.ends_with("/unlink");
+                    let args = Self::parse_arguments(&payload);
+                    let commands = Self::split_commands(&args);
+                    for command in commands {
+                        let mut exec_idx = None;
+                        for (i, word) in command.iter().enumerate() {
+                            let is_env = word.contains('=')
+                                && !word.starts_with('-')
+                                && !word.starts_with('/')
+                                && !word.starts_with('.')
+                                && !word.starts_with('\\');
+                            if !is_env {
+                                exec_idx = Some(i);
+                                break;
+                            }
+                        }
 
-                        if is_rm || is_rmdir || is_unlink {
-                            let mut check_all = false;
-                            for arg in &command[idx + 1..] {
-                                if arg == "--" {
-                                    check_all = true;
-                                    continue;
-                                }
-                                if !check_all && arg.starts_with('-') {
-                                    continue;
-                                }
-                                if arg == ">"
-                                    || arg == ">>"
-                                    || arg == "<"
-                                    || arg == "2>"
-                                    || arg == "2>&1"
-                                {
-                                    break;
-                                }
-                                if Self::is_dangerous_delete_path(arg) {
-                                    return true;
+                        if let Some(idx) = exec_idx {
+                            let exec = &command[idx];
+                            let exec_lower = exec.to_lowercase();
+                            let is_rm = exec_lower == "rm" || exec_lower.ends_with("/rm");
+                            let is_rmdir = exec_lower == "rmdir" || exec_lower.ends_with("/rmdir");
+                            let is_unlink = exec_lower == "unlink" || exec_lower.ends_with("/unlink");
+
+                            if is_rm || is_rmdir || is_unlink {
+                                let mut check_all = false;
+                                for arg in &command[idx + 1..] {
+                                    if arg == "--" {
+                                        check_all = true;
+                                        continue;
+                                    }
+                                    if !check_all && arg.starts_with('-') {
+                                        continue;
+                                    }
+                                    if arg == ">"
+                                        || arg == ">>"
+                                        || arg == "<"
+                                        || arg == "2>"
+                                        || arg == "2>&1"
+                                    {
+                                        break;
+                                    }
+                                    if Self::is_dangerous_delete_path(arg) {
+                                        return true;
+                                    }
                                 }
                             }
                         }
@@ -471,106 +555,109 @@ impl SecurityGuard {
                     }
                 }
 
-                let cmd_lower = cmd.to_lowercase();
+                let payloads = Self::unwrap_command_payloads(cmd);
+                for payload in &payloads {
+                    let cmd_lower = payload.to_lowercase();
 
-                // Always block privilege escalation and system control regardless of mode
-                let has_privilege = Self::has_bin(&cmd_lower, "sudo")
-                    || Self::has_bin(&cmd_lower, "su")
-                    || Self::has_bin(&cmd_lower, "chmod")
-                    || Self::has_bin(&cmd_lower, "chown")
-                    || Self::has_bin(&cmd_lower, "eval")
-                    || Self::has_bin(&cmd_lower, "source");
-                let has_system = Self::has_bin(&cmd_lower, "shutdown")
-                    || Self::has_bin(&cmd_lower, "reboot")
-                    || Self::has_bin(&cmd_lower, "poweroff")
-                    || Self::has_bin(&cmd_lower, "halt");
+                    // Always block privilege escalation and system control regardless of mode
+                    let has_privilege = Self::has_bin(&cmd_lower, "sudo")
+                        || Self::has_bin(&cmd_lower, "su")
+                        || Self::has_bin(&cmd_lower, "chmod")
+                        || Self::has_bin(&cmd_lower, "chown")
+                        || Self::has_bin(&cmd_lower, "eval")
+                        || Self::has_bin(&cmd_lower, "source");
+                    let has_system = Self::has_bin(&cmd_lower, "shutdown")
+                        || Self::has_bin(&cmd_lower, "reboot")
+                        || Self::has_bin(&cmd_lower, "poweroff")
+                        || Self::has_bin(&cmd_lower, "halt");
 
-                if has_privilege || has_system {
-                    return true;
-                }
+                    if has_privilege || has_system {
+                        return true;
+                    }
 
-                // Always block piping network scripts to shell in ALL modes (curl ... | bash)
-                let has_pipe_to_shell = {
-                    let mut parts = cmd_lower.split('|');
-                    parts.next(); // skip first command
-                    parts.any(|part| {
-                        Self::has_bin(part, "sh")
-                            || Self::has_bin(part, "bash")
-                            || Self::has_bin(part, "python")
-                            || Self::has_bin(part, "python3")
-                    })
-                };
+                    // Always block piping network scripts to shell in ALL modes (curl ... | bash)
+                    let has_pipe_to_shell = {
+                        let mut parts = cmd_lower.split('|');
+                        parts.next(); // skip first command
+                        parts.any(|part| {
+                            Self::has_bin(part, "sh")
+                                || Self::has_bin(part, "bash")
+                                || Self::has_bin(part, "python")
+                                || Self::has_bin(part, "python3")
+                        })
+                    };
 
-                if has_pipe_to_shell {
-                    return true;
-                }
+                    if has_pipe_to_shell {
+                        return true;
+                    }
 
-                // If loose mode, all other commands are allowed without warning
-                if mode == "loose" {
-                    return false;
-                }
+                    // If loose mode, all other commands are allowed without warning
+                    if mode == "loose" {
+                        continue;
+                    }
 
-                let is_strict = mode == "strict";
+                    let is_strict = mode == "strict";
 
-                // 1. Destructive Commands
-                let has_destructive = if is_strict {
-                    Self::has_bin(&cmd_lower, "rm")
-                        || Self::has_bin(&cmd_lower, "rmdir")
-                        || Self::has_bin(&cmd_lower, "unlink")
-                        || Self::has_bin(&cmd_lower, "dd")
-                        || Self::has_bin(&cmd_lower, "mkfs")
-                        || Self::has_bin(&cmd_lower, "fdisk")
-                        || Self::has_bin(&cmd_lower, "parted")
-                        || Self::has_bin(&cmd_lower, "format")
-                        || (Self::has_bin(&cmd_lower, "xargs")
-                            && (Self::has_bin(&cmd_lower, "rm")
-                                || Self::has_bin(&cmd_lower, "kill")
-                                || Self::has_bin(&cmd_lower, "chmod")
-                                || Self::has_bin(&cmd_lower, "chown")))
-                        || cmd_lower.contains("cargo clean")
-                        || cmd_lower.contains("npm run clean")
-                        || cmd_lower.contains("bun run clean")
-                        || cmd_lower.contains("yarn clean")
-                } else {
-                    // Normal mode: ask permission for raw deletes (rm, rmdir, unlink)
-                    // and block raw dd/mkfs/fdisk/format
-                    Self::has_bin(&cmd_lower, "rm")
-                        || Self::has_bin(&cmd_lower, "rmdir")
-                        || Self::has_bin(&cmd_lower, "unlink")
-                        || Self::has_bin(&cmd_lower, "dd")
-                        || Self::has_bin(&cmd_lower, "mkfs")
-                        || Self::has_bin(&cmd_lower, "fdisk")
-                        || Self::has_bin(&cmd_lower, "format")
-                };
+                    // 1. Destructive Commands
+                    let has_destructive = if is_strict {
+                        Self::has_bin(&cmd_lower, "rm")
+                            || Self::has_bin(&cmd_lower, "rmdir")
+                            || Self::has_bin(&cmd_lower, "unlink")
+                            || Self::has_bin(&cmd_lower, "dd")
+                            || Self::has_bin(&cmd_lower, "mkfs")
+                            || Self::has_bin(&cmd_lower, "fdisk")
+                            || Self::has_bin(&cmd_lower, "parted")
+                            || Self::has_bin(&cmd_lower, "format")
+                            || (Self::has_bin(&cmd_lower, "xargs")
+                                && (Self::has_bin(&cmd_lower, "rm")
+                                    || Self::has_bin(&cmd_lower, "kill")
+                                    || Self::has_bin(&cmd_lower, "chmod")
+                                    || Self::has_bin(&cmd_lower, "chown")))
+                            || cmd_lower.contains("cargo clean")
+                            || cmd_lower.contains("npm run clean")
+                            || cmd_lower.contains("bun run clean")
+                            || cmd_lower.contains("yarn clean")
+                    } else {
+                        // Normal mode: ask permission for raw deletes (rm, rmdir, unlink)
+                        // and block raw dd/mkfs/fdisk/format
+                        Self::has_bin(&cmd_lower, "rm")
+                            || Self::has_bin(&cmd_lower, "rmdir")
+                            || Self::has_bin(&cmd_lower, "unlink")
+                            || Self::has_bin(&cmd_lower, "dd")
+                            || Self::has_bin(&cmd_lower, "mkfs")
+                            || Self::has_bin(&cmd_lower, "fdisk")
+                            || Self::has_bin(&cmd_lower, "format")
+                    };
 
-                // 2. Process Control
-                let has_process = if is_strict {
-                    Self::has_bin(&cmd_lower, "kill")
-                        || Self::has_bin(&cmd_lower, "killall")
-                        || Self::has_bin(&cmd_lower, "pkill")
-                } else {
-                    false // Normal mode: allow kill/killall for process management
-                };
+                    // 2. Process Control
+                    let has_process = if is_strict {
+                        Self::has_bin(&cmd_lower, "kill")
+                            || Self::has_bin(&cmd_lower, "killall")
+                            || Self::has_bin(&cmd_lower, "pkill")
+                    } else {
+                        false // Normal mode: allow kill/killall for process management
+                    };
 
-                // 3. Network Script Executions / File Transfers
-                let has_network = if is_strict {
-                    Self::has_bin(&cmd_lower, "curl")
-                        || Self::has_bin(&cmd_lower, "wget")
-                        || Self::has_bin(&cmd_lower, "scp")
-                        || Self::has_bin(&cmd_lower, "rsync")
-                        || Self::has_bin(&cmd_lower, "sftp")
-                        || Self::has_bin(&cmd_lower, "nc")
-                        || Self::has_bin(&cmd_lower, "netcat")
-                } else {
-                    // Normal mode: block piping network scripts directly to shell (e.g. curl ... | bash)
-                    {
+                    // 3. Network Script Executions / File Transfers
+                    let has_network = if is_strict {
+                        Self::has_bin(&cmd_lower, "curl")
+                            || Self::has_bin(&cmd_lower, "wget")
+                            || Self::has_bin(&cmd_lower, "scp")
+                            || Self::has_bin(&cmd_lower, "rsync")
+                            || Self::has_bin(&cmd_lower, "sftp")
+                            || Self::has_bin(&cmd_lower, "nc")
+                            || Self::has_bin(&cmd_lower, "netcat")
+                    } else {
+                        // Normal mode: block piping network scripts directly to shell (e.g. curl ... | bash)
                         let mut parts = cmd_lower.split('|');
                         parts.next(); // skip first command
                         parts.any(|part| Self::has_bin(part, "sh") || Self::has_bin(part, "bash"))
-                    }
-                };
+                    };
 
-                return has_destructive || has_process || has_network;
+                    if has_destructive || has_process || has_network {
+                        return true;
+                    }
+                }
             }
         } else if tool_name == "write_file"
             || tool_name == "patch_file"
@@ -1249,4 +1336,40 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[test]
+    fn test_unwrap_command_payloads() {
+        let payloads = SecurityGuard::unwrap_command_payloads("bash -c \"sh -c 'rm -rf /'\"");
+        assert!(payloads.contains(&"bash -c \"sh -c 'rm -rf /'\"".to_string()));
+        assert!(payloads.contains(&"sh -c 'rm -rf /'".to_string()));
+        assert!(payloads.contains(&"rm -rf /".to_string()));
+    }
+
+    #[test]
+    fn test_evasion_wrapper_detection() {
+        // Evasion wrapped rm -rf / should still be caught as forbidden
+        assert!(SecurityGuard::is_forbidden(
+            "exec_command",
+            &json!({"command": "sh -c 'rm -rf /'"})
+        ));
+        assert!(SecurityGuard::is_forbidden(
+            "exec_command",
+            &json!({"command": "bash -c 'rm -rf /'"})
+        ));
+        assert!(SecurityGuard::is_forbidden(
+            "exec_command",
+            &json!({"command": "python3 -c \"import os; os.system('rm -rf /')\""})
+        ));
+
+        // Evasion wrapped privilege escalation should still be caught as sensitive
+        assert!(SecurityGuard::is_sensitive(
+            "exec_command",
+            &json!({"command": "sh -c 'sudo apt update'"})
+        ));
+        assert!(SecurityGuard::is_sensitive(
+            "exec_command",
+            &json!({"command": "bash -c 'chmod +x script.sh'"})
+        ));
+    }
 }
+
