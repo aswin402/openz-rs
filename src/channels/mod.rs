@@ -1258,7 +1258,7 @@ pub fn send_notification(msg: &str) {
     tokio::spawn(async move {
         // Broadcast to WebSocket WebUI clients
         let ws_senders = if let Ok(senders) = get_active_ws_senders().lock() {
-            senders.values().cloned().collect::<Vec<_>>()
+            senders.iter().map(|(k, v)| (k.clone(), v.clone())).collect::<Vec<_>>()
         } else {
             Vec::new()
         };
@@ -1268,10 +1268,15 @@ pub fn send_notification(msg: &str) {
             "message": msg_str
         });
         if let Ok(evt_str) = serde_json::to_string(&evt) {
-            for tx in ws_senders {
-                let _ = tx.send(Message::Text(evt_str.clone())).await;
+            for (id, tx) in ws_senders {
+                if tx.send(Message::Text(evt_str.clone())).await.is_err() {
+                    if let Ok(mut senders) = get_active_ws_senders().lock() {
+                        senders.remove(&id);
+                    }
+                }
             }
         }
+
 
         // Load config to check if external channels (Telegram, Discord, WhatsApp) are enabled.
         if let Ok(config) = crate::config::loader::load_config() {

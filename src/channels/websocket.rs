@@ -180,6 +180,17 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
         senders.insert(client_id.clone(), tx.clone());
     }
 
+    struct WsSenderGuard(String);
+    impl Drop for WsSenderGuard {
+        fn drop(&mut self) {
+            if let Ok(mut senders) = crate::channels::get_active_ws_senders().lock() {
+                senders.remove(&self.0);
+            }
+        }
+    }
+    let _guard = WsSenderGuard(client_id.clone());
+
+
     // Send ready event
     let ready_evt = serde_json::json!({
         "event": "ready",
