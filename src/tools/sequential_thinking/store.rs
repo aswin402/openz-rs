@@ -205,7 +205,7 @@ pub struct SqliteThoughtStore {
 impl SqliteThoughtStore {
     pub fn new(conn: Connection) -> Result<Self, String> {
         conn.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys = ON;",
+            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-2000; PRAGMA mmap_size=0; PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000; PRAGMA foreign_keys = ON;",
         )
         .map_err(|e| e.to_string())?;
         conn.execute(

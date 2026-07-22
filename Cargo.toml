@@ -1,7 +1,8 @@
 [package]
 name = "openz"
-version = "0.0.63"
+version = "0.0.64"
 edition = "2021"
+
 
 [workspace]
 members = [
@@ -50,7 +51,7 @@ async-trait = "0.1.80"
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
-tokio = { version = "1.38", features = ["full"] }
+tokio = { version = "1.38", features = ["rt-multi-thread", "net", "sync", "time", "macros", "io-util", "process", "signal", "fs"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -127,6 +128,9 @@ openz-docs-mcp = { path = "tools/openz-docs" }
 
 
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.6"
+
 [build-dependencies]
 tonic-build = "0.11"
 
@@ -136,6 +140,15 @@ codegen-units = 1       # Reduces compiler RAM usage and yields better optimizat
 lto = "thin"            # Link-Time Optimization: reduces peak linker memory usage and final ROM size
 debug = false           # Exclude debug symbols to minimize compile RAM usage
 strip = true            # Strip symbols and debug info from the final binary (significantly reduces ROM footprint)
+
+[profile.release-small]
+inherits = "release"
+opt-level = "z"         # Optimize aggressively for binary size
+lto = "fat"             # Fat LTO for maximum dead-code elimination
+panic = "abort"         # Removes unwinding tables (~10-20% binary size reduction)
+codegen-units = 1
+strip = true
+debug = false
 
 [profile.release-balanced]
 inherits = "release"
@@ -152,3 +165,4 @@ codegen-units = 1
 lto = false             # Low-resource mode prioritizes finishing without linker spikes
 strip = true
 debug = false
+

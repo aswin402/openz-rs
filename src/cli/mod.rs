@@ -61,9 +61,16 @@ pub async fn run_cli() -> Result<()> {
     let args = CliArgs::parse();
     crate::tools::subagent::cleanup_stale_resources();
 
+    // Start background FastEmbed ONNX model eviction task (frees ~130 MB RAM after 5 min idle)
+    crate::tools::shared_memory::start_model_eviction();
+
+    // Start background SQLite vacuum & optimizer (reclaims unused disk pages after startup)
+    start_database_auto_optimizer();
+
     // Surface (and offer to migrate) any stale runtime DB files left in the
     // working directory instead of letting them shadow the global database.
     crate::config::loader::check_root_runtime_dbs();
+
 
     match args.command {
         Command::Onboard => {
@@ -145,3 +152,30 @@ pub async fn run_cli() -> Result<()> {
     }
     Ok(())
 }
+
+/// Spawns a background task that performs incremental SQLite maintenance
+/// (incremental_vacuum and optimize) 10 seconds after startup to reclaim unused space.
+pub fn start_database_auto_optimizer() {
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        let db_names = [
+            "memory.db",
+            "docs.db",
+            "graph_memory.db",
+            "ccr_cache.db",
+            "context-bus.db",
+            "logs.db",
+            "thoughts.db",
+            "embeddings_cache.db",
+        ];
+        for name in db_names {
+            let path = crate::config::loader::runtime_db_path(name);
+            if path.exists() {
+                if let Ok(conn) = rusqlite::Connection::open(&path) {
+                    let _ = conn.execute_batch("PRAGMA incremental_vacuum(50); PRAGMA optimize;");
+                }
+            }
+        }
+    });
+}
+

@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::db::{get_db_mutex, with_db};
 use super::embeddings::{
-    cosine_similarity, get_cloud_embeddings_batch, get_embedding, get_global_model,
+    cosine_similarity, get_cloud_embeddings_batch, get_embedding, with_model,
 };
 
 pub fn chunk_content_by_headings(query: &str, content: &str) -> Vec<(String, String)> {
@@ -154,19 +154,16 @@ pub async fn archive_research_entries(entries: Vec<(String, String, String)>) ->
             Some(res) => res,
             None => {
                 tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>> {
-                    let model_mutex = get_global_model()?;
-                    let mut model = model_mutex
-                        .lock()
-                        .map_err(|e| anyhow!("Failed to lock model Mutex: {:?}", e))?;
+                    with_model(|model| {
+                        let refs: Vec<&str> = queries_to_embed.iter().map(|s| s.as_str()).collect();
+                        let formatted_refs: Vec<String> =
+                            refs.iter().map(|s| format!("passage: {}", s)).collect();
+                        let formatted_slices: Vec<&str> =
+                            formatted_refs.iter().map(|s| s.as_str()).collect();
 
-                    let refs: Vec<&str> = queries_to_embed.iter().map(|s| s.as_str()).collect();
-                    let formatted_refs: Vec<String> =
-                        refs.iter().map(|s| format!("passage: {}", s)).collect();
-                    let formatted_slices: Vec<&str> =
-                        formatted_refs.iter().map(|s| s.as_str()).collect();
-
-                    let embeds = model.embed(formatted_slices, None)?;
-                    Ok(embeds)
+                        let embeds = model.embed(formatted_slices, None)?;
+                        Ok(embeds)
+                    })
                 })
                 .await??
             }

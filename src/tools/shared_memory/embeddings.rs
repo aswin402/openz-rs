@@ -2,18 +2,88 @@ use super::db::get_shared_client;
 use anyhow::{anyhow, Result};
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
-static GLOBAL_EMBEDDING_MODEL: OnceLock<std::sync::Mutex<TextEmbedding>> = OnceLock::new();
+/// Managed embedding model with idle eviction.
+/// The ONNX model (~130 MB) is loaded on first use and automatically
+/// evicted after 5 minutes of inactivity to free memory.
+struct ManagedModel {
+    inner: std::sync::Mutex<Option<(TextEmbedding, Instant)>>,
+    eviction_started: std::sync::atomic::AtomicBool,
+}
 
-pub fn get_global_model() -> Result<&'static std::sync::Mutex<TextEmbedding>> {
-    if let Some(m) = GLOBAL_EMBEDDING_MODEL.get() {
-        Ok(m)
-    } else {
-        let model = TextEmbedding::try_new(InitOptions::new(EmbeddingModel::AllMiniLML6V2))?;
-        let _ = GLOBAL_EMBEDDING_MODEL.set(std::sync::Mutex::new(model));
-        Ok(GLOBAL_EMBEDDING_MODEL.get().unwrap())
+static MANAGED_MODEL: OnceLock<ManagedModel> = OnceLock::new();
+
+const MODEL_IDLE_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
+
+fn get_managed() -> &'static ManagedModel {
+    MANAGED_MODEL.get_or_init(|| ManagedModel {
+        inner: std::sync::Mutex::new(None),
+        eviction_started: std::sync::atomic::AtomicBool::new(false),
+    })
+}
+
+/// Start the background eviction task (idempotent — only spawns once).
+pub fn start_model_eviction() {
+    let mgr = get_managed();
+    if mgr
+        .eviction_started
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::Relaxed,
+        )
+        .is_ok()
+    {
+        tokio::spawn(async {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let mgr = get_managed();
+                let mut guard = mgr.inner.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some((_, last_used)) = guard.as_ref() {
+                    if last_used.elapsed() > MODEL_IDLE_TIMEOUT {
+                        *guard = None;
+                        tracing::info!(
+                            "Evicted FastEmbed ONNX model after {}s idle — freed ~130 MB",
+                            MODEL_IDLE_TIMEOUT.as_secs()
+                        );
+                    }
+                }
+            }
+        });
     }
 }
+
+/// Load the embedding model (if not already loaded), reset the idle timer,
+/// and run the provided closure with a mutable reference to the model.
+pub fn with_model<F, R>(f: F) -> Result<R>
+where
+    F: FnOnce(&mut TextEmbedding) -> Result<R>,
+{
+    let mgr = get_managed();
+    let mut guard = mgr
+        .inner
+        .lock()
+        .map_err(|e| anyhow!("Managed model lock poisoned: {}", e))?;
+
+    if guard.is_none() {
+        let model = TextEmbedding::try_new(InitOptions::new(EmbeddingModel::AllMiniLML6V2))?;
+        *guard = Some((model, Instant::now()));
+        tracing::info!("Loaded FastEmbed ONNX model (AllMiniLmL6V2)");
+    }
+
+    if let Some((_, ref mut ts)) = *guard {
+        *ts = Instant::now();
+    }
+
+    let (ref mut model, _) = guard
+        .as_mut()
+        .ok_or_else(|| anyhow!("Model unexpectedly None after init"))?;
+    f(model)
+}
+
 
 async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
     let config = crate::config::loader::load_config()?;
@@ -499,19 +569,18 @@ pub async fn get_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
     // Fall back to local ONNX model
     let text_owned = text.to_string();
     tokio::task::spawn_blocking(move || -> Result<Vec<f32>> {
-        let model_mutex = get_global_model()?;
-        let mut model = model_mutex
-            .lock()
-            .map_err(|e| anyhow!("Failed to lock model Mutex: {:?}", e))?;
-        let formatted = if is_query {
-            format!("query: {}", text_owned)
-        } else {
-            format!("passage: {}", text_owned)
-        };
-        let embeds = model.embed(vec![&formatted], None)?;
-        Ok(embeds[0].clone())
+        with_model(|model| {
+            let formatted = if is_query {
+                format!("query: {}", text_owned)
+            } else {
+                format!("passage: {}", text_owned)
+            };
+            let embeds = model.embed(vec![&formatted], None)?;
+            Ok(embeds[0].clone())
+        })
     })
     .await?
+
 }
 
 pub fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {

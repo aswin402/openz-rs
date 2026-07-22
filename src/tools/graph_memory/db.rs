@@ -173,7 +173,7 @@ pub(crate) fn init_db() -> Result<Connection> {
         })
     })?;
     conn.execute_batch(&format!(
-        "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; {}",
+        "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-2000; PRAGMA mmap_size=0; PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000; {}",
         SCHEMA_DDL
     ))?;
     Ok(conn)

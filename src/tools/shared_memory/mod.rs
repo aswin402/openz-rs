@@ -13,7 +13,7 @@ pub mod tests;
 
 pub use db::{get_current_workspace, get_db_mutex, get_shared_client, get_sqlite_db_path, with_db};
 
-pub use embeddings::{cosine_similarity, get_embedding, get_global_model};
+pub use embeddings::{cosine_similarity, get_embedding, start_model_eviction, with_model};
 
 pub use auto_capture::{auto_capture_research_memory, AutoCaptureSummary};
 

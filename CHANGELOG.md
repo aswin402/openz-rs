@@ -398,7 +398,18 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.63 (Latest Release)
+### v0.0.64 (Latest Release)
+
+**Comprehensive Performance & Footprint Optimization (RAM, CPU, Storage, Binary Size):**
+*   **SQLite Memory Tuning:** Added memory-constraining PRAGMAs (`cache_size=-2000`, `mmap_size=0`, `synchronous=NORMAL`, `wal_autocheckpoint=1000`) across all 7 database connection initialization sites, capping page cache memory from ~56 MB to ~14 MB.
+*   **FastEmbed Idle Eviction:** Implemented `ManagedModel` with automatic 5-minute idle eviction in `src/tools/shared_memory/embeddings.rs` and background lifecycle loop in `src/cli/mod.rs`, freeing ~130 MB ONNX vector model weights from resident memory.
+*   **Tokio Runtime Right-Sizing:** Replaced default `#[tokio::main]` runtime (16 worker threads, 2 MB stacks = 32 MB) with a right-sized multi-thread runtime of **4 worker threads** and **512 KB stack size** in `src/main.rs`.
+*   **jemalloc Global Allocator:** Integrated `tikv-jemallocator` in `Cargo.toml` and `src/main.rs` to purge unallocated heap memory back to the kernel within 1 second, eliminating glibc heap fragmentation.
+*   **Binary Size Profile:** Added `[profile.release-small]` profile in `Cargo.toml` featuring `opt-level = "z"`, `lto = "fat"`, `panic = "abort"`, and `strip = true` for minimal executable footprint.
+*   **Auto Maintenance & Feature Pruning:** Added startup background SQLite auto-optimizer (`start_database_auto_optimizer`) and pruned unneeded Tokio features.
+*   **Chore:** Bumped version to `v0.0.64`.
+
+### v0.0.63
 
 **Native Browser Status Inspection & Subagent Orchestration Consolidation:**
 *   **Feature:** Built native `inspect_browsers` tool for OpenZ to monitor running browser sessions (Firefox GeckoDriver port 4444, Chrome CDP port 9222), `gsd-browser` background daemons/pages, and recent browser error logs from `logs.db`.

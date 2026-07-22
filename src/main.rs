@@ -32,8 +32,21 @@ fn rotate_logs(log_path: &std::path::Path) {
     }
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+fn main() -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .thread_stack_size(512 * 1024)
+        .thread_name("openz-worker")
+        .enable_all()
+        .build()?;
+    runtime.block_on(async_main())
+}
+
+async fn async_main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
     let log_path = openz::logs::default_log_path();

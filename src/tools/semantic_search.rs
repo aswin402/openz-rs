@@ -80,7 +80,7 @@ fn get_db_conn() -> Result<rusqlite::Connection> {
         let _ = fs::create_dir_all(parent);
     }
     let conn = rusqlite::Connection::open(&db_path)?;
-    conn.execute("PRAGMA foreign_keys = ON", [])?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-2000; PRAGMA mmap_size=0; PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000; PRAGMA foreign_keys=ON;")?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS file_cache (
             file_path TEXT PRIMARY KEY,
@@ -269,26 +269,24 @@ impl Tool for SemanticSearchTool {
 
         let (query_vec, new_embeds) =
             tokio::task::spawn_blocking(move || -> Result<(Vec<f32>, Vec<Vec<f32>>)> {
-                let model_mutex = crate::tools::shared_memory::get_global_model()?;
-                let mut model = model_mutex
-                    .lock()
-                    .map_err(|e| anyhow!("Failed to lock model Mutex: {:?}", e))?;
+                crate::tools::shared_memory::with_model(|model| {
+                    // Embed Query
+                    let query_embeds = model.embed(vec![&query_prefixed], None)?;
+                    let q_vec = query_embeds[0].clone();
 
-                // Embed Query
-                let query_embeds = model.embed(vec![&query_prefixed], None)?;
-                let q_vec = query_embeds[0].clone();
+                    // Embed New Passages if any
+                    let p_embeds = if !dirty_texts.is_empty() {
+                        let refs: Vec<&str> = dirty_texts.iter().map(|s| s.as_str()).collect();
+                        model.embed(refs, None)?
+                    } else {
+                        Vec::new()
+                    };
 
-                // Embed New Passages if any
-                let p_embeds = if !dirty_texts.is_empty() {
-                    let refs: Vec<&str> = dirty_texts.iter().map(|s| s.as_str()).collect();
-                    model.embed(refs, None)?
-                } else {
-                    Vec::new()
-                };
-
-                Ok((q_vec, p_embeds))
+                    Ok((q_vec, p_embeds))
+                })
             })
             .await??;
+
 
         // 3. Merge new embeddings back into cache and final list
         if !dirty_files.is_empty() {

@@ -51,7 +51,7 @@ pub fn init_db() -> Result<Connection> {
     }
     let conn = Connection::open(&path)?;
 
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-2000; PRAGMA mmap_size=0; PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000;")?;
 
     let integrity: String = conn
         .query_row("PRAGMA integrity_check", [], |row| row.get(0))
@@ -67,7 +67,7 @@ pub fn init_db() -> Result<Connection> {
         let _ = std::fs::remove_file(format!("{}.wal", path.display()));
         let _ = std::fs::remove_file(format!("{}.shm", path.display()));
         let conn = Connection::open(&path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;")?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-2000; PRAGMA mmap_size=0; PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000;")?;
         create_schema(&conn)?;
         return Ok(conn);
     }
