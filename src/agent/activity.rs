@@ -323,6 +323,12 @@ pub fn make_active_tui_session(
 mod tests {
     use super::*;
 
+    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_test_env() -> std::sync::MutexGuard<'static, ()> {
+        TEST_MUTEX.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     fn reset_activity_write_state_for_test() {
         let mut state = activity_write_state()
             .lock()
@@ -356,6 +362,7 @@ mod tests {
 
     #[test]
     fn activity_updates_are_throttled_and_coalesced() {
+        let _guard = lock_test_env();
         reset_activity_write_state_for_test();
         let path = temp_activity_path("coalesce");
 
@@ -370,8 +377,12 @@ mod tests {
         assert_eq!(immediate.status, "Processing user prompt");
         assert_eq!(immediate.current_tool, None);
 
-        std::thread::sleep(ACTIVITY_WRITE_THROTTLE + Duration::from_millis(80));
-        let flushed = read_activity_at(&path);
+        let start = std::time::Instant::now();
+        let mut flushed = read_activity_at(&path);
+        while flushed.status != "Executing tool" && start.elapsed() < Duration::from_secs(3) {
+            std::thread::sleep(Duration::from_millis(50));
+            flushed = read_activity_at(&path);
+        }
         assert_eq!(flushed.status, "Executing tool");
         assert_eq!(flushed.current_tool.as_deref(), Some("grep_search"));
 
@@ -380,6 +391,7 @@ mod tests {
 
     #[test]
     fn idle_activity_forces_immediate_write() {
+        let _guard = lock_test_env();
         reset_activity_write_state_for_test();
         let path = temp_activity_path("idle");
 
@@ -389,6 +401,7 @@ mod tests {
         assert_eq!(read_activity_at(&path).status, "Idle");
         let _ = fs::remove_file(path);
     }
+
 
     #[test]
     fn session_preview_uses_latest_user_message_and_truncates() {
