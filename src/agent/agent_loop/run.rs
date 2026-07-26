@@ -89,6 +89,12 @@ fn is_current_or_latest_query(text: &str) -> bool {
         "recent",
         "2026",
         "price",
+        "pricing",
+        "cost",
+        "billing",
+        "plan",
+        "plans",
+        "subscription",
         "version",
         "release",
         "news",
@@ -114,6 +120,10 @@ fn is_explicit_research_request(text: &str) -> bool {
         "analyse this",
         "read this",
         "check this",
+        "check the",
+        "see this",
+        "see the",
+        "open this",
         "tell me about this",
         "deep dive",
     ]
@@ -1399,6 +1409,13 @@ mod tests {
         );
         assert!(
             !fresh_research_brief_blocks_lookup(
+                &format!("see the pricing https://www.duix.com/pricing {marker}"),
+                "web_fetch"
+            )
+            .await
+        );
+        assert!(
+            !fresh_research_brief_blocks_lookup(
                 &format!("what is openhuman {marker}"),
                 "read_file"
             )
@@ -1421,6 +1438,9 @@ mod tests {
         ));
         assert!(is_explicit_research_request(
             "please read this https://github.com/mem0ai/mem0"
+        ));
+        assert!(is_explicit_research_request(
+            "see the pricing https://www.duix.com/pricing"
         ));
         assert!(!is_explicit_research_request("what is openhuman"));
         assert!(!is_explicit_research_request("hey whats new"));

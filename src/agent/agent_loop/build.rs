@@ -336,6 +336,12 @@ fn is_current_or_latest_query(text: &str) -> bool {
         "recent",
         "2026",
         "price",
+        "pricing",
+        "cost",
+        "billing",
+        "plan",
+        "plans",
+        "subscription",
         "version",
         "news",
         "what's new",
@@ -1105,6 +1111,16 @@ mod tests {
             concrete_research_topic_terms("whats new in hermes"),
             vec!["hermes"]
         );
+    }
+
+    #[test]
+    fn pricing_queries_are_current_sensitive() {
+        assert!(is_current_or_latest_query(
+            "see the pricing https://www.duix.com/pricing"
+        ));
+        assert!(!should_skip_research_memory_for_generic_query(
+            "see the pricing https://www.duix.com/pricing"
+        ));
     }
 
     #[test]
