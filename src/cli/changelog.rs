@@ -181,9 +181,11 @@ pub async fn handle_changelog() -> Result<()> {
         green = AURA_GREEN,
         reset = COLOR_RESET
     );
-    println!("    • Added exact URL `web_fetch` caching with ETag, Last-Modified, Cache-Control, and expiry metadata.");
-    println!("    • Added `cache_mode` policies: auto, prefer_cache, revalidate, and bypass.");
-    println!("    • Revalidates stale pages with conditional requests and falls back to stale cache on live fetch failure.");
+    println!(
+        "    • Refreshes exact-URL cache validators and expiry metadata on HTTP 304 Not Modified."
+    );
+    println!("    • Uses Last-Modified heuristic freshness when Cache-Control is missing.");
+    println!("    • Keeps web_fetch cache behavior closer to standard HTTP caching semantics.");
 
     println!(
         "  {slate}[v0.0.48]{reset}",

@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.67 (Latest Release)
+### v0.0.68 (Latest Release)
+
+**Web Cache Validator Hardening:**
+*   **Fix:** `web_fetch` now refreshes exact-URL cache validators, fetch time, expiry time, and use count when an origin returns `304 Not Modified`.
+*   **Fix:** Responses without `Cache-Control` now use `Last-Modified` heuristic freshness instead of expiring immediately.
+*   **Tests:** Added focused regression coverage for missing `Cache-Control` plus `Last-Modified` behavior.
+*   **Chore:** Bumped version to `v0.0.68`.
+
+### v0.0.67
 
 **Exact URL Web Cache & HTTP Revalidation:**
 *   **Feature:** Added an exact URL `web_fetch_cache` SQLite table storing body text, `ETag`, `Last-Modified`, `Cache-Control`, fetch time, expiry time, status code, and use count.

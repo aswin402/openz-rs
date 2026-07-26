@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.67`
+# OpenZ 🦊 `v0.0.68`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.68`
+
+- **Cache Validator Refresh**: `web_fetch` now refreshes exact-URL cache validators and expiry metadata on `304 Not Modified`, so validated cached pages do not stay permanently stale.
+- **Last-Modified Heuristic**: Pages without `Cache-Control` now use `Last-Modified` heuristic freshness instead of expiring immediately.
+- **Cache Correctness Coverage**: Added focused regression coverage for missing `Cache-Control` plus `Last-Modified` behavior.
 
 ## What Changed In `v0.0.67`
 
