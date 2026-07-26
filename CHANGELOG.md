@@ -398,7 +398,18 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.66 (Latest Release)
+### v0.0.67 (Latest Release)
+
+**Exact URL Web Cache & HTTP Revalidation:**
+*   **Feature:** Added an exact URL `web_fetch_cache` SQLite table storing body text, `ETag`, `Last-Modified`, `Cache-Control`, fetch time, expiry time, status code, and use count.
+*   **Feature:** `web_fetch` now supports `cache_mode` values `auto`, `prefer_cache`, `revalidate`, and `bypass` for deterministic cache policy control.
+*   **Feature:** Stale cached pages are revalidated with `If-None-Match` and `If-Modified-Since`; `304 Not Modified` reuses the cached body without redownloading content.
+*   **Resilience:** If a live fetch fails or returns an error and an exact URL cache entry exists, OpenZ falls back to stale cached content instead of dropping the answer path.
+*   **Prompt Discipline:** The orchestrator is instructed to use `cache_mode="revalidate"` for direct URL checks and check-again/verify/refresh/browse requests.
+*   **Tests:** Added focused cache-control and cache-mode regression tests.
+*   **Chore:** Bumped version to `v0.0.67`.
+
+### v0.0.66
 
 **Generic Live Research Policy:**
 *   **Fix:** Saved research briefs no longer block explicit live web/search tool calls when the user provides a URL, the tool arguments contain a URL, the prompt asks for current/latest information, or the user asks to check/verify/refresh again.

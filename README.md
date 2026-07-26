@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.66`
+# OpenZ 🦊 `v0.0.67`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,13 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.67`
+
+- **Exact URL Web Cache**: `web_fetch` now stores exact URL responses in SQLite with body text, `ETag`, `Last-Modified`, `Cache-Control`, fetch time, expiry time, status, and use count.
+- **HTTP Revalidation**: Stale cached pages are revalidated with `If-None-Match` / `If-Modified-Since`, and `304 Not Modified` returns the cached body without redownloading content.
+- **Cache Modes**: `web_fetch` now supports `cache_mode`: `auto`, `prefer_cache`, `revalidate`, and `bypass`.
+- **Stale Fallback**: If a live re-fetch fails, OpenZ can fall back to the stale exact-URL cached body instead of failing outright.
 
 ## What Changed In `v0.0.66`
 

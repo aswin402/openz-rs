@@ -181,9 +181,9 @@ pub async fn handle_changelog() -> Result<()> {
         green = AURA_GREEN,
         reset = COLOR_RESET
     );
-    println!("    • Added a generic live research policy for direct URLs, URL tool args, current/latest prompts, and re-check/verify/refresh intent.");
-    println!("    • Prevented broad cached research briefs from blocking explicit web/search tool execution.");
-    println!("    • Preserved brief-first reuse for stable non-live definition and comparison questions.");
+    println!("    • Added exact URL `web_fetch` caching with ETag, Last-Modified, Cache-Control, and expiry metadata.");
+    println!("    • Added `cache_mode` policies: auto, prefer_cache, revalidate, and bypass.");
+    println!("    • Revalidates stale pages with conditional requests and falls back to stale cache on live fetch failure.");
 
     println!(
         "  {slate}[v0.0.48]{reset}",
