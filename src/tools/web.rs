@@ -2,7 +2,8 @@ use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use futures_util::StreamExt;
 use regex::Regex;
-use reqwest::Client;
+use reqwest::{header, Client};
+use rusqlite::OptionalExtension;
 use scraper::node::Node;
 use scraper::Html;
 use std::time::Duration;
@@ -117,6 +118,209 @@ pub async fn validate_url(url: &str) -> Result<std::net::IpAddr> {
     validate_url_sync(&parsed)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WebFetchCacheMode {
+    Auto,
+    PreferCache,
+    Revalidate,
+    Bypass,
+}
+
+impl WebFetchCacheMode {
+    fn from_args(arguments: &serde_json::Value) -> Result<Self> {
+        let raw = arguments
+            .get("cache_mode")
+            .or_else(|| arguments.get("cacheMode"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("auto")
+            .trim()
+            .to_lowercase();
+        match raw.as_str() {
+            "auto" | "" => Ok(Self::Auto),
+            "prefer_cache" | "prefer-cache" | "cache" => Ok(Self::PreferCache),
+            "revalidate" | "validate" | "refresh" => Ok(Self::Revalidate),
+            "bypass" | "no_cache" | "no-cache" | "fresh" => Ok(Self::Bypass),
+            other => Err(anyhow!(
+                "Invalid cache_mode '{}'. Use auto, prefer_cache, revalidate, or bypass.",
+                other
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CachedWebFetch {
+    body_text: String,
+    etag: Option<String>,
+    last_modified: Option<String>,
+    expires_at: String,
+}
+
+fn now_utc() -> chrono::DateTime<chrono::Utc> {
+    chrono::Utc::now()
+}
+
+fn parse_http_date(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc2822(raw)
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+}
+
+fn cache_control_directives(cache_control: &str) -> Vec<String> {
+    cache_control
+        .split(',')
+        .map(|part| part.trim().to_ascii_lowercase())
+        .filter(|part| !part.is_empty())
+        .collect()
+}
+
+fn cache_control_max_age(cache_control: &str) -> Option<i64> {
+    cache_control_directives(cache_control)
+        .into_iter()
+        .find_map(|directive| {
+            directive
+                .strip_prefix("max-age=")
+                .and_then(|raw| raw.trim_matches('"').parse::<i64>().ok())
+        })
+        .filter(|age| *age >= 0)
+}
+
+fn cache_control_has(cache_control: &str, needle: &str) -> bool {
+    cache_control_directives(cache_control)
+        .iter()
+        .any(|directive| directive == needle)
+}
+
+fn compute_expires_at(
+    cache_control: Option<&str>,
+    last_modified: Option<&str>,
+    fetched_at: chrono::DateTime<chrono::Utc>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    let Some(cache_control) = cache_control.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Some(fetched_at);
+    };
+    if cache_control_has(cache_control, "no-store") {
+        return None;
+    }
+    if cache_control_has(cache_control, "no-cache")
+        || cache_control_has(cache_control, "must-revalidate")
+    {
+        return Some(fetched_at);
+    }
+    if let Some(max_age) = cache_control_max_age(cache_control) {
+        return Some(fetched_at + chrono::Duration::seconds(max_age));
+    }
+    if let Some(last_modified) = last_modified.and_then(parse_http_date) {
+        let age = fetched_at
+            .signed_duration_since(last_modified)
+            .num_seconds()
+            .max(0);
+        let heuristic = (age / 10).clamp(60, 86_400);
+        return Some(fetched_at + chrono::Duration::seconds(heuristic));
+    }
+    Some(fetched_at)
+}
+
+fn is_cache_fresh(expires_at: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
+    chrono::DateTime::parse_from_rfc3339(expires_at)
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc) > now)
+        .unwrap_or(false)
+}
+
+fn header_to_string(headers: &header::HeaderMap, name: header::HeaderName) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn load_cached_web_fetch(url: &str) -> Result<Option<CachedWebFetch>> {
+    crate::tools::shared_memory::with_db(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT body_text, etag, last_modified, expires_at FROM web_fetch_cache WHERE url = ?1",
+        )?;
+        let cached = stmt
+            .query_row(rusqlite::params![url], |row| {
+                Ok(CachedWebFetch {
+                    body_text: row.get(0)?,
+                    etag: row.get(1)?,
+                    last_modified: row.get(2)?,
+                    expires_at: row.get(3)?,
+                })
+            })
+            .optional()?;
+        Ok(cached)
+    })
+}
+
+fn save_cached_web_fetch(
+    url: &str,
+    body_text: &str,
+    headers: &header::HeaderMap,
+    status_code: u16,
+) -> Result<()> {
+    let fetched_at = now_utc();
+    let etag = header_to_string(headers, header::ETAG);
+    let last_modified = header_to_string(headers, header::LAST_MODIFIED);
+    let cache_control = header_to_string(headers, header::CACHE_CONTROL);
+    let Some(expires_at) = compute_expires_at(
+        cache_control.as_deref(),
+        last_modified.as_deref(),
+        fetched_at,
+    ) else {
+        return Ok(());
+    };
+    crate::tools::shared_memory::with_db(|conn| {
+        conn.execute(
+            "INSERT INTO web_fetch_cache (url, body_text, etag, last_modified, cache_control, fetched_at, expires_at, status_code, use_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)
+             ON CONFLICT(url) DO UPDATE SET body_text=excluded.body_text, etag=excluded.etag, last_modified=excluded.last_modified, cache_control=excluded.cache_control, fetched_at=excluded.fetched_at, expires_at=excluded.expires_at, status_code=excluded.status_code",
+            rusqlite::params![
+                url,
+                body_text,
+                etag,
+                last_modified,
+                cache_control,
+                fetched_at.to_rfc3339(),
+                expires_at.to_rfc3339(),
+                i64::from(status_code),
+            ],
+        )?;
+        Ok(())
+    })
+}
+
+fn mark_cached_web_fetch_used(url: &str) -> Result<()> {
+    crate::tools::shared_memory::with_db(|conn| {
+        conn.execute(
+            "UPDATE web_fetch_cache SET use_count = use_count + 1 WHERE url = ?1",
+            rusqlite::params![url],
+        )?;
+        Ok(())
+    })
+}
+
+fn extract_text_from_html(html: &str) -> String {
+    let document = Html::parse_document(html);
+    let mut raw_text = String::new();
+    walk_nodes(document.tree.root(), &mut raw_text);
+
+    let clean_text = raw_text
+        .replace("&nbsp;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'");
+
+    let clean_text_spaces = web_re_whitespace().replace_all(&clean_text, " ");
+    let final_text = web_re_newlines().replace_all(&clean_text_spaces, "\n");
+    final_text.trim().to_string()
+}
+
 pub struct WebFetchTool {
     #[allow(dead_code)]
     client: Client,
@@ -208,7 +412,12 @@ impl Tool for WebFetchTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "url": { "type": "string", "description": "The URL to fetch" }
+                "url": { "type": "string", "description": "The URL to fetch" },
+                "cache_mode": {
+                    "type": "string",
+                    "enum": ["auto", "prefer_cache", "revalidate", "bypass"],
+                    "description": "Exact-URL cache policy. auto uses fresh cached responses and revalidates stale ones; prefer_cache returns any cached response first; revalidate always sends conditional validators; bypass ignores cache."
+                }
             },
             "required": ["url"]
         })
@@ -219,6 +428,25 @@ impl Tool for WebFetchTool {
             .get("url")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'url' argument"))?;
+        let cache_mode = WebFetchCacheMode::from_args(arguments)?;
+        let cached = load_cached_web_fetch(url_str).unwrap_or_else(|err| {
+            tracing::debug!(error = ?err, url = %url_str, "web_fetch cache lookup skipped");
+            None
+        });
+
+        if let Some(cached_item) = cached.as_ref() {
+            match cache_mode {
+                WebFetchCacheMode::PreferCache => {
+                    let _ = mark_cached_web_fetch_used(url_str);
+                    return Ok(serde_json::Value::String(cached_item.body_text.clone()));
+                }
+                WebFetchCacheMode::Auto if is_cache_fresh(&cached_item.expires_at, now_utc()) => {
+                    let _ = mark_cached_web_fetch_used(url_str);
+                    return Ok(serde_json::Value::String(cached_item.body_text.clone()));
+                }
+                _ => {}
+            }
+        }
 
         let resolved_ip = validate_url(url_str).await?;
 
@@ -248,15 +476,50 @@ impl Tool for WebFetchTool {
             .timeout(Duration::from_secs(WEB_TOTAL_TIMEOUT_SECS))
             .build()?;
 
-        let res = client
+        let mut request = client
             .get(url_str)
-            .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-            .send()
-            .await?;
+            .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+        if cache_mode != WebFetchCacheMode::Bypass {
+            if let Some(cached_item) = cached.as_ref() {
+                if let Some(etag) = cached_item.etag.as_deref() {
+                    request = request.header(header::IF_NONE_MATCH, etag);
+                }
+                if let Some(last_modified) = cached_item.last_modified.as_deref() {
+                    request = request.header(header::IF_MODIFIED_SINCE, last_modified);
+                }
+            }
+        }
+
+        let res = match request.send().await {
+            Ok(res) => res,
+            Err(err) => {
+                if let Some(cached_item) = cached {
+                    tracing::warn!(error = ?err, url = %url_str, "web_fetch live request failed; using stale cached response");
+                    let _ = mark_cached_web_fetch_used(url_str);
+                    return Ok(serde_json::Value::String(cached_item.body_text));
+                }
+                return Err(err.into());
+            }
+        };
+
+        if res.status() == reqwest::StatusCode::NOT_MODIFIED {
+            if let Some(cached_item) = cached {
+                let _ = mark_cached_web_fetch_used(url_str);
+                return Ok(serde_json::Value::String(cached_item.body_text));
+            }
+        }
 
         if !res.status().is_success() {
+            if let Some(cached_item) = cached {
+                tracing::warn!(status = %res.status(), url = %url_str, "web_fetch live request returned error; using stale cached response");
+                let _ = mark_cached_web_fetch_used(url_str);
+                return Ok(serde_json::Value::String(cached_item.body_text));
+            }
             return Err(anyhow!("Failed to fetch URL: HTTP {}", res.status()));
         }
+
+        let status_code = res.status().as_u16();
+        let headers = res.headers().clone();
 
         // Check Content-Length to avoid downloading enormous pages
         const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10MB
@@ -283,26 +546,13 @@ impl Tool for WebFetchTool {
             body_bytes.extend_from_slice(&chunk);
         }
         let html = String::from_utf8_lossy(&body_bytes).into_owned();
+        let result_text = extract_text_from_html(&html);
 
-        let result_text = {
-            // Parse HTML DOM using scraper
-            let document = Html::parse_document(&html);
-            let mut raw_text = String::new();
-            walk_nodes(document.tree.root(), &mut raw_text);
-
-            // Replace html entities
-            let clean_text = raw_text
-                .replace("&nbsp;", " ")
-                .replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&amp;", "&")
-                .replace("&quot;", "\"")
-                .replace("&#39;", "'");
-
-            let clean_text_spaces = web_re_whitespace().replace_all(&clean_text, " ");
-            let final_text = web_re_newlines().replace_all(&clean_text_spaces, "\n");
-            final_text.trim().to_string()
-        };
+        let _ =
+            save_cached_web_fetch(url_str, &result_text, &headers, status_code).map_err(|err| {
+                tracing::debug!(error = ?err, url = %url_str, "web_fetch cache save skipped");
+                err
+            });
 
         let _ = crate::tools::shared_memory::archive_research_entry(
             url_str,
@@ -376,6 +626,48 @@ mod tests {
         assert!(!is_safe_ip(&"::ffff:127.0.0.1".parse::<IpAddr>().unwrap()));
         assert!(!is_safe_ip(&"::ffff:10.0.0.1".parse::<IpAddr>().unwrap()));
         assert!(is_safe_ip(&"::ffff:8.8.8.8".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn cache_control_max_age_sets_expiry() {
+        let fetched_at = chrono::DateTime::parse_from_rfc3339("2026-07-26T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let expires = compute_expires_at(Some("public, max-age=120"), None, fetched_at).unwrap();
+        assert_eq!(expires, fetched_at + chrono::Duration::seconds(120));
+    }
+
+    #[test]
+    fn cache_control_no_cache_requires_revalidation() {
+        let fetched_at = chrono::DateTime::parse_from_rfc3339("2026-07-26T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let expires = compute_expires_at(Some("no-cache"), None, fetched_at).unwrap();
+        assert_eq!(expires, fetched_at);
+    }
+
+    #[test]
+    fn cache_control_no_store_skips_storage() {
+        let fetched_at = chrono::DateTime::parse_from_rfc3339("2026-07-26T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert!(compute_expires_at(Some("no-store"), None, fetched_at).is_none());
+    }
+
+    #[test]
+    fn web_fetch_cache_mode_accepts_aliases() {
+        assert_eq!(
+            WebFetchCacheMode::from_args(&serde_json::json!({})).unwrap(),
+            WebFetchCacheMode::Auto
+        );
+        assert_eq!(
+            WebFetchCacheMode::from_args(&serde_json::json!({ "cache_mode": "refresh" })).unwrap(),
+            WebFetchCacheMode::Revalidate
+        );
+        assert_eq!(
+            WebFetchCacheMode::from_args(&serde_json::json!({ "cacheMode": "no-cache" })).unwrap(),
+            WebFetchCacheMode::Bypass
+        );
     }
 
     #[tokio::test]

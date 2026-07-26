@@ -151,6 +151,20 @@ fn create_schema(conn: &Connection) -> Result<()> {
         [],
     )?;
     conn.execute(
+        "CREATE TABLE IF NOT EXISTS web_fetch_cache (
+            url TEXT PRIMARY KEY,
+            body_text TEXT NOT NULL,
+            etag TEXT,
+            last_modified TEXT,
+            cache_control TEXT,
+            fetched_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            status_code INTEGER NOT NULL,
+            use_count INTEGER NOT NULL DEFAULT 0
+        )",
+        [],
+    )?;
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS workflow_cards (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL UNIQUE,
