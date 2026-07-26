@@ -398,7 +398,17 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.64 (Latest Release)
+### v0.0.65 (Latest Release)
+
+**Configure Exit Reliability & Custom Provider Support:**
+*   **Fix:** `openz configure` now exits cleanly after save/back/Esc flows by disabling raw mode and terminating the command process, preventing background maintenance tasks from keeping configure alive.
+*   **Feature:** Added `Add Custom Provider` in the Providers configure menu for OpenAI-compatible endpoints with provider name, API base URL, API key, and default model fields.
+*   **Feature:** Custom providers are now first-class in TUI `/model` and text-channel `/switch-model` flows, including `custom_provider/model` prefix routing through the OpenAI-compatible provider adapter.
+*   **Feature:** Local custom providers on `localhost`/`127.0.0.1` can run without an API key; remote custom providers support env fallback keys like `OPENZ_PROVIDER_<NAME>_API_KEY`.
+*   **Tests:** Added focused coverage for custom provider config resolution, resolver routing, and model-switch rendering.
+*   **Chore:** Bumped version to `v0.0.65`.
+
+### v0.0.64
 
 **Comprehensive Performance & Footprint Optimization (RAM, CPU, Storage, Binary Size):**
 *   **SQLite Memory Tuning:** Added memory-constraining PRAGMAs (`cache_size=-2000`, `mmap_size=0`, `synchronous=NORMAL`, `wal_autocheckpoint=1000`) across all 7 database connection initialization sites, capping page cache memory from ~56 MB to ~14 MB.

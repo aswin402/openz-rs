@@ -181,9 +181,11 @@ pub async fn handle_changelog() -> Result<()> {
         green = AURA_GREEN,
         reset = COLOR_RESET
     );
-    println!("    • Added Headroom parity controls: threshold, signatures_only, and model_hint.");
-    println!("    • Added headroom_stats/headroom_usage analytics plus FTS5 cache search.");
-    println!("    • Hardened Headroom cache, path, SSRF, workspace, and run_and_compress safety.");
+    println!(
+        "    • Fixed `openz configure` exit so save/back/Esc flows do not leave the process alive."
+    );
+    println!("    • Added custom OpenAI-compatible providers with name, API base, key, and default model.");
+    println!("    • Wired custom providers into TUI `/model`, text `/switch-model`, and provider prefix routing.");
 
     println!(
         "  {slate}[v0.0.48]{reset}",

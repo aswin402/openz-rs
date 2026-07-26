@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.64`
+# OpenZ 🦊 `v0.0.65`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,13 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.65`
+
+- **Configure Exit Reliability**: `openz configure` now exits cleanly after save/back/Esc flows instead of staying alive behind the terminal.
+- **Custom OpenAI-Compatible Providers**: Providers configure menu now has `Add Custom Provider` for provider name, API base URL, API key, and default model.
+- **Model Picker Integration**: Custom providers now appear in TUI `/model` and text-channel `/switch-model`, with `custom_provider/model` prefix routing.
+- **Local Provider Support**: Local custom endpoints on localhost can run without an API key; remote custom providers support `OPENZ_PROVIDER_<NAME>_API_KEY`.
 
 ## What Changed In `v0.0.64`
 
