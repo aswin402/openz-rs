@@ -325,6 +325,20 @@ fn weak_model_operating_rules(model: &str) -> String {
     "\n\n[Small Model Operating Rules]\n- Use [Recent Session Context] before saying you do not know what this session discussed.\n- Use [Pinned Memory] before answering identity, persona, or preference questions.\n- For tool-heavy tasks, keep steps short and prefer exact tool schemas over guessing.\n- For broad tasks, research first, then make an implementation plan and todo list before editing.\n".to_string()
 }
 
+fn text_has_http_url(text: &str) -> bool {
+    text.split_whitespace().any(|part| {
+        let candidate = part.trim_matches(|c: char| {
+            matches!(
+                c,
+                '<' | '>' | ')' | '(' | ']' | '[' | '"' | '\'' | ',' | '.'
+            )
+        });
+        reqwest::Url::parse(candidate)
+            .map(|url| matches!(url.scheme(), "http" | "https"))
+            .unwrap_or(false)
+    })
+}
+
 fn is_current_or_latest_query(text: &str) -> bool {
     let lower = text.to_lowercase();
     [
@@ -335,13 +349,6 @@ fn is_current_or_latest_query(text: &str) -> bool {
         "new",
         "recent",
         "2026",
-        "price",
-        "pricing",
-        "cost",
-        "billing",
-        "plan",
-        "plans",
-        "subscription",
         "version",
         "news",
         "what's new",
@@ -349,6 +356,35 @@ fn is_current_or_latest_query(text: &str) -> bool {
     ]
     .iter()
     .any(|needle| lower.contains(needle))
+}
+
+fn asks_to_revalidate_saved_research(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    [
+        "again",
+        "recheck",
+        "re-check",
+        "refresh",
+        "verify",
+        "confirm",
+        "double check",
+        "check again",
+        "look again",
+        "go and check",
+        "from web",
+        "browse",
+        "live",
+        "actual page",
+        "real page",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn has_live_research_intent(text: &str) -> bool {
+    text_has_http_url(text)
+        || is_current_or_latest_query(text)
+        || asks_to_revalidate_saved_research(text)
 }
 
 fn concrete_research_topic_terms(text: &str) -> Vec<String> {
@@ -459,6 +495,9 @@ fn is_openz_self_inventory_query(text: &str) -> bool {
 }
 
 fn should_skip_research_memory_for_generic_query(text: &str) -> bool {
+    if text_has_http_url(text) {
+        return false;
+    }
     is_openz_self_inventory_query(text)
         || is_local_operational_or_ack_query(text)
         || concrete_research_topic_terms(text).is_empty()
@@ -471,12 +510,12 @@ fn format_research_brief_context_items(
     if items.is_empty() {
         return String::new();
     }
-    let current_sensitive = is_current_or_latest_query(user_content);
-    let mut out = String::from("\n\n[Relevant Research Briefs]\nUse these saved briefs first for simple definition/comparison questions. Do not call web/search tools when a fresh brief answers the question. Only refresh if freshness=stale or the user asks for latest/current data. Only state facts present in the briefs or saved sources; say unknown if a requested detail is missing. Do not guess licenses, channels, release numbers, integrations, or comparisons from memory alone:\n");
+    let current_sensitive = has_live_research_intent(user_content);
+    let mut out = String::from("\n\n[Relevant Research Briefs]\nUse these saved briefs first for simple definition/comparison questions. Do not call web/search tools when a fresh brief answers a stable non-live question. If the user provides a URL, asks to verify/check again, or asks for latest/current data, refresh the exact source or web before final answer. Only state facts present in the briefs or saved sources; say unknown if a requested detail is missing. Do not guess licenses, channels, release numbers, integrations, or comparisons from memory alone:\n");
     if current_sensitive {
-        out.push_str("- Current/latest intent detected: verify against saved sources or web before final answer.\n");
+        out.push_str("- Live/refresh intent detected: verify exact saved sources or web before final answer.\n");
     } else {
-        out.push_str("- Current/latest intent not detected: prefer answering from fresh briefs/sources without extra fetching.\n");
+        out.push_str("- Stable intent detected: prefer answering from fresh briefs/sources without extra fetching.\n");
     }
     for item in items.iter().take(3) {
         let line = format!(
@@ -1114,13 +1153,11 @@ mod tests {
     }
 
     #[test]
-    fn pricing_queries_are_current_sensitive() {
-        assert!(is_current_or_latest_query(
-            "see the pricing https://www.duix.com/pricing"
-        ));
+    fn live_queries_keep_research_context_available() {
         assert!(!should_skip_research_memory_for_generic_query(
-            "see the pricing https://www.duix.com/pricing"
+            "check this https://example.com/path"
         ));
+        assert!(has_live_research_intent("go and check again mem0"));
     }
 
     #[test]

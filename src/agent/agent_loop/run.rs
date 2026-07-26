@@ -78,6 +78,29 @@ fn is_research_lookup_tool(tool_name: &str) -> bool {
     )
 }
 
+fn text_has_http_url(text: &str) -> bool {
+    text.split_whitespace().any(|part| {
+        let candidate = part.trim_matches(|c: char| {
+            matches!(
+                c,
+                '<' | '>' | ')' | '(' | ']' | '[' | '"' | '\'' | ',' | '.'
+            )
+        });
+        reqwest::Url::parse(candidate)
+            .map(|url| matches!(url.scheme(), "http" | "https"))
+            .unwrap_or(false)
+    })
+}
+
+fn value_contains_http_url(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(text) => text_has_http_url(text),
+        serde_json::Value::Array(items) => items.iter().any(value_contains_http_url),
+        serde_json::Value::Object(map) => map.values().any(value_contains_http_url),
+        _ => false,
+    }
+}
+
 fn is_current_or_latest_query(text: &str) -> bool {
     let lower = text.to_lowercase();
     [
@@ -88,13 +111,6 @@ fn is_current_or_latest_query(text: &str) -> bool {
         "new",
         "recent",
         "2026",
-        "price",
-        "pricing",
-        "cost",
-        "billing",
-        "plan",
-        "plans",
-        "subscription",
         "version",
         "release",
         "news",
@@ -107,7 +123,6 @@ fn is_current_or_latest_query(text: &str) -> bool {
 
 fn is_explicit_research_request(text: &str) -> bool {
     let lower = text.to_lowercase();
-    let has_url = lower.contains("http://") || lower.contains("https://");
     let has_research_verb = [
         "research",
         "look up",
@@ -130,13 +145,46 @@ fn is_explicit_research_request(text: &str) -> bool {
     .iter()
     .any(|needle| lower.contains(needle));
 
-    has_research_verb || (has_url && lower.contains("tell me"))
+    text_has_http_url(text) || has_research_verb
 }
 
-async fn fresh_research_brief_blocks_lookup(user_content: &str, tool_name: &str) -> bool {
-    if !is_research_lookup_tool(tool_name)
+fn asks_to_revalidate_saved_research(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    [
+        "again",
+        "recheck",
+        "re-check",
+        "refresh",
+        "verify",
+        "confirm",
+        "double check",
+        "check again",
+        "look again",
+        "go and check",
+        "from web",
+        "browse",
+        "live",
+        "actual page",
+        "real page",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn should_force_live_research_lookup(user_content: &str, arguments: &serde_json::Value) -> bool {
+    text_has_http_url(user_content)
+        || value_contains_http_url(arguments)
         || is_current_or_latest_query(user_content)
+        || asks_to_revalidate_saved_research(user_content)
         || is_explicit_research_request(user_content)
+}
+async fn fresh_research_brief_blocks_lookup(
+    user_content: &str,
+    tool_name: &str,
+    arguments: &serde_json::Value,
+) -> bool {
+    if !is_research_lookup_tool(tool_name)
+        || should_force_live_research_lookup(user_content, arguments)
     {
         return false;
     }
@@ -970,7 +1018,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 "Executing tool call"
             );
             let fresh_brief_blocks_lookup =
-                fresh_research_brief_blocks_lookup(ctx.user_content, &call.name).await;
+                fresh_research_brief_blocks_lookup(ctx.user_content, &call.name, &call.arguments)
+                    .await;
             let approval = super::security_approval::evaluate_tool_approval(
                 &call,
                 &ctx.messages,
@@ -1397,34 +1446,58 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            fresh_research_brief_blocks_lookup(&format!("what is openhuman {marker}"), "web_fetch")
-                .await
-        );
-        assert!(
-            !fresh_research_brief_blocks_lookup(
-                &format!("latest openhuman {marker} release"),
-                "web_fetch"
+            fresh_research_brief_blocks_lookup(
+                &format!("what is openhuman {marker}"),
+                "web_fetch",
+                &serde_json::json!({}),
             )
             .await
         );
         assert!(
             !fresh_research_brief_blocks_lookup(
-                &format!("see the pricing https://www.duix.com/pricing {marker}"),
-                "web_fetch"
+                &format!("latest openhuman {marker} release"),
+                "web_fetch",
+                &serde_json::json!({}),
+            )
+            .await
+        );
+        assert!(
+            !fresh_research_brief_blocks_lookup(
+                &format!("check this https://example.com/{marker}"),
+                "web_fetch",
+                &serde_json::json!({}),
             )
             .await
         );
         assert!(
             !fresh_research_brief_blocks_lookup(
                 &format!("what is openhuman {marker}"),
-                "read_file"
+                "web_fetch",
+                &serde_json::json!({ "url": format!("https://example.com/{marker}") }),
+            )
+            .await
+        );
+        assert!(
+            !fresh_research_brief_blocks_lookup(
+                &format!("go and check again openhuman {marker}"),
+                "web_search",
+                &serde_json::json!({}),
+            )
+            .await
+        );
+        assert!(
+            !fresh_research_brief_blocks_lookup(
+                &format!("what is openhuman {marker}"),
+                "read_file",
+                &serde_json::json!({}),
             )
             .await
         );
         assert!(
             !fresh_research_brief_blocks_lookup(
                 &format!("research about openhuman {marker} and tell me about this"),
-                "web_fetch"
+                "web_fetch",
+                &serde_json::json!({}),
             )
             .await
         );
@@ -1440,8 +1513,9 @@ mod tests {
             "please read this https://github.com/mem0ai/mem0"
         ));
         assert!(is_explicit_research_request(
-            "see the pricing https://www.duix.com/pricing"
+            "check this https://example.com/path"
         ));
+        assert!(asks_to_revalidate_saved_research("go and check again"));
         assert!(!is_explicit_research_request("what is openhuman"));
         assert!(!is_explicit_research_request("hey whats new"));
     }
