@@ -707,6 +707,7 @@ mod tests {
         config.providers.deepseek = Some(crate::config::schema::ProviderConfig {
             api_key: Some("test-key".to_string()),
             api_base: None,
+            default_model: None,
             extra: std::collections::HashMap::new(),
         });
         let model_routed = determine_routed_model(&config, "gpt-4o", "Hi there");

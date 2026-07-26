@@ -8,6 +8,8 @@ pub struct ProviderConfig {
     pub api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_base: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -696,6 +698,27 @@ fn env_key(env_keys: &[&str]) -> Option<String> {
         .find_map(|env| std::env::var(env).ok().filter(|key| !key.trim().is_empty()))
 }
 
+fn custom_provider_env_key(provider_name: &str) -> String {
+    let mut key = String::from("OPENZ_PROVIDER_");
+    for ch in provider_name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            key.push(ch.to_ascii_uppercase());
+        } else {
+            key.push('_');
+        }
+    }
+    key.push_str("_API_KEY");
+    key
+}
+
+fn is_local_api_base(api_base: &str) -> bool {
+    let base = api_base.trim().to_lowercase();
+    base.starts_with("http://localhost")
+        || base.starts_with("http://127.0.0.1")
+        || base.starts_with("http://0.0.0.0")
+        || base.starts_with("http://[::1]")
+}
+
 // ── Shared provider config resolution ─────────────────────────────────────
 // Single source of truth for resolving provider API key + base URL.
 // Used by: resolver.rs, channels/mod.rs (fetch_provider_models), cli/builder.rs.
@@ -703,43 +726,143 @@ impl Config {
     /// Resolve API key and base URL for a provider from config + env vars.
     /// Returns `(api_key, api_base)` — local providers may return an empty key.
     pub fn resolve_provider_config(&self, provider_name: &str) -> (String, String) {
-        let Some(def) = provider_def(provider_name) else {
+        if let Some(def) = provider_def(provider_name) {
+            let provider = (def.config)(&self.providers);
+            let key = if def.local {
+                String::new()
+            } else {
+                configured_key(provider)
+                    .or_else(|| env_key(def.env_keys))
+                    .unwrap_or_default()
+            };
+            let base = provider
+                .and_then(|p| p.api_base.clone())
+                .unwrap_or_else(|| def.default_base.to_string());
+            return (key, base);
+        }
+
+        let Some(provider) = self.providers.others.get(provider_name) else {
             return (String::new(), String::new());
         };
-        let provider = (def.config)(&self.providers);
-        let key = if def.local {
-            String::new()
-        } else {
-            configured_key(provider)
-                .or_else(|| env_key(def.env_keys))
-                .unwrap_or_default()
-        };
-        let base = provider
-            .and_then(|p| p.api_base.clone())
-            .unwrap_or_else(|| def.default_base.to_string());
+        let base = provider.api_base.clone().unwrap_or_default();
+        let env_var = custom_provider_env_key(provider_name);
+        let key = configured_key(Some(provider))
+            .or_else(|| {
+                std::env::var(env_var)
+                    .ok()
+                    .filter(|key| !key.trim().is_empty())
+            })
+            .unwrap_or_default();
         (key, base)
     }
 
-    pub fn is_provider_configured(&self, provider_name: &str) -> bool {
-        let Some(def) = provider_def(provider_name) else {
-            return false;
-        };
-        if provider_name == "ollama_local" || provider_name == "mivi" {
-            return true;
+    pub fn custom_provider_names(&self) -> Vec<String> {
+        let mut names = self.providers.others.keys().cloned().collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
+    pub fn custom_provider_default_model(&self, provider_name: &str) -> Option<String> {
+        self.providers
+            .others
+            .get(provider_name)
+            .and_then(|provider| provider.default_model.clone())
+            .filter(|model| !model.trim().is_empty())
+    }
+
+    pub fn is_custom_provider(&self, provider_name: &str) -> bool {
+        self.providers.others.contains_key(provider_name)
+    }
+
+    pub fn is_custom_provider_name_valid(provider_name: &str) -> bool {
+        let name = provider_name.trim();
+        !name.is_empty()
+            && name
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.')
+            && provider_def(name).is_none()
+    }
+
+    pub fn custom_provider_env_var(provider_name: &str) -> String {
+        custom_provider_env_key(provider_name)
+    }
+
+    pub fn custom_provider_allows_empty_key(&self, provider_name: &str) -> bool {
+        self.providers
+            .others
+            .get(provider_name)
+            .and_then(|provider| provider.api_base.as_deref())
+            .is_some_and(is_local_api_base)
+    }
+
+    pub fn set_provider_config(&mut self, provider_name: &str, provider_config: ProviderConfig) {
+        match provider_name {
+            "anthropic" => self.providers.anthropic = Some(provider_config),
+            "openai" => self.providers.openai = Some(provider_config),
+            "mivi" => self.providers.mivi = Some(provider_config),
+            "openrouter" => self.providers.openrouter = Some(provider_config),
+            "deepseek" => self.providers.deepseek = Some(provider_config),
+            "groq" => self.providers.groq = Some(provider_config),
+            "ollama" => self.providers.ollama = Some(provider_config),
+            "minimax" => self.providers.minimax = Some(provider_config),
+            "mistral" => self.providers.mistral = Some(provider_config),
+            "z.ai" => self.providers.z_ai = Some(provider_config),
+            "nvidia" => self.providers.nvidia = Some(provider_config),
+            "opencode_zen" => self.providers.opencode_zen = Some(provider_config),
+            "cerebras" => self.providers.cerebras = Some(provider_config),
+            "google_ai_studio" => self.providers.google_ai_studio = Some(provider_config),
+            "cohere" => self.providers.cohere = Some(provider_config),
+            "llm7" => self.providers.llm7 = Some(provider_config),
+            "sambanova" => self.providers.sambanova = Some(provider_config),
+            "huggingface" => self.providers.huggingface = Some(provider_config),
+            custom => {
+                self.providers
+                    .others
+                    .insert(custom.to_string(), provider_config);
+            }
         }
-        let provider = (def.config)(&self.providers);
-        if def.local {
-            provider.is_some()
+    }
+
+    pub fn get_provider_config(&self, provider_name: &str) -> Option<&ProviderConfig> {
+        if let Some(def) = provider_def(provider_name) {
+            (def.config)(&self.providers)
         } else {
-            configured_key(provider).is_some()
+            self.providers.others.get(provider_name)
+        }
+    }
+
+    pub fn is_provider_configured(&self, provider_name: &str) -> bool {
+        if let Some(def) = provider_def(provider_name) {
+            if provider_name == "ollama_local" || provider_name == "mivi" {
+                return true;
+            }
+            let provider = (def.config)(&self.providers);
+            if def.local {
+                provider.is_some()
+            } else {
+                configured_key(provider).is_some()
+            }
+        } else if let Some(provider) = self.providers.others.get(provider_name) {
+            provider
+                .api_base
+                .as_deref()
+                .is_some_and(|base| !base.trim().is_empty())
+                && (configured_key(Some(provider)).is_some()
+                    || self.custom_provider_allows_empty_key(provider_name))
+        } else {
+            false
         }
     }
 
     pub fn is_provider_available(&self, provider_name: &str) -> bool {
-        let Some(def) = provider_def(provider_name) else {
-            return false;
-        };
-        self.is_provider_configured(provider_name) || env_key(def.env_keys).is_some()
+        if let Some(def) = provider_def(provider_name) {
+            self.is_provider_configured(provider_name) || env_key(def.env_keys).is_some()
+        } else {
+            self.is_provider_configured(provider_name)
+                || std::env::var(custom_provider_env_key(provider_name))
+                    .ok()
+                    .is_some_and(|key| !key.trim().is_empty())
+        }
     }
 
     pub fn get_dynamic_fallbacks(&self, subagent_name: &str) -> Vec<String> {
@@ -868,6 +991,7 @@ mod provider_resolution_tests {
         config.providers.z_ai = Some(ProviderConfig {
             api_key: Some("z-key".to_string()),
             api_base: None,
+            default_model: None,
             extra: HashMap::new(),
         });
 
@@ -909,6 +1033,33 @@ mod provider_resolution_tests {
             (String::new(), "http://127.0.0.1:8000/v1".to_string())
         );
         assert!(config.is_provider_available("mivi"));
+    }
+
+    #[test]
+    fn custom_provider_resolves_config_and_local_availability() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::remove_var("OPENZ_PROVIDER_LOCAL_AI_API_KEY");
+        let mut config = blank_config();
+        config.providers.others.insert(
+            "local_ai".to_string(),
+            ProviderConfig {
+                api_key: None,
+                api_base: Some("http://127.0.0.1:9999/v1".to_string()),
+                default_model: Some("local-model".to_string()),
+                extra: HashMap::new(),
+            },
+        );
+
+        assert!(Config::is_custom_provider_name_valid("local_ai"));
+        assert!(config.is_provider_available("local_ai"));
+        assert_eq!(
+            config.resolve_provider_config("local_ai"),
+            (String::new(), "http://127.0.0.1:9999/v1".to_string())
+        );
+        assert_eq!(
+            config.custom_provider_default_model("local_ai"),
+            Some("local-model".to_string())
+        );
     }
 
     #[test]

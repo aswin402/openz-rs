@@ -572,7 +572,23 @@ impl CliChannel {
                         .filter(|p| config.is_provider_configured(p.name))
                         .collect();
 
-                    if filtered_providers.is_empty() {
+                    let custom_provider_options = config
+                        .custom_provider_names()
+                        .into_iter()
+                        .filter(|name| config.is_provider_available(name))
+                        .map(|name| {
+                            let default_model = config.custom_provider_default_model(&name);
+                            let display = format!(
+                                "Custom: {} ({})",
+                                name,
+                                default_model.as_deref().unwrap_or("custom model")
+                            );
+                            let models = default_model.into_iter().collect::<Vec<_>>();
+                            (name, display, models)
+                        })
+                        .collect::<Vec<_>>();
+
+                    if filtered_providers.is_empty() && custom_provider_options.is_empty() {
                         println!(
                             "{}⚠️ No LLM providers configured! Please run 'openz configure' first.{}",
                             crate::agent::style::colors::AURA_GOLD,
@@ -589,6 +605,11 @@ impl CliChannel {
                         .iter()
                         .map(|p| p.display.to_string())
                         .collect();
+                    provider_options.extend(
+                        custom_provider_options
+                            .iter()
+                            .map(|(_, display, _)| display.clone()),
+                    );
                     provider_options.push("Exit".to_string());
                     let (active_mdl, current_active_header) = {
                         let defaults = self.defaults.lock().await;
@@ -608,7 +629,9 @@ impl CliChannel {
                         false,
                     ) {
                         Ok(Some(selected_idx)) => {
-                            if selected_idx == filtered_providers.len() {
+                            if selected_idx
+                                == filtered_providers.len() + custom_provider_options.len()
+                            {
                                 println!("Model selection cancelled.");
                                 println!(
                                     "{}────────────────────────────────────────────────────────────{}",
@@ -616,46 +639,58 @@ impl CliChannel {
                                 );
                                 continue;
                             }
-                            let prov_info = filtered_providers[selected_idx];
-                            if prov_info.name == "ollama_local" {
+                            let (prov_name, prov_display, curated_models) =
+                                if selected_idx < filtered_providers.len() {
+                                    let prov_info = filtered_providers[selected_idx];
+                                    (
+                                        prov_info.name.to_string(),
+                                        prov_info.display.to_string(),
+                                        prov_info
+                                            .models
+                                            .iter()
+                                            .map(|model| model.to_string())
+                                            .collect::<Vec<_>>(),
+                                    )
+                                } else {
+                                    let custom_idx = selected_idx - filtered_providers.len();
+                                    custom_provider_options[custom_idx].clone()
+                                };
+                            if prov_name == "ollama_local" {
                                 crate::providers::ollama_manager::ensure_local_ollama(&config);
                             }
 
                             print!(
                                 "{}◇ Fetching models for {}...{}",
-                                AURA_SLATE, prov_info.display, COLOR_RESET
+                                AURA_SLATE, prov_display, COLOR_RESET
                             );
                             let _ = std::io::stdout().flush();
 
-                            let mut model_options = match crate::channels::fetch_provider_models(
-                                prov_info.name,
-                                &config,
-                            )
-                            .await
-                            {
-                                Some(mut models) => {
-                                    print!("\r\x1b[2K");
-                                    let _ = std::io::stdout().flush();
-                                    for &m in prov_info.models {
-                                        let ms = m.to_string();
-                                        if !models.contains(&ms) {
-                                            models.push(ms);
+                            let mut model_options =
+                                match crate::channels::fetch_provider_models(&prov_name, &config)
+                                    .await
+                                {
+                                    Some(mut models) => {
+                                        print!("\r\x1b[2K");
+                                        let _ = std::io::stdout().flush();
+                                        for m in &curated_models {
+                                            if !models.contains(m) {
+                                                models.push(m.clone());
+                                            }
                                         }
+                                        models.sort();
+                                        models
                                     }
-                                    models.sort();
-                                    models
-                                }
-                                None => {
-                                    print!("\r\x1b[2K");
-                                    let _ = std::io::stdout().flush();
-                                    prov_info.models.iter().map(|&m| m.to_string()).collect()
-                                }
-                            };
+                                    None => {
+                                        print!("\r\x1b[2K");
+                                        let _ = std::io::stdout().flush();
+                                        curated_models.clone()
+                                    }
+                                };
                             model_options.push("Type manually (Custom Model)".to_string());
                             model_options.push("Exit".to_string());
 
                             match select_menu_custom(
-                                &format!("Choose a model from {}:", prov_info.display),
+                                &format!("Choose a model from {}:", prov_display),
                                 &model_options,
                                 &active_mdl,
                                 None,
@@ -670,7 +705,7 @@ impl CliChannel {
                                         );
                                         continue;
                                     }
-                                    let prov = prov_info.name;
+                                    let prov = prov_name.as_str();
                                     let mdl = if selected_model_idx == model_options.len() - 2 {
                                         match inquire::Text::new("Enter custom model name:")
                                             .prompt()

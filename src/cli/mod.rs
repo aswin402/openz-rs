@@ -77,6 +77,8 @@ pub async fn run_cli() -> Result<()> {
         }
         Command::Configure => {
             configure::handle_configure().await?;
+            let _ = crossterm::terminal::disable_raw_mode();
+            std::process::exit(0);
         }
         Command::Agent => {
             agent::handle_agent().await?;

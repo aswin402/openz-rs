@@ -40,6 +40,13 @@ pub struct ProviderModels {
     pub models: &'static [&'static str],
 }
 
+#[derive(Debug, Clone)]
+pub struct ProviderModelsOption {
+    pub name: String,
+    pub display: String,
+    pub models: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelSwitchCommand {
     None,
@@ -349,6 +356,70 @@ pub fn configured_provider_models(
         .collect()
 }
 
+pub fn configured_provider_model_options(
+    config: &crate::config::schema::Config,
+) -> Vec<ProviderModelsOption> {
+    let mut providers = configured_provider_models(config)
+        .into_iter()
+        .map(|provider| ProviderModelsOption {
+            name: provider.name.to_string(),
+            display: provider.display.to_string(),
+            models: provider
+                .models
+                .iter()
+                .map(|model| model.to_string())
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+
+    for name in config.custom_provider_names() {
+        if !config.is_provider_available(&name) {
+            continue;
+        }
+        let default_model = config.custom_provider_default_model(&name);
+        let models = default_model.clone().into_iter().collect::<Vec<_>>();
+        let display_model = default_model.unwrap_or_else(|| "custom model".to_string());
+        providers.push(ProviderModelsOption {
+            name: name.clone(),
+            display: format!("Custom: {} ({})", name, display_model),
+            models,
+        });
+    }
+
+    providers
+}
+
+pub fn provider_model_option_by_name(
+    config: &crate::config::schema::Config,
+    name: &str,
+) -> Option<ProviderModelsOption> {
+    provider_models_by_name(name)
+        .map(|provider| ProviderModelsOption {
+            name: provider.name.to_string(),
+            display: provider.display.to_string(),
+            models: provider
+                .models
+                .iter()
+                .map(|model| model.to_string())
+                .collect(),
+        })
+        .or_else(|| {
+            if !config.is_custom_provider(name) {
+                return None;
+            }
+            let default_model = config.custom_provider_default_model(name);
+            Some(ProviderModelsOption {
+                name: name.to_string(),
+                display: format!(
+                    "Custom: {} ({})",
+                    name,
+                    default_model.as_deref().unwrap_or("custom model")
+                ),
+                models: default_model.into_iter().collect(),
+            })
+        })
+}
+
 pub fn provider_models_by_name(name: &str) -> Option<&'static ProviderModels> {
     provider_model_catalog()
         .iter()
@@ -392,7 +463,7 @@ pub fn render_model_switch_command(
 }
 
 pub fn render_model_switch_providers(config: &crate::config::schema::Config) -> String {
-    let providers = configured_provider_models(config);
+    let providers = configured_provider_model_options(config);
     if providers.is_empty() {
         return "No configured LLM providers found. Run `openz configure` first.".to_string();
     }
@@ -412,7 +483,7 @@ pub fn render_model_switch_models(
     config: &crate::config::schema::Config,
     provider: &str,
 ) -> String {
-    let Some(provider_models) = provider_models_by_name(provider) else {
+    let Some(provider_models) = provider_model_option_by_name(config, provider) else {
         return format!("Unknown provider `{provider}`. Use `/switch-model` to list providers.");
     };
     if !config.is_provider_available(provider) {
@@ -425,8 +496,12 @@ pub fn render_model_switch_models(
         "Models for `{}` ({}):\n",
         provider_models.name, provider_models.display
     );
-    for model in provider_models.models {
-        response.push_str(&format!("- `{model}`\n"));
+    if provider_models.models.is_empty() {
+        response.push_str("- Type any OpenAI-compatible model name manually\n");
+    } else {
+        for model in &provider_models.models {
+            response.push_str(&format!("- `{model}`\n"));
+        }
     }
     response.push_str(&format!(
         "\nUsage: `/switch-model {} <model>`",
@@ -536,7 +611,7 @@ pub fn save_default_model_selection(
     provider: &str,
     model: &str,
 ) -> anyhow::Result<()> {
-    if provider_models_by_name(provider).is_none() {
+    if provider_models_by_name(provider).is_none() && !base_config.is_custom_provider(provider) {
         anyhow::bail!("unknown provider `{provider}`");
     }
     if !base_config.is_provider_available(provider) {
@@ -1154,7 +1229,11 @@ pub async fn fetch_provider_models(
 
     let (api_key, api_base) = config.resolve_provider_config(provider_name);
 
-    if provider_name != "ollama" && provider_name != "ollama_local" && api_key.is_empty() {
+    if provider_name != "ollama"
+        && provider_name != "ollama_local"
+        && api_key.is_empty()
+        && !config.custom_provider_allows_empty_key(provider_name)
+    {
         return None;
     }
 
@@ -1527,6 +1606,28 @@ mod model_switch_tests {
                 model: "deepseek-v4-flash-free".to_string()
             }
         );
+    }
+
+    #[test]
+    fn model_switch_lists_custom_providers_and_models() {
+        let mut config = crate::config::schema::Config::default();
+        config.providers.others.insert(
+            "acme".to_string(),
+            crate::config::schema::ProviderConfig {
+                api_key: Some("key".to_string()),
+                api_base: Some("https://acme.example/v1".to_string()),
+                default_model: Some("acme-model".to_string()),
+                extra: std::collections::HashMap::new(),
+            },
+        );
+
+        let providers = render_model_switch_providers(&config);
+        assert!(providers.contains("`acme`"));
+        assert!(providers.contains("Custom: acme"));
+
+        let models = render_model_switch_models(&config, "acme");
+        assert!(models.contains("`acme-model`"));
+        assert!(models.contains("/switch-model acme <model>"));
     }
 
     #[test]

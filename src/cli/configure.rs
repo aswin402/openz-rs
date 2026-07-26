@@ -5,81 +5,167 @@ use crate::println;
 use anyhow::{anyhow, Result};
 use inquire::{Confirm, Password, PasswordDisplayMode, Text};
 
-pub fn update_provider_key(config: &mut Config, provider_name: &str, api_key: String) {
-    let mut p_config = match provider_name {
-        "anthropic" => config.providers.anthropic.clone(),
-        "openai" => config.providers.openai.clone(),
-        "mivi" => config.providers.mivi.clone(),
-        "openrouter" => config.providers.openrouter.clone(),
-        "deepseek" => config.providers.deepseek.clone(),
-        "groq" => config.providers.groq.clone(),
-        "ollama" => config.providers.ollama.clone(),
-        "minimax" => config.providers.minimax.clone(),
-        "mistral" => config.providers.mistral.clone(),
-        "z.ai" => config.providers.z_ai.clone(),
-        "nvidia" => config.providers.nvidia.clone(),
-        "opencode_zen" => config.providers.opencode_zen.clone(),
-        "cerebras" => config.providers.cerebras.clone(),
-        "google_ai_studio" => config.providers.google_ai_studio.clone(),
-        "cohere" => config.providers.cohere.clone(),
-        "llm7" => config.providers.llm7.clone(),
-        "sambanova" => config.providers.sambanova.clone(),
-        "huggingface" => config.providers.huggingface.clone(),
-        _ => return,
+fn default_base_for_provider(provider_name: &str) -> &'static str {
+    match provider_name {
+        "anthropic" => "https://api.anthropic.com",
+        "openai" => "https://api.openai.com/v1",
+        "mivi" => "http://127.0.0.1:8000/v1",
+        "openrouter" => "https://openrouter.ai/api/v1",
+        "deepseek" => "https://api.deepseek.com/v1",
+        "groq" => "https://api.groq.com/openai/v1",
+        "ollama" => "http://localhost:11434/v1",
+        "minimax" => "https://api.minimax.io/v1",
+        "mistral" => "https://api.mistral.ai/v1",
+        "z.ai" => "https://api.z.ai/api/paas/v4/",
+        "nvidia" => "https://integrate.api.nvidia.com/v1",
+        "opencode_zen" => "https://opencode.ai/zen/v1",
+        "cerebras" => "https://api.cerebras.ai/v1",
+        "google_ai_studio" => "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "cohere" => "https://api.cohere.com/v1",
+        "llm7" => "https://token.llm7.io/v1",
+        "sambanova" => "https://api.sambanova.ai/v1",
+        "huggingface" => "https://api-inference.huggingface.co/v1",
+        _ => "https://api.openai.com/v1",
     }
-    .unwrap_or_else(|| ProviderConfig {
-        api_key: None,
-        api_base: None,
-        extra: std::collections::HashMap::new(),
-    });
+}
+
+pub fn update_provider_key(config: &mut Config, provider_name: &str, api_key: String) {
+    let mut p_config = config
+        .get_provider_config(provider_name)
+        .cloned()
+        .unwrap_or_else(|| ProviderConfig {
+            api_key: None,
+            api_base: None,
+            default_model: None,
+            extra: std::collections::HashMap::new(),
+        });
     p_config.api_key = Some(api_key);
 
     if p_config.api_base.is_none() {
-        let default_base = match provider_name {
-            "anthropic" => "https://api.anthropic.com",
-            "openai" => "https://api.openai.com/v1",
-            "mivi" => "http://127.0.0.1:8000/v1",
-            "openrouter" => "https://openrouter.ai/api/v1",
-            "deepseek" => "https://api.deepseek.com/v1",
-            "groq" => "https://api.groq.com/openai/v1",
-            "ollama" => "http://localhost:11434/v1",
-            "minimax" => "https://api.minimax.io/v1",
-            "mistral" => "https://api.mistral.ai/v1",
-            "z.ai" => "https://api.z.ai/api/paas/v4/",
-            "nvidia" => "https://integrate.api.nvidia.com/v1",
-            "opencode_zen" => "https://opencode.ai/zen/v1",
-            "cerebras" => "https://api.cerebras.ai/v1",
-            "google_ai_studio" => "https://generativelanguage.googleapis.com/v1beta/openai/",
-            "cohere" => "https://api.cohere.com/v1",
-            "llm7" => "https://token.llm7.io/v1",
-            "sambanova" => "https://api.sambanova.ai/v1",
-            "huggingface" => "https://api-inference.huggingface.co/v1",
-            _ => "",
-        };
-        p_config.api_base = Some(default_base.to_string());
+        p_config.api_base = Some(default_base_for_provider(provider_name).to_string());
     }
 
-    match provider_name {
-        "anthropic" => config.providers.anthropic = Some(p_config),
-        "openai" => config.providers.openai = Some(p_config),
-        "mivi" => config.providers.mivi = Some(p_config),
-        "openrouter" => config.providers.openrouter = Some(p_config),
-        "deepseek" => config.providers.deepseek = Some(p_config),
-        "groq" => config.providers.groq = Some(p_config),
-        "ollama" => config.providers.ollama = Some(p_config),
-        "minimax" => config.providers.minimax = Some(p_config),
-        "mistral" => config.providers.mistral = Some(p_config),
-        "z.ai" => config.providers.z_ai = Some(p_config),
-        "nvidia" => config.providers.nvidia = Some(p_config),
-        "opencode_zen" => config.providers.opencode_zen = Some(p_config),
-        "cerebras" => config.providers.cerebras = Some(p_config),
-        "google_ai_studio" => config.providers.google_ai_studio = Some(p_config),
-        "cohere" => config.providers.cohere = Some(p_config),
-        "llm7" => config.providers.llm7 = Some(p_config),
-        "sambanova" => config.providers.sambanova = Some(p_config),
-        "huggingface" => config.providers.huggingface = Some(p_config),
-        _ => {}
+    config.set_provider_config(provider_name, p_config);
+}
+
+fn is_local_base(api_base: &str) -> bool {
+    let base = api_base.trim().to_lowercase();
+    base.starts_with("http://localhost")
+        || base.starts_with("http://127.0.0.1")
+        || base.starts_with("http://0.0.0.0")
+        || base.starts_with("http://[::1]")
+}
+
+async fn handle_custom_provider_form(
+    config: &mut Config,
+    existing_name: Option<String>,
+) -> Result<()> {
+    let provider_name = match existing_name {
+        Some(name) => name,
+        None => {
+            let input = Text::new("Custom provider name (letters, numbers, _, -, .):").prompt()?;
+            let name = input.trim().to_string();
+            if !Config::is_custom_provider_name_valid(&name) {
+                return Err(anyhow!(
+                    "invalid custom provider name `{}`; use a unique name with letters, numbers, _, -, or .",
+                    name
+                ));
+            }
+            name
+        }
+    };
+
+    let existing = config.get_provider_config(&provider_name).cloned();
+    if existing.is_some() {
+        let reconfigure = Confirm::new(&format!(
+            "Custom provider `{}` already exists. Reconfigure?",
+            provider_name
+        ))
+        .with_default(false)
+        .prompt()?;
+        if !reconfigure {
+            return Ok(());
+        }
     }
+
+    let existing_base = existing
+        .as_ref()
+        .and_then(|provider| provider.api_base.as_deref())
+        .unwrap_or("https://api.openai.com/v1");
+    let base_input = Text::new(&format!(
+        "OpenAI-compatible API base URL [default: {}]:",
+        existing_base
+    ))
+    .prompt()?;
+    let api_base = if base_input.trim().is_empty() {
+        existing_base.to_string()
+    } else {
+        base_input.trim().to_string()
+    };
+
+    let key = Password::new(&format!(
+        "API key for `{}` (leave empty only for local/no-key providers):",
+        provider_name
+    ))
+    .without_confirmation()
+    .with_display_mode(PasswordDisplayMode::Masked)
+    .prompt()?;
+    let api_key = if key.trim().is_empty() {
+        existing
+            .as_ref()
+            .and_then(|provider| provider.api_key.clone())
+    } else {
+        Some(key.trim().to_string())
+    };
+
+    if api_key.as_deref().unwrap_or_default().trim().is_empty() && !is_local_base(&api_base) {
+        println!(
+            "{}⚠️ No API key set. You can also set {}.{}",
+            AURA_GOLD,
+            Config::custom_provider_env_var(&provider_name),
+            COLOR_RESET
+        );
+    }
+
+    let existing_model = existing
+        .as_ref()
+        .and_then(|provider| provider.default_model.as_deref())
+        .unwrap_or("gpt-4o");
+    let model_input = Text::new(&format!(
+        "Default model for `{}` [default: {}]:",
+        provider_name, existing_model
+    ))
+    .prompt()?;
+    let default_model = if model_input.trim().is_empty() {
+        existing_model.to_string()
+    } else {
+        model_input.trim().to_string()
+    };
+
+    config.set_provider_config(
+        &provider_name,
+        ProviderConfig {
+            api_key,
+            api_base: Some(api_base),
+            default_model: Some(default_model.clone()),
+            extra: existing.map(|provider| provider.extra).unwrap_or_default(),
+        },
+    );
+
+    let use_now = Confirm::new("Use this provider/model as the active default now?")
+        .with_default(true)
+        .prompt()?;
+    if use_now {
+        config.agents.defaults.provider = provider_name.clone();
+        config.agents.defaults.model = default_model.clone();
+    }
+
+    save_config(config)?;
+    println!(
+        "{}✓ Custom provider `{}` saved with default model `{}`.{}",
+        EMERALD_GREEN, provider_name, default_model, COLOR_RESET
+    );
+    Ok(())
 }
 
 fn is_telegram_configured(config: &Config) -> bool {
@@ -296,6 +382,7 @@ async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Resu
     ];
 
     loop {
+        let custom_names = config.custom_provider_names();
         let mut prov_options: Vec<String> = provider_list
             .iter()
             .map(|p| {
@@ -306,6 +393,13 @@ async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Resu
                 }
             })
             .collect();
+        for name in &custom_names {
+            let model = config
+                .custom_provider_default_model(name)
+                .unwrap_or_else(|| "custom model".to_string());
+            prov_options.push(format!("Custom: {} ({})", name, model));
+        }
+        prov_options.push("Add Custom Provider".to_string());
         prov_options.push("Back".to_string());
 
         let choice_idx = match select_menu_custom(
@@ -319,8 +413,17 @@ async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Resu
             _ => break, // Go back on Esc
         };
 
-        if choice_idx == provider_list.len() {
+        if choice_idx == provider_list.len() + custom_names.len() + 1 {
             break; // Back option
+        }
+        if choice_idx == provider_list.len() + custom_names.len() {
+            handle_custom_provider_form(config, None).await?;
+            continue;
+        }
+        if choice_idx >= provider_list.len() {
+            let custom_idx = choice_idx - provider_list.len();
+            handle_custom_provider_form(config, Some(custom_names[custom_idx].clone())).await?;
+            continue;
         }
 
         let prov_info = &provider_list[choice_idx];

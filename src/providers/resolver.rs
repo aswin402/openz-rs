@@ -19,6 +19,7 @@ pub fn resolve_api_config(config: &Config, provider_name: &str) -> (String, Stri
         && provider_name != "ollama"
         && provider_name != "ollama_local"
         && provider_name != "mivi"
+        && !config.custom_provider_allows_empty_key(provider_name)
     {
         tracing::warn!(
             "No API key configured for provider '{}'. Requests will likely fail with 401.",
@@ -28,26 +29,26 @@ pub fn resolve_api_config(config: &Config, provider_name: &str) -> (String, Stri
     (key, base)
 }
 
-fn provider_api_key_env_var(provider_name: &str) -> &'static str {
+fn provider_api_key_env_var(provider_name: &str) -> String {
     match provider_name {
-        "anthropic" => "ANTHROPIC_API_KEY",
-        "openai" => "OPENAI_API_KEY",
-        "mivi" => "MIVI_API_KEY",
-        "openrouter" => "OPENROUTER_API_KEY",
-        "deepseek" => "DEEPSEEK_API_KEY",
-        "groq" => "GROQ_API_KEY",
-        "minimax" => "MINIMAX_API_KEY",
-        "mistral" => "MISTRAL_API_KEY",
-        "z.ai" => "Z_AI_API_KEY",
-        "nvidia" => "NVIDIA_API_KEY",
-        "opencode_zen" => "OPENCODE_ZEN_API_KEY",
-        "google_ai_studio" | "google ai studio" => "GOOGLE_AI_STUDIO_API_KEY",
-        "cerebras" => "CEREBRAS_API_KEY",
-        "cohere" => "COHERE_API_KEY",
-        "llm7" => "LLM7_API_KEY",
-        "sambanova" => "SAMBANOVA_API_KEY",
-        "huggingface" => "HUGGINGFACE_API_KEY",
-        _ => "PROVIDER_API_KEY",
+        "anthropic" => "ANTHROPIC_API_KEY".to_string(),
+        "openai" => "OPENAI_API_KEY".to_string(),
+        "mivi" => "MIVI_API_KEY".to_string(),
+        "openrouter" => "OPENROUTER_API_KEY".to_string(),
+        "deepseek" => "DEEPSEEK_API_KEY".to_string(),
+        "groq" => "GROQ_API_KEY".to_string(),
+        "minimax" => "MINIMAX_API_KEY".to_string(),
+        "mistral" => "MISTRAL_API_KEY".to_string(),
+        "z.ai" => "Z_AI_API_KEY".to_string(),
+        "nvidia" => "NVIDIA_API_KEY".to_string(),
+        "opencode_zen" => "OPENCODE_ZEN_API_KEY".to_string(),
+        "google_ai_studio" | "google ai studio" => "GOOGLE_AI_STUDIO_API_KEY".to_string(),
+        "cerebras" => "CEREBRAS_API_KEY".to_string(),
+        "cohere" => "COHERE_API_KEY".to_string(),
+        "llm7" => "LLM7_API_KEY".to_string(),
+        "sambanova" => "SAMBANOVA_API_KEY".to_string(),
+        "huggingface" => "HUGGINGFACE_API_KEY".to_string(),
+        _ => Config::custom_provider_env_var(provider_name),
     }
 }
 
@@ -90,7 +91,17 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
     let has_nvidia_key = config.is_provider_available("nvidia");
 
     // 1. Explicit provider prefixes
-    if model_lower == "mivi" || model_lower.starts_with("mivi/") {
+    for custom_name in config.custom_provider_names() {
+        let custom_prefix = format!("{}/", custom_name.to_lowercase());
+        if model_lower.starts_with(&custom_prefix) {
+            provider_name = custom_name.clone();
+            clean_model = &model[custom_name.len() + 1..];
+            break;
+        }
+    }
+    if provider_name != defaults.provider || clean_model != model {
+        // custom provider prefix matched above
+    } else if model_lower == "mivi" || model_lower.starts_with("mivi/") {
         provider_name = "mivi".to_string();
         clean_model = model.strip_prefix("mivi/").unwrap_or(model);
     } else if model_lower.starts_with("openrouter/") {
@@ -301,6 +312,7 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
     if final_provider_name != "ollama"
         && final_provider_name != "ollama_local"
         && final_provider_name != "mivi"
+        && !config.custom_provider_allows_empty_key(&final_provider_name)
         && final_api_key.is_empty()
     {
         let has_openrouter = config.is_provider_available("openrouter");
@@ -369,6 +381,12 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
         if clean_lower.starts_with(prefix) {
             clean_model_str = clean_model_str[prefix.len()..].to_string();
             break;
+        }
+    }
+    if config.is_custom_provider(&final_provider_name) {
+        let custom_prefix = format!("{}/", final_provider_name.to_lowercase());
+        if clean_model_str.to_lowercase().starts_with(&custom_prefix) {
+            clean_model_str = clean_model_str[final_provider_name.len() + 1..].to_string();
         }
     }
     if final_provider_name == "nvidia" {
@@ -499,6 +517,28 @@ mod tests {
     }
 
     #[test]
+    fn test_custom_provider_prefix_routes_to_openai_compatible_provider() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::remove_var("OPENZ_PROVIDER_ACME_API_KEY");
+        let mut cfg = config_with("auto");
+        cfg.providers.others.insert(
+            "acme".to_string(),
+            ProviderConfig {
+                api_key: Some("acme-key".to_string()),
+                api_base: Some("https://acme.example/v1".to_string()),
+                default_model: Some("acme-model".to_string()),
+                extra: Default::default(),
+            },
+        );
+
+        let r = resolve_provider_full(&cfg, "acme/acme-model").unwrap();
+        assert_eq!(r.provider_name, "acme");
+        assert_eq!(r.model, "acme-model");
+        assert_eq!(r.api_key, "acme-key");
+        assert_eq!(r.api_base, "https://acme.example/v1");
+    }
+
+    #[test]
     fn test_prefix_openai() {
         let _guard = env_lock().lock().unwrap();
         let cfg = config_with("auto");
@@ -536,6 +576,7 @@ mod tests {
         cfg.providers.openrouter = Some(ProviderConfig {
             api_key: Some(String::new()),
             api_base: None,
+            default_model: None,
             extra: Default::default(),
         });
 
@@ -562,6 +603,7 @@ mod tests {
         cfg.providers.openrouter = Some(ProviderConfig {
             api_key: Some(String::new()),
             api_base: None,
+            default_model: None,
             extra: Default::default(),
         });
 
@@ -587,11 +629,13 @@ mod tests {
         cfg.providers.openrouter = Some(ProviderConfig {
             api_key: Some("rk".to_string()),
             api_base: None,
+            default_model: None,
             extra: Default::default(),
         });
         cfg.providers.nvidia = Some(ProviderConfig {
             api_key: Some(String::new()),
             api_base: None,
+            default_model: None,
             extra: Default::default(),
         });
 

@@ -93,6 +93,7 @@ pub async fn handle_onboard() -> Result<()> {
     let p_config = Some(ProviderConfig {
         api_key,
         api_base,
+        default_model: Some(model.clone()),
         extra: std::collections::HashMap::new(),
     });
 
