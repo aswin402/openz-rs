@@ -9,6 +9,7 @@ pub fn update_provider_key(config: &mut Config, provider_name: &str, api_key: St
     let mut p_config = match provider_name {
         "anthropic" => config.providers.anthropic.clone(),
         "openai" => config.providers.openai.clone(),
+        "mivi" => config.providers.mivi.clone(),
         "openrouter" => config.providers.openrouter.clone(),
         "deepseek" => config.providers.deepseek.clone(),
         "groq" => config.providers.groq.clone(),
@@ -37,6 +38,7 @@ pub fn update_provider_key(config: &mut Config, provider_name: &str, api_key: St
         let default_base = match provider_name {
             "anthropic" => "https://api.anthropic.com",
             "openai" => "https://api.openai.com/v1",
+            "mivi" => "http://127.0.0.1:8000/v1",
             "openrouter" => "https://openrouter.ai/api/v1",
             "deepseek" => "https://api.deepseek.com/v1",
             "groq" => "https://api.groq.com/openai/v1",
@@ -60,6 +62,7 @@ pub fn update_provider_key(config: &mut Config, provider_name: &str, api_key: St
     match provider_name {
         "anthropic" => config.providers.anthropic = Some(p_config),
         "openai" => config.providers.openai = Some(p_config),
+        "mivi" => config.providers.mivi = Some(p_config),
         "openrouter" => config.providers.openrouter = Some(p_config),
         "deepseek" => config.providers.deepseek = Some(p_config),
         "groq" => config.providers.groq = Some(p_config),
@@ -225,6 +228,10 @@ async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Resu
         ProviderInfo {
             name: "openai",
             display: "OpenAI",
+        },
+        ProviderInfo {
+            name: "mivi",
+            display: "MIVI Local",
         },
         ProviderInfo {
             name: "openrouter",

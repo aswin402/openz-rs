@@ -11,6 +11,7 @@ pub async fn handle_onboard() -> Result<()> {
     let providers = vec![
         "anthropic",
         "openai",
+        "mivi",
         "openrouter",
         "deepseek",
         "groq",
@@ -20,7 +21,7 @@ pub async fn handle_onboard() -> Result<()> {
     let provider_name = Select::new("Choose an LLM provider:", providers).prompt()?;
 
     let mut api_key = None;
-    if provider_name != "ollama" {
+    if provider_name != "ollama" && provider_name != "mivi" {
         let key = Password::new(&format!("Enter API Key for {}:", provider_name))
             .without_confirmation()
             .with_display_mode(PasswordDisplayMode::Masked)
@@ -33,6 +34,7 @@ pub async fn handle_onboard() -> Result<()> {
     let default_base = match provider_name {
         "anthropic" => "https://api.anthropic.com",
         "openai" => "https://api.openai.com/v1",
+        "mivi" => "http://127.0.0.1:8000/v1",
         "openrouter" => "https://openrouter.ai/api/v1",
         "deepseek" => "https://api.deepseek.com/v1",
         "groq" => "https://api.groq.com/openai/v1",
@@ -52,6 +54,7 @@ pub async fn handle_onboard() -> Result<()> {
     let default_model = match provider_name {
         "anthropic" => "claude-3-5-sonnet-20241022",
         "openai" => "gpt-4o",
+        "mivi" => "mivi",
         "openrouter" => "google/gemini-2.5-pro",
         "deepseek" => "deepseek-chat",
         "groq" => "llama3-70b-8192",
@@ -96,6 +99,7 @@ pub async fn handle_onboard() -> Result<()> {
     match provider_name {
         "anthropic" => config.providers.anthropic = p_config,
         "openai" => config.providers.openai = p_config,
+        "mivi" => config.providers.mivi = p_config,
         "openrouter" => config.providers.openrouter = p_config,
         "deepseek" => config.providers.deepseek = p_config,
         "groq" => config.providers.groq = p_config,

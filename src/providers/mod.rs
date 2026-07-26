@@ -184,6 +184,10 @@ pub async fn parse_multimodal_content(text: &str) -> Vec<ContentPart> {
 pub fn model_supports_vision(model: &str) -> bool {
     let m = model.to_lowercase();
 
+    if m == "mivi" || m.starts_with("mivi/") {
+        return true;
+    }
+
     if m.contains("gpt-4o")
         || m.starts_with("o3")
         || m.contains("gpt-4-turbo")
@@ -285,6 +289,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_model_supports_vision() {
+        // Local MIVI
+        assert!(model_supports_vision("mivi"));
+        assert!(model_supports_vision("mivi/mivi"));
         // OpenAI
         assert!(model_supports_vision("gpt-4o"));
         assert!(model_supports_vision("gpt-4o-mini"));

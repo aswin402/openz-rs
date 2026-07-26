@@ -15,7 +15,11 @@ pub struct ResolvedProvider {
 /// Resolve API key and base URL for a given provider name from config + env vars.
 pub fn resolve_api_config(config: &Config, provider_name: &str) -> (String, String) {
     let (key, base) = config.resolve_provider_config(provider_name);
-    if key.is_empty() && provider_name != "ollama" && provider_name != "ollama_local" {
+    if key.is_empty()
+        && provider_name != "ollama"
+        && provider_name != "ollama_local"
+        && provider_name != "mivi"
+    {
         tracing::warn!(
             "No API key configured for provider '{}'. Requests will likely fail with 401.",
             provider_name
@@ -28,6 +32,7 @@ fn provider_api_key_env_var(provider_name: &str) -> &'static str {
     match provider_name {
         "anthropic" => "ANTHROPIC_API_KEY",
         "openai" => "OPENAI_API_KEY",
+        "mivi" => "MIVI_API_KEY",
         "openrouter" => "OPENROUTER_API_KEY",
         "deepseek" => "DEEPSEEK_API_KEY",
         "groq" => "GROQ_API_KEY",
@@ -85,7 +90,10 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
     let has_nvidia_key = config.is_provider_available("nvidia");
 
     // 1. Explicit provider prefixes
-    if model_lower.starts_with("openrouter/") {
+    if model_lower == "mivi" || model_lower.starts_with("mivi/") {
+        provider_name = "mivi".to_string();
+        clean_model = model.strip_prefix("mivi/").unwrap_or(model);
+    } else if model_lower.starts_with("openrouter/") {
         provider_name = "openrouter".to_string();
         clean_model = &model["openrouter/".len()..];
     } else if model_lower.ends_with(":free")
@@ -292,6 +300,7 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
 
     if final_provider_name != "ollama"
         && final_provider_name != "ollama_local"
+        && final_provider_name != "mivi"
         && final_api_key.is_empty()
     {
         let has_openrouter = config.is_provider_available("openrouter");
@@ -334,6 +343,7 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
         "ollama/",
         "anthropic/",
         "openai/",
+        "mivi/",
         "deepseek/",
         "groq/",
         "google_ai_studio/",
@@ -465,6 +475,27 @@ mod tests {
         assert_eq!(r.provider_name, "anthropic");
         assert_eq!(r.model, "claude-3-5-sonnet");
         std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+
+    #[test]
+    fn test_mivi_prefix_routes_to_local_mivi_provider() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::remove_var("MIVI_API_KEY");
+        let cfg = config_with("auto");
+        let r = resolve_provider_full(&cfg, "mivi/mivi").unwrap();
+        assert_eq!(r.provider_name, "mivi");
+        assert_eq!(r.model, "mivi");
+        assert_eq!(r.api_base, "http://127.0.0.1:8000/v1");
+    }
+
+    #[test]
+    fn test_bare_mivi_routes_to_local_mivi_provider() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::remove_var("MIVI_API_KEY");
+        let cfg = config_with("auto");
+        let r = resolve_provider_full(&cfg, "mivi").unwrap();
+        assert_eq!(r.provider_name, "mivi");
+        assert_eq!(r.model, "mivi");
     }
 
     #[test]

@@ -17,6 +17,8 @@ pub struct ProvidersConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openai: Option<ProviderConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mivi: Option<ProviderConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anthropic: Option<ProviderConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openrouter: Option<ProviderConfig>,
@@ -485,6 +487,9 @@ struct ProviderDef {
 fn provider_openai(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
     providers.openai.as_ref()
 }
+fn provider_mivi(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
+    providers.mivi.as_ref()
+}
 fn provider_anthropic(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
     providers.anthropic.as_ref()
 }
@@ -551,6 +556,13 @@ const PROVIDER_DEFS: &[ProviderDef] = &[
         default_base: "https://api.openai.com/v1",
         config: provider_openai,
         local: false,
+    },
+    ProviderDef {
+        names: &["mivi"],
+        env_keys: &["MIVI_API_KEY"],
+        default_base: "http://127.0.0.1:8000/v1",
+        config: provider_mivi,
+        local: true,
     },
     ProviderDef {
         names: &["openrouter"],
@@ -712,7 +724,7 @@ impl Config {
         let Some(def) = provider_def(provider_name) else {
             return false;
         };
-        if provider_name == "ollama_local" {
+        if provider_name == "ollama_local" || provider_name == "mivi" {
             return true;
         }
         let provider = (def.config)(&self.providers);
@@ -877,12 +889,26 @@ mod provider_resolution_tests {
         let config = blank_config();
 
         assert!(config.is_provider_available("ollama_local"));
+        assert!(config.is_provider_available("mivi"));
         assert!(!config.is_provider_available("ollama"));
         assert!(!config.is_provider_available("openai"));
 
         std::env::set_var("OPENAI_API_KEY", "test-key");
         assert!(config.is_provider_available("openai"));
         std::env::remove_var("OPENAI_API_KEY");
+    }
+
+    #[test]
+    fn mivi_provider_uses_local_defaults_without_key() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::remove_var("MIVI_API_KEY");
+        let config = blank_config();
+
+        assert_eq!(
+            config.resolve_provider_config("mivi"),
+            (String::new(), "http://127.0.0.1:8000/v1".to_string())
+        );
+        assert!(config.is_provider_available("mivi"));
     }
 
     #[test]
