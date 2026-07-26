@@ -62,6 +62,14 @@ pub struct ModelRisk {
     pub reasons: Vec<&'static str>,
 }
 
+fn model_name_suggests_strong(model_lc: &str) -> bool {
+    model_lc.contains("70b")
+        || model_lc.contains("deepseek-v4")
+        || model_lc.contains("claude")
+        || model_lc.contains("gpt-4")
+        || (model_lc.contains("nemotron") && model_lc.contains("ultra"))
+}
+
 pub fn classify_model_risk(provider: &str, model: &str) -> ModelRisk {
     let model_lc = model.trim().to_lowercase();
     let known = provider_models_by_name(provider)
@@ -76,7 +84,7 @@ pub fn classify_model_risk(provider: &str, model: &str) -> ModelRisk {
     if !known {
         reasons.push("not in OpenZ curated model catalog");
     }
-    if model_lc.contains("free") && model_lc != "deepseek-v4-flash-free" {
+    if model_lc.contains("free") && !model_name_suggests_strong(&model_lc) {
         reasons.push("free-tier model may be rate-limited or unstable");
     }
     if [
@@ -97,11 +105,7 @@ pub fn classify_model_risk(provider: &str, model: &str) -> ModelRisk {
     let risky = !reasons.is_empty();
     let tier = if risky {
         "risky"
-    } else if model_lc.contains("70b")
-        || model_lc.contains("deepseek-v4")
-        || model_lc.contains("claude")
-        || model_lc.contains("gpt-4")
-    {
+    } else if model_name_suggests_strong(&model_lc) {
         "strong"
     } else {
         "standard"

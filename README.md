@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.68`
+# OpenZ 🦊 `v0.0.69`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,13 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.69`
+
+- **Research Memory Relevance**: Saved research briefs now require topic-anchor relevance, so broad comparison briefs no longer answer unrelated entity questions just because a name appears in the summary.
+- **Saved Source Footer Filtering**: Saved source matches now require relevance in label, URI, or aliases, preventing unrelated source footers from appearing on answers.
+- **Auto-Capture Hygiene**: Non-research/debug turns are no longer auto-saved as research briefs, while real research prompts and natural definition follow-ups still save useful context.
+- **Hardcoded Fix Cleanup**: Removed one-off `/home/aswin` video-render paths, centralized live research policy, replaced fixed-year detection with runtime current-year logic, and removed brittle project/model-specific gates.
 
 ## What Changed In `v0.0.68`
 

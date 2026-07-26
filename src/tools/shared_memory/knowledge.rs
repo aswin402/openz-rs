@@ -127,6 +127,51 @@ fn matching_term_count(query: &str, fields: &[&str]) -> (usize, usize) {
     (matching, total_terms)
 }
 
+fn has_anchor_term_match(query: &str, fields: &[&str]) -> bool {
+    let query_tokens = tokenize(query);
+    if query_tokens.is_empty() {
+        return false;
+    }
+    let anchor_tokens: std::collections::BTreeSet<String> =
+        tokenize(&fields.join(" ")).into_iter().collect();
+    query_tokens
+        .iter()
+        .any(|term| anchor_tokens.contains(term.as_str()))
+}
+
+fn source_has_relevant_anchor(query: &str, item: &SourceBookmark) -> bool {
+    if query.trim().is_empty() {
+        return true;
+    }
+    let aliases: Vec<&str> = item.aliases.iter().map(|s| s.as_str()).collect();
+    let anchor_fields: Vec<&str> = [item.label.as_str(), item.uri.as_str()]
+        .into_iter()
+        .chain(aliases.iter().copied())
+        .collect();
+    exact_field_match(query, &[item.label.as_str(), item.uri.as_str()])
+        || item
+            .aliases
+            .iter()
+            .any(|alias| alias.trim().eq_ignore_ascii_case(query.trim()))
+        || item
+            .uri
+            .to_lowercase()
+            .contains(&query.trim().to_lowercase())
+        || has_anchor_term_match(query, &anchor_fields)
+}
+
+fn brief_has_relevant_anchor(query: &str, item: &ResearchBrief) -> bool {
+    if query.trim().is_empty() {
+        return true;
+    }
+    item.topic.trim().eq_ignore_ascii_case(query.trim())
+        || item
+            .topic
+            .to_lowercase()
+            .contains(&query.trim().to_lowercase())
+        || has_anchor_term_match(query, &[item.topic.as_str()])
+}
+
 fn exact_field_match(query: &str, fields: &[&str]) -> bool {
     let q = query.trim().to_lowercase();
     if q.is_empty() {
@@ -371,7 +416,9 @@ pub async fn search_source_bookmarks(query: &str, limit: usize) -> Result<Vec<So
     for item in &mut rows {
         item.score = source_rank_score(query, item);
     }
-    rows.retain(|item| item.score > 0.0 || query.trim().is_empty());
+    rows.retain(|item| {
+        query.trim().is_empty() || (item.score > 0.0 && source_has_relevant_anchor(query, item))
+    });
     rows.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
@@ -518,7 +565,10 @@ pub async fn search_research_briefs(query: &str, limit: usize) -> Result<Vec<Res
     for item in &mut rows {
         item.score = brief_rank_score(search_query, item);
     }
-    rows.retain(|item| item.score > 0.0 || query.trim().is_empty());
+    rows.retain(|item| {
+        query.trim().is_empty()
+            || (item.score > 0.0 && brief_has_relevant_anchor(search_query, item))
+    });
     rows.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
@@ -780,6 +830,49 @@ mod tests {
         let old = (chrono::Utc::now() - chrono::Duration::seconds(120)).to_rfc3339();
         assert_eq!(freshness_status(Some(&old), 60), "stale");
         assert_eq!(freshness_status(None, 60), "unknown");
+    }
+
+    #[tokio::test]
+    async fn source_search_requires_label_uri_or_alias_anchor() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let item = add_source_bookmark(
+            &format!("tinygrad llama example {marker}"),
+            "repo",
+            &format!("https://github.com/tinygrad/examples/llama-{marker}.py"),
+            vec![format!("tinygrad {marker}")],
+            "TurboQuant PyTorch is mentioned only in this summary text.",
+            0.95,
+            604800,
+        )
+        .await
+        .unwrap();
+
+        let matches = search_source_bookmarks("turboquant pytorch", 5)
+            .await
+            .unwrap();
+        assert!(matches.iter().all(|m| m.id != item.id));
+        assert_eq!(delete_source(&item.id).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn research_brief_search_requires_topic_anchor() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let topic = format!("rightnow-ai/openfang-{marker}");
+        let brief = save_research_brief(
+            &topic,
+            "Hermes Agent is discussed inside this comparison summary, but the canonical topic is OpenFang.",
+            vec![],
+            0.9,
+            604800,
+        )
+        .await
+        .unwrap();
+
+        let matches = search_research_briefs("what is hermes agent", 5)
+            .await
+            .unwrap();
+        assert!(matches.iter().all(|m| m.id != brief.id));
+        let _ = delete_research_brief(&topic).await;
     }
 
     #[tokio::test]

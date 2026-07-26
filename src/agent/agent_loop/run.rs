@@ -78,113 +78,13 @@ fn is_research_lookup_tool(tool_name: &str) -> bool {
     )
 }
 
-fn text_has_http_url(text: &str) -> bool {
-    text.split_whitespace().any(|part| {
-        let candidate = part.trim_matches(|c: char| {
-            matches!(
-                c,
-                '<' | '>' | ')' | '(' | ']' | '[' | '"' | '\'' | ',' | '.'
-            )
-        });
-        reqwest::Url::parse(candidate)
-            .map(|url| matches!(url.scheme(), "http" | "https"))
-            .unwrap_or(false)
-    })
-}
-
-fn value_contains_http_url(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::String(text) => text_has_http_url(text),
-        serde_json::Value::Array(items) => items.iter().any(value_contains_http_url),
-        serde_json::Value::Object(map) => map.values().any(value_contains_http_url),
-        _ => false,
-    }
-}
-
-fn is_current_or_latest_query(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    [
-        "latest",
-        "current",
-        "today",
-        "now",
-        "new",
-        "recent",
-        "2026",
-        "version",
-        "release",
-        "news",
-        "what's new",
-        "whats new",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
-}
-
-fn is_explicit_research_request(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    let has_research_verb = [
-        "research",
-        "look up",
-        "lookup",
-        "search",
-        "find",
-        "dig into",
-        "investigate",
-        "analyze this",
-        "analyse this",
-        "read this",
-        "check this",
-        "check the",
-        "see this",
-        "see the",
-        "open this",
-        "tell me about this",
-        "deep dive",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle));
-
-    text_has_http_url(text) || has_research_verb
-}
-
-fn asks_to_revalidate_saved_research(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    [
-        "again",
-        "recheck",
-        "re-check",
-        "refresh",
-        "verify",
-        "confirm",
-        "double check",
-        "check again",
-        "look again",
-        "go and check",
-        "from web",
-        "browse",
-        "live",
-        "actual page",
-        "real page",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
-}
-
-fn should_force_live_research_lookup(user_content: &str, arguments: &serde_json::Value) -> bool {
-    text_has_http_url(user_content)
-        || value_contains_http_url(arguments)
-        || is_current_or_latest_query(user_content)
-        || asks_to_revalidate_saved_research(user_content)
-        || is_explicit_research_request(user_content)
-}
 async fn fresh_research_brief_blocks_lookup(
     user_content: &str,
     tool_name: &str,
     arguments: &serde_json::Value,
 ) -> bool {
     if !is_research_lookup_tool(tool_name)
-        || should_force_live_research_lookup(user_content, arguments)
+        || super::research_policy::should_force_live_research_lookup(user_content, arguments)
     {
         return false;
     }
@@ -1502,22 +1402,6 @@ mod tests {
             .await
         );
         let _ = crate::tools::shared_memory::delete_research_brief(&topic).await;
-    }
-
-    #[test]
-    fn explicit_research_request_detection_catches_link_analysis() {
-        assert!(is_explicit_research_request(
-            "research about this https://github.com/tinyhumansai/openhuman and tell me about this"
-        ));
-        assert!(is_explicit_research_request(
-            "please read this https://github.com/mem0ai/mem0"
-        ));
-        assert!(is_explicit_research_request(
-            "check this https://example.com/path"
-        ));
-        assert!(asks_to_revalidate_saved_research("go and check again"));
-        assert!(!is_explicit_research_request("what is openhuman"));
-        assert!(!is_explicit_research_request("hey whats new"));
     }
 
     #[test]

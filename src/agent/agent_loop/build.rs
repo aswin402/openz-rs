@@ -287,14 +287,24 @@ fn runtime_tool_discipline_rules() -> &'static str {
     "- When asked what OpenZ can do, what features/tools exist, or how OpenZ compares, call 'openz_inventory' (and 'tool_catalog' only for deeper schema/routing details) before giving exact counts. Do not guess feature/tool counts from memory.\n\
             - When asked model/provider identity questions such as 'what model are you', 'are you DeepSeek', 'which provider are you using', or model capability questions such as 'which programming language are you best at', call 'openz_inventory' first and answer from runtime_identity. Do not guess hidden model architecture, training data, parameter count, or benchmark ranking. State uncertainty when the live config only exposes a model label/provider.\n\
             - When 'exec_command' launches a dev server/background server and returns server_registered=true, treat the launch as complete. Do not retry with pkill/ps guesses. Use 'manage_servers' automatically to list or stop registered servers when the task is finished, when the user says done/stop/cleanup, or before finalizing a verification-only server. If the user is actively previewing a server, report the server id and leave it running until no longer needed.\n\
-            - When creating large websites, generated source files, or video timelines, avoid one huge 'write_file' payload. Prefer chunked file creation/append steps or smaller artifacts, then verify file exists. For 20s+ HTML videos, render in shorter segments and concatenate. After a repeated successful workaround, save it with 'workflow_memory' or 'curate_skill'."
+            - When creating large websites, generated source files, or video timelines, avoid one huge 'write_file' payload. Prefer chunked file creation/append steps or smaller artifacts, then verify file exists. For 20s+ HTML videos, render in shorter segments and concatenate. After a repeated successful workaround, save it with 'workflow_memory' or 'curate_skill'.
+            - When answering from recent memory or saved research, do not scold the user for repeating a question. Answer normally and mention the saved context only if useful."
+}
+
+fn model_name_suggests_strong(model: &str) -> bool {
+    let m = model.to_lowercase();
+    m.contains("70b")
+        || m.contains("deepseek-v4")
+        || m.contains("claude")
+        || m.contains("gpt-4")
+        || (m.contains("nemotron") && m.contains("ultra"))
 }
 
 fn is_weak_or_risky_model(model: &str) -> bool {
-    let m = model.to_lowercase();
-    if m == "deepseek-v4-flash-free" {
+    if model_name_suggests_strong(model) {
         return false;
     }
+    let m = model.to_lowercase();
     [
         "1b",
         "2b",
@@ -324,68 +334,6 @@ fn weak_model_operating_rules(model: &str) -> String {
         return String::new();
     }
     "\n\n[Small Model Operating Rules]\n- Use [Recent Session Context] before saying you do not know what this session discussed.\n- Use [Pinned Memory] before answering identity, persona, or preference questions.\n- For tool-heavy tasks, keep steps short and prefer exact tool schemas over guessing.\n- For broad tasks, research first, then make an implementation plan and todo list before editing.\n".to_string()
-}
-
-fn text_has_http_url(text: &str) -> bool {
-    text.split_whitespace().any(|part| {
-        let candidate = part.trim_matches(|c: char| {
-            matches!(
-                c,
-                '<' | '>' | ')' | '(' | ']' | '[' | '"' | '\'' | ',' | '.'
-            )
-        });
-        reqwest::Url::parse(candidate)
-            .map(|url| matches!(url.scheme(), "http" | "https"))
-            .unwrap_or(false)
-    })
-}
-
-fn is_current_or_latest_query(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    [
-        "latest",
-        "current",
-        "today",
-        "now",
-        "new",
-        "recent",
-        "2026",
-        "version",
-        "news",
-        "what's new",
-        "whats new",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
-}
-
-fn asks_to_revalidate_saved_research(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    [
-        "again",
-        "recheck",
-        "re-check",
-        "refresh",
-        "verify",
-        "confirm",
-        "double check",
-        "check again",
-        "look again",
-        "go and check",
-        "from web",
-        "browse",
-        "live",
-        "actual page",
-        "real page",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
-}
-
-fn has_live_research_intent(text: &str) -> bool {
-    text_has_http_url(text)
-        || is_current_or_latest_query(text)
-        || asks_to_revalidate_saved_research(text)
 }
 
 fn concrete_research_topic_terms(text: &str) -> Vec<String> {
@@ -474,29 +422,25 @@ fn is_openz_self_inventory_query(text: &str) -> bool {
         return false;
     }
 
-    let mentions_external_project = [
-        "hermes",
-        "openhuman",
-        "openfang",
-        "openclaw",
-        "dox",
-        "claude",
-        "chatgpt",
-        "cursor",
+    let asks_external_comparison = [
         "compare",
+        " compared to",
+        " compared with",
         " vs ",
         " versus ",
         "different from",
-        "difference",
+        "difference between",
+        "better than",
+        "worse than",
     ]
     .iter()
     .any(|needle| lower.contains(needle));
 
-    !mentions_external_project
+    !asks_external_comparison
 }
 
 fn should_skip_research_memory_for_generic_query(text: &str) -> bool {
-    if text_has_http_url(text) {
+    if super::research_policy::text_has_http_url(text) {
         return false;
     }
     is_openz_self_inventory_query(text)
@@ -511,7 +455,7 @@ fn format_research_brief_context_items(
     if items.is_empty() {
         return String::new();
     }
-    let current_sensitive = has_live_research_intent(user_content);
+    let current_sensitive = super::research_policy::has_live_research_intent(user_content);
     let mut out = String::from("\n\n[Relevant Research Briefs]\nUse these saved briefs first for simple definition/comparison questions. Do not call web/search tools when a fresh brief answers a stable non-live question. If the user provides a URL, asks to verify/check again, or asks for latest/current data, refresh the exact source or web before final answer. Only state facts present in the briefs or saved sources; say unknown if a requested detail is missing. Do not guess licenses, channels, release numbers, integrations, or comparisons from memory alone:\n");
     if current_sensitive {
         out.push_str("- Live/refresh intent detected: verify exact saved sources or web before final answer.\n");
@@ -1158,7 +1102,11 @@ mod tests {
         assert!(!should_skip_research_memory_for_generic_query(
             "check this https://example.com/path"
         ));
-        assert!(has_live_research_intent("go and check again mem0"));
+        assert!(
+            crate::agent::agent_loop::research_policy::has_live_research_intent(
+                "go and check again mem0"
+            )
+        );
     }
 
     #[test]

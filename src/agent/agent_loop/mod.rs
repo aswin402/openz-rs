@@ -10,6 +10,7 @@ pub mod build;
 pub mod command;
 pub mod compact;
 pub mod loop_control;
+pub mod research_policy;
 pub mod restore;
 pub mod run;
 pub mod save;

@@ -398,7 +398,18 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.68 (Latest Release)
+### v0.0.69 (Latest Release)
+
+**Research Memory Relevance & Hardcoded Cleanup:**
+*   **Fix:** Research brief lookup now requires topic-anchor relevance, preventing broad comparison briefs from matching unrelated entity questions through summary-only terms.
+*   **Fix:** Saved source lookup now requires label, URI, or alias relevance before injecting source context or displaying source-match notifications.
+*   **Fix:** Auto-capture now skips non-research/debug turns such as local explanation prompts, while preserving real research prompts and natural definition follow-ups.
+*   **Hardening:** Centralized live research intent policy, replaced fixed-year matching with runtime current-year detection, removed brittle external-project inventory gates, and replaced exact model exceptions with generic strong-model heuristics.
+*   **Tooling:** `render_video` no longer hardcodes `/home/aswin` paths and now accepts portable CLI arguments for input/output, dimensions, FPS, duration, frame tick JavaScript, and render delays.
+*   **Tests:** Added focused regressions for unrelated source suppression, topic-anchor brief matching, non-research auto-capture skipping, and preserved source/brief behavior.
+*   **Chore:** Bumped version to `v0.0.69`.
+
+### v0.0.68
 
 **Web Cache Validator Hardening:**
 *   **Fix:** `web_fetch` now refreshes exact-URL cache validators, fetch time, expiry time, and use count when an origin returns `304 Not Modified`.

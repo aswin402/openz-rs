@@ -121,6 +121,59 @@ pub fn canonical_research_topic(raw: &str) -> String {
     }
 }
 
+fn is_research_worthy_user_content(text: &str) -> bool {
+    let normalized = text
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if normalized.trim().is_empty() {
+        return false;
+    }
+    if url_regex().is_match(&normalized) {
+        return true;
+    }
+    let explicit_research = [
+        "research",
+        "look up",
+        "lookup",
+        "search",
+        "find",
+        "dig into",
+        "investigate",
+        "analyze this",
+        "analyse this",
+        "read this",
+        "check this",
+        "check the",
+        "see this",
+        "see the",
+        "open this",
+        "tell me about this",
+        "deep dive",
+        "compare",
+        " vs ",
+        " versus ",
+        "difference between",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    if explicit_research {
+        return true;
+    }
+    let definition_query = [
+        "what is ",
+        "whats ",
+        "what's ",
+        "what are ",
+        "who is ",
+        "tell me about ",
+    ]
+    .iter()
+    .any(|marker| normalized.starts_with(marker) || normalized.contains(&format!(" {marker}")));
+    definition_query && !canonical_research_topic(&normalized).trim().is_empty()
+}
+
 fn topic_from(tool_name: &str, args: &Value, user_content: &str) -> String {
     if let Some(topic) = first_str(
         args,
@@ -459,6 +512,17 @@ pub async fn auto_capture_research_memory(
         return Ok(None);
     }
 
+    let user_research_worthy = is_research_worthy_user_content(user_content);
+    let has_research_target_arg = first_str(
+        arguments,
+        &["query", "topic", "goal", "url", "repo", "repository"],
+    )
+    .map(is_research_worthy_user_content)
+    .unwrap_or(false);
+    if !user_research_worthy && !(user_content.trim().is_empty() && has_research_target_arg) {
+        return Ok(None);
+    }
+
     let mut candidates = Vec::new();
     collect_candidates(arguments, &mut candidates);
     collect_candidates(result, &mut candidates);
@@ -590,6 +654,31 @@ mod tests {
             crate::tools::shared_memory::delete_research_brief(&format!("Hermes Agent {}", marker))
                 .await;
     }
+    #[tokio::test]
+    async fn auto_capture_skips_non_research_debug_turns() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let url = format!("https://example.com/debug-{marker}");
+        let result = serde_json::json!({
+            "url": url,
+            "content": "Example.com is a documentation page used for a quick runtime check."
+        });
+
+        let summary = auto_capture_research_memory(
+            "web_fetch",
+            &serde_json::json!({"url": format!("https://example.com/debug-{marker}")}),
+            &result,
+            "why u needed source code",
+        )
+        .await
+        .unwrap();
+
+        assert!(summary.is_none());
+        let matches = crate::tools::shared_memory::search_research_briefs(&marker, 5)
+            .await
+            .unwrap();
+        assert!(matches.iter().all(|item| !item.topic.contains(&marker)));
+    }
+
     #[tokio::test]
     async fn auto_capture_ignores_skipped_saved_brief_results() {
         let marker = uuid::Uuid::new_v4().to_string();
