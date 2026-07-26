@@ -196,20 +196,20 @@ fn compute_expires_at(
     last_modified: Option<&str>,
     fetched_at: chrono::DateTime<chrono::Utc>,
 ) -> Option<chrono::DateTime<chrono::Utc>> {
-    let Some(cache_control) = cache_control.map(str::trim).filter(|s| !s.is_empty()) else {
-        return Some(fetched_at);
-    };
-    if cache_control_has(cache_control, "no-store") {
-        return None;
+    if let Some(cache_control) = cache_control.map(str::trim).filter(|s| !s.is_empty()) {
+        if cache_control_has(cache_control, "no-store") {
+            return None;
+        }
+        if cache_control_has(cache_control, "no-cache")
+            || cache_control_has(cache_control, "must-revalidate")
+        {
+            return Some(fetched_at);
+        }
+        if let Some(max_age) = cache_control_max_age(cache_control) {
+            return Some(fetched_at + chrono::Duration::seconds(max_age));
+        }
     }
-    if cache_control_has(cache_control, "no-cache")
-        || cache_control_has(cache_control, "must-revalidate")
-    {
-        return Some(fetched_at);
-    }
-    if let Some(max_age) = cache_control_max_age(cache_control) {
-        return Some(fetched_at + chrono::Duration::seconds(max_age));
-    }
+
     if let Some(last_modified) = last_modified.and_then(parse_http_date) {
         let age = fetched_at
             .signed_duration_since(last_modified)
@@ -287,6 +287,41 @@ fn save_cached_web_fetch(
                 fetched_at.to_rfc3339(),
                 expires_at.to_rfc3339(),
                 i64::from(status_code),
+            ],
+        )?;
+        Ok(())
+    })
+}
+
+fn refresh_cached_web_fetch_validators(url: &str, headers: &header::HeaderMap) -> Result<()> {
+    let fetched_at = now_utc();
+    let etag = header_to_string(headers, header::ETAG);
+    let last_modified = header_to_string(headers, header::LAST_MODIFIED);
+    let cache_control = header_to_string(headers, header::CACHE_CONTROL);
+    let Some(expires_at) = compute_expires_at(
+        cache_control.as_deref(),
+        last_modified.as_deref(),
+        fetched_at,
+    ) else {
+        return Ok(());
+    };
+    crate::tools::shared_memory::with_db(|conn| {
+        conn.execute(
+            "UPDATE web_fetch_cache
+             SET etag = COALESCE(?2, etag),
+                 last_modified = COALESCE(?3, last_modified),
+                 cache_control = COALESCE(?4, cache_control),
+                 fetched_at = ?5,
+                 expires_at = ?6,
+                 use_count = use_count + 1
+             WHERE url = ?1",
+            rusqlite::params![
+                url,
+                etag,
+                last_modified,
+                cache_control,
+                fetched_at.to_rfc3339(),
+                expires_at.to_rfc3339(),
             ],
         )?;
         Ok(())
@@ -503,8 +538,10 @@ impl Tool for WebFetchTool {
         };
 
         if res.status() == reqwest::StatusCode::NOT_MODIFIED {
+            let headers = res.headers().clone();
             if let Some(cached_item) = cached {
-                let _ = mark_cached_web_fetch_used(url_str);
+                let _ = refresh_cached_web_fetch_validators(url_str, &headers)
+                    .or_else(|_| mark_cached_web_fetch_used(url_str));
                 return Ok(serde_json::Value::String(cached_item.body_text));
             }
         }
@@ -644,6 +681,16 @@ mod tests {
             .with_timezone(&chrono::Utc);
         let expires = compute_expires_at(Some("no-cache"), None, fetched_at).unwrap();
         assert_eq!(expires, fetched_at);
+    }
+
+    #[test]
+    fn missing_cache_control_uses_last_modified_heuristic() {
+        let fetched_at = chrono::DateTime::parse_from_rfc3339("2026-07-26T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let expires =
+            compute_expires_at(None, Some("Sat, 25 Jul 2026 00:00:00 GMT"), fetched_at).unwrap();
+        assert!(expires > fetched_at);
     }
 
     #[test]
