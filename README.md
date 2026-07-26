@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.65`
+# OpenZ 🦊 `v0.0.66`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.66`
+
+- **Generic Live Research Policy**: Saved research briefs no longer block explicit live lookup intent. Direct URLs, URLs inside tool arguments, current/latest prompts, and "check again / verify / refresh / browse" style requests force web/search tools to run.
+- **Stable Brief Reuse Preserved**: Fresh cached briefs still short-circuit stable non-live definition/comparison questions, keeping the token-saving behavior without stale answers for exact-page checks.
+- **Orchestrator Prompt Hardening**: Research context now tells the agent to refresh exact sources/web whenever the user provides a URL or asks to re-check, instead of relying on broad topic freshness.
 
 ## What Changed In `v0.0.65`
 

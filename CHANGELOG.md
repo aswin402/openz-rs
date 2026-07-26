@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.65 (Latest Release)
+### v0.0.66 (Latest Release)
+
+**Generic Live Research Policy:**
+*   **Fix:** Saved research briefs no longer block explicit live web/search tool calls when the user provides a URL, the tool arguments contain a URL, the prompt asks for current/latest information, or the user asks to check/verify/refresh again.
+*   **Fix:** Direct URL prompts now keep research context available but force exact-source/web refresh before final answers, preventing broad topic briefs from answering specific pages.
+*   **Preserved:** Fresh briefs still short-circuit stable non-live definition and comparison prompts so repeated simple questions remain fast and token-efficient.
+*   **Tests:** Added focused regression coverage for live lookup bypass and prompt-context behavior.
+*   **Chore:** Bumped version to `v0.0.66`.
+
+### v0.0.65
 
 **Configure Exit Reliability & Custom Provider Support:**
 *   **Fix:** `openz configure` now exits cleanly after save/back/Esc flows by disabling raw mode and terminating the command process, preventing background maintenance tasks from keeping configure alive.

@@ -181,11 +181,9 @@ pub async fn handle_changelog() -> Result<()> {
         green = AURA_GREEN,
         reset = COLOR_RESET
     );
-    println!(
-        "    • Fixed `openz configure` exit so save/back/Esc flows do not leave the process alive."
-    );
-    println!("    • Added custom OpenAI-compatible providers with name, API base, key, and default model.");
-    println!("    • Wired custom providers into TUI `/model`, text `/switch-model`, and provider prefix routing.");
+    println!("    • Added a generic live research policy for direct URLs, URL tool args, current/latest prompts, and re-check/verify/refresh intent.");
+    println!("    • Prevented broad cached research briefs from blocking explicit web/search tool execution.");
+    println!("    • Preserved brief-first reuse for stable non-live definition and comparison questions.");
 
     println!(
         "  {slate}[v0.0.48]{reset}",
