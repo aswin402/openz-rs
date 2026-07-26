@@ -328,7 +328,7 @@ static CONFIG_CACHE: std::sync::Mutex<Option<ConfigCache>> = std::sync::Mutex::n
 
 pub fn load_config() -> Result<Config> {
     let path = config_path();
-    
+
     // Check modification time if file exists
     let current_modified = if path.exists() {
         fs::metadata(&path)
@@ -337,7 +337,7 @@ pub fn load_config() -> Result<Config> {
     } else {
         let default_config = Config::default();
         let _ = save_config(&default_config);
-        
+
         let mut cache = CONFIG_CACHE.lock().unwrap();
         *cache = Some(ConfigCache {
             config: default_config.clone(),
@@ -707,10 +707,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_caching_with_modification_time() {
-        let dir = std::env::temp_dir().join(format!(
-            "openz_cfg_cache_test_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("openz_cfg_cache_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
 
         // 1. Initial load constructs defaults
@@ -722,7 +720,10 @@ mod tests {
         let config2 = super::CONFIG_DIR_OVERRIDE
             .scope(dir.clone(), async { super::load_config().unwrap() })
             .await;
-        assert_eq!(config1.agents.defaults.tool_timeout_secs, config2.agents.defaults.tool_timeout_secs);
+        assert_eq!(
+            config1.agents.defaults.tool_timeout_secs,
+            config2.agents.defaults.tool_timeout_secs
+        );
 
         // 3. Write directly to file (simulating external edit)
         std::thread::sleep(std::time::Duration::from_millis(50));

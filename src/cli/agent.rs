@@ -274,4 +274,3 @@ pub async fn handle_agent() -> Result<()> {
     let _ = crossterm::terminal::disable_raw_mode();
     std::process::exit(0);
 }
-

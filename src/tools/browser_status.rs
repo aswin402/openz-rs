@@ -1,8 +1,8 @@
 use crate::tools::Tool;
 use anyhow::Result;
 use serde_json::{json, Value};
-use tokio::process::Command;
 use std::time::Duration;
+use tokio::process::Command;
 
 pub struct InspectBrowsersTool;
 
@@ -20,7 +20,7 @@ fn get_recent_browser_errors() -> Result<Vec<Value>> {
          ORDER BY timestamp DESC 
          LIMIT 10"
     )?;
-    
+
     let rows = stmt.query_map([], |row| {
         Ok(json!({
             "timestamp": row.get::<_, String>(0)?,
@@ -82,7 +82,10 @@ impl Tool for InspectBrowsersTool {
                 }
             }
             Err(_) => {
-                if tokio::net::TcpStream::connect("127.0.0.1:4444").await.is_ok() {
+                if tokio::net::TcpStream::connect("127.0.0.1:4444")
+                    .await
+                    .is_ok()
+                {
                     json!({ "status": "running", "message": "Port 4444 open, geckodriver status endpoint unresponsive" })
                 } else {
                     json!({ "status": "stopped" })
@@ -103,7 +106,10 @@ impl Tool for InspectBrowsersTool {
                 }
             }
             Err(_) => {
-                if tokio::net::TcpStream::connect("127.0.0.1:9222").await.is_ok() {
+                if tokio::net::TcpStream::connect("127.0.0.1:9222")
+                    .await
+                    .is_ok()
+                {
                     json!({ "status": "running", "message": "Port 9222 open, Chrome list endpoint unresponsive" })
                 } else {
                     json!({ "status": "stopped" })
@@ -135,9 +141,10 @@ impl Tool for InspectBrowsersTool {
                     let pages_val = match gsd_pages_cmd.output().await {
                         Ok(p_out) if p_out.status.success() => {
                             let p_stdout = String::from_utf8_lossy(&p_out.stdout).to_string();
-                            serde_json::from_str::<Value>(&p_stdout).unwrap_or_else(|_| json!(p_stdout.trim()))
+                            serde_json::from_str::<Value>(&p_stdout)
+                                .unwrap_or_else(|_| json!(p_stdout.trim()))
                         }
-                        _ => json!([])
+                        _ => json!([]),
                     };
 
                     json!({

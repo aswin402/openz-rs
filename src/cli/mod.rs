@@ -71,7 +71,6 @@ pub async fn run_cli() -> Result<()> {
     // working directory instead of letting them shadow the global database.
     crate::config::loader::check_root_runtime_dbs();
 
-
     match args.command {
         Command::Onboard => {
             onboard::handle_onboard().await?;
@@ -84,25 +83,29 @@ pub async fn run_cli() -> Result<()> {
         }
         Command::Gateway { action } => match action {
             Some(ChannelAction::Logs { tail }) => {
-                logs::handle_logs(None, tail, Some("gateway".to_string()), None, false, None).await?;
+                logs::handle_logs(None, tail, Some("gateway".to_string()), None, false, None)
+                    .await?;
             }
             None => channels::handle_gateway().await?,
         },
         Command::Telegram { action } => match action {
             Some(ChannelAction::Logs { tail }) => {
-                logs::handle_logs(None, tail, Some("telegram".to_string()), None, false, None).await?;
+                logs::handle_logs(None, tail, Some("telegram".to_string()), None, false, None)
+                    .await?;
             }
             None => channels::handle_telegram().await?,
         },
         Command::Discord { action } => match action {
             Some(ChannelAction::Logs { tail }) => {
-                logs::handle_logs(None, tail, Some("discord".to_string()), None, false, None).await?;
+                logs::handle_logs(None, tail, Some("discord".to_string()), None, false, None)
+                    .await?;
             }
             None => channels::handle_discord().await?,
         },
         Command::Whatsapp { action } => match action {
             Some(ChannelAction::Logs { tail }) => {
-                logs::handle_logs(None, tail, Some("whatsapp".to_string()), None, false, None).await?;
+                logs::handle_logs(None, tail, Some("whatsapp".to_string()), None, false, None)
+                    .await?;
             }
             None => channels::handle_whatsapp().await?,
         },
@@ -178,4 +181,3 @@ pub fn start_database_auto_optimizer() {
         }
     });
 }
-

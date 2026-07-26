@@ -66,8 +66,14 @@ pub async fn init_db_writer(mut rx: tokio::sync::mpsc::UnboundedReceiver<LogEntr
             return;
         }
 
-        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_session ON logs (session)", []);
-        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs (timestamp)", []);
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_logs_session ON logs (session)",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs (timestamp)",
+            [],
+        );
 
         // Purge logs older than 7 days on startup
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
@@ -94,7 +100,11 @@ impl<S> tracing_subscriber::Layer<S> for SqliteLogLayer
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
-    fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
         let metadata = event.metadata();
         let level = metadata.level().to_string();
         let target = metadata.target().to_string();
@@ -105,7 +115,9 @@ where
         };
         event.record(&mut visitor);
 
-        let session = visitor.session.or_else(|| crate::agent::style::spinner::get_current_session_key());
+        let session = visitor
+            .session
+            .or_else(|| crate::agent::style::spinner::get_current_session_key());
         let timestamp = chrono::Utc::now().to_rfc3339();
 
         if let Some(tx) = LOG_TX.get() {
@@ -684,7 +696,12 @@ fn extract_quoted_field(text: &str, field_prefix: &str) -> Option<String> {
     None
 }
 
-fn print_line_filtered(raw: &str, filter: &SessionFilter, level_filter: &LogLevelFilter, search: Option<&str>) {
+fn print_line_filtered(
+    raw: &str,
+    filter: &SessionFilter,
+    level_filter: &LogLevelFilter,
+    search: Option<&str>,
+) {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
@@ -1201,7 +1218,7 @@ fn print_tail_sqlite(
 ) -> Result<i64> {
     let conn = rusqlite::Connection::open(db_path)?;
     let mut stmt = conn.prepare(
-        "SELECT id, timestamp, level, target, message, session FROM logs ORDER BY id DESC LIMIT ?1"
+        "SELECT id, timestamp, level, target, message, session FROM logs ORDER BY id DESC LIMIT ?1",
     )?;
 
     struct DbRow {
@@ -1235,7 +1252,16 @@ fn print_tail_sqlite(
 
     let mut last_id = 0;
     for r in &rows {
-        print_row(&r.timestamp, &r.level, &r.target, &r.message, r.session.as_deref(), filter, level_filter, search);
+        print_row(
+            &r.timestamp,
+            &r.level,
+            &r.target,
+            &r.message,
+            r.session.as_deref(),
+            filter,
+            level_filter,
+            search,
+        );
         last_id = r.id;
     }
 
@@ -1324,14 +1350,40 @@ pub async fn run_logs_viewer(
 
     if is_sqlite {
         print_header(&path, tail, &effective_filter, &level_filter);
-        let last_id = print_tail_sqlite(&path, tail, &effective_filter, &level_filter, search.as_deref())?;
+        let last_id = print_tail_sqlite(
+            &path,
+            tail,
+            &effective_filter,
+            &level_filter,
+            search.as_deref(),
+        )?;
         println!("\n  {PURPLE}{DIM}── live ──{RESET}\n");
-        follow_sqlite(&path, last_id, effective_filter, level_filter, search.as_deref()).await
+        follow_sqlite(
+            &path,
+            last_id,
+            effective_filter,
+            level_filter,
+            search.as_deref(),
+        )
+        .await
     } else {
         print_header(&path, tail, &effective_filter, &level_filter);
-        let pos = print_tail(&path, tail, &effective_filter, &level_filter, search.as_deref())?;
+        let pos = print_tail(
+            &path,
+            tail,
+            &effective_filter,
+            &level_filter,
+            search.as_deref(),
+        )?;
         println!("\n  {PURPLE}{DIM}── live ──{RESET}\n");
-        follow(&path, pos, effective_filter, level_filter, search.as_deref()).await
+        follow(
+            &path,
+            pos,
+            effective_filter,
+            level_filter,
+            search.as_deref(),
+        )
+        .await
     }
 }
 
@@ -1386,7 +1438,7 @@ pub fn get_running_sessions() -> Result<Vec<RunningSession>> {
          WHERE session IS NOT NULL 
          GROUP BY session 
          ORDER BY last_seen DESC 
-         LIMIT 15"
+         LIMIT 15",
     )?;
 
     struct SessionMeta {
@@ -1405,7 +1457,7 @@ pub fn get_running_sessions() -> Result<Vec<RunningSession>> {
     for row in rows_iter {
         if let Ok(meta) = row {
             let mut type_stmt = conn.prepare(
-                "SELECT target, message FROM logs WHERE session = ?1 ORDER BY id DESC LIMIT 5"
+                "SELECT target, message FROM logs WHERE session = ?1 ORDER BY id DESC LIMIT 5",
             )?;
 
             let mut target_type = "Agent".to_string();
@@ -1451,7 +1503,9 @@ pub fn get_running_sessions() -> Result<Vec<RunningSession>> {
 pub fn get_latest_session_id() -> Option<String> {
     let db_path = default_db_path();
     let conn = rusqlite::Connection::open(&db_path).ok()?;
-    let mut stmt = conn.prepare("SELECT session FROM logs WHERE session IS NOT NULL ORDER BY id DESC LIMIT 1").ok()?;
+    let mut stmt = conn
+        .prepare("SELECT session FROM logs WHERE session IS NOT NULL ORDER BY id DESC LIMIT 1")
+        .ok()?;
     stmt.query_row([], |row| row.get(0)).ok()
 }
 
@@ -1474,7 +1528,8 @@ mod tests {
                 session TEXT
             )",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         conn.execute(
             "INSERT INTO logs (timestamp, level, target, message, session) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -1504,7 +1559,8 @@ mod tests {
         assert_eq!(last_id, 2);
 
         let error_level_filter = LogLevelFilter::Error;
-        let last_id_error = print_tail_sqlite(&db_path, 10, &filter, &error_level_filter, None).unwrap();
+        let last_id_error =
+            print_tail_sqlite(&db_path, 10, &filter, &error_level_filter, None).unwrap();
         assert_eq!(last_id_error, 2);
 
         let _ = std::fs::remove_file(&db_path);

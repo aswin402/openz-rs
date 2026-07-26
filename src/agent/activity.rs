@@ -402,7 +402,6 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
-
     #[test]
     fn session_preview_uses_latest_user_message_and_truncates() {
         let mut messages = Vec::new();

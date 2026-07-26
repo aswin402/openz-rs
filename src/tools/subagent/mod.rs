@@ -59,7 +59,9 @@ pub fn build_provider_for_model(
 
 pub fn scan_for_images(goal: &str, context: &str) -> Vec<String> {
     let mut image_paths = Vec::new();
-    if let Ok(path_regex) = regex::Regex::new(r"(?:file://)?(/[a-zA-Z0-9_\-\./]+|~/[a-zA-Z0-9_\-\./]+)") {
+    if let Ok(path_regex) =
+        regex::Regex::new(r"(?:file://)?(/[a-zA-Z0-9_\-\./]+|~/[a-zA-Z0-9_\-\./]+)")
+    {
         for cap in path_regex.captures_iter(&format!("{} {}", goal, context)) {
             if let Some(mat) = cap.get(1) {
                 let path_str = mat.as_str();
@@ -79,7 +81,11 @@ pub fn scan_for_images(goal: &str, context: &str) -> Vec<String> {
                 }
 
                 if let Some(path) = final_path {
-                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
                     if ["png", "jpg", "jpeg", "webp", "gif"].contains(&ext.as_str()) {
                         let canonical = path.to_string_lossy().to_string();
                         if !image_paths.contains(&canonical) {
@@ -95,7 +101,10 @@ pub fn scan_for_images(goal: &str, context: &str) -> Vec<String> {
         let default_clip = crate::config::resolve_path("~/.openz/clipboard_image_0.png");
         if default_clip.exists() && default_clip.is_file() {
             let text_lower = format!("{} {}", goal, context).to_lowercase();
-            if text_lower.contains("image") || text_lower.contains("picture") || text_lower.contains("screenshot") {
+            if text_lower.contains("image")
+                || text_lower.contains("picture")
+                || text_lower.contains("screenshot")
+            {
                 image_paths.push(default_clip.to_string_lossy().to_string());
             }
         }
@@ -123,8 +132,9 @@ pub async fn execute_subagent_run(
     let model_name_str = model_name.to_string();
     let cancellation_token_clone = cancellation_token.clone();
 
-    let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir, async move {
-        DELEGATION_DEPTH.scope(current_depth + 1, async move {
+    let run_res_fut =
+        crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir, async move {
+            DELEGATION_DEPTH.scope(current_depth + 1, async move {
             crate::tools::subagent::ACTIVE_SUBAGENT.scope(subagent_name_str.clone(), async move {
                 tokio::select! {
                     biased;
@@ -151,15 +161,15 @@ pub async fn execute_subagent_run(
                 }
             }).await
         }).await
-    });
+        });
 
     let sub_timeout = resolve_subagent_timeout_secs(timeout_secs, default_timeout_secs);
-    let run_res_timeout = tokio::time::timeout(
-        std::time::Duration::from_secs(sub_timeout),
-        run_res_fut,
-    );
+    let run_res_timeout =
+        tokio::time::timeout(std::time::Duration::from_secs(sub_timeout), run_res_fut);
     match crate::agent::style::with_spinner(spinner_msg, run_res_timeout).await {
         Ok(res) => res,
-        Err(_) => Err(anyhow::anyhow!("Subagent execution timed out after {sub_timeout}s")),
+        Err(_) => Err(anyhow::anyhow!(
+            "Subagent execution timed out after {sub_timeout}s"
+        )),
     }
 }

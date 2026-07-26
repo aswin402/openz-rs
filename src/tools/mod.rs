@@ -35,7 +35,8 @@ pub fn normalize_tool_args(args: &serde_json::Value) -> serde_json::Value {
             let mut new_map = serde_json::Map::new();
             for (k, v) in map {
                 let normalized_k = match k.as_str() {
-                    "TargetFile" | "filepath" | "file" | "Path" | "AbsolutePath" | "DirectoryPath" => "path".to_string(),
+                    "TargetFile" | "filepath" | "file" | "Path" | "AbsolutePath"
+                    | "DirectoryPath" => "path".to_string(),
                     "CommandLine" | "Command" | "command_line" => "command".to_string(),
                     "Query" => "query".to_string(),
                     "Url" | "UrlContent" => "url".to_string(),
@@ -1464,6 +1465,7 @@ pub mod doc_reader;
 pub mod docs_mcp;
 pub mod filesystem;
 pub mod firefox;
+pub mod get_logs;
 pub mod git_manager;
 pub mod github;
 pub mod github_mcp;
@@ -1474,6 +1476,7 @@ pub mod headroom;
 pub mod html_video;
 pub mod image_generator;
 pub mod js_format;
+pub mod manage_whitelist;
 pub mod mcp;
 pub mod mcp_manager;
 pub mod memory_extra;
@@ -1507,6 +1510,3 @@ pub mod wasm_sandbox;
 pub mod watcher;
 pub mod web;
 pub mod web_search;
-pub mod get_logs;
-pub mod manage_whitelist;
-

@@ -6,8 +6,8 @@ use super::parallel_research::get_status_from_goal;
 use super::schema_retry::{evaluate_schema_retry, SchemaRetryDecision};
 use super::{
     build_provider_for_model, cancellation_result_json, classify_subagent_error,
-    compact_lifecycle_line, execute_subagent_run, scan_for_images, status_json,
-    CancellationToken, SubagentRunStatus, DELEGATION_DEPTH,
+    compact_lifecycle_line, execute_subagent_run, scan_for_images, status_json, CancellationToken,
+    SubagentRunStatus, DELEGATION_DEPTH,
 };
 use crate::agent::style::*;
 use crate::agent::AgentLoop;

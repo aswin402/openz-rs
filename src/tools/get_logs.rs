@@ -35,7 +35,10 @@ impl Tool for GetLogsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let limit = arguments.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+        let limit = arguments
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(50) as usize;
         let session_opt = arguments.get("session").and_then(|v| v.as_str());
         let level_opt = arguments.get("level").and_then(|v| v.as_str());
 
@@ -71,7 +74,8 @@ impl Tool for GetLogsTool {
         let level_filter = crate::logs::LogLevelFilter::from_opt(level_opt);
 
         // Build SQL query
-        let mut query = "SELECT id, timestamp, level, target, message, session FROM logs".to_string();
+        let mut query =
+            "SELECT id, timestamp, level, target, message, session FROM logs".to_string();
         let mut where_clauses = Vec::new();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
@@ -107,8 +111,11 @@ impl Tool for GetLogsTool {
         params.push(Box::new(limit));
 
         let mut stmt = conn.prepare(&query)?;
-        
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| &**p as &dyn rusqlite::ToSql).collect();
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params
+            .iter()
+            .map(|p| &**p as &dyn rusqlite::ToSql)
+            .collect();
 
         struct LogRow {
             id: i64,
@@ -159,7 +166,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_logs_tool() {
-        let temp_dir = std::env::temp_dir().join(format!("openz_get_logs_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_get_logs_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let _conn = crate::config::loader::CONFIG_DIR_OVERRIDE.scope(temp_dir.clone(), async {
@@ -198,32 +206,37 @@ mod tests {
                     "session_1"
                 ],
             ).unwrap();
-            
+
             conn
         }).await;
 
-        crate::config::loader::CONFIG_DIR_OVERRIDE.scope(temp_dir.clone(), async {
-            let tool = GetLogsTool;
+        crate::config::loader::CONFIG_DIR_OVERRIDE
+            .scope(temp_dir.clone(), async {
+                let tool = GetLogsTool;
 
-            let args = json!({
-                "limit": 10,
-                "session": "session_1",
-                "level": "info"
-            });
-            let result = tool.call(&args).await.unwrap();
-            let logs = result.get("logs").unwrap().as_array().unwrap();
-            assert_eq!(logs.len(), 2);
+                let args = json!({
+                    "limit": 10,
+                    "session": "session_1",
+                    "level": "info"
+                });
+                let result = tool.call(&args).await.unwrap();
+                let logs = result.get("logs").unwrap().as_array().unwrap();
+                assert_eq!(logs.len(), 2);
 
-            let args_err = json!({
-                "limit": 10,
-                "session": "session_1",
-                "level": "error"
-            });
-            let result_err = tool.call(&args_err).await.unwrap();
-            let logs_err = result_err.get("logs").unwrap().as_array().unwrap();
-            assert_eq!(logs_err.len(), 1);
-            assert_eq!(logs_err[0].get("message").unwrap().as_str().unwrap(), "Test log message 2");
-        }).await;
+                let args_err = json!({
+                    "limit": 10,
+                    "session": "session_1",
+                    "level": "error"
+                });
+                let result_err = tool.call(&args_err).await.unwrap();
+                let logs_err = result_err.get("logs").unwrap().as_array().unwrap();
+                assert_eq!(logs_err.len(), 1);
+                assert_eq!(
+                    logs_err[0].get("message").unwrap().as_str().unwrap(),
+                    "Test log message 2"
+                );
+            })
+            .await;
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

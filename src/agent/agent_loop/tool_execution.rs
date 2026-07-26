@@ -137,7 +137,10 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 String::new()
             }
         } else if name == "generate_image" {
-            let path = map.get("output_path").and_then(|v| v.as_str()).unwrap_or("output.png");
+            let path = map
+                .get("output_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("output.png");
             let filename = std::path::Path::new(path)
                 .file_name()
                 .map(|f| f.to_string_lossy().to_string())

@@ -84,7 +84,6 @@ where
     f(model)
 }
 
-
 async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
     let config = crate::config::loader::load_config()?;
     let preferred = config
@@ -580,7 +579,6 @@ pub async fn get_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
         })
     })
     .await?
-
 }
 
 pub fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {

@@ -58,7 +58,9 @@ impl SecurityGuard {
             let next_char = cmd_trimmed.as_bytes().get(prefix_trimmed.len());
             match next_char {
                 None => true,
-                Some(&c) => (c as char).is_whitespace() || c == b';' || c == b'|' || c == b'&' || c == b'`',
+                Some(&c) => {
+                    (c as char).is_whitespace() || c == b';' || c == b'|' || c == b'&' || c == b'`'
+                }
             }
         } else {
             false
@@ -87,13 +89,14 @@ impl SecurityGuard {
             let wl_abs = if wl_path.is_absolute() {
                 wl_path.to_path_buf()
             } else {
-                let workspace = match crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
-                    Ok(w) => w,
-                    Err(_) => match std::env::current_dir() {
-                        Ok(cwd) => cwd,
-                        Err(_) => continue,
-                    },
-                };
+                let workspace =
+                    match crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
+                        Ok(w) => w,
+                        Err(_) => match std::env::current_dir() {
+                            Ok(cwd) => cwd,
+                            Err(_) => continue,
+                        },
+                    };
                 workspace.join(wl_path)
             };
 
@@ -423,11 +426,16 @@ impl SecurityGuard {
                     let exec_name = command[idx].to_lowercase();
                     let bin_name = exec_name.split('/').last().unwrap_or(&exec_name);
 
-                    if matches!(bin_name, "sh" | "bash" | "zsh" | "dash" | "ksh" | "su" | "sudo") {
+                    if matches!(
+                        bin_name,
+                        "sh" | "bash" | "zsh" | "dash" | "ksh" | "su" | "sudo"
+                    ) {
                         let mut i = idx + 1;
                         while i < command.len() {
                             let arg = &command[i];
-                            if (arg == "-c" || arg == "-lc" || arg == "--command") && i + 1 < command.len() {
+                            if (arg == "-c" || arg == "-lc" || arg == "--command")
+                                && i + 1 < command.len()
+                            {
                                 stack.push((command[i + 1].clone(), depth + 1));
                                 break;
                             }
@@ -509,7 +517,8 @@ impl SecurityGuard {
                             let exec_lower = exec.to_lowercase();
                             let is_rm = exec_lower == "rm" || exec_lower.ends_with("/rm");
                             let is_rmdir = exec_lower == "rmdir" || exec_lower.ends_with("/rmdir");
-                            let is_unlink = exec_lower == "unlink" || exec_lower.ends_with("/unlink");
+                            let is_unlink =
+                                exec_lower == "unlink" || exec_lower.ends_with("/unlink");
 
                             if is_rm || is_rmdir || is_unlink {
                                 let mut check_all = false;
@@ -1285,18 +1294,34 @@ mod tests {
 
     #[test]
     fn test_matches_whitelisted_prefix() {
-        assert!(SecurityGuard::matches_whitelisted_prefix("cargo check", "cargo check"));
-        assert!(SecurityGuard::matches_whitelisted_prefix("cargo check --tests", "cargo check"));
-        assert!(SecurityGuard::matches_whitelisted_prefix("cargo check; echo hello", "cargo check"));
-        
+        assert!(SecurityGuard::matches_whitelisted_prefix(
+            "cargo check",
+            "cargo check"
+        ));
+        assert!(SecurityGuard::matches_whitelisted_prefix(
+            "cargo check --tests",
+            "cargo check"
+        ));
+        assert!(SecurityGuard::matches_whitelisted_prefix(
+            "cargo check; echo hello",
+            "cargo check"
+        ));
+
         // Should not match without word boundary
-        assert!(!SecurityGuard::matches_whitelisted_prefix("cargo check-tests", "cargo check"));
-        assert!(!SecurityGuard::matches_whitelisted_prefix("cargo", "cargo check"));
+        assert!(!SecurityGuard::matches_whitelisted_prefix(
+            "cargo check-tests",
+            "cargo check"
+        ));
+        assert!(!SecurityGuard::matches_whitelisted_prefix(
+            "cargo",
+            "cargo check"
+        ));
     }
 
     #[tokio::test]
     async fn test_security_guard_with_whitelisted_config() {
-        let temp_dir = std::env::temp_dir().join(format!("openz_sec_whitelist_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_sec_whitelist_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
 
         let config_json = json!({
@@ -1308,31 +1333,37 @@ mod tests {
                 }
             }
         });
-        std::fs::write(temp_dir.join("config.json"), serde_json::to_string(&config_json).unwrap()).unwrap();
+        std::fs::write(
+            temp_dir.join("config.json"),
+            serde_json::to_string(&config_json).unwrap(),
+        )
+        .unwrap();
 
-        crate::config::loader::CONFIG_DIR_OVERRIDE.scope(temp_dir.clone(), async {
-            assert!(!SecurityGuard::is_sensitive_with_mode(
-                "exec_command",
-                &json!({"command": "cargo check --tests"}),
-                "strict"
-            ));
-            assert!(!SecurityGuard::is_sensitive_with_mode(
-                "exec_command",
-                &json!({"command": "git status"}),
-                "strict"
-            ));
+        crate::config::loader::CONFIG_DIR_OVERRIDE
+            .scope(temp_dir.clone(), async {
+                assert!(!SecurityGuard::is_sensitive_with_mode(
+                    "exec_command",
+                    &json!({"command": "cargo check --tests"}),
+                    "strict"
+                ));
+                assert!(!SecurityGuard::is_sensitive_with_mode(
+                    "exec_command",
+                    &json!({"command": "git status"}),
+                    "strict"
+                ));
 
-            assert!(SecurityGuard::is_sensitive_with_mode(
-                "exec_command",
-                &json!({"command": "rm -rf /some/path"}),
-                "strict"
-            ));
+                assert!(SecurityGuard::is_sensitive_with_mode(
+                    "exec_command",
+                    &json!({"command": "rm -rf /some/path"}),
+                    "strict"
+                ));
 
-            assert!(SecurityGuard::is_safe_path("/tmp/safe_zone/file.txt"));
-            assert!(SecurityGuard::is_safe_path("./local_safe_zone/another.txt"));
+                assert!(SecurityGuard::is_safe_path("/tmp/safe_zone/file.txt"));
+                assert!(SecurityGuard::is_safe_path("./local_safe_zone/another.txt"));
 
-            assert!(!SecurityGuard::is_safe_path("/etc/hosts"));
-        }).await;
+                assert!(!SecurityGuard::is_safe_path("/etc/hosts"));
+            })
+            .await;
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -1372,4 +1403,3 @@ mod tests {
         ));
     }
 }
-

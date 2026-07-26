@@ -504,8 +504,12 @@ impl AgentLoop {
                 } else {
                     Some(&ctx.session.metadata)
                 };
-                let merged =
-                    merge_latest_config_for_runtime(&ctx.config, latest_config, session_key, session_metadata);
+                let merged = merge_latest_config_for_runtime(
+                    &ctx.config,
+                    latest_config,
+                    session_key,
+                    session_metadata,
+                );
                 let provider_changed = merged.agents.defaults.provider != old_provider
                     || merged.agents.defaults.model != old_model;
                 if provider_changed {
@@ -623,7 +627,10 @@ mod tests {
         config.agents.defaults.tool_timeout_secs = 30;
 
         let mut metadata = serde_json::Map::new();
-        metadata.insert("model".to_string(), serde_json::Value::String("overridden-model".to_string()));
+        metadata.insert(
+            "model".to_string(),
+            serde_json::Value::String("overridden-model".to_string()),
+        );
         metadata.insert("temperature".to_string(), serde_json::json!(0.7));
 
         apply_session_overrides(&mut config, &metadata);
@@ -641,9 +648,15 @@ mod tests {
 
         let mut metadata = serde_json::Map::new();
         let mut nested = serde_json::Map::new();
-        nested.insert("model".to_string(), serde_json::Value::String("nested-model".to_string()));
+        nested.insert(
+            "model".to_string(),
+            serde_json::Value::String("nested-model".to_string()),
+        );
         nested.insert("temperature".to_string(), serde_json::json!(0.5));
-        metadata.insert("config_override".to_string(), serde_json::Value::Object(nested));
+        metadata.insert(
+            "config_override".to_string(),
+            serde_json::Value::Object(nested),
+        );
 
         apply_session_overrides(&mut config, &metadata);
 

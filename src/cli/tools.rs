@@ -90,7 +90,9 @@ fn register_core_tools(
     registry.register(std::sync::Arc::new(ManageServersTool));
     registry.register(std::sync::Arc::new(WebFetchTool::new()));
     registry.register(std::sync::Arc::new(crate::tools::get_logs::GetLogsTool));
-    registry.register(std::sync::Arc::new(crate::tools::manage_whitelist::ManageWhitelistTool));
+    registry.register(std::sync::Arc::new(
+        crate::tools::manage_whitelist::ManageWhitelistTool,
+    ));
     registry.register(std::sync::Arc::new(InspectBrowsersTool));
     registry.register(std::sync::Arc::new(DelegateTaskTool {
         config: config.clone(),

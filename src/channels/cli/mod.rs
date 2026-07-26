@@ -266,12 +266,33 @@ impl CliChannel {
             if trimmed == "/settings" {
                 let defaults = self.defaults.lock().await;
                 println!("{}Active Settings:{}", COLOR_BOLD, COLOR_RESET);
-                println!("  {}Model:{}          {}", RED_ORANGE, COLOR_RESET, defaults.model);
-                println!("  {}Provider:{}       {}", RED_ORANGE, COLOR_RESET, defaults.provider);
-                println!("  {}Security Mode:{}  {}", RED_ORANGE, COLOR_RESET, defaults.security_mode);
-                println!("  {}Sandbox:{}        {}", RED_ORANGE, COLOR_RESET, if defaults.enable_sandbox { "Enabled" } else { "Disabled" });
-                
-                println!("  {}Whitelisted Command Prefixes:{}", RED_ORANGE, COLOR_RESET);
+                println!(
+                    "  {}Model:{}          {}",
+                    RED_ORANGE, COLOR_RESET, defaults.model
+                );
+                println!(
+                    "  {}Provider:{}       {}",
+                    RED_ORANGE, COLOR_RESET, defaults.provider
+                );
+                println!(
+                    "  {}Security Mode:{}  {}",
+                    RED_ORANGE, COLOR_RESET, defaults.security_mode
+                );
+                println!(
+                    "  {}Sandbox:{}        {}",
+                    RED_ORANGE,
+                    COLOR_RESET,
+                    if defaults.enable_sandbox {
+                        "Enabled"
+                    } else {
+                        "Disabled"
+                    }
+                );
+
+                println!(
+                    "  {}Whitelisted Command Prefixes:{}",
+                    RED_ORANGE, COLOR_RESET
+                );
                 if defaults.whitelisted_command_prefixes.is_empty() {
                     println!("    (None)");
                 } else {
@@ -288,7 +309,7 @@ impl CliChannel {
                         println!("    • {}", path);
                     }
                 }
-                
+
                 println!(
                     "{}────────────────────────────────────────────────────────────{}",
                     LIGHT_WHITE, COLOR_RESET

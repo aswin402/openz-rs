@@ -190,7 +190,6 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
     }
     let _guard = WsSenderGuard(client_id.clone());
 
-
     // Send ready event
     let ready_evt = serde_json::json!({
         "event": "ready",

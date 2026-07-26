@@ -43,7 +43,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     let has_images = parts
         .iter()
         .any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
-    let supports_vision = crate::providers::model_supports_vision(&ctx.config.agents.defaults.model);
+    let supports_vision =
+        crate::providers::model_supports_vision(&ctx.config.agents.defaults.model);
     let silent = crate::agent::style::spinner::is_silent();
     if has_images && !supports_vision && !silent {
         crate::tui_println!(
