@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.69 (Latest Release)
+### v0.0.70 (Latest Release)
+
+**Live Refresh Source Hygiene:**
+*   **Fix:** Saved research/source match notifications are now suppressed on live-intent prompts such as direct URLs, explicit research, and check-again/refresh requests.
+*   **Fix:** Refresh-only URL checks no longer auto-save duplicate research briefs when the user is only verifying whether a page changed.
+*   **Improvement:** GitHub source labels now use readable repo/issue/PR forms instead of lossy labels like `github.com - 6`.
+*   **Tests:** Added focused regressions for live notification suppression, GitHub label formatting, refresh-only auto-capture skipping, and preserved normal research capture.
+*   **Chore:** Bumped version to `v0.0.70`.
+
+### v0.0.69
 
 **Research Memory Relevance & Hardcoded Cleanup:**
 *   **Fix:** Research brief lookup now requires topic-anchor relevance, preventing broad comparison briefs from matching unrelated entity questions through summary-only terms.

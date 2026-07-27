@@ -448,6 +448,10 @@ fn should_skip_research_memory_for_generic_query(text: &str) -> bool {
         || concrete_research_topic_terms(text).is_empty()
 }
 
+fn should_show_saved_context_notification(text: &str) -> bool {
+    !super::research_policy::has_live_research_intent(text)
+}
+
 fn format_research_brief_context_items(
     items: &[crate::tools::shared_memory::ResearchBrief],
     user_content: &str,
@@ -486,11 +490,13 @@ async fn retrieve_research_brief_context(user_content: &str) -> String {
     }
     match crate::tools::shared_memory::search_research_briefs(user_content, 3).await {
         Ok(items) => {
-            if let Some(best) = items.first().filter(|item| item.score >= MIN_MATCH_SCORE) {
-                crate::channels::cli::send_notification(&format!(
-                    "◇ Research brief matched: {} ({})",
-                    best.topic, best.freshness
-                ));
+            if should_show_saved_context_notification(user_content) {
+                if let Some(best) = items.first().filter(|item| item.score >= MIN_MATCH_SCORE) {
+                    crate::channels::cli::send_notification(&format!(
+                        "◇ Research brief matched: {} ({})",
+                        best.topic, best.freshness
+                    ));
+                }
             }
             format_research_brief_context_items(&items, user_content)
         }
@@ -538,11 +544,13 @@ async fn retrieve_source_context(user_content: &str) -> String {
     }
     match crate::tools::shared_memory::search_source_bookmarks(user_content, 4).await {
         Ok(items) => {
-            if let Some(best) = items.first().filter(|item| item.score >= MIN_MATCH_SCORE) {
-                crate::channels::cli::send_notification(&format!(
-                    "◇ Sources matched: {} ({})",
-                    best.label, best.freshness
-                ));
+            if should_show_saved_context_notification(user_content) {
+                if let Some(best) = items.first().filter(|item| item.score >= MIN_MATCH_SCORE) {
+                    crate::channels::cli::send_notification(&format!(
+                        "◇ Sources matched: {} ({})",
+                        best.label, best.freshness
+                    ));
+                }
             }
             format_source_context_items(&items)
         }
@@ -1095,6 +1103,19 @@ mod tests {
             concrete_research_topic_terms("whats new in hermes"),
             vec!["hermes"]
         );
+    }
+
+    #[test]
+    fn live_queries_suppress_saved_context_notifications() {
+        assert!(!should_show_saved_context_notification(
+            "check again https://example.com/path"
+        ));
+        assert!(!should_show_saved_context_notification(
+            "research this https://example.com/path"
+        ));
+        assert!(should_show_saved_context_notification(
+            "what is hermes agent"
+        ));
     }
 
     #[test]

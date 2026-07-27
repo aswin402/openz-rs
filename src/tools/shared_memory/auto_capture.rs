@@ -174,6 +174,43 @@ fn is_research_worthy_user_content(text: &str) -> bool {
     definition_query && !canonical_research_topic(&normalized).trim().is_empty()
 }
 
+fn is_refresh_only_user_content(text: &str) -> bool {
+    let normalized = text
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !url_regex().is_match(&normalized) {
+        return false;
+    }
+    let asks_refresh = [
+        "again",
+        "recheck",
+        "re-check",
+        "refresh",
+        "verify",
+        "confirm",
+        "double check",
+        "check again",
+        "look again",
+        "go and check",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    let asks_research = [
+        "research",
+        "deep dive",
+        "tell me about",
+        "compare",
+        "analyze",
+        "analyse",
+        "investigate",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    asks_refresh && !asks_research
+}
+
 fn topic_from(tool_name: &str, args: &Value, user_content: &str) -> String {
     if let Some(topic) = first_str(
         args,
@@ -221,6 +258,38 @@ fn label_for_url(url: &str) -> String {
         .ok()
         .and_then(|parsed| {
             let host = parsed.host_str()?.trim_start_matches("www.");
+            let parts = parsed
+                .path_segments()
+                .map(|segments| segments.collect::<Vec<_>>())
+                .unwrap_or_default();
+            if host == "github.com" && parts.len() >= 2 {
+                let repo = format!("{}/{}", parts[0], parts[1]);
+                return match parts.get(2).copied() {
+                    Some("issues") => parts
+                        .get(3)
+                        .map(|num| format!("{repo} issue #{num}"))
+                        .or_else(|| Some(format!("{repo} issues"))),
+                    Some("pull") => parts
+                        .get(3)
+                        .map(|num| format!("{repo} PR #{num}"))
+                        .or_else(|| Some(format!("{repo} pull requests"))),
+                    Some("blob" | "tree") => {
+                        if parts.len() > 4 {
+                            Some(format!("{repo} {}", parts[4..].join("/")))
+                        } else {
+                            Some(repo)
+                        }
+                    }
+                    _ => Some(repo),
+                };
+            }
+            if host == "raw.githubusercontent.com" && parts.len() >= 2 {
+                let repo = format!("{}/{}", parts[0], parts[1]);
+                if parts.len() > 3 {
+                    return Some(format!("{repo} {}", parts[3..].join("/")));
+                }
+                return Some(repo);
+            }
             let path = parsed.path().trim_matches('/');
             if path.is_empty() {
                 Some(host.to_string())
@@ -522,6 +591,9 @@ pub async fn auto_capture_research_memory(
     if !user_research_worthy && !(user_content.trim().is_empty() && has_research_target_arg) {
         return Ok(None);
     }
+    if is_refresh_only_user_content(user_content) {
+        return Ok(None);
+    }
 
     let mut candidates = Vec::new();
     collect_candidates(arguments, &mut candidates);
@@ -593,6 +665,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn github_labels_are_human_readable() {
+        assert_eq!(
+            label_for_url("https://github.com/tonbistudio/turboquant-pytorch"),
+            "tonbistudio/turboquant-pytorch"
+        );
+        assert_eq!(
+            label_for_url("https://github.com/tonbistudio/turboquant-pytorch/issues/6"),
+            "tonbistudio/turboquant-pytorch issue #6"
+        );
+        assert_eq!(
+            label_for_url("https://github.com/barbel-bb/turboquant-cache/pull/12"),
+            "barbel-bb/turboquant-cache PR #12"
+        );
+    }
+
+    #[test]
     fn result_summary_prefers_signal_over_navigation_noise() {
         let result = serde_json::json!({
             "url": "https://github.com/example/openhuman",
@@ -654,6 +742,27 @@ mod tests {
             crate::tools::shared_memory::delete_research_brief(&format!("Hermes Agent {}", marker))
                 .await;
     }
+    #[tokio::test]
+    async fn auto_capture_skips_refresh_only_url_checks() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let url = format!("https://github.com/example/recheck-{marker}");
+        let result = serde_json::json!({
+            "url": url,
+            "content": "Example project is an open-source research repository with useful implementation notes."
+        });
+
+        let summary = auto_capture_research_memory(
+            "web_fetch",
+            &serde_json::json!({"url": format!("https://github.com/example/recheck-{marker}")}),
+            &result,
+            &format!("check again https://github.com/example/recheck-{marker}"),
+        )
+        .await
+        .unwrap();
+
+        assert!(summary.is_none());
+    }
+
     #[tokio::test]
     async fn auto_capture_skips_non_research_debug_turns() {
         let marker = uuid::Uuid::new_v4().to_string();

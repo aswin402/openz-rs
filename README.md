@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.69`
+# OpenZ 🦊 `v0.0.70`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.70`
+
+- **Live Refresh Footer Suppression**: Direct URL, research, and check-again prompts no longer display saved brief/source match notifications after the answer.
+- **Cleaner GitHub Source Labels**: GitHub repos, issues, PRs, and raw files now save with readable labels such as `owner/repo`, `owner/repo issue #6`, and `owner/repo PR #12`.
+- **Refresh-Only Capture Hygiene**: `check again <url>` style verification prompts no longer auto-save duplicate research briefs when they are only confirming current state.
 
 ## What Changed In `v0.0.69`
 
