@@ -128,7 +128,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     let pinned_memory = retrieve_pinned_identity_memories().await;
     let recent_session_part = recent_session_context(&ctx.session.messages, 2000);
     let brief_context = retrieve_research_brief_context(ctx.user_content).await;
-    let source_context = retrieve_source_context(ctx.user_content).await;
+    let source_context = retrieve_source_context(ctx.user_content, !brief_context.is_empty()).await;
     let workflow_context = retrieve_workflow_context(ctx.user_content).await;
     let weak_model_rules = weak_model_operating_rules(&config.agents.defaults.model);
     let mut cross_session_memory = retrieve_cross_session_memories(ctx.user_content).await;
@@ -464,7 +464,7 @@ fn format_research_brief_context_items(
     if current_sensitive {
         out.push_str("- Live/refresh intent detected: verify exact saved sources or web before final answer.\n");
     } else {
-        out.push_str("- Stable intent detected: prefer answering from fresh briefs/sources without extra fetching.\n");
+        out.push_str("- Stable intent detected: answer directly from fresh briefs/sources when they cover the question; do not call web/search only to improve wording or re-check stable definitions.\n");
     }
     for item in items.iter().take(3) {
         let line = format!(
@@ -538,13 +538,17 @@ Use these ranked links, repos, docs, paths, or profiles before broad searching. 
     out
 }
 
-async fn retrieve_source_context(user_content: &str) -> String {
+fn should_notify_source_context(user_content: &str, brief_context_available: bool) -> bool {
+    should_show_saved_context_notification(user_content) && !brief_context_available
+}
+
+async fn retrieve_source_context(user_content: &str, brief_context_available: bool) -> String {
     if should_skip_research_memory_for_generic_query(user_content) {
         return String::new();
     }
     match crate::tools::shared_memory::search_source_bookmarks(user_content, 4).await {
         Ok(items) => {
-            if should_show_saved_context_notification(user_content) {
+            if should_notify_source_context(user_content, brief_context_available) {
                 if let Some(best) = items.first().filter(|item| item.score >= MIN_MATCH_SCORE) {
                     crate::channels::cli::send_notification(&format!(
                         "◇ Sources matched: {} ({})",
@@ -1104,6 +1108,22 @@ mod tests {
             concrete_research_topic_terms("whats new in hermes"),
             vec!["hermes"]
         );
+    }
+
+    #[test]
+    fn stable_brief_context_suppresses_source_notification() {
+        assert!(should_notify_source_context(
+            "what is turboquant-pytorch",
+            false
+        ));
+        assert!(!should_notify_source_context(
+            "what is turboquant-pytorch",
+            true
+        ));
+        assert!(!should_notify_source_context(
+            "check again https://example.com",
+            false
+        ));
     }
 
     #[test]

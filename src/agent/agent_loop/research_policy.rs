@@ -108,9 +108,9 @@ pub fn has_live_research_intent(text: &str) -> bool {
 
 pub fn should_force_live_research_lookup(
     user_content: &str,
-    arguments: &serde_json::Value,
+    _arguments: &serde_json::Value,
 ) -> bool {
-    has_live_research_intent(user_content) || value_contains_http_url(arguments)
+    has_live_research_intent(user_content)
 }
 
 #[cfg(test)]
@@ -143,9 +143,13 @@ mod tests {
     }
 
     #[test]
-    fn urls_in_arguments_force_live_lookup() {
-        assert!(should_force_live_research_lookup(
+    fn tool_argument_urls_do_not_override_stable_user_intent() {
+        assert!(!should_force_live_research_lookup(
             "what is this",
+            &serde_json::json!({ "url": "https://example.com/pricing" })
+        ));
+        assert!(should_force_live_research_lookup(
+            "check again https://example.com/pricing",
             &serde_json::json!({ "url": "https://example.com/pricing" })
         ));
     }

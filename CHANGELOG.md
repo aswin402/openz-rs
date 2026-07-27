@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.71 (Latest Release)
+### v0.0.72 (Latest Release)
+
+**Stable Query Memory Efficiency:**
+*   **Fix:** Stable definition/comparison questions now keep using fresh research briefs even if the model-generated tool arguments contain a URL; explicit user live intent still refreshes exact sources.
+*   **Fix:** Saved source match notifications are suppressed when fresh research brief context already matched, preventing duplicate memory/source footers on simple questions.
+*   **Improvement:** Research auto-capture prefers existing canonical repo topics for short aliases such as `Hermes`, avoiding vague duplicate brief topics like `hermes`.
+*   **Tests:** Added focused regressions for stable argument URL policy, brief-first lookup blocking, source notification suppression, and alias-to-repo topic capture.
+*   **Chore:** Bumped version to `v0.0.72`.
+
+### v0.0.71
 
 **Memory Database Display Repair:**
 *   **Fix:** Legacy saved GitHub source labels are repaired at display time from their URI, so existing database rows no longer show labels like `github.com - pulls` or `github.com - 6`.

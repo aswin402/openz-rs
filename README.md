@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.71`
+# OpenZ 🦊 `v0.0.72`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,13 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.72`
+
+- **Stable Research Brief Reuse**: Stable definition/comparison questions no longer force live web lookup just because the model put a URL into a tool argument. User text now drives refresh intent.
+- **Quieter Memory Context**: Saved source match notifications are suppressed when a fresh research brief already matched, reducing duplicate footers on simple questions.
+- **Canonical Research Topics**: Auto-capture now prefers an existing canonical repo topic for short aliases, so follow-ups like `Hermes` reuse `nousresearch/hermes-agent` instead of creating vague duplicate topics.
+- **Regression Coverage**: Added focused tests for argument URL policy, brief-first lookup blocking, source notification suppression, and alias-to-repo topic capture.
 
 ## What Changed In `v0.0.71`
 

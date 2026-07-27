@@ -3,7 +3,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{add_source_bookmark, save_research_brief};
+use super::{add_source_bookmark, save_research_brief, search_source_bookmarks};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AutoCaptureSummary {
@@ -500,6 +500,18 @@ fn repo_topic_from_candidates(candidates: &[SourceCandidate]) -> Option<String> 
     })
 }
 
+async fn existing_repo_topic_for(query: &str) -> Option<String> {
+    let matches = search_source_bookmarks(query, 3).await.ok()?;
+    matches.into_iter().find_map(|source| {
+        let topic = canonical_research_topic(&source.uri);
+        if topic.contains('/') {
+            Some(topic)
+        } else {
+            None
+        }
+    })
+}
+
 fn dedupe_candidates(candidates: Vec<SourceCandidate>) -> Vec<SourceCandidate> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
@@ -611,10 +623,17 @@ pub async fn auto_capture_research_memory(
     } else {
         let user_topic = canonical_research_topic(user_content);
         let arg_topic = topic_from(tool_name, arguments, "");
+        let existing_repo_topic = if !user_topic.contains('/') {
+            existing_repo_topic_for(&user_topic).await
+        } else {
+            None
+        };
         if !user_topic.contains('/') && arg_topic.contains('/') {
             arg_topic
         } else if !user_topic.contains('/') {
-            candidate_repo_topic.unwrap_or(user_topic)
+            candidate_repo_topic
+                .or(existing_repo_topic)
+                .unwrap_or(user_topic)
         } else {
             user_topic
         }
@@ -846,6 +865,42 @@ mod tests {
         for source in sources.into_iter().filter(|s| s.uri.contains(&marker)) {
             let _ = crate::tools::shared_memory::delete_source(&source.id).await;
         }
+        let _ = crate::tools::shared_memory::delete_research_brief(&summary.topic).await;
+    }
+
+    #[tokio::test]
+    async fn auto_capture_prefers_existing_repo_topic_for_short_alias() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let repo_url = format!("https://github.com/NousResearch/hermes-agent-{marker}");
+        let source = crate::tools::shared_memory::add_source_bookmark(
+            &format!("NousResearch/hermes-agent-{marker}"),
+            "repo",
+            &repo_url,
+            vec![format!("hermes-{marker}")],
+            "Official Hermes Agent repository",
+            0.95,
+            604800,
+        )
+        .await
+        .unwrap();
+        let result = serde_json::json!({
+            "title": format!("Hermes Agent docs {marker}"),
+            "url": format!("https://hermes-agent.nousresearch.com/docs/{marker}"),
+            "content": "Hermes Agent is a self-improving AI agent framework with tools, skills, and messaging channels."
+        });
+
+        let summary = auto_capture_research_memory(
+            "web_fetch",
+            &serde_json::json!({"url": format!("https://hermes-agent.nousresearch.com/docs/{marker}")}),
+            &result,
+            &format!("so whats hermes-{marker}"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(summary.topic, format!("nousresearch/hermes-agent-{marker}"));
+        let _ = crate::tools::shared_memory::delete_source(&source.id).await;
         let _ = crate::tools::shared_memory::delete_research_brief(&summary.topic).await;
     }
 

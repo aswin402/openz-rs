@@ -1370,7 +1370,7 @@ mod tests {
             .await
         );
         assert!(
-            !fresh_research_brief_blocks_lookup(
+            fresh_research_brief_blocks_lookup(
                 &format!("what is openhuman {marker}"),
                 "web_fetch",
                 &serde_json::json!({ "url": format!("https://example.com/{marker}") }),
