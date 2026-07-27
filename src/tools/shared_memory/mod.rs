@@ -31,9 +31,9 @@ pub use consolidation::consolidate_shared_memory;
 pub use interaction::{get_recent_interactions, log_interaction, update_interaction_errors};
 
 pub use knowledge::{
-    add_source_bookmark, delete_research_brief, delete_source, mark_source_checked,
-    save_research_brief, search_research_briefs, search_source_bookmarks, KnowledgeSourceTool,
-    ResearchBrief, ResearchBriefTool, SourceBookmark,
+    add_source_bookmark, delete_research_brief, delete_source, display_source_label,
+    mark_source_checked, save_research_brief, search_research_briefs, search_source_bookmarks,
+    KnowledgeSourceTool, ResearchBrief, ResearchBriefTool, SourceBookmark,
 };
 pub use workflows::{
     add_workflow_card, delete_workflow, get_workflow_by_name, record_workflow_run,

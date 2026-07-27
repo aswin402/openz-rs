@@ -92,6 +92,111 @@ fn freshness_bonus(freshness: &str) -> f64 {
     }
 }
 
+pub fn display_source_label(label: &str, uri: &str) -> String {
+    let derived = source_label_from_uri(uri);
+    let current = label.trim();
+    if current.is_empty() || is_low_quality_source_label(current, uri) {
+        derived.unwrap_or_else(|| uri.chars().take(80).collect())
+    } else {
+        current.to_string()
+    }
+}
+
+fn source_label_from_uri(uri: &str) -> Option<String> {
+    reqwest::Url::parse(uri).ok().and_then(|parsed| {
+        let host = parsed.host_str()?.trim_start_matches("www.");
+        let parts = parsed
+            .path_segments()
+            .map(|segments| segments.collect::<Vec<_>>())
+            .unwrap_or_default();
+        if host == "github.com" && parts.len() >= 2 {
+            let repo = format!("{}/{}", parts[0], parts[1]);
+            return match parts.get(2).copied() {
+                Some("issues") => parts
+                    .get(3)
+                    .map(|num| format!("{repo} issue #{num}"))
+                    .or_else(|| Some(format!("{repo} issues"))),
+                Some("pull") => parts
+                    .get(3)
+                    .map(|num| format!("{repo} PR #{num}"))
+                    .or_else(|| Some(format!("{repo} pull requests"))),
+                Some("pulls") => Some(format!("{repo} pull requests")),
+                Some("blob" | "tree") => {
+                    if parts.len() > 4 {
+                        Some(format!("{repo} {}", parts[4..].join("/")))
+                    } else {
+                        Some(repo)
+                    }
+                }
+                _ => Some(repo),
+            };
+        }
+        if host == "raw.githubusercontent.com" && parts.len() >= 2 {
+            let repo = format!("{}/{}", parts[0], parts[1]);
+            if parts.len() > 3 {
+                return Some(format!("{repo} {}", parts[3..].join("/")));
+            }
+            return Some(repo);
+        }
+        None
+    })
+}
+
+fn is_low_quality_source_label(label: &str, uri: &str) -> bool {
+    let lower = label.to_lowercase();
+    if lower.starts_with("github.com - ") || lower.starts_with("raw.githubusercontent.com - ") {
+        return true;
+    }
+    if let Some(derived) = source_label_from_uri(uri) {
+        let derived_lower = derived.to_lowercase();
+        return lower == "github.com"
+            || lower == "raw.githubusercontent.com"
+            || lower == "github"
+            || lower == "pulls"
+            || lower == "issues"
+            || lower.parse::<u64>().is_ok()
+            || (lower.len() < derived_lower.len() && derived_lower.contains(&lower));
+    }
+    false
+}
+
+fn is_ui_chrome_noise_summary(lower: &str) -> bool {
+    if lower.starts_with("assignee:") && lower.contains("sort by") {
+        return true;
+    }
+    if lower.contains("footer navigation")
+        && lower.contains("terms")
+        && lower.contains("privacy")
+        && lower.contains("manage cookies")
+    {
+        return true;
+    }
+    if lower.contains("you can’t perform that action")
+        || lower.contains("you can't perform that action")
+    {
+        return true;
+    }
+    let chrome_terms = [
+        "filter by",
+        "sort by",
+        "newest",
+        "oldest",
+        "most commented",
+        "least commented",
+        "recently updated",
+        "least recently updated",
+        "best match",
+        "most reactions",
+        "protip",
+        "manage cookies",
+    ];
+    chrome_terms
+        .iter()
+        .filter(|term| lower.contains(**term))
+        .count()
+        >= 5
+}
+
 const STOP_WORDS: &[&str] = &[
     "the", "a", "an", "is", "it", "this", "that", "to", "in", "for", "of", "on", "and", "or", "be",
     "was", "are", "what", "how", "why", "who", "when", "where", "which", "with", "from", "about",
@@ -284,6 +389,7 @@ fn is_useful_research_brief_summary(summary: &str) -> bool {
     }
     if lower.starts_with("skipped web/search lookup:")
         || lower.contains("fresh saved research brief already matches")
+        || is_ui_chrome_noise_summary(&lower)
     {
         return false;
     }
@@ -830,6 +936,33 @@ mod tests {
         let old = (chrono::Utc::now() - chrono::Duration::seconds(120)).to_rfc3339();
         assert_eq!(freshness_status(Some(&old), 60), "stale");
         assert_eq!(freshness_status(None, 60), "unknown");
+    }
+
+    #[test]
+    fn display_source_label_repairs_legacy_github_labels() {
+        assert_eq!(
+            display_source_label(
+                "github.com - pulls",
+                "https://github.com/tonbistudio/turboquant-pytorch/pulls"
+            ),
+            "tonbistudio/turboquant-pytorch pull requests"
+        );
+        assert_eq!(
+            display_source_label(
+                "github.com - 6",
+                "https://github.com/tonbistudio/turboquant-pytorch/issues/6"
+            ),
+            "tonbistudio/turboquant-pytorch issue #6"
+        );
+    }
+
+    #[test]
+    fn research_brief_quality_rejects_github_ui_chrome() {
+        let noisy = "assignee: Filter by this user Sort Sort by Newest Oldest Most commented Least commented Recently updated Least recently updated Best match Most reactions Pull requests list feat: HadamardRotation #12 Footer navigation Terms Privacy Security Status Community Docs Contact Manage cookies You can’t perform that action at this time";
+        assert!(!is_useful_research_brief_summary(noisy));
+        assert!(is_useful_research_brief_summary(
+            "TurboQuant-PyTorch is a PyTorch implementation for compressing LLM KV caches with vector quantization and adaptive bit allocation."
+        ));
     }
 
     #[tokio::test]

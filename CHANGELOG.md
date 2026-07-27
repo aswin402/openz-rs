@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.70 (Latest Release)
+### v0.0.71 (Latest Release)
+
+**Memory Database Display Repair:**
+*   **Fix:** Legacy saved GitHub source labels are repaired at display time from their URI, so existing database rows no longer show labels like `github.com - pulls` or `github.com - 6`.
+*   **Fix:** Research brief search now ignores summaries dominated by GitHub UI chrome, sort/filter controls, footer navigation, cookie text, or action-denied boilerplate.
+*   **Tests:** Added focused coverage for legacy GitHub label repair and noisy GitHub brief rejection while preserving normal source/research behavior.
+*   **Chore:** Bumped version to `v0.0.71`.
+
+### v0.0.70
 
 **Live Refresh Source Hygiene:**
 *   **Fix:** Saved research/source match notifications are now suppressed on live-intent prompts such as direct URLs, explicit research, and check-again/refresh requests.

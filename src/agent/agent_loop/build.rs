@@ -520,7 +520,7 @@ Use these ranked links, repos, docs, paths, or profiles before broad searching. 
         let line = format!(
             "- {} [{}] {} | freshness={} ttl={}s trust={:.2} score={:.2} | aliases: {} | summary: {}
 ",
-            item.label,
+            crate::tools::shared_memory::display_source_label(&item.label, &item.uri),
             item.kind,
             item.uri,
             item.freshness,
@@ -548,7 +548,8 @@ async fn retrieve_source_context(user_content: &str) -> String {
                 if let Some(best) = items.first().filter(|item| item.score >= MIN_MATCH_SCORE) {
                     crate::channels::cli::send_notification(&format!(
                         "◇ Sources matched: {} ({})",
-                        best.label, best.freshness
+                        crate::tools::shared_memory::display_source_label(&best.label, &best.uri),
+                        best.freshness
                     ));
                 }
             }

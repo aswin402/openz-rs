@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.70`
+# OpenZ 🦊 `v0.0.71`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.71`
+
+- **Legacy Source Label Repair**: Old saved GitHub labels such as `github.com - pulls` and `github.com - 6` are repaired at display time using the source URI.
+- **Noisy Brief Filtering**: Saved research briefs that are mostly GitHub UI chrome, filters, sort controls, footer text, or cookie/status text are ignored instead of reused.
+- **Memory Cleanup Coverage**: Added regressions for legacy GitHub source label repair and GitHub UI-chrome brief rejection.
 
 ## What Changed In `v0.0.70`
 
