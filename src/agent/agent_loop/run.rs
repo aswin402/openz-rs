@@ -389,6 +389,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         // Track if content was already streamed to terminal (to avoid duplicate display)
         let mut content_streaming_started = false;
         let mut reasoning_printed = false;
+        let mut tool_call_stream_started = false;
         let mut current_line_buffer = String::new();
         let mut resp = if config.agents.defaults.streaming {
             let mut stream = loop_ref
@@ -533,6 +534,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         name,
                         arguments,
                     } => {
+                        tool_call_stream_started = true;
                         // If we have reasoning content that hasn't been printed yet, print it now
                         print_reasoning(
                             &full_reasoning,
@@ -573,13 +575,17 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 in_reasoning_phase = false;
             }
 
-            // Print any reasoning that was not printed yet
-            print_reasoning(
-                &full_reasoning,
-                &mut in_reasoning_phase,
-                &mut reasoning_printed,
-                start_time,
-            );
+            // Print reasoning only when a visible answer or tool call followed it. If the
+            // model returns reasoning-only, keep it for fallback final content instead of
+            // ending the turn with a Thought block and no answer.
+            if should_print_trailing_reasoning(&full_content, tool_call_stream_started) {
+                print_reasoning(
+                    &full_reasoning,
+                    &mut in_reasoning_phase,
+                    &mut reasoning_printed,
+                    start_time,
+                );
+            }
 
             // Print the final line in the buffer if any
             if !current_line_buffer.is_empty() && !silent {
@@ -724,9 +730,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         if resp.content.is_none() && resp.reasoning_content.is_some() && resp.tool_calls.is_empty()
         {
             resp.content = resp.reasoning_content.take();
-            // If we already printed it as reasoning on the terminal, set streamed = true
-            // to avoid printing it again in cli.rs
-            ctx.streamed = reasoning_printed;
+            // Reasoning-only fallbacks still need a visible final response. The
+            // reasoning panel is not the answer, so do not mark it streamed.
+            ctx.streamed = false;
             // Clear any thinking spinner that was active on the terminal
             if !crate::agent::style::spinner::is_silent() {
                 print!("\r\x1b[2K");
@@ -1271,6 +1277,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     Ok(TurnState::Save)
 }
 
+fn should_print_trailing_reasoning(full_content: &str, tool_call_stream_started: bool) -> bool {
+    !full_content.trim().is_empty() || tool_call_stream_started
+}
+
 fn format_markdown_line(line: &str) -> String {
     static RE_BOLD: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
     static RE_CODE: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
@@ -1331,6 +1341,13 @@ fn format_markdown_line(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reasoning_only_stream_does_not_print_trailing_thought() {
+        assert!(!should_print_trailing_reasoning("", false));
+        assert!(should_print_trailing_reasoning("final answer", false));
+        assert!(should_print_trailing_reasoning("", true));
+    }
 
     #[tokio::test]
     async fn fresh_brief_blocks_non_latest_research_tools() {

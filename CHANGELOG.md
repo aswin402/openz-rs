@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.73 (Latest Release)
+### v0.0.74 (Latest Release)
+
+**Reasoning-Only TUI Response Repair:**
+*   **Fix:** Streaming responses that contain only model reasoning no longer finish with a `Thought` block and no assistant answer.
+*   **Fix:** Reasoning-only fallback content is no longer marked as already streamed, so the CLI/TUI prints a visible final response.
+*   **Tests:** Added focused coverage for reasoning-only streaming behavior.
+*   **Chore:** Bumped version to `v0.0.74`.
+
+### v0.0.73
 
 **Research Topic Canonicalization Repair:**
 *   **Fix:** Non-GitHub URL research topics now use stable `host/path` canonical form, preventing duplicate topics such as `sakana.ai fugu` and `sakana.ai/fugu`.

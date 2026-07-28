@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.73`
+# OpenZ 🦊 `v0.0.74`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.74`
+
+- **Reasoning-Only Answer Repair**: Streaming turns that receive only `reasoning_content` no longer end with a visible Thought block and no final answer.
+- **TUI Output Fix**: Reasoning-only fallback content is returned as visible final content instead of being marked as already streamed.
+- **Regression Coverage**: Added a focused test for reasoning-only streaming behavior so greetings/simple prompts do not disappear after thinking.
 
 ## What Changed In `v0.0.73`
 

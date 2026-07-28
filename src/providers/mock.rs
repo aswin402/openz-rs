@@ -51,6 +51,15 @@ impl MockResponse {
             reasoning_content: None,
         }
     }
+
+    pub fn reasoning_only(reasoning: impl Into<String>) -> Self {
+        Self {
+            content: None,
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            reasoning_content: Some(reasoning.into()),
+        }
+    }
 }
 
 impl From<crate::providers::LLMResponse> for MockResponse {
