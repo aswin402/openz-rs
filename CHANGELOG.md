@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.76 (Latest Release)
+### v0.0.77 (Latest Release)
+
+**Streaming Thought Fallback Repair:**
+*   **Fix:** Streaming reasoning-only responses no longer dump provider reasoning as unformatted plain answer text.
+*   **Fix:** When TUI thoughts are enabled, reasoning-only fallback output now uses the normal `Thought for X.Xs` tree block.
+*   **Behavior:** The fallback remains visible so reasoning-only model responses do not disappear after the thinking spinner.
+*   **Chore:** Bumped version to `v0.0.77`.
+
+### v0.0.76
 
 **Configurable TUI Thought Display:**
 *   **Behavior:** Restored the old default TUI reasoning display with live `▶ Thinking...` seconds and `Thought for X.Xs` blocks before final answers.

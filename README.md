@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.76`
+# OpenZ 🦊 `v0.0.77`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.77`
+
+- **Streaming Thought Fallback Repair**: Streaming reasoning-only responses no longer dump raw reasoning as plain answer text.
+- **Formatted Thought Output**: When thoughts are enabled, fallback reasoning now appears under the normal `Thought for X.Xs` block.
+- **No Blank Regression**: The fallback still keeps the turn visible instead of ending after the thinking spinner.
 
 ## What Changed In `v0.0.76`
 

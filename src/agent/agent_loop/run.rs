@@ -740,15 +740,55 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         }
 
         // Handle models that send everything as reasoning_content with no content.
-        // When there's reasoning but no content and no tool calls, the reasoning IS the response.
-        // Common with DeepSeek-V4 and similar reasoning models.
+        // Common with DeepSeek-V4-style streams. Keep the turn visible, but do
+        // not dump reasoning as unformatted answer text in the TUI.
         if resp.content.is_none() && resp.reasoning_content.is_some() && resp.tool_calls.is_empty()
         {
-            resp.content = resp.reasoning_content.take();
-            // Reasoning-only fallbacks still need a visible final response. The
-            // reasoning panel is not the answer, so do not mark it streamed.
-            ctx.streamed = false;
-            // Clear any thinking spinner that was active on the terminal
+            if config.agents.defaults.streaming && !reasoning_printed {
+                let mode =
+                    normalize_tui_thought_display(&config.agents.defaults.tui_thought_display);
+                if should_show_tui_thoughts(mode) && !crate::agent::style::spinner::is_silent() {
+                    print!("\r\x1b[2K");
+                    let duration_secs = start_time.elapsed().as_secs_f32();
+                    let depth = crate::tools::subagent::DELEGATION_DEPTH
+                        .try_with(|d| *d)
+                        .unwrap_or(0);
+                    let prefix = if depth > 0 {
+                        crate::agent::style::get_tree_prefix(false)
+                    } else {
+                        String::new()
+                    };
+                    crate::tui_println!(
+                        "{}{}● {}{}{}Thought for {:.1}s{}",
+                        prefix,
+                        RED_ORANGE,
+                        COLOR_RESET,
+                        COLOR_BOLD,
+                        RED_ORANGE,
+                        duration_secs,
+                        COLOR_RESET
+                    );
+                    if let Some(ref reasoning) = resp.reasoning_content {
+                        let visible_reasoning = if mode == "compact" {
+                            compact_reasoning_summary(reasoning)
+                        } else {
+                            reasoning.clone()
+                        };
+                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                        crate::agent::style::print_tree_monologue(&leaf_prefix, &visible_reasoning);
+                        crate::tui_println!("");
+                    }
+                    let _ = std::io::stdout().flush();
+                    reasoning_printed = true;
+                    ctx.streamed = true;
+                } else {
+                    resp.content = resp.reasoning_content.take();
+                    ctx.streamed = false;
+                }
+            } else {
+                resp.content = resp.reasoning_content.take();
+                ctx.streamed = false;
+            }
             if !crate::agent::style::spinner::is_silent() {
                 print!("\r\x1b[2K");
                 let _ = std::io::stdout().flush();
