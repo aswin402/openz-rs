@@ -58,17 +58,21 @@ pub fn canonical_research_topic(raw: &str) -> String {
     if let Ok(parsed) = reqwest::Url::parse(parse_target) {
         if let Some(host) = parsed.host_str() {
             let host = host.trim_start_matches("www.");
-            let path = parsed.path().trim_matches('/');
+            let path_parts = parsed
+                .path()
+                .trim_matches('/')
+                .split('/')
+                .filter(|part| !part.is_empty())
+                .map(|part| part.trim().trim_end_matches(".html"))
+                .filter(|part| !part.is_empty())
+                .take(3)
+                .collect::<Vec<_>>();
             text = if host == "github.com" || host == "raw.githubusercontent.com" {
-                path.split('/')
-                    .take(2)
-                    .filter(|part| !part.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("/")
-            } else if path.is_empty() {
+                path_parts.into_iter().take(2).collect::<Vec<_>>().join("/")
+            } else if path_parts.is_empty() {
                 host.to_string()
             } else {
-                format!("{} {}", host, path.replace(['-', '_', '/'], " "))
+                format!("{}/{}", host, path_parts.join("/"))
             };
         }
     }
@@ -489,8 +493,28 @@ fn collect_candidates(value: &Value, out: &mut Vec<SourceCandidate>) {
     }
 }
 
+fn is_repo_url(url: &str) -> bool {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|parsed| {
+            parsed
+                .host_str()
+                .map(|host| host.trim_start_matches("www.").to_string())
+        })
+        .map(|host| {
+            matches!(
+                host.as_str(),
+                "github.com" | "raw.githubusercontent.com" | "gitlab.com"
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn repo_topic_from_candidates(candidates: &[SourceCandidate]) -> Option<String> {
     candidates.iter().find_map(|candidate| {
+        if !is_repo_url(&candidate.url) {
+            return None;
+        }
         let topic = canonical_research_topic(&candidate.url);
         if topic.contains('/') {
             Some(topic)
@@ -503,6 +527,9 @@ fn repo_topic_from_candidates(candidates: &[SourceCandidate]) -> Option<String> 
 async fn existing_repo_topic_for(query: &str) -> Option<String> {
     let matches = search_source_bookmarks(query, 3).await.ok()?;
     matches.into_iter().find_map(|source| {
+        if source.kind.trim().to_lowercase() != "repo" && !is_repo_url(&source.uri) {
+            return None;
+        }
         let topic = canonical_research_topic(&source.uri);
         if topic.contains('/') {
             Some(topic)
@@ -628,11 +655,10 @@ pub async fn auto_capture_research_memory(
         } else {
             None
         };
-        if !user_topic.contains('/') && arg_topic.contains('/') {
-            arg_topic
-        } else if !user_topic.contains('/') {
+        if !user_topic.contains('/') {
             candidate_repo_topic
                 .or(existing_repo_topic)
+                .or_else(|| arg_topic.contains('/').then_some(arg_topic))
                 .unwrap_or(user_topic)
         } else {
             user_topic
@@ -739,6 +765,14 @@ mod tests {
         assert_eq!(
             canonical_research_topic("https://github.com/mem0ai/mem0?utm_source=chatgpt.com"),
             "mem0ai/mem0"
+        );
+        assert_eq!(
+            canonical_research_topic("https://sakana.ai/fugu/"),
+            "sakana.ai/fugu"
+        );
+        assert_eq!(
+            canonical_research_topic("https://www.duix.com/pricing?utm_source=test"),
+            "duix.com/pricing"
         );
         assert_eq!(canonical_research_topic("what is mem0"), "mem0");
         assert_eq!(canonical_research_topic("hey whats hermes"), "hermes");
@@ -858,6 +892,44 @@ mod tests {
             .unwrap();
         assert_eq!(briefs[0].topic, summary.topic);
         assert!(briefs[0].stale_after_secs >= 604_800);
+
+        let sources = crate::tools::shared_memory::search_source_bookmarks(&marker, 5)
+            .await
+            .unwrap();
+        for source in sources.into_iter().filter(|s| s.uri.contains(&marker)) {
+            let _ = crate::tools::shared_memory::delete_source(&source.id).await;
+        }
+        let _ = crate::tools::shared_memory::delete_research_brief(&summary.topic).await;
+    }
+
+    #[tokio::test]
+    async fn auto_capture_uses_canonical_website_url_topic() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let url = format!("https://sakana.ai/fugu-{marker}/");
+        let result = serde_json::json!({
+            "title": format!("Sakana Fugu {marker}"),
+            "url": url,
+            "content": "Sakana Fugu is a multi-agent orchestration model exposed through an OpenAI-compatible API."
+        });
+
+        let summary = auto_capture_research_memory(
+            "web_fetch",
+            &serde_json::json!({"url": format!("https://sakana.ai/fugu-{marker}/")}),
+            &result,
+            &format!("hey research about this https://sakana.ai/fugu-{marker}/"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(summary.topic, format!("sakana.ai/fugu-{marker}"));
+        let matches = crate::tools::shared_memory::search_research_briefs(
+            &format!("what is sakana fugu-{marker}"),
+            5,
+        )
+        .await
+        .unwrap();
+        assert!(matches.iter().any(|item| item.topic == summary.topic));
 
         let sources = crate::tools::shared_memory::search_source_bookmarks(&marker, 5)
             .await

@@ -344,7 +344,21 @@ pub async fn handle_doctor() -> Result<()> {
     }
     println!();
 
-    // ── Step 3: Disk/cache pressure report ──
+    // ── Step 3: Repair research-memory topic aliases ──
+    println!("🔍 Checking research brief topic aliases...");
+    match crate::tools::shared_memory::repair_research_brief_topics().await {
+        Ok(repaired) if repaired > 0 => {
+            println!(
+                "✅ Repaired {} research brief topic alias(es) using saved source evidence.",
+                repaired
+            );
+        }
+        Ok(_) => println!("✅ No research brief topic aliases needed repair."),
+        Err(err) => println!("⚠️  Research brief topic repair skipped: {err}"),
+    }
+    println!();
+
+    // ── Step 4: Disk/cache pressure report ──
     print_disk_report(&data_dir);
     println!();
 

@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.72 (Latest Release)
+### v0.0.73 (Latest Release)
+
+**Research Topic Canonicalization Repair:**
+*   **Fix:** Non-GitHub URL research topics now use stable `host/path` canonical form, preventing duplicate topics such as `sakana.ai fugu` and `sakana.ai/fugu`.
+*   **Fix:** Repository topic promotion now verifies actual repo source evidence instead of treating every slash-containing website topic as a repo topic.
+*   **Improvement:** `openz doctor` repairs legacy research brief topics by merging or renaming vague aliases into source-proven canonical topics without deleting brief content.
+*   **Tests:** Added focused regressions for Sakana-style website topics, Hermes-style repo alias repair, and legacy website space-topic repair.
+*   **Chore:** Bumped version to `v0.0.73`.
+
+### v0.0.72
 
 **Stable Query Memory Efficiency:**
 *   **Fix:** Stable definition/comparison questions now keep using fresh research briefs even if the model-generated tool arguments contain a URL; explicit user live intent still refreshes exact sources.

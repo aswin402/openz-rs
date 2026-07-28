@@ -432,6 +432,86 @@ fn parse_string_array(raw: &str) -> Vec<String> {
     serde_json::from_str(raw).unwrap_or_default()
 }
 
+fn topic_match_key(topic: &str) -> String {
+    canonical_research_topic(topic)
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect()
+}
+
+fn source_is_repo_like(source: &SourceBookmark) -> bool {
+    if source.kind.trim().eq_ignore_ascii_case("repo") {
+        return true;
+    }
+    reqwest::Url::parse(&source.uri)
+        .ok()
+        .and_then(|parsed| {
+            parsed
+                .host_str()
+                .map(|host| host.trim_start_matches("www.").to_string())
+        })
+        .map(|host| {
+            matches!(
+                host.as_str(),
+                "github.com" | "raw.githubusercontent.com" | "gitlab.com"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn proven_canonical_topic_for_brief(
+    topic: &str,
+    source_ids: &[String],
+    sources: &[SourceBookmark],
+) -> Option<String> {
+    let canonical_topic = canonical_research_topic(topic);
+    let topic_key = topic_match_key(&canonical_topic);
+    if topic_key.is_empty() {
+        return None;
+    }
+
+    let source_id_set: std::collections::BTreeSet<&str> =
+        source_ids.iter().map(|id| id.as_str()).collect();
+    let mut candidates = sources
+        .iter()
+        .filter_map(|source| {
+            let source_topic = canonical_research_topic(&source.uri);
+            if source_topic.trim().is_empty() || source_topic == canonical_topic {
+                return None;
+            }
+            let linked_by_id = source_id_set.contains(source.id.as_str());
+            let linked_by_anchor = source_has_relevant_anchor(&canonical_topic, source);
+            let linked_by_topic_key = topic_match_key(&source_topic) == topic_key;
+            if !(linked_by_id || linked_by_anchor || linked_by_topic_key) {
+                return None;
+            }
+            let score = if source_is_repo_like(source) { 2 } else { 1 };
+            Some((score, source.score, source_topic))
+        })
+        .collect::<Vec<_>>();
+
+    candidates.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    candidates.into_iter().map(|(_, _, topic)| topic).next()
+}
+
+fn merge_string_arrays(left: &[String], right: &[String]) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    left.iter()
+        .chain(right.iter())
+        .filter_map(|item| {
+            let trimmed = item.trim();
+            if trimmed.is_empty() || !seen.insert(trimmed.to_string()) {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .collect()
+}
+
 fn source_from_row(row: &rusqlite::Row<'_>, score: f64) -> rusqlite::Result<SourceBookmark> {
     let aliases: String = row.get(4)?;
     let last_checked: Option<String> = row.get(7)?;
@@ -648,6 +728,88 @@ pub async fn save_research_brief(
         .into_iter()
         .next()
         .ok_or_else(|| anyhow!("research brief save failed"))
+}
+
+pub async fn repair_research_brief_topics() -> Result<usize> {
+    let now = now_rfc3339();
+    let _lock = get_db_mutex().lock().await;
+    with_db(|conn| {
+        let sources = {
+            let mut stmt = conn.prepare("SELECT id, label, kind, uri, aliases, summary, trust_score, last_checked, stale_after_secs, created_at, updated_at, use_count FROM source_bookmarks ORDER BY trust_score DESC, use_count DESC, updated_at DESC LIMIT 1000")?;
+            let mapped = stmt.query_map([], |row| source_from_row(row, 0.0))?;
+            let mut out = Vec::new();
+            for item in mapped {
+                out.push(item?);
+            }
+            out
+        };
+
+        let briefs = {
+            let mut stmt = conn.prepare("SELECT id, topic, summary, source_ids, confidence, stale_after_secs, created_at, updated_at, use_count FROM research_briefs ORDER BY confidence DESC, use_count DESC, updated_at DESC LIMIT 1000")?;
+            let mapped = stmt.query_map([], |row| brief_from_row(row, 0.0))?;
+            let mut out = Vec::new();
+            for item in mapped {
+                out.push(item?);
+            }
+            out
+        };
+
+        let mut repaired = 0usize;
+        for brief in briefs {
+            let Some(target_topic) =
+                proven_canonical_topic_for_brief(&brief.topic, &brief.source_ids, &sources)
+            else {
+                continue;
+            };
+            if target_topic == brief.topic {
+                continue;
+            }
+
+            let existing = conn
+                .query_row(
+                    "SELECT id, topic, summary, source_ids, confidence, stale_after_secs, created_at, updated_at, use_count FROM research_briefs WHERE topic = ?1",
+                    params![target_topic],
+                    |row| brief_from_row(row, 0.0),
+                )
+                .optional()?;
+
+            if let Some(existing) = existing {
+                let merged_source_ids =
+                    merge_string_arrays(&existing.source_ids, &brief.source_ids);
+                let merged_source_ids_json = serde_json::to_string(&merged_source_ids)?;
+                let use_incoming_summary = brief.confidence >= existing.confidence
+                    && brief.updated_at >= existing.updated_at;
+                let summary = if use_incoming_summary {
+                    brief.summary.as_str()
+                } else {
+                    existing.summary.as_str()
+                };
+                conn.execute(
+                    "UPDATE research_briefs SET summary = ?2, source_ids = ?3, confidence = ?4, stale_after_secs = ?5, updated_at = ?6, use_count = ?7 WHERE topic = ?1",
+                    params![
+                        target_topic,
+                        summary,
+                        merged_source_ids_json,
+                        existing.confidence.max(brief.confidence),
+                        existing.stale_after_secs.min(brief.stale_after_secs).max(60),
+                        now,
+                        existing.use_count.max(brief.use_count)
+                    ],
+                )?;
+                conn.execute(
+                    "DELETE FROM research_briefs WHERE id = ?1",
+                    params![brief.id],
+                )?;
+            } else {
+                conn.execute(
+                    "UPDATE research_briefs SET topic = ?2, updated_at = ?3 WHERE id = ?1",
+                    params![brief.id, target_topic, now],
+                )?;
+            }
+            repaired += 1;
+        }
+        Ok(repaired)
+    })
 }
 
 pub async fn search_research_briefs(query: &str, limit: usize) -> Result<Vec<ResearchBrief>> {
@@ -877,6 +1039,122 @@ mod tests {
             .any(|m| { m.topic == canonical_topic && m.summary == "Example repository alias update contains a useful description from a follow-up question." }));
         let _ = delete_research_brief(&url_topic).await;
         let _ = delete_research_brief(&marker).await;
+    }
+
+    #[tokio::test]
+    async fn repair_research_brief_topics_merges_alias_into_existing_repo_topic() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let alias_topic = format!("hermes-{marker}");
+        let canonical_topic = format!("nousresearch/hermes-agent-{marker}");
+        let source = add_source_bookmark(
+            &canonical_topic,
+            "repo",
+            &format!("https://github.com/NousResearch/hermes-agent-{marker}"),
+            vec![alias_topic.clone()],
+            "Official Hermes Agent repository",
+            0.95,
+            604800,
+        )
+        .await
+        .unwrap();
+        save_research_brief(
+            &canonical_topic,
+            "Canonical Hermes Agent brief with current repository context.",
+            vec![source.id.clone()],
+            0.7,
+            604800,
+        )
+        .await
+        .unwrap();
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = now_rfc3339();
+        let source_ids = serde_json::to_string(&vec![source.id.clone()]).unwrap();
+        {
+            let _lock = get_db_mutex().lock().await;
+            with_db(|conn| {
+                conn.execute(
+                    "INSERT INTO research_briefs (id, topic, summary, source_ids, confidence, stale_after_secs, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                    params![
+                        id,
+                        alias_topic,
+                        "Alias Hermes brief should merge into the canonical repository topic.",
+                        source_ids,
+                        0.9,
+                        604800,
+                        now
+                    ],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        assert_eq!(repair_research_brief_topics().await.unwrap(), 1);
+        let matches = search_research_briefs(&format!("what is hermes-{marker}"), 5)
+            .await
+            .unwrap();
+        assert!(matches.iter().any(|item| item.topic == canonical_topic));
+        assert!(matches.iter().all(|item| item.topic != alias_topic));
+
+        let _ = delete_source(&source.id).await;
+        let _ = delete_research_brief(&canonical_topic).await;
+        let _ = delete_research_brief(&alias_topic).await;
+    }
+
+    #[tokio::test]
+    async fn repair_research_brief_topics_renames_website_space_topic() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let url = format!("https://sakana.ai/fugu-{marker}/");
+        let canonical_topic = format!("sakana.ai/fugu-{marker}");
+        let legacy_topic = format!("sakana.ai fugu-{marker}");
+        let source = add_source_bookmark(
+            &format!("Sakana Fugu {marker}"),
+            "website",
+            &url,
+            vec![format!("sakana fugu-{marker}")],
+            "Sakana Fugu product page",
+            0.85,
+            604800,
+        )
+        .await
+        .unwrap();
+
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = now_rfc3339();
+        let source_ids = serde_json::to_string(&vec![source.id.clone()]).unwrap();
+        {
+            let _lock = get_db_mutex().lock().await;
+            with_db(|conn| {
+                conn.execute(
+                    "INSERT INTO research_briefs (id, topic, summary, source_ids, confidence, stale_after_secs, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                    params![
+                        id,
+                        legacy_topic,
+                        "Sakana Fugu is a multi-agent orchestration product page.",
+                        source_ids,
+                        0.8,
+                        604800,
+                        now
+                    ],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        assert_eq!(repair_research_brief_topics().await.unwrap(), 1);
+        let matches = search_research_briefs(&format!("what is sakana fugu-{marker}"), 5)
+            .await
+            .unwrap();
+        assert!(matches.iter().any(|item| item.topic == canonical_topic));
+        assert!(matches.iter().all(|item| item.topic != legacy_topic));
+
+        let _ = delete_source(&source.id).await;
+        let _ = delete_research_brief(&canonical_topic).await;
+        let _ = delete_research_brief(&legacy_topic).await;
     }
 
     #[tokio::test]

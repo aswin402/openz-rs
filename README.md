@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.72`
+# OpenZ 🦊 `v0.0.73`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,13 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.73`
+
+- **Canonical Website Topics**: URL-based research topics now keep stable `host/path` form, so `https://sakana.ai/fugu/` saves as `sakana.ai/fugu` instead of a loose space topic.
+- **Doctor Memory Repair**: `openz doctor` now repairs legacy research brief aliases using saved source evidence, merging vague topics like `hermes` into canonical repo topics when proven.
+- **Duplicate Brief Cleanup**: Existing duplicate website/repo brief topics are renamed or merged without deleting content.
+- **Regression Coverage**: Added focused tests for Sakana-style website topics, Hermes-style repo alias repair, and legacy website topic repair.
 
 ## What Changed In `v0.0.72`
 
