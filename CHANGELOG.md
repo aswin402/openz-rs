@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.77 (Latest Release)
+### v0.0.78 (Latest Release)
+
+**Streaming Thought Final-Answer Recovery:**
+*   **Fix:** Streaming reasoning-only responses now make one answer-recovery call instead of ending after a Thought block.
+*   **Behavior:** The TUI prints formatted `Thought for X.Xs` output first, then displays the recovered user-facing answer.
+*   **Fix:** The fallback continues to avoid dumping provider reasoning as plain final text.
+*   **Chore:** Bumped version to `v0.0.78`.
+
+### v0.0.77
 
 **Streaming Thought Fallback Repair:**
 *   **Fix:** Streaming reasoning-only responses no longer dump provider reasoning as unformatted plain answer text.

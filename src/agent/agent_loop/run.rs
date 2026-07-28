@@ -740,58 +740,87 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         }
 
         // Handle models that send everything as reasoning_content with no content.
-        // Common with DeepSeek-V4-style streams. Keep the turn visible, but do
-        // not dump reasoning as unformatted answer text in the TUI.
+        // Common with DeepSeek-V4-style streams. Recover a user-facing answer
+        // instead of dumping reasoning as plain text or ending after Thought.
         if resp.content.is_none() && resp.reasoning_content.is_some() && resp.tool_calls.is_empty()
         {
-            if config.agents.defaults.streaming && !reasoning_printed {
-                let mode =
-                    normalize_tui_thought_display(&config.agents.defaults.tui_thought_display);
-                if should_show_tui_thoughts(mode) && !crate::agent::style::spinner::is_silent() {
-                    print!("\r\x1b[2K");
-                    let duration_secs = start_time.elapsed().as_secs_f32();
-                    let depth = crate::tools::subagent::DELEGATION_DEPTH
-                        .try_with(|d| *d)
-                        .unwrap_or(0);
-                    let prefix = if depth > 0 {
-                        crate::agent::style::get_tree_prefix(false)
-                    } else {
-                        String::new()
-                    };
-                    crate::tui_println!(
-                        "{}{}● {}{}{}Thought for {:.1}s{}",
-                        prefix,
-                        RED_ORANGE,
-                        COLOR_RESET,
-                        COLOR_BOLD,
-                        RED_ORANGE,
-                        duration_secs,
-                        COLOR_RESET
-                    );
-                    if let Some(ref reasoning) = resp.reasoning_content {
-                        let visible_reasoning = if mode == "compact" {
-                            compact_reasoning_summary(reasoning)
-                        } else {
-                            reasoning.clone()
-                        };
-                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                        crate::agent::style::print_tree_monologue(&leaf_prefix, &visible_reasoning);
-                        crate::tui_println!("");
+            if !crate::agent::style::spinner::is_silent() {
+                print!("\r\x1b[2K");
+                let _ = std::io::stdout().flush();
+            }
+
+            if config.agents.defaults.streaming {
+                let mut recovery_messages = ctx.messages.clone();
+                recovery_messages.push(Message {
+                    role: "user".to_string(),
+                    content: "Your previous streamed response contained reasoning only and no user-facing answer. Provide only the final answer to my last message now. Do not include reasoning, analysis, or tool calls.".to_string(),
+                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                    extra: serde_json::Map::new(),
+                });
+                let recovery_activity_msg =
+                    format!("{}▶ Recovering final answer...{}", RED_ORANGE, COLOR_RESET);
+
+                match loop_ref
+                    .chat_with_fallback(
+                        &mut ctx.active_provider,
+                        &ctx.system_prompt,
+                        &recovery_messages,
+                        &[],
+                        &settings,
+                        &recovery_activity_msg,
+                    )
+                    .await
+                {
+                    Ok(mut recovery_resp) => {
+                        if let Some(text) = recovery_resp.content.take() {
+                            let (clean_content, extracted_reasoning) =
+                                crate::providers::openai::split_think_blocks(&text);
+                            recovery_resp.content = clean_content;
+                            recovery_resp.reasoning_content =
+                                crate::providers::openai::merge_reasoning(
+                                    recovery_resp.reasoning_content.take(),
+                                    extracted_reasoning,
+                                );
+                        }
+
+                        let original_reasoning = resp.reasoning_content.take();
+                        resp.content = recovery_resp
+                            .content
+                            .take()
+                            .filter(|s| !s.trim().is_empty());
+                        resp.reasoning_content = crate::providers::openai::merge_reasoning(
+                            original_reasoning,
+                            recovery_resp.reasoning_content.take(),
+                        );
+                        resp.finish_reason = recovery_resp.finish_reason;
+                        resp.tool_calls.clear();
+
+                        if resp.content.is_none() {
+                            resp.content = Some(
+                                "I did not receive a final answer from the model for this turn."
+                                    .to_string(),
+                            );
+                        }
+                        ctx.streamed = false;
+                        content_streaming_started = false;
                     }
-                    let _ = std::io::stdout().flush();
-                    reasoning_printed = true;
-                    ctx.streamed = true;
-                } else {
-                    resp.content = resp.reasoning_content.take();
-                    ctx.streamed = false;
+                    Err(e) => {
+                        tracing::warn!(
+                            session = %ctx.session_key,
+                            error = %e,
+                            "Failed to recover final answer from reasoning-only stream"
+                        );
+                        resp.content = Some(
+                            "I did not receive a final answer from the model for this turn."
+                                .to_string(),
+                        );
+                        ctx.streamed = false;
+                        content_streaming_started = false;
+                    }
                 }
             } else {
                 resp.content = resp.reasoning_content.take();
                 ctx.streamed = false;
-            }
-            if !crate::agent::style::spinner::is_silent() {
-                print!("\r\x1b[2K");
-                let _ = std::io::stdout().flush();
             }
         }
 
