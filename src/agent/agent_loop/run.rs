@@ -750,6 +750,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             }
 
             if config.agents.defaults.streaming {
+                let original_reasoning = resp.reasoning_content.take();
                 let mut recovery_messages = ctx.messages.clone();
                 recovery_messages.push(Message {
                     role: "user".to_string(),
@@ -760,7 +761,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 let recovery_activity_msg = String::new();
 
                 match loop_ref
-                    .chat_with_fallback(
+                    .chat_stream_with_fallback(
                         &mut ctx.active_provider,
                         &ctx.system_prompt,
                         &recovery_messages,
@@ -770,38 +771,131 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     )
                     .await
                 {
-                    Ok(mut recovery_resp) => {
-                        if let Some(text) = recovery_resp.content.take() {
-                            let (clean_content, extracted_reasoning) =
-                                crate::providers::openai::split_think_blocks(&text);
-                            recovery_resp.content = clean_content;
-                            recovery_resp.reasoning_content =
-                                crate::providers::openai::merge_reasoning(
-                                    recovery_resp.reasoning_content.take(),
-                                    extracted_reasoning,
-                                );
+                    Ok(mut recovery_stream) => {
+                        let mode = normalize_tui_thought_display(
+                            &config.agents.defaults.tui_thought_display,
+                        );
+                        let mut recovery_content = String::new();
+                        let mut recovery_reasoning = String::new();
+                        let mut recovery_finish_reason = "stop".to_string();
+
+                        while let Some(chunk) = recovery_stream.next().await {
+                            match chunk? {
+                                crate::providers::ChatStreamChunk::Content(text) => {
+                                    if !reasoning_printed
+                                        && should_show_tui_thoughts(mode)
+                                        && !crate::agent::style::spinner::is_silent()
+                                    {
+                                        let duration_secs = start_time.elapsed().as_secs_f32();
+                                        let depth = crate::tools::subagent::DELEGATION_DEPTH
+                                            .try_with(|d| *d)
+                                            .unwrap_or(0);
+                                        let prefix = if depth > 0 {
+                                            crate::agent::style::get_tree_prefix(false)
+                                        } else {
+                                            String::new()
+                                        };
+                                        crate::tui_println!(
+                                            "{}{}● {}{}{}Thought for {:.1}s{}",
+                                            prefix,
+                                            RED_ORANGE,
+                                            COLOR_RESET,
+                                            COLOR_BOLD,
+                                            RED_ORANGE,
+                                            duration_secs,
+                                            COLOR_RESET
+                                        );
+                                        if let Some(ref reasoning) = original_reasoning {
+                                            let visible_reasoning = if mode == "compact" {
+                                                compact_reasoning_summary(reasoning)
+                                            } else {
+                                                reasoning.clone()
+                                            };
+                                            let leaf_prefix =
+                                                crate::agent::style::get_tree_prefix(true);
+                                            crate::agent::style::print_tree_monologue(
+                                                &leaf_prefix,
+                                                &visible_reasoning,
+                                            );
+                                            crate::tui_println!("");
+                                        }
+                                        reasoning_printed = true;
+                                    }
+
+                                    recovery_content.push_str(&text);
+                                    for c in text.chars() {
+                                        if c == '\r' {
+                                            continue;
+                                        }
+                                        if c == '\n' {
+                                            if !crate::agent::style::spinner::is_silent() {
+                                                content_streaming_started = true;
+                                                print!("\r\x1b[2K");
+                                                print!(
+                                                    "{}",
+                                                    format_markdown_line(&current_line_buffer)
+                                                );
+                                                print!("\r\n");
+                                                let _ = std::io::stdout().flush();
+                                            }
+                                            current_line_buffer.clear();
+                                        } else {
+                                            current_line_buffer.push(c);
+                                            if !crate::agent::style::spinner::is_silent() {
+                                                content_streaming_started = true;
+                                                print!("{}", c);
+                                                let _ = std::io::stdout().flush();
+                                            }
+                                        }
+                                    }
+                                    super::tool_execution::send_progress_update(
+                                        ctx.session_key,
+                                        &text,
+                                    )
+                                    .await;
+                                }
+                                crate::providers::ChatStreamChunk::Reasoning(text) => {
+                                    recovery_reasoning.push_str(&text);
+                                }
+                                crate::providers::ChatStreamChunk::ToolCall { .. } => {}
+                                crate::providers::ChatStreamChunk::Done { finish_reason } => {
+                                    if let Some(reason) = finish_reason {
+                                        recovery_finish_reason = reason;
+                                    }
+                                }
+                            }
                         }
 
-                        let original_reasoning = resp.reasoning_content.take();
-                        resp.content = recovery_resp
-                            .content
-                            .take()
-                            .filter(|s| !s.trim().is_empty());
-                        resp.reasoning_content = crate::providers::openai::merge_reasoning(
-                            original_reasoning,
-                            recovery_resp.reasoning_content.take(),
-                        );
-                        resp.finish_reason = recovery_resp.finish_reason;
-                        resp.tool_calls.clear();
+                        if !current_line_buffer.is_empty()
+                            && !crate::agent::style::spinner::is_silent()
+                        {
+                            print!(
+                                "
+[2K"
+                            );
+                            print!("{}", format_markdown_line(&current_line_buffer));
+                            let _ = std::io::stdout().flush();
+                        }
 
-                        if resp.content.is_none() {
-                            resp.content = Some(
+                        resp.content = if recovery_content.trim().is_empty() {
+                            Some(
                                 "I did not receive a final answer from the model for this turn."
                                     .to_string(),
-                            );
-                        }
-                        ctx.streamed = false;
-                        content_streaming_started = false;
+                            )
+                        } else {
+                            Some(recovery_content)
+                        };
+                        resp.reasoning_content = crate::providers::openai::merge_reasoning(
+                            original_reasoning,
+                            if recovery_reasoning.trim().is_empty() {
+                                None
+                            } else {
+                                Some(recovery_reasoning)
+                            },
+                        );
+                        resp.finish_reason = recovery_finish_reason;
+                        resp.tool_calls.clear();
+                        ctx.streamed = content_streaming_started;
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -813,6 +907,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             "I did not receive a final answer from the model for this turn."
                                 .to_string(),
                         );
+                        resp.reasoning_content = original_reasoning;
                         ctx.streamed = false;
                         content_streaming_started = false;
                     }

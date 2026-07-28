@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.79`
+# OpenZ 🦊 `v0.0.80`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.80`
+
+- **Streaming Recovery Actually Streams**: When a provider streams only reasoning first, the final-answer recovery now uses streaming too, so recovered answer text can flow chunk-by-chunk.
+- **No Recovery Status Line**: The hidden recovery request stays silent and does not show a user-facing recovery spinner.
+- **Cleaner Provider Explanation**: Streaming now distinguishes provider `reasoning_content` deltas from final `content` deltas instead of treating reasoning-only streams as complete answers.
 
 ## What Changed In `v0.0.79`
 

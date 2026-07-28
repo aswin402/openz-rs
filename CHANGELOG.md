@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.79 (Latest Release)
+### v0.0.80 (Latest Release)
+
+**Streaming Recovery Stream Repair:**
+*   **Fix:** Reasoning-only streaming fallback now recovers the final answer via `chat_stream_with_fallback`, so recovered answer content can still render chunk-by-chunk.
+*   **Fix:** The hidden recovery request remains silent and does not show a visible recovery spinner label.
+*   **Behavior:** OpenZ now treats provider `reasoning_content` deltas and final `content` deltas as separate phases, which explains why some providers can stream thoughts before answer text.
+*   **Tests:** Ran focused streaming assembly coverage and compile validation.
+*   **Chore:** Bumped version to `v0.0.80`.
+
+### v0.0.79
 
 **Streaming Defaults & TUI Control:**
 *   **Behavior:** Response streaming now defaults to disabled for new configs, matching the cleaner non-streaming TUI output path.
