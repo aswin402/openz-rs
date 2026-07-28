@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.74`
+# OpenZ 🦊 `v0.0.75`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.75`
+
+- **Private Reasoning In TUI**: Normal streaming answers no longer print provider reasoning as `Thought` before the final response.
+- **Quiet Thinking Spinner**: Reasoning chunks no longer leave `▶ Thinking...` artifacts in the terminal for simple answers.
+- **Tool Planning Still Visible**: Compact Thought output is preserved only when reasoning leads into tool calls.
 
 ## What Changed In `v0.0.74`
 

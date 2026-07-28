@@ -472,15 +472,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 };
                 match chunk? {
                     crate::providers::ChatStreamChunk::Content(text) => {
-                        // If we have reasoning content that hasn't been printed yet, print it now
-                        print_reasoning(
-                            &full_reasoning,
-                            &mut in_reasoning_phase,
-                            &mut reasoning_printed,
-                            start_time,
-                        );
-
-                        // If we were in reasoning phase but reasoning was empty/already printed, clear the spinner
+                        // Normal answers should not expose model reasoning. Clear any
+                        // thinking indicator and stream only the final content.
                         if in_reasoning_phase && !silent {
                             print!("\r\x1b[2K");
                             let _ = std::io::stdout().flush();
@@ -516,15 +509,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     crate::providers::ChatStreamChunk::Reasoning(text) => {
                         full_reasoning.push_str(&text);
                         in_reasoning_phase = true;
-                        // Show a live thinking spinner instead of raw reasoning text
-                        if !silent {
-                            let elapsed = start_time.elapsed().as_secs_f32();
-                            print!(
-                                "\r\x1b[2K{}{}▶ Thinking... {:.1}s{}",
-                                COLOR_BOLD, RED_ORANGE, elapsed, COLOR_RESET
-                            );
-                            let _ = std::io::stdout().flush();
-                        }
+                        // Keep provider reasoning private by default. If a tool call
+                        // follows, the tool-call branch may print a compact Thought block.
                         streaming_assembly
                             .push_chunk(crate::providers::ChatStreamChunk::Reasoning(text));
                     }
@@ -578,7 +564,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             // Print reasoning only when a visible answer or tool call followed it. If the
             // model returns reasoning-only, keep it for fallback final content instead of
             // ending the turn with a Thought block and no answer.
-            if should_print_trailing_reasoning(&full_content, tool_call_stream_started) {
+            if should_print_trailing_reasoning(tool_call_stream_started) {
                 print_reasoning(
                     &full_reasoning,
                     &mut in_reasoning_phase,
@@ -1277,8 +1263,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     Ok(TurnState::Save)
 }
 
-fn should_print_trailing_reasoning(full_content: &str, tool_call_stream_started: bool) -> bool {
-    !full_content.trim().is_empty() || tool_call_stream_started
+fn should_print_trailing_reasoning(tool_call_stream_started: bool) -> bool {
+    tool_call_stream_started
 }
 
 fn format_markdown_line(line: &str) -> String {
@@ -1344,9 +1330,8 @@ mod tests {
 
     #[test]
     fn reasoning_only_stream_does_not_print_trailing_thought() {
-        assert!(!should_print_trailing_reasoning("", false));
-        assert!(should_print_trailing_reasoning("final answer", false));
-        assert!(should_print_trailing_reasoning("", true));
+        assert!(!should_print_trailing_reasoning(false));
+        assert!(should_print_trailing_reasoning(true));
     }
 
     #[tokio::test]

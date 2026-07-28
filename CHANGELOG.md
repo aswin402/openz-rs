@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.74 (Latest Release)
+### v0.0.75 (Latest Release)
+
+**TUI Reasoning Privacy Repair:**
+*   **Fix:** Normal streaming answers no longer print provider reasoning as `Thought` before the final answer.
+*   **Fix:** Reasoning chunks no longer leave `▶ Thinking...` artifacts in the terminal for simple answer turns.
+*   **Behavior:** Tool-call turns may still show compact Thought context so tool execution remains understandable.
+*   **Chore:** Bumped version to `v0.0.75`.
+
+### v0.0.74
 
 **Reasoning-Only TUI Response Repair:**
 *   **Fix:** Streaming responses that contain only model reasoning no longer finish with a `Thought` block and no assistant answer.
