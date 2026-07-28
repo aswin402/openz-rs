@@ -137,7 +137,7 @@ fn default_enable_sandbox() -> bool {
 }
 
 fn default_streaming() -> bool {
-    true
+    false
 }
 
 fn default_show_tool_router_status() -> bool {

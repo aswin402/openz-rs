@@ -283,6 +283,16 @@ impl CliChannel {
                     RED_ORANGE, COLOR_RESET, defaults.tui_thought_display
                 );
                 println!(
+                    "  {}Streaming:{}      {}",
+                    RED_ORANGE,
+                    COLOR_RESET,
+                    if defaults.streaming {
+                        "Enabled"
+                    } else {
+                        "Disabled"
+                    }
+                );
+                println!(
                     "  {}Sandbox:{}        {}",
                     RED_ORANGE,
                     COLOR_RESET,
@@ -314,6 +324,76 @@ impl CliChannel {
                     }
                 }
 
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
+                continue;
+            }
+
+            if trimmed == "/streaming" {
+                let current_streaming = self.defaults.lock().await.streaming;
+                let options = vec![
+                    format!(
+                        "Enable streaming{}",
+                        if current_streaming { " (current)" } else { "" }
+                    ),
+                    format!(
+                        "Disable streaming{}",
+                        if !current_streaming { " (current)" } else { "" }
+                    ),
+                    "Back".to_string(),
+                ];
+                let header = format!(
+                    "Current streaming mode: {}",
+                    if current_streaming {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
+                let active_mdl = self.defaults.lock().await.model.clone();
+                match select_menu_custom(
+                    "Choose response streaming mode:",
+                    &options,
+                    &active_mdl,
+                    Some(&header),
+                    true,
+                ) {
+                    Ok(Some(choice @ 0..=1)) => {
+                        let enable = choice == 0;
+                        match crate::config::loader::load_config() {
+                            Ok(mut config) => {
+                                config.agents.defaults.streaming = enable;
+                                match crate::config::loader::save_config(&config) {
+                                    Ok(()) => {
+                                        *self.defaults.lock().await =
+                                            config.agents.defaults.clone();
+                                        println!(
+                                            "{}✓ Response streaming {}.{}",
+                                            EMERALD_GREEN,
+                                            if enable { "enabled" } else { "disabled" },
+                                            COLOR_RESET
+                                        );
+                                    }
+                                    Err(e) => eprintln!(
+                                        "{}✕ Error: Failed to save config: {}{}",
+                                        ERROR_RED, e, COLOR_RESET
+                                    ),
+                                }
+                            }
+                            Err(e) => eprintln!(
+                                "{}✕ Error: Failed to load config: {}{}",
+                                ERROR_RED, e, COLOR_RESET
+                            ),
+                        }
+                    }
+                    Ok(Some(_)) | Ok(None) => println!("No changes made."),
+                    Err(e) => eprintln!(
+                        "{}✕ Error: Failed to open streaming menu: {}{}",
+                        ERROR_RED, e, COLOR_RESET
+                    ),
+                }
                 println!(
                     "{}────────────────────────────────────────────────────────────{}",
                     LIGHT_WHITE, COLOR_RESET

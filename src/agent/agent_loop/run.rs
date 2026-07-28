@@ -757,8 +757,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     timestamp: Some(chrono::Utc::now().to_rfc3339()),
                     extra: serde_json::Map::new(),
                 });
-                let recovery_activity_msg =
-                    format!("{}▶ Recovering final answer...{}", RED_ORANGE, COLOR_RESET);
+                let recovery_activity_msg = String::new();
 
                 match loop_ref
                     .chat_with_fallback(

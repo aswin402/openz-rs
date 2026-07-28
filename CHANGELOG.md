@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.78 (Latest Release)
+### v0.0.79 (Latest Release)
+
+**Streaming Defaults & TUI Control:**
+*   **Behavior:** Response streaming now defaults to disabled for new configs, matching the cleaner non-streaming TUI output path.
+*   **Feature:** Added `/streaming` inside `openz agent` with Enable, Disable, and Back menu options plus current-state display.
+*   **Fix:** Internal final-answer recovery no longer displays a visible `Recovering final answer...` spinner label.
+*   **Feature:** `/settings` now includes the active streaming mode.
+*   **Chore:** Bumped version to `v0.0.79`.
+
+### v0.0.78
 
 **Streaming Thought Final-Answer Recovery:**
 *   **Fix:** Streaming reasoning-only responses now make one answer-recovery call instead of ending after a Thought block.

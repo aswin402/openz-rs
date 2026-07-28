@@ -22,6 +22,7 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/skill", "List active skills"),
     ("/sources", "Search saved source bookmarks"),
     ("/stop-server", "Stop a background server by id, or all"),
+    ("/streaming", "Manage response streaming mode"),
     ("/tui", "Manage TUI display settings"),
     ("/workflows", "Search reusable workflows"),
 ];

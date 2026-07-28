@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.78`
+# OpenZ 🦊 `v0.0.79`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,13 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.79`
+
+- **Streaming Off By Default**: New configs now default to non-streaming responses for cleaner TUI output and fewer gateway edge cases.
+- **TUI Streaming Selector**: Added `/streaming` inside `openz agent` with Enable, Disable, and Back options showing the current state.
+- **Quiet Recovery Path**: Internal final-answer recovery no longer shows a visible `Recovering final answer...` status line.
+- **Settings Visibility**: `/settings` now shows whether response streaming is enabled or disabled.
 
 ## What Changed In `v0.0.78`
 

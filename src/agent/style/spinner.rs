@@ -83,7 +83,7 @@ where
     let depth = crate::tools::subagent::DELEGATION_DEPTH
         .try_with(|d| *d)
         .unwrap_or(0);
-    if is_silent() {
+    if is_silent() || msg.trim().is_empty() {
         return future.await;
     }
     let prefix = if depth > 0 {
