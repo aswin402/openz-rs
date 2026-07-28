@@ -1043,6 +1043,28 @@ mod provider_resolution_tests {
     }
 
     #[test]
+    fn mivi_provider_default_model_can_be_configured() {
+        let mut config = blank_config();
+        config.set_provider_config(
+            "mivi",
+            ProviderConfig {
+                api_key: Some("local".to_string()),
+                api_base: Some("http://127.0.0.1:8000/v1".to_string()),
+                default_model: Some("mivi llm".to_string()),
+                extra: HashMap::new(),
+            },
+        );
+
+        assert_eq!(
+            config
+                .get_provider_config("mivi")
+                .and_then(|provider| provider.default_model.clone()),
+            Some("mivi llm".to_string())
+        );
+        assert!(config.is_provider_available("mivi"));
+    }
+
+    #[test]
     fn custom_provider_resolves_config_and_local_availability() {
         let _guard = env_lock().lock().unwrap();
         std::env::remove_var("OPENZ_PROVIDER_LOCAL_AI_API_KEY");

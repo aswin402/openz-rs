@@ -752,9 +752,20 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             if config.agents.defaults.streaming {
                 let original_reasoning = resp.reasoning_content.take();
                 let mut recovery_messages = ctx.messages.clone();
+                let recovery_prompt = match original_reasoning.as_deref() {
+                    Some(reasoning) if !reasoning.trim().is_empty() => format!(
+                        "Your previous streamed response contained reasoning only and no user-facing answer. Here is that reasoning:
+
+{}
+
+Now provide only the final user-facing answer to my last message. Do not include analysis, reasoning labels, or tool calls.",
+                        reasoning.trim()
+                    ),
+                    _ => "Your previous streamed response contained reasoning only and no user-facing answer. Provide only the final answer to my last message now. Do not include reasoning, analysis, or tool calls.".to_string(),
+                };
                 recovery_messages.push(Message {
                     role: "user".to_string(),
-                    content: "Your previous streamed response contained reasoning only and no user-facing answer. Provide only the final answer to my last message now. Do not include reasoning, analysis, or tool calls.".to_string(),
+                    content: recovery_prompt,
                     timestamp: Some(chrono::Utc::now().to_rfc3339()),
                     extra: serde_json::Map::new(),
                 });
@@ -869,29 +880,36 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         if !current_line_buffer.is_empty()
                             && !crate::agent::style::spinner::is_silent()
                         {
-                            print!(
-                                "
-[2K"
-                            );
+                            print!("\r\x1b[2K");
                             print!("{}", format_markdown_line(&current_line_buffer));
                             let _ = std::io::stdout().flush();
                         }
 
-                        resp.content = if recovery_content.trim().is_empty() {
+                        let recovery_reasoning_visible = recovery_reasoning.trim().to_string();
+                        let recovered_content = if !recovery_content.trim().is_empty() {
+                            Some(recovery_content)
+                        } else if !recovery_reasoning_visible.is_empty() {
+                            Some(recovery_reasoning_visible)
+                        } else {
                             Some(
                                 "I did not receive a final answer from the model for this turn."
                                     .to_string(),
                             )
-                        } else {
-                            Some(recovery_content)
                         };
+                        let recovery_reasoning_for_memory = if recovered_content
+                            .as_ref()
+                            .is_some_and(|content| content == recovery_reasoning.trim())
+                        {
+                            None
+                        } else if recovery_reasoning.trim().is_empty() {
+                            None
+                        } else {
+                            Some(recovery_reasoning)
+                        };
+                        resp.content = recovered_content;
                         resp.reasoning_content = crate::providers::openai::merge_reasoning(
                             original_reasoning,
-                            if recovery_reasoning.trim().is_empty() {
-                                None
-                            } else {
-                                Some(recovery_reasoning)
-                            },
+                            recovery_reasoning_for_memory,
                         );
                         resp.finish_reason = recovery_finish_reason;
                         resp.tool_calls.clear();
@@ -904,10 +922,13 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             "Failed to recover final answer from reasoning-only stream"
                         );
                         resp.content = Some(
-                            "I did not receive a final answer from the model for this turn."
+                            original_reasoning
+                                .as_deref()
+                                .filter(|reasoning| !reasoning.trim().is_empty())
+                                .unwrap_or("I did not receive a final answer from the model for this turn.")
                                 .to_string(),
                         );
-                        resp.reasoning_content = original_reasoning;
+                        resp.reasoning_content = None;
                         ctx.streamed = false;
                         content_streaming_started = false;
                     }

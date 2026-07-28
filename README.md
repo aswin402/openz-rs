@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.80`
+# OpenZ 🦊 `v0.0.81`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.81`
+
+- **Mivi Model Menu Repair**: `/model` now lists the built-in `mivi` local provider and includes configured default models such as `mivi llm`.
+- **Configured Defaults In `/model`**: Built-in providers now merge their configured `default_model` into the selectable model list.
+- **Stronger Streaming Recovery**: If a provider streams reasoning-only during both the original and recovery request, OpenZ now uses the recovered reasoning as visible final text instead of the placeholder failure message.
 
 ## What Changed In `v0.0.80`
 

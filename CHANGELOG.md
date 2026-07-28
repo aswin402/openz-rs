@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.80 (Latest Release)
+### v0.0.81 (Latest Release)
+
+**Mivi Model Menu & Streaming Recovery Hardening:**
+*   **Fix:** `/model` now includes the built-in `mivi` local provider in the provider list.
+*   **Fix:** Built-in providers merge configured `default_model` values into selectable model options, so custom names like `mivi llm` appear.
+*   **Fix:** Streaming recovery no longer falls through to the placeholder failure text when the provider emits reasoning-only output twice; it uses the recovered reasoning as visible final content.
+*   **Tests:** Added focused mivi default-model regression coverage and reran streaming assembly coverage.
+*   **Chore:** Bumped version to `v0.0.81`.
+
+### v0.0.80
 
 **Streaming Recovery Stream Repair:**
 *   **Fix:** Reasoning-only streaming fallback now recovers the final answer via `chat_stream_with_fallback`, so recovered answer content can still render chunk-by-chunk.

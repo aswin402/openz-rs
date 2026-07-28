@@ -540,6 +540,11 @@ impl CliChannel {
 
                     let provider_list = &[
                         ProviderModels {
+                            name: "mivi",
+                            display: "Mivi Local (custom)",
+                            models: &["mivi llm", "mivi-llm", "mivi"],
+                        },
+                        ProviderModels {
                             name: "openai",
                             display: "OpenAI (8)",
                             models: &[
@@ -791,14 +796,24 @@ impl CliChannel {
                             let (prov_name, prov_display, curated_models) =
                                 if selected_idx < filtered_providers.len() {
                                     let prov_info = filtered_providers[selected_idx];
+                                    let mut models = prov_info
+                                        .models
+                                        .iter()
+                                        .map(|model| model.to_string())
+                                        .collect::<Vec<_>>();
+                                    if let Some(default_model) = config
+                                        .get_provider_config(prov_info.name)
+                                        .and_then(|provider| provider.default_model.clone())
+                                        .filter(|model| !model.trim().is_empty())
+                                    {
+                                        if !models.contains(&default_model) {
+                                            models.push(default_model);
+                                        }
+                                    }
                                     (
                                         prov_info.name.to_string(),
                                         prov_info.display.to_string(),
-                                        prov_info
-                                            .models
-                                            .iter()
-                                            .map(|model| model.to_string())
-                                            .collect::<Vec<_>>(),
+                                        models,
                                     )
                                 } else {
                                     let custom_idx = selected_idx - filtered_providers.len();
