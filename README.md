@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.75`
+# OpenZ 🦊 `v0.0.76`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,13 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.76`
+
+- **Thought Display Restored By Default**: TUI streaming shows the old `Thought for X.Xs` block and live thinking timer again.
+- **Configurable TUI Thoughts**: Use `/tui thoughts full|compact|off` to choose full reasoning display, compact summaries, or no thought display.
+- **Configure UI Support**: `openz configure` now includes a TUI category for thought display mode.
+- **Agent-Controlled Setting**: `manage_config` can update `tui_thought_display`, so you can ask OpenZ itself to change the mode.
 
 ## What Changed In `v0.0.75`
 

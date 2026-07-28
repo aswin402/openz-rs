@@ -403,46 +403,56 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 )
                 .await?;
             let silent = crate::agent::style::spinner::is_silent();
+            let tui_thought_display =
+                normalize_tui_thought_display(&config.agents.defaults.tui_thought_display);
 
             let mut full_content = String::new();
             let mut full_reasoning = String::new();
             // Track whether we're currently in reasoning phase (for live spinner)
             let mut in_reasoning_phase = false;
 
-            let print_reasoning =
-                |full_reasoning: &str,
-                 in_reasoning_phase: &mut bool,
-                 reasoning_printed: &mut bool,
-                 start_time: std::time::Instant| {
-                    if !*reasoning_printed && !full_reasoning.is_empty() {
-                        let depth = crate::tools::subagent::DELEGATION_DEPTH
-                            .try_with(|d| *d)
-                            .unwrap_or(0);
-                        if !silent {
-                            let elapsed = start_time.elapsed().as_secs_f32();
-                            let prefix = if depth > 0 {
-                                crate::agent::style::get_tree_prefix(false)
-                            } else {
-                                "".to_string()
-                            };
-                            crate::tui_println!(
-                                "{}{}● {}{}{}Thought for {:.1}s{}",
-                                prefix,
-                                RED_ORANGE,
-                                COLOR_RESET,
-                                COLOR_BOLD,
-                                RED_ORANGE,
-                                elapsed,
-                                COLOR_RESET
-                            );
-                            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                            crate::agent::style::print_tree_monologue(&leaf_prefix, full_reasoning);
-                            crate::tui_println!("");
-                        }
-                        *reasoning_printed = true;
-                        *in_reasoning_phase = false;
+            let print_reasoning = |full_reasoning: &str,
+                                   in_reasoning_phase: &mut bool,
+                                   reasoning_printed: &mut bool,
+                                   start_time: std::time::Instant,
+                                   display_mode: &str| {
+                if !*reasoning_printed
+                    && !full_reasoning.is_empty()
+                    && should_show_tui_thoughts(display_mode)
+                {
+                    let depth = crate::tools::subagent::DELEGATION_DEPTH
+                        .try_with(|d| *d)
+                        .unwrap_or(0);
+                    if !silent {
+                        let elapsed = start_time.elapsed().as_secs_f32();
+                        let prefix = if depth > 0 {
+                            crate::agent::style::get_tree_prefix(false)
+                        } else {
+                            "".to_string()
+                        };
+                        crate::tui_println!(
+                            "{}{}● {}{}{}Thought for {:.1}s{}",
+                            prefix,
+                            RED_ORANGE,
+                            COLOR_RESET,
+                            COLOR_BOLD,
+                            RED_ORANGE,
+                            elapsed,
+                            COLOR_RESET
+                        );
+                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                        let visible_reasoning = if display_mode == "compact" {
+                            compact_reasoning_summary(full_reasoning)
+                        } else {
+                            full_reasoning.to_string()
+                        };
+                        crate::agent::style::print_tree_monologue(&leaf_prefix, &visible_reasoning);
+                        crate::tui_println!("");
                     }
-                };
+                    *reasoning_printed = true;
+                    *in_reasoning_phase = false;
+                }
+            };
 
             let mut streaming_assembly = super::streaming::StreamingAssembly::new();
 
@@ -472,8 +482,16 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 };
                 match chunk? {
                     crate::providers::ChatStreamChunk::Content(text) => {
-                        // Normal answers should not expose model reasoning. Clear any
-                        // thinking indicator and stream only the final content.
+                        // Preserve old Thought-with-seconds output when enabled, before
+                        // streaming the final answer.
+                        print_reasoning(
+                            &full_reasoning,
+                            &mut in_reasoning_phase,
+                            &mut reasoning_printed,
+                            start_time,
+                            tui_thought_display,
+                        );
+
                         if in_reasoning_phase && !silent {
                             print!("\r\x1b[2K");
                             let _ = std::io::stdout().flush();
@@ -509,8 +527,15 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     crate::providers::ChatStreamChunk::Reasoning(text) => {
                         full_reasoning.push_str(&text);
                         in_reasoning_phase = true;
-                        // Keep provider reasoning private by default. If a tool call
-                        // follows, the tool-call branch may print a compact Thought block.
+                        // Show old live thinking indicator only when TUI thoughts are enabled.
+                        if !silent && should_show_tui_thoughts(tui_thought_display) {
+                            let elapsed = start_time.elapsed().as_secs_f32();
+                            print!(
+                                "\r\x1b[2K{}{}▶ Thinking... {:.1}s{}",
+                                COLOR_BOLD, RED_ORANGE, elapsed, COLOR_RESET
+                            );
+                            let _ = std::io::stdout().flush();
+                        }
                         streaming_assembly
                             .push_chunk(crate::providers::ChatStreamChunk::Reasoning(text));
                     }
@@ -527,6 +552,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             &mut in_reasoning_phase,
                             &mut reasoning_printed,
                             start_time,
+                            tui_thought_display,
                         );
 
                         // Also clear thinking spinner if active
@@ -564,12 +590,15 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             // Print reasoning only when a visible answer or tool call followed it. If the
             // model returns reasoning-only, keep it for fallback final content instead of
             // ending the turn with a Thought block and no answer.
-            if should_print_trailing_reasoning(tool_call_stream_started) {
+            if should_show_tui_thoughts(tui_thought_display)
+                && (!full_content.trim().is_empty() || tool_call_stream_started)
+            {
                 print_reasoning(
                     &full_reasoning,
                     &mut in_reasoning_phase,
                     &mut reasoning_printed,
                     start_time,
+                    tui_thought_display,
                 );
             }
 
@@ -1263,8 +1292,25 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     Ok(TurnState::Save)
 }
 
-fn should_print_trailing_reasoning(tool_call_stream_started: bool) -> bool {
-    tool_call_stream_started
+fn normalize_tui_thought_display(mode: &str) -> &'static str {
+    match mode.trim().to_lowercase().as_str() {
+        "off" | "none" | "hide" | "hidden" => "off",
+        "compact" | "summary" | "summarized" => "compact",
+        _ => "full",
+    }
+}
+
+fn should_show_tui_thoughts(mode: &str) -> bool {
+    normalize_tui_thought_display(mode) != "off"
+}
+
+fn compact_reasoning_summary(reasoning: &str) -> String {
+    let mut text = reasoning.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.chars().count() > 360 {
+        text = text.chars().take(357).collect::<String>();
+        text.push_str("...");
+    }
+    text
 }
 
 fn format_markdown_line(line: &str) -> String {
@@ -1329,9 +1375,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reasoning_only_stream_does_not_print_trailing_thought() {
-        assert!(!should_print_trailing_reasoning(false));
-        assert!(should_print_trailing_reasoning(true));
+    fn tui_thought_display_modes_normalize() {
+        assert_eq!(normalize_tui_thought_display("full"), "full");
+        assert_eq!(normalize_tui_thought_display("summary"), "compact");
+        assert_eq!(normalize_tui_thought_display("off"), "off");
+        assert!(should_show_tui_thoughts("full"));
+        assert!(should_show_tui_thoughts("compact"));
+        assert!(!should_show_tui_thoughts("off"));
+    }
+
+    #[test]
+    fn compact_reasoning_summary_truncates_long_text() {
+        let raw = "word ".repeat(120);
+        let compact = compact_reasoning_summary(&raw);
+        assert!(compact.chars().count() <= 360);
+        assert!(compact.ends_with("..."));
     }
 
     #[tokio::test]

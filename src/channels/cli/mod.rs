@@ -279,6 +279,10 @@ impl CliChannel {
                     RED_ORANGE, COLOR_RESET, defaults.security_mode
                 );
                 println!(
+                    "  {}TUI Thoughts:{}   {}",
+                    RED_ORANGE, COLOR_RESET, defaults.tui_thought_display
+                );
+                println!(
                     "  {}Sandbox:{}        {}",
                     RED_ORANGE,
                     COLOR_RESET,
@@ -310,6 +314,71 @@ impl CliChannel {
                     }
                 }
 
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
+                continue;
+            }
+
+            if trimmed == "/tui" || trimmed == "/tui settings" {
+                let defaults = self.defaults.lock().await;
+                println!("{}TUI Settings:{}", COLOR_BOLD, COLOR_RESET);
+                println!(
+                    "  {}Thought display:{} {}",
+                    RED_ORANGE, COLOR_RESET, defaults.tui_thought_display
+                );
+                println!(
+                    "Use {} /tui thoughts <full|compact|off>{}.",
+                    RED_ORANGE, COLOR_RESET
+                );
+                println!(
+                    "{}────────────────────────────────────────────────────────────{}",
+                    LIGHT_WHITE, COLOR_RESET
+                );
+                continue;
+            }
+
+            if let Some(stripped) = trimmed
+                .strip_prefix("/tui thoughts")
+                .or_else(|| trimmed.strip_prefix("/thoughts"))
+            {
+                let mode = match stripped.trim().to_lowercase().as_str() {
+                    "full" | "on" | "default" => "full",
+                    "compact" | "summary" => "compact",
+                    "off" | "none" | "hide" => "off",
+                    _ => {
+                        println!("Usage: /tui thoughts <full|compact|off>");
+                        println!(
+                            "{}────────────────────────────────────────────────────────────{}",
+                            LIGHT_WHITE, COLOR_RESET
+                        );
+                        continue;
+                    }
+                };
+
+                match crate::config::loader::load_config() {
+                    Ok(mut config) => {
+                        config.agents.defaults.tui_thought_display = mode.to_string();
+                        match crate::config::loader::save_config(&config) {
+                            Ok(()) => {
+                                *self.defaults.lock().await = config.agents.defaults.clone();
+                                println!(
+                                    "{}✓ TUI thought display set to {}.{}",
+                                    EMERALD_GREEN, mode, COLOR_RESET
+                                );
+                            }
+                            Err(e) => eprintln!(
+                                "{}✕ Error: Failed to save config: {}{}",
+                                ERROR_RED, e, COLOR_RESET
+                            ),
+                        }
+                    }
+                    Err(e) => eprintln!(
+                        "{}✕ Error: Failed to load config: {}{}",
+                        ERROR_RED, e, COLOR_RESET
+                    ),
+                }
                 println!(
                     "{}────────────────────────────────────────────────────────────{}",
                     LIGHT_WHITE, COLOR_RESET

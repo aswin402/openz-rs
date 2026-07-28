@@ -237,6 +237,11 @@ pub async fn handle_configure() -> Result<()> {
             configure_options.push("Email".to_string());
         }
 
+        configure_options.push(format!(
+            "TUI (thoughts: {})",
+            config.agents.defaults.tui_thought_display
+        ));
+
         if config.agents.defaults.enable_sandbox {
             configure_options.push("Sandbox (seccomp) (enabled)".to_string());
         } else {
@@ -284,6 +289,9 @@ pub async fn handle_configure() -> Result<()> {
                 handle_email_submenu(&mut config).await?;
             }
             6 => {
+                handle_tui_submenu(&mut config).await?;
+            }
+            7 => {
                 handle_sandbox_submenu(&mut config).await?;
             }
             _ => {
@@ -827,6 +835,53 @@ async fn handle_email_submenu(config: &mut Config) -> Result<()> {
         "{}────────────────────────────────────────────────────────────{}",
         LIGHT_WHITE, COLOR_RESET
     );
+    Ok(())
+}
+
+async fn handle_tui_submenu(config: &mut Config) -> Result<()> {
+    println!(
+        "\n{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
+    println!("{}--- TUI Configuration ---{}", COLOR_BOLD, COLOR_RESET);
+    println!("Controls how provider reasoning is displayed in the terminal UI.");
+    println!();
+
+    let options = vec![
+        "Full thoughts with seconds (default)".to_string(),
+        "Compact thought summary".to_string(),
+        "Off".to_string(),
+        "Back".to_string(),
+    ];
+    let choice = match select_menu_custom(
+        "Choose TUI thought display:",
+        &options,
+        &config.agents.defaults.model,
+        Some("TUI Settings"),
+        true,
+    )? {
+        Some(idx) => idx,
+        None => return Ok(()),
+    };
+
+    let mode = match choice {
+        0 => "full",
+        1 => "compact",
+        2 => "off",
+        _ => return Ok(()),
+    };
+
+    config.agents.defaults.tui_thought_display = mode.to_string();
+    save_config(config)?;
+    println!(
+        "{}✓ TUI thought display set to {}.{}",
+        EMERALD_GREEN, mode, COLOR_RESET
+    );
+    println!(
+        "{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
     Ok(())
 }
 

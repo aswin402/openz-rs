@@ -110,6 +110,8 @@ pub struct AgentDefaults {
         alias = "show_tool_router_status"
     )]
     pub show_tool_router_status: bool,
+    #[serde(default = "default_tui_thought_display", alias = "tui_thought_display")]
+    pub tui_thought_display: String,
     #[serde(default = "default_min_free_disk_gb", alias = "min_free_disk_gb")]
     pub min_free_disk_gb: f64,
     #[serde(default = "default_allow_network_tools", alias = "allow_network_tools")]
@@ -140,6 +142,10 @@ fn default_streaming() -> bool {
 
 fn default_show_tool_router_status() -> bool {
     false
+}
+
+fn default_tui_thought_display() -> String {
+    "full".to_string()
 }
 
 fn default_min_free_disk_gb() -> f64 {
@@ -226,6 +232,7 @@ impl Default for AgentDefaults {
             enable_sandbox: default_enable_sandbox(),
             tool_timeout_secs: default_tool_timeout_secs(),
             show_tool_router_status: default_show_tool_router_status(),
+            tui_thought_display: default_tui_thought_display(),
             min_free_disk_gb: default_min_free_disk_gb(),
             allow_network_tools: default_allow_network_tools(),
             max_concurrent_process_tools: default_max_concurrent_process_tools(),

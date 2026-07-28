@@ -781,6 +781,11 @@ impl Tool for ManageConfigTool {
                             "type": "boolean",
                             "description": "Show compact tool-router selection summaries in the TUI."
                         },
+                        "tui_thought_display": {
+                            "type": "string",
+                            "enum": ["full", "compact", "off"],
+                            "description": "Controls TUI reasoning display: full Thought blocks with seconds, compact summaries, or off."
+                        },
                         "min_free_disk_gb": {
                             "type": "number",
                             "description": "Minimum free disk space required before disk-writing tools run."
@@ -886,6 +891,22 @@ impl Tool for ManageConfigTool {
                         "show_tool_router_status" => {
                             if let Some(b) = v.as_bool() {
                                 config.agents.defaults.show_tool_router_status = b;
+                            }
+                        }
+                        "tui_thought_display" => {
+                            if let Some(s) = v.as_str() {
+                                let mode = match s.trim().to_lowercase().as_str() {
+                                    "full" | "on" | "default" => "full",
+                                    "compact" | "summary" => "compact",
+                                    "off" | "none" | "hide" => "off",
+                                    other => {
+                                        return Ok(serde_json::json!({
+                                            "success": false,
+                                            "error": format!("Invalid tui_thought_display '{}'. Use full, compact, or off.", other)
+                                        }));
+                                    }
+                                };
+                                config.agents.defaults.tui_thought_display = mode.to_string();
                             }
                         }
                         "min_free_disk_gb" => {
@@ -1997,6 +2018,7 @@ mod tests {
                     "temperature": 0.25,
                     "caveman_mode": false,
                     "streaming": false,
+                    "tui_thought_display": "compact",
                     "min_free_disk_gb": 3.5,
                     "allow_network_tools": false,
                     "max_concurrent_process_tools": 2,
@@ -2015,6 +2037,10 @@ mod tests {
         assert_eq!(updated_config.agents.defaults.temperature, 0.25f32);
         assert_eq!(updated_config.agents.defaults.caveman_mode, false);
         assert_eq!(updated_config.agents.defaults.streaming, false);
+        assert_eq!(
+            updated_config.agents.defaults.tui_thought_display,
+            "compact"
+        );
         assert_eq!(updated_config.agents.defaults.min_free_disk_gb, 3.5);
         assert_eq!(updated_config.agents.defaults.allow_network_tools, false);
         assert_eq!(

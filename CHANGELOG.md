@@ -398,7 +398,17 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.75 (Latest Release)
+### v0.0.76 (Latest Release)
+
+**Configurable TUI Thought Display:**
+*   **Behavior:** Restored the old default TUI reasoning display with live `▶ Thinking...` seconds and `Thought for X.Xs` blocks before final answers.
+*   **Feature:** Added `/tui thoughts full|compact|off` and `/tui settings` slash commands.
+*   **Feature:** Added a TUI category to `openz configure` for changing thought display mode.
+*   **Feature:** `manage_config` can now update `tui_thought_display`, allowing the agent to change the setting when asked.
+*   **Tests:** Added focused coverage for TUI thought display mode normalization and compact summary truncation.
+*   **Chore:** Bumped version to `v0.0.76`.
+
+### v0.0.75
 
 **TUI Reasoning Privacy Repair:**
 *   **Fix:** Normal streaming answers no longer print provider reasoning as `Thought` before the final answer.
