@@ -49,7 +49,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     }
     let mut vision_instruction = "";
     if !crate::providers::model_supports_vision(&config.agents.defaults.model) {
-        vision_instruction = " If a message contains a markdown image link (e.g. ![](file://...)) and you need to analyze or describe the image, you MUST delegate the visual analysis task to the specialized 'vision_agent' tool (or the 'delegate_task' tool) to see and report on the image contents.";
+        vision_instruction = " If a message contains a markdown image link (e.g. ![](file://...)) and you need to analyze or describe the image, you MUST call the direct 'vision_agent' tool to see and report on the image contents. Do not route image analysis through generic 'delegate_task' when the specialized 'vision_agent' tool is available; generic delegation may select a non-vision model.";
     }
     let subagents_list = if let Ok(profiles) = crate::subagents::load_profiles() {
         profiles
@@ -85,7 +85,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
           * Context Scoping & Compression: You have native tools for context management:\n\
             - 'scope_context' (with target_path): Walks up the tree and compiles relevant AGENTS.md instructions. Use this BEFORE editing files to retrieve rules.\n\
             - 'web_fetch' cache discipline: for direct URL checks or when the user asks to verify/check again/refresh/browse, pass cache_mode=\"revalidate\"; use cache_mode=\"bypass\" only when the user explicitly requests a fresh uncached fetch.\n\
-            - Web acquisition/open workflow discipline: if a search or fetch backend fails while the user asks to find, download, open, play, or show a file/URL, do not declare the task blocked while another relevant path remains. Try a browser-backed path (`gsd_browser` or `obscura_browser`), inspect DOM/source/image links, download only after finding a concrete URL, then use `open_path`/device inventory to show it. Repeated browser snapshots/page-source reads are normal observation steps.\n\
+            - Web acquisition/open workflow discipline: if a search or fetch backend fails while the user asks to find, download, open, play, or show a file/URL, do not declare the task blocked while another relevant path remains. Try a browser-backed path (`gsd_browser` or `obscura_browser`), inspect DOM/source/image links, download only after finding a concrete URL, then use `open_path`/device inventory to show it. Repeated browser snapshots/page-source reads are normal observation steps. For local GUI display requests, prefer `open_path` first; only try explicit desktop apps or shell launchers after `open_path` fails or the user says the app did not appear.\n\
             - 'compress_content' (with raw_text and content_type): Compresses logs/code/JSON and registers a CCR reference token (CCR ID).\n\
             - 'retrieve_original' (with ccr_id): Retrieves the original raw text. Use this to read the full content of any truncated output or file (it accepts both CCR IDs and file:// file paths!).\n\
           * Remote Session Control: If the user asks you (e.g., via Telegram or Discord) to execute a command, answer an approval prompt, or run a query in their TUI/CLI session, invoke the 'send_remote_input' tool to forward the prompt directly to that session (e.g., 'cli:direct').\n\

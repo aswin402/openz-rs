@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.85`
+# OpenZ 🦊 `v0.0.86`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.86`
+
+- **Vision Routing Discipline**: Non-vision active models now instruct OpenZ to call the direct `vision_agent` tool for image analysis instead of routing through generic `delegate_task`.
+- **GUI Open Discipline**: Local GUI display requests now prefer `open_path` and device inventory before trying explicit desktop apps or shell launchers.
+- **Old Transcript Cleanup**: Documents the v0.0.81 image/open workflow issues and prevents the same routing mistakes in future turns.
 
 ## What Changed In `v0.0.85`
 

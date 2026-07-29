@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.85 (Latest Release)
+### v0.0.86 (Latest Release)
+
+**Vision & GUI Open Workflow Discipline:**
+*   **Fix:** Non-vision active models now instruct OpenZ to call the specialized `vision_agent` tool directly for image analysis instead of using generic `delegate_task`, avoiding non-vision model routing failures.
+*   **Improvement:** Local GUI display requests prefer `open_path` and device inventory before ad hoc shell launchers or explicit desktop app guesses.
+*   **Analysis:** The v0.0.81 transcript issues were generic routing/orchestration problems, not image-generation failures: delegate misuse, noisy GUI retries, malformed shell copy attempts, and unclear GUI/headless distinction.
+*   **Chore:** Bumped version to `v0.0.86`.
+
+### v0.0.85
 
 **Generic Dynamic Loop Guard:**
 *   **Improvement:** Progress-aware repeat detection now applies to read-only/search/status tools, not only browser observation tools.
