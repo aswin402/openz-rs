@@ -125,6 +125,66 @@ pub fn canonical_research_topic(raw: &str) -> String {
     }
 }
 
+fn has_explicit_research_directive(normalized: &str) -> bool {
+    [
+        "research",
+        "deep dive",
+        "investigate",
+        "analyze this",
+        "analyse this",
+        "compare",
+        " vs ",
+        " versus ",
+        "difference between",
+        "tell me about this",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn is_acquisition_or_display_user_content(text: &str) -> bool {
+    let normalized = text
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let has_acquisition_action = [
+        "download",
+        "save it",
+        "save that",
+        "show it",
+        "show that",
+        "open it",
+        "open that",
+        "play ",
+        "set wallpaper",
+        "make wallpaper",
+        "install",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    let has_local_artifact_target = [
+        "wallpaper",
+        "image",
+        "picture",
+        "photo",
+        "video",
+        "song",
+        "music",
+        "desktop",
+        "browser",
+        "viewer",
+        "file",
+        "app",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+
+    has_acquisition_action
+        && has_local_artifact_target
+        && !has_explicit_research_directive(&normalized)
+}
+
 fn is_research_worthy_user_content(text: &str) -> bool {
     let normalized = text
         .to_lowercase()
@@ -620,6 +680,10 @@ pub async fn auto_capture_research_memory(
         return Ok(None);
     }
 
+    if is_acquisition_or_display_user_content(user_content) {
+        return Ok(None);
+    }
+
     let user_research_worthy = is_research_worthy_user_content(user_content);
     let has_research_target_arg = first_str(
         arguments,
@@ -814,6 +878,32 @@ mod tests {
         .unwrap();
 
         assert!(summary.is_none());
+    }
+
+    #[tokio::test]
+    async fn auto_capture_skips_download_and_display_workflows() {
+        let marker = uuid::Uuid::new_v4().to_string();
+        let url = format!("https://example.com/wallpaper-{marker}.jpg");
+        let result = serde_json::json!({
+            "title": format!("Wallpaper {marker}"),
+            "url": url,
+            "content": "A dark desktop wallpaper download result."
+        });
+
+        let summary = auto_capture_research_memory(
+            "web_search",
+            &serde_json::json!({"query": format!("hollow knight dark wallpaper 4k {marker}")}),
+            &result,
+            &format!("find a good platform to download a dark wallpaper image and show it to me {marker}"),
+        )
+        .await
+        .unwrap();
+
+        assert!(summary.is_none());
+        let matches = crate::tools::shared_memory::search_research_briefs(&marker, 5)
+            .await
+            .unwrap();
+        assert!(matches.iter().all(|item| !item.topic.contains(&marker)));
     }
 
     #[tokio::test]

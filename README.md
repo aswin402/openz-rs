@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.82`
+# OpenZ 🦊 `v0.0.83`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,13 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.83`
+
+- **Browser Fill Repair**: `gsd_browser` fill now accepts `text`, `value`, `query`, or `content`, preventing search-box fills from failing on harmless argument aliases.
+- **Browser Observation Loop Fix**: Repeated `gsd_browser` snapshots/page-source reads are treated as normal observation steps instead of duplicate loops.
+- **Web Acquisition Recovery**: Runtime guidance now keeps trying browser-backed retrieval paths before declaring download/open/show tasks blocked.
+- **Research Memory Hygiene**: Download/show workflows no longer auto-save research briefs unless the user explicitly asks for research or comparison.
 
 ## What Changed In `v0.0.82`
 

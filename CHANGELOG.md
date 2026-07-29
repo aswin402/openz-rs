@@ -398,7 +398,18 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.82 (Latest Release)
+### v0.0.83 (Latest Release)
+
+**Browser Acquisition & Research Hygiene Hardening:**
+*   **Fix:** `gsd_browser` fill accepts `text`, `value`, `query`, and `content` aliases, avoiding missing-text failures for search-box input.
+*   **Fix:** Repeated read-only browser observation actions (`snapshot`, `page_source`, `accessibility_tree`, `screenshot`) no longer trigger duplicate-loop blocking.
+*   **Improvement:** Runtime guidance now uses a browser-backed fallback ladder for find/download/open/show workflows before declaring a task blocked.
+*   **Improvement:** Research auto-capture skips download/display workflows unless the user explicitly asks for research, comparison, or analysis.
+*   **Docs:** Added implementation plan for browser acquisition hardening.
+*   **Tests:** Added focused browser schema, loop-control, and research auto-capture regressions.
+*   **Chore:** Bumped version to `v0.0.83`.
+
+### v0.0.82
 
 **Device Inventory Memory:**
 *   **Feature:** Added native `device_inventory` tool for local device/app capability CRUD: `list`, `get`, `add`, `update`, `delete`, `record_success`, `record_failure`, and `suggest`.

@@ -47,6 +47,14 @@ impl Tool for GsdBrowserTool {
                     "type": "string",
                     "description": "Text to type into input element (required for 'fill')."
                 },
+                "value": {
+                    "type": "string",
+                    "description": "Alias for text; accepted for 'fill'."
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Alias for text; accepted for search-box 'fill'."
+                },
                 "path": {
                     "type": "string",
                     "description": "Output file path (required for 'screenshot' and 'save_pdf')."
@@ -110,8 +118,15 @@ impl Tool for GsdBrowserTool {
                     .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for fill action"))?;
                 let text = arguments
                     .get("text")
+                    .or_else(|| arguments.get("value"))
+                    .or_else(|| arguments.get("query"))
+                    .or_else(|| arguments.get("content"))
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'text' parameter for fill action"))?;
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "Missing fill text. Pass 'text' (preferred), or alias 'value', 'query', or 'content' for fill action"
+                        )
+                    })?;
                 cmd.arg("fill-ref").arg(ref_id).arg(text);
             }
             "screenshot" => {
@@ -177,5 +192,18 @@ mod tests {
         let tool = GsdBrowserTool;
         assert_eq!(tool.name(), "gsd_browser");
         Ok(())
+    }
+
+    #[test]
+    fn gsd_browser_schema_exposes_fill_aliases() {
+        let tool = GsdBrowserTool;
+        let params = tool.parameters();
+        let props = params
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("properties object");
+        assert!(props.contains_key("text"));
+        assert!(props.contains_key("value"));
+        assert!(props.contains_key("query"));
     }
 }
