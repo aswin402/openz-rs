@@ -45,7 +45,7 @@ pub(crate) fn tool_arg_fingerprint(args: &serde_json::Value) -> Option<String> {
     read_scene_file_fingerprint(scene_file_arg_path(args)?)
 }
 
-fn is_repeat_safe_observation(tool_name: &str, args: &serde_json::Value) -> bool {
+fn is_progress_observation(tool_name: &str, args: &serde_json::Value) -> bool {
     if tool_name != "gsd_browser" {
         return false;
     }
@@ -55,18 +55,45 @@ fn is_repeat_safe_observation(tool_name: &str, args: &serde_json::Value) -> bool
     )
 }
 
+fn tool_call_id(call: &serde_json::Value) -> Option<&str> {
+    call.get("id")
+        .and_then(|v| v.as_str())
+        .or_else(|| call.get("tool_call_id").and_then(|v| v.as_str()))
+}
+
+fn tool_result_signature(
+    messages: &[Message],
+    call_id: Option<&str>,
+    tool_name: &str,
+) -> Option<String> {
+    messages.iter().find_map(|msg| {
+        if msg.role != "tool" {
+            return None;
+        }
+        let same_call = call_id
+            .is_some_and(|id| msg.extra.get("tool_call_id").and_then(|v| v.as_str()) == Some(id));
+        let same_name = msg.extra.get("name").and_then(|v| v.as_str()) == Some(tool_name);
+        if same_call || (call_id.is_none() && same_name) {
+            let mut hasher = Sha256::new();
+            hasher.update(msg.content.as_bytes());
+            Some(format!("sha256:{:x}", hasher.finalize()))
+        } else {
+            None
+        }
+    })
+}
+
 pub(crate) fn count_previous_tool_calls(
     messages: &[Message],
     tool_name: &str,
     tool_args: &serde_json::Value,
 ) -> usize {
-    if is_repeat_safe_observation(tool_name, tool_args) {
-        return 0;
-    }
-
     let last_user_idx = messages.iter().rposition(|m| m.role == "user").unwrap_or(0);
+    let turn_messages = &messages[last_user_idx..];
+    let progress_observation = is_progress_observation(tool_name, tool_args);
+    let mut seen_signatures = std::collections::HashSet::new();
     let mut count = 0;
-    for msg in &messages[last_user_idx..] {
+    for (idx, msg) in turn_messages.iter().enumerate() {
         if msg.role == "assistant" {
             if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
                 for tc in tool_calls {
@@ -103,6 +130,19 @@ pub(crate) fn count_previous_tool_calls(
                                 args_val == tool_args
                             };
                             if match_args {
+                                if progress_observation {
+                                    let signature = tool_result_signature(
+                                        &turn_messages[idx + 1..],
+                                        tool_call_id(tc),
+                                        tool_name,
+                                    );
+                                    if signature
+                                        .as_ref()
+                                        .is_some_and(|sig| seen_signatures.insert(sig.clone()))
+                                    {
+                                        continue;
+                                    }
+                                }
                                 count += 1;
                             }
                         }
@@ -241,14 +281,35 @@ mod tests {
         assert!(hint.contains("scene_path"));
     }
 
-    #[test]
-    fn repeated_gsd_browser_snapshots_are_observations_not_loops() {
-        let args = json!({ "action": "snapshot" });
+    fn assistant_named_tool_call(name: &str, id: &str, arguments: serde_json::Value) -> Message {
         let mut extra = serde_json::Map::new();
         extra.insert(
             "tool_calls".to_string(),
-            json!([{ "name": "gsd_browser", "arguments": args.clone() }]),
+            json!([{ "id": id, "name": name, "arguments": arguments }]),
         );
+        Message {
+            role: "assistant".to_string(),
+            content: String::new(),
+            timestamp: None,
+            extra,
+        }
+    }
+
+    fn tool_result(id: &str, name: &str, content: &str) -> Message {
+        let mut extra = serde_json::Map::new();
+        extra.insert("tool_call_id".to_string(), json!(id));
+        extra.insert("name".to_string(), json!(name));
+        Message {
+            role: "tool".to_string(),
+            content: content.to_string(),
+            timestamp: None,
+            extra,
+        }
+    }
+
+    #[test]
+    fn repeated_gsd_browser_snapshots_with_new_state_are_not_loops() {
+        let args = json!({ "action": "snapshot" });
         let messages = vec![
             Message {
                 role: "user".to_string(),
@@ -256,17 +317,37 @@ mod tests {
                 timestamp: None,
                 extra: serde_json::Map::new(),
             },
-            Message {
-                role: "assistant".to_string(),
-                content: String::new(),
-                timestamp: None,
-                extra,
-            },
+            assistant_named_tool_call("gsd_browser", "call_1", args.clone()),
+            tool_result("call_1", "gsd_browser", "page state 1"),
+            assistant_named_tool_call("gsd_browser", "call_2", args.clone()),
+            tool_result("call_2", "gsd_browser", "page state 2"),
         ];
 
         assert_eq!(
             count_previous_tool_calls(&messages, "gsd_browser", &args),
             0
+        );
+    }
+
+    #[test]
+    fn repeated_gsd_browser_snapshots_with_same_state_count_as_stale() {
+        let args = json!({ "action": "snapshot" });
+        let messages = vec![
+            Message {
+                role: "user".to_string(),
+                content: "use browser and inspect page".to_string(),
+                timestamp: None,
+                extra: serde_json::Map::new(),
+            },
+            assistant_named_tool_call("gsd_browser", "call_1", args.clone()),
+            tool_result("call_1", "gsd_browser", "same page state"),
+            assistant_named_tool_call("gsd_browser", "call_2", args.clone()),
+            tool_result("call_2", "gsd_browser", "same page state"),
+        ];
+
+        assert_eq!(
+            count_previous_tool_calls(&messages, "gsd_browser", &args),
+            1
         );
     }
 

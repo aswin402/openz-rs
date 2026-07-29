@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.83 (Latest Release)
+### v0.0.84 (Latest Release)
+
+**Progress-Aware Browser Loop Guard:**
+*   **Fix:** Browser observation repeats now compare tool-result signatures, so repeated `snapshot`, `page_source`, `accessibility_tree`, and `screenshot` calls are allowed when the observed page state changes.
+*   **Safety:** Identical stale browser observations still count toward loop protection, preserving runaway-loop defense without a fixed blanket cap for useful progress.
+*   **Tests:** Added focused regressions for changed-state and same-state browser observation repeats.
+*   **Chore:** Bumped version to `v0.0.84`.
+
+### v0.0.83
 
 **Browser Acquisition & Research Hygiene Hardening:**
 *   **Fix:** `gsd_browser` fill accepts `text`, `value`, `query`, and `content` aliases, avoiding missing-text failures for search-box input.

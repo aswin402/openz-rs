@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.83`
+# OpenZ 🦊 `v0.0.84`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,11 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.84`
+
+- **Progress-Aware Browser Loop Guard**: Browser observation repeats are now judged by result state. Repeated snapshots/page-source reads with changed output are allowed; identical stale output still counts toward loop protection.
+- **Safer Than Self-Raising Limits**: The model cannot bypass the guard by asking for a bigger limit; OpenZ derives progress from tool-result signatures.
 
 ## What Changed In `v0.0.83`
 
