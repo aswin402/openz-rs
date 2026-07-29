@@ -55,13 +55,17 @@ impl Tool for OpenTool {
             let resolved_clone = resolved.clone();
             let status = tokio::task::spawn_blocking(move || open::that(resolved_clone)).await?;
             match status {
-                Ok(_) => Ok(json!({
-                    "status": "success",
-                    "message": format!("Successfully opened '{}'", resolved),
-                    "user_visible": true,
-                    "do_not_retry": true,
-                    "instruction": "The target was handed to the user's default application. Treat this as complete and do not try another viewer unless the user says it failed."
-                })),
+                Ok(_) => {
+                    let device_inventory_recorded = record_device_open_success(&resolved);
+                    Ok(json!({
+                        "status": "success",
+                        "message": format!("Successfully opened '{}'", resolved),
+                        "user_visible": true,
+                        "do_not_retry": true,
+                        "device_inventory_recorded": device_inventory_recorded,
+                        "instruction": "The target was handed to the user's default application and the successful open was recorded for future local-device suggestions. Treat this as complete and do not try another viewer unless the user says it failed."
+                    }))
+                }
                 Err(e) => Err(anyhow!("Failed to open '{}': {}", resolved, e)),
             }
         } else {
@@ -72,15 +76,29 @@ impl Tool for OpenTool {
             let resolved_clone = resolved.clone();
             let status = tokio::task::spawn_blocking(move || open::that(resolved_clone)).await?;
             match status {
-                Ok(_) => Ok(json!({
-                    "status": "success",
-                    "message": format!("Successfully opened '{}'", resolved),
-                    "user_visible": true,
-                    "do_not_retry": true,
-                    "instruction": "The target was handed to the user's default application. Treat this as complete and do not try another viewer unless the user says it failed."
-                })),
+                Ok(_) => {
+                    let device_inventory_recorded = record_device_open_success(&resolved);
+                    Ok(json!({
+                        "status": "success",
+                        "message": format!("Successfully opened '{}'", resolved),
+                        "user_visible": true,
+                        "do_not_retry": true,
+                        "device_inventory_recorded": device_inventory_recorded,
+                        "instruction": "The target was handed to the user's default application and the successful open was recorded for future local-device suggestions. Treat this as complete and do not try another viewer unless the user says it failed."
+                    }))
+                }
                 Err(e) => Err(anyhow!("Failed to open '{}': {}", resolved, e)),
             }
+        }
+    }
+}
+
+fn record_device_open_success(target: &str) -> Option<String> {
+    match crate::tools::device_inventory::record_successful_default_open(target) {
+        Ok(id) => id,
+        Err(error) => {
+            tracing::warn!(%error, target, "failed to record open_path success in device inventory");
+            None
         }
     }
 }

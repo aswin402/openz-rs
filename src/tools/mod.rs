@@ -341,6 +341,25 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         when_not_to_use: "Avoid shell pkill guesses for servers OpenZ registered itself.",
     },
     StaticToolDef {
+        name: "device_inventory",
+        domain: "self_management",
+        writes_disk: true,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &[
+            "device apps",
+            "app inventory",
+            "local capability registry",
+            "known viewers",
+        ],
+        examples: &[
+            "Suggest an image viewer for a generated PNG",
+            "Record that Firefox successfully opened an image",
+        ],
+        when_to_use: "Use before opening/showing/playing local files so OpenZ reuses known apps, viewers, editors, file paths, and device capabilities for this computer.",
+        when_not_to_use: "Avoid storing secrets, API keys, arbitrary shell pipelines, or information unrelated to local device capability.",
+    },
+    StaticToolDef {
         name: "schedule_job",
         domain: "self_management",
         writes_disk: true,
@@ -1461,6 +1480,7 @@ pub mod compiler_auto_heal;
 pub mod crawl;
 pub mod cron;
 pub mod db_inspector;
+pub mod device_inventory;
 pub mod doc_reader;
 pub mod docs_mcp;
 pub mod filesystem;

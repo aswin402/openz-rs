@@ -144,6 +144,9 @@ fn register_core_tools(
     registry.register(std::sync::Arc::new(DbInspectorTool));
     registry.register(std::sync::Arc::new(DbWriteTool));
     registry.register(std::sync::Arc::new(SystemInfoTool));
+    registry.register(std::sync::Arc::new(
+        crate::tools::device_inventory::DeviceInventoryTool::new(),
+    ));
     registry.register(std::sync::Arc::new(CheckPortTool));
     registry.register(std::sync::Arc::new(
         crate::tools::cargo_manager::CargoManagerTool::new(provider.clone()),
@@ -979,6 +982,7 @@ mod tests {
         assert!(names.contains(&"tool_catalog".to_string()));
         assert!(names.contains(&"openz_inventory".to_string()));
         assert!(names.contains(&"manage_servers".to_string()));
+        assert!(names.contains(&"device_inventory".to_string()));
         assert!(names.contains(&"workflow_memory".to_string()));
         assert!(names.contains(&"sequentialthinking".to_string()));
         assert!(names.contains(&"scope_context".to_string()));

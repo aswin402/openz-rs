@@ -9,6 +9,7 @@ static MCP_SPIN: AtomicU32 = AtomicU32::new(0);
 
 pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/clear", "Clear screen"),
+    ("/device", "Manage local app/device inventory"),
     ("/exit", "Exit OpenZ"),
     ("/help", "List slash commands"),
     ("/history", "Restore/switch sessions using selection menu"),

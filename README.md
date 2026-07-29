@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.81`
+# OpenZ 🦊 `v0.0.82`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,13 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.82`
+
+- **Device Inventory Memory**: Added native `device_inventory` tool for local app/device capability CRUD and suggestions.
+- **TUI Device Command**: Added `/device` for listing, suggesting, adding, deleting, and scoring local capabilities from `openz agent`.
+- **Automatic Open Learning**: `open_path` now records successful default opens into `~/.openz/device_inventory.json`, so OpenZ remembers what works for images, videos, PDFs, URLs, and editable files.
+- **Safe First Step**: The registry stores and ranks capabilities, but does not execute arbitrary remembered commands; execution stays in existing guarded tools.
 
 ## What Changed In `v0.0.81`
 

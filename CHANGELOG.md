@@ -398,7 +398,17 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.81 (Latest Release)
+### v0.0.82 (Latest Release)
+
+**Device Inventory Memory:**
+*   **Feature:** Added native `device_inventory` tool for local device/app capability CRUD: `list`, `get`, `add`, `update`, `delete`, `record_success`, `record_failure`, and `suggest`.
+*   **Feature:** Added `/device` TUI command for manually listing, suggesting, adding, deleting, and scoring local capabilities from the terminal UI.
+*   **Improvement:** `open_path` records successful default opens into `~/.openz/device_inventory.json`, so generated images, videos, PDFs, URLs, and editable files build local app preference memory automatically.
+*   **Safety:** Device inventory stores and ranks known capabilities but does not execute arbitrary remembered commands; execution remains in existing guarded open/command tools.
+*   **Tests:** Added focused device inventory CRUD, suggestion ranking, auto-learn, and native registry coverage.
+*   **Chore:** Bumped version to `v0.0.82`.
+
+### v0.0.81
 
 **Mivi Model Menu & Streaming Recovery Hardening:**
 *   **Fix:** `/model` now includes the built-in `mivi` local provider in the provider list.
