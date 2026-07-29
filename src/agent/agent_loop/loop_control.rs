@@ -45,14 +45,64 @@ pub(crate) fn tool_arg_fingerprint(args: &serde_json::Value) -> Option<String> {
     read_scene_file_fingerprint(scene_file_arg_path(args)?)
 }
 
-fn is_progress_observation(tool_name: &str, args: &serde_json::Value) -> bool {
-    if tool_name != "gsd_browser" {
-        return false;
+fn is_progress_sensitive_repeat(tool_name: &str, args: &serde_json::Value) -> bool {
+    if matches!(
+        tool_name,
+        "web_fetch"
+            | "web_search"
+            | "crawl"
+            | "crawl_site"
+            | "social_search"
+            | "searchxyz_search_web"
+            | "searchxyz_read_url"
+            | "searchxyz_search_and_read"
+            | "searchxyz_deep_research"
+            | "searchxyz_site_map"
+            | "searchxyz_read_github_repo"
+            | "read_file"
+            | "list_dir"
+            | "find_files"
+            | "grep_search"
+            | "ast_grep"
+            | "code_outline"
+            | "doc_reader"
+            | "system_info"
+            | "check_port"
+            | "browser_status"
+            | "git_manager"
+            | "open_path"
+            | "device_inventory"
+            | "retrieve_original"
+            | "scope_context"
+            | "compress_content"
+            | "search_nodes"
+            | "open_nodes"
+            | "read_graph"
+            | "recall_memory"
+            | "proactive_recall"
+            | "semantic_search"
+            | "rust_docs"
+            | "get_working_memory"
+            | "list_jobs"
+    ) {
+        return true;
     }
-    matches!(
-        args.get("action").and_then(|v| v.as_str()),
-        Some("snapshot" | "page_source" | "accessibility_tree" | "screenshot")
-    )
+
+    if tool_name == "gsd_browser" {
+        return matches!(
+            args.get("action").and_then(|v| v.as_str()),
+            Some("snapshot" | "page_source" | "accessibility_tree" | "screenshot" | "eval")
+        );
+    }
+
+    if tool_name == "obscura_browser" || tool_name == "firefox_browser" {
+        return matches!(
+            args.get("action").and_then(|v| v.as_str()),
+            Some("render" | "screenshot" | "eval" | "page_source" | "accessibility_tree")
+        );
+    }
+
+    false
 }
 
 fn tool_call_id(call: &serde_json::Value) -> Option<&str> {
@@ -90,7 +140,7 @@ pub(crate) fn count_previous_tool_calls(
 ) -> usize {
     let last_user_idx = messages.iter().rposition(|m| m.role == "user").unwrap_or(0);
     let turn_messages = &messages[last_user_idx..];
-    let progress_observation = is_progress_observation(tool_name, tool_args);
+    let progress_sensitive_repeat = is_progress_sensitive_repeat(tool_name, tool_args);
     let mut seen_signatures = std::collections::HashSet::new();
     let mut count = 0;
     for (idx, msg) in turn_messages.iter().enumerate() {
@@ -130,7 +180,7 @@ pub(crate) fn count_previous_tool_calls(
                                 args_val == tool_args
                             };
                             if match_args {
-                                if progress_observation {
+                                if progress_sensitive_repeat {
                                     let signature = tool_result_signature(
                                         &turn_messages[idx + 1..],
                                         tool_call_id(tc),
@@ -305,6 +355,63 @@ mod tests {
             timestamp: None,
             extra,
         }
+    }
+
+    #[test]
+    fn repeated_read_only_tools_with_new_state_are_not_loops() {
+        let args = json!({ "query": "openz" });
+        let messages = vec![
+            Message {
+                role: "user".to_string(),
+                content: "research openz".to_string(),
+                timestamp: None,
+                extra: serde_json::Map::new(),
+            },
+            assistant_named_tool_call("web_search", "call_1", args.clone()),
+            tool_result("call_1", "web_search", "result page 1"),
+            assistant_named_tool_call("web_search", "call_2", args.clone()),
+            tool_result("call_2", "web_search", "result page 2"),
+        ];
+
+        assert_eq!(count_previous_tool_calls(&messages, "web_search", &args), 0);
+    }
+
+    #[test]
+    fn repeated_read_only_tools_with_same_state_count_as_stale() {
+        let args = json!({ "query": "openz" });
+        let messages = vec![
+            Message {
+                role: "user".to_string(),
+                content: "research openz".to_string(),
+                timestamp: None,
+                extra: serde_json::Map::new(),
+            },
+            assistant_named_tool_call("web_search", "call_1", args.clone()),
+            tool_result("call_1", "web_search", "same result page"),
+            assistant_named_tool_call("web_search", "call_2", args.clone()),
+            tool_result("call_2", "web_search", "same result page"),
+        ];
+
+        assert_eq!(count_previous_tool_calls(&messages, "web_search", &args), 1);
+    }
+
+    #[test]
+    fn repeated_mutating_tools_still_count_even_with_different_outputs() {
+        let args = json!({ "path": "/tmp/file.txt", "content": "x" });
+        let messages = vec![
+            Message {
+                role: "user".to_string(),
+                content: "write file".to_string(),
+                timestamp: None,
+                extra: serde_json::Map::new(),
+            },
+            assistant_named_tool_call("write_file", "call_1", args.clone()),
+            tool_result("call_1", "write_file", "ok 1"),
+            assistant_named_tool_call("write_file", "call_2", args.clone()),
+            tool_result("call_2", "write_file", "ok 2"),
+        ];
+
+        assert_eq!(count_previous_tool_calls(&messages, "write_file", &args), 2);
     }
 
     #[test]

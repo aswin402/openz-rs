@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.84 (Latest Release)
+### v0.0.85 (Latest Release)
+
+**Generic Dynamic Loop Guard:**
+*   **Improvement:** Progress-aware repeat detection now applies to read-only/search/status tools, not only browser observation tools.
+*   **Safety:** Mutating and side-effect tools keep strict exact-repeat protection even when outputs differ.
+*   **Design:** Loop safety is derived from tool-result signatures, avoiding global fixed limits and avoiding model-controlled limit escalation.
+*   **Tests:** Added focused regressions for changed-state read-only repeats, stale read-only repeats, and mutating repeat strictness.
+*   **Chore:** Bumped version to `v0.0.85`.
+
+### v0.0.84
 
 **Progress-Aware Browser Loop Guard:**
 *   **Fix:** Browser observation repeats now compare tool-result signatures, so repeated `snapshot`, `page_source`, `accessibility_tree`, and `screenshot` calls are allowed when the observed page state changes.
