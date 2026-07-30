@@ -7,6 +7,57 @@ use searchxyz::tools::{
 };
 use serde_json::{json, Value};
 
+fn backend_health_label(
+    name: &str,
+    configured_order: &[String],
+    config: &searchxyz::config::Config,
+) -> String {
+    let enabled = configured_order.iter().any(|backend| backend == name);
+    let preferred = configured_order
+        .first()
+        .is_some_and(|backend| backend == name);
+    if !enabled {
+        return "disabled".to_string();
+    }
+
+    let base = match name {
+        "searxng" => {
+            if config.searxng.instance_url.trim().is_empty() {
+                "missing_config"
+            } else {
+                "configured"
+            }
+        }
+        "brave" => {
+            if config
+                .brave
+                .api_key
+                .as_ref()
+                .is_some_and(|key| !key.trim().is_empty())
+            {
+                "configured"
+            } else {
+                "missing_key"
+            }
+        }
+        "duckduckgo" | "google" | "bing" => "keyless",
+        _ => "configured",
+    };
+
+    if preferred {
+        format!("preferred ({base})")
+    } else {
+        base.to_string()
+    }
+}
+
+fn only_scraper_backends_enabled(configured_order: &[String]) -> bool {
+    !configured_order.is_empty()
+        && configured_order
+            .iter()
+            .all(|backend| matches!(backend.as_str(), "duckduckgo" | "google" | "bing"))
+}
+
 pub async fn build_searchxyz_doctor_report(include_paths: bool) -> Result<String> {
     let server = get_server();
     let config = server.config.as_ref();
@@ -22,21 +73,7 @@ pub async fn build_searchxyz_doctor_report(include_paths: bool) -> Result<String
         .filter(|v| !v.trim().is_empty())
         .unwrap_or_else(|| "native_only".to_string());
 
-    let searxng_status = if config.searxng.instance_url.trim().is_empty() {
-        "not_configured".to_string()
-    } else {
-        format!("configured ({})", config.searxng.instance_url)
-    };
-    let brave_status = if config
-        .brave
-        .api_key
-        .as_ref()
-        .is_some_and(|k| !k.trim().is_empty())
-    {
-        "configured".to_string()
-    } else {
-        "missing_api_key".to_string()
-    };
+    let known_backends = ["searxng", "brave", "duckduckgo", "google", "bing"];
     let headless_status = if config.headless.enabled {
         match &config.headless.chrome_path {
             Some(path) => format!("enabled ({path})"),
@@ -58,9 +95,14 @@ pub async fn build_searchxyz_doctor_report(include_paths: bool) -> Result<String
         config.search.backends.join(", ")
     ));
     report.push_str(&format!("- Max results: {}\n", config.search.max_results));
-    report.push_str(&format!("- SearXNG: {}\n", searxng_status));
-    report.push_str(&format!("- Brave: {}\n", brave_status));
-    report.push_str("- DuckDuckGo/Google/Bing: keyless scraper/native backends; availability depends on upstream blocking and network health.\n\n");
+    for backend in known_backends {
+        report.push_str(&format!(
+            "- {}: {}\n",
+            backend,
+            backend_health_label(backend, &config.search.backends, config)
+        ));
+    }
+    report.push_str("- Labels: preferred, configured, missing_key, disabled, keyless.\n\n");
 
     report.push_str("## Fetch & Safety\n");
     report.push_str(&format!("- Headless rendering: {}\n", headless_status));
@@ -102,8 +144,29 @@ pub async fn build_searchxyz_doctor_report(include_paths: bool) -> Result<String
     }
 
     report.push_str("\n## Hints\n");
-    if config.searxng.instance_url.trim().is_empty() {
-        report.push_str("- Configure `SEARCHXYZ_SEARXNG_URL` for the strongest private/native discovery path.\n");
+    if !config
+        .search
+        .backends
+        .iter()
+        .any(|backend| backend == "searxng")
+    {
+        report.push_str("- SearXNG is not enabled in backend order. Configure `SEARCHXYZ_SEARXNG_URL` without explicit backend order, or include `searxng` in `SEARCHXYZ_SEARCH_BACKENDS`, for the strongest private/native discovery path.\n");
+    }
+    if config
+        .search
+        .backends
+        .iter()
+        .any(|backend| backend == "brave")
+        && config
+            .brave
+            .api_key
+            .as_ref()
+            .is_none_or(|key| key.trim().is_empty())
+    {
+        report.push_str("- Brave is enabled but missing `SEARCHXYZ_BRAVE_API_KEY`; it will be skipped at runtime.\n");
+    }
+    if only_scraper_backends_enabled(&config.search.backends) {
+        report.push_str("- Only keyless scraper backends are enabled; these can be blocked or return empty results under anti-bot pressure. Prefer SearXNG for native discovery.\n");
     }
     if !config.headless.enabled {
         report.push_str("- Enable SearchXyz headless mode when scraper backends are blocked by JS or anti-bot pages.\n");
@@ -468,5 +531,52 @@ impl Tool for SearchXyzSiteMapTool {
             .await
             .map_err(map_mcp_err)?;
         Ok(json!(res))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backend_health_labels_cover_expected_states() {
+        let mut config = searchxyz::config::Config::default();
+        config.search.backends = vec![
+            "searxng".to_string(),
+            "brave".to_string(),
+            "duckduckgo".to_string(),
+        ];
+        config.searxng.instance_url = "http://searxng.local".to_string();
+        config.brave.api_key = None;
+
+        assert_eq!(
+            backend_health_label("searxng", &config.search.backends, &config),
+            "preferred (configured)"
+        );
+        assert_eq!(
+            backend_health_label("brave", &config.search.backends, &config),
+            "missing_key"
+        );
+        assert_eq!(
+            backend_health_label("duckduckgo", &config.search.backends, &config),
+            "keyless"
+        );
+        assert_eq!(
+            backend_health_label("google", &config.search.backends, &config),
+            "disabled"
+        );
+    }
+
+    #[test]
+    fn only_scraper_backends_detects_keyless_only_order() {
+        assert!(only_scraper_backends_enabled(&[
+            "duckduckgo".to_string(),
+            "google".to_string(),
+            "bing".to_string(),
+        ]));
+        assert!(!only_scraper_backends_enabled(&[
+            "searxng".to_string(),
+            "duckduckgo".to_string(),
+        ]));
     }
 }

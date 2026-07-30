@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.90`
+# OpenZ 🦊 `v0.0.91`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,13 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.91`
+
+- **SearXNG-First Native Discovery**: When `SEARCHXYZ_SEARXNG_URL` is explicitly configured and backend order is not, SearchXyz automatically prefers `searxng` first.
+- **Explicit Backend Order Preserved**: `SEARCHXYZ_SEARCH_BACKENDS` now lets users define backend order, and SearchXyz will not override it.
+- **Backend Health Labels**: `searchxyz_doctor` now labels backends as preferred, configured, missing_key, disabled, or keyless.
+- **Better Native Hints**: Doctor now warns when only scraper backends are enabled, Brave is missing a key, or SearXNG is not in backend order.
 
 ## What Changed In `v0.0.90`
 

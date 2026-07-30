@@ -398,7 +398,17 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.90 (Latest Release)
+### v0.0.91 (Latest Release)
+
+**Stronger Native SearchXyz Discovery:**
+*   **Discovery:** When `SEARCHXYZ_SEARXNG_URL` is explicitly configured and backend order is not, SearchXyz now automatically moves `searxng` to the front for the strongest private/native discovery path.
+*   **Control:** Added `SEARCHXYZ_SEARCH_BACKENDS` for explicit backend ordering; user order is preserved even when SearXNG is configured.
+*   **Doctor:** `searchxyz_doctor` now labels each backend as `preferred`, `configured`, `missing_key`, `disabled`, or `keyless`.
+*   **Hints:** Doctor now warns when SearXNG is not enabled, Brave is missing `SEARCHXYZ_BRAVE_API_KEY`, or only keyless scraper backends are active.
+*   **Tests:** Added focused regressions for SearXNG preference, explicit backend order preservation, backend-list parsing, health labels, and scraper-only detection.
+*   **Chore:** Bumped version to `v0.0.91`.
+
+### v0.0.90
 
 **Actionable Native Search Failures:**
 *   **Improvement:** `web_search` native-only failures now include concrete next steps: run `searchxyz_doctor`, configure `SEARCHXYZ_SEARXNG_URL`, enable `diagnose_on_failure=true`, or explicitly use `search_policy=native_then_external` for one-off fallback.

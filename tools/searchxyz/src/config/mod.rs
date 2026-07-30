@@ -248,29 +248,77 @@ impl Default for CacheConfig {
 
 // ── Loading ──────────────────────────────────────────────────
 
+fn parse_backend_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|backend| !backend.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn toml_has_key_path(contents: &str, path: &[&str]) -> Result<bool, SearchXyzError> {
+    let value = contents.parse::<toml::Value>().map_err(|e| {
+        SearchXyzError::ConfigError(format!("Failed to parse searchxyz.toml metadata: {e}"))
+    })?;
+    let mut current = &value;
+    for key in path {
+        let Some(next) = current.get(*key) else {
+            return Ok(false);
+        };
+        current = next;
+    }
+    Ok(true)
+}
+
 impl Config {
     /// Load config with the following precedence (highest wins):
     /// 1. Environment variables (SEARCHXYZ_*)
     /// 2. TOML file (searchxyz.toml)
     /// 3. Compiled defaults
     pub fn load(path: Option<&str>) -> Result<Self, SearchXyzError> {
-        // Start from defaults.
-        let mut config = if let Some(p) = path {
+        let (mut config, file_has_explicit_backends, file_has_explicit_searxng) = if let Some(p) =
+            path
+        {
             let contents = std::fs::read_to_string(p)?;
-            toml::from_str::<Config>(&contents)
-                .map_err(|e| SearchXyzError::ConfigError(format!("Failed to parse {p}: {e}")))?
-        } else {
-            // Try default path; fall back to defaults silently.
-            match std::fs::read_to_string("searchxyz.toml") {
-                Ok(contents) => toml::from_str::<Config>(&contents).map_err(|e| {
-                    SearchXyzError::ConfigError(format!("Failed to parse searchxyz.toml: {e}"))
+            let explicit_backends = toml_has_key_path(&contents, &["search", "backends"])?;
+            let explicit_searxng = toml_has_key_path(&contents, &["searxng", "instance_url"])?;
+            (
+                toml::from_str::<Config>(&contents).map_err(|e| {
+                    SearchXyzError::ConfigError(format!("Failed to parse {p}: {e}"))
                 })?,
-                Err(_) => Config::default(),
+                explicit_backends,
+                explicit_searxng,
+            )
+        } else {
+            match std::fs::read_to_string("searchxyz.toml") {
+                Ok(contents) => {
+                    let explicit_backends = toml_has_key_path(&contents, &["search", "backends"])?;
+                    let explicit_searxng =
+                        toml_has_key_path(&contents, &["searxng", "instance_url"])?;
+                    (
+                        toml::from_str::<Config>(&contents).map_err(|e| {
+                            SearchXyzError::ConfigError(format!(
+                                "Failed to parse searchxyz.toml: {e}"
+                            ))
+                        })?,
+                        explicit_backends,
+                        explicit_searxng,
+                    )
+                }
+                Err(_) => (Config::default(), false, false),
             }
         };
 
+        let env_has_explicit_backends = std::env::var_os("SEARCHXYZ_SEARCH_BACKENDS").is_some();
+        let env_has_explicit_searxng = std::env::var_os("SEARCHXYZ_SEARXNG_URL").is_some();
+
         // Layer environment variable overrides.
         config.apply_env_overrides();
+
+        let explicit_backend_order = file_has_explicit_backends || env_has_explicit_backends;
+        let explicit_searxng = file_has_explicit_searxng || env_has_explicit_searxng;
+        config.apply_native_backend_preferences(explicit_backend_order, explicit_searxng);
 
         // Validate.
         config.validate()?;
@@ -288,6 +336,9 @@ impl Config {
         }
         if let Ok(url) = std::env::var("SEARCHXYZ_SEARXNG_URL") {
             self.searxng.instance_url = url;
+        }
+        if let Ok(backends) = std::env::var("SEARCHXYZ_SEARCH_BACKENDS") {
+            self.search.backends = parse_backend_list(&backends);
         }
         if let Ok(level) = std::env::var("SEARCHXYZ_LOG_LEVEL") {
             self.server.log_level = level;
@@ -360,6 +411,21 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .collect();
         }
+    }
+
+    fn apply_native_backend_preferences(
+        &mut self,
+        explicit_backend_order: bool,
+        explicit_searxng: bool,
+    ) {
+        if explicit_backend_order
+            || !explicit_searxng
+            || self.searxng.instance_url.trim().is_empty()
+        {
+            return;
+        }
+        self.search.backends.retain(|backend| backend != "searxng");
+        self.search.backends.insert(0, "searxng".to_string());
     }
 
     /// Validate invariants.
@@ -483,6 +549,54 @@ mod tests {
         std::env::remove_var("SEARCHXYZ_PROXY_ENABLED");
         std::env::remove_var("SEARCHXYZ_PROXY_URLS");
         std::env::remove_var("SEARCHXYZ_CACHE_PATH");
+    }
+
+    #[test]
+    fn searxng_env_is_preferred_when_backends_are_not_explicit() {
+        std::env::set_var("SEARCHXYZ_SEARXNG_URL", "http://searxng.local");
+        std::env::remove_var("SEARCHXYZ_SEARCH_BACKENDS");
+
+        let config = Config::load(None).unwrap();
+
+        assert_eq!(
+            config.search.backends.first().map(String::as_str),
+            Some("searxng")
+        );
+        assert_eq!(config.searxng.instance_url, "http://searxng.local");
+
+        std::env::remove_var("SEARCHXYZ_SEARXNG_URL");
+    }
+
+    #[test]
+    fn explicit_search_backends_keep_user_order_even_with_searxng_env() {
+        std::env::set_var("SEARCHXYZ_SEARXNG_URL", "http://searxng.local");
+        std::env::set_var("SEARCHXYZ_SEARCH_BACKENDS", "duckduckgo,searxng,brave");
+
+        let config = Config::load(None).unwrap();
+
+        assert_eq!(
+            config.search.backends,
+            vec![
+                "duckduckgo".to_string(),
+                "searxng".to_string(),
+                "brave".to_string()
+            ]
+        );
+
+        std::env::remove_var("SEARCHXYZ_SEARXNG_URL");
+        std::env::remove_var("SEARCHXYZ_SEARCH_BACKENDS");
+    }
+
+    #[test]
+    fn parse_backend_list_ignores_empty_items() {
+        assert_eq!(
+            parse_backend_list("duckduckgo, ,searxng,,brave"),
+            vec![
+                "duckduckgo".to_string(),
+                "searxng".to_string(),
+                "brave".to_string()
+            ]
+        );
     }
 
     #[test]
