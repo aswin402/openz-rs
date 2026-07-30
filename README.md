@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.92`
+# OpenZ 🦊 `v0.0.93`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.93`
+
+- **Native Search Rescue**: `web_search` now returns direct docs.rs and crates.io results for known Rust crate queries when SearchXyz scraper backends return no results.
+- **Tokio Recovery**: Queries like `rust tokio async runtime` now recover to `https://docs.rs/tokio` and `https://crates.io/crates/tokio` without enabling external search fallback.
+- **Low-Cost Path**: Rescue results are generated locally from high-confidence crate names, avoiding network retries when native discovery is blocked.
 
 ## What Changed In `v0.0.92`
 

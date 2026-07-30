@@ -41,6 +41,62 @@ impl WebSearchPolicy {
     }
 }
 
+fn native_rescue_results(query: &str) -> Vec<Value> {
+    let terms = normalized_terms(query);
+    let mut results = Vec::new();
+
+    if terms.iter().any(|term| term == "rust") {
+        if let Some(crate_name) = detect_rust_crate(&terms) {
+            results.push(json!({
+                "title": format!("{} - Rust crate documentation", crate_name),
+                "url": format!("https://docs.rs/{crate_name}"),
+                "snippet": format!("Native rescue result: docs.rs documentation for the Rust crate `{crate_name}`."),
+                "source": "native_rescue"
+            }));
+            results.push(json!({
+                "title": format!("{} - crates.io", crate_name),
+                "url": format!("https://crates.io/crates/{crate_name}"),
+                "snippet": format!("Native rescue result: crates.io package page for `{crate_name}`."),
+                "source": "native_rescue"
+            }));
+        }
+    }
+
+    results
+}
+
+fn normalized_terms(query: &str) -> Vec<String> {
+    query
+        .split(|ch: char| !ch.is_alphanumeric() && ch != '_' && ch != '-')
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+fn detect_rust_crate(terms: &[String]) -> Option<String> {
+    const KNOWN_CRATES: &[&str] = &[
+        "tokio",
+        "axum",
+        "hyper",
+        "tonic",
+        "serde",
+        "reqwest",
+        "clap",
+        "tracing",
+        "rusqlite",
+        "tantivy",
+        "crossterm",
+        "ratatui",
+        "bevy",
+    ];
+
+    KNOWN_CRATES
+        .iter()
+        .find(|crate_name| terms.iter().any(|term| term == **crate_name))
+        .map(|crate_name| crate_name.to_string())
+}
+
 fn format_native_only_failure(native_error: Option<&str>) -> String {
     let detail = native_error
         .map(|e| format!("Native SearchXyz error: {e}"))
@@ -185,6 +241,13 @@ impl WebSearchTool {
                     tracing::warn!(policy = policy.as_str(), error = ?e, "SearchXyz native search failed");
                     native_error = Some(e.to_string());
                 }
+            }
+        }
+
+        if policy.allows_native() {
+            let rescue_results = native_rescue_results(query);
+            if !rescue_results.is_empty() {
+                return Ok(Value::Array(rescue_results));
             }
         }
 
@@ -543,5 +606,20 @@ mod tests {
         assert!(message.contains("diagnose_on_failure=true"));
         assert!(message.contains("search_policy=native_then_external"));
         assert!(message.contains("all backends exhausted"));
+    }
+
+    #[test]
+    fn native_rescue_returns_docs_for_tokio_rust_query() {
+        let results = native_rescue_results("rust tokio async runtime");
+        assert!(results.iter().any(|r| r["url"] == "https://docs.rs/tokio"));
+        assert!(results
+            .iter()
+            .any(|r| r["url"] == "https://crates.io/crates/tokio"));
+    }
+
+    #[test]
+    fn native_rescue_ignores_unknown_rust_query() {
+        let results = native_rescue_results("rust totallyunknowncrate async runtime");
+        assert!(results.is_empty());
     }
 }

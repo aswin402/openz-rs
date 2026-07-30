@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.92 (Latest Release)
+### v0.0.93 (Latest Release)
+
+**Native Search Rescue:**
+*   **Recovery:** `web_search` now returns direct docs.rs and crates.io results for known Rust crate queries when native SearchXyz scraper backends return no usable results.
+*   **Tokio Case:** Queries such as `rust tokio async runtime` now recover to `https://docs.rs/tokio` and `https://crates.io/crates/tokio` without enabling external fallback.
+*   **Efficiency:** Rescue results are generated locally from high-confidence crate names, avoiding extra network retries under scraper blocking.
+*   **Tests:** Added focused regressions for Tokio rescue and unknown-crate non-rescue behavior.
+*   **Chore:** Bumped version to `v0.0.93`.
+
+### v0.0.92
 
 **Native SearchXyz Result Ranking:**
 *   **Ranking:** SearchXyz now scores results using query term coverage, title/snippet/url matches, phrase matches, trusted-domain bonuses, and low-quality URL penalties.
