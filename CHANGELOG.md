@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.87 (Latest Release)
+### v0.0.88 (Latest Release)
+
+**Native Web Search Policy:**
+*   **Default:** `web_search` now defaults to `search_policy=native_only`, using the embedded SearchXyz dispatcher as the primary and only path unless fallback is explicitly enabled.
+*   **Feature:** Added `search_policy` values `native_only`, `native_then_external`, and `external_only`, with `OPENZ_WEB_SEARCH_POLICY` as a runtime override.
+*   **Hardening:** Native-only failures now return an explicit policy error instead of silently falling through to Tavily, Exa, DuckDuckGo, or Mojeek.
+*   **Tests:** Added focused regressions for native-only default behavior and fallback policy aliases.
+*   **Chore:** Bumped version to `v0.0.88`.
+
+### v0.0.87
 
 **SearchXyz Research Hardening:**
 *   **Feature:** Added SearchXyz include/exclude domain filters, optional multi-backend merge mode, compact diagnostics, explicit fetch cache modes, and `save_mode=none` for one-off checks.

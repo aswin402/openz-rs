@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.87`
+# OpenZ 🦊 `v0.0.88`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.88`
+
+- **Native Web Search Default**: `web_search` now defaults to `search_policy=native_only`, so OpenZ uses the embedded SearchXyz dispatcher instead of automatically falling through to external APIs/scrapers.
+- **Configurable Fallback**: Added `search_policy` with `native_only`, `native_then_external`, and `external_only`, plus `OPENZ_WEB_SEARCH_POLICY` for runtime override.
+- **Cleaner Failure Mode**: When native-only search fails, OpenZ returns an explicit policy error instead of silently calling Tavily, Exa, DuckDuckGo, or Mojeek.
 
 ## What Changed In `v0.0.87`
 

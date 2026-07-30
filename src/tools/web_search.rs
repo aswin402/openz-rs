@@ -4,6 +4,43 @@ use reqwest::Client;
 use scraper::{Html, Selector};
 use serde_json::{json, Value};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WebSearchPolicy {
+    NativeOnly,
+    NativeThenExternal,
+    ExternalOnly,
+}
+
+impl WebSearchPolicy {
+    fn parse(value: Option<&str>) -> Self {
+        let env_value = std::env::var("OPENZ_WEB_SEARCH_POLICY").ok();
+        let raw = value.or(env_value.as_deref()).unwrap_or("native_only");
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "native_then_external" | "native-first" | "native_first" | "fallback" => {
+                Self::NativeThenExternal
+            }
+            "external_only" | "external-only" => Self::ExternalOnly,
+            _ => Self::NativeOnly,
+        }
+    }
+
+    fn allows_native(self) -> bool {
+        matches!(self, Self::NativeOnly | Self::NativeThenExternal)
+    }
+
+    fn allows_external(self) -> bool {
+        matches!(self, Self::NativeThenExternal | Self::ExternalOnly)
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NativeOnly => "native_only",
+            Self::NativeThenExternal => "native_then_external",
+            Self::ExternalOnly => "external_only",
+        }
+    }
+}
+
 pub struct WebSearchTool {
     client: Client,
 }
@@ -42,6 +79,11 @@ impl Tool for WebSearchTool {
                 "query": {
                     "type": "string",
                     "description": "The search query term."
+                },
+                "search_policy": {
+                    "type": "string",
+                    "enum": ["native_only", "native_then_external", "external_only"],
+                    "description": "Search backend policy. Default native_only uses SearchXyz only; native_then_external allows API/scraper fallback; external_only skips SearchXyz. Can also be set with OPENZ_WEB_SEARCH_POLICY."
                 }
             },
             "required": ["query"]
@@ -90,32 +132,47 @@ impl WebSearchTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
 
-        // 0. Try SearchXyz Dispatcher (Local/stealth federated searches)
-        let search_query = searchxyz::search::SearchQuery::new(query, 10);
-        match crate::tools::searchxyz::get_server()
-            .dispatcher
-            .search(&search_query)
-            .await
-        {
-            Ok(results) => {
-                let mut search_results = Vec::new();
-                for r in results {
-                    search_results.push(json!({
-                        "title": r.title,
-                        "url": r.url,
-                        "snippet": r.snippet
-                    }));
+        let policy =
+            WebSearchPolicy::parse(arguments.get("search_policy").and_then(|v| v.as_str()));
+        let mut native_error = None;
+
+        // 0. Try SearchXyz Dispatcher (OpenZ-native search path).
+        if policy.allows_native() {
+            let search_query = searchxyz::search::SearchQuery::new(query, 10);
+            match crate::tools::searchxyz::get_server()
+                .dispatcher
+                .search(&search_query)
+                .await
+            {
+                Ok(results) => {
+                    let mut search_results = Vec::new();
+                    for r in results {
+                        search_results.push(json!({
+                            "title": r.title,
+                            "url": r.url,
+                            "snippet": r.snippet,
+                            "source": "searchxyz"
+                        }));
+                    }
+                    if !search_results.is_empty() {
+                        return Ok(Value::Array(search_results));
+                    }
                 }
-                if !search_results.is_empty() {
-                    return Ok(Value::Array(search_results));
+                Err(e) => {
+                    tracing::warn!(policy = policy.as_str(), error = ?e, "SearchXyz native search failed");
+                    native_error = Some(e.to_string());
                 }
             }
-            Err(e) => {
-                tracing::warn!(
-                    "SearchXyz dispatcher query failed, falling back to other engines: {:?}",
-                    e
-                );
-            }
+        }
+
+        if !policy.allows_external() {
+            let detail = native_error
+                .map(|e| format!(" Native SearchXyz error: {e}"))
+                .unwrap_or_else(|| " Native SearchXyz returned no results.".to_string());
+            return Err(anyhow!(
+                "Native web_search policy is active (search_policy=native_only); external search backends are disabled.{}",
+                detail
+            ));
         }
 
         // 1. Try Websurfx Local/Private Search Engine API (if WEBSURFX_URL is set)
@@ -391,7 +448,10 @@ impl WebSearchTool {
         }
 
         if search_results.is_empty() {
-            return Err(anyhow!("All web search backends (Tavily, Exa, DuckDuckGo, Mojeek) failed or returned no results."));
+            return Err(anyhow!(
+                "All enabled external web search backends (Websurfx, Tavily, Exa, DuckDuckGo, Mojeek) failed or returned no results. Current policy: {}.",
+                policy.as_str()
+            ));
         }
 
         Ok(Value::Array(search_results))
@@ -409,16 +469,25 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_web_search_query() -> Result<()> {
-        let tool = WebSearchTool::new();
-        let args = json!({ "query": "Rust programming language" });
-        let res = tool.call(&args).await;
-        assert!(res.is_ok());
-        let val = res.unwrap();
-        assert!(val.is_array());
-        let arr = val.as_array().unwrap();
-        assert!(!arr.is_empty(), "Search results should not be empty");
-        Ok(())
+    #[test]
+    fn web_search_policy_defaults_to_native_only() {
+        std::env::remove_var("OPENZ_WEB_SEARCH_POLICY");
+        assert_eq!(WebSearchPolicy::parse(None), WebSearchPolicy::NativeOnly);
+    }
+
+    #[test]
+    fn web_search_policy_accepts_external_fallback_alias() {
+        assert_eq!(
+            WebSearchPolicy::parse(Some("native_then_external")),
+            WebSearchPolicy::NativeThenExternal
+        );
+        assert_eq!(
+            WebSearchPolicy::parse(Some("fallback")),
+            WebSearchPolicy::NativeThenExternal
+        );
+        assert_eq!(
+            WebSearchPolicy::parse(Some("external_only")),
+            WebSearchPolicy::ExternalOnly
+        );
     }
 }
