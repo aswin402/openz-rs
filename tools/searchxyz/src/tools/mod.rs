@@ -9,7 +9,11 @@ use tokio::sync::Mutex;
 
 use crate::cache::Cache;
 use crate::config::Config;
-use crate::crawler::Crawler;
+use crate::crawler::{Crawler, FetchCacheMode as CrawlerCacheMode};
+use crate::diagnostics::{
+    format_read_url_diagnostics, format_search_and_read_diagnostics, format_search_diagnostics,
+};
+use crate::evidence::build_evidence_summary;
 use crate::extractor::{ExtractedContent, ExtractionPipeline};
 use crate::index::SearchIndex;
 use crate::pipeline::SearchAndReadPipeline;
@@ -17,12 +21,59 @@ use crate::search::{SearchDispatcher, SearchQuery};
 
 // ── MCP tool request parameter schemas ─────────────────────────
 
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SaveMode {
+    Full,
+    None,
+}
+
+impl SaveMode {
+    fn should_save(self) -> bool {
+        matches!(self, SaveMode::Full)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FetchCacheMode {
+    Auto,
+    PreferCache,
+    Revalidate,
+    Bypass,
+}
+
+impl From<FetchCacheMode> for crate::crawler::FetchCacheMode {
+    fn from(value: FetchCacheMode) -> Self {
+        match value {
+            FetchCacheMode::Auto => crate::crawler::FetchCacheMode::Auto,
+            FetchCacheMode::PreferCache => crate::crawler::FetchCacheMode::PreferCache,
+            FetchCacheMode::Revalidate => crate::crawler::FetchCacheMode::Revalidate,
+            FetchCacheMode::Bypass => crate::crawler::FetchCacheMode::Bypass,
+        }
+    }
+}
+
 #[derive(Deserialize, JsonSchema)]
 pub struct SearchWebRequest {
     #[schemars(description = "The search query string (e.g. 'rust async patterns')")]
     pub query: String,
     #[schemars(description = "Maximum number of results to return (default: 10, max: 20)")]
     pub max_results: Option<usize>,
+    #[schemars(
+        description = "Only keep results from these domains. Supports bare domains and subdomains."
+    )]
+    pub include_domains: Option<Vec<String>>,
+    #[schemars(
+        description = "Drop results from these domains. Supports bare domains and subdomains."
+    )]
+    pub exclude_domains: Option<Vec<String>>,
+    #[schemars(
+        description = "Query all available backends and deduplicate results instead of stopping at the first successful backend."
+    )]
+    pub merge_backends: Option<bool>,
+    #[schemars(description = "Append compact backend diagnostics to the output.")]
+    pub include_diagnostics: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -38,6 +89,16 @@ pub struct ReadUrlRequest {
     )]
     pub render_js: Option<bool>,
     #[schemars(
+        description = "Cache behavior: auto, prefer_cache, revalidate, or bypass. Revalidate currently bypasses the SearchXyz TTL cache."
+    )]
+    pub cache_mode: Option<FetchCacheMode>,
+    #[schemars(
+        description = "Persistence behavior: full indexes the page and graph; none returns content without saving."
+    )]
+    pub save_mode: Option<SaveMode>,
+    #[schemars(description = "Append compact fetch/cache diagnostics to the output.")]
+    pub include_diagnostics: Option<bool>,
+    #[schemars(
         description = "Optional maximum characters to return; appends truncation metadata when exceeded."
     )]
     pub max_chars: Option<usize>,
@@ -49,10 +110,28 @@ pub struct SearchAndReadRequest {
     pub query: String,
     #[schemars(description = "How many top results to read (default: 3, max: 5)")]
     pub max_pages: Option<usize>,
+    #[schemars(description = "Only keep search results from these domains before crawling.")]
+    pub include_domains: Option<Vec<String>>,
+    #[schemars(description = "Drop search results from these domains before crawling.")]
+    pub exclude_domains: Option<Vec<String>>,
+    #[schemars(
+        description = "Query all available backends and deduplicate results before crawling."
+    )]
+    pub merge_backends: Option<bool>,
     #[schemars(
         description = "Enable JavaScript rendering with a headless browser for dynamic or JS-heavy websites."
     )]
     pub render_js: Option<bool>,
+    #[schemars(
+        description = "Cache behavior: auto, prefer_cache, revalidate, or bypass. Revalidate currently bypasses the SearchXyz TTL cache."
+    )]
+    pub cache_mode: Option<FetchCacheMode>,
+    #[schemars(
+        description = "Persistence behavior: full indexes pages and graph; none returns content without saving."
+    )]
+    pub save_mode: Option<SaveMode>,
+    #[schemars(description = "Append compact search and page diagnostics to the output.")]
+    pub include_diagnostics: Option<bool>,
     #[schemars(
         description = "Optional maximum characters to return; appends truncation metadata when exceeded."
     )]
@@ -89,10 +168,28 @@ pub struct DeepResearchRequest {
     pub breadth: Option<usize>,
     #[schemars(description = "How many top pages to crawl per sub-query (default: 2, max: 4)")]
     pub max_pages_per_query: Option<usize>,
+    #[schemars(description = "Only keep search results from these domains before crawling.")]
+    pub include_domains: Option<Vec<String>>,
+    #[schemars(description = "Drop search results from these domains before crawling.")]
+    pub exclude_domains: Option<Vec<String>>,
+    #[schemars(
+        description = "Query all available backends and deduplicate results before crawling."
+    )]
+    pub merge_backends: Option<bool>,
     #[schemars(
         description = "Enable JavaScript rendering with a headless browser for dynamic or JS-heavy websites."
     )]
     pub render_js: Option<bool>,
+    #[schemars(
+        description = "Cache behavior: auto, prefer_cache, revalidate, or bypass. Revalidate currently bypasses the SearchXyz TTL cache."
+    )]
+    pub cache_mode: Option<FetchCacheMode>,
+    #[schemars(
+        description = "Persistence behavior: full indexes pages and graph; none returns content without saving."
+    )]
+    pub save_mode: Option<SaveMode>,
+    #[schemars(description = "Append compact sub-query diagnostics to the output.")]
+    pub include_diagnostics: Option<bool>,
     #[schemars(
         description = "Optional maximum characters to return; appends truncation metadata when exceeded."
     )]
@@ -332,13 +429,17 @@ impl SearchXyzServer {
         req: Parameters<SearchWebRequest>,
     ) -> Result<String, rmcp::ErrorData> {
         let max = req.0.max_results.unwrap_or(10).min(20);
-        let search_query = SearchQuery {
-            query: req.0.query.clone(),
-            max_results: max,
-        };
+        let mut search_query = SearchQuery::new(req.0.query.clone(), max);
+        search_query.include_domains = req.0.include_domains.unwrap_or_default();
+        search_query.exclude_domains = req.0.exclude_domains.unwrap_or_default();
+        search_query.merge_backends = req.0.merge_backends.unwrap_or(false);
 
-        let results = self.dispatcher.search(&search_query).await?;
-        let text = results
+        let report = self
+            .dispatcher
+            .search_with_diagnostics(&search_query)
+            .await?;
+        let mut text = report
+            .results
             .iter()
             .enumerate()
             .map(|(i, r)| {
@@ -351,6 +452,9 @@ impl SearchXyzServer {
                 )
             })
             .collect::<String>();
+        if req.0.include_diagnostics.unwrap_or(false) {
+            text.push_str(&format_search_diagnostics(&report));
+        }
 
         Ok(text)
     }
@@ -372,6 +476,8 @@ impl SearchXyzServer {
 
         let depth = req.0.depth.unwrap_or(1).min(3);
         let render_js = req.0.render_js.unwrap_or(false);
+        let cache_mode: CrawlerCacheMode = req.0.cache_mode.unwrap_or(FetchCacheMode::Auto).into();
+        let save = req.0.save_mode.unwrap_or(SaveMode::Full).should_save();
 
         // ── Check for YouTube video URLs ──
         if crate::crawler::youtube::extract_video_id(url).is_some() {
@@ -386,18 +492,20 @@ impl SearchXyzServer {
                 links: Vec::new(),
             };
 
-            // Index the transcript
-            if let Err(e) = self.index.add_document(&extracted, "youtube").await {
-                tracing::warn!(url = %url, error = %e, "Failed to index YouTube transcript (non-fatal)");
-            }
+            if save {
+                // Index the transcript
+                if let Err(e) = self.index.add_document(&extracted, "youtube").await {
+                    tracing::warn!(url = %url, error = %e, "Failed to index YouTube transcript (non-fatal)");
+                }
 
-            // Run automatic graph heuristics
-            {
-                let mut graph = self.graph.lock().await;
-                graph.extract_heuristics(url, &title, &transcript);
+                // Run automatic graph heuristics
+                {
+                    let mut graph = self.graph.lock().await;
+                    graph.extract_heuristics(url, &title, &transcript);
+                }
+                self.persist_research_state_nonfatal("youtube transcript")
+                    .await;
             }
-            self.persist_research_state_nonfatal("youtube transcript")
-                .await;
 
             let text = format!(
                 "# {}\n\n**Source:** {}\n\n---\n\n{}",
@@ -408,19 +516,34 @@ impl SearchXyzServer {
 
         // ── Check for GitHub repository URLs ──
         if crate::crawler::github::parse_github_url(url).is_some() {
-            let summary = crate::crawler::github::clone_and_index_repo(
-                &self.index,
-                &self.graph,
-                url,
+            if save {
+                let summary = crate::crawler::github::clone_and_index_repo(
+                    &self.index,
+                    &self.graph,
+                    url,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await?;
+                self.persist_research_state_nonfatal("github repo ingestion")
+                    .await;
+                let mut text = summary;
+                if req.0.include_diagnostics.unwrap_or(false) {
+                    text.push_str(&format_read_url_diagnostics(
+                        url,
+                        cache_mode,
+                        save,
+                        "github_repo_ingestion",
+                    ));
+                }
+                return Ok(limit_output("read_url", &text, req.0.max_chars));
+            }
+            return Err(rmcp::ErrorData::invalid_params(
+                "GitHub repository ingestion requires save_mode=full; use regular GitHub pages for no-save reads.",
                 None,
-                None,
-                None,
-                None,
-            )
-            .await?;
-            self.persist_research_state_nonfatal("github repo ingestion")
-                .await;
-            return Ok(limit_output("read_url", &summary, req.0.max_chars));
+            ));
         }
 
         if depth > 1 {
@@ -428,20 +551,22 @@ impl SearchXyzServer {
                 crate::crawler::spider::Spider::new(self.crawler.clone(), self.extractor.clone());
             let crawled_pages = spider.crawl(url, depth, render_js).await?;
 
-            // Index successful crawled pages
-            for page in &crawled_pages {
-                if let Err(e) = self.index.add_document(page, "spider").await {
-                    tracing::warn!(url = %page.url, error = %e, "Failed to index page from spider (non-fatal)");
+            if save {
+                // Index successful crawled pages
+                for page in &crawled_pages {
+                    if let Err(e) = self.index.add_document(page, "spider").await {
+                        tracing::warn!(url = %page.url, error = %e, "Failed to index page from spider (non-fatal)");
+                    }
+                    // Run automatic graph heuristics
+                    {
+                        let mut graph = self.graph.lock().await;
+                        graph.extract_heuristics(&page.url, &page.title, &page.content_markdown);
+                    }
                 }
-                // Run automatic graph heuristics
-                {
-                    let mut graph = self.graph.lock().await;
-                    graph.extract_heuristics(&page.url, &page.title, &page.content_markdown);
-                }
+                self.persist_research_state_nonfatal("spider crawl").await;
             }
-            self.persist_research_state_nonfatal("spider crawl").await;
 
-            let text = crawled_pages
+            let mut text = crawled_pages
                 .iter()
                 .map(|p| {
                     format!(
@@ -450,26 +575,39 @@ impl SearchXyzServer {
                     )
                 })
                 .collect::<String>();
+            if req.0.include_diagnostics.unwrap_or(false) {
+                text.push_str(&format_read_url_diagnostics(
+                    url,
+                    cache_mode,
+                    save,
+                    "spider_crawl",
+                ));
+            }
             Ok(limit_output("read_url", &text, req.0.max_chars))
         } else {
-            let fetch_result = self.crawler.fetch_url(url, render_js).await?;
+            let fetch_result = self
+                .crawler
+                .fetch_url_with_cache_mode(url, render_js, cache_mode)
+                .await?;
             let content = self.extractor.extract(
                 url,
                 &fetch_result.body,
                 Some(&fetch_result.content_type),
             )?;
 
-            // Index the single crawled page too!
-            if let Err(e) = self.index.add_document(&content, "read_url").await {
-                tracing::warn!(url = %content.url, error = %e, "Failed to index page from read_url (non-fatal)");
-            }
+            if save {
+                // Index the single crawled page too.
+                if let Err(e) = self.index.add_document(&content, "read_url").await {
+                    tracing::warn!(url = %content.url, error = %e, "Failed to index page from read_url (non-fatal)");
+                }
 
-            // Run automatic graph heuristics
-            {
-                let mut graph = self.graph.lock().await;
-                graph.extract_heuristics(url, &content.title, &content.content_markdown);
+                // Run automatic graph heuristics
+                {
+                    let mut graph = self.graph.lock().await;
+                    graph.extract_heuristics(url, &content.title, &content.content_markdown);
+                }
+                self.persist_research_state_nonfatal("read_url").await;
             }
-            self.persist_research_state_nonfatal("read_url").await;
 
             let text = format!(
                 "# {}\n\n**Source:** {}\n\n---\n\n{}",
@@ -488,6 +626,8 @@ impl SearchXyzServer {
     ) -> Result<String, rmcp::ErrorData> {
         let max = req.0.max_pages.unwrap_or(3).min(5);
         let render_js = req.0.render_js.unwrap_or(false);
+        let cache_mode: CrawlerCacheMode = req.0.cache_mode.unwrap_or(FetchCacheMode::Auto).into();
+        let save = req.0.save_mode.unwrap_or(SaveMode::Full).should_save();
         let pipeline = SearchAndReadPipeline::new(
             self.dispatcher.clone(),
             self.crawler.clone(),
@@ -495,16 +635,26 @@ impl SearchXyzServer {
             self.index.clone(),
         );
 
-        let results = pipeline.run(&req.0.query, max, render_js).await?;
-        {
-            let mut graph = self.graph.lock().await;
-            for result in &results {
-                graph.extract_heuristics(&result.url, &result.title, &result.content_markdown);
+        let mut search_query = SearchQuery::new(req.0.query.clone(), max * 2);
+        search_query.include_domains = req.0.include_domains.unwrap_or_default();
+        search_query.exclude_domains = req.0.exclude_domains.unwrap_or_default();
+        search_query.merge_backends = req.0.merge_backends.unwrap_or(false);
+
+        let report = pipeline
+            .run_with_options(search_query, max, render_js, cache_mode, save)
+            .await?;
+        if save {
+            {
+                let mut graph = self.graph.lock().await;
+                for result in &report.pages {
+                    graph.extract_heuristics(&result.url, &result.title, &result.content_markdown);
+                }
             }
+            self.persist_research_state_nonfatal("search_and_read")
+                .await;
         }
-        self.persist_research_state_nonfatal("search_and_read")
-            .await;
-        let text = results
+        let mut text = report
+            .pages
             .iter()
             .map(|r| {
                 format!(
@@ -513,6 +663,11 @@ impl SearchXyzServer {
                 )
             })
             .collect::<String>();
+        if req.0.include_diagnostics.unwrap_or(false) {
+            text.push_str(&format_search_and_read_diagnostics(
+                &report, cache_mode, save,
+            ));
+        }
         Ok(limit_output("search_and_read", &text, req.0.max_chars))
     }
 
@@ -590,6 +745,8 @@ impl SearchXyzServer {
         let breadth = req.0.breadth.unwrap_or(3).min(5);
         let max_pages = req.0.max_pages_per_query.unwrap_or(2).min(4);
         let render_js = req.0.render_js.unwrap_or(false);
+        let cache_mode: CrawlerCacheMode = req.0.cache_mode.unwrap_or(FetchCacheMode::Auto).into();
+        let save = req.0.save_mode.unwrap_or(SaveMode::Full).should_save();
 
         // 1. Expand query.
         let expanded_queries = expand_query(query, breadth);
@@ -609,11 +766,23 @@ impl SearchXyzServer {
         use futures::future::join_all;
         let mut futures = Vec::new();
         for q in &expanded_queries {
-            futures.push(pipeline.run(q, max_pages, render_js));
+            let mut search_query = SearchQuery::new(q.clone(), max_pages * 2);
+            search_query.include_domains = req.0.include_domains.clone().unwrap_or_default();
+            search_query.exclude_domains = req.0.exclude_domains.clone().unwrap_or_default();
+            search_query.merge_backends = req.0.merge_backends.unwrap_or(false);
+            futures.push(pipeline.run_with_options(
+                search_query,
+                max_pages,
+                render_js,
+                cache_mode,
+                save,
+            ));
         }
 
         let results = join_all(futures).await;
 
+        let include_diagnostics = req.0.include_diagnostics.unwrap_or(false);
+        let mut diagnostics = String::new();
         let mut all_pages = std::collections::HashMap::new();
         let mut executed_count = 0;
 
@@ -622,14 +791,23 @@ impl SearchXyzServer {
             match res {
                 Ok(pages) => {
                     output.push_str(&format!("## Sub-Query: `{}`\n", sub_q));
-                    if pages.is_empty() {
+                    if pages.pages.is_empty() {
                         output.push_str("   *No new pages crawled successfully.*\n\n");
                     } else {
                         output.push_str(&format!(
                             "   *Successfully retrieved {} pages.*\n\n",
-                            pages.len()
+                            pages.pages.len()
                         ));
-                        for page in pages {
+                        if include_diagnostics {
+                            diagnostics.push_str(&format!(
+                                "
+### Diagnostics for `{}`
+{}",
+                                sub_q,
+                                format_search_and_read_diagnostics(&pages, cache_mode, save)
+                            ));
+                        }
+                        for page in pages.pages {
                             // Avoid duplicate display by grouping/storing globally in a map.
                             all_pages.insert(page.url.clone(), page);
                         }
@@ -652,13 +830,23 @@ impl SearchXyzServer {
 
         output.push_str(&format!("*Summary: Executed {} sub-queries successfully, retrieving a total of {} unique pages.*\n\n", executed_count, all_pages.len()));
 
-        {
-            let mut graph = self.graph.lock().await;
-            for page in all_pages.values() {
-                graph.extract_heuristics(&page.url, &page.title, &page.content_markdown);
+        if save {
+            {
+                let mut graph = self.graph.lock().await;
+                for page in all_pages.values() {
+                    graph.extract_heuristics(&page.url, &page.title, &page.content_markdown);
+                }
             }
+            self.persist_research_state_nonfatal("deep_research").await;
         }
-        self.persist_research_state_nonfatal("deep_research").await;
+
+        let evidence_pages: Vec<_> = all_pages.values().cloned().collect();
+        output.push_str(&build_evidence_summary(query, &evidence_pages));
+        if include_diagnostics && !diagnostics.is_empty() {
+            output.push_str("---\n## Diagnostics\n");
+            output.push_str(&diagnostics);
+            output.push('\n');
+        }
 
         output.push_str("---\n## Compiled Research Documents\n\n");
         for (url, page) in all_pages {
@@ -1110,7 +1298,7 @@ mod tests {
         SearchXyzServer::new(
             dispatcher,
             crate::crawler::Crawler::new(
-                crate::config::CrawlerConfig::default(),
+                config.crawler.clone(),
                 crate::config::HeadlessConfig::default(),
                 crate::config::ProxyConfig::default(),
                 cache.clone(),
@@ -1136,6 +1324,7 @@ mod tests {
             embedding: Default::default(),
         };
         config.cache.path = test_dir.join("cache.json");
+        config.crawler.allow_private_network = true;
 
         let index = SearchIndex::open(&config.index).unwrap();
         let graph = Arc::new(Mutex::new(KnowledgeGraph::new()));
@@ -1198,6 +1387,7 @@ mod tests {
             embedding: Default::default(),
         };
         config.cache.path = test_dir.join("cache.json");
+        config.crawler.allow_private_network = true;
 
         let index = SearchIndex::open(&config.index).unwrap();
         let graph = Arc::new(Mutex::new(KnowledgeGraph::new()));
@@ -1216,7 +1406,13 @@ mod tests {
             .search_and_read(Parameters(SearchAndReadRequest {
                 query: "rust tokio".to_string(),
                 max_pages: Some(1),
+                include_domains: None,
+                exclude_domains: None,
+                merge_backends: None,
                 render_js: Some(false),
+                cache_mode: None,
+                save_mode: None,
+                include_diagnostics: None,
                 max_chars: None,
             }))
             .await

@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.86`
+# OpenZ 🦊 `v0.0.87`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,13 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.87`
+
+- **SearchXyz Hardening**: Added domain include/exclude filters, optional multi-backend merge mode, compact diagnostics, explicit cache modes, and one-off no-save reads.
+- **Safer Fetching**: SearchXyz now blocks localhost/private/link-local URL fetches by default and validates redirect targets before returning content.
+- **HTTP Cache Discipline**: Exact URL fetches now preserve ETag, Last-Modified, Cache-Control, and content type metadata, with 304 reuse and stale fallback on live fetch failure.
+- **Research Evidence Summary**: Deep research now appends deterministic claims, source, conflict, and unknown sections before compiled documents.
 
 ## What Changed In `v0.0.86`
 

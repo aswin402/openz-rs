@@ -71,6 +71,8 @@ pub struct CrawlerConfig {
     pub max_retries: u32,
     /// Per-domain max requests per second.
     pub rate_limit_per_sec: u64,
+    /// Allow localhost/private/link-local targets. Disabled by default to prevent SSRF.
+    pub allow_private_network: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -188,6 +190,7 @@ impl Default for CrawlerConfig {
             max_redirects: 5,
             max_retries: 3,
             rate_limit_per_sec: 2,
+            allow_private_network: false,
         }
     }
 }

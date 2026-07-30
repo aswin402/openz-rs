@@ -12,6 +12,14 @@ pub struct CacheEntry {
     pub url: String,
     pub fetched_at: DateTime<Utc>,
     pub ttl_secs: u64,
+    #[serde(default)]
+    pub etag: Option<String>,
+    #[serde(default)]
+    pub last_modified: Option<String>,
+    #[serde(default)]
+    pub cache_control: Option<String>,
+    #[serde(default)]
+    pub content_type: Option<String>,
 }
 
 impl CacheEntry {
@@ -21,6 +29,10 @@ impl CacheEntry {
             url,
             fetched_at: Utc::now(),
             ttl_secs: 3600, // default 1 hour
+            etag: None,
+            last_modified: None,
+            cache_control: None,
+            content_type: None,
         }
     }
 
@@ -37,6 +49,39 @@ impl CacheEntry {
             elapsed.num_seconds() as u64 > self.ttl_secs
         }
     }
+
+    pub fn apply_cache_control_ttl(&mut self, default_ttl: Duration) {
+        let Some(cache_control) = &self.cache_control else {
+            return;
+        };
+        let lower = cache_control.to_ascii_lowercase();
+        if lower
+            .split(',')
+            .map(str::trim)
+            .any(|directive| matches!(directive, "no-store" | "no-cache"))
+        {
+            self.ttl_secs = 0;
+            return;
+        }
+
+        if let Some(max_age) = parse_cache_control_seconds(&lower, "s-maxage")
+            .or_else(|| parse_cache_control_seconds(&lower, "max-age"))
+        {
+            self.ttl_secs = max_age;
+        } else if self.ttl_secs == 3600 {
+            self.ttl_secs = default_ttl.as_secs();
+        }
+    }
+}
+
+fn parse_cache_control_seconds(cache_control: &str, key: &str) -> Option<u64> {
+    cache_control.split(',').find_map(|directive| {
+        let (name, value) = directive.trim().split_once('=')?;
+        if name.trim() != key {
+            return None;
+        }
+        value.trim().trim_matches('"').parse::<u64>().ok()
+    })
 }
 
 /// Thread-safe LRU cache for crawled page content.
@@ -109,6 +154,11 @@ impl Cache {
         self.inner.peek(url).filter(|e| !e.is_expired())
     }
 
+    /// Retrieve a cached entry regardless of freshness. Used for HTTP revalidation.
+    pub fn get_any(&self, url: &str) -> Option<&CacheEntry> {
+        self.inner.peek(url)
+    }
+
     /// Retrieve and promote a cached entry.
     pub fn get_mut(&mut self, url: &str) -> Option<&CacheEntry> {
         let entry = self.inner.get(url)?;
@@ -121,6 +171,7 @@ impl Cache {
 
     /// Insert or update a cache entry.
     pub fn put(&mut self, url: String, mut entry: CacheEntry) {
+        entry.apply_cache_control_ttl(self.default_ttl);
         if entry.ttl_secs == 3600 {
             entry.ttl_secs = self.default_ttl.as_secs();
         }
@@ -139,6 +190,24 @@ impl Cache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_control_max_age_updates_ttl() {
+        let mut entry = CacheEntry::new("content".to_string(), "https://example.com".to_string());
+        entry.cache_control = Some("public, max-age=42".to_string());
+        entry.apply_cache_control_ttl(Duration::from_secs(3600));
+
+        assert_eq!(entry.ttl_secs, 42);
+    }
+
+    #[test]
+    fn cache_control_no_store_expires_immediately() {
+        let mut entry = CacheEntry::new("content".to_string(), "https://example.com".to_string());
+        entry.cache_control = Some("no-store".to_string());
+        entry.apply_cache_control_ttl(Duration::from_secs(3600));
+
+        assert_eq!(entry.ttl_secs, 0);
+    }
 
     #[test]
     fn test_cache_serialization_deserialization() {

@@ -91,10 +91,7 @@ impl WebSearchTool {
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
 
         // 0. Try SearchXyz Dispatcher (Local/stealth federated searches)
-        let search_query = searchxyz::search::SearchQuery {
-            query: query.to_string(),
-            max_results: 10,
-        };
+        let search_query = searchxyz::search::SearchQuery::new(query, 10);
         match crate::tools::searchxyz::get_server()
             .dispatcher
             .search(&search_query)

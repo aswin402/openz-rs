@@ -32,6 +32,9 @@ pub enum SearchXyzError {
     #[error("Request to `{url}` timed out after {timeout_secs}s")]
     Timeout { url: String, timeout_secs: u64 },
 
+    #[error("Blocked unsafe URL `{url}`: {reason}")]
+    UnsafeUrl { url: String, reason: String },
+
     // ── Extraction ──
     #[error("Content extraction failed for `{url}`: {reason}")]
     ExtractionFailed { url: String, reason: String },

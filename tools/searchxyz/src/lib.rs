@@ -1,7 +1,9 @@
 pub mod cache;
 pub mod config;
 pub mod crawler;
+pub mod diagnostics;
 pub mod error;
+pub mod evidence;
 pub mod extractor;
 pub mod graph;
 pub mod index;

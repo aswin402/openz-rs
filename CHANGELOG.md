@@ -398,7 +398,17 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.86 (Latest Release)
+### v0.0.87 (Latest Release)
+
+**SearchXyz Research Hardening:**
+*   **Feature:** Added SearchXyz include/exclude domain filters, optional multi-backend merge mode, compact diagnostics, explicit fetch cache modes, and `save_mode=none` for one-off checks.
+*   **Security:** SearchXyz fetches now block localhost, private, link-local, documentation, and unspecified network targets by default, including redirect targets.
+*   **Cache:** HTTP fetches now preserve ETag, Last-Modified, Cache-Control, and content type metadata, support 304 cache reuse, and fall back to stale cached bodies on live fetch failure when allowed.
+*   **Research Quality:** Deep research now includes deterministic evidence summaries with claims, evidence sources, potential conflicts, and unknowns before compiled documents.
+*   **Tests:** Added focused regressions for backend merge/dedupe, domain filters, diagnostics, private-network blocking, cache validators, stale fallback, Cache-Control TTLs, and evidence summaries.
+*   **Chore:** Bumped version to `v0.0.87`.
+
+### v0.0.86
 
 **Vision & GUI Open Workflow Discipline:**
 *   **Fix:** Non-vision active models now instruct OpenZ to call the specialized `vision_agent` tool directly for image analysis instead of using generic `delegate_task`, avoiding non-vision model routing failures.

@@ -31,6 +31,24 @@ impl Tool for SearchXyzSearchWebTool {
                 "max_results": {
                     "type": "integer",
                     "description": "Max results to return (default: 10)."
+                },
+                "include_domains": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Only keep results from these domains."
+                },
+                "exclude_domains": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Drop results from these domains."
+                },
+                "merge_backends": {
+                    "type": "boolean",
+                    "description": "Query all available backends and deduplicate results instead of stopping at the first success."
+                },
+                "include_diagnostics": {
+                    "type": "boolean",
+                    "description": "Append compact backend diagnostics to the output."
                 }
             },
             "required": ["query"]
@@ -76,6 +94,20 @@ impl Tool for SearchXyzReadUrlTool {
                     "type": "boolean",
                     "description": "Enable headless JS rendering (default: false)."
                 },
+                "cache_mode": {
+                    "type": "string",
+                    "enum": ["auto", "prefer_cache", "revalidate", "bypass"],
+                    "description": "Cache behavior. Use revalidate/check-again or bypass for live refresh tasks."
+                },
+                "save_mode": {
+                    "type": "string",
+                    "enum": ["full", "none"],
+                    "description": "Whether to persist fetched content into SearchXyz memory. Use none for one-off checks."
+                },
+                "include_diagnostics": {
+                    "type": "boolean",
+                    "description": "Append compact diagnostics to the output."
+                },
                 "max_chars": {
                     "type": "integer",
                     "description": "Optional output character budget. Truncates large Markdown responses with metadata when exceeded."
@@ -120,9 +152,37 @@ impl Tool for SearchXyzSearchAndReadTool {
                     "type": "integer",
                     "description": "How many top results to crawl (default: 3)."
                 },
+                "include_domains": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Only keep search results from these domains before crawling."
+                },
+                "exclude_domains": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Drop search results from these domains before crawling."
+                },
+                "merge_backends": {
+                    "type": "boolean",
+                    "description": "Query all available backends and deduplicate results before crawling."
+                },
                 "render_js": {
                     "type": "boolean",
                     "description": "Enable JS rendering (default: false)."
+                },
+                "cache_mode": {
+                    "type": "string",
+                    "enum": ["auto", "prefer_cache", "revalidate", "bypass"],
+                    "description": "Cache behavior. Use revalidate/check-again or bypass for live refresh tasks."
+                },
+                "save_mode": {
+                    "type": "string",
+                    "enum": ["full", "none"],
+                    "description": "Whether to persist fetched content into SearchXyz memory. Use none for one-off checks."
+                },
+                "include_diagnostics": {
+                    "type": "boolean",
+                    "description": "Append compact diagnostics to the output."
                 },
                 "max_chars": {
                     "type": "integer",
@@ -172,9 +232,37 @@ impl Tool for SearchXyzDeepResearchTool {
                     "type": "integer",
                     "description": "How many top pages to crawl per sub-query (default: 2)."
                 },
+                "include_domains": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Only keep search results from these domains before crawling."
+                },
+                "exclude_domains": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Drop search results from these domains before crawling."
+                },
+                "merge_backends": {
+                    "type": "boolean",
+                    "description": "Query all available backends and deduplicate results before crawling."
+                },
                 "render_js": {
                     "type": "boolean",
                     "description": "Enable headless JS rendering (default: false)."
+                },
+                "cache_mode": {
+                    "type": "string",
+                    "enum": ["auto", "prefer_cache", "revalidate", "bypass"],
+                    "description": "Cache behavior. Use revalidate/check-again or bypass for live refresh tasks."
+                },
+                "save_mode": {
+                    "type": "string",
+                    "enum": ["full", "none"],
+                    "description": "Whether to persist fetched content into SearchXyz memory. Use none for one-off checks."
+                },
+                "include_diagnostics": {
+                    "type": "boolean",
+                    "description": "Append compact diagnostics to the output."
                 },
                 "max_chars": {
                     "type": "integer",

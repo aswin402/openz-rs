@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::task::JoinSet;
 
-use crate::crawler::Crawler;
+use crate::crawler::{Crawler, FetchCacheMode};
 use crate::error::SearchXyzError;
 use crate::extractor::{ExtractedContent, ExtractionPipeline};
 use crate::index::SearchIndex;
@@ -12,6 +12,20 @@ use crate::search::{SearchDispatcher, SearchQuery};
 ///
 /// Used by the `search_and_read` MCP tool to execute the full
 /// research workflow in one call.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PageAttempt {
+    pub url: String,
+    pub status: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SearchAndReadReport {
+    pub pages: Vec<ExtractedContent>,
+    pub search: crate::search::SearchReport,
+    pub page_attempts: Vec<PageAttempt>,
+}
+
 pub struct SearchAndReadPipeline {
     dispatcher: Arc<SearchDispatcher>,
     crawler: Arc<Crawler>,
@@ -47,17 +61,37 @@ impl SearchAndReadPipeline {
         max_pages: usize,
         render_js: bool,
     ) -> Result<Vec<ExtractedContent>, SearchXyzError> {
-        // ── Step 1: Search ──
-        let search_query = SearchQuery {
-            query: query.to_string(),
-            max_results: max_pages * 2, // fetch extras in case some fail
-        };
+        Ok(self
+            .run_with_options(
+                SearchQuery::new(query, max_pages * 2),
+                max_pages,
+                render_js,
+                FetchCacheMode::Auto,
+                true,
+            )
+            .await?
+            .pages)
+    }
 
-        let search_results = self.dispatcher.search(&search_query).await?;
+    pub async fn run_with_options(
+        &self,
+        search_query: SearchQuery,
+        max_pages: usize,
+        render_js: bool,
+        cache_mode: FetchCacheMode,
+        save: bool,
+    ) -> Result<SearchAndReadReport, SearchXyzError> {
+        // ── Step 1: Search ──
+
+        let search_report = self
+            .dispatcher
+            .search_with_diagnostics(&search_query)
+            .await?;
+        let search_results = &search_report.results;
 
         if search_results.is_empty() {
             return Err(SearchXyzError::SearchFailed {
-                query: query.into(),
+                query: search_query.query.clone(),
                 reason: "No search results found".into(),
             });
         }
@@ -71,7 +105,7 @@ impl SearchAndReadPipeline {
 
         tracing::info!(
             count = urls.len(),
-            query = query,
+            query = %search_query.query,
             "Crawling top search results in parallel"
         );
 
@@ -83,49 +117,69 @@ impl SearchAndReadPipeline {
             let extractor = self.extractor.clone();
 
             join_set.spawn(async move {
+                let attempted_url = url.clone();
                 // Crawl the page.
-                let fetch_result = crawler.fetch_url(&url, render_js).await?;
+                let fetch_result = crawler
+                    .fetch_url_with_cache_mode(&url, render_js, cache_mode)
+                    .await
+                    .map_err(|e| (attempted_url.clone(), e))?;
 
                 // Extract content.
-                let content = extractor.extract(
-                    &url,
-                    &fetch_result.body,
-                    Some(&fetch_result.content_type),
-                )?;
+                let content = extractor
+                    .extract(&url, &fetch_result.body, Some(&fetch_result.content_type))
+                    .map_err(|e| (attempted_url.clone(), e))?;
 
-                Ok::<ExtractedContent, SearchXyzError>(content)
+                Ok::<(String, ExtractedContent), (String, SearchXyzError)>((attempted_url, content))
             });
         }
 
         // ── Step 4: Collect results, tolerating partial failures ──
         let mut extracted: Vec<ExtractedContent> = Vec::new();
+        let mut page_attempts: Vec<PageAttempt> = Vec::new();
         let mut errors: Vec<String> = Vec::new();
 
         while let Some(result) = join_set.join_next().await {
             match result {
-                Ok(Ok(content)) => {
+                Ok(Ok((url, content))) => {
+                    page_attempts.push(PageAttempt {
+                        url,
+                        status: "success".to_string(),
+                        detail: None,
+                    });
                     extracted.push(content);
                 }
-                Ok(Err(e)) => {
-                    tracing::warn!(error = %e, "Pipeline: one URL failed");
+                Ok(Err((url, e))) => {
+                    tracing::warn!(url = %url, error = %e, "Pipeline: one URL failed");
+                    page_attempts.push(PageAttempt {
+                        url,
+                        status: "error".to_string(),
+                        detail: Some(e.to_string()),
+                    });
                     errors.push(e.to_string());
                 }
                 Err(join_err) => {
                     tracing::error!(error = %join_err, "Pipeline: task panicked");
+                    page_attempts.push(PageAttempt {
+                        url: "<task>".to_string(),
+                        status: "panic".to_string(),
+                        detail: Some(join_err.to_string()),
+                    });
                     errors.push(format!("Task panicked: {join_err}"));
                 }
             }
         }
 
         // ── Step 5: Index all successful extractions ──
-        for content in &extracted {
-            if let Err(e) = self.index.add_document(content, "search_and_read").await {
-                // Indexing failure is non-fatal — log and continue.
-                tracing::warn!(
-                    url = %content.url,
-                    error = %e,
-                    "Failed to index document (non-fatal)"
-                );
+        if save {
+            for content in &extracted {
+                if let Err(e) = self.index.add_document(content, "search_and_read").await {
+                    // Indexing failure is non-fatal — log and continue.
+                    tracing::warn!(
+                        url = %content.url,
+                        error = %e,
+                        "Failed to index document (non-fatal)"
+                    );
+                }
             }
         }
 
@@ -133,7 +187,7 @@ impl SearchAndReadPipeline {
         if extracted.is_empty() {
             // All URLs failed — report all errors.
             return Err(SearchXyzError::SearchFailed {
-                query: query.into(),
+                query: search_query.query.clone(),
                 reason: format!(
                     "All pages failed to load or extract. Errors:\n{}",
                     errors.join("\n")
@@ -149,6 +203,10 @@ impl SearchAndReadPipeline {
             );
         }
 
-        Ok(extracted)
+        Ok(SearchAndReadReport {
+            pages: extracted,
+            search: search_report,
+            page_attempts,
+        })
     }
 }
