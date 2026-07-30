@@ -398,7 +398,17 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.91 (Latest Release)
+### v0.0.92 (Latest Release)
+
+**Native SearchXyz Result Ranking:**
+*   **Ranking:** SearchXyz now scores results using query term coverage, title/snippet/url matches, phrase matches, trusted-domain bonuses, and low-quality URL penalties.
+*   **Quality:** Search/tag/login/account/category URLs and common tracking parameters are penalized before first-success and merged results are truncated.
+*   **Merge:** Multi-backend merge still deduplicates normalized URLs, then reranks the merged result set.
+*   **Doctor:** `searchxyz_doctor` now reports ranking as enabled and lists the ranking signals.
+*   **Tests:** Added focused regressions for title phrase ranking, low-quality URL penalties, and merge dedupe after ranking.
+*   **Chore:** Bumped version to `v0.0.92`.
+
+### v0.0.91
 
 **Stronger Native SearchXyz Discovery:**
 *   **Discovery:** When `SEARCHXYZ_SEARXNG_URL` is explicitly configured and backend order is not, SearchXyz now automatically moves `searxng` to the front for the strongest private/native discovery path.

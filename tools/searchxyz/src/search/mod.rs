@@ -127,7 +127,7 @@ impl SearchDispatcher {
 
             match backend.search(query).await {
                 Ok(results) => {
-                    let results = filter_results(query, results);
+                    let results = rank_results(query, filter_results(query, results));
                     if !results.is_empty() {
                         tracing::info!(
                             backend = backend.name(),
@@ -240,12 +240,126 @@ impl SearchDispatcher {
             });
         }
 
+        let merged = rank_results(query, merged);
         Ok(SearchReport {
             results: merged.into_iter().take(query.max_results).collect(),
             attempts,
             mode: "merge".to_string(),
         })
     }
+}
+
+fn rank_results(query: &SearchQuery, mut results: Vec<SearchResult>) -> Vec<SearchResult> {
+    results.sort_by(|a, b| {
+        let score_b = score_result(query, b);
+        let score_a = score_result(query, a);
+        score_b
+            .cmp(&score_a)
+            .then_with(|| {
+                a.title
+                    .to_ascii_lowercase()
+                    .cmp(&b.title.to_ascii_lowercase())
+            })
+            .then_with(|| a.url.cmp(&b.url))
+    });
+    results
+}
+
+fn score_result(query: &SearchQuery, result: &SearchResult) -> i32 {
+    let terms = query_terms(&query.query);
+    if terms.is_empty() {
+        return 0;
+    }
+
+    let title = result.title.to_ascii_lowercase();
+    let snippet = result.snippet.to_ascii_lowercase();
+    let url = result.url.to_ascii_lowercase();
+    let mut score = 0;
+
+    for term in &terms {
+        if title.contains(term) {
+            score += 12;
+        }
+        if snippet.contains(term) {
+            score += 5;
+        }
+        if url.contains(term) {
+            score += 2;
+        }
+    }
+
+    if phrase_contains(&title, &terms) {
+        score += 24;
+    }
+    if phrase_contains(&snippet, &terms) {
+        score += 10;
+    }
+
+    score += trusted_domain_bonus(&url);
+    score -= low_quality_url_penalty(&url);
+    score
+}
+
+fn query_terms(query: &str) -> Vec<String> {
+    query
+        .split(|ch: char| !ch.is_alphanumeric())
+        .map(str::trim)
+        .filter(|term| term.len() >= 2)
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+fn phrase_contains(text: &str, terms: &[String]) -> bool {
+    if terms.len() < 2 {
+        return false;
+    }
+    text.contains(&terms.join(" "))
+}
+
+fn trusted_domain_bonus(url: &str) -> i32 {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return 0;
+    };
+    let host = parsed.host_str().unwrap_or_default();
+    match host {
+        host if host.ends_with(".edu") => 8,
+        host if host.ends_with(".gov") => 8,
+        "docs.rs" | "crates.io" | "github.com" | "arxiv.org" | "developer.mozilla.org" => 6,
+        _ => 0,
+    }
+}
+
+fn low_quality_url_penalty(url: &str) -> i32 {
+    let lower = url.to_ascii_lowercase();
+    let mut penalty = 0;
+    let bad_path_markers = [
+        "/search",
+        "/tag/",
+        "/tags/",
+        "/login",
+        "/signin",
+        "/signup",
+        "/account",
+        "/category/",
+        "/author/",
+    ];
+    for marker in bad_path_markers {
+        if lower.contains(marker) {
+            penalty += 18;
+        }
+    }
+
+    let tracking_markers = ["utm_", "fbclid=", "gclid=", "mc_cid=", "ref="];
+    for marker in tracking_markers {
+        if lower.contains(marker) {
+            penalty += 6;
+        }
+    }
+
+    if lower.ends_with("/search") || lower.ends_with("/login") {
+        penalty += 10;
+    }
+    penalty
 }
 
 fn filter_results(query: &SearchQuery, results: Vec<SearchResult>) -> Vec<SearchResult> {
@@ -383,8 +497,65 @@ mod tests {
 
         let results = dispatcher.search(&query).await.unwrap();
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].source, "a");
-        assert_eq!(results[1].url, "https://rust-lang.org/learn");
+        assert!(results
+            .iter()
+            .any(|r| r.url.starts_with("https://example.com/page")));
+        assert!(results
+            .iter()
+            .any(|r| r.url == "https://rust-lang.org/learn"));
+    }
+
+    #[tokio::test]
+    async fn ranking_prefers_title_phrase_match_over_weak_snippet_match() {
+        let dispatcher = SearchDispatcher::new(vec![Box::new(StaticBackend {
+            name: "a",
+            results: vec![
+                SearchResult {
+                    title: "Generic article".to_string(),
+                    url: "https://example.com/article".to_string(),
+                    snippet: "tokio async runtime appears once".to_string(),
+                    source: "a".to_string(),
+                },
+                SearchResult {
+                    title: "Tokio Async Runtime Guide".to_string(),
+                    url: "https://docs.rs/tokio".to_string(),
+                    snippet: "reference docs".to_string(),
+                    source: "a".to_string(),
+                },
+            ],
+        })]);
+        let query = SearchQuery::new("tokio async runtime", 10);
+
+        let results = dispatcher.search(&query).await.unwrap();
+        assert_eq!(results[0].title, "Tokio Async Runtime Guide");
+    }
+
+    #[tokio::test]
+    async fn ranking_penalizes_search_login_and_tracking_urls() {
+        let dispatcher = SearchDispatcher::new(vec![Box::new(StaticBackend {
+            name: "a",
+            results: vec![
+                SearchResult {
+                    title: "Tokio Async Runtime".to_string(),
+                    url: "https://example.com/search?q=tokio&utm_source=x".to_string(),
+                    snippet: "tokio async runtime".to_string(),
+                    source: "a".to_string(),
+                },
+                SearchResult {
+                    title: "Tokio Async Runtime".to_string(),
+                    url: "https://example.com/guides/tokio-async-runtime".to_string(),
+                    snippet: "tokio async runtime".to_string(),
+                    source: "a".to_string(),
+                },
+            ],
+        })]);
+        let query = SearchQuery::new("tokio async runtime", 10);
+
+        let results = dispatcher.search(&query).await.unwrap();
+        assert_eq!(
+            results[0].url,
+            "https://example.com/guides/tokio-async-runtime"
+        );
     }
 
     #[tokio::test]

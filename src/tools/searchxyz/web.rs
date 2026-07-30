@@ -95,6 +95,7 @@ pub async fn build_searchxyz_doctor_report(include_paths: bool) -> Result<String
         config.search.backends.join(", ")
     ));
     report.push_str(&format!("- Max results: {}\n", config.search.max_results));
+    report.push_str("- Ranking: enabled (query coverage, title/snippet/url matches, domain bonuses, low-quality URL penalties)\n");
     for backend in known_backends {
         report.push_str(&format!(
             "- {}: {}\n",

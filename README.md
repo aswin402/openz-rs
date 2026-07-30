@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.91`
+# OpenZ 🦊 `v0.0.92`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,13 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.92`
+
+- **Native Search Ranking**: SearchXyz now reranks search results by query coverage, title/snippet/url matches, phrase matches, domain bonuses, and low-quality URL penalties.
+- **Cleaner Result Quality**: Search/tag/login/account/category URLs and tracking parameters are penalized before results are truncated.
+- **Merge Ranking Preserved**: Multi-backend merge still deduplicates normalized URLs, then ranks the merged set.
+- **Doctor Visibility**: `searchxyz_doctor` now reports ranking as enabled and lists the ranking factors.
 
 ## What Changed In `v0.0.91`
 
