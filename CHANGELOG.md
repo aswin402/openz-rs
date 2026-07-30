@@ -398,7 +398,15 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.88 (Latest Release)
+### v0.0.89 (Latest Release)
+
+**SearchXyz Native Doctor:**
+*   **Feature:** Added `searchxyz_doctor`, a native health report for SearchXyz configuration, backend order, SearXNG/Brave/headless status, safety settings, cache/index/graph state, and local storage paths.
+*   **Debugging:** Native-only search failures now have a direct diagnostic tool before users enable `native_then_external` fallback.
+*   **Tests:** Added focused metadata and native tool registration coverage for the new doctor tool.
+*   **Chore:** Bumped version to `v0.0.89`.
+
+### v0.0.88
 
 **Native Web Search Policy:**
 *   **Default:** `web_search` now defaults to `search_policy=native_only`, using the embedded SearchXyz dispatcher as the primary and only path unless fallback is explicitly enabled.

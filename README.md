@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.88`
+# OpenZ 🦊 `v0.0.89`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.89`
+
+- **SearchXyz Doctor**: Added `searchxyz_doctor` to report native search policy, configured backend order, SearXNG/Brave/headless status, safety settings, cache entries, indexed source count, graph size, and local paths.
+- **Native Search Debugging**: Native-only no-result failures now have a first-class diagnostic path before enabling external fallback.
+- **Registration Coverage**: Added focused metadata and native tool registration coverage for the new doctor tool.
 
 ## What Changed In `v0.0.88`
 

@@ -439,6 +439,9 @@ fn register_memory_extra_tools(registry: &ToolRegistry) {
 fn register_searchxyz_tools(registry: &ToolRegistry) {
     // ── searchxyz tools ───────────────────────────────────────────────────────
     registry.register(std::sync::Arc::new(
+        crate::tools::searchxyz::SearchXyzDoctorTool,
+    ));
+    registry.register(std::sync::Arc::new(
         crate::tools::searchxyz::SearchXyzSearchWebTool,
     ));
     registry.register(std::sync::Arc::new(
@@ -987,6 +990,7 @@ mod tests {
         assert!(names.contains(&"sequentialthinking".to_string()));
         assert!(names.contains(&"scope_context".to_string()));
         assert!(names.contains(&"create_entities".to_string()));
+        assert!(names.contains(&"searchxyz_doctor".to_string()));
         assert!(names.contains(&"searchxyz_search_web".to_string()));
         assert!(names.contains(&"openmedia_ping".to_string()));
         assert!(names.contains(&"opendoc_open_document".to_string()));
