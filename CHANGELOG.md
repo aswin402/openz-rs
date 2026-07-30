@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.93 (Latest Release)
+### v0.0.94 (Latest Release)
+
+**Research Topic Hygiene:**
+*   **URL Topics:** Direct URL research now preserves meaningful URL fragments, so `https://9router.com/#get-started` canonicalizes to `9router.com/get-started` instead of collapsing to only the host.
+*   **Search Topics:** Saved `web_search` topics now strip tool-call phrasing such as `call web_search with query ...` before archive/brief normalization.
+*   **Rust Crates:** Rust crate searches normalize to stable topics like `rust/tokio`, preventing noisy saved topics such as `call web search query rust tokio async runtime`.
+*   **Tests:** Added a focused unit regression for URL fragment preservation and web-search phrase cleanup.
+*   **Chore:** Bumped version to `v0.0.94`.
+
+### v0.0.93
 
 **Native Search Rescue:**
 *   **Recovery:** `web_search` now returns direct docs.rs and crates.io results for known Rust crate queries when native SearchXyz scraper backends return no usable results.

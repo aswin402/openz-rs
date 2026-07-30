@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.93`
+# OpenZ 🦊 `v0.0.94`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.94`
+
+- **Research Topic Hygiene**: Direct URL research now preserves meaningful URL fragments, so `https://9router.com/#get-started` saves under `9router.com/get-started` instead of collapsing to a vague host topic.
+- **Search Query Cleanup**: Saved web-search topics now strip tool-call phrasing like `call web_search with query ...` before archiving.
+- **Rust Crate Topics**: Rust crate searches such as `rust tokio async runtime` normalize to `rust/tokio`, keeping future recall cleaner.
 
 ## What Changed In `v0.0.93`
 

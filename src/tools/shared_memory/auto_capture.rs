@@ -67,10 +67,17 @@ pub fn canonical_research_topic(raw: &str) -> String {
                 .filter(|part| !part.is_empty())
                 .take(3)
                 .collect::<Vec<_>>();
+            let fragment_part = parsed
+                .fragment()
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .map(|part| part.trim_end_matches(".html"));
             text = if host == "github.com" || host == "raw.githubusercontent.com" {
                 path_parts.into_iter().take(2).collect::<Vec<_>>().join("/")
             } else if path_parts.is_empty() {
-                host.to_string()
+                fragment_part
+                    .map(|fragment| format!("{host}/{fragment}"))
+                    .unwrap_or_else(|| host.to_string())
             } else {
                 format!("{}/{}", host, path_parts.join("/"))
             };
@@ -100,6 +107,17 @@ pub fn canonical_research_topic(raw: &str) -> String {
             "tell me about ",
             "research about ",
             "research ",
+            "call web_search with query ",
+            "call web search with query ",
+            "call web_search query ",
+            "call web search query ",
+            "web_search with query ",
+            "web search with query ",
+            "web_search query ",
+            "web search query ",
+            "search query ",
+            "query ",
+            "search ",
             "compare ",
         ] {
             if let Some(rest) = text.strip_prefix(prefix) {
@@ -120,6 +138,27 @@ pub fn canonical_research_topic(raw: &str) -> String {
         .collect::<Vec<_>>();
     if words.is_empty() {
         raw.trim().chars().take(160).collect()
+    } else if words.iter().any(|word| *word == "rust") {
+        const KNOWN_RUST_CRATES: &[&str] = &[
+            "tokio",
+            "axum",
+            "hyper",
+            "tonic",
+            "serde",
+            "reqwest",
+            "clap",
+            "tracing",
+            "rusqlite",
+            "tantivy",
+            "crossterm",
+            "ratatui",
+            "bevy",
+        ];
+        KNOWN_RUST_CRATES
+            .iter()
+            .find(|crate_name| words.iter().any(|word| *word == **crate_name))
+            .map(|crate_name| format!("rust/{crate_name}"))
+            .unwrap_or_else(|| words.join(" ").chars().take(160).collect())
     } else {
         words.join(" ").chars().take(160).collect()
     }
@@ -772,6 +811,26 @@ pub async fn auto_capture_research_memory(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_research_topic_strips_tool_phrasing_and_preserves_url_fragments() {
+        assert_eq!(
+            canonical_research_topic("https://9router.com/#get-started"),
+            "9router.com/get-started"
+        );
+        assert_eq!(
+            canonical_research_topic("research this https://9router.com/#get-started"),
+            "9router.com/get-started"
+        );
+        assert_eq!(
+            canonical_research_topic("call web_search with query rust tokio async runtime"),
+            "rust/tokio"
+        );
+        assert_eq!(
+            canonical_research_topic("web search query rust tokio async runtime"),
+            "rust/tokio"
+        );
+    }
 
     #[test]
     fn github_labels_are_human_readable() {
