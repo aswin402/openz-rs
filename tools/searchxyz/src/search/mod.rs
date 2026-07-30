@@ -250,9 +250,10 @@ impl SearchDispatcher {
 }
 
 fn rank_results(query: &SearchQuery, mut results: Vec<SearchResult>) -> Vec<SearchResult> {
+    let model = RankingModel::from_results(query, &results);
     results.sort_by(|a, b| {
-        let score_b = score_result(query, b);
-        let score_a = score_result(query, a);
+        let score_b = score_result(&model, b);
+        let score_a = score_result(&model, a);
         score_b
             .cmp(&score_a)
             .then_with(|| {
@@ -265,9 +266,54 @@ fn rank_results(query: &SearchQuery, mut results: Vec<SearchResult>) -> Vec<Sear
     results
 }
 
-fn score_result(query: &SearchQuery, result: &SearchResult) -> i32 {
-    let terms = query_terms(&query.query);
-    if terms.is_empty() {
+#[derive(Debug, Clone)]
+struct RankingTerm {
+    text: String,
+    weight: i32,
+}
+
+#[derive(Debug, Clone)]
+struct RankingModel {
+    terms: Vec<RankingTerm>,
+    phrase: String,
+    distinctive_term: Option<String>,
+}
+
+impl RankingModel {
+    fn from_results(query: &SearchQuery, results: &[SearchResult]) -> Self {
+        let raw_terms = query_terms(&query.query);
+        let total = results.len().max(1) as i32;
+        let terms = raw_terms
+            .iter()
+            .map(|term| {
+                let df = results
+                    .iter()
+                    .filter(|result| result_contains_term(result, term))
+                    .count() as i32;
+                RankingTerm {
+                    text: term.clone(),
+                    weight: dynamic_term_weight(df, total),
+                }
+            })
+            .collect::<Vec<_>>();
+        let distinctive_term = terms
+            .iter()
+            .max_by(|a, b| {
+                a.weight
+                    .cmp(&b.weight)
+                    .then_with(|| a.text.len().cmp(&b.text.len()))
+            })
+            .map(|term| term.text.clone());
+        Self {
+            phrase: raw_terms.join(" "),
+            terms,
+            distinctive_term,
+        }
+    }
+}
+
+fn score_result(model: &RankingModel, result: &SearchResult) -> i32 {
+    if model.terms.is_empty() {
         return 0;
     }
 
@@ -275,45 +321,134 @@ fn score_result(query: &SearchQuery, result: &SearchResult) -> i32 {
     let snippet = result.snippet.to_ascii_lowercase();
     let url = result.url.to_ascii_lowercase();
     let mut score = 0;
+    let mut matched_terms = 0;
+    let mut matched_weight = 0;
 
-    for term in &terms {
-        if title.contains(term) {
-            score += 12;
+    for term in &model.terms {
+        let mut matched = false;
+        if title.contains(&term.text) {
+            score += 10 * term.weight;
+            matched = true;
         }
-        if snippet.contains(term) {
-            score += 5;
+        if snippet.contains(&term.text) {
+            score += 4 * term.weight;
+            matched = true;
         }
-        if url.contains(term) {
-            score += 2;
+        if url.contains(&term.text) {
+            score += 3 * term.weight;
+            matched = true;
+        }
+        if matched {
+            matched_terms += 1;
+            matched_weight += term.weight;
         }
     }
 
-    if phrase_contains(&title, &terms) {
-        score += 24;
+    if phrase_contains(&title, &model.phrase) {
+        score += 40;
     }
-    if phrase_contains(&snippet, &terms) {
-        score += 10;
+    if phrase_contains(&url, &model.phrase.replace(' ', "-")) {
+        score += 28;
+    }
+    if phrase_contains(&snippet, &model.phrase) {
+        score += 18;
     }
 
+    score += coverage_bonus(matched_terms, model.terms.len(), matched_weight);
+    score += distinctive_target_bonus(model, &title, &url);
     score += trusted_domain_bonus(&url);
+    score -= generic_low_coverage_penalty(model, result, matched_terms);
     score -= low_quality_url_penalty(&url);
     score
 }
 
+fn result_contains_term(result: &SearchResult, term: &str) -> bool {
+    result.title.to_ascii_lowercase().contains(term)
+        || result.snippet.to_ascii_lowercase().contains(term)
+        || result.url.to_ascii_lowercase().contains(term)
+}
+
+fn dynamic_term_weight(document_frequency: i32, total_results: i32) -> i32 {
+    if document_frequency <= 1 {
+        8
+    } else if document_frequency * 3 <= total_results {
+        6
+    } else if document_frequency * 3 <= total_results * 2 {
+        4
+    } else {
+        2
+    }
+}
+
+fn coverage_bonus(matched_terms: usize, total_terms: usize, matched_weight: i32) -> i32 {
+    if total_terms == 0 {
+        return 0;
+    }
+    let coverage = matched_terms as i32 * 100 / total_terms as i32;
+    match coverage {
+        100 => 36 + matched_weight,
+        67..=99 => 18 + matched_weight / 2,
+        34..=66 => 6,
+        _ => 0,
+    }
+}
+
+fn distinctive_target_bonus(model: &RankingModel, title: &str, url: &str) -> i32 {
+    let Some(term) = model.distinctive_term.as_deref() else {
+        return 0;
+    };
+    let mut score = 0;
+    if title.starts_with(term) {
+        score += 24;
+    }
+    if url_domain_or_path_contains(url, term) {
+        score += 22;
+    }
+    score
+}
+
+fn url_domain_or_path_contains(url: &str, term: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return url.contains(term);
+    };
+    parsed
+        .host_str()
+        .is_some_and(|host| host.to_ascii_lowercase().contains(term))
+        || parsed.path().to_ascii_lowercase().contains(term)
+}
+
+fn generic_low_coverage_penalty(
+    model: &RankingModel,
+    result: &SearchResult,
+    matched_terms: usize,
+) -> i32 {
+    if model.terms.len() < 3 || matched_terms > 1 {
+        return 0;
+    }
+    let Ok(parsed) = url::Url::parse(&result.url) else {
+        return 0;
+    };
+    let path = parsed.path().trim_matches('/');
+    if path.is_empty() || matches!(path, "learn" | "docs" | "blog" | "articles") {
+        28
+    } else {
+        0
+    }
+}
+
 fn query_terms(query: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
     query
         .split(|ch: char| !ch.is_alphanumeric())
         .map(str::trim)
         .filter(|term| term.len() >= 2)
         .map(str::to_ascii_lowercase)
+        .filter(|term| seen.insert(term.clone()))
         .collect()
 }
 
-fn phrase_contains(text: &str, terms: &[String]) -> bool {
-    if terms.len() < 2 {
-        return false;
-    }
-    text.contains(&terms.join(" "))
+fn phrase_contains(text: &str, phrase: &str) -> bool {
+    !phrase.trim().is_empty() && text.contains(phrase)
 }
 
 fn trusted_domain_bonus(url: &str) -> i32 {
@@ -528,6 +663,70 @@ mod tests {
 
         let results = dispatcher.search(&query).await.unwrap();
         assert_eq!(results[0].title, "Tokio Async Runtime Guide");
+    }
+
+    #[tokio::test]
+    async fn ranking_prefers_specific_topic_page_over_broad_language_pages() {
+        let dispatcher = SearchDispatcher::new(vec![Box::new(StaticBackend {
+            name: "a",
+            results: vec![
+                SearchResult {
+                    title: "Rust Programming Language".to_string(),
+                    url: "https://www.rust-lang.org/".to_string(),
+                    snippet: "Rust is a programming language empowering everyone to build reliable software.".to_string(),
+                    source: "a".to_string(),
+                },
+                SearchResult {
+                    title: "Tokio - Asynchronous runtime for Rust".to_string(),
+                    url: "https://tokio.rs/".to_string(),
+                    snippet: "Tokio is an event-driven async runtime for building reliable network applications with Rust.".to_string(),
+                    source: "a".to_string(),
+                },
+                SearchResult {
+                    title: "tokio - docs.rs".to_string(),
+                    url: "https://docs.rs/tokio".to_string(),
+                    snippet: "API documentation for the tokio crate.".to_string(),
+                    source: "a".to_string(),
+                },
+            ],
+        })]);
+        let query = SearchQuery::new("rust tokio async runtime", 10);
+
+        let results = dispatcher.search(&query).await.unwrap();
+        assert_ne!(results[0].url, "https://www.rust-lang.org/");
+        assert!(results[0].url.contains("tokio"));
+    }
+
+    #[tokio::test]
+    async fn ranking_prefers_specific_requested_page_for_non_rust_queries() {
+        let dispatcher = SearchDispatcher::new(vec![Box::new(StaticBackend {
+            name: "a",
+            results: vec![
+                SearchResult {
+                    title: "Sakana AI".to_string(),
+                    url: "https://sakana.ai/".to_string(),
+                    snippet: "Sakana AI builds nature-inspired artificial intelligence systems."
+                        .to_string(),
+                    source: "a".to_string(),
+                },
+                SearchResult {
+                    title: "Fugu Pricing - Sakana AI".to_string(),
+                    url: "https://sakana.ai/fugu/pricing".to_string(),
+                    snippet: "Pricing for Fugu subscriptions, plans, and usage tiers.".to_string(),
+                    source: "a".to_string(),
+                },
+                SearchResult {
+                    title: "Sakana AI Blog".to_string(),
+                    url: "https://sakana.ai/blog".to_string(),
+                    snippet: "Company updates and research articles.".to_string(),
+                    source: "a".to_string(),
+                },
+            ],
+        })]);
+        let query = SearchQuery::new("sakana fugu pricing", 10);
+
+        let results = dispatcher.search(&query).await.unwrap();
+        assert_eq!(results[0].url, "https://sakana.ai/fugu/pricing");
     }
 
     #[tokio::test]

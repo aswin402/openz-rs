@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.94`
+# OpenZ 🦊 `v0.0.95`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.95`
+
+- **Generic Search Ranking Hardening**: SearchXyz now weights query terms dynamically by result-set rarity, so specific entities/pages beat broad generic pages.
+- **Specific Page Preference**: Queries like `sakana fugu pricing` prefer the exact pricing/product page over a company homepage or blog.
+- **Broad Page Demotion**: Generic root/docs/blog pages are penalized when they only match one term from a multi-term query.
 
 ## What Changed In `v0.0.94`
 

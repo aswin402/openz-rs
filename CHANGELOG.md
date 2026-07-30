@@ -398,7 +398,17 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.94 (Latest Release)
+### v0.0.95 (Latest Release)
+
+**Generic Search Ranking Hardening:**
+*   **Dynamic Rarity:** SearchXyz ranking now weights query terms by how rare they are within the returned result set, so specific entities/pages beat broad generic matches.
+*   **Coverage:** Results matching more distinct query terms receive stronger coverage bonuses.
+*   **Specificity:** Entity/title starts and domain/path matches receive boosts, while generic root/docs/blog pages are demoted when they only match one term from a multi-term query.
+*   **Scope:** This is generic ranking behavior for all SearchXyz queries, not a Rust-only special case.
+*   **Tests:** Added focused regressions for `rust tokio async runtime` and non-Rust `sakana fugu pricing` ranking.
+*   **Chore:** Bumped version to `v0.0.95`.
+
+### v0.0.94
 
 **Research Topic Hygiene:**
 *   **URL Topics:** Direct URL research now preserves meaningful URL fragments, so `https://9router.com/#get-started` canonicalizes to `9router.com/get-started` instead of collapsing to only the host.
