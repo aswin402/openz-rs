@@ -74,6 +74,49 @@ fn normalized_terms(query: &str) -> Vec<String> {
         .collect()
 }
 
+fn native_search_results_need_merge_retry(query: &str, results: &[Value]) -> bool {
+    let terms = normalized_terms(query)
+        .into_iter()
+        .filter(|term| term.len() >= 3)
+        .collect::<Vec<_>>();
+    if terms.len() < 3 || results.len() < 3 {
+        return false;
+    }
+
+    let best_coverage = results
+        .iter()
+        .take(3)
+        .map(|result| result_term_coverage(result, &terms))
+        .max()
+        .unwrap_or(0);
+
+    best_coverage < 2
+}
+
+fn result_term_coverage(result: &Value, terms: &[String]) -> usize {
+    let haystack = ["title", "url", "snippet"]
+        .into_iter()
+        .filter_map(|key| result.get(key).and_then(|value| value.as_str()))
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    terms.iter().filter(|term| haystack.contains(*term)).count()
+}
+
+fn searchxyz_results_to_json(results: Vec<searchxyz::search::SearchResult>) -> Vec<Value> {
+    results
+        .into_iter()
+        .map(|r| {
+            json!({
+                "title": r.title,
+                "url": r.url,
+                "snippet": r.snippet,
+                "source": "searchxyz"
+            })
+        })
+        .collect()
+}
+
 fn detect_rust_crate(terms: &[String]) -> Option<String> {
     const KNOWN_CRATES: &[&str] = &[
         "tokio",
@@ -224,16 +267,28 @@ impl WebSearchTool {
                 .await
             {
                 Ok(results) => {
-                    let mut search_results = Vec::new();
-                    for r in results {
-                        search_results.push(json!({
-                            "title": r.title,
-                            "url": r.url,
-                            "snippet": r.snippet,
-                            "source": "searchxyz"
-                        }));
-                    }
+                    let search_results = searchxyz_results_to_json(results);
                     if !search_results.is_empty() {
+                        if native_search_results_need_merge_retry(query, &search_results) {
+                            let mut merged_query = searchxyz::search::SearchQuery::new(query, 10);
+                            merged_query.merge_backends = true;
+                            match crate::tools::searchxyz::get_server()
+                                .dispatcher
+                                .search(&merged_query)
+                                .await
+                            {
+                                Ok(merged_results) => {
+                                    let merged_results = searchxyz_results_to_json(merged_results);
+                                    if !merged_results.is_empty() {
+                                        tracing::info!(query = %query, "SearchXyz first native results looked weak; returned merged backend results");
+                                        return Ok(Value::Array(merged_results));
+                                    }
+                                }
+                                Err(err) => {
+                                    tracing::warn!(query = %query, error = ?err, "SearchXyz merge retry failed after weak native results");
+                                }
+                            }
+                        }
                         return Ok(Value::Array(search_results));
                     }
                 }
@@ -606,6 +661,34 @@ mod tests {
         assert!(message.contains("diagnose_on_failure=true"));
         assert!(message.contains("search_policy=native_then_external"));
         assert!(message.contains("all backends exhausted"));
+    }
+
+    #[test]
+    fn weak_native_results_trigger_merge_retry_for_multi_term_queries() {
+        let results = vec![
+            json!({"title":"Google Gemini","url":"https://gemini.google.com/app","snippet":"Google AI chat app"}),
+            json!({"title":"Gemini Help","url":"https://support.google.com/gemini","snippet":"Help center"}),
+            json!({"title":"Google AI Studio","url":"https://aistudio.google.com","snippet":"Build with Gemini"}),
+        ];
+
+        assert!(native_search_results_need_merge_retry(
+            "sakana fugu pricing",
+            &results
+        ));
+    }
+
+    #[test]
+    fn relevant_native_results_skip_merge_retry() {
+        let results = vec![
+            json!({"title":"Fugu Pricing - Sakana AI","url":"https://sakana.ai/fugu/pricing","snippet":"Pricing for Fugu subscriptions and usage tiers"}),
+            json!({"title":"Fugu Docs","url":"https://sakana.ai/fugu/docs","snippet":"Sakana Fugu API docs"}),
+            json!({"title":"Sakana AI","url":"https://sakana.ai","snippet":"Fugu is a multi-agent model"}),
+        ];
+
+        assert!(!native_search_results_need_merge_retry(
+            "sakana fugu pricing",
+            &results
+        ));
     }
 
     #[test]

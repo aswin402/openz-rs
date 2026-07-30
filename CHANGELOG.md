@@ -398,7 +398,17 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.95 (Latest Release)
+### v0.0.96 (Latest Release)
+
+**Automatic Native Merge Retry:**
+*   **Quality Gate:** `web_search` now checks top native SearchXyz result coverage for multi-term queries before returning first-backend results.
+*   **Retry:** Weak/off-topic result sets automatically retry native SearchXyz with `merge_backends=true`, improving searches where one scraper returns unrelated pages.
+*   **Efficiency:** Relevant native results still return immediately, avoiding extra backend calls when first-pass quality is good.
+*   **Scope:** The retry rule is generic and query-driven, not hardcoded to Sakana, Rust, or any specific website.
+*   **Tests:** Added focused regressions for weak-result retry and relevant-result no-retry behavior.
+*   **Chore:** Bumped version to `v0.0.96`.
+
+### v0.0.95
 
 **Generic Search Ranking Hardening:**
 *   **Dynamic Rarity:** SearchXyz ranking now weights query terms by how rare they are within the returned result set, so specific entities/pages beat broad generic matches.
