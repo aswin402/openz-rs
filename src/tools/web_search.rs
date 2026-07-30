@@ -41,6 +41,21 @@ impl WebSearchPolicy {
     }
 }
 
+fn format_native_only_failure(native_error: Option<&str>) -> String {
+    let detail = native_error
+        .map(|e| format!("Native SearchXyz error: {e}"))
+        .unwrap_or_else(|| "Native SearchXyz returned no usable results.".to_string());
+    format!(
+        "Native web_search policy is active (`search_policy=native_only`); external search backends are disabled. {detail}
+
+Next steps:
+- Run `searchxyz_doctor` to inspect native backend health.
+- Configure `SEARCHXYZ_SEARXNG_URL` for stronger private/native discovery.
+- Enable `diagnose_on_failure=true` to append doctor output to this error.
+- For one-off fallback, call `web_search` with `search_policy=native_then_external`."
+    )
+}
+
 pub struct WebSearchTool {
     client: Client,
 }
@@ -84,6 +99,10 @@ impl Tool for WebSearchTool {
                     "type": "string",
                     "enum": ["native_only", "native_then_external", "external_only"],
                     "description": "Search backend policy. Default native_only uses SearchXyz only; native_then_external allows API/scraper fallback; external_only skips SearchXyz. Can also be set with OPENZ_WEB_SEARCH_POLICY."
+                },
+                "diagnose_on_failure": {
+                    "type": "boolean",
+                    "description": "When native-only SearchXyz fails, append searchxyz_doctor output to the error for actionable debugging."
                 }
             },
             "required": ["query"]
@@ -134,6 +153,10 @@ impl WebSearchTool {
 
         let policy =
             WebSearchPolicy::parse(arguments.get("search_policy").and_then(|v| v.as_str()));
+        let diagnose_on_failure = arguments
+            .get("diagnose_on_failure")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let mut native_error = None;
 
         // 0. Try SearchXyz Dispatcher (OpenZ-native search path).
@@ -166,13 +189,28 @@ impl WebSearchTool {
         }
 
         if !policy.allows_external() {
-            let detail = native_error
-                .map(|e| format!(" Native SearchXyz error: {e}"))
-                .unwrap_or_else(|| " Native SearchXyz returned no results.".to_string());
-            return Err(anyhow!(
-                "Native web_search policy is active (search_policy=native_only); external search backends are disabled.{}",
-                detail
-            ));
+            let mut message = format_native_only_failure(native_error.as_deref());
+            if diagnose_on_failure {
+                match crate::tools::searchxyz::web::build_searchxyz_doctor_report(false).await {
+                    Ok(report) => {
+                        message.push_str(
+                            "
+
+---
+",
+                        );
+                        message.push_str(&report);
+                    }
+                    Err(err) => {
+                        message.push_str(&format!(
+                            "
+
+SearchXyz doctor failed while building diagnostics: {err}"
+                        ));
+                    }
+                }
+            }
+            return Err(anyhow!(message));
         }
 
         // 1. Try Websurfx Local/Private Search Engine API (if WEBSURFX_URL is set)
@@ -489,5 +527,21 @@ mod tests {
             WebSearchPolicy::parse(Some("external_only")),
             WebSearchPolicy::ExternalOnly
         );
+    }
+
+    #[test]
+    fn web_search_schema_exposes_diagnose_on_failure() {
+        let schema = WebSearchTool::new().parameters();
+        assert!(schema["properties"].get("diagnose_on_failure").is_some());
+    }
+
+    #[test]
+    fn native_only_failure_mentions_doctor_and_external_policy() {
+        let message = format_native_only_failure(Some("all backends exhausted"));
+        assert!(message.contains("searchxyz_doctor"));
+        assert!(message.contains("SEARCHXYZ_SEARXNG_URL"));
+        assert!(message.contains("diagnose_on_failure=true"));
+        assert!(message.contains("search_policy=native_then_external"));
+        assert!(message.contains("all backends exhausted"));
     }
 }

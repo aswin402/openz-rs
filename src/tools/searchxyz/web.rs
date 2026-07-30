@@ -7,6 +7,112 @@ use searchxyz::tools::{
 };
 use serde_json::{json, Value};
 
+pub async fn build_searchxyz_doctor_report(include_paths: bool) -> Result<String> {
+    let server = get_server();
+    let config = server.config.as_ref();
+    let cache_len = server.cache.lock().await.len();
+    let (_, source_count) = server.index.list_documents(None, 1, 0)?;
+    let graph = server.graph.lock().await;
+    let graph_nodes = graph.nodes.len();
+    let graph_edges = graph.edges.len();
+    drop(graph);
+
+    let native_policy = std::env::var("OPENZ_WEB_SEARCH_POLICY")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "native_only".to_string());
+
+    let searxng_status = if config.searxng.instance_url.trim().is_empty() {
+        "not_configured".to_string()
+    } else {
+        format!("configured ({})", config.searxng.instance_url)
+    };
+    let brave_status = if config
+        .brave
+        .api_key
+        .as_ref()
+        .is_some_and(|k| !k.trim().is_empty())
+    {
+        "configured".to_string()
+    } else {
+        "missing_api_key".to_string()
+    };
+    let headless_status = if config.headless.enabled {
+        match &config.headless.chrome_path {
+            Some(path) => format!("enabled ({path})"),
+            None => "enabled (auto chrome path)".to_string(),
+        }
+    } else {
+        "disabled".to_string()
+    };
+
+    let mut report = String::new();
+    report.push_str("# SearchXyz Doctor\n\n");
+    report.push_str("## Policy\n");
+    report.push_str(&format!("- OpenZ web_search policy: `{}`\n", native_policy));
+    report.push_str("- Default behavior: native SearchXyz only unless `search_policy=native_then_external` or `OPENZ_WEB_SEARCH_POLICY=native_then_external` is set.\n\n");
+
+    report.push_str("## Search Backends\n");
+    report.push_str(&format!(
+        "- Configured order: `{}`\n",
+        config.search.backends.join(", ")
+    ));
+    report.push_str(&format!("- Max results: {}\n", config.search.max_results));
+    report.push_str(&format!("- SearXNG: {}\n", searxng_status));
+    report.push_str(&format!("- Brave: {}\n", brave_status));
+    report.push_str("- DuckDuckGo/Google/Bing: keyless scraper/native backends; availability depends on upstream blocking and network health.\n\n");
+
+    report.push_str("## Fetch & Safety\n");
+    report.push_str(&format!("- Headless rendering: {}\n", headless_status));
+    report.push_str(&format!(
+        "- Private network fetches allowed: {}\n",
+        config.crawler.allow_private_network
+    ));
+    report.push_str(&format!(
+        "- Request timeout: {}s\n",
+        config.crawler.timeout_secs
+    ));
+    report.push_str(&format!(
+        "- Max redirects: {}\n",
+        config.crawler.max_redirects
+    ));
+    report.push_str(&format!(
+        "- Max body bytes: {}\n\n",
+        config.crawler.max_body_bytes
+    ));
+
+    report.push_str("## Local State\n");
+    report.push_str(&format!("- Cache entries loaded: {}\n", cache_len));
+    report.push_str(&format!("- Indexed sources: {}\n", source_count));
+    report.push_str(&format!("- Graph nodes: {}\n", graph_nodes));
+    report.push_str(&format!("- Graph edges: {}\n", graph_edges));
+    if include_paths {
+        report.push_str(&format!(
+            "- Index path: `{}`\n",
+            config.index.path.display()
+        ));
+        report.push_str(&format!(
+            "- Cache path: `{}`\n",
+            config.cache.path.display()
+        ));
+        report.push_str(&format!(
+            "- Graph path: `{}`\n",
+            config.index.path.join("graph.json").display()
+        ));
+    }
+
+    report.push_str("\n## Hints\n");
+    if config.searxng.instance_url.trim().is_empty() {
+        report.push_str("- Configure `SEARCHXYZ_SEARXNG_URL` for the strongest private/native discovery path.\n");
+    }
+    if !config.headless.enabled {
+        report.push_str("- Enable SearchXyz headless mode when scraper backends are blocked by JS or anti-bot pages.\n");
+    }
+    report.push_str("- For one-off fallback to external engines, call `web_search` with `search_policy=native_then_external`.\n");
+
+    Ok(report)
+}
+
 // ── 0. Doctor ────────────────────────────────────────────────
 pub struct SearchXyzDoctorTool;
 
@@ -37,109 +143,7 @@ impl Tool for SearchXyzDoctorTool {
             .get("include_paths")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
-        let server = get_server();
-        let config = server.config.as_ref();
-        let cache_len = server.cache.lock().await.len();
-        let (_, source_count) = server.index.list_documents(None, 1, 0)?;
-        let graph = server.graph.lock().await;
-        let graph_nodes = graph.nodes.len();
-        let graph_edges = graph.edges.len();
-        drop(graph);
-
-        let native_policy = std::env::var("OPENZ_WEB_SEARCH_POLICY")
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| "native_only".to_string());
-
-        let searxng_status = if config.searxng.instance_url.trim().is_empty() {
-            "not_configured".to_string()
-        } else {
-            format!("configured ({})", config.searxng.instance_url)
-        };
-        let brave_status = if config
-            .brave
-            .api_key
-            .as_ref()
-            .is_some_and(|k| !k.trim().is_empty())
-        {
-            "configured".to_string()
-        } else {
-            "missing_api_key".to_string()
-        };
-        let headless_status = if config.headless.enabled {
-            match &config.headless.chrome_path {
-                Some(path) => format!("enabled ({path})"),
-                None => "enabled (auto chrome path)".to_string(),
-            }
-        } else {
-            "disabled".to_string()
-        };
-
-        let mut report = String::new();
-        report.push_str("# SearchXyz Doctor\n\n");
-        report.push_str("## Policy\n");
-        report.push_str(&format!("- OpenZ web_search policy: `{}`\n", native_policy));
-        report.push_str("- Default behavior: native SearchXyz only unless `search_policy=native_then_external` or `OPENZ_WEB_SEARCH_POLICY=native_then_external` is set.\n\n");
-
-        report.push_str("## Search Backends\n");
-        report.push_str(&format!(
-            "- Configured order: `{}`\n",
-            config.search.backends.join(", ")
-        ));
-        report.push_str(&format!("- Max results: {}\n", config.search.max_results));
-        report.push_str(&format!("- SearXNG: {}\n", searxng_status));
-        report.push_str(&format!("- Brave: {}\n", brave_status));
-        report.push_str("- DuckDuckGo/Google/Bing: keyless scraper/native backends; availability depends on upstream blocking and network health.\n\n");
-
-        report.push_str("## Fetch & Safety\n");
-        report.push_str(&format!("- Headless rendering: {}\n", headless_status));
-        report.push_str(&format!(
-            "- Private network fetches allowed: {}\n",
-            config.crawler.allow_private_network
-        ));
-        report.push_str(&format!(
-            "- Request timeout: {}s\n",
-            config.crawler.timeout_secs
-        ));
-        report.push_str(&format!(
-            "- Max redirects: {}\n",
-            config.crawler.max_redirects
-        ));
-        report.push_str(&format!(
-            "- Max body bytes: {}\n\n",
-            config.crawler.max_body_bytes
-        ));
-
-        report.push_str("## Local State\n");
-        report.push_str(&format!("- Cache entries loaded: {}\n", cache_len));
-        report.push_str(&format!("- Indexed sources: {}\n", source_count));
-        report.push_str(&format!("- Graph nodes: {}\n", graph_nodes));
-        report.push_str(&format!("- Graph edges: {}\n", graph_edges));
-        if include_paths {
-            report.push_str(&format!(
-                "- Index path: `{}`\n",
-                config.index.path.display()
-            ));
-            report.push_str(&format!(
-                "- Cache path: `{}`\n",
-                config.cache.path.display()
-            ));
-            report.push_str(&format!(
-                "- Graph path: `{}`\n",
-                config.index.path.join("graph.json").display()
-            ));
-        }
-
-        report.push_str("\n## Hints\n");
-        if config.searxng.instance_url.trim().is_empty() {
-            report.push_str("- Configure `SEARCHXYZ_SEARXNG_URL` for the strongest private/native discovery path.\n");
-        }
-        if !config.headless.enabled {
-            report.push_str("- Enable SearchXyz headless mode when scraper backends are blocked by JS or anti-bot pages.\n");
-        }
-        report.push_str("- For one-off fallback to external engines, call `web_search` with `search_policy=native_then_external`.\n");
-
-        Ok(json!(report))
+        Ok(json!(build_searchxyz_doctor_report(include_paths).await?))
     }
 }
 

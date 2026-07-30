@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.89`
+# OpenZ 🦊 `v0.0.90`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,12 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.90`
+
+- **Actionable Native Search Failures**: `web_search` native-only failures now tell users to run `searchxyz_doctor`, configure `SEARCHXYZ_SEARXNG_URL`, or explicitly use `search_policy=native_then_external` for fallback.
+- **Inline Failure Diagnostics**: Added `diagnose_on_failure=true` to append the SearchXyz doctor report when native-only search fails.
+- **Shared Doctor Report Builder**: Reused the same health report logic for `searchxyz_doctor` and web search failure diagnostics.
 
 ## What Changed In `v0.0.89`
 

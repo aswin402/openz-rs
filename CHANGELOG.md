@@ -398,7 +398,16 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.89 (Latest Release)
+### v0.0.90 (Latest Release)
+
+**Actionable Native Search Failures:**
+*   **Improvement:** `web_search` native-only failures now include concrete next steps: run `searchxyz_doctor`, configure `SEARCHXYZ_SEARXNG_URL`, enable `diagnose_on_failure=true`, or explicitly use `search_policy=native_then_external` for one-off fallback.
+*   **Feature:** Added `diagnose_on_failure` to `web_search`, appending the SearchXyz doctor report when native-only search fails.
+*   **Refactor:** Extracted a shared SearchXyz doctor report builder so `searchxyz_doctor` and web search failure diagnostics stay consistent.
+*   **Tests:** Added focused regressions for schema exposure and actionable native-only failure text.
+*   **Chore:** Bumped version to `v0.0.90`.
+
+### v0.0.89
 
 **SearchXyz Native Doctor:**
 *   **Feature:** Added `searchxyz_doctor`, a native health report for SearchXyz configuration, backend order, SearXNG/Brave/headless status, safety settings, cache/index/graph state, and local storage paths.
