@@ -34,7 +34,7 @@ pub fn normalize_tool_args(args: &serde_json::Value) -> serde_json::Value {
         serde_json::Value::Object(map) => {
             let mut new_map = serde_json::Map::new();
             for (k, v) in map {
-                let normalized_k = match k.as_str() {
+                let alias = match k.as_str() {
                     "TargetFile" | "filepath" | "file" | "Path" | "AbsolutePath"
                     | "DirectoryPath" => "path".to_string(),
                     "CommandLine" | "Command" | "command_line" => "command".to_string(),
@@ -46,7 +46,13 @@ pub fn normalize_tool_args(args: &serde_json::Value) -> serde_json::Value {
                     "ImageName" | "OutputPath" => "output_path".to_string(),
                     other => to_snake_case(other),
                 };
-                new_map.insert(normalized_k, normalize_tool_args(v));
+                // Preserve schema-native keys while adding compatibility aliases.
+                // Native tools use both camelCase and snake_case contracts.
+                let normalized_value = normalize_tool_args(v);
+                new_map.insert(k.clone(), normalized_value.clone());
+                if alias != *k && !new_map.contains_key(&alias) {
+                    new_map.insert(alias, normalized_value);
+                }
             }
             serde_json::Value::Object(new_map)
         }
@@ -1421,6 +1427,36 @@ mod route_cache_tests {
         async fn call(&self, _arguments: &serde_json::Value) -> Result<serde_json::Value> {
             Ok(serde_json::json!({ "ok": true }))
         }
+    }
+
+    #[test]
+    fn normalize_tool_args_preserves_native_keys_and_adds_aliases() {
+        let normalized = normalize_tool_args(&serde_json::json!({
+            "text": "payload",
+            "sessionId": "session-1",
+            "entities": [{"entityType": "person"}],
+            "TargetFile": "src/main.rs"
+        }));
+
+        assert_eq!(normalized["text"], "payload");
+        assert_eq!(normalized["content"], "payload");
+        assert_eq!(normalized["sessionId"], "session-1");
+        assert_eq!(normalized["session_id"], "session-1");
+        assert_eq!(normalized["entities"][0]["entityType"], "person");
+        assert_eq!(normalized["entities"][0]["entity_type"], "person");
+        assert_eq!(normalized["TargetFile"], "src/main.rs");
+        assert_eq!(normalized["path"], "src/main.rs");
+    }
+
+    #[test]
+    fn normalize_tool_args_does_not_overwrite_explicit_aliases() {
+        let normalized = normalize_tool_args(&serde_json::json!({
+            "text": "native",
+            "content": "explicit"
+        }));
+
+        assert_eq!(normalized["text"], "native");
+        assert_eq!(normalized["content"], "explicit");
     }
 
     #[test]

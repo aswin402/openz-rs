@@ -997,6 +997,21 @@ mod tests {
         assert!(names.contains(&"searchxyz_search_web".to_string()));
         assert!(names.contains(&"openmedia_ping".to_string()));
         assert!(names.contains(&"opendoc_open_document".to_string()));
+
+        let find_path = registry
+            .catalog_entries(true)
+            .into_iter()
+            .find(|entry| entry["name"].as_str() == Some("find_path"))
+            .expect("find_path must be registered");
+        let find_path_schema = &find_path["parameters"];
+        assert!(find_path_schema["properties"].get("startEntity").is_some());
+        assert!(find_path_schema["properties"].get("targetEntity").is_some());
+        let required = find_path_schema["required"]
+            .as_array()
+            .expect("find_path required fields");
+        assert!(required.iter().any(|field| field == "startEntity"));
+        assert!(required.iter().any(|field| field == "targetEntity"));
+
         assert!(
             registry.tool_count() > 128,
             "full registry should exceed one OpenAI tool payload"

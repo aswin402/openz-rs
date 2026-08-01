@@ -700,19 +700,31 @@ impl Tool for OptimizeToolScopeTool {
 fn redact_secrets(val: &mut Value) {
     match val {
         Value::Object(map) => {
-            for (k, v) in map.iter_mut() {
-                let lower = k.to_lowercase();
-                if lower.contains("api_key")
-                    || lower.contains("bot_token")
-                    || lower.contains("verify_token")
-                    || lower.contains("password")
-                    || lower.contains("secret")
-                {
-                    if v.is_string() {
-                        *v = Value::String("********".to_string());
-                    }
+            for (key, value) in map.iter_mut() {
+                let normalized_key: String = key
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric())
+                    .flat_map(|c| c.to_lowercase())
+                    .collect();
+                let is_secret = matches!(
+                    normalized_key.as_str(),
+                    "apikey"
+                        | "apitoken"
+                        | "accesstoken"
+                        | "authtoken"
+                        | "bottoken"
+                        | "clientsecret"
+                        | "password"
+                        | "secret"
+                        | "verifytoken"
+                        | "webhooksecret"
+                        | "privatekey"
+                        | "token"
+                );
+                if is_secret && !value.is_null() {
+                    *value = Value::String("********".to_string());
                 } else {
-                    redact_secrets(v);
+                    redact_secrets(value);
                 }
             }
         }
@@ -1980,6 +1992,27 @@ mod tests {
             })))
             .unwrap();
         assert!(del_res["success"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn redact_secrets_handles_camel_case_and_nested_values() {
+        let mut value = serde_json::json!({
+            "api_key": "snake-secret",
+            "apiKey": "camel-secret",
+            "nested": [{
+                "botToken": "bot-secret",
+                "phone_number_id": "not-a-secret"
+            }],
+            "model": "openai/gpt-4o"
+        });
+
+        redact_secrets(&mut value);
+
+        assert_eq!(value["api_key"], "********");
+        assert_eq!(value["apiKey"], "********");
+        assert_eq!(value["nested"][0]["botToken"], "********");
+        assert_eq!(value["nested"][0]["phone_number_id"], "not-a-secret");
+        assert_eq!(value["model"], "openai/gpt-4o");
     }
 
     #[test]

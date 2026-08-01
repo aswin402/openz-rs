@@ -1,3 +1,10 @@
+### v0.0.108 (Latest Release)
+**Shared Tool Argument Compatibility and Secret Redaction:**
+- Fixed the shared argument normalizer so schema-native camelCase fields are preserved instead of being destructively rewritten.
+- Legacy snake_case aliases are still added recursively, including nested entity and relation payloads.
+- Added regression coverage for canonical fields, aliases, nested arguments, and explicit alias precedence.
+- Fixed configuration redaction for `apiKey` and other camelCase secret fields, with recursive coverage for token and credential variants.
+
 ### v0.0.107 (Latest Release)
 **Remote Inbox Regression Coverage:**
 - Added isolated FIFO queue integration coverage.
