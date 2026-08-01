@@ -333,6 +333,42 @@ fn telegram_command_action(text: &str) -> TelegramCommandAction {
     }
 }
 
+const TELEGRAM_COMMANDS: &[(&str, &str)] = &[
+    ("remote", "Toggle TUI remote control mode"),
+    ("local", "Switch to local bot chat mode"),
+    ("new_session", "Start a new local session"),
+    ("resume", "Resume a previous local session"),
+    ("model", "Show the active default model"),
+    ("switch_model", "Switch the default provider/model"),
+    ("mcps", "List configured MCP servers"),
+    ("memory", "View metadata memory for the session"),
+    ("skill", "List active skills"),
+    ("sources", "Search saved source bookmarks"),
+    ("workflows", "Search reusable workflows"),
+    ("help", "List available commands"),
+    ("exit", "Exit remote control mode"),
+];
+
+fn telegram_commands_payload() -> serde_json::Value {
+    serde_json::json!({
+        "commands": TELEGRAM_COMMANDS
+            .iter()
+            .map(|(command, description)| serde_json::json!({
+                "command": command,
+                "description": description
+            }))
+            .collect::<Vec<_>>()
+    })
+}
+
+fn valid_telegram_command_name(command: &str) -> bool {
+    !command.is_empty()
+        && command.len() <= 32
+        && command
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
 impl TelegramChannel {
     pub fn new(bot_token: String, agent_loop: AgentLoop) -> Self {
         TelegramChannel {
@@ -396,23 +432,7 @@ impl super::Channel for TelegramChannel {
             "https://api.telegram.org/bot{}/setMyCommands",
             self.bot_token
         );
-        let commands_payload = serde_json::json!({
-            "commands": [
-                { "command": "remote", "description": "Toggle TUI remote control mode" },
-                { "command": "local", "description": "Switch to local bot chat mode" },
-                { "command": "new-session", "description": "Start a new local session" },
-                { "command": "resume", "description": "Resume a previous local session" },
-                { "command": "model", "description": "Show the active default model" },
-                { "command": "switch-model", "description": "Switch the default provider/model" },
-                { "command": "mcps", "description": "List configured MCP servers" },
-                { "command": "memory", "description": "View metadata memory for the session" },
-                { "command": "skill", "description": "List active skills" },
-                { "command": "sources", "description": "Search saved source bookmarks" },
-                { "command": "workflows", "description": "Search reusable workflows" },
-                { "command": "help", "description": "List available commands" },
-                { "command": "exit", "description": "Exit remote control mode" }
-            ]
-        });
+        let commands_payload = telegram_commands_payload();
         let client_clone = self.client.clone();
         let silent_clone = silent;
         let token_clone = self.bot_token.clone();
@@ -510,7 +530,10 @@ impl super::Channel for TelegramChannel {
                                 let trimmed = text.trim();
 
                                 if trimmed.starts_with('/') {
-                                    let cmd = trimmed.split_whitespace().next().unwrap_or("");
+                                    let raw_cmd = trimmed.split_whitespace().next().unwrap_or("");
+                                    // Telegram only permits underscores in registered command names;
+                                    // accept the legacy hyphen spelling in incoming messages too.
+                                    let cmd = raw_cmd.replace('_', "-");
                                     let command_action = telegram_command_action(trimmed);
                                     if command_action != TelegramCommandAction::None
                                         || cmd == "/new-session"
@@ -1795,6 +1818,18 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn registered_telegram_commands_use_telegram_safe_names() {
+        assert!(TELEGRAM_COMMANDS
+            .iter()
+            .all(|(command, _)| valid_telegram_command_name(command)));
+        let payload = telegram_commands_payload();
+        assert_eq!(
+            payload["commands"].as_array().unwrap().len(),
+            TELEGRAM_COMMANDS.len()
+        );
     }
 
     #[test]

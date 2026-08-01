@@ -1,3 +1,9 @@
+### v0.0.109 (Latest Release)
+**Telegram Command Registration Reliability:**
+- Fixed invalid Telegram slash-command names that used hyphens instead of Telegram-supported underscores.
+- Kept legacy hyphenated command input working by normalizing incoming command aliases.
+- Added a focused regression test that validates every registered command name before startup.
+
 ### v0.0.108 (Latest Release)
 **Shared Tool Argument Compatibility and Secret Redaction:**
 - Fixed the shared argument normalizer so schema-native camelCase fields are preserved instead of being destructively rewritten.
