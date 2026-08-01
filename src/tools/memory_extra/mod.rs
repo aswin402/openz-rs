@@ -565,12 +565,12 @@ mod tests {
             conn.execute(
                 "INSERT OR IGNORE INTO graph_nodes (name, entity_type, observations, user_id, session_id, agent_id)
                  VALUES (?1, 'Test', ?2, '*', ?3, '*')",
-                params![format!("node-{}", marker), serde_json::json!([format!("observation {}", marker)]).to_string(), scope],
+                params![format!("node-{}", scope), serde_json::json!([format!("observation {}", marker)]).to_string(), scope],
             )?;
             conn.execute(
                 "INSERT INTO graph_edges (from_name, to_name, relation_type, user_id, session_id, agent_id)
                  VALUES (?1, 'OtherNode', 'mentions', '*', ?2, '*')",
-                params![format!("node-{}", marker), scope],
+                params![format!("node-{}", scope), scope],
             )?;
             conn.execute(
                 "INSERT OR REPLACE INTO shared_agent_memory (memory_key, memory_value, source_agent, target_agents, importance, timestamp, user_id, session_id, agent_id)
@@ -582,10 +582,17 @@ mod tests {
         .unwrap();
 
         crate::tools::shared_memory::with_db(|conn| {
+            let current_workspace =
+                crate::tools::shared_memory::get_current_workspace();
             conn.execute(
                 "INSERT INTO cognitive_memory (id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate)
-                 VALUES (?1, ?2, '[]', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'test', '[]', 0.8, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 1, 0.05)",
-                params![format!("{}-cognitive", scope), format!("cognitive memory {}", marker)],
+                 VALUES (?1, ?2, '[]', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?3, '[]', 0.8, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 1, 0.05)",
+                params![format!("{}-cognitive", scope), format!("cognitive memory {}", marker), current_workspace],
+            )?;
+            conn.execute(
+                "INSERT INTO cognitive_memory (id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate)
+                 VALUES (?1, ?2, '[]', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'foreign-workspace', '[]', 0.8, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 1, 0.05)",
+                params![format!("{}-foreign-cognitive", scope), format!("foreign workspace cognitive memory {}", marker)],
             )?;
             conn.execute(
                 "INSERT INTO research_archive (id, query, content, source, timestamp, embedding)
@@ -635,9 +642,20 @@ mod tests {
         .unwrap();
         assert_eq!(graph_left, 0);
 
-        let shared_left = crate::tools::shared_memory::with_db(|conn| {
+        let active_edges_left = with_db(|conn| {
             conn.query_row(
-                "SELECT COUNT(*) FROM cognitive_memory WHERE text LIKE ?1",
+                "SELECT COUNT(*) FROM graph_edges WHERE from_name = ?1 AND valid_until IS NULL",
+                params![format!("node-{}", scope)],
+                |r| r.get::<_, i64>(0),
+            )
+            .map_err(anyhow::Error::from)
+        })
+        .unwrap();
+        assert_eq!(active_edges_left, 0);
+
+        let shared_left = with_db(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM shared_agent_memory WHERE memory_key LIKE ?1 OR memory_value LIKE ?1",
                 params![format!("%{}%", marker)],
                 |r| r.get::<_, i64>(0),
             )
@@ -645,6 +663,17 @@ mod tests {
         })
         .unwrap();
         assert_eq!(shared_left, 0);
+
+        let foreign_cognitive_left = crate::tools::shared_memory::with_db(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM cognitive_memory WHERE text LIKE ?1",
+                params![format!("%foreign workspace cognitive memory {}%", marker)],
+                |r| r.get::<_, i64>(0),
+            )
+            .map_err(anyhow::Error::from)
+        })
+        .unwrap();
+        assert_eq!(foreign_cognitive_left, 1);
     }
 
     #[tokio::test]
@@ -1208,6 +1237,26 @@ fn helper() {}
             .unwrap();
 
         let stats_tool = MemoryStatsTool;
+        let before = stats_tool
+            .call(&json!({ "sessionId": scope }))
+            .await
+            .unwrap();
+        let current_workspace = crate::tools::shared_memory::get_current_workspace();
+        crate::tools::shared_memory::with_db(|conn| {
+            conn.execute(
+                "INSERT INTO cognitive_memory (id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate)
+                 VALUES (?1, ?2, '[]', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?3, '[]', 0.8, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 1, 0.05)",
+                params![format!("{}-current-cognitive", scope), format!("{} current cognitive", marker), current_workspace],
+            )?;
+            conn.execute(
+                "INSERT INTO cognitive_memory (id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate)
+                 VALUES (?1, ?2, '[]', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 'foreign-workspace', '[]', 0.8, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 1, 0.05)",
+                params![format!("{}-foreign-cognitive", scope), format!("{} foreign cognitive", marker)],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
         let stats = stats_tool
             .call(&json!({ "sessionId": scope }))
             .await
@@ -1216,6 +1265,11 @@ fn helper() {}
         assert!(stats["semanticFacts"].as_i64().unwrap() >= 1);
         assert!(stats["semanticFactsWithEmbeddings"].as_i64().unwrap() >= 1);
         assert_eq!(stats["coordinator"], true);
+        assert_eq!(
+            stats["cognitiveMemories"].as_i64().unwrap()
+                - before["cognitiveMemories"].as_i64().unwrap(),
+            1
+        );
         assert!(stats["totalActive"].as_i64().unwrap() >= stats["semanticFacts"].as_i64().unwrap());
     }
 

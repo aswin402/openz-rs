@@ -1,3 +1,11 @@
+### v0.0.112 (Latest Release)
+**Memory Scope Isolation:**
+- Fixed `forget_memory` so cognitive-memory deletion is limited to the active workspace.
+- Added regression coverage proving matching records in another workspace survive.
+- No global cognitive records are removed by a scoped forget operation.
+- Graph relations connected to nodes removed through matching observations are now expired too, preventing orphaned active edges.
+- `memory_stats` now counts cognitive memories only from the active workspace, matching recall behavior.
+
 ### v0.0.111 (Latest Release)
 **Telegram Messaging and Remote Inbox Cleanup:**
 - Expired or malformed inbox entries are cleaned globally before new remote prompts are enqueued, preventing stale failed-channel jobs from accumulating.

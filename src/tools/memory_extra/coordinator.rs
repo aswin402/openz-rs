@@ -589,6 +589,21 @@ impl MemoryCoordinator {
                 )? as i64;
             }
 
+            let matching_node_names: Vec<String> = {
+                let mut stmt = conn.prepare(
+                    "SELECT name FROM graph_nodes
+                     WHERE (name LIKE ?1 OR entity_type LIKE ?1 OR observations LIKE ?1)
+                       AND (user_id = ?2 OR user_id = '*')
+                       AND (session_id = ?3 OR session_id = '*')
+                       AND (agent_id = ?4 OR agent_id = '*')",
+                )?;
+                let rows = stmt.query_map(
+                    params![like, scope.user_id, scope.session_id, scope.agent_id],
+                    |row| row.get::<_, String>(0),
+                )?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+
             let graph_nodes_deleted = conn.execute(
                 "DELETE FROM graph_nodes
                  WHERE (name LIKE ?1 OR entity_type LIKE ?1 OR observations LIKE ?1)
@@ -598,7 +613,7 @@ impl MemoryCoordinator {
                 params![like, scope.user_id, scope.session_id, scope.agent_id],
             )? as i64;
 
-            let graph_edges_expired = conn.execute(
+            let mut graph_edges_expired = conn.execute(
                 "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
                  WHERE valid_until IS NULL
                    AND (from_name LIKE ?1 OR to_name LIKE ?1 OR relation_type LIKE ?1)
@@ -607,6 +622,18 @@ impl MemoryCoordinator {
                    AND (agent_id = ?4 OR agent_id = '*')",
                 params![like, scope.user_id, scope.session_id, scope.agent_id],
             )? as i64;
+
+            for node_name in matching_node_names {
+                graph_edges_expired += conn.execute(
+                    "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                     WHERE valid_until IS NULL
+                       AND (from_name = ?1 OR to_name = ?1)
+                       AND (user_id = ?2 OR user_id = '*')
+                       AND (session_id = ?3 OR session_id = '*')
+                       AND (agent_id = ?4 OR agent_id = '*')",
+                    params![node_name, scope.user_id, scope.session_id, scope.agent_id],
+                )? as i64;
+            }
 
             let shared_deleted = conn.execute(
                 "DELETE FROM shared_agent_memory
@@ -654,9 +681,15 @@ impl MemoryCoordinator {
 
         let (cognitive_memories_deleted, research_entries_deleted) =
             crate::tools::shared_memory::with_db(|conn| {
+                // Cognitive memory is workspace-scoped, unlike the graph database's
+                // explicit user/session/agent scope. Never erase matching records
+                // belonging to another active workspace.
+                let current_workspace = crate::tools::shared_memory::get_current_workspace();
                 let cognitive_deleted = conn.execute(
-                    "DELETE FROM cognitive_memory WHERE text LIKE ?1 OR tags LIKE ?1",
-                    params![like],
+                    "DELETE FROM cognitive_memory
+                     WHERE workspace = ?1
+                       AND (text LIKE ?2 OR tags LIKE ?2)",
+                    params![current_workspace, like],
                 )? as i64;
                 let research_deleted = conn.execute(
                     "DELETE FROM research_archive WHERE query LIKE ?1 OR content LIKE ?1 OR source LIKE ?1",
@@ -741,10 +774,12 @@ impl MemoryCoordinator {
 
         let (cognitive_memories, research_entries) =
             crate::tools::shared_memory::with_db(|conn| {
-                let cognitive_memories =
-                    conn.query_row("SELECT COUNT(*) FROM cognitive_memory", [], |r| {
-                        r.get::<_, i64>(0)
-                    })?;
+                let current_workspace = crate::tools::shared_memory::get_current_workspace();
+                let cognitive_memories = conn.query_row(
+                    "SELECT COUNT(*) FROM cognitive_memory WHERE workspace = ?1",
+                    rusqlite::params![current_workspace],
+                    |r| r.get::<_, i64>(0),
+                )?;
                 let research_entries =
                     conn.query_row("SELECT COUNT(*) FROM research_archive", [], |r| {
                         r.get::<_, i64>(0)
