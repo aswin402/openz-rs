@@ -136,6 +136,9 @@ fn register_core_tools(
         crate::tools::telegram_send::TelegramSendDocumentTool,
     ));
     registry.register(std::sync::Arc::new(
+        crate::tools::telegram_send::TelegramSendMessageTool,
+    ));
+    registry.register(std::sync::Arc::new(
         crate::tools::mcp_manager::ManageMcpTool,
     ));
     registry.register(std::sync::Arc::new(crate::tools::grep::GrepSearchTool));

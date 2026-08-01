@@ -187,9 +187,38 @@ fn quarantine_inbox_file(path: &Path) {
     }
 }
 
+fn cleanup_stale_inbox_files_in(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_inbox_json = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.starts_with("inbox_") && name.ends_with(".json"))
+            .unwrap_or(false);
+        if !is_inbox_json {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else {
+            quarantine_inbox_file(&path);
+            continue;
+        };
+        let Ok(message) = serde_json::from_str::<InboxMessage>(&content) else {
+            quarantine_inbox_file(&path);
+            continue;
+        };
+        if inbox_message_is_expired(&message) {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 pub fn send_inbox_message(session_id: &str, message: &str, sender: &str) -> anyhow::Result<()> {
     let dir = runtime_data_dir();
     fs::create_dir_all(&dir)?;
+    cleanup_stale_inbox_files_in(&dir);
 
     let msg = InboxMessage {
         message: message.to_string(),
@@ -579,6 +608,35 @@ mod tests {
             timestamp: (chrono::Utc::now() - chrono::Duration::minutes(6)).to_rfc3339(),
         };
         assert!(inbox_message_is_expired(&old));
+    }
+
+    #[tokio::test]
+    async fn enqueue_cleans_expired_entries_for_other_targets() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_inbox_cleanup_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        crate::config::loader::CONFIG_DIR_OVERRIDE
+            .scope(temp_dir.clone(), async {
+                let stale = InboxMessage {
+                    message: "stale".to_string(),
+                    sender: "test".to_string(),
+                    timestamp: (chrono::Utc::now() - chrono::Duration::minutes(6)).to_rfc3339(),
+                };
+                std::fs::write(
+                    temp_dir.join("inbox_telegram_direct_stale.json"),
+                    serde_json::to_string(&stale).unwrap(),
+                )
+                .unwrap();
+
+                send_inbox_message("cli:test", "fresh", "test").unwrap();
+
+                assert!(!temp_dir.join("inbox_telegram_direct_stale.json").exists());
+                assert_eq!(pop_inbox_message("cli:test").unwrap().message, "fresh");
+            })
+            .await;
+
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 
     #[tokio::test]

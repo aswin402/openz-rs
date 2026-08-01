@@ -73,13 +73,17 @@ pub fn get_telegram_bot_info() -> Option<(String, Client)> {
 /// Send a text response through the active Telegram bot, splitting messages at
 /// Telegram's message-size limit.
 pub async fn send_text_message(chat_id: i64, text: &str) -> anyhow::Result<()> {
+    send_text_message_to_target(&chat_id.to_string(), text).await
+}
+
+pub async fn send_text_message_to_target(target: &str, text: &str) -> anyhow::Result<()> {
     let (bot_token, client) =
         get_telegram_bot_info().ok_or_else(|| anyhow::anyhow!("Telegram bot is not active"))?;
     let send_url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
 
     for chunk in chunk_message(text, 4096) {
         let payload = serde_json::json!({
-            "chat_id": chat_id,
+            "chat_id": target,
             "text": chunk
         });
         let mut last_error = None;

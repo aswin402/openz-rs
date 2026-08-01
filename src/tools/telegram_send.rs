@@ -177,6 +177,80 @@ impl Tool for TelegramSendDocumentTool {
     }
 }
 
+pub struct TelegramSendMessageTool;
+
+#[async_trait::async_trait]
+impl Tool for TelegramSendMessageTool {
+    fn name(&self) -> &str {
+        "telegram_send_message"
+    }
+
+    fn description(&self) -> &str {
+        "Send text through the configured OpenZ Telegram bot to an explicit Telegram chat ID or @username. Requires user approval."
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "Text to send. Long text is split safely at Telegram's message limit."
+                },
+                "chat_id": {
+                    "type": "string",
+                    "description": "Explicit Telegram numeric chat ID or @username. Phone numbers are rejected."
+                }
+            },
+            "required": ["text", "chat_id"]
+        })
+    }
+
+    fn metadata(&self) -> ToolMetadata {
+        ToolMetadata {
+            domain: "communication",
+            risk: ToolRisk::High,
+            uses_network: true,
+            writes_disk: false,
+            spawns_process: false,
+            requires_approval: true,
+            priority: 45,
+            aliases: &["send telegram message", "telegram text"],
+            examples: &["Send 'Deployment finished' to Telegram chat 123456789"],
+            when_to_use: "Use only after the user explicitly confirms the exact Telegram chat ID or username.",
+            when_not_to_use: "Do not use phone numbers, guessed chat IDs, or raw shell/API commands.",
+            recommended_timeout_secs: Some(120),
+        }
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let text = arguments
+            .get("text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("Missing 'text' parameter"))?;
+        let chat_id = arguments
+            .get("chat_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("Missing 'chat_id' parameter"))?;
+        if text.trim().is_empty() {
+            return Err(anyhow!("Telegram message cannot be empty"));
+        }
+        if !valid_telegram_target(chat_id) {
+            return Err(anyhow!(
+                "Invalid Telegram target. Use an explicit numeric chat ID or @username; phone numbers are not accepted."
+            ));
+        }
+
+        crate::channels::telegram::send_text_message_to_target(chat_id, text).await?;
+        Ok(json!({
+            "status": "sent",
+            "channel": "telegram",
+            "target": chat_id,
+            "do_not_retry": true
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::valid_telegram_target;

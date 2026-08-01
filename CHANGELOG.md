@@ -1,3 +1,10 @@
+### v0.0.111 (Latest Release)
+**Telegram Messaging and Remote Inbox Cleanup:**
+- Expired or malformed inbox entries are cleaned globally before new remote prompts are enqueued, preventing stale failed-channel jobs from accumulating.
+- Added the native `telegram_send_message` tool with explicit chat-target validation and bounded retry behavior.
+- Generalized Telegram text delivery to support numeric chat IDs and validated usernames.
+- Added focused inbox, Telegram target, and shared-memory workflow coverage.
+
 ### v0.0.110 (Latest Release)
 **Secret-Safe Logging:**
 - Added a central in-memory scrubber for configured and environment-backed credentials.
