@@ -1,3 +1,9 @@
+### v0.0.110 (Latest Release)
+**Secret-Safe Logging:**
+- Added a central in-memory scrubber for configured and environment-backed credentials.
+- File logs, stderr logs, and SQLite logs now redact secrets even when embedded in command URLs or tool arguments.
+- Added focused regression coverage for Telegram bot tokens and provider keys inside log text.
+
 ### v0.0.109 (Latest Release)
 **Telegram Command Registration Reliability:**
 - Fixed invalid Telegram slash-command names that used hyphens instead of Telegram-supported underscores.

@@ -49,6 +49,12 @@ fn main() -> anyhow::Result<()> {
 async fn async_main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
+    let config_value = openz::config::loader::load_config()
+        .ok()
+        .and_then(|config| serde_json::to_value(config).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let log_secrets = openz::logs::initialize_secret_redaction(&config_value);
+
     let log_path = openz::logs::default_log_path();
     if let Some(parent) = log_path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
@@ -60,13 +66,17 @@ async fn async_main() -> anyhow::Result<()> {
     rotate_logs(&log_path);
 
     let log_path_clone = log_path.clone();
+    let file_secrets = log_secrets.clone();
     let make_writer = move || -> Box<dyn Write + Send> {
         match OpenOptions::new()
             .create(true)
             .append(true)
             .open(&log_path_clone)
         {
-            Ok(file) => Box::new(FlushWriter(file)),
+            Ok(file) => Box::new(openz::logs::SecretScrubWriter::new(
+                FlushWriter(file),
+                file_secrets.clone(),
+            )),
             Err(e) => {
                 eprintln!(
                     "openz: failed to open log file {}: {}; logs will be discarded",
@@ -117,8 +127,11 @@ async fn async_main() -> anyhow::Result<()> {
                 .with_target(true)
                 .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
 
+            let stderr_secrets = log_secrets.clone();
             let stderr_layer = tracing_subscriber::fmt::layer()
-                .with_writer(std::io::stderr)
+                .with_writer(move || {
+                    openz::logs::SecretScrubWriter::new(std::io::stderr(), stderr_secrets.clone())
+                })
                 .with_ansi(true)
                 .with_target(true)
                 .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);

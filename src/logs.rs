@@ -21,7 +21,7 @@ const WHITE: &str = "\x1b[38;2;220;220;220m"; // LIGHT_WHITE  — message body
 const ORANGE: &str = "\x1b[38;2;255;133;75m"; // warm accent  — DEBUG
 const CYAN: &str = "\x1b[38;2;137;221;255m"; // AURA_CYAN    — session tag
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 pub struct LogEntry {
     pub timestamp: String,
@@ -32,6 +32,111 @@ pub struct LogEntry {
 }
 
 pub static LOG_TX: OnceLock<tokio::sync::mpsc::UnboundedSender<LogEntry>> = OnceLock::new();
+
+static LOG_SECRETS: OnceLock<Arc<Vec<String>>> = OnceLock::new();
+
+fn normalized_secret_key(key: &str) -> String {
+    key.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+fn is_secret_key(key: &str) -> bool {
+    matches!(
+        normalized_secret_key(key).as_str(),
+        "apikey"
+            | "apitoken"
+            | "accesstoken"
+            | "authtoken"
+            | "bottoken"
+            | "clientsecret"
+            | "password"
+            | "secret"
+            | "verifytoken"
+            | "webhooksecret"
+            | "privatekey"
+            | "token"
+    )
+}
+
+fn collect_secret_values(value: &serde_json::Value, secrets: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                if is_secret_key(key) {
+                    if let Some(secret) = child.as_str() {
+                        let secret = secret.trim();
+                        if secret.len() >= 8 {
+                            secrets.push(secret.to_string());
+                        }
+                    }
+                }
+                collect_secret_values(child, secrets);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_secret_values(item, secrets);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Load configured and environment-backed credentials into the log scrubber.
+/// Values are retained only in memory and are never emitted to logs.
+pub fn initialize_secret_redaction(config: &serde_json::Value) -> Arc<Vec<String>> {
+    let mut secrets = Vec::new();
+    collect_secret_values(config, &mut secrets);
+    for (key, value) in std::env::vars() {
+        if is_secret_key(&key) && value.trim().len() >= 8 {
+            secrets.push(value.trim().to_string());
+        }
+    }
+    secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    secrets.dedup();
+    let shared = Arc::new(secrets);
+    let _ = LOG_SECRETS.set(shared.clone());
+    shared
+}
+
+fn redact_text_with_secrets(text: &str, secrets: &[String]) -> String {
+    secrets.iter().fold(text.to_string(), |result, secret| {
+        result.replace(secret, "[REDACTED_SECRET]")
+    })
+}
+
+pub fn redact_sensitive_text(text: &str) -> String {
+    LOG_SECRETS
+        .get()
+        .map(|secrets| redact_text_with_secrets(text, secrets))
+        .unwrap_or_else(|| text.to_string())
+}
+
+pub struct SecretScrubWriter<W> {
+    inner: W,
+    secrets: Arc<Vec<String>>,
+}
+
+impl<W> SecretScrubWriter<W> {
+    pub fn new(inner: W, secrets: Arc<Vec<String>>) -> Self {
+        Self { inner, secrets }
+    }
+}
+
+impl<W: std::io::Write> std::io::Write for SecretScrubWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let text = String::from_utf8_lossy(buf);
+        let redacted = redact_text_with_secrets(&text, &self.secrets);
+        self.inner.write_all(redacted.as_bytes())?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
 
 pub fn default_db_path() -> PathBuf {
     crate::config::config_dir().join("logs.db")
@@ -125,8 +230,8 @@ where
                 timestamp,
                 level,
                 target,
-                message: visitor.message,
-                session,
+                message: redact_sensitive_text(&visitor.message),
+                session: session.map(|value| redact_sensitive_text(&value)),
             });
         }
     }
@@ -1512,6 +1617,21 @@ pub fn get_latest_session_id() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secret_scrubber_masks_credentials_inside_log_text() {
+        let secrets = vec![
+            "bot123:token-value".to_string(),
+            "provider-secret".to_string(),
+        ];
+        let redacted = redact_text_with_secrets(
+            "curl https://api.telegram.org/bot123:token-value/sendMessage key=provider-secret",
+            &secrets,
+        );
+        assert!(!redacted.contains("bot123:token-value"));
+        assert!(!redacted.contains("provider-secret"));
+        assert_eq!(redacted.matches("[REDACTED_SECRET]").count(), 2);
+    }
 
     #[tokio::test]
     async fn test_sqlite_logging_workflow() {
