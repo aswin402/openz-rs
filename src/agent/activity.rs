@@ -150,38 +150,134 @@ pub struct InboxMessage {
     pub timestamp: String,
 }
 
+const REMOTE_INBOX_TTL_SECS: i64 = 5 * 60;
+
+fn inbox_slug(session_id: &str) -> String {
+    session_id.replace(':', "_")
+}
+
+fn inbox_prefix(session_id: &str) -> String {
+    format!("inbox_{}_", inbox_slug(session_id))
+}
+
+fn inbox_legacy_path(session_id: &str) -> PathBuf {
+    resolve_path(&format!("~/.openz/inbox_{}.json", inbox_slug(session_id)))
+}
+
+fn inbox_message_is_expired(message: &InboxMessage) -> bool {
+    let Some(timestamp) = chrono::DateTime::parse_from_rfc3339(&message.timestamp).ok() else {
+        return true;
+    };
+    chrono::Utc::now()
+        .signed_duration_since(timestamp.with_timezone(&chrono::Utc))
+        .num_seconds()
+        > REMOTE_INBOX_TTL_SECS
+}
+
+fn quarantine_inbox_file(path: &Path) {
+    let quarantine = path.with_file_name(format!(
+        "{}.invalid.{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("inbox"),
+        uuid::Uuid::new_v4()
+    ));
+    if fs::rename(path, quarantine).is_err() {
+        let _ = fs::remove_file(path);
+    }
+}
+
 pub fn send_inbox_message(session_id: &str, message: &str, sender: &str) -> anyhow::Result<()> {
-    let slug = session_id.replace(':', "_");
-    let path = resolve_path(&format!("~/.openz/inbox_{}.json", slug));
+    let dir = runtime_data_dir();
+    fs::create_dir_all(&dir)?;
+
     let msg = InboxMessage {
         message: message.to_string(),
         sender: sender.to_string(),
         timestamp: chrono::Utc::now().to_rfc3339(),
     };
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
     let content = serde_json::to_string_pretty(&msg)?;
-    fs::write(path, content)?;
+    let slug = inbox_slug(session_id);
+    let path = dir.join(format!("inbox_{}_{}.json", slug, uuid::Uuid::new_v4()));
+    let temp_path = dir.join(format!(
+        "{}.tmp.{}",
+        path.file_name().unwrap().to_string_lossy(),
+        uuid::Uuid::new_v4()
+    ));
+
+    fs::write(&temp_path, content)?;
+    fs::rename(temp_path, path)?;
     Ok(())
 }
 
 pub fn pop_inbox_message(session_id: &str) -> Option<InboxMessage> {
-    let slug = session_id.replace(':', "_");
-    let path = resolve_path(&format!("~/.openz/inbox_{}.json", slug));
-    if !path.exists() {
-        return None;
+    let dir = runtime_data_dir();
+    let prefix = inbox_prefix(session_id);
+    let mut paths = fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with(&prefix) && name.ends_with(".json"))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+
+    // Read the legacy single-file format during migration.
+    let legacy = inbox_legacy_path(session_id);
+    if legacy.exists() {
+        paths.push(legacy);
     }
-    let temp_name = format!("inbox_{}.json.tmp.{}", slug, uuid::Uuid::new_v4());
-    let temp_path = path.with_file_name(temp_name);
-    // Atomic rename: if successful, this thread owns this message and can read it
-    if fs::rename(&path, &temp_path).is_ok() {
-        let content = fs::read_to_string(&temp_path).ok()?;
-        let _ = fs::remove_file(&temp_path);
-        serde_json::from_str(&content).ok()
-    } else {
-        None
+
+    let mut candidates = Vec::new();
+    for path in paths {
+        let Ok(content) = fs::read_to_string(&path) else {
+            quarantine_inbox_file(&path);
+            continue;
+        };
+        let Ok(message) = serde_json::from_str::<InboxMessage>(&content) else {
+            quarantine_inbox_file(&path);
+            continue;
+        };
+        if inbox_message_is_expired(&message) {
+            let _ = fs::remove_file(&path);
+            continue;
+        }
+        candidates.push((message.timestamp.clone(), path));
     }
+    candidates.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (_, path) in candidates {
+        let claim_path = path.with_file_name(format!(
+            "{}.claimed.{}",
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("inbox"),
+            uuid::Uuid::new_v4()
+        ));
+        if fs::rename(&path, &claim_path).is_err() {
+            continue;
+        }
+
+        let parsed = fs::read_to_string(&claim_path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<InboxMessage>(&content).ok());
+        let Some(message) = parsed else {
+            quarantine_inbox_file(&claim_path);
+            continue;
+        };
+
+        if inbox_message_is_expired(&message) {
+            let _ = fs::remove_file(&claim_path);
+            continue;
+        }
+
+        let _ = fs::remove_file(&claim_path);
+        return Some(message);
+    }
+    None
 }
 
 const ACTIVE_TUI_STALE_SECS: i64 = 30;
@@ -268,6 +364,39 @@ pub fn upsert_active_tui_session(session: &ActiveTuiSession) -> anyhow::Result<(
 
 pub fn remove_active_tui_session(session_key: &str) {
     let _ = fs::remove_file(active_tui_path(session_key));
+}
+
+fn resolve_direct_target_from_keys(keys: &[String]) -> anyhow::Result<String> {
+    match keys {
+        [] => Err(anyhow::anyhow!("No active TUI sessions are available")),
+        [key] => Ok(key.clone()),
+        _ => Err(anyhow::anyhow!(
+            "Multiple active TUI sessions exist; select a specific session"
+        )),
+    }
+}
+
+pub fn resolve_cli_direct_target() -> anyhow::Result<String> {
+    let keys = list_active_tui_sessions()
+        .into_iter()
+        .map(|session| session.session_key)
+        .collect::<Vec<_>>();
+    resolve_direct_target_from_keys(&keys)
+}
+
+pub fn direct_inbox_belongs_to(session_id: &str) -> bool {
+    list_active_tui_sessions()
+        .into_iter()
+        .map(|session| session.session_key)
+        .collect::<Vec<_>>()
+        .as_slice()
+        == [session_id.to_string()]
+}
+
+pub fn active_tui_session_exists(session_id: &str) -> bool {
+    list_active_tui_sessions()
+        .iter()
+        .any(|session| session.session_key == session_id)
 }
 
 pub fn list_active_tui_sessions() -> Vec<ActiveTuiSession> {
@@ -427,6 +556,77 @@ mod tests {
         let preview = session_preview_from_messages(&messages);
         assert!(preview.starts_with("this is the latest prompt"));
         assert!(preview.len() <= 67);
+    }
+
+    #[test]
+    fn direct_target_requires_exactly_one_session() {
+        assert!(resolve_direct_target_from_keys(&[]).is_err());
+        assert_eq!(
+            resolve_direct_target_from_keys(&["cli:one".to_string()]).unwrap(),
+            "cli:one"
+        );
+        assert!(
+            resolve_direct_target_from_keys(&["cli:one".to_string(), "cli:two".to_string()])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn inbox_expiry_rejects_old_messages() {
+        let old = InboxMessage {
+            message: "old".to_string(),
+            sender: "test".to_string(),
+            timestamp: (chrono::Utc::now() - chrono::Duration::minutes(6)).to_rfc3339(),
+        };
+        assert!(inbox_message_is_expired(&old));
+    }
+
+    #[tokio::test]
+    async fn inbox_queue_preserves_fifo_order() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_inbox_fifo_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        crate::config::loader::CONFIG_DIR_OVERRIDE
+            .scope(temp_dir.clone(), async {
+                send_inbox_message("cli:test", "first", "test").unwrap();
+                tokio::time::sleep(Duration::from_millis(2)).await;
+                send_inbox_message("cli:test", "second", "test").unwrap();
+
+                assert_eq!(pop_inbox_message("cli:test").unwrap().message, "first");
+                assert_eq!(pop_inbox_message("cli:test").unwrap().message, "second");
+                assert!(pop_inbox_message("cli:test").is_none());
+            })
+            .await;
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn inbox_queue_quarantines_malformed_entries() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_inbox_invalid_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        crate::config::loader::CONFIG_DIR_OVERRIDE
+            .scope(temp_dir.clone(), async {
+                std::fs::write(
+                    temp_dir.join("inbox_cli_test_invalid.json"),
+                    "{not valid json",
+                )
+                .unwrap();
+                send_inbox_message("cli:test", "valid", "test").unwrap();
+
+                assert_eq!(pop_inbox_message("cli:test").unwrap().message, "valid");
+                let quarantined = std::fs::read_dir(&temp_dir)
+                    .unwrap()
+                    .flatten()
+                    .any(|entry| entry.file_name().to_string_lossy().contains(".invalid."));
+                assert!(quarantined);
+            })
+            .await;
+
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 
     #[test]

@@ -134,9 +134,14 @@ pub fn read_line_raw(
             )?;
         }
 
-        if let Some(inbox_msg) = crate::agent::activity::pop_inbox_message(session_key)
-            .or_else(|| crate::agent::activity::pop_inbox_message("cli:direct"))
-        {
+        let inbox_msg = crate::agent::activity::pop_inbox_message(session_key).or_else(|| {
+            if crate::agent::activity::direct_inbox_belongs_to(session_key) {
+                crate::agent::activity::pop_inbox_message("cli:direct")
+            } else {
+                None
+            }
+        });
+        if let Some(inbox_msg) = inbox_msg {
             if lines_printed > 1 {
                 for _ in 0..(lines_printed - 1) {
                     print!("\r\n\x1b[2K");

@@ -133,6 +133,9 @@ fn register_core_tools(
     registry.register(std::sync::Arc::new(RemoveJobTool));
     registry.register(std::sync::Arc::new(SendRemoteInputTool));
     registry.register(std::sync::Arc::new(
+        crate::tools::telegram_send::TelegramSendDocumentTool,
+    ));
+    registry.register(std::sync::Arc::new(
         crate::tools::mcp_manager::ManageMcpTool,
     ));
     registry.register(std::sync::Arc::new(crate::tools::grep::GrepSearchTool));

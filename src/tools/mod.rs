@@ -1524,6 +1524,7 @@ pub mod sop;
 pub mod subagent;
 pub mod svg_animator;
 pub mod system_info;
+pub mod telegram_send;
 pub mod template_compiler;
 pub mod video;
 pub mod wasm_sandbox;

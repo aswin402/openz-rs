@@ -78,6 +78,49 @@ fn is_research_lookup_tool(tool_name: &str) -> bool {
     )
 }
 
+fn direct_research_url(tool_name: &str, arguments: &serde_json::Value) -> Option<String> {
+    if !matches!(tool_name, "web_fetch" | "searchxyz_read_url") {
+        return None;
+    }
+
+    let raw_url = arguments.get("url").and_then(|value| value.as_str())?;
+    let mut parsed = reqwest::Url::parse(raw_url).ok()?;
+    // URL fragments select a page section but do not change the fetched document.
+    parsed.set_fragment(None);
+    Some(parsed.to_string())
+}
+
+fn direct_page_research_only(user_content: &str) -> bool {
+    if !super::research_policy::text_has_http_url(user_content) {
+        return false;
+    }
+
+    let lower = user_content.to_lowercase();
+    // Extraction and download tasks legitimately follow embeds and asset URLs.
+    // Ordinary "research this URL" requests remain page-local by default.
+    let allows_related_sources = [
+        "deep",
+        "broader",
+        "more detail",
+        "related",
+        "compare",
+        "comparison",
+        "multiple sources",
+        "full research",
+        "scrape",
+        "scrap",
+        "source code",
+        "download",
+        "assets",
+        "asset",
+        "run locally",
+        "local copy",
+    ]
+    .iter()
+    .any(|term| lower.contains(term));
+    !allows_related_sources
+}
+
 async fn fresh_research_brief_blocks_lookup(
     user_content: &str,
     tool_name: &str,
@@ -319,6 +362,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     let max_iterations = ctx.config.agents.defaults.max_tool_iterations;
     let mut turn_capture_summaries: Vec<crate::tools::shared_memory::AutoCaptureSummary> =
         Vec::new();
+    let mut completed_direct_research_urls = std::collections::HashSet::new();
+    let direct_page_only = direct_page_research_only(ctx.user_content);
+    let mut direct_page_fetched = false;
 
     // Build a turn-level cancellation token from the current CLI context.
     // This provides early cancellation detection even before the CLI select! drops run_fut.
@@ -1108,6 +1154,16 @@ Now provide only the final user-facing answer to my last message. Do not include
                 super::tool_execution::format_tool_args(&call.name, &call.arguments);
             let tool_spinner_msg =
                 crate::agent::style::get_tree_spinner_msg(&call.name, &formatted_args);
+            let direct_url = direct_research_url(&call.name, &call.arguments);
+            let duplicate_direct_url = direct_url
+                .as_ref()
+                .is_some_and(|url| completed_direct_research_urls.contains(url));
+            let out_of_scope_direct_page_lookup = direct_page_only
+                && direct_page_fetched
+                && is_research_lookup_tool(&call.name)
+                && !direct_url
+                    .as_ref()
+                    .is_some_and(|url| completed_direct_research_urls.contains(url));
 
             let tool_msg = format!("▸ Running *{}*...", formatted_args);
             super::tool_execution::send_progress_update(ctx.session_key, &tool_msg).await;
@@ -1138,7 +1194,37 @@ Now provide only the final user-facing answer to my last message. Do not include
                 should_halt = true;
             }
 
-            let result_val = if fresh_brief_blocks_lookup {
+            let result_val = if out_of_scope_direct_page_lookup {
+                let skip_msg = "Skipped broader research: this request supplied one direct URL. Use the fetched page, or ask for deeper/broader research to inspect additional sources.";
+                super::tool_execution::send_progress_update(ctx.session_key, skip_msg).await;
+                if !silent {
+                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                    crate::tui_println!(
+                        "{}{}{}↳ {}{}",
+                        AURA_SLATE,
+                        leaf_prefix,
+                        AURA_BLUE,
+                        skip_msg,
+                        COLOR_RESET
+                    );
+                }
+                serde_json::json!({ "status": "skipped", "reason": skip_msg })
+            } else if duplicate_direct_url {
+                let skip_msg = "Skipped duplicate URL lookup: this page was already fetched successfully in this turn. Use the previous result or continue with a different source.";
+                super::tool_execution::send_progress_update(ctx.session_key, skip_msg).await;
+                if !silent {
+                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                    crate::tui_println!(
+                        "{}{}{}↳ {}{}",
+                        AURA_SLATE,
+                        leaf_prefix,
+                        AURA_BLUE,
+                        skip_msg,
+                        COLOR_RESET
+                    );
+                }
+                serde_json::json!({ "status": "skipped", "reason": skip_msg })
+            } else if fresh_brief_blocks_lookup {
                 let skip_msg = "Skipped web/search lookup: a fresh saved research brief already matches this non-latest query. Answer from [Relevant Research Briefs] unless the user asks for latest/current data.";
                 super::tool_execution::send_progress_update(ctx.session_key, skip_msg).await;
                 if !silent {
@@ -1370,6 +1456,12 @@ Now provide only the final user-facing answer to my last message. Do not include
                     }
                 }
             };
+            if direct_url.is_some() && result_val.get("error").is_none() {
+                if let Some(url) = direct_url {
+                    completed_direct_research_urls.insert(url);
+                    direct_page_fetched = true;
+                }
+            }
             if let Some(err_val) = result_val.get("error").and_then(|v| v.as_str()) {
                 ctx.turn_errors
                     .push(format!("Tool {} returned error: {}", call.name, err_val));
@@ -1566,6 +1658,41 @@ mod tests {
         assert!(should_show_tui_thoughts("full"));
         assert!(should_show_tui_thoughts("compact"));
         assert!(!should_show_tui_thoughts("off"));
+    }
+
+    #[test]
+    fn direct_research_url_deduplicates_fragments_across_readers() {
+        let first = direct_research_url(
+            "web_fetch",
+            &serde_json::json!({"url": "https://9router.com/#get-started"}),
+        );
+        let second = direct_research_url(
+            "searchxyz_read_url",
+            &serde_json::json!({"url": "https://9router.com/"}),
+        );
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn direct_research_url_ignores_non_url_research_tools() {
+        assert!(direct_research_url(
+            "web_search",
+            &serde_json::json!({"query": "9router get started"}),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn direct_page_scope_requires_explicit_broader_intent() {
+        assert!(direct_page_research_only(
+            "research this https://9router.com/#get-started"
+        ));
+        assert!(!direct_page_research_only(
+            "research this https://9router.com/#get-started and compare related sources"
+        ));
+        assert!(!direct_page_research_only(
+            "scrape the source code and assets from https://example.com/game"
+        ));
     }
 
     #[test]

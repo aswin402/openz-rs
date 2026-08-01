@@ -6627,7 +6627,7 @@ dependencies = [
 
 [[package]]
 name = "openz"
-version = "0.0.96"
+version = "0.0.107"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -8430,6 +8430,7 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
+ "mime_guess",
  "native-tls",
  "percent-encoding",
  "pin-project-lite",

@@ -279,7 +279,7 @@ impl Tool for SearchXyzReadUrlTool {
     }
 
     fn description(&self) -> &str {
-        "Fetch a URL and extract its content as clean Markdown. Also handles PDFs, YouTube transcripts, and Git repos."
+        "Fetch a URL and extract its content as clean Markdown. Also handles PDFs, YouTube transcripts, and Git repos. For a direct URL, use this OR web_fetch, never both in the same turn."
     }
 
     fn parameters(&self) -> Value {

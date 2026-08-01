@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, Duration};
 
@@ -51,8 +52,72 @@ static TELEGRAM_BOT_INFO: OnceLock<(String, Client)> = OnceLock::new();
 static APPROVAL_CALLBACKS: OnceLock<Mutex<HashMap<String, oneshot::Sender<bool>>>> =
     OnceLock::new();
 
+#[derive(Deserialize)]
+struct TelegramApiResponse {
+    ok: bool,
+    description: Option<String>,
+}
+
+fn remote_timeout_secs() -> u64 {
+    std::env::var("OPENZ_REMOTE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(900)
+        .clamp(60, 3600)
+}
+
 pub fn get_telegram_bot_info() -> Option<(String, Client)> {
     TELEGRAM_BOT_INFO.get().cloned()
+}
+
+/// Send a text response through the active Telegram bot, splitting messages at
+/// Telegram's message-size limit.
+pub async fn send_text_message(chat_id: i64, text: &str) -> anyhow::Result<()> {
+    let (bot_token, client) =
+        get_telegram_bot_info().ok_or_else(|| anyhow::anyhow!("Telegram bot is not active"))?;
+    let send_url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
+
+    for chunk in chunk_message(text, 4096) {
+        let payload = serde_json::json!({
+            "chat_id": chat_id,
+            "text": chunk
+        });
+        let mut last_error = None;
+        for attempt in 0..3 {
+            let response = match client.post(&send_url).json(&payload).send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    last_error = Some(error.to_string());
+                    if attempt < 2 {
+                        tokio::time::sleep(Duration::from_millis(250 * (attempt + 1) as u64)).await;
+                        continue;
+                    }
+                    break;
+                }
+            };
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            let api = serde_json::from_str::<TelegramApiResponse>(&body).ok();
+            if status.is_success() && api.as_ref().is_some_and(|result| result.ok) {
+                last_error = None;
+                break;
+            }
+
+            let description = api
+                .and_then(|result| result.description)
+                .unwrap_or_else(|| body.clone());
+            last_error = Some(format!("HTTP {}: {}", status, description));
+            if !(status.is_server_error() || status.as_u16() == 429) || attempt == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(250 * (attempt + 1) as u64)).await;
+        }
+
+        if let Some(error) = last_error {
+            return Err(anyhow::anyhow!("Telegram sendMessage failed: {}", error));
+        }
+    }
+    Ok(())
 }
 
 pub fn register_approval(req_id: &str, tx: oneshot::Sender<bool>) {
@@ -104,6 +169,7 @@ struct TelegramCallbackQuery {
 
 static REMOTE_CONTROL_TARGETS: OnceLock<Mutex<HashMap<i64, String>>> = OnceLock::new();
 static ACTIVE_TYPING_LOOPS: OnceLock<Mutex<HashMap<i64, oneshot::Sender<()>>>> = OnceLock::new();
+static REMOTE_TYPING_HEARTBEATS: OnceLock<Mutex<HashMap<i64, Instant>>> = OnceLock::new();
 
 pub fn start_typing_indicator(chat_id: i64, token: String, client: Client) {
     let map = ACTIVE_TYPING_LOOPS.get_or_init(|| Mutex::new(HashMap::new()));
@@ -117,6 +183,11 @@ pub fn start_typing_indicator(chat_id: i64, token: String, client: Client) {
         guard.insert(chat_id, tx);
         got_inserted = true;
     }
+    REMOTE_TYPING_HEARTBEATS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+        .map(|mut guard| guard.insert(chat_id, Instant::now()));
 
     if got_inserted {
         tokio::spawn(async move {
@@ -150,6 +221,60 @@ pub fn stop_typing_indicator(chat_id: i64) {
             let _ = tx.send(());
         }
     }
+    if let Some(heartbeats) = REMOTE_TYPING_HEARTBEATS.get() {
+        if let Ok(mut guard) = heartbeats.lock() {
+            guard.remove(&chat_id);
+        }
+    }
+}
+
+pub fn refresh_remote_typing_indicator(chat_id: i64) {
+    if let Some(heartbeats) = REMOTE_TYPING_HEARTBEATS.get() {
+        if let Ok(mut guard) = heartbeats.lock() {
+            if guard.contains_key(&chat_id) {
+                guard.insert(chat_id, Instant::now());
+            }
+        }
+    }
+}
+
+fn typing_indicator_active(chat_id: i64) -> bool {
+    ACTIVE_TYPING_LOOPS
+        .get()
+        .and_then(|map| map.lock().ok())
+        .map(|guard| guard.contains_key(&chat_id))
+        .unwrap_or(false)
+}
+
+fn spawn_remote_typing_watchdog(chat_id: i64, token: String, client: Client) {
+    tokio::spawn(async move {
+        let timeout = Duration::from_secs(remote_timeout_secs());
+        loop {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            if !typing_indicator_active(chat_id) {
+                return;
+            }
+
+            let stale = REMOTE_TYPING_HEARTBEATS
+                .get()
+                .and_then(|heartbeats| heartbeats.lock().ok())
+                .and_then(|guard| guard.get(&chat_id).copied())
+                .map(|last_seen| last_seen.elapsed() >= timeout)
+                .unwrap_or(true);
+            if !stale {
+                continue;
+            }
+
+            stop_typing_indicator(chat_id);
+            let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+            let payload = serde_json::json!({
+                "chat_id": chat_id,
+                "text": "Remote TUI request timed out. The selected TUI session may have stopped. Use /remote to select an active session again."
+            });
+            let _ = client.post(&send_url).json(&payload).send().await;
+            return;
+        }
+    });
 }
 
 fn selected_remote_session(chat_id: i64) -> Option<String> {
@@ -1081,6 +1206,11 @@ impl super::Channel for TelegramChannel {
                                             &remote_sender,
                                         ) {
                                             Ok(_) => {
+                                                spawn_remote_typing_watchdog(
+                                                    chat_id,
+                                                    token.clone(),
+                                                    client.clone(),
+                                                );
                                                 let send_url = format!(
                                                     "https://api.telegram.org/bot{}/sendMessage",
                                                     token

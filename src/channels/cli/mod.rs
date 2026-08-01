@@ -1536,14 +1536,7 @@ impl CliChannel {
                         dyn std::future::Future<Output = anyhow::Result<crate::agent::RunResult>>
                             + Send,
                     >,
-                > = if let Some(ref sender) = remote_sender {
-                    Box::pin(
-                        crate::agent::style::spinner::CURRENT_SESSION_KEY
-                            .scope(sender.clone(), runner.run(trimmed, &session_key)),
-                    )
-                } else {
-                    Box::pin(runner.run(trimmed, &session_key))
-                };
+                > = Box::pin(runner.run(trimmed, &session_key));
 
                 let tx = crate::shutdown::cli_cancel_tx();
                 let mut rx = tx.subscribe();
@@ -1598,6 +1591,27 @@ impl CliChannel {
                 tokio::pin!(run_fut);
                 tokio::pin!(cancel_fut);
 
+                let (heartbeat_stop, heartbeat_task) = if let Some(chat_id) = remote_sender
+                    .as_deref()
+                    .and_then(|sender| sender.strip_prefix("telegram:"))
+                    .and_then(|id| id.parse::<i64>().ok())
+                {
+                    let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel();
+                    let task = tokio::spawn(async move {
+                        loop {
+                            tokio::select! {
+                                _ = &mut stop_rx => break,
+                                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                                    crate::channels::telegram::refresh_remote_typing_indicator(chat_id);
+                                }
+                            }
+                        }
+                    });
+                    (Some(stop_tx), Some(task))
+                } else {
+                    (None, None)
+                };
+
                 let result = tokio::select! {
                     biased;
                     _ = &mut cancel_fut => {
@@ -1614,6 +1628,13 @@ impl CliChannel {
                         Some(res)
                     }
                 };
+
+                if let Some(stop_tx) = heartbeat_stop {
+                    let _ = stop_tx.send(());
+                }
+                if let Some(task) = heartbeat_task {
+                    let _ = task.await;
+                }
 
                 // Signal the keyboard thread to stop. Give it a very short cleanup window so it
                 // does not keep consuming keys from the next input prompt or approval menu.
@@ -1655,19 +1676,11 @@ impl CliChannel {
                         if sender.starts_with("telegram:") {
                             if let Some(chat_id_str) = sender.strip_prefix("telegram:") {
                                 if let Ok(chat_id) = chat_id_str.parse::<i64>() {
-                                    if let Some((bot_token, client)) =
-                                        crate::channels::telegram::get_telegram_bot_info()
-                                    {
-                                        let send_url = format!(
-                                            "https://api.telegram.org/bot{}/sendMessage",
-                                            bot_token
-                                        );
-                                        let payload = serde_json::json!({
-                                            "chat_id": chat_id,
-                                            "text": format!("🔌 [Remote Control Output]\n{}", res.content)
-                                        });
-                                        let _ = client.post(&send_url).json(&payload).send().await;
-                                    }
+                                    let _ = crate::channels::telegram::send_text_message(
+                                        chat_id,
+                                        &format!("🔌 [Remote Control Output]\n{}", res.content),
+                                    )
+                                    .await;
                                 }
                             }
                         }
@@ -1679,6 +1692,17 @@ impl CliChannel {
                         "{}────────────────────────────────────────────────────────────{}",
                         LIGHT_WHITE, COLOR_RESET
                     );
+                    if let Some(ref sender) = remote_sender {
+                        if let Some(chat_id_str) = sender.strip_prefix("telegram:") {
+                            if let Ok(chat_id) = chat_id_str.parse::<i64>() {
+                                let _ = crate::channels::telegram::send_text_message(
+                                    chat_id,
+                                    &format!("🔌 [Remote Control Error]\n{}", e),
+                                )
+                                .await;
+                            }
+                        }
+                    }
                 }
                 None => {
                     println!(
@@ -1689,6 +1713,17 @@ impl CliChannel {
                         "{}────────────────────────────────────────────────────────────{}",
                         LIGHT_WHITE, COLOR_RESET
                     );
+                    if let Some(ref sender) = remote_sender {
+                        if let Some(chat_id_str) = sender.strip_prefix("telegram:") {
+                            if let Ok(chat_id) = chat_id_str.parse::<i64>() {
+                                let _ = crate::channels::telegram::send_text_message(
+                                    chat_id,
+                                    "🔌 [Remote Control Cancelled]\nThe remote request was interrupted.",
+                                )
+                                .await;
+                            }
+                        }
+                    }
                 }
             }
         }

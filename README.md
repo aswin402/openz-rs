@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.96`
+# OpenZ 🦊 `v0.0.107`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -12,7 +12,7 @@ OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-
 
 ---
 
-## What Changed In `v0.0.96`
+## What Changed In `v0.0.107`
 
 - **Automatic Native Merge Retry**: `web_search` now detects weak/off-topic first native results and retries SearchXyz with merged backends before answering.
 - **Generic Quality Gate**: Multi-term queries require enough top-result term coverage; unrelated result sets trigger retry automatically.

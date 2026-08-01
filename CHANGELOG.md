@@ -1,3 +1,50 @@
+### v0.0.107 (Latest Release)
+**Remote Inbox Regression Coverage:**
+- Added isolated FIFO queue integration coverage.
+- Added malformed-entry quarantine coverage.
+- Remote inbox behavior is now tested through the real runtime-directory override.
+
+### v0.0.106 (Latest Release)
+**Remote Job Heartbeats:**
+- TUI-to-Telegram remote jobs refresh a heartbeat while executing.
+- The timeout now detects genuinely stalled or stopped TUI sessions instead of timing out healthy long jobs.
+- Added heartbeat cleanup on completion, cancellation, and errors.
+
+### v0.0.105 (Latest Release)
+**Telegram Delivery Hardening:**
+- Telegram text sends validate the API JSON ok result.
+- Transient network, rate-limit, and server failures retry with bounded backoff.
+- Remote timeout is configurable with OPENZ_REMOTE_TIMEOUT_SECS, clamped to 60 seconds through one hour.
+- Default remote timeout increased to 15 minutes for long-running TUI work.
+
+### v0.0.104 (Latest Release)
+**Multi-TUI Remote Target Safety:**
+- cli:direct resolves only when exactly one active TUI exists.
+- Multiple TUIs no longer race to consume a global remote inbox.
+- Added focused tests for direct target resolution and inbox expiry.
+
+### v0.0.103 (Latest Release)
+**Reliable Remote Inbox Queue:**
+- Remote prompts are stored as separate atomically published queue entries.
+- Multiple prompts no longer overwrite each other.
+- Expired prompts are discarded after five minutes.
+- Malformed inbox entries are quarantined instead of silently blocking the queue.
+- Messages are consumed in timestamp order.
+- Invalid or unavailable CLI targets are rejected before Telegram reports execution.
+- Remote typing indicators expire with a timeout when the selected TUI stops responding.
+
+### v0.0.102 (Latest Release)
+**TUI-to-Telegram Remote Session Identity Fix:**
+- Remote prompts executed in a selected TUI session now retain the TUI session identity.
+- Prevents the TUI from consuming its own forwarded prompt when Telegram remote control is used.
+- Preserves Telegram sender routing only for returning output, errors, and cancellation messages.
+
+### v0.0.101 (Latest Release)
+**Remote Telegram Completion Recovery:**
+- Remote prompts sent from Telegram now receive success, error, and cancellation responses.
+- Long responses use the same safe Telegram chunking path as normal Telegram replies.
+- Self-targeted send_remote_input calls are rejected to prevent TUI input loops.
+
 # OpenZ Changelog & System Specifications 🦊⚡
 
 Welcome to OpenZ! This document provides an official record of the framework's architecture, hardware footprint, system capabilities, Model Context Protocol (MCP) integrations, native tools, and version releases.
@@ -397,6 +444,44 @@ Inside `openz agent`, the user can issue direct slash commands:
 ---
 
 ## 📅 Version Release History
+
+### v0.0.100 (Latest Release)
+
+**Safe Telegram Document Delivery:**
+*   **Native Tool:** Added `telegram_send_document` for sending local files through the active OpenZ Telegram bot.
+*   **Explicit Recipients:** Accepts only numeric Telegram chat IDs or `@username`; phone numbers and guessed/old chat targets are rejected.
+*   **Approval-Gated:** Outbound file delivery is high-risk and requires user approval.
+*   **Safety Limits:** Validates regular files and enforces Telegram's 50 MB document limit.
+*   **No Polling Conflict:** Uses the active channel's native HTTP client instead of calling `getUpdates` or raw shell commands.
+*   **Tests:** Added target validation regressions for chat IDs, usernames, and phone-number rejection.
+*   **Chore:** Bumped version to `v0.0.100`.
+
+### v0.0.99 (Latest Release)
+
+**Extraction-Aware URL Scope:**
+*   **Scrape/Download Support:** Explicit scrape, download, source-code, asset, and local-copy tasks may follow related embed and asset URLs.
+*   **Research Safety:** Ordinary direct-page research remains page-local unless broader research is explicitly requested.
+*   **Prompt Alignment:** Runtime guidance now matches the extraction exception.
+*   **Chore:** Bumped version to `v0.0.99`.
+
+### v0.0.98 (Latest Release)
+
+**Direct Page Research Scope:**
+*   **Page-Local Default:** A request containing one direct URL now stays on that page after the first successful fetch.
+*   **No Unrequested Expansion:** Automatic GitHub, web-search, or related-source lookups are skipped unless the user asks for deeper, broader, comparative, or multi-source research.
+*   **Opt-In Depth:** Explicit broader research still permits additional sources.
+*   **Tests:** Added a regression for direct-page scope and explicit broader intent.
+*   **Chore:** Bumped version to `v0.0.98`.
+
+### v0.0.97 (Latest Release)
+
+**Direct URL Research Deduplication:**
+*   **Single Reader:** Direct URL research now uses one URL reader per turn; `web_fetch` and `searchxyz_read_url` cannot fetch the same document twice.
+*   **Fragment-Aware:** URL fragments such as `#get-started` are ignored for network deduplication while remaining available to research-topic normalization.
+*   **Retry Safety:** A failed first fetch is not marked complete, so fallback readers remain available when genuinely needed.
+*   **Prompt Guidance:** Tool descriptions and runtime guidance now tell the orchestrator to choose one direct URL reader.
+*   **Tests:** Added focused regressions for cross-reader and fragment-insensitive URL deduplication.
+*   **Chore:** Bumped version to `v0.0.97`.
 
 ### v0.0.96 (Latest Release)
 
