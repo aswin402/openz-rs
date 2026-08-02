@@ -1,25 +1,43 @@
 ### v0.0.114 (Latest Release)
-**Private Trace, Research Reliability, and Marketplace Clarification:**
-- Reasoning/trace output now defaults to private. Normal public channels no longer leak provider reasoning, workflow internals, or memory-capture notices unless explicitly configured.
-- Added `/tui trace full|compact|off` as the primary TUI visibility command while preserving legacy `/tui thoughts` and `/thoughts` aliases.
-- Added configurable research budgets, browser failure classification, source-ledger confidence, and final-answer caveats when live source verification is incomplete.
-- Added browser preflight payloads for `inspect_browsers`, Firefox/geckodriver, GSD browser, and Obscura/CDP startup failures.
-- `parallel_research` now returns `partial_success` with completed subagent summaries when other branches timeout, while user cancellation still aborts promptly.
-- Long tool outputs now store exact raw output files with structured transcript metadata (`original_ref`, byte counts, inline limit) and remain retrievable through `retrieve_original`.
-- Generic `read_file` calls aimed at saved `~/.openz/tool_outputs/` files are automatically rewritten to `retrieve_original`, preventing re-truncation and removing the need for users to name the retrieval tool.
-- `read_doc` now automatically attempts OCR for scanned PDFs and OCR-supported image files when native text extraction is empty; the top-level `ocr` Cargo feature now enables `opendoc-mcp/ocr`.
-- `read_doc` now runs automatic PDF complexity analysis by default before extraction/OCR and returns `complexity_result`; `analyze_complexity=false` remains an explicit opt-out.
-- Successful local artifact-producing tools now auto-run `open_path` once per output path when the user asked to show/open/view/play/display the result, so generated media/documents appear without tool-name prompting.
-- Failed `open_path` calls now auto-run `device_inventory suggest` for the target category, so missing/default-app failures produce actionable local viewer suggestions without requiring the user to name the registry tool.
-- Ambiguous AI-agent marketplace prompts now ask whether the user means buyer-side ready-made agents or seller-side creator marketplaces before researching.
-- Added provider-free browser search fallback: `searchxyz_browser_search` uses local browser automation to discover organic result links without requiring Brave or SearXNG.
-- Default `web_search` now uses the local-first cascade automatically: native SearchXyz, native rescue, then browser discovery, with no external API fallback.
-- SearchXyz search failures now classify blocked/rate-limited/timeout/no-result cases, record temporary backend cooldowns, and append `searchxyz_doctor` diagnostics automatically unless `diagnose_on_failure=false` is set.
-- Research-style `web_search` queries automatically read top browser-discovered pages through `searchxyz_read_url`; `read_top_results`, `max_pages`, and `save_mode` remain debug/override controls.
-- `web_fetch` now detects empty JavaScript app shells and retries through brokered local browser rendering automatically (GSD → Firefox → Obscura); `render_js=false` remains an explicit opt-out.
-- `searchxyz_read_github_repo` now automatically retries small repositories when `max_files` is too low, returning structured auto-retry metadata instead of requiring manual limit tuning.
-- `web_fetch` calls are upgraded to `cache_mode=revalidate` automatically when the active user request asks for latest/current/verify/check-again data, unless the model supplied an explicit cache mode.
-- First filesystem edit attempts (`write_file`, `patch_file`, `replace_lines`, `zenflow_edit`) are automatically converted into `scope_context` for that target path once per turn, so project instructions load before edits proceed.
+**Automation, Research Reliability, Privacy, and Workspace Safety:**
+
+#### Automatic tool routing
+- First file edit per target now auto-runs `scope_context`, loading project instructions before `write_file`, `patch_file`, `replace_lines`, or `zenflow_edit` modifies code.
+- Saved `~/.openz/tool_outputs/` reads are automatically rewritten to `retrieve_original`, avoiding repeated truncation of long tool outputs.
+- Generated local artifacts auto-run `open_path` when the user asks to show/open/view/play/display the result.
+- Failed `open_path` calls auto-run `device_inventory suggest`, producing viewer/app suggestions without requiring the user to know the registry tool.
+- Fresh/current/latest/check-again `web_fetch` requests automatically use `cache_mode=revalidate` unless a cache mode is explicitly provided.
+
+#### SearchXyz and web research
+- Default `web_search` now follows a local-first cascade: native SearchXyz, native rescue, then provider-free browser discovery. External APIs remain opt-in.
+- Added `searchxyz_browser_search`, using local browser automation to discover organic result links without Brave or SearXNG.
+- Research-style `web_search` queries automatically read top browser-discovered pages through `searchxyz_read_url`.
+- Search failures now classify blocked, rate-limited, timeout, and no-result cases, record backend cooldowns, and attach `searchxyz_doctor` diagnostics by default.
+- `web_fetch` detects empty JavaScript app shells and retries through brokered browser rendering in this order: GSD, Firefox, Obscura.
+- `searchxyz_read_github_repo` automatically retries small repositories when `max_files` is too low and returns structured auto-retry metadata.
+
+#### Documents and artifacts
+- `read_doc` automatically attempts OCR for scanned PDFs and OCR-supported image files when native extraction is empty.
+- The top-level Cargo feature `ocr` now enables `opendoc-mcp/ocr`.
+- `read_doc` runs PDF complexity analysis by default before extraction/OCR and exposes `complexity_result`; `analyze_complexity=false` opts out.
+
+#### Privacy, traces, and source confidence
+- Reasoning/trace output is private by default across normal user-facing channels.
+- Added `/tui trace full|compact|off`; legacy `/tui thoughts` and `/thoughts` aliases remain supported.
+- Long tool outputs store exact raw files with transcript metadata and remain retrievable through `retrieve_original`.
+- Source ledger confidence and final-answer caveats now flag incomplete live verification.
+
+#### Subagents, cancellation, and channel reliability
+- Subagents launched from unsafe non-project directories such as home/root/runtime paths now use scratch workspaces under `~/.openz/worktrees` instead of writing directly in the active workspace.
+- Normal project/git repo subagent behavior is unchanged: isolated worktrees still sync back on success.
+- `parallel_research` returns `partial_success` with completed branch summaries when other branches time out; user cancellation still aborts promptly.
+- CLI cancellation and raw-mode cleanup handle Esc, Ctrl+C, Ctrl+D, ETX, and EOT paths more reliably.
+- Browser preflight payloads now cover `inspect_browsers`, Firefox/geckodriver, GSD browser, and Obscura/CDP startup failures.
+
+#### Security and maintenance
+- `openz doctor --scrub-secrets` can redact historical leaked secrets from sessions, traces, tool outputs, active TUI state, memory, shared data, and runtime data.
+- Marketplace research prompts now ask buyer-side vs seller-side clarification only when genuinely ambiguous.
+- Fixed the remaining dead-code warnings from test-only helper functions.
 
 ### v0.0.112
 **Memory Scope Isolation:**
@@ -29,58 +47,58 @@
 - Graph relations connected to nodes removed through matching observations are now expired too, preventing orphaned active edges.
 - `memory_stats` now counts cognitive memories only from the active workspace, matching recall behavior.
 
-### v0.0.111 (Latest Release)
+### v0.0.111
 **Telegram Messaging and Remote Inbox Cleanup:**
 - Expired or malformed inbox entries are cleaned globally before new remote prompts are enqueued, preventing stale failed-channel jobs from accumulating.
 - Added the native `telegram_send_message` tool with explicit chat-target validation and bounded retry behavior.
 - Generalized Telegram text delivery to support numeric chat IDs and validated usernames.
 - Added focused inbox, Telegram target, and shared-memory workflow coverage.
 
-### v0.0.110 (Latest Release)
+### v0.0.110
 **Secret-Safe Logging:**
 - Added a central in-memory scrubber for configured and environment-backed credentials.
 - File logs, stderr logs, and SQLite logs now redact secrets even when embedded in command URLs or tool arguments.
 - Added focused regression coverage for Telegram bot tokens and provider keys inside log text.
 
-### v0.0.109 (Latest Release)
+### v0.0.109
 **Telegram Command Registration Reliability:**
 - Fixed invalid Telegram slash-command names that used hyphens instead of Telegram-supported underscores.
 - Kept legacy hyphenated command input working by normalizing incoming command aliases.
 - Added a focused regression test that validates every registered command name before startup.
 
-### v0.0.108 (Latest Release)
+### v0.0.108
 **Shared Tool Argument Compatibility and Secret Redaction:**
 - Fixed the shared argument normalizer so schema-native camelCase fields are preserved instead of being destructively rewritten.
 - Legacy snake_case aliases are still added recursively, including nested entity and relation payloads.
 - Added regression coverage for canonical fields, aliases, nested arguments, and explicit alias precedence.
 - Fixed configuration redaction for `apiKey` and other camelCase secret fields, with recursive coverage for token and credential variants.
 
-### v0.0.107 (Latest Release)
+### v0.0.107
 **Remote Inbox Regression Coverage:**
 - Added isolated FIFO queue integration coverage.
 - Added malformed-entry quarantine coverage.
 - Remote inbox behavior is now tested through the real runtime-directory override.
 
-### v0.0.106 (Latest Release)
+### v0.0.106
 **Remote Job Heartbeats:**
 - TUI-to-Telegram remote jobs refresh a heartbeat while executing.
 - The timeout now detects genuinely stalled or stopped TUI sessions instead of timing out healthy long jobs.
 - Added heartbeat cleanup on completion, cancellation, and errors.
 
-### v0.0.105 (Latest Release)
+### v0.0.105
 **Telegram Delivery Hardening:**
 - Telegram text sends validate the API JSON ok result.
 - Transient network, rate-limit, and server failures retry with bounded backoff.
 - Remote timeout is configurable with OPENZ_REMOTE_TIMEOUT_SECS, clamped to 60 seconds through one hour.
 - Default remote timeout increased to 15 minutes for long-running TUI work.
 
-### v0.0.104 (Latest Release)
+### v0.0.104
 **Multi-TUI Remote Target Safety:**
 - cli:direct resolves only when exactly one active TUI exists.
 - Multiple TUIs no longer race to consume a global remote inbox.
 - Added focused tests for direct target resolution and inbox expiry.
 
-### v0.0.103 (Latest Release)
+### v0.0.103
 **Reliable Remote Inbox Queue:**
 - Remote prompts are stored as separate atomically published queue entries.
 - Multiple prompts no longer overwrite each other.
@@ -90,13 +108,13 @@
 - Invalid or unavailable CLI targets are rejected before Telegram reports execution.
 - Remote typing indicators expire with a timeout when the selected TUI stops responding.
 
-### v0.0.102 (Latest Release)
+### v0.0.102
 **TUI-to-Telegram Remote Session Identity Fix:**
 - Remote prompts executed in a selected TUI session now retain the TUI session identity.
 - Prevents the TUI from consuming its own forwarded prompt when Telegram remote control is used.
 - Preserves Telegram sender routing only for returning output, errors, and cancellation messages.
 
-### v0.0.101 (Latest Release)
+### v0.0.101
 **Remote Telegram Completion Recovery:**
 - Remote prompts sent from Telegram now receive success, error, and cancellation responses.
 - Long responses use the same safe Telegram chunking path as normal Telegram replies.
@@ -502,7 +520,7 @@ Inside `openz agent`, the user can issue direct slash commands:
 
 ## 📅 Version Release History
 
-### v0.0.100 (Latest Release)
+### v0.0.100
 
 **Safe Telegram Document Delivery:**
 *   **Native Tool:** Added `telegram_send_document` for sending local files through the active OpenZ Telegram bot.
@@ -513,7 +531,7 @@ Inside `openz agent`, the user can issue direct slash commands:
 *   **Tests:** Added target validation regressions for chat IDs, usernames, and phone-number rejection.
 *   **Chore:** Bumped version to `v0.0.100`.
 
-### v0.0.99 (Latest Release)
+### v0.0.99
 
 **Extraction-Aware URL Scope:**
 *   **Scrape/Download Support:** Explicit scrape, download, source-code, asset, and local-copy tasks may follow related embed and asset URLs.
@@ -521,7 +539,7 @@ Inside `openz agent`, the user can issue direct slash commands:
 *   **Prompt Alignment:** Runtime guidance now matches the extraction exception.
 *   **Chore:** Bumped version to `v0.0.99`.
 
-### v0.0.98 (Latest Release)
+### v0.0.98
 
 **Direct Page Research Scope:**
 *   **Page-Local Default:** A request containing one direct URL now stays on that page after the first successful fetch.
@@ -530,7 +548,7 @@ Inside `openz agent`, the user can issue direct slash commands:
 *   **Tests:** Added a regression for direct-page scope and explicit broader intent.
 *   **Chore:** Bumped version to `v0.0.98`.
 
-### v0.0.97 (Latest Release)
+### v0.0.97
 
 **Direct URL Research Deduplication:**
 *   **Single Reader:** Direct URL research now uses one URL reader per turn; `web_fetch` and `searchxyz_read_url` cannot fetch the same document twice.
@@ -540,7 +558,7 @@ Inside `openz agent`, the user can issue direct slash commands:
 *   **Tests:** Added focused regressions for cross-reader and fragment-insensitive URL deduplication.
 *   **Chore:** Bumped version to `v0.0.97`.
 
-### v0.0.96 (Latest Release)
+### v0.0.96
 
 **Automatic Native Merge Retry:**
 *   **Quality Gate:** `web_search` now checks top native SearchXyz result coverage for multi-term queries before returning first-backend results.
@@ -1268,7 +1286,7 @@ Inside `openz agent`, the user can issue direct slash commands:
     *   Implemented `test_searchxyz_tools_metadata` unit tests verifying wrapper registry.
     *   Bumped version to `v0.0.30`. All 202 native tests and 38 integrated `searchxyz` tests passing.
 
-### v0.0.29 (Latest Release)
+### v0.0.29
 *   **Security: SSRF & timing attack mitigations (HIGH)**:
     *   Implemented constant-time WhatsApp HMAC signature validation in `src/channels/whatsapp.rs` to protect webhook endpoints from timing attacks.
     *   Added WebSocket frame size and message limits (16MB) in `src/channels/websocket.rs` to prevent DoS attacks.
