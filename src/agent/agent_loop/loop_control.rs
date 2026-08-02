@@ -309,6 +309,16 @@ mod tests {
     }
 
     #[test]
+    fn research_browser_dependency_errors_get_actionable_hint() {
+        let hint = generate_self_healing_hint(
+            "searchxyz_search_and_read",
+            "Failed to start geckodriver on port 4444",
+        );
+        assert!(hint.contains("inspect_browsers"));
+        assert!(hint.contains("browser fallback"));
+    }
+
+    #[test]
     fn openmedia_svg_errors_get_schema_specific_hint() {
         let hint = generate_self_healing_hint(
             "openmedia_create_svg",
@@ -485,6 +495,16 @@ mod tests {
     }
 }
 
+fn is_research_or_browser_tool(tool_lower: &str) -> bool {
+    tool_lower.contains("search")
+        || tool_lower.contains("research")
+        || tool_lower.contains("fetch")
+        || tool_lower.contains("crawl")
+        || tool_lower.contains("browser")
+        || tool_lower.contains("obscura")
+        || tool_lower.contains("firefox")
+        || tool_lower.contains("gsd")
+}
 pub(crate) fn generate_self_healing_hint(tool_name: &str, error_str: &str) -> String {
     let err_lower = error_str.to_lowercase();
     let tool_lower = tool_name.to_lowercase();
@@ -528,6 +548,28 @@ pub(crate) fn generate_self_healing_hint(tool_name: &str, error_str: &str) -> St
 
     if tool_lower == "openmedia_create_svg" {
         return "OpenMedia SVG schema: pass width, height, and elements (or alias shapes). Valid element type values are rect, circle, line, and text. Text uses content (alias text is accepted by OpenZ), x, y, fill, font_size, font_family, font_weight, and text_anchor=middle for centered logos. Use line with stroke, stroke_width, and stroke_linecap for diagonals instead of unsupported path-like guesses. Optional output_path copies the generated SVG to your requested location.".to_string();
+    }
+
+    if is_research_or_browser_tool(&tool_lower) {
+        let failure = super::research_policy::classify_research_failure(error_str);
+        match failure {
+            super::research_policy::ResearchFailureKind::Captcha => {
+                return "Research browser fallback hit an anti-bot or CAPTCHA page. Do not keep retrying the same browser path; switch to official URLs, cached sources, or return a partial answer with an unverified-source caveat.".to_string();
+            }
+            super::research_policy::ResearchFailureKind::BrowserDependencyMissing => {
+                return "Research browser fallback cannot run because a browser dependency is missing. Use inspect_browsers to check Chrome CDP, gsd-browser, and geckodriver status before trying another browser tool.".to_string();
+            }
+            super::research_policy::ResearchFailureKind::BrowserSessionLost => {
+                return "Research browser fallback lost its active browser session. Use inspect_browsers, restart the browser backend once if healthy, then stop retrying that backend if the same failure repeats.".to_string();
+            }
+            super::research_policy::ResearchFailureKind::SearchExhausted => {
+                return "Search backends returned no usable results. Run searchxyz_doctor for backend health, then use configured fallback policy or answer from cached/official sources with a clear source caveat.".to_string();
+            }
+            _ if failure.is_retryable() => {
+                return "Research lookup failed with a transient backend/network condition. Retry within the configured research budget; after budget exhaustion, return partial findings and cite which sources could not be verified.".to_string();
+            }
+            _ => {}
+        }
     }
 
     if err_lower.contains("mcp")

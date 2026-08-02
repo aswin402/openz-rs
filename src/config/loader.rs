@@ -259,6 +259,7 @@ const AGENT_DEFAULTS_LEGACY_ALIASES: &[&str] = &[
     "enable_sandbox",
     "tool_timeout_secs",
     "show_tool_router_status",
+    "show_auto_capture_notices",
     "tui_thought_display",
     "min_free_disk_gb",
     "allow_network_tools",

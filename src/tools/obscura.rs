@@ -192,7 +192,17 @@ impl Tool for ObscuraBrowserTool {
             .unwrap_or(15);
 
         // Ensure browser is running
-        ensure_browser_running().await?;
+        if let Err(e) = ensure_browser_running().await {
+            let payload = crate::tools::browser_status::browser_preflight_error_value(
+                &format!("Chrome CDP browser startup failed: {}", e),
+                crate::tools::browser_status::BrowserHealth {
+                    chrome_cdp: crate::tools::browser_status::BrowserBackendStatus::Broken,
+                    gsd_browser: crate::tools::browser_status::BrowserBackendStatus::Stopped,
+                    geckodriver: crate::tools::browser_status::BrowserBackendStatus::Stopped,
+                },
+            );
+            return Err(anyhow!(payload.to_string()));
+        }
 
         let client = reqwest::Client::new();
 

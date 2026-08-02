@@ -1169,7 +1169,7 @@ mod tests {
         };
         let block = format_research_brief_context_items(&[item], "what is mem0");
         assert!(block.contains("Do not call web/search tools"));
-        assert!(block.contains("Current/latest intent not detected"));
+        assert!(block.contains("stable non-live question"));
         assert!(block.contains("Only state facts present"));
         assert!(block.contains("say unknown"));
     }

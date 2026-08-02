@@ -4,6 +4,121 @@ use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::process::Command;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserBackendStatus {
+    Running,
+    Stopped,
+    Missing,
+    Broken,
+}
+
+impl BrowserBackendStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BrowserBackendStatus::Running => "running",
+            BrowserBackendStatus::Stopped => "stopped",
+            BrowserBackendStatus::Missing => "missing",
+            BrowserBackendStatus::Broken => "broken",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserBackend {
+    ChromeCdp,
+    GsdBrowser,
+    GeckoDriver,
+}
+
+impl BrowserBackend {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BrowserBackend::ChromeCdp => "chrome_cdp",
+            BrowserBackend::GsdBrowser => "gsd_browser",
+            BrowserBackend::GeckoDriver => "geckodriver",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserHealth {
+    pub chrome_cdp: BrowserBackendStatus,
+    pub gsd_browser: BrowserBackendStatus,
+    pub geckodriver: BrowserBackendStatus,
+}
+
+impl BrowserHealth {
+    pub fn to_json(&self) -> Value {
+        json!({
+            "chrome_cdp": self.chrome_cdp.as_str(),
+            "gsd_browser": self.gsd_browser.as_str(),
+            "geckodriver": self.geckodriver.as_str(),
+        })
+    }
+
+    pub fn actionable_summary(&self) -> String {
+        if recommended_browser_backend(self).is_none() {
+            return "No browser backend available. Run inspect_browsers, install/start Chrome CDP, gsd-browser, or geckodriver, then retry browser fallback once.".to_string();
+        }
+        format!(
+            "Browser preflight ok: recommended backend is {:?}.",
+            recommended_browser_backend(self).expect("checked above")
+        )
+    }
+}
+
+pub fn recommended_browser_backend(health: &BrowserHealth) -> Option<BrowserBackend> {
+    if health.chrome_cdp == BrowserBackendStatus::Running {
+        Some(BrowserBackend::ChromeCdp)
+    } else if health.gsd_browser == BrowserBackendStatus::Running {
+        Some(BrowserBackend::GsdBrowser)
+    } else if health.geckodriver == BrowserBackendStatus::Running {
+        Some(BrowserBackend::GeckoDriver)
+    } else {
+        None
+    }
+}
+
+pub fn browser_preflight_value(health: &BrowserHealth) -> Value {
+    json!({
+        "health": health.to_json(),
+        "recommended_backend": recommended_browser_backend(health).map(|backend| backend.as_str()),
+        "summary": health.actionable_summary(),
+    })
+}
+
+pub fn browser_preflight_error_value(error: &str, health: BrowserHealth) -> Value {
+    json!({
+        "error": error,
+        "browser_preflight": browser_preflight_value(&health),
+    })
+}
+
+fn status_value_to_backend_status(value: &Value, missing_text: &[&str]) -> BrowserBackendStatus {
+    let status = value
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("stopped");
+    let error_or_message = value
+        .get("error")
+        .or_else(|| value.get("message"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    match status {
+        "running" => BrowserBackendStatus::Running,
+        _ if missing_text
+            .iter()
+            .any(|needle| error_or_message.contains(needle)) =>
+        {
+            BrowserBackendStatus::Missing
+        }
+        _ if !error_or_message.is_empty() => BrowserBackendStatus::Broken,
+        _ => BrowserBackendStatus::Stopped,
+    }
+}
+
 pub struct InspectBrowsersTool;
 
 fn get_recent_browser_errors() -> Result<Vec<Value>> {
@@ -31,10 +146,8 @@ fn get_recent_browser_errors() -> Result<Vec<Value>> {
     })?;
 
     let mut errors = Vec::new();
-    for row in rows {
-        if let Ok(entry) = row {
-            errors.push(entry);
-        }
+    for entry in rows.flatten() {
+        errors.push(entry);
     }
     Ok(errors)
 }
@@ -169,10 +282,26 @@ impl Tool for InspectBrowsersTool {
 
         let recent_errors = get_recent_browser_errors().unwrap_or_else(|_| vec![]);
 
+        let health = BrowserHealth {
+            chrome_cdp: status_value_to_backend_status(
+                &obscura_status,
+                &["not found", "no such file"],
+            ),
+            gsd_browser: status_value_to_backend_status(
+                &gsd_status,
+                &["not found", "failed to run gsd-browser binary"],
+            ),
+            geckodriver: status_value_to_backend_status(
+                &firefox_status,
+                &["not found", "no such file", "missing"],
+            ),
+        };
+
         Ok(json!({
             "firefox_geckodriver": firefox_status,
             "chrome_obscura": obscura_status,
             "gsd_browser": gsd_status,
+            "browser_preflight": browser_preflight_value(&health),
             "recent_browser_errors": recent_errors
         }))
     }
@@ -181,6 +310,56 @@ impl Tool for InspectBrowsersTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_preflight_prefers_running_chrome_cdp() {
+        let health = BrowserHealth {
+            chrome_cdp: BrowserBackendStatus::Running,
+            gsd_browser: BrowserBackendStatus::Stopped,
+            geckodriver: BrowserBackendStatus::Missing,
+        };
+
+        assert_eq!(
+            recommended_browser_backend(&health),
+            Some(BrowserBackend::ChromeCdp)
+        );
+    }
+
+    #[test]
+    fn browser_preflight_reports_missing_all_backends() {
+        let health = BrowserHealth {
+            chrome_cdp: BrowserBackendStatus::Missing,
+            gsd_browser: BrowserBackendStatus::Missing,
+            geckodriver: BrowserBackendStatus::Missing,
+        };
+
+        assert_eq!(recommended_browser_backend(&health), None);
+        assert!(health
+            .actionable_summary()
+            .contains("No browser backend available"));
+    }
+
+    #[test]
+    fn browser_preflight_error_payload_is_machine_readable() {
+        let payload = browser_preflight_error_value(
+            "geckodriver missing",
+            BrowserHealth {
+                chrome_cdp: BrowserBackendStatus::Stopped,
+                gsd_browser: BrowserBackendStatus::Stopped,
+                geckodriver: BrowserBackendStatus::Missing,
+            },
+        );
+
+        assert_eq!(payload["error"], "geckodriver missing");
+        assert_eq!(
+            payload["browser_preflight"]["health"]["geckodriver"],
+            "missing"
+        );
+        assert!(payload["browser_preflight"]["summary"]
+            .as_str()
+            .expect("summary string")
+            .contains("No browser backend available"));
+    }
 
     #[tokio::test]
     async fn test_inspect_browsers_metadata() -> Result<()> {
@@ -197,6 +376,7 @@ mod tests {
         assert!(res.get("firefox_geckodriver").is_some());
         assert!(res.get("chrome_obscura").is_some());
         assert!(res.get("gsd_browser").is_some());
+        assert!(res.get("browser_preflight").is_some());
         assert!(res.get("recent_browser_errors").is_some());
         Ok(())
     }

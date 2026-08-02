@@ -9,6 +9,7 @@ use crate::tools::ToolRegistry;
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::sync::Arc;
+use tokio::task::JoinSet;
 
 pub struct ParallelResearchTool {
     pub config: Config,
@@ -17,6 +18,8 @@ pub struct ParallelResearchTool {
     pub parent_tools: Vec<Arc<dyn Tool>>,
     pub cancellation_token: CancellationToken,
 }
+
+const PARALLEL_RESEARCH_RESULT_FLUSH_GRACE_SECS: u64 = 5;
 
 const READ_ONLY_TOOLS: &[&str] = &[
     "read_file",
@@ -117,7 +120,9 @@ impl Tool for ParallelResearchTool {
             .try_with(|w| w.clone())
             .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
 
-        let mut join_handles = Vec::new();
+        let mut join_set = JoinSet::new();
+        let mut task_goals: Vec<String> = Vec::new();
+        let mut max_child_timeout_secs = 1;
 
         for (idx, task_val) in tasks_val.iter().enumerate() {
             let goal = match task_val.get("goal").and_then(|v| v.as_str()) {
@@ -137,6 +142,8 @@ impl Tool for ParallelResearchTool {
                 task_val.get("timeout_secs").and_then(|v| v.as_u64()),
                 self.config.agents.defaults.tool_timeout_secs,
             );
+            max_child_timeout_secs = max_child_timeout_secs.max(timeout_secs);
+            task_goals.push(goal.clone());
 
             let role = get_heuristic_role(idx, &goal);
 
@@ -169,7 +176,7 @@ impl Tool for ParallelResearchTool {
             let role_clone = role.clone();
             let goal_clone = goal.clone();
 
-            let handle = tokio::spawn(async move {
+            join_set.spawn(async move {
                 if !is_parent_silent {
                     let leaf_prefix =
                         crate::agent::style::get_tree_prefix_for_depth(true, current_depth);
@@ -279,55 +286,122 @@ impl Tool for ParallelResearchTool {
                         }
                     }
                 }
-                (goal_clone, run_res)
+                (idx, goal_clone, run_res)
             });
-            join_handles.push(handle);
         }
 
-        // Race join_all against cancellation — spawned tasks self-terminate
-        // via their own tokio::select! on the shared CancellationToken.
-        let join_results = {
-            let all_fut = futures_util::future::join_all(join_handles);
+        let total_tasks = task_goals.len();
+        let mut completed = vec![false; total_tasks];
+        let mut completed_count = 0;
+        let mut results = Vec::new();
+        let aggregate_deadline_secs = parallel_research_flush_deadline_secs(max_child_timeout_secs);
+        let aggregate_deadline =
+            tokio::time::sleep(std::time::Duration::from_secs(aggregate_deadline_secs));
+        tokio::pin!(aggregate_deadline);
+
+        while completed_count < total_tasks {
             tokio::select! {
                 biased;
                 _ = self.cancellation_token.wait_for_cancellation() => {
+                    join_set.abort_all();
                     return Err(anyhow!("Parallel research cancelled by user"));
                 }
-                results = all_fut => results,
-            }
-        };
-        let mut results = Vec::new();
-
-        for res in join_results {
-            match res {
-                Ok((goal, Ok(run_res))) => {
-                    results.push(serde_json::json!({
-                        "task": goal,
-                        "status": "success",
-                        "summary": run_res.content
-                    }));
+                _ = &mut aggregate_deadline => {
+                    join_set.abort_all();
+                    for (idx, goal) in task_goals.iter().enumerate() {
+                        if !completed[idx] {
+                            results.push(parallel_task_error_json(
+                                goal,
+                                "timeout",
+                                &format!(
+                                    "Parallel research aggregate deadline reached after {aggregate_deadline_secs}s; unfinished task aborted so completed partial results can be returned before the outer tool timeout."
+                                ),
+                            ));
+                        }
+                    }
+                    break;
                 }
-                Ok((goal, Err(e))) => {
-                    results.push(serde_json::json!({
-                        "task": goal,
-                        "status": "error",
-                        "error": format!("{:?}", e)
-                    }));
-                }
-                Err(e) => {
-                    results.push(serde_json::json!({
-                        "status": "error",
-                        "error": format!("Task join failed: {:?}", e)
-                    }));
+                joined = join_set.join_next() => {
+                    match joined {
+                        Some(Ok((idx, goal, Ok(run_res)))) => {
+                            if idx < completed.len() && !completed[idx] {
+                                completed[idx] = true;
+                                completed_count += 1;
+                            }
+                            results.push(parallel_task_success_json(&goal, &run_res.content));
+                        }
+                        Some(Ok((idx, goal, Err(e)))) => {
+                            if idx < completed.len() && !completed[idx] {
+                                completed[idx] = true;
+                                completed_count += 1;
+                            }
+                            let error = e.to_string();
+                            let status = if error.to_lowercase().contains("timed out") {
+                                "timeout"
+                            } else {
+                                "error"
+                            };
+                            results.push(parallel_task_error_json(&goal, status, &error));
+                        }
+                        Some(Err(e)) => {
+                            results.push(parallel_task_error_json(
+                                "unknown task",
+                                "error",
+                                &format!("Task join failed: {e:?}"),
+                            ));
+                        }
+                        None => break,
+                    }
                 }
             }
         }
 
-        Ok(serde_json::json!({
-            "status": "success",
-            "results": results
-        }))
+        Ok(parallel_research_response(results))
     }
+}
+
+pub fn parallel_research_flush_deadline_secs(max_child_timeout_secs: u64) -> u64 {
+    max_child_timeout_secs
+        .saturating_sub(PARALLEL_RESEARCH_RESULT_FLUSH_GRACE_SECS)
+        .max(1)
+}
+
+fn parallel_task_success_json(task: &str, summary: &str) -> Value {
+    serde_json::json!({
+        "task": task,
+        "status": "success",
+        "summary": summary,
+    })
+}
+
+fn parallel_task_error_json(task: &str, status: &str, error: &str) -> Value {
+    serde_json::json!({
+        "task": task,
+        "status": status,
+        "error": error,
+    })
+}
+
+pub fn parallel_research_response(results: Vec<Value>) -> Value {
+    let succeeded = results
+        .iter()
+        .filter(|result| result.get("status").and_then(|v| v.as_str()) == Some("success"))
+        .count();
+    let failed = results.len().saturating_sub(succeeded);
+    let status = if failed == 0 {
+        "success"
+    } else if succeeded > 0 {
+        "partial_success"
+    } else {
+        "error"
+    };
+
+    serde_json::json!({
+        "status": status,
+        "succeeded": succeeded,
+        "failed": failed,
+        "results": results,
+    })
 }
 
 pub fn get_status_from_goal(goal: &str) -> String {

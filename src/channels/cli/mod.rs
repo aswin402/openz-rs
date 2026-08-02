@@ -508,7 +508,7 @@ impl CliChannel {
                     RED_ORANGE, COLOR_RESET, defaults.security_mode
                 );
                 println!(
-                    "  {}TUI Thoughts:{}   {}",
+                    "  {}TUI Trace:{}      {}",
                     RED_ORANGE, COLOR_RESET, defaults.tui_thought_display
                 );
                 println!(
@@ -634,11 +634,11 @@ impl CliChannel {
                 let defaults = self.defaults.lock().await;
                 println!("{}TUI Settings:{}", COLOR_BOLD, COLOR_RESET);
                 println!(
-                    "  {}Thought display:{} {}",
+                    "  {}Trace visibility:{} {}",
                     RED_ORANGE, COLOR_RESET, defaults.tui_thought_display
                 );
                 println!(
-                    "Use {} /tui thoughts <full|compact|off>{}.",
+                    "Use {} /tui trace <full|compact|off>{} or legacy /tui thoughts.",
                     RED_ORANGE, COLOR_RESET
                 );
                 println!(
@@ -649,7 +649,8 @@ impl CliChannel {
             }
 
             if let Some(stripped) = trimmed
-                .strip_prefix("/tui thoughts")
+                .strip_prefix("/tui trace")
+                .or_else(|| trimmed.strip_prefix("/tui thoughts"))
                 .or_else(|| trimmed.strip_prefix("/thoughts"))
             {
                 let mode = match stripped.trim().to_lowercase().as_str() {
@@ -657,7 +658,7 @@ impl CliChannel {
                     "compact" | "summary" => "compact",
                     "off" | "none" | "hide" => "off",
                     _ => {
-                        println!("Usage: /tui thoughts <full|compact|off>");
+                        println!("Usage: /tui trace <full|compact|off>");
                         println!(
                             "{}────────────────────────────────────────────────────────────{}",
                             LIGHT_WHITE, COLOR_RESET
@@ -673,7 +674,7 @@ impl CliChannel {
                             Ok(()) => {
                                 *self.defaults.lock().await = config.agents.defaults.clone();
                                 println!(
-                                    "{}✓ TUI thought display set to {}.{}",
+                                    "{}✓ TUI trace visibility set to {}.{}",
                                     EMERALD_GREEN, mode, COLOR_RESET
                                 );
                             }
@@ -1573,15 +1574,8 @@ impl CliChannel {
                             }
                             if let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read()
                             {
-                                if key.kind == crossterm::event::KeyEventKind::Press {
-                                    if key.code == crossterm::event::KeyCode::Esc
-                                        || (key.code == crossterm::event::KeyCode::Char('c')
-                                            && key
-                                                .modifiers
-                                                .contains(crossterm::event::KeyModifiers::CONTROL))
-                                    {
-                                        crate::shutdown::trigger_cli_cancel();
-                                    }
+                                if input::is_turn_cancel_key(&key) {
+                                    crate::shutdown::trigger_cli_cancel();
                                 }
                             }
                         }

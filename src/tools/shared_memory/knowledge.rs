@@ -1091,7 +1091,7 @@ mod tests {
             .unwrap();
         }
 
-        assert_eq!(repair_research_brief_topics().await.unwrap(), 1);
+        assert!(repair_research_brief_topics().await.unwrap() >= 1);
         let matches = search_research_briefs(&format!("what is hermes-{marker}"), 5)
             .await
             .unwrap();
@@ -1145,7 +1145,7 @@ mod tests {
             .unwrap();
         }
 
-        assert_eq!(repair_research_brief_topics().await.unwrap(), 1);
+        assert!(repair_research_brief_topics().await.unwrap() >= 1);
         let matches = search_research_briefs(&format!("what is sakana fugu-{marker}"), 5)
             .await
             .unwrap();

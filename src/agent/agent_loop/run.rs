@@ -121,6 +121,490 @@ fn direct_page_research_only(user_content: &str) -> bool {
     !allows_related_sources
 }
 
+fn user_content_requests_fresh_fetch(user_content: &str) -> bool {
+    let lower = user_content.to_lowercase();
+    [
+        "latest",
+        "current",
+        "today",
+        "now",
+        "check again",
+        "verify",
+        "refresh",
+        "recheck",
+        "up to date",
+        "what's new",
+        "whats new",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn saved_tool_output_ref_from_read_file(
+    call: &crate::providers::ToolCallRequest,
+) -> Option<String> {
+    if call.name != "read_file" {
+        return None;
+    }
+
+    let raw_path = call.arguments.get("path")?.as_str()?.trim();
+    if raw_path.is_empty() {
+        return None;
+    }
+
+    let path_without_scheme = raw_path.strip_prefix("file://").unwrap_or(raw_path);
+    let path = std::path::Path::new(path_without_scheme);
+    let outputs_dir = crate::config::loader::runtime_data_dir().join("tool_outputs");
+
+    if !path.is_absolute() || !path.starts_with(&outputs_dir) {
+        return None;
+    }
+
+    if raw_path.starts_with("file://") {
+        Some(raw_path.to_string())
+    } else {
+        Some(format!("file://{}", path.to_string_lossy()))
+    }
+}
+
+fn auto_adjust_tool_call_for_user_intent(
+    mut call: crate::providers::ToolCallRequest,
+    user_content: &str,
+) -> crate::providers::ToolCallRequest {
+    if let Some(original_ref) = saved_tool_output_ref_from_read_file(&call) {
+        return crate::providers::ToolCallRequest {
+            id: call.id,
+            name: "retrieve_original".to_string(),
+            arguments: serde_json::json!({ "ccr_id": original_ref }),
+        };
+    }
+
+    if call.name == "web_fetch"
+        && user_content_requests_fresh_fetch(user_content)
+        && call.arguments.get("cache_mode").is_none()
+        && call.arguments.get("cacheMode").is_none()
+    {
+        if let serde_json::Value::Object(map) = &mut call.arguments {
+            map.insert(
+                "cache_mode".to_string(),
+                serde_json::Value::String("revalidate".to_string()),
+            );
+        }
+    }
+    call
+}
+
+fn edit_tool_target_path(tool_name: &str, arguments: &serde_json::Value) -> Option<String> {
+    if !matches!(
+        tool_name,
+        "write_file" | "patch_file" | "replace_lines" | "zenflow_edit"
+    ) {
+        return None;
+    }
+
+    arguments
+        .get("path")
+        .or_else(|| arguments.get("file_path"))
+        .or_else(|| arguments.get("target_path"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(ToString::to_string)
+}
+
+fn scope_context_target_for_edit_path(target_path: &str) -> String {
+    let trimmed = target_path.trim();
+    let path = std::path::Path::new(trimmed);
+    if path.exists() {
+        return trimmed.to_string();
+    }
+
+    let mut parent = path.parent();
+    while let Some(candidate) = parent {
+        if candidate.as_os_str().is_empty() {
+            return ".".to_string();
+        }
+        if candidate.exists() {
+            return candidate.to_string_lossy().to_string();
+        }
+        parent = candidate.parent();
+    }
+
+    trimmed.to_string()
+}
+
+fn auto_scope_context_before_edit(
+    call: crate::providers::ToolCallRequest,
+    scoped_edit_paths: &mut std::collections::HashSet<String>,
+) -> crate::providers::ToolCallRequest {
+    let Some(edit_path) = edit_tool_target_path(&call.name, &call.arguments) else {
+        return call;
+    };
+    let target_path = scope_context_target_for_edit_path(&edit_path);
+
+    if !scoped_edit_paths.insert(target_path.clone()) {
+        return call;
+    }
+
+    crate::providers::ToolCallRequest {
+        id: call.id,
+        name: "scope_context".to_string(),
+        arguments: serde_json::json!({
+            "target_path": target_path,
+            "auto_reason": "before_edit"
+        }),
+    }
+}
+
+fn user_content_requests_artifact_open(user_content: &str) -> bool {
+    let lower = user_content.to_lowercase();
+    [
+        "show", "open", "display", "view", "preview", "play", "launch", "see it",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn is_local_artifact_path(path: &str) -> bool {
+    let clean = path.trim().trim_start_matches("file://");
+    if clean.starts_with("http://") || clean.starts_with("https://") {
+        return false;
+    }
+    let Some(ext) = std::path::Path::new(clean)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+    else {
+        return false;
+    };
+    matches!(
+        ext.as_str(),
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "webp"
+            | "gif"
+            | "bmp"
+            | "svg"
+            | "mp4"
+            | "mov"
+            | "webm"
+            | "pdf"
+            | "docx"
+            | "pptx"
+            | "xlsx"
+            | "html"
+            | "htm"
+    )
+}
+
+fn artifact_path_from_value(value: &serde_json::Value) -> Option<String> {
+    let obj = value.as_object()?;
+    for key in [
+        "output_path",
+        "outputPath",
+        "path",
+        "file_path",
+        "filePath",
+        "target",
+        "url",
+    ] {
+        if let Some(path) = obj.get(key).and_then(|value| value.as_str()) {
+            if is_local_artifact_path(path) {
+                return Some(path.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn artifact_path_from_tool_result(
+    call: &crate::providers::ToolCallRequest,
+    result: &serde_json::Value,
+) -> Option<String> {
+    if result.get("error").is_some() {
+        return None;
+    }
+    artifact_path_from_value(result).or_else(|| artifact_path_from_value(&call.arguments))
+}
+
+fn auto_open_artifact_call_after_tool(
+    user_content: &str,
+    call: &crate::providers::ToolCallRequest,
+    result: &serde_json::Value,
+    opened_artifact_paths: &mut std::collections::HashSet<String>,
+) -> Option<crate::providers::ToolCallRequest> {
+    if call.name == "open_path" || !user_content_requests_artifact_open(user_content) {
+        return None;
+    }
+
+    let target = artifact_path_from_tool_result(call, result)?;
+    if !opened_artifact_paths.insert(target.clone()) {
+        return None;
+    }
+
+    Some(crate::providers::ToolCallRequest {
+        id: format!("auto_open_{}", call.id),
+        name: "open_path".to_string(),
+        arguments: serde_json::json!({
+            "target": target,
+            "auto_reason": "user_requested_artifact_display"
+        }),
+    })
+}
+
+fn artifact_open_category(target: &str) -> Option<&'static str> {
+    let clean = target.trim().trim_start_matches("file://");
+    if clean.starts_with("http://") || clean.starts_with("https://") {
+        return Some("browser");
+    }
+    let ext = std::path::Path::new(clean)
+        .extension()
+        .and_then(|ext| ext.to_str())?
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "svg" => Some("image_viewer"),
+        "mp4" | "mkv" | "webm" | "mov" | "avi" => Some("video_player"),
+        "mp3" | "wav" | "ogg" | "flac" | "m4a" => Some("audio_player"),
+        "pdf" => Some("pdf_viewer"),
+        "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "odt" | "ods" | "odp" => {
+            Some("office_docs")
+        }
+        "txt" | "md" | "rs" | "js" | "ts" | "html" | "htm" | "css" | "json" | "toml" | "yaml"
+        | "yml" => Some("editor"),
+        _ => Some("file_manager"),
+    }
+}
+
+fn auto_device_inventory_suggest_call_after_open_failure(
+    call: &crate::providers::ToolCallRequest,
+    result: &serde_json::Value,
+    suggested_open_targets: &mut std::collections::HashSet<String>,
+) -> Option<crate::providers::ToolCallRequest> {
+    if call.name != "open_path" || result.get("error").is_none() {
+        return None;
+    }
+    let target = call
+        .arguments
+        .get("target")
+        .and_then(|value| value.as_str())?;
+    if !suggested_open_targets.insert(target.to_string()) {
+        return None;
+    }
+    let category = artifact_open_category(target)?;
+
+    Some(crate::providers::ToolCallRequest {
+        id: format!("auto_device_inventory_{}", call.id),
+        name: "device_inventory".to_string(),
+        arguments: serde_json::json!({
+            "action": "suggest",
+            "category": category,
+            "target": target,
+            "limit": 5,
+            "auto_reason": "open_path_failed"
+        }),
+    })
+}
+
+#[cfg(test)]
+mod auto_tool_arg_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn web_fetch_latest_intent_injects_revalidate_cache_mode() {
+        let call = crate::providers::ToolCallRequest {
+            id: "call_1".to_string(),
+            name: "web_fetch".to_string(),
+            arguments: json!({ "url": "https://example.com" }),
+        };
+        let normalized = auto_adjust_tool_call_for_user_intent(
+            call,
+            "check the latest version from https://example.com",
+        );
+        assert_eq!(normalized.arguments["cache_mode"], "revalidate");
+    }
+
+    #[test]
+    fn web_fetch_explicit_cache_mode_is_preserved() {
+        let call = crate::providers::ToolCallRequest {
+            id: "call_1".to_string(),
+            name: "web_fetch".to_string(),
+            arguments: json!({ "url": "https://example.com", "cache_mode": "prefer_cache" }),
+        };
+        let normalized = auto_adjust_tool_call_for_user_intent(call, "check latest");
+        assert_eq!(normalized.arguments["cache_mode"], "prefer_cache");
+    }
+
+    #[test]
+    fn read_file_for_saved_tool_output_is_rewritten_to_retrieve_original() {
+        let call = crate::providers::ToolCallRequest {
+            id: "call_read_output".to_string(),
+            name: "read_file".to_string(),
+            arguments: json!({ "path": "file:///home/aswin/.openz/tool_outputs/output_big_tool.json" }),
+        };
+        let normalized = auto_adjust_tool_call_for_user_intent(call, "show the full output");
+        assert_eq!(normalized.name, "retrieve_original");
+        assert_eq!(normalized.id, "call_read_output");
+        assert_eq!(
+            normalized.arguments["ccr_id"],
+            "file:///home/aswin/.openz/tool_outputs/output_big_tool.json"
+        );
+    }
+
+    #[test]
+    fn read_file_for_normal_project_file_is_preserved() {
+        let call = crate::providers::ToolCallRequest {
+            id: "call_read_file".to_string(),
+            name: "read_file".to_string(),
+            arguments: json!({ "path": "src/main.rs" }),
+        };
+        let normalized = auto_adjust_tool_call_for_user_intent(call, "show the file");
+        assert_eq!(normalized.name, "read_file");
+        assert_eq!(normalized.arguments["path"], "src/main.rs");
+    }
+
+    #[test]
+    fn first_edit_call_is_replaced_with_scope_context() {
+        let call = crate::providers::ToolCallRequest {
+            id: "call_edit".to_string(),
+            name: "patch_file".to_string(),
+            arguments: json!({ "path": "src/main.rs", "patch": "---" }),
+        };
+        let mut scoped = std::collections::HashSet::new();
+        let normalized = auto_scope_context_before_edit(call, &mut scoped);
+        assert_eq!(normalized.name, "scope_context");
+        assert_eq!(normalized.id, "call_edit");
+        assert_eq!(normalized.arguments["target_path"], "src/main.rs");
+        assert!(scoped.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn first_write_to_new_file_scopes_existing_parent_directory() {
+        let call = crate::providers::ToolCallRequest {
+            id: "call_new_file".to_string(),
+            name: "write_file".to_string(),
+            arguments: json!({ "path": "src/__openz_auto_scope_new_file.rs", "content": "" }),
+        };
+        let mut scoped = std::collections::HashSet::new();
+        let normalized = auto_scope_context_before_edit(call, &mut scoped);
+        assert_eq!(normalized.name, "scope_context");
+        assert_eq!(normalized.arguments["target_path"], "src");
+        assert!(scoped.contains("src"));
+    }
+
+    #[test]
+    fn second_edit_call_for_same_path_is_preserved() {
+        let call = crate::providers::ToolCallRequest {
+            id: "call_edit".to_string(),
+            name: "patch_file".to_string(),
+            arguments: json!({ "path": "src/main.rs", "patch": "---" }),
+        };
+        let mut scoped = std::collections::HashSet::from(["src/main.rs".to_string()]);
+        let normalized = auto_scope_context_before_edit(call, &mut scoped);
+        assert_eq!(normalized.name, "patch_file");
+    }
+    #[test]
+    fn show_intent_and_generated_output_path_builds_auto_open_call() {
+        let call = crate::providers::ToolCallRequest {
+            id: "call_image".to_string(),
+            name: "generate_image".to_string(),
+            arguments: json!({ "output_path": "/tmp/demo.png" }),
+        };
+        let result = json!({ "status": "success", "output_path": "/tmp/demo.png" });
+        let mut opened = std::collections::HashSet::new();
+        let open_call = auto_open_artifact_call_after_tool(
+            "make an image and show it",
+            &call,
+            &result,
+            &mut opened,
+        )
+        .expect("auto open call");
+        assert_eq!(open_call.name, "open_path");
+        assert_eq!(open_call.id, "auto_open_call_image");
+        assert_eq!(open_call.arguments["target"], "/tmp/demo.png");
+    }
+
+    #[test]
+    fn generated_artifact_without_show_intent_does_not_auto_open() {
+        let call = crate::providers::ToolCallRequest {
+            id: "call_image".to_string(),
+            name: "generate_image".to_string(),
+            arguments: json!({ "output_path": "/tmp/demo.png" }),
+        };
+        let result = json!({ "status": "success", "output_path": "/tmp/demo.png" });
+        let mut opened = std::collections::HashSet::new();
+        assert!(
+            auto_open_artifact_call_after_tool("make an image", &call, &result, &mut opened,)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn auto_open_dedupes_same_artifact_path() {
+        let call = crate::providers::ToolCallRequest {
+            id: "call_video".to_string(),
+            name: "html_to_video".to_string(),
+            arguments: json!({ "output_path": "/tmp/demo.mp4" }),
+        };
+        let result = json!({ "status": "success", "output_path": "/tmp/demo.mp4" });
+        let mut opened = std::collections::HashSet::new();
+        assert!(
+            auto_open_artifact_call_after_tool("show the video", &call, &result, &mut opened)
+                .is_some()
+        );
+        assert!(
+            auto_open_artifact_call_after_tool("show the video", &call, &result, &mut opened)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn failed_open_path_builds_device_inventory_suggestion_call() {
+        let call = crate::providers::ToolCallRequest {
+            id: "call_open".to_string(),
+            name: "open_path".to_string(),
+            arguments: json!({ "target": "/tmp/demo.pdf" }),
+        };
+        let result = json!({ "error": "Failed to open '/tmp/demo.pdf': no application found" });
+        let mut suggested = std::collections::HashSet::new();
+
+        let suggest_call =
+            auto_device_inventory_suggest_call_after_open_failure(&call, &result, &mut suggested)
+                .expect("device inventory suggestion call");
+
+        assert_eq!(suggest_call.name, "device_inventory");
+        assert_eq!(suggest_call.id, "auto_device_inventory_call_open");
+        assert_eq!(suggest_call.arguments["action"], "suggest");
+        assert_eq!(suggest_call.arguments["category"], "pdf_viewer");
+        assert_eq!(suggest_call.arguments["target"], "/tmp/demo.pdf");
+    }
+
+    #[test]
+    fn failed_open_path_suggestion_dedupes_same_target() {
+        let call = crate::providers::ToolCallRequest {
+            id: "call_open".to_string(),
+            name: "open_path".to_string(),
+            arguments: json!({ "target": "/tmp/demo.png" }),
+        };
+        let result = json!({ "error": "Failed to open '/tmp/demo.png': no application found" });
+        let mut suggested = std::collections::HashSet::new();
+
+        assert!(auto_device_inventory_suggest_call_after_open_failure(
+            &call,
+            &result,
+            &mut suggested
+        )
+        .is_some());
+        assert!(auto_device_inventory_suggest_call_after_open_failure(
+            &call,
+            &result,
+            &mut suggested
+        )
+        .is_none());
+    }
+}
+
 async fn fresh_research_brief_blocks_lookup(
     user_content: &str,
     tool_name: &str,
@@ -357,12 +841,31 @@ async fn execute_approved_tool(params: ApprovedToolExec<'_>) -> serde_json::Valu
 }
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
+    if let Some(question) =
+        crate::agent::marketplace_intent::clarification_question_for_marketplace_intent(
+            ctx.user_content,
+        )
+    {
+        ctx.final_content = question.to_string();
+        ctx.messages.push(Message {
+            role: "assistant".to_string(),
+            content: question.to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            extra: serde_json::Map::new(),
+        });
+        return Ok(TurnState::Save);
+    }
+
     let mut iterations = 0;
     let mut loop_blocked_count = 0;
     let max_iterations = ctx.config.agents.defaults.max_tool_iterations;
     let mut turn_capture_summaries: Vec<crate::tools::shared_memory::AutoCaptureSummary> =
         Vec::new();
+    let mut turn_source_ledger = crate::agent::source_ledger::SourceLedger::default();
     let mut completed_direct_research_urls = std::collections::HashSet::new();
+    let mut auto_scoped_edit_paths = std::collections::HashSet::new();
+    let mut auto_opened_artifact_paths = std::collections::HashSet::new();
+    let mut auto_suggested_open_targets = std::collections::HashSet::new();
     let direct_page_only = direct_page_research_only(ctx.user_content);
     let mut direct_page_fetched = false;
 
@@ -942,12 +1445,11 @@ Now provide only the final user-facing answer to my last message. Do not include
                                     .to_string(),
                             )
                         };
-                        let recovery_reasoning_for_memory = if recovered_content
-                            .as_ref()
-                            .is_some_and(|content| content == recovery_reasoning.trim())
+                        let recovery_reasoning_for_memory = if recovery_reasoning.trim().is_empty()
+                            || recovered_content
+                                .as_ref()
+                                .is_some_and(|content| content == recovery_reasoning.trim())
                         {
-                            None
-                        } else if recovery_reasoning.trim().is_empty() {
                             None
                         } else {
                             Some(recovery_reasoning)
@@ -1016,22 +1518,34 @@ Now provide only the final user-facing answer to my last message. Do not include
         let has_tool_calls = !resp.tool_calls.is_empty();
 
         if has_reasoning || (has_content && has_tool_calls) {
-            // Send reasoning/thought summary to non-CLI channels (Telegram, WS, etc.)
-            if has_reasoning {
+            let output_visibility = crate::agent::events::OutputVisibility::from_tui_trace_mode(
+                &config.agents.defaults.tui_thought_display,
+            );
+            let public_reasoning_progress =
+                should_send_public_reasoning_progress(&config.agents.defaults.tui_thought_display);
+            // Send reasoning/thought summary to non-CLI channels only when explicitly enabled.
+            if public_reasoning_progress && has_reasoning {
                 if let Some(ref reasoning) = resp.reasoning_content {
-                    let reasoning_msg = format!(
-                        "▶ *Thought*\n\n> {}",
-                        reasoning.trim().replace('\n', "\n> ")
-                    );
-                    super::tool_execution::send_progress_update(ctx.session_key, &reasoning_msg)
+                    if let Some(reasoning_msg) =
+                        crate::agent::events::AgentEvent::PrivateReasoning(reasoning.clone())
+                            .public_text(&output_visibility)
+                    {
+                        super::tool_execution::send_progress_update(
+                            ctx.session_key,
+                            &reasoning_msg,
+                        )
                         .await;
+                    }
                 }
-            } else if has_content && has_tool_calls {
+            } else if public_reasoning_progress && has_content && has_tool_calls {
                 if let Some(ref content) = resp.content {
-                    let thought_msg =
-                        format!("▶ *Thought*\n\n> {}", content.trim().replace('\n', "\n> "));
-                    super::tool_execution::send_progress_update(ctx.session_key, &thought_msg)
-                        .await;
+                    if let Some(thought_msg) =
+                        crate::agent::events::AgentEvent::PrivateReasoning(content.clone())
+                            .public_text(&output_visibility)
+                    {
+                        super::tool_execution::send_progress_update(ctx.session_key, &thought_msg)
+                            .await;
+                    }
                 }
             }
 
@@ -1039,7 +1553,7 @@ Now provide only the final user-facing answer to my last message. Do not include
             let depth = crate::tools::subagent::DELEGATION_DEPTH
                 .try_with(|d| *d)
                 .unwrap_or(0);
-            if !silent {
+            if !silent && should_show_tui_thoughts(&config.agents.defaults.tui_thought_display) {
                 let prefix = if depth > 0 {
                     crate::agent::style::get_tree_prefix(false)
                 } else {
@@ -1077,7 +1591,7 @@ Now provide only the final user-facing answer to my last message. Do not include
                     );
                     let full_reasoning = if has_reasoning {
                         resp.reasoning_content.clone().unwrap_or_default()
-                    } else if has_content && has_tool_calls {
+                    } else if public_reasoning_progress && has_content && has_tool_calls {
                         resp.content.clone().unwrap_or_default()
                     } else {
                         String::new()
@@ -1113,6 +1627,14 @@ Now provide only the final user-facing answer to my last message. Do not include
                 break;
             }
 
+            let content = if config.research.require_sources_for_current_claims
+                && super::research_policy::has_live_research_intent(ctx.user_content)
+            {
+                turn_source_ledger.append_live_research_caveat_if_needed(content, true)
+            } else {
+                content
+            };
+
             ctx.final_content = content.clone();
             let mut extra = serde_json::Map::new();
             if let Some(ref reasoning) = resp.reasoning_content {
@@ -1138,6 +1660,8 @@ Now provide only the final user-facing answer to my last message. Do not include
         let mut assistant_tool_calls_json = Vec::new();
 
         for call in resp.tool_calls {
+            let call = auto_adjust_tool_call_for_user_intent(call, ctx.user_content);
+            let call = auto_scope_context_before_edit(call, &mut auto_scoped_edit_paths);
             // Break early if already cancelled (e.g. previous tool in batch was cancelled)
             if turn_cancel.is_cancelled() {
                 break;
@@ -1456,6 +1980,9 @@ Now provide only the final user-facing answer to my last message. Do not include
                     }
                 }
             };
+            if is_research_lookup_tool(&call.name) {
+                turn_source_ledger.record_tool_result(&call.name, &call.arguments, &result_val);
+            }
             if direct_url.is_some() && result_val.get("error").is_none() {
                 if let Some(url) = direct_url {
                     completed_direct_research_urls.insert(url);
@@ -1482,6 +2009,18 @@ Now provide only the final user-facing answer to my last message. Do not include
                 None,
             );
 
+            let maybe_auto_open_call = auto_open_artifact_call_after_tool(
+                ctx.user_content,
+                &call,
+                &result_val,
+                &mut auto_opened_artifact_paths,
+            );
+            let maybe_device_suggest_call = auto_device_inventory_suggest_call_after_open_failure(
+                &call,
+                &result_val,
+                &mut auto_suggested_open_targets,
+            );
+
             tool_results.push(super::transcript::ToolTranscriptResult {
                 id: call.id.clone(),
                 name: call.name.clone(),
@@ -1505,6 +2044,141 @@ Now provide only the final user-facing answer to my last message. Do not include
                 }
             }
             assistant_tool_calls_json.push(assistant_tool_call);
+
+            if let Some(suggest_call) = maybe_device_suggest_call {
+                if let Some(suggest_tool) = loop_ref.tools.get(&suggest_call.name) {
+                    let metadata = suggest_tool.metadata();
+                    let formatted_suggest_args = super::tool_execution::format_tool_args(
+                        &suggest_call.name,
+                        &suggest_call.arguments,
+                    );
+                    let suggest_spinner_msg = crate::agent::style::get_tree_spinner_msg(
+                        &suggest_call.name,
+                        &formatted_suggest_args,
+                    );
+                    let suggest_result = execute_approved_tool(ApprovedToolExec {
+                        tool: suggest_tool,
+                        call: &suggest_call,
+                        metadata: &metadata,
+                        config: &config,
+                        formatted_args: &formatted_suggest_args,
+                        session_key: ctx.session_key,
+                        silent,
+                        tool_spinner_msg: &suggest_spinner_msg,
+                        turn_cancel: &turn_cancel_clone,
+                        turn_errors: &mut ctx.turn_errors,
+                    })
+                    .await;
+
+                    tool_results.push(super::transcript::ToolTranscriptResult {
+                        id: suggest_call.id.clone(),
+                        name: suggest_call.name.clone(),
+                        result: suggest_result,
+                    });
+
+                    assistant_tool_calls_json.push(serde_json::json!({
+                        "id": suggest_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": suggest_call.name,
+                            "arguments": suggest_call.arguments.to_string()
+                        },
+                        "_openz_auto_tool": true
+                    }));
+                }
+            }
+
+            if let Some(open_call) = maybe_auto_open_call {
+                if let Some(open_tool) = loop_ref.tools.get(&open_call.name) {
+                    let metadata = open_tool.metadata();
+                    let formatted_open_args = super::tool_execution::format_tool_args(
+                        &open_call.name,
+                        &open_call.arguments,
+                    );
+                    let open_spinner_msg = crate::agent::style::get_tree_spinner_msg(
+                        &open_call.name,
+                        &formatted_open_args,
+                    );
+                    let open_result = execute_approved_tool(ApprovedToolExec {
+                        tool: open_tool,
+                        call: &open_call,
+                        metadata: &metadata,
+                        config: &config,
+                        formatted_args: &formatted_open_args,
+                        session_key: ctx.session_key,
+                        silent,
+                        tool_spinner_msg: &open_spinner_msg,
+                        turn_cancel: &turn_cancel_clone,
+                        turn_errors: &mut ctx.turn_errors,
+                    })
+                    .await;
+                    let maybe_open_suggest_call =
+                        auto_device_inventory_suggest_call_after_open_failure(
+                            &open_call,
+                            &open_result,
+                            &mut auto_suggested_open_targets,
+                        );
+
+                    tool_results.push(super::transcript::ToolTranscriptResult {
+                        id: open_call.id.clone(),
+                        name: open_call.name.clone(),
+                        result: open_result,
+                    });
+
+                    assistant_tool_calls_json.push(serde_json::json!({
+                        "id": open_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": open_call.name,
+                            "arguments": open_call.arguments.to_string()
+                        },
+                        "_openz_auto_tool": true
+                    }));
+
+                    if let Some(suggest_call) = maybe_open_suggest_call {
+                        if let Some(suggest_tool) = loop_ref.tools.get(&suggest_call.name) {
+                            let metadata = suggest_tool.metadata();
+                            let formatted_suggest_args = super::tool_execution::format_tool_args(
+                                &suggest_call.name,
+                                &suggest_call.arguments,
+                            );
+                            let suggest_spinner_msg = crate::agent::style::get_tree_spinner_msg(
+                                &suggest_call.name,
+                                &formatted_suggest_args,
+                            );
+                            let suggest_result = execute_approved_tool(ApprovedToolExec {
+                                tool: suggest_tool,
+                                call: &suggest_call,
+                                metadata: &metadata,
+                                config: &config,
+                                formatted_args: &formatted_suggest_args,
+                                session_key: ctx.session_key,
+                                silent,
+                                tool_spinner_msg: &suggest_spinner_msg,
+                                turn_cancel: &turn_cancel_clone,
+                                turn_errors: &mut ctx.turn_errors,
+                            })
+                            .await;
+
+                            tool_results.push(super::transcript::ToolTranscriptResult {
+                                id: suggest_call.id.clone(),
+                                name: suggest_call.name.clone(),
+                                result: suggest_result,
+                            });
+
+                            assistant_tool_calls_json.push(serde_json::json!({
+                                "id": suggest_call.id,
+                                "type": "function",
+                                "function": {
+                                    "name": suggest_call.name,
+                                    "arguments": suggest_call.arguments.to_string()
+                                },
+                                "_openz_auto_tool": true
+                            }));
+                        }
+                    }
+                }
+            }
         }
 
         super::transcript::append_assistant_tool_calls(
@@ -1544,10 +2218,19 @@ Now provide only the final user-facing answer to my last message. Do not include
         let sources_saved: usize = turn_capture_summaries.iter().map(|c| c.sources_saved).sum();
         let briefs_saved = count_unique_auto_capture_brief_topics(&turn_capture_summaries);
         let topics = summarize_auto_capture_topics(&turn_capture_summaries);
-        crate::channels::cli::send_notification(&format!(
-            "◇ [Knowledge] Auto-saved research: {} source(s), {} brief(s) | {}",
-            sources_saved, briefs_saved, topics
-        ));
+        let output_visibility = crate::agent::events::OutputVisibility {
+            memory_notices: ctx.config.agents.defaults.show_auto_capture_notices,
+            ..Default::default()
+        };
+        if let Some(notice) = (crate::agent::events::AgentEvent::MemoryCaptureSummary {
+            sources_saved,
+            briefs_saved,
+            topics,
+        })
+        .public_text(&output_visibility)
+        {
+            crate::channels::cli::send_notification(&notice);
+        }
     }
 
     ctx.session.messages = ctx.messages.clone();
@@ -1578,6 +2261,10 @@ fn normalize_tui_thought_display(mode: &str) -> &'static str {
 
 fn should_show_tui_thoughts(mode: &str) -> bool {
     normalize_tui_thought_display(mode) != "off"
+}
+
+fn should_send_public_reasoning_progress(mode: &str) -> bool {
+    should_show_tui_thoughts(mode)
 }
 
 fn compact_reasoning_summary(reasoning: &str) -> String {
@@ -1696,11 +2383,27 @@ mod tests {
     }
 
     #[test]
+    fn public_reasoning_progress_is_hidden_by_default() {
+        assert!(!should_send_public_reasoning_progress("off"));
+        assert!(!should_send_public_reasoning_progress("hidden"));
+        assert!(should_send_public_reasoning_progress("compact"));
+        assert!(should_send_public_reasoning_progress("full"));
+    }
+
+    #[test]
     fn compact_reasoning_summary_truncates_long_text() {
         let raw = "word ".repeat(120);
         let compact = compact_reasoning_summary(&raw);
         assert!(compact.chars().count() <= 360);
         assert!(compact.ends_with("..."));
+    }
+
+    #[test]
+    fn compact_reasoning_summary_never_returns_full_long_reasoning() {
+        let raw = "internal step ".repeat(80);
+        let compact = compact_reasoning_summary(&raw);
+        assert!(compact.chars().count() <= 360);
+        assert_ne!(compact, raw);
     }
 
     #[tokio::test]

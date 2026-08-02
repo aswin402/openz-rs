@@ -451,6 +451,9 @@ fn register_searchxyz_tools(registry: &ToolRegistry) {
         crate::tools::searchxyz::SearchXyzSearchWebTool,
     ));
     registry.register(std::sync::Arc::new(
+        crate::tools::searchxyz::SearchXyzBrowserSearchTool,
+    ));
+    registry.register(std::sync::Arc::new(
         crate::tools::searchxyz::SearchXyzReadUrlTool,
     ));
     registry.register(std::sync::Arc::new(

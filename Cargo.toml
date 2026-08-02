@@ -1,6 +1,6 @@
 [package]
 name = "openz"
-version = "0.0.112"
+version = "0.0.114"
 edition = "2021"
 
 
@@ -126,7 +126,9 @@ opendoc-mcp = { path = "tools/opendoc" }
 openz-github-mcp = { path = "tools/openz-github" }
 openz-docs-mcp = { path = "tools/openz-docs" }
 
-
+[features]
+default = []
+ocr = ["opendoc-mcp/ocr"]
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.6"

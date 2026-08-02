@@ -90,6 +90,78 @@ fn extract_table(t: &docx_rs::Table, text: &mut String, depth: usize) {
     }
 }
 
+fn document_text_needs_ocr(text: &str) -> bool {
+    text.chars().filter(|ch| !ch.is_whitespace()).count() < 24
+}
+
+fn is_ocr_supported_extension(extension: Option<&str>) -> bool {
+    matches!(
+        extension.map(|ext| ext.to_ascii_lowercase()).as_deref(),
+        Some("pdf" | "png" | "jpg" | "jpeg" | "bmp" | "tiff" | "tif")
+    )
+}
+
+fn is_image_ocr_extension(extension: Option<&str>) -> bool {
+    matches!(
+        extension.map(|ext| ext.to_ascii_lowercase()).as_deref(),
+        Some("png" | "jpg" | "jpeg" | "bmp" | "tiff" | "tif")
+    )
+}
+
+fn ocr_text_from_result(result: &Value) -> Option<String> {
+    if result.get("success").and_then(|value| value.as_bool()) != Some(true) {
+        return None;
+    }
+    result
+        .get("text")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(ToString::to_string)
+}
+
+fn run_opendoc_ocr(path: &std::path::Path, language: Option<&str>) -> Value {
+    let response = crate::tools::opendoc::get_server().ocr_document(
+        path.to_string_lossy().to_string(),
+        language.map(ToString::to_string),
+    );
+    serde_json::from_str(&response).unwrap_or_else(|_| {
+        json!({
+            "success": false,
+            "error": "Failed to parse OCR response",
+            "raw": response
+        })
+    })
+}
+
+fn should_analyze_document_complexity(extension: Option<&str>, arguments: &Value) -> bool {
+    let explicit = arguments
+        .get("analyze_complexity")
+        .or_else(|| arguments.get("analyzeComplexity"))
+        .and_then(|value| value.as_bool());
+
+    if let Some(enabled) = explicit {
+        return enabled;
+    }
+
+    matches!(
+        extension.map(|ext| ext.to_ascii_lowercase()).as_deref(),
+        Some("pdf")
+    )
+}
+
+fn run_opendoc_complexity_analysis(path: &std::path::Path) -> Value {
+    let response = crate::tools::opendoc::get_server()
+        .analyze_document_complexity(path.to_string_lossy().to_string());
+    serde_json::from_str(&response).unwrap_or_else(|_| {
+        json!({
+            "success": false,
+            "error": "Failed to parse document complexity response",
+            "raw": response
+        })
+    })
+}
+
 #[async_trait::async_trait]
 impl Tool for DocReaderTool {
     fn name(&self) -> &str {
@@ -106,7 +178,19 @@ impl Tool for DocReaderTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the document file (e.g. .pdf, .xlsx, .xls, .ods, .docx)."
+                    "description": "Path to the document file (e.g. .pdf, .xlsx, .xls, .ods, .docx, .png, .jpg)."
+                },
+                "auto_ocr": {
+                    "type": "boolean",
+                    "description": "Automatically run OCR for scanned PDFs or image files when native text extraction is empty (default: true)."
+                },
+                "ocr_language": {
+                    "type": "string",
+                    "description": "Optional OCR language code for Tesseract, e.g. eng."
+                },
+                "analyze_complexity": {
+                    "type": "boolean",
+                    "description": "Automatically run document complexity analysis before PDF extraction to guide OCR/chunk/render decisions (default: true for PDFs)."
                 }
             },
             "required": ["path"]
@@ -139,9 +223,38 @@ impl Tool for DocReaderTool {
             .extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.to_lowercase());
+        let auto_ocr = arguments
+            .get("auto_ocr")
+            .or_else(|| arguments.get("autoOcr"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true);
+        let ocr_language = arguments
+            .get("ocr_language")
+            .or_else(|| arguments.get("ocrLanguage"))
+            .and_then(|value| value.as_str());
 
-        let content = match extension.as_deref() {
-            Some("pdf") => pdf_extract::extract_text(&resolved_path)?,
+        let mut complexity_analyzed = false;
+        let mut complexity_result: Option<Value> = None;
+        if should_analyze_document_complexity(extension.as_deref(), arguments) {
+            complexity_analyzed = true;
+            complexity_result = Some(run_opendoc_complexity_analysis(&resolved_path));
+        }
+
+        let mut extraction_method = "native";
+        let mut ocr_attempted = false;
+        let mut ocr_result: Option<Value> = None;
+
+        let mut content = match extension.as_deref() {
+            Some("pdf") => match pdf_extract::extract_text(&resolved_path) {
+                Ok(text) => text,
+                Err(err) if auto_ocr => {
+                    ocr_result = Some(json!({
+                        "native_extract_error": err.to_string()
+                    }));
+                    String::new()
+                }
+                Err(err) => return Err(err.into()),
+            },
             Some("xlsx") | Some("xls") | Some("ods") => {
                 let mut sheets = calamine::open_workbook_auto(&resolved_path)?;
                 let mut text = String::new();
@@ -165,12 +278,36 @@ impl Tool for DocReaderTool {
                 file.read_to_end(&mut buf)?;
                 extract_docx_text(&buf)?
             }
+            ext if auto_ocr && is_image_ocr_extension(ext) => String::new(),
             _ => {
                 return Err(anyhow!(
-                    "Unsupported file extension. Supported formats: .pdf, .xlsx, .xls, .ods, .docx"
+                    "Unsupported file extension. Supported formats: .pdf, .xlsx, .xls, .ods, .docx, .png, .jpg, .jpeg, .bmp, .tiff"
                 ));
             }
         };
+
+        if auto_ocr
+            && is_ocr_supported_extension(extension.as_deref())
+            && (is_image_ocr_extension(extension.as_deref()) || document_text_needs_ocr(&content))
+        {
+            ocr_attempted = true;
+            let ocr = run_opendoc_ocr(&resolved_path, ocr_language);
+            if let Some(ocr_text) = ocr_text_from_result(&ocr) {
+                content = ocr_text;
+                extraction_method = "ocr";
+            }
+            ocr_result = Some(match ocr_result.take() {
+                Some(mut prior) => {
+                    if let Some(obj) = prior.as_object_mut() {
+                        obj.insert("ocr".to_string(), ocr);
+                        prior
+                    } else {
+                        ocr
+                    }
+                }
+                None => ocr,
+            });
+        }
 
         let _ = crate::tools::shared_memory::archive_research_entry(
             path_str,
@@ -180,8 +317,13 @@ impl Tool for DocReaderTool {
         .await;
 
         Ok(json!({
-            "status": "success",
-            "content": content
+            "status": if ocr_attempted && document_text_needs_ocr(&content) { "partial_success" } else { "success" },
+            "content": content,
+            "extraction_method": extraction_method,
+            "complexity_analyzed": complexity_analyzed,
+            "complexity_result": complexity_result,
+            "ocr_attempted": ocr_attempted,
+            "ocr_result": ocr_result
         }))
     }
 }
@@ -189,6 +331,62 @@ impl Tool for DocReaderTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_pdf_text_is_ocr_candidate() {
+        assert!(document_text_needs_ocr("   "));
+        assert!(document_text_needs_ocr(
+            "
+	  "
+        ));
+    }
+
+    #[test]
+    fn normal_document_text_does_not_need_ocr() {
+        assert!(!document_text_needs_ocr(
+            "This PDF already contains enough extractable text to answer questions from it."
+        ));
+    }
+
+    #[test]
+    fn image_extensions_are_ocr_supported_documents() {
+        assert!(is_ocr_supported_extension(Some("png")));
+        assert!(is_ocr_supported_extension(Some("jpg")));
+        assert!(is_ocr_supported_extension(Some("jpeg")));
+        assert!(is_ocr_supported_extension(Some("tiff")));
+        assert!(!is_ocr_supported_extension(Some("docx")));
+    }
+
+    #[test]
+    fn pdf_complexity_analysis_defaults_on() {
+        assert!(should_analyze_document_complexity(Some("pdf"), &json!({})));
+    }
+
+    #[test]
+    fn complexity_analysis_can_be_disabled() {
+        assert!(!should_analyze_document_complexity(
+            Some("pdf"),
+            &json!({ "analyze_complexity": false })
+        ));
+    }
+
+    #[test]
+    fn spreadsheets_skip_complexity_analysis_by_default() {
+        assert!(!should_analyze_document_complexity(
+            Some("xlsx"),
+            &json!({})
+        ));
+    }
+
+    #[test]
+    fn ocr_json_text_is_extracted_from_success_response() {
+        let parsed = ocr_text_from_result(&json!({
+            "success": true,
+            "text": "Scanned invoice total 42"
+        }))
+        .unwrap();
+        assert_eq!(parsed, "Scanned invoice total 42");
+    }
 
     #[tokio::test]
     async fn test_doc_reader_metadata() -> Result<()> {

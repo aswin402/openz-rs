@@ -1,6 +1,7 @@
 use super::delegate_task::{
     create_isolated_workspace, current_workspace_root, ensure_markdown_images,
-    run_evolution_review, sync_changes_back, WorktreeGuard,
+    is_scratch_workspace, run_evolution_review, should_sync_changes_back, sync_changes_back,
+    WorktreeGuard,
 };
 use super::parallel_research::get_status_from_goal;
 use super::schema_retry::{evaluate_schema_retry, SchemaRetryDecision};
@@ -176,7 +177,16 @@ impl Tool for DelegateProfileTool {
 
             match workspace_res {
                 Ok(Ok(dir)) => {
-                    crate::tui_println!("{}  ✓ Isolated workspace worktree created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
+                    if is_scratch_workspace(&dir) {
+                        workspace_isolation = "scratch_workspace".to_string();
+                        workspace_isolation_reason = Some(format!(
+                            "Active workspace '{}' is unsafe to copy; using an empty scratch workspace with no sync-back.",
+                            parent_dir.display()
+                        ));
+                        crate::tui_println!("{}  ✓ Scratch subagent workspace created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
+                    } else {
+                        crate::tui_println!("{}  ✓ Isolated workspace worktree created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
+                    }
                     dir
                 }
                 Ok(Err(e)) => {
@@ -419,7 +429,7 @@ impl Tool for DelegateProfileTool {
                         );
                     }
 
-                    if workspace_dir != parent_dir {
+                    if should_sync_changes_back(&parent_dir, &workspace_dir) {
                         let _ = sync_changes_back(&workspace_dir, &parent_dir);
                     }
 

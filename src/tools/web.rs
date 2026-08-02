@@ -356,6 +356,161 @@ fn extract_text_from_html(html: &str) -> String {
     final_text.trim().to_string()
 }
 
+fn web_fetch_render_js_enabled(arguments: &serde_json::Value) -> bool {
+    arguments
+        .get("render_js")
+        .or_else(|| arguments.get("renderJs"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
+fn web_fetch_should_retry_browser_render(
+    html: &str,
+    extracted_text: &str,
+    arguments: &serde_json::Value,
+) -> bool {
+    if !web_fetch_render_js_enabled(arguments) {
+        return false;
+    }
+
+    let visible_chars = extracted_text.trim().chars().count();
+    let normalized = html.to_ascii_lowercase();
+    let script_count = normalized.matches("<script").count();
+    let has_app_root = [
+        "id=\"root\"",
+        "id='root'",
+        "id=\"app\"",
+        "id='app'",
+        "data-reactroot",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+    let has_js_required_text = [
+        "enable javascript",
+        "requires javascript",
+        "javascript is required",
+        "you need javascript",
+        "please enable js",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle));
+
+    visible_chars < 240 && (has_js_required_text || (has_app_root && script_count > 0))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WebFetchBrowserRenderBackend {
+    Gsd,
+    Firefox,
+    Obscura,
+}
+
+impl WebFetchBrowserRenderBackend {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Gsd => "gsd_browser",
+            Self::Firefox => "firefox_browser",
+            Self::Obscura => "obscura_browser",
+        }
+    }
+}
+
+fn web_fetch_browser_render_backends() -> [WebFetchBrowserRenderBackend; 3] {
+    [
+        WebFetchBrowserRenderBackend::Gsd,
+        WebFetchBrowserRenderBackend::Firefox,
+        WebFetchBrowserRenderBackend::Obscura,
+    ]
+}
+
+#[cfg(test)]
+fn web_fetch_browser_render_backend_names() -> [&'static str; 3] {
+    web_fetch_browser_render_backends().map(WebFetchBrowserRenderBackend::name)
+}
+
+fn web_fetch_extract_browser_output(value: serde_json::Value) -> Result<String> {
+    value
+        .as_str()
+        .or_else(|| value.get("output").and_then(|output| output.as_str()))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("Browser render returned no readable text"))
+}
+
+async fn web_fetch_render_with_backend(
+    backend: WebFetchBrowserRenderBackend,
+    url: &str,
+) -> Result<String> {
+    match backend {
+        WebFetchBrowserRenderBackend::Gsd => {
+            let browser = crate::tools::gsd_browser::GsdBrowserTool;
+            browser
+                .call(&serde_json::json!({
+                    "action": "navigate",
+                    "url": url,
+                }))
+                .await?;
+            let page_source = browser
+                .call(&serde_json::json!({ "action": "page_source" }))
+                .await?;
+            let html = page_source
+                .get("output")
+                .and_then(|output| output.as_str())
+                .ok_or_else(|| anyhow!("gsd_browser page_source returned no output"))?;
+            let markdown = html2md::parse_html(html).trim().to_string();
+            if markdown.is_empty() {
+                Err(anyhow!("gsd_browser rendered empty text"))
+            } else {
+                Ok(markdown)
+            }
+        }
+        WebFetchBrowserRenderBackend::Firefox => {
+            let browser = crate::tools::firefox::FirefoxBrowserTool::new();
+            let rendered = browser
+                .call(&serde_json::json!({
+                    "url": url,
+                    "action": "render",
+                }))
+                .await?;
+            web_fetch_extract_browser_output(rendered)
+        }
+        WebFetchBrowserRenderBackend::Obscura => {
+            let browser = crate::tools::obscura::ObscuraBrowserTool;
+            let rendered = browser
+                .call(&serde_json::json!({
+                    "url": url,
+                    "action": "render",
+                    "timeout": 20,
+                }))
+                .await?;
+            web_fetch_extract_browser_output(rendered)
+        }
+    }
+}
+
+async fn web_fetch_browser_render(url: &str) -> Result<String> {
+    let mut failures = Vec::new();
+    for backend in web_fetch_browser_render_backends() {
+        match web_fetch_render_with_backend(backend, url).await {
+            Ok(text) => return Ok(text),
+            Err(err) => {
+                tracing::warn!(
+                    backend = backend.name(),
+                    url = %url,
+                    error = ?err,
+                    "web_fetch browser render backend failed; trying next backend"
+                );
+                failures.push(format!("{}: {}", backend.name(), err));
+            }
+        }
+    }
+
+    Err(anyhow!(
+        "All browser render backends failed: {}",
+        failures.join("; ")
+    ))
+}
+
 pub struct WebFetchTool {
     #[allow(dead_code)]
     client: Client,
@@ -452,6 +607,10 @@ impl Tool for WebFetchTool {
                     "type": "string",
                     "enum": ["auto", "prefer_cache", "revalidate", "bypass"],
                     "description": "Exact-URL cache policy. auto uses fresh cached responses and revalidates stale ones; prefer_cache returns any cached response first; revalidate always sends conditional validators; bypass ignores cache."
+                },
+                "render_js": {
+                    "type": "boolean",
+                    "description": "Automatically retry through local browser rendering when static fetch looks like an empty JavaScript app shell. Defaults to true; set false to opt out."
                 }
             },
             "required": ["url"]
@@ -583,7 +742,22 @@ impl Tool for WebFetchTool {
             body_bytes.extend_from_slice(&chunk);
         }
         let html = String::from_utf8_lossy(&body_bytes).into_owned();
-        let result_text = extract_text_from_html(&html);
+        let mut result_text = extract_text_from_html(&html);
+
+        if web_fetch_should_retry_browser_render(&html, &result_text, arguments) {
+            match web_fetch_browser_render(url_str).await {
+                Ok(rendered_text) if !rendered_text.trim().is_empty() => {
+                    tracing::info!(url = %url_str, "web_fetch static output looked like a JS shell; using browser-rendered text");
+                    result_text = rendered_text;
+                }
+                Ok(_) => {
+                    tracing::warn!(url = %url_str, "web_fetch browser render retry returned empty text; using static fetch output");
+                }
+                Err(err) => {
+                    tracing::warn!(url = %url_str, error = ?err, "web_fetch browser render retry failed; using static fetch output");
+                }
+            }
+        }
 
         let _ =
             save_cached_web_fetch(url_str, &result_text, &headers, status_code).map_err(|err| {
@@ -715,6 +889,37 @@ mod tests {
             WebFetchCacheMode::from_args(&serde_json::json!({ "cacheMode": "no-cache" })).unwrap(),
             WebFetchCacheMode::Bypass
         );
+    }
+
+    #[test]
+    fn web_fetch_detects_js_shell_pages_for_browser_retry() {
+        let html = r#"<html><head><title>App</title></head><body><div id="root"></div><script src="/app.js"></script><noscript>You need to enable JavaScript to run this app.</noscript></body></html>"#;
+        let text = extract_text_from_html(html);
+        assert!(web_fetch_should_retry_browser_render(
+            html,
+            &text,
+            &serde_json::json!({})
+        ));
+    }
+
+    #[test]
+    fn web_fetch_browser_render_uses_broker_order() {
+        assert_eq!(
+            web_fetch_browser_render_backend_names(),
+            ["gsd_browser", "firefox_browser", "obscura_browser"]
+        );
+    }
+
+    #[test]
+    fn web_fetch_browser_retry_can_be_disabled_explicitly() {
+        let html =
+            r#"<html><body><div id="app"></div><script src="/bundle.js"></script></body></html>"#;
+        let text = extract_text_from_html(html);
+        assert!(!web_fetch_should_retry_browser_render(
+            html,
+            &text,
+            &serde_json::json!({ "render_js": false })
+        ));
     }
 
     #[tokio::test]

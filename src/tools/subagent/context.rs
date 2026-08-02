@@ -6,6 +6,7 @@ use crate::config::resolve_path;
 use crate::providers::LLMProvider;
 use crate::tools::subagent::cancellation_token::CancellationToken;
 use crate::tools::subagent::lifecycle::{cancellation_result_json, SubagentRunStatus, status_json};
+use crate::tools::subagent::delegate_task::simulation_space_teardown_message;
 use crate::tools::subagent::scan_for_images;
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
@@ -95,7 +96,16 @@ impl SubagentRunContext {
 
             match workspace_res {
                 Ok(Ok(dir)) => {
-                    crate::tui_println!("{}  ✓ Isolated workspace worktree created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
+                    if is_scratch_workspace(&dir) {
+                        workspace_isolation = "scratch_workspace".to_string();
+                        workspace_isolation_reason = Some(format!(
+                            "Active workspace '{}' is unsafe to copy; using an empty scratch workspace with no sync-back.",
+                            parent_dir.display()
+                        ));
+                        crate::tui_println!("{}  ✓ Scratch subagent workspace created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
+                    } else {
+                        crate::tui_println!("{}  ✓ Isolated workspace worktree created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
+                    }
                     dir
                 }
                 Ok(Err(e)) => {
@@ -138,18 +148,36 @@ impl SubagentRunContext {
                 if let Err(e) = crate::tools::graph_memory::CommitDatabaseBranchTool.call(&serde_json::json!({})).await {
                     tracing::warn!("Failed to commit database branch: {:?}", e);
                 } else {
-                    crate::tui_println!("{}  ✓ Committed simulation space branch '{}'{}", EMERALD_GREEN, self.branch_id, COLOR_RESET);
+                    crate::tui_println!(
+                        "{}  ✓ {}{}",
+                        EMERALD_GREEN,
+                        simulation_space_teardown_message(
+                            true,
+                            &self.branch_id,
+                            is_scratch_workspace(&self.workspace_dir),
+                        ),
+                        COLOR_RESET
+                    );
                 }
             } else {
                 if let Err(e) = crate::tools::graph_memory::RollbackDatabaseBranchTool.call(&serde_json::json!({})).await {
                     tracing::warn!("Failed to rollback database branch: {:?}", e);
                 } else {
-                    crate::tui_println!("{}  ✓ Rolled back simulation space branch '{}'{}", AURA_GOLD, self.branch_id, COLOR_RESET);
+                    crate::tui_println!(
+                        "{}  ✓ {}{}",
+                        AURA_GOLD,
+                        simulation_space_teardown_message(
+                            false,
+                            &self.branch_id,
+                            is_scratch_workspace(&self.workspace_dir),
+                        ),
+                        COLOR_RESET
+                    );
                 }
             }
         }
 
-        if run_success && self.workspace_dir != self.parent_dir {
+        if run_success && should_sync_changes_back(&self.parent_dir, &self.workspace_dir) {
             if let Err(e) = sync_changes_back(&self.workspace_dir, &self.parent_dir) {
                 if !crate::agent::style::is_silent() {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
@@ -543,6 +571,8 @@ pub fn set_directory_modified_time_for_test(
     }
 }
 
+const SCRATCH_WORKSPACE_MARKER: &str = ".openz_scratch_workspace";
+
 fn openz_worktrees_dir() -> std::path::PathBuf {
     resolve_path("~/.openz/worktrees")
 }
@@ -602,16 +632,13 @@ pub fn create_isolated_workspace(parent_dir: &std::path::Path) -> Result<std::pa
         Err(_) => false,
     };
 
-    if !is_git && is_dangerous_fallback_copy_root(parent_dir) {
-        return Err(anyhow!(
-            "Refusing to recursively copy unsafe workspace root '{}'. cd into a project git repository before launching OpenZ, or set the agent workspace to a safe project directory. Running subagents in active workspace disables isolation.",
-            parent_dir.display()
-        ));
-    }
-
     let uuid_str = uuid::Uuid::new_v4().to_string();
     let slug = format!("openz_worktree_{}", &uuid_str[..8]);
     let worktree_dir = openz_worktrees_dir().join(slug);
+
+    if !is_git && is_dangerous_fallback_copy_root(parent_dir) {
+        return create_scratch_workspace(&worktree_dir, parent_dir);
+    }
 
     if !worktree_dir.exists() {
         std::fs::create_dir_all(&worktree_dir)?;
@@ -704,11 +731,41 @@ fn is_dangerous_fallback_copy_root(path: &std::path::Path) -> bool {
     let resolved = canonical_or_original(path);
     let home = resolve_path("~");
     let canonical_home = canonical_or_original(&home);
+    let runtime_dir = canonical_or_original(&crate::config::loader::runtime_data_dir());
 
     resolved == canonical_home
         || resolved == PathBuf::from("/")
         || resolved == PathBuf::from("/home")
         || resolved == PathBuf::from("/Users")
+        || resolved == runtime_dir
+        || resolved.starts_with(runtime_dir.join("worktrees"))
+}
+
+fn create_scratch_workspace(
+    worktree_dir: &std::path::Path,
+    unsafe_parent_dir: &std::path::Path,
+) -> Result<std::path::PathBuf> {
+    std::fs::create_dir_all(worktree_dir)?;
+    std::fs::write(
+        worktree_dir.join(SCRATCH_WORKSPACE_MARKER),
+        format!(
+            "Scratch workspace created because active workspace '{}' is unsafe to copy.
+",
+            unsafe_parent_dir.display()
+        ),
+    )?;
+    Ok(worktree_dir.to_path_buf())
+}
+
+pub fn is_scratch_workspace(workspace_dir: &std::path::Path) -> bool {
+    workspace_dir.join(SCRATCH_WORKSPACE_MARKER).is_file()
+}
+
+pub fn should_sync_changes_back(
+    parent_dir: &std::path::Path,
+    workspace_dir: &std::path::Path,
+) -> bool {
+    workspace_dir != parent_dir && !is_scratch_workspace(workspace_dir)
 }
 
 pub fn copy_dir_recursive_filtered(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {

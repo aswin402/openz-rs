@@ -1,4 +1,27 @@
-### v0.0.112 (Latest Release)
+### v0.0.114 (Latest Release)
+**Private Trace, Research Reliability, and Marketplace Clarification:**
+- Reasoning/trace output now defaults to private. Normal public channels no longer leak provider reasoning, workflow internals, or memory-capture notices unless explicitly configured.
+- Added `/tui trace full|compact|off` as the primary TUI visibility command while preserving legacy `/tui thoughts` and `/thoughts` aliases.
+- Added configurable research budgets, browser failure classification, source-ledger confidence, and final-answer caveats when live source verification is incomplete.
+- Added browser preflight payloads for `inspect_browsers`, Firefox/geckodriver, GSD browser, and Obscura/CDP startup failures.
+- `parallel_research` now returns `partial_success` with completed subagent summaries when other branches timeout, while user cancellation still aborts promptly.
+- Long tool outputs now store exact raw output files with structured transcript metadata (`original_ref`, byte counts, inline limit) and remain retrievable through `retrieve_original`.
+- Generic `read_file` calls aimed at saved `~/.openz/tool_outputs/` files are automatically rewritten to `retrieve_original`, preventing re-truncation and removing the need for users to name the retrieval tool.
+- `read_doc` now automatically attempts OCR for scanned PDFs and OCR-supported image files when native text extraction is empty; the top-level `ocr` Cargo feature now enables `opendoc-mcp/ocr`.
+- `read_doc` now runs automatic PDF complexity analysis by default before extraction/OCR and returns `complexity_result`; `analyze_complexity=false` remains an explicit opt-out.
+- Successful local artifact-producing tools now auto-run `open_path` once per output path when the user asked to show/open/view/play/display the result, so generated media/documents appear without tool-name prompting.
+- Failed `open_path` calls now auto-run `device_inventory suggest` for the target category, so missing/default-app failures produce actionable local viewer suggestions without requiring the user to name the registry tool.
+- Ambiguous AI-agent marketplace prompts now ask whether the user means buyer-side ready-made agents or seller-side creator marketplaces before researching.
+- Added provider-free browser search fallback: `searchxyz_browser_search` uses local browser automation to discover organic result links without requiring Brave or SearXNG.
+- Default `web_search` now uses the local-first cascade automatically: native SearchXyz, native rescue, then browser discovery, with no external API fallback.
+- SearchXyz search failures now classify blocked/rate-limited/timeout/no-result cases, record temporary backend cooldowns, and append `searchxyz_doctor` diagnostics automatically unless `diagnose_on_failure=false` is set.
+- Research-style `web_search` queries automatically read top browser-discovered pages through `searchxyz_read_url`; `read_top_results`, `max_pages`, and `save_mode` remain debug/override controls.
+- `web_fetch` now detects empty JavaScript app shells and retries through brokered local browser rendering automatically (GSD → Firefox → Obscura); `render_js=false` remains an explicit opt-out.
+- `searchxyz_read_github_repo` now automatically retries small repositories when `max_files` is too low, returning structured auto-retry metadata instead of requiring manual limit tuning.
+- `web_fetch` calls are upgraded to `cache_mode=revalidate` automatically when the active user request asks for latest/current/verify/check-again data, unless the model supplied an explicit cache mode.
+- First filesystem edit attempts (`write_file`, `patch_file`, `replace_lines`, `zenflow_edit`) are automatically converted into `scope_context` for that target path once per turn, so project instructions load before edits proceed.
+
+### v0.0.112
 **Memory Scope Isolation:**
 - Fixed `forget_memory` so cognitive-memory deletion is limited to the active workspace.
 - Added regression coverage proving matching records in another workspace survive.

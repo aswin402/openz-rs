@@ -52,6 +52,112 @@ const EXPLICIT_RESEARCH_TERMS: &[&str] = &[
     "deep dive",
 ];
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResearchBudget {
+    pub default_time_budget_secs: u64,
+    pub max_search_attempts: usize,
+    pub max_browser_fallbacks: usize,
+    pub require_sources_for_current_claims: bool,
+    pub stop_on_captcha: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResearchRuntimePolicy {
+    pub budget: ResearchBudget,
+}
+
+impl ResearchRuntimePolicy {
+    pub fn from_config(config: &crate::config::schema::Config) -> Self {
+        Self {
+            budget: ResearchBudget {
+                default_time_budget_secs: config.research.default_time_budget_secs,
+                max_search_attempts: config.research.max_search_attempts,
+                max_browser_fallbacks: config.research.max_browser_fallbacks,
+                require_sources_for_current_claims: config
+                    .research
+                    .require_sources_for_current_claims,
+                stop_on_captcha: config.research.stop_on_captcha,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResearchFailureKind {
+    Captcha,
+    BrowserDependencyMissing,
+    BrowserSessionLost,
+    SearchExhausted,
+    Timeout,
+    Network,
+    RateLimited,
+    ServerUnavailable,
+    Other,
+}
+
+impl ResearchFailureKind {
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Timeout | Self::Network | Self::RateLimited | Self::ServerUnavailable
+        )
+    }
+
+    pub fn should_stop_browser_fallback(&self, policy: &ResearchRuntimePolicy) -> bool {
+        matches!(
+            self,
+            Self::BrowserDependencyMissing | Self::BrowserSessionLost
+        ) || (policy.budget.stop_on_captcha && matches!(self, Self::Captcha))
+    }
+}
+
+pub fn classify_research_failure(error: &str) -> ResearchFailureKind {
+    let lower = error.to_lowercase();
+    if lower.contains("captcha") || lower.contains("cloudflare") || lower.contains("bot check") {
+        ResearchFailureKind::Captcha
+    } else if lower.contains("geckodriver")
+        || lower.contains("chromedriver")
+        || lower.contains("failed to start any headless browser")
+        || lower.contains("browser dependency")
+        || lower.contains("not installed")
+    {
+        ResearchFailureKind::BrowserDependencyMissing
+    } else if lower.contains("receiver is gone")
+        || lower.contains("browser session")
+        || lower.contains("connection closed before receiving response")
+    {
+        ResearchFailureKind::BrowserSessionLost
+    } else if lower.contains("all search backends")
+        || lower.contains("all enabled external web search backends")
+        || lower.contains("no search results")
+        || lower.contains("search backends exhausted")
+    {
+        ResearchFailureKind::SearchExhausted
+    } else if lower.contains("429")
+        || lower.contains("rate limit")
+        || lower.contains("too many requests")
+    {
+        ResearchFailureKind::RateLimited
+    } else if lower.contains("503")
+        || lower.contains("502")
+        || lower.contains("504")
+        || lower.contains("service unavailable")
+        || lower.contains("bad gateway")
+    {
+        ResearchFailureKind::ServerUnavailable
+    } else if lower.contains("timeout") || lower.contains("timed out") {
+        ResearchFailureKind::Timeout
+    } else if lower.contains("dns")
+        || lower.contains("network")
+        || lower.contains("connection")
+        || lower.contains("host")
+    {
+        ResearchFailureKind::Network
+    } else {
+        ResearchFailureKind::Other
+    }
+}
+
 pub fn text_has_http_url(text: &str) -> bool {
     text.split_whitespace().any(|part| {
         let candidate = part.trim_matches(|c: char| {
@@ -116,6 +222,36 @@ pub fn should_force_live_research_lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_research_runtime_policy_has_bounded_budgets() {
+        let config = crate::config::schema::Config::default();
+        let policy = ResearchRuntimePolicy::from_config(&config);
+
+        assert_eq!(policy.budget.default_time_budget_secs, 120);
+        assert_eq!(policy.budget.max_search_attempts, 2);
+        assert_eq!(policy.budget.max_browser_fallbacks, 1);
+        assert!(policy.budget.require_sources_for_current_claims);
+        assert!(policy.budget.stop_on_captcha);
+    }
+
+    #[test]
+    fn research_failure_classification_stops_browser_fallback_for_terminal_browser_errors() {
+        assert_eq!(
+            classify_research_failure("captcha challenge detected"),
+            ResearchFailureKind::Captcha
+        );
+        assert_eq!(
+            classify_research_failure("Failed to start geckodriver on port 4444"),
+            ResearchFailureKind::BrowserDependencyMissing
+        );
+        assert_eq!(
+            classify_research_failure("gsd-browser error: receiver is gone"),
+            ResearchFailureKind::BrowserSessionLost
+        );
+        assert!(classify_research_failure("HTTP 503 service unavailable").is_retryable());
+        assert!(!classify_research_failure("captcha challenge detected").is_retryable());
+    }
 
     #[test]
     fn explicit_research_request_detection_catches_link_analysis() {

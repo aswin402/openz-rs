@@ -27,8 +27,8 @@ pub use index::{
     SearchXyzRecallTool,
 };
 pub use web::{
-    SearchXyzDeepResearchTool, SearchXyzDoctorTool, SearchXyzReadUrlTool,
-    SearchXyzSearchAndReadTool, SearchXyzSearchWebTool, SearchXyzSiteMapTool,
+    SearchXyzBrowserSearchTool, SearchXyzDeepResearchTool, SearchXyzDoctorTool,
+    SearchXyzReadUrlTool, SearchXyzSearchAndReadTool, SearchXyzSearchWebTool, SearchXyzSiteMapTool,
 };
 
 fn openz_config_dir() -> std::path::PathBuf {
@@ -158,6 +158,10 @@ mod tests {
     fn test_searchxyz_tools_metadata() {
         assert_eq!(SearchXyzDoctorTool.name(), "searchxyz_doctor");
         assert_eq!(SearchXyzSearchWebTool.name(), "searchxyz_search_web");
+        assert_eq!(
+            SearchXyzBrowserSearchTool.name(),
+            "searchxyz_browser_search"
+        );
         assert_eq!(SearchXyzReadUrlTool.name(), "searchxyz_read_url");
         assert_eq!(
             SearchXyzSearchAndReadTool.name(),

@@ -12,8 +12,32 @@ struct RawInputGuard;
 
 impl Drop for RawInputGuard {
     fn drop(&mut self) {
+        let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
+        let _ = crossterm::terminal::disable_raw_mode();
         IS_RAW_INPUT_ACTIVE.store(false, Ordering::SeqCst);
     }
+}
+
+pub(super) fn is_ctrl_exit_key(key_event: &crossterm::event::KeyEvent) -> bool {
+    if key_event.kind == KeyEventKind::Release {
+        return false;
+    }
+
+    match key_event.code {
+        KeyCode::Char('\u{3}') | KeyCode::Char('\u{4}') => true,
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'c') || c.eq_ignore_ascii_case(&'d') => {
+            key_event.modifiers.contains(KeyModifiers::CONTROL)
+        }
+        _ => false,
+    }
+}
+
+pub(super) fn is_turn_cancel_key(key_event: &crossterm::event::KeyEvent) -> bool {
+    if key_event.kind == KeyEventKind::Release {
+        return false;
+    }
+
+    key_event.code == KeyCode::Esc || is_ctrl_exit_key(key_event)
 }
 
 pub(super) fn handle_clipboard_paste(index: usize) -> Result<PathBuf> {
@@ -224,10 +248,10 @@ pub fn read_line_raw(
             let alt = key_event.modifiers.contains(KeyModifiers::ALT);
             let shift = key_event.modifiers.contains(KeyModifiers::SHIFT);
 
-            // Ctrl+C or Ctrl+D to exit
-            if ctrl
-                && (key_event.code == KeyCode::Char('c') || key_event.code == KeyCode::Char('d'))
-            {
+            // Ctrl+C or Ctrl+D to exit. In raw mode different terminals can deliver
+            // uppercase chars or literal ETX/EOT control chars, so keep this broader
+            // than the printable-input branch below.
+            if is_ctrl_exit_key(&key_event) {
                 if lines_printed > 1 {
                     for _ in 0..(lines_printed - 1) {
                         print!("\r\n\x1b[2K");
@@ -651,6 +675,20 @@ pub fn read_line_raw(
                     }
                 }
                 KeyCode::Esc => {
+                    if typed_input.is_empty() {
+                        if lines_printed > 1 {
+                            for _ in 0..(lines_printed - 1) {
+                                print!("\r\n\x1b[2K");
+                            }
+                            print!("\x1b[{}A\r", lines_printed - 1);
+                        }
+                        let _ =
+                            crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
+                        let _ = disable_raw_mode();
+                        println!();
+                        return Ok(("/exit".to_string(), None));
+                    }
+
                     autocomplete_visible = false;
                     selected_index = None;
                     let typed_input_str: String = typed_input.iter().collect();
@@ -717,4 +755,71 @@ pub fn read_line_raw(
     }
 
     Ok((final_input, None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_ctrl_exit_key, is_turn_cancel_key};
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, modifiers)
+    }
+
+    #[test]
+    fn ctrl_exit_key_accepts_common_terminal_encodings() {
+        assert!(is_ctrl_exit_key(&key(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(is_ctrl_exit_key(&key(
+            KeyCode::Char('C'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )));
+        assert!(is_ctrl_exit_key(&key(
+            KeyCode::Char('d'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(is_ctrl_exit_key(&key(
+            KeyCode::Char('\u{3}'),
+            KeyModifiers::NONE
+        )));
+        assert!(is_ctrl_exit_key(&key(
+            KeyCode::Char('\u{4}'),
+            KeyModifiers::NONE
+        )));
+    }
+
+    #[test]
+    fn ctrl_exit_key_rejects_printable_chars_and_key_releases() {
+        assert!(!is_ctrl_exit_key(&key(
+            KeyCode::Char('c'),
+            KeyModifiers::NONE
+        )));
+        assert!(!is_ctrl_exit_key(&key(
+            KeyCode::Char('v'),
+            KeyModifiers::CONTROL
+        )));
+
+        let release = KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Release,
+            state: crossterm::event::KeyEventState::NONE,
+        };
+        assert!(!is_ctrl_exit_key(&release));
+    }
+
+    #[test]
+    fn turn_cancel_key_accepts_esc_and_ctrl_exit_keys() {
+        assert!(is_turn_cancel_key(&key(KeyCode::Esc, KeyModifiers::NONE)));
+        assert!(is_turn_cancel_key(&key(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(!is_turn_cancel_key(&key(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE
+        )));
+    }
 }

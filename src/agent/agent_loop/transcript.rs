@@ -62,6 +62,7 @@ pub(crate) async fn append_tool_results(
         let limit = config.agents.defaults.tool_output_limit.unwrap_or(4000);
         let is_retrieve = tool_result.name == "retrieve_original"
             || tool_result.name == "headroom/retrieve_original";
+        let mut tool_output_metadata = None;
         let content = if content_str.len() > limit && !is_retrieve {
             let outputs_dir = crate::config::loader::runtime_data_dir().join("tool_outputs");
             let compressed = crate::agent::context_compactor::compress_tool_output(
@@ -96,10 +97,19 @@ pub(crate) async fn append_tool_results(
             };
 
             if let Some(file_path) = saved_path {
+                let original_ref = format!("file://{}", file_path.to_string_lossy());
+                tool_output_metadata = Some(serde_json::json!({
+                    "truncated": true,
+                    "original_ref": original_ref,
+                    "original_path": file_path.to_string_lossy(),
+                    "original_bytes": content_str.len(),
+                    "compressed_bytes": compressed.len(),
+                    "inline_limit": limit,
+                    "retrieve_tool": "retrieve_original",
+                }));
                 format!(
-                    "{}\n\n... [TRUNCATED - Full output saved for reference at file://{}] ...",
-                    compressed,
-                    file_path.to_string_lossy()
+                    "{}\n\n... [TRUNCATED - Full output saved for reference at {}] ...",
+                    compressed, original_ref
                 )
             } else {
                 format!(
@@ -110,6 +120,10 @@ pub(crate) async fn append_tool_results(
         } else {
             content_str
         };
+
+        if let Some(metadata) = tool_output_metadata {
+            extra.insert("tool_output".to_string(), metadata);
+        }
 
         messages.push(Message {
             role: "tool".to_string(),
@@ -201,10 +215,55 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .contains('/'));
-        assert!(messages[0]
-            .content
-            .contains(&format!("file://{}", entries[0].to_string_lossy())));
+        let expected_ref = format!("file://{}", entries[0].to_string_lossy());
+        assert!(messages[0].content.contains(&expected_ref));
+        assert_eq!(
+            messages[0].extra["tool_output"]["original_ref"],
+            expected_ref
+        );
+        assert_eq!(messages[0].extra["tool_output"]["truncated"], true);
+        assert_eq!(
+            std::fs::read_to_string(&entries[0]).expect("saved full output"),
+            serde_json::json!({
+                "payload": "this output is intentionally long enough to be stored"
+            })
+            .to_string()
+        );
         assert!(std::fs::read_dir(home_dir.join(".openz")).is_err());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn retrieve_original_outputs_are_not_truncated_again() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "openz_transcript_retrieve_passthrough_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut config = Config::default();
+        config.agents.defaults.tool_output_limit = Some(10);
+        let mut messages = Vec::new();
+        let full_content = "x".repeat(128);
+
+        crate::config::loader::CONFIG_DIR_OVERRIDE
+            .scope(temp_dir.clone(), async {
+                append_tool_results(
+                    &mut messages,
+                    &config,
+                    vec![ToolTranscriptResult {
+                        id: "call_1".to_string(),
+                        name: "retrieve_original".to_string(),
+                        result: serde_json::json!({ "content": full_content }),
+                    }],
+                )
+                .await;
+            })
+            .await;
+
+        assert!(!messages[0].content.contains("TRUNCATED"));
+        assert!(messages[0].extra.get("tool_output").is_none());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

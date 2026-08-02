@@ -82,6 +82,37 @@ fn test_delegate_task_metadata_is_explicit_for_router() {
 }
 
 #[test]
+fn test_parallel_research_partial_response_shape() {
+    let response = super::parallel_research::parallel_research_response(vec![
+        serde_json::json!({
+            "task": "marketplaces",
+            "status": "success",
+            "summary": "found sources"
+        }),
+        serde_json::json!({
+            "task": "pricing",
+            "status": "timeout",
+            "error": "Parallel research aggregate deadline reached"
+        }),
+    ]);
+
+    assert_eq!(response["status"], "partial_success");
+    assert_eq!(response["succeeded"], 1);
+    assert_eq!(response["failed"], 1);
+    assert_eq!(response["results"][0]["summary"], "found sources");
+    assert_eq!(response["results"][1]["status"], "timeout");
+}
+
+#[test]
+fn test_parallel_research_flush_deadline_precedes_child_timeout() {
+    assert!(super::parallel_research::parallel_research_flush_deadline_secs(300) < 300);
+    assert_eq!(
+        super::parallel_research::parallel_research_flush_deadline_secs(1),
+        1
+    );
+}
+
+#[test]
 fn test_parallel_research_metadata_is_explicit_for_router() {
     let tool = ParallelResearchTool {
         config: Config::default(),
@@ -387,8 +418,17 @@ fn test_worktree_cleanup_enforces_total_size_quota_oldest_first() -> Result<()> 
     Ok(())
 }
 
+#[test]
+fn test_scratch_workspace_teardown_message_skips_branch_commit_wording() {
+    let msg = delegate_task::simulation_space_teardown_message(true, "branch_test", true);
+
+    assert!(msg.contains("Scratch workspace completed"));
+    assert!(msg.contains("sync-back skipped"));
+    assert!(!msg.contains("Committed simulation space branch"));
+}
+
 #[tokio::test]
-async fn test_create_isolated_workspace_rejects_home_like_non_git_root() -> Result<()> {
+async fn test_create_isolated_workspace_uses_scratch_for_home_like_non_git_root() -> Result<()> {
     let _lock = crate::tools::graph_memory::test_lock().lock().await;
     let temp_root = std::env::temp_dir().join(format!(
         "openz_home_like_worktree_guard_{}",
@@ -403,11 +443,11 @@ async fn test_create_isolated_workspace_rejects_home_like_non_git_root() -> Resu
     let old_home = std::env::var_os("HOME");
     std::env::set_var("HOME", &fake_home);
 
-    let res = crate::config::loader::CONFIG_DIR_OVERRIDE
+    let workspace = crate::config::loader::CONFIG_DIR_OVERRIDE
         .scope(config_dir.clone(), async {
             delegate_task::create_isolated_workspace(&fake_home)
         })
-        .await;
+        .await?;
 
     if let Some(old_home) = old_home {
         std::env::set_var("HOME", old_home);
@@ -415,29 +455,25 @@ async fn test_create_isolated_workspace_rejects_home_like_non_git_root() -> Resu
         std::env::remove_var("HOME");
     }
 
-    assert!(
-        res.is_err(),
-        "home-like roots must not be recursively copied"
-    );
-    let err = res.unwrap_err().to_string();
-    assert!(
-        err.contains("unsafe workspace root"),
-        "unexpected error: {err}"
+    assert_ne!(
+        workspace, fake_home,
+        "home-like roots must not run subagents in the active workspace"
     );
     assert!(
-        err.contains("cd into a project git repository"),
-        "error should include actionable guidance: {err}"
+        workspace.starts_with(config_dir.join("worktrees")),
+        "scratch workspace should be created under OpenZ worktrees dir: {workspace:?}"
     );
     assert!(
-        err.contains("disables isolation"),
-        "error should warn about fallback behavior: {err}"
+        workspace.exists(),
+        "scratch workspace should exist for subagents launched from arbitrary directories"
     );
     assert!(
-        !config_dir.join("worktrees").exists()
-            || std::fs::read_dir(config_dir.join("worktrees"))?
-                .next()
-                .is_none(),
-        "rejecting a home-like root must not leave a worktree behind"
+        !workspace.join(".cache").exists(),
+        "scratch workspace must not recursively copy user cache directories"
+    );
+    assert!(
+        !workspace.join(".cache/big/blob.bin").exists(),
+        "scratch workspace must not copy home contents"
     );
 
     let _ = std::fs::remove_dir_all(&temp_root);

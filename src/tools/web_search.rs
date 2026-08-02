@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WebSearchPolicy {
     NativeOnly,
+    NativeThenBrowser,
     NativeThenExternal,
     ExternalOnly,
 }
@@ -16,6 +17,9 @@ impl WebSearchPolicy {
         let env_value = std::env::var("OPENZ_WEB_SEARCH_POLICY").ok();
         let raw = value.or(env_value.as_deref()).unwrap_or("native_only");
         match raw.trim().to_ascii_lowercase().as_str() {
+            "native_then_browser" | "browser_fallback" | "native-browser" | "native_browser" => {
+                Self::NativeThenBrowser
+            }
             "native_then_external" | "native-first" | "native_first" | "fallback" => {
                 Self::NativeThenExternal
             }
@@ -25,7 +29,14 @@ impl WebSearchPolicy {
     }
 
     fn allows_native(self) -> bool {
-        matches!(self, Self::NativeOnly | Self::NativeThenExternal)
+        matches!(
+            self,
+            Self::NativeOnly | Self::NativeThenBrowser | Self::NativeThenExternal
+        )
+    }
+
+    fn allows_browser(self) -> bool {
+        matches!(self, Self::NativeOnly | Self::NativeThenBrowser)
     }
 
     fn allows_external(self) -> bool {
@@ -35,6 +46,7 @@ impl WebSearchPolicy {
     fn as_str(self) -> &'static str {
         match self {
             Self::NativeOnly => "native_only",
+            Self::NativeThenBrowser => "native_then_browser",
             Self::NativeThenExternal => "native_then_external",
             Self::ExternalOnly => "external_only",
         }
@@ -117,6 +129,122 @@ fn searchxyz_results_to_json(results: Vec<searchxyz::search::SearchResult>) -> V
         .collect()
 }
 
+fn web_search_should_auto_read_top_results(query: &str, arguments: &Value) -> bool {
+    if let Some(explicit) = arguments
+        .get("read_top_results")
+        .and_then(|value| value.as_bool())
+    {
+        return explicit;
+    }
+
+    let normalized = query.to_ascii_lowercase();
+    [
+        "research",
+        "summarize",
+        "summary",
+        "compare",
+        "comparison",
+        "latest",
+        "current",
+        "today",
+        "pricing",
+        "release",
+        "changelog",
+        "what's new",
+        "whats new",
+        "market",
+        "landscape",
+        "deep dive",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn web_search_auto_read_max_pages(arguments: &Value, should_read: bool) -> usize {
+    if !should_read {
+        return 0;
+    }
+    arguments
+        .get("max_pages")
+        .and_then(|value| value.as_u64())
+        .map(|value| value.clamp(1, 5) as usize)
+        .unwrap_or(3)
+}
+
+fn web_search_should_diagnose_on_failure(arguments: &Value) -> bool {
+    arguments
+        .get("diagnose_on_failure")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
+fn browser_search_value_to_web_search_result(value: Value) -> Value {
+    if value
+        .get("read_results")
+        .and_then(|read_results| read_results.as_array())
+        .is_some_and(|read_results| !read_results.is_empty())
+    {
+        value
+    } else {
+        Value::Array(
+            value
+                .get("results")
+                .and_then(|results| results.as_array())
+                .cloned()
+                .unwrap_or_default(),
+        )
+    }
+}
+
+fn web_search_archive_text(search_res: &Value) -> Option<String> {
+    let results = if let Some(arr) = search_res.as_array() {
+        arr
+    } else {
+        search_res.get("results")?.as_array()?
+    };
+
+    if results.is_empty() {
+        return None;
+    }
+
+    let mut text = results
+        .iter()
+        .map(|r| {
+            format!(
+                "Title: {}\nURL: {}\nSnippet: {}\n---",
+                r["title"].as_str().unwrap_or_default(),
+                r["url"].as_str().unwrap_or_default(),
+                r["snippet"].as_str().unwrap_or_default()
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    if let Some(read_results) = search_res
+        .get("read_results")
+        .and_then(|value| value.as_array())
+    {
+        for read in read_results.iter().take(3) {
+            let url = read["url"].as_str().unwrap_or_default();
+            let content = read.get("content").unwrap_or(&Value::Null);
+            let content_text = content
+                .as_str()
+                .or_else(|| content.get("content").and_then(|value| value.as_str()))
+                .or_else(|| content.get("markdown").and_then(|value| value.as_str()))
+                .unwrap_or_default();
+            if !content_text.trim().is_empty() {
+                text.push_str(&format!(
+                    "\nRead URL: {}\nContent: {}\n---",
+                    url,
+                    content_text.chars().take(2000).collect::<String>()
+                ));
+            }
+        }
+    }
+
+    Some(text)
+}
+
 fn detect_rust_crate(terms: &[String]) -> Option<String> {
     const KNOWN_CRATES: &[&str] = &[
         "tokio",
@@ -149,9 +277,10 @@ fn format_native_only_failure(native_error: Option<&str>) -> String {
 
 Next steps:
 - Run `searchxyz_doctor` to inspect native backend health.
+- Provider-free browser discovery is attempted automatically before this failure is returned.
 - Configure `SEARCHXYZ_SEARXNG_URL` for stronger private/native discovery.
-- Enable `diagnose_on_failure=true` to append doctor output to this error.
-- For one-off fallback, call `web_search` with `search_policy=native_then_external`."
+- Diagnostics are appended automatically unless `diagnose_on_failure=false` is set.
+- For one-off API/scraper fallback, call `web_search` with `search_policy=native_then_external`."
     )
 }
 
@@ -196,12 +325,20 @@ impl Tool for WebSearchTool {
                 },
                 "search_policy": {
                     "type": "string",
-                    "enum": ["native_only", "native_then_external", "external_only"],
-                    "description": "Search backend policy. Default native_only uses SearchXyz only; native_then_external allows API/scraper fallback; external_only skips SearchXyz. Can also be set with OPENZ_WEB_SEARCH_POLICY."
+                    "enum": ["native_only", "native_then_browser", "native_then_external", "external_only"],
+                    "description": "Search backend policy. Default native_only uses the local stack: SearchXyz native discovery, native rescue, then browser discovery without Brave/SearXNG; native_then_external allows API/scraper fallback; external_only skips SearchXyz. Can also be set with OPENZ_WEB_SEARCH_POLICY."
                 },
                 "diagnose_on_failure": {
                     "type": "boolean",
-                    "description": "When native-only SearchXyz fails, append searchxyz_doctor output to the error for actionable debugging."
+                    "description": "When SearchXyz plus browser fallback fail, append searchxyz_doctor output to the error for actionable debugging. Defaults to true; set false to opt out."
+                },
+                "read_top_results": {
+                    "type": "boolean",
+                    "description": "Override automatic research-style page reading. By default, research/latest/compare/summarize queries read top browser-discovered pages."
+                },
+                "max_pages": {
+                    "type": "integer",
+                    "description": "Maximum browser-discovered result pages to read for research-style queries (default: 3, max: 5)."
                 }
             },
             "required": ["query"]
@@ -216,27 +353,13 @@ impl Tool for WebSearchTool {
 
         let search_res = self.perform_search(arguments).await?;
 
-        if let Some(arr) = search_res.as_array() {
-            if !arr.is_empty() {
-                let results_str = arr
-                    .iter()
-                    .map(|r| {
-                        format!(
-                            "Title: {}\nURL: {}\nSnippet: {}\n---",
-                            r["title"].as_str().unwrap_or_default(),
-                            r["url"].as_str().unwrap_or_default(),
-                            r["snippet"].as_str().unwrap_or_default()
-                        )
-                    })
-                    .collect::<Vec<String>>()
-                    .join("\n");
-                let _ = crate::tools::shared_memory::archive_research_entry(
-                    query,
-                    &results_str,
-                    "web_search",
-                )
-                .await;
-            }
+        if let Some(results_str) = web_search_archive_text(&search_res) {
+            let _ = crate::tools::shared_memory::archive_research_entry(
+                query,
+                &results_str,
+                "web_search",
+            )
+            .await;
         }
 
         Ok(search_res)
@@ -252,10 +375,7 @@ impl WebSearchTool {
 
         let policy =
             WebSearchPolicy::parse(arguments.get("search_policy").and_then(|v| v.as_str()));
-        let diagnose_on_failure = arguments
-            .get("diagnose_on_failure")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let diagnose_on_failure = web_search_should_diagnose_on_failure(arguments);
         let mut native_error = None;
 
         // 0. Try SearchXyz Dispatcher (OpenZ-native search path).
@@ -303,6 +423,35 @@ impl WebSearchTool {
             let rescue_results = native_rescue_results(query);
             if !rescue_results.is_empty() {
                 return Ok(Value::Array(rescue_results));
+            }
+        }
+
+        if policy.allows_browser() {
+            let should_read_top_results = web_search_should_auto_read_top_results(query, arguments);
+            let max_pages = web_search_auto_read_max_pages(arguments, should_read_top_results);
+            let browser_tool = crate::tools::searchxyz::SearchXyzBrowserSearchTool;
+            match browser_tool
+                .call(&json!({
+                    "query": query,
+                    "engine": "duckduckgo",
+                    "max_results": 5,
+                    "read_top_results": should_read_top_results,
+                    "max_pages": max_pages,
+                    "save_mode": "none",
+                }))
+                .await
+            {
+                Ok(value) => {
+                    if let Some(results) = value.get("results").and_then(|v| v.as_array()) {
+                        if !results.is_empty() {
+                            return Ok(browser_search_value_to_web_search_result(value));
+                        }
+                    }
+                    tracing::warn!(query = %query, result = %value, "browser search fallback returned no usable links");
+                }
+                Err(err) => {
+                    tracing::warn!(query = %query, error = ?err, "browser search fallback failed");
+                }
             }
         }
 
@@ -632,6 +781,105 @@ mod tests {
     }
 
     #[test]
+    fn default_native_policy_uses_provider_free_browser_fallback() {
+        std::env::remove_var("OPENZ_WEB_SEARCH_POLICY");
+        let policy = WebSearchPolicy::parse(None);
+        assert!(policy.allows_native());
+        assert!(policy.allows_browser());
+        assert!(!policy.allows_external());
+    }
+
+    #[test]
+    fn web_search_policy_accepts_native_then_browser() {
+        assert_eq!(
+            WebSearchPolicy::parse(Some("native_then_browser")),
+            WebSearchPolicy::NativeThenBrowser
+        );
+        assert!(WebSearchPolicy::NativeThenBrowser.allows_native());
+        assert!(WebSearchPolicy::NativeThenBrowser.allows_browser());
+        assert!(!WebSearchPolicy::NativeThenBrowser.allows_external());
+    }
+
+    #[test]
+    fn web_search_schema_exposes_browser_fallback_policy() {
+        let tool = WebSearchTool::new();
+        let params = tool.parameters();
+        let policy_enum = params["properties"]["search_policy"]["enum"]
+            .as_array()
+            .expect("policy enum");
+        assert!(policy_enum.iter().any(|v| v == "native_then_browser"));
+    }
+
+    #[test]
+    fn web_search_auto_reads_research_style_queries() {
+        assert!(web_search_should_auto_read_top_results(
+            "research ai agent marketplaces",
+            &json!({})
+        ));
+        assert!(web_search_should_auto_read_top_results(
+            "latest rust async runtime docs",
+            &json!({})
+        ));
+        assert!(web_search_should_auto_read_top_results(
+            "compare crawlee crawl4ai scrapling",
+            &json!({})
+        ));
+        assert!(!web_search_should_auto_read_top_results(
+            "rust homepage",
+            &json!({})
+        ));
+    }
+
+    #[test]
+    fn web_search_read_controls_allow_explicit_override() {
+        assert!(!web_search_should_auto_read_top_results(
+            "research ai agent marketplaces",
+            &json!({ "read_top_results": false })
+        ));
+        assert!(web_search_should_auto_read_top_results(
+            "rust homepage",
+            &json!({ "read_top_results": true })
+        ));
+        assert_eq!(web_search_auto_read_max_pages(&json!({}), true), 3);
+        assert_eq!(
+            web_search_auto_read_max_pages(&json!({ "max_pages": 99 }), true),
+            5
+        );
+        assert_eq!(web_search_auto_read_max_pages(&json!({}), false), 0);
+    }
+
+    #[test]
+    fn web_search_failure_diagnostics_default_on_with_explicit_opt_out() {
+        assert!(web_search_should_diagnose_on_failure(&json!({})));
+        assert!(web_search_should_diagnose_on_failure(
+            &json!({ "diagnose_on_failure": true })
+        ));
+        assert!(!web_search_should_diagnose_on_failure(
+            &json!({ "diagnose_on_failure": false })
+        ));
+    }
+
+    #[test]
+    fn web_search_archive_text_includes_browser_read_results() {
+        let archive = web_search_archive_text(&json!({
+            "results": [{
+                "title": "Example",
+                "url": "https://example.com",
+                "snippet": "result snippet"
+            }],
+            "read_results": [{
+                "status": "success",
+                "url": "https://example.com",
+                "content": { "content": "full page text from browser-discovered result" }
+            }]
+        }))
+        .expect("archive text");
+
+        assert!(archive.contains("result snippet"));
+        assert!(archive.contains("full page text from browser-discovered result"));
+    }
+
+    #[test]
     fn web_search_policy_accepts_external_fallback_alias() {
         assert_eq!(
             WebSearchPolicy::parse(Some("native_then_external")),
@@ -658,7 +906,7 @@ mod tests {
         let message = format_native_only_failure(Some("all backends exhausted"));
         assert!(message.contains("searchxyz_doctor"));
         assert!(message.contains("SEARCHXYZ_SEARXNG_URL"));
-        assert!(message.contains("diagnose_on_failure=true"));
+        assert!(message.contains("diagnose_on_failure=false"));
         assert!(message.contains("search_policy=native_then_external"));
         assert!(message.contains("all backends exhausted"));
     }

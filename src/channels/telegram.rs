@@ -365,6 +365,7 @@ fn telegram_commands_payload() -> serde_json::Value {
     })
 }
 
+#[cfg(test)]
 fn valid_telegram_command_name(command: &str) -> bool {
     !command.is_empty()
         && command.len() <= 32

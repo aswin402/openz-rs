@@ -34,7 +34,10 @@ pub enum Command {
         action: Option<ChannelAction>,
     },
     Subagent,
-    Doctor,
+    Doctor {
+        #[arg(long)]
+        scrub_secrets: bool,
+    },
     McpBridge {
         #[arg(long)]
         port: u16,

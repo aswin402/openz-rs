@@ -110,6 +110,11 @@ pub struct AgentDefaults {
         alias = "show_tool_router_status"
     )]
     pub show_tool_router_status: bool,
+    #[serde(
+        default = "default_show_auto_capture_notices",
+        alias = "show_auto_capture_notices"
+    )]
+    pub show_auto_capture_notices: bool,
     #[serde(default = "default_tui_thought_display", alias = "tui_thought_display")]
     pub tui_thought_display: String,
     #[serde(default = "default_min_free_disk_gb", alias = "min_free_disk_gb")]
@@ -144,8 +149,12 @@ fn default_show_tool_router_status() -> bool {
     false
 }
 
+fn default_show_auto_capture_notices() -> bool {
+    false
+}
+
 fn default_tui_thought_display() -> String {
-    "full".to_string()
+    "off".to_string()
 }
 
 fn default_min_free_disk_gb() -> f64 {
@@ -232,6 +241,7 @@ impl Default for AgentDefaults {
             enable_sandbox: default_enable_sandbox(),
             tool_timeout_secs: default_tool_timeout_secs(),
             show_tool_router_status: default_show_tool_router_status(),
+            show_auto_capture_notices: default_show_auto_capture_notices(),
             tui_thought_display: default_tui_thought_display(),
             min_free_disk_gb: default_min_free_disk_gb(),
             allow_network_tools: default_allow_network_tools(),
@@ -417,6 +427,68 @@ impl Default for SkillsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResearchConfig {
+    #[serde(
+        default = "default_research_time_budget_secs",
+        alias = "default_time_budget_secs"
+    )]
+    pub default_time_budget_secs: u64,
+    #[serde(
+        default = "default_research_max_search_attempts",
+        alias = "max_search_attempts"
+    )]
+    pub max_search_attempts: usize,
+    #[serde(
+        default = "default_research_max_browser_fallbacks",
+        alias = "max_browser_fallbacks"
+    )]
+    pub max_browser_fallbacks: usize,
+    #[serde(
+        default = "default_require_sources_for_current_claims",
+        alias = "require_sources_for_current_claims"
+    )]
+    pub require_sources_for_current_claims: bool,
+    #[serde(
+        default = "default_research_stop_on_captcha",
+        alias = "stop_on_captcha"
+    )]
+    pub stop_on_captcha: bool,
+}
+
+fn default_research_time_budget_secs() -> u64 {
+    120
+}
+
+fn default_research_max_search_attempts() -> usize {
+    2
+}
+
+fn default_research_max_browser_fallbacks() -> usize {
+    1
+}
+
+fn default_require_sources_for_current_claims() -> bool {
+    true
+}
+
+fn default_research_stop_on_captcha() -> bool {
+    true
+}
+
+impl Default for ResearchConfig {
+    fn default() -> Self {
+        Self {
+            default_time_budget_secs: default_research_time_budget_secs(),
+            max_search_attempts: default_research_max_search_attempts(),
+            max_browser_fallbacks: default_research_max_browser_fallbacks(),
+            require_sources_for_current_claims: default_require_sources_for_current_claims(),
+            stop_on_captcha: default_research_stop_on_captcha(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub providers: ProvidersConfig,
@@ -430,6 +502,8 @@ pub struct Config {
     pub embeddings: Option<EmbeddingsConfig>,
     #[serde(default)]
     pub skills: SkillsConfig,
+    #[serde(default)]
+    pub research: ResearchConfig,
 }
 
 impl Default for ChannelsConfig {
@@ -481,6 +555,7 @@ impl Default for Config {
             mcp_servers: HashMap::new(),
             embeddings: Some(EmbeddingsConfig::default()),
             skills: SkillsConfig::default(),
+            research: ResearchConfig::default(),
         }
     }
 }
@@ -987,6 +1062,7 @@ mod provider_resolution_tests {
             mcp_servers: HashMap::new(),
             embeddings: Some(EmbeddingsConfig::default()),
             skills: SkillsConfig::default(),
+            research: ResearchConfig::default(),
         }
     }
 
@@ -1104,5 +1180,22 @@ mod provider_resolution_tests {
         );
         assert!(config.is_provider_available("cerebras"));
         std::env::remove_var("CEBRAS_API_KEY");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_tui_thought_display_is_hidden_for_public_safety() {
+        let defaults = AgentDefaults::default();
+        assert_eq!(defaults.tui_thought_display, "off");
+    }
+
+    #[test]
+    fn auto_capture_notices_are_hidden_by_default() {
+        let defaults = AgentDefaults::default();
+        assert!(!defaults.show_auto_capture_notices);
     }
 }

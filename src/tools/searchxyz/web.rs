@@ -1,11 +1,152 @@
 use super::{get_server, map_mcp_err};
 use crate::tools::Tool;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use rmcp::handler::server::wrapper::Parameters;
 use searchxyz::tools::{
     DeepResearchRequest, ReadUrlRequest, SearchAndReadRequest, SearchWebRequest, SiteMapRequest,
 };
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchFailureKind {
+    RateLimited,
+    Blocked,
+    Timeout,
+    NoUsableResults,
+    Other,
+}
+
+impl SearchFailureKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            SearchFailureKind::RateLimited => "rate_limited",
+            SearchFailureKind::Blocked => "blocked",
+            SearchFailureKind::Timeout => "timeout",
+            SearchFailureKind::NoUsableResults => "no_usable_results",
+            SearchFailureKind::Other => "other",
+        }
+    }
+}
+
+pub fn classify_search_failure(message: &str) -> SearchFailureKind {
+    let normalized = message.to_lowercase();
+    if normalized.contains("429")
+        || normalized.contains("too many requests")
+        || normalized.contains("rate limit")
+    {
+        return SearchFailureKind::RateLimited;
+    }
+    if normalized.contains("403")
+        || normalized.contains("forbidden")
+        || normalized.contains("captcha")
+        || normalized.contains("blocked")
+        || normalized.contains("unusual traffic")
+    {
+        return SearchFailureKind::Blocked;
+    }
+    if normalized.contains("timed out") || normalized.contains("timeout") {
+        return SearchFailureKind::Timeout;
+    }
+    if normalized.contains("0 usable results")
+        || normalized.contains("all search backends exhausted")
+    {
+        return SearchFailureKind::NoUsableResults;
+    }
+    SearchFailureKind::Other
+}
+
+pub fn search_failure_cooldown_secs(kind: SearchFailureKind) -> u64 {
+    match kind {
+        SearchFailureKind::RateLimited => 1800,
+        SearchFailureKind::Blocked => 3600,
+        SearchFailureKind::Timeout => 300,
+        SearchFailureKind::NoUsableResults => 600,
+        SearchFailureKind::Other => 120,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct BackendCooldown {
+    kind: SearchFailureKind,
+    until: Instant,
+}
+
+static SEARCH_BACKEND_COOLDOWNS: OnceLock<Mutex<HashMap<String, BackendCooldown>>> =
+    OnceLock::new();
+
+fn search_backend_cooldowns() -> &'static Mutex<HashMap<String, BackendCooldown>> {
+    SEARCH_BACKEND_COOLDOWNS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn record_search_backend_failure(backends: &[String], kind: SearchFailureKind) {
+    if backends.is_empty() {
+        return;
+    }
+
+    let until = Instant::now() + std::time::Duration::from_secs(search_failure_cooldown_secs(kind));
+    let mut cooldowns = search_backend_cooldowns()
+        .lock()
+        .expect("search backend cooldown lock poisoned");
+    for backend in backends {
+        if backend.trim().is_empty() {
+            continue;
+        }
+        cooldowns.insert(backend.clone(), BackendCooldown { kind, until });
+    }
+}
+
+pub fn active_search_backend_cooldowns() -> Vec<Value> {
+    let now = Instant::now();
+    let mut cooldowns = search_backend_cooldowns()
+        .lock()
+        .expect("search backend cooldown lock poisoned");
+    cooldowns.retain(|_, cooldown| cooldown.until > now);
+
+    let mut active = cooldowns
+        .iter()
+        .map(|(backend, cooldown)| {
+            json!({
+                "backend": backend,
+                "error_kind": cooldown.kind.as_str(),
+                "cooldown_remaining_secs": cooldown.until.saturating_duration_since(now).as_secs().max(1),
+            })
+        })
+        .collect::<Vec<_>>();
+    active.sort_by(|a, b| {
+        a["backend"]
+            .as_str()
+            .unwrap_or_default()
+            .cmp(b["backend"].as_str().unwrap_or_default())
+    });
+    active
+}
+
+#[cfg(test)]
+fn clear_search_backend_cooldowns_for_tests() {
+    search_backend_cooldowns()
+        .lock()
+        .expect("search backend cooldown lock poisoned")
+        .clear();
+}
+
+fn search_failure_error_value(
+    raw_error: &str,
+    kind: SearchFailureKind,
+    backends: &[String],
+) -> Value {
+    json!({
+        "status": "search_failed",
+        "error_kind": kind.as_str(),
+        "retryable": true,
+        "cooldown_secs": search_failure_cooldown_secs(kind),
+        "affected_backends": backends,
+        "raw_error": raw_error,
+        "next_step": "Use searchxyz_browser_search for provider-free browser discovery, searchxyz_recall for local indexed content, or provide a direct URL for searchxyz_read_url."
+    })
+}
 
 fn backend_health_label(
     name: &str,
@@ -87,7 +228,7 @@ pub async fn build_searchxyz_doctor_report(include_paths: bool) -> Result<String
     report.push_str("# SearchXyz Doctor\n\n");
     report.push_str("## Policy\n");
     report.push_str(&format!("- OpenZ web_search policy: `{}`\n", native_policy));
-    report.push_str("- Default behavior: native SearchXyz only unless `search_policy=native_then_external` or `OPENZ_WEB_SEARCH_POLICY=native_then_external` is set.\n\n");
+    report.push_str("- Default behavior: native SearchXyz only unless `search_policy=native_then_external`, `external_only`, or the matching `OPENZ_WEB_SEARCH_POLICY` value is set. The default local stack includes browser discovery.\n\n");
 
     report.push_str("## Search Backends\n");
     report.push_str(&format!(
@@ -144,6 +285,20 @@ pub async fn build_searchxyz_doctor_report(include_paths: bool) -> Result<String
         ));
     }
 
+    let active_cooldowns = active_search_backend_cooldowns();
+    if !active_cooldowns.is_empty() {
+        report.push_str("\n## Backend Cooldowns\n");
+        for cooldown in active_cooldowns {
+            let backend = cooldown["backend"].as_str().unwrap_or("unknown");
+            let error_kind = cooldown["error_kind"].as_str().unwrap_or("unknown");
+            let remaining = cooldown["cooldown_remaining_secs"].as_u64().unwrap_or(0);
+            report.push_str(&format!(
+                "- {}: {} ({}s remaining)\n",
+                backend, error_kind, remaining
+            ));
+        }
+    }
+
     report.push_str("\n## Hints\n");
     if !config
         .search
@@ -172,9 +327,343 @@ pub async fn build_searchxyz_doctor_report(include_paths: bool) -> Result<String
     if !config.headless.enabled {
         report.push_str("- Enable SearchXyz headless mode when scraper backends are blocked by JS or anti-bot pages.\n");
     }
+    report.push_str("- Provider-free browser fallback is automatic in default `web_search`; call `searchxyz_browser_search` directly only for explicit engine/debug control.\n");
     report.push_str("- For one-off fallback to external engines, call `web_search` with `search_policy=native_then_external`.\n");
 
     Ok(report)
+}
+
+fn encode_browser_query(query: &str) -> String {
+    percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC)
+        .to_string()
+        .replace("%20", "+")
+}
+
+pub fn browser_search_url(engine: &str, query: &str) -> Result<String> {
+    let encoded = encode_browser_query(query);
+    match engine {
+        "duckduckgo" | "ddg" => Ok(format!("https://duckduckgo.com/html/?q={encoded}")),
+        "bing" => Ok(format!("https://www.bing.com/search?q={encoded}")),
+        other => Err(anyhow!(
+            "Unsupported browser search engine: {other}. Use duckduckgo or bing."
+        )),
+    }
+}
+
+fn normalize_browser_result_url(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || trimmed.starts_with("javascript:")
+        || trimmed.starts_with("mailto:")
+    {
+        return None;
+    }
+
+    if let Some(encoded) = trimmed
+        .strip_prefix("/l/?uddg=")
+        .or_else(|| trimmed.strip_prefix("https://duckduckgo.com/l/?uddg="))
+    {
+        let raw_target = encoded.split('&').next().unwrap_or(encoded);
+        let decoded = percent_encoding::percent_decode_str(raw_target)
+            .decode_utf8_lossy()
+            .to_string();
+        if decoded.starts_with("http://") || decoded.starts_with("https://") {
+            return Some(decoded);
+        }
+    }
+
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return Some(trimmed.to_string());
+    }
+
+    None
+}
+
+fn is_likely_search_engine_internal_url(url: &str) -> bool {
+    let lowered = url.to_lowercase();
+    [
+        "duckduckgo.com",
+        "bing.com/search",
+        "bing.com/images",
+        "go.microsoft.com",
+        "microsoft.com/rewards",
+        "privacy.microsoft.com",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle))
+}
+
+fn text_for_anchor(anchor: scraper::element_ref::ElementRef<'_>) -> String {
+    anchor
+        .text()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn extract_browser_search_results(engine: &str, html: &str, max_results: usize) -> Vec<Value> {
+    let doc = scraper::Html::parse_document(html);
+    let selector = scraper::Selector::parse("a[href]").expect("valid anchor selector");
+    let mut seen = std::collections::HashSet::new();
+    let mut results = Vec::new();
+
+    for anchor in doc.select(&selector) {
+        let Some(raw_href) = anchor.value().attr("href") else {
+            continue;
+        };
+        let Some(url) = normalize_browser_result_url(raw_href) else {
+            continue;
+        };
+        if is_likely_search_engine_internal_url(&url) || !seen.insert(url.clone()) {
+            continue;
+        }
+        let title = text_for_anchor(anchor);
+        results.push(json!({
+            "title": title,
+            "url": url,
+            "engine": engine,
+            "source": "browser_search",
+        }));
+        if results.len() >= max_results {
+            break;
+        }
+    }
+
+    results
+}
+
+fn html_has_bot_block(html: &str) -> bool {
+    let lowered = html.to_lowercase();
+    [
+        "captcha",
+        "unusual traffic",
+        "verify you are human",
+        "checking your browser",
+        "access denied",
+        "temporarily blocked",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle))
+}
+
+fn browser_search_read_top_results_enabled(arguments: &Value) -> bool {
+    arguments
+        .get("read_top_results")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn browser_search_max_pages(arguments: &Value, max_results: usize) -> usize {
+    let default_pages = max_results.clamp(1, 3);
+    arguments
+        .get("max_pages")
+        .and_then(|value| value.as_u64())
+        .map(|value| value.clamp(1, 5) as usize)
+        .unwrap_or(default_pages)
+}
+
+async fn read_browser_search_results(
+    results: &[Value],
+    arguments: &Value,
+    max_results: usize,
+) -> Vec<Value> {
+    let max_pages = browser_search_max_pages(arguments, max_results);
+    let save_mode = arguments
+        .get("save_mode")
+        .and_then(|value| value.as_str())
+        .unwrap_or("none");
+    let reader = SearchXyzReadUrlTool;
+    let mut reads = Vec::new();
+
+    for result in results.iter().take(max_pages) {
+        let Some(url) = result.get("url").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        match reader
+            .call(&json!({
+                "url": url,
+                "cache_mode": "auto",
+                "save_mode": save_mode,
+                "max_chars": 6000,
+            }))
+            .await
+        {
+            Ok(content) => reads.push(json!({
+                "status": "success",
+                "url": url,
+                "content": content,
+            })),
+            Err(err) => reads.push(json!({
+                "status": "error",
+                "url": url,
+                "error": err.to_string(),
+            })),
+        }
+    }
+
+    reads
+}
+
+// ── Browser Search Fallback ───────────────────────────────────
+pub struct SearchXyzBrowserSearchTool;
+
+#[async_trait::async_trait]
+impl Tool for SearchXyzBrowserSearchTool {
+    fn name(&self) -> &str {
+        "searchxyz_browser_search"
+    }
+
+    fn description(&self) -> &str {
+        "Search the web through a local browser page when keyless/API search backends are blocked. No Brave or SearXNG dependency required."
+    }
+
+    fn metadata(&self) -> crate::tools::ToolMetadata {
+        let mut m = crate::tools::ToolMetadata::infer(self.name());
+        m.domain = "web";
+        m.risk = crate::tools::ToolRisk::Medium;
+        m.uses_network = true;
+        m.spawns_process = true;
+        m
+    }
+
+    fn parameters(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query string."
+                },
+                "engine": {
+                    "type": "string",
+                    "enum": ["duckduckgo", "bing"],
+                    "description": "Browser search engine to use (default: duckduckgo)."
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum result links to return (default: 5, max: 20)."
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "description": "Per browser action timeout hint in seconds (default: 20, max: 60). Reserved for future browser backends."
+                },
+                "read_top_results": {
+                    "type": "boolean",
+                    "description": "After browser discovery, fetch the top result pages through searchxyz_read_url (default: false)."
+                },
+                "max_pages": {
+                    "type": "integer",
+                    "description": "Maximum discovered pages to read when read_top_results=true (default: min(max_results, 3), max: 5)."
+                },
+                "save_mode": {
+                    "type": "string",
+                    "enum": ["full", "none"],
+                    "description": "Whether fetched top-result pages should be persisted into SearchXyz memory (default: none)."
+                }
+            },
+            "required": ["query"]
+        })
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let query = arguments
+            .get("query")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
+        let engine = arguments
+            .get("engine")
+            .and_then(|v| v.as_str())
+            .unwrap_or("duckduckgo");
+        let max_results = arguments
+            .get("max_results")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5)
+            .clamp(1, 20) as usize;
+        let search_url = browser_search_url(engine, query)?;
+        let browser = crate::tools::gsd_browser::GsdBrowserTool;
+
+        let nav = browser
+            .call(&json!({
+                "action": "navigate",
+                "url": search_url,
+            }))
+            .await;
+        if let Err(err) = nav {
+            return Ok(json!({
+                "status": "browser_error",
+                "error_kind": "browser_navigation_failed",
+                "retryable": true,
+                "engine": engine,
+                "query": query,
+                "error": err.to_string(),
+                "next_step": "Run inspect_browsers, retry with engine=bing, or use searchxyz_recall/direct URL readers."
+            }));
+        }
+
+        let page_source = browser.call(&json!({ "action": "page_source" })).await;
+        let html = match page_source {
+            Ok(value) => value
+                .get("output")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            Err(err) => {
+                return Ok(json!({
+                    "status": "browser_error",
+                    "error_kind": "browser_page_source_failed",
+                    "retryable": true,
+                    "engine": engine,
+                    "query": query,
+                    "error": err.to_string(),
+                    "next_step": "Run inspect_browsers, retry with engine=bing, or use searchxyz_recall/direct URL readers."
+                }));
+            }
+        };
+
+        let results = extract_browser_search_results(engine, &html, max_results);
+        if results.is_empty() && html_has_bot_block(&html) {
+            return Ok(json!({
+                "status": "blocked",
+                "error_kind": "captcha_or_bot_block",
+                "retryable": true,
+                "engine": engine,
+                "query": query,
+                "result_count": 0,
+                "results": [],
+                "next_step": "Retry later, try engine=bing, use a known URL, or build the local SearchXyz index from trusted seed sources."
+            }));
+        }
+
+        let read_results = if browser_search_read_top_results_enabled(arguments) {
+            read_browser_search_results(&results, arguments, max_results).await
+        } else {
+            Vec::new()
+        };
+        let read_errors = read_results
+            .iter()
+            .filter(|entry| entry["status"] == "error")
+            .count();
+        let status = if results.is_empty() {
+            "no_results"
+        } else if browser_search_read_top_results_enabled(arguments) && read_errors > 0 {
+            "partial_success"
+        } else {
+            "success"
+        };
+
+        Ok(json!({
+            "status": status,
+            "engine": engine,
+            "query": query,
+            "result_count": results.len(),
+            "results": results,
+            "read_count": read_results.len(),
+            "read_results": read_results,
+        }))
+    }
 }
 
 // ── 0. Doctor ────────────────────────────────────────────────
@@ -261,11 +750,20 @@ impl Tool for SearchXyzSearchWebTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let req: SearchWebRequest = serde_json::from_value(arguments.clone())?;
-        let res = get_server()
-            .search_web(Parameters(req))
-            .await
-            .map_err(map_mcp_err)?;
-        Ok(json!(res))
+        let server = get_server();
+        let configured_backends = server.config.search.backends.clone();
+        match server.search_web(Parameters(req)).await {
+            Ok(res) => Ok(json!(res)),
+            Err(err) => {
+                let raw_error = format!("MCP Error {:?}: {}", err.code, err.message);
+                let kind = classify_search_failure(&raw_error);
+                record_search_backend_failure(&configured_backends, kind);
+                Err(anyhow!(
+                    "{}",
+                    search_failure_error_value(&raw_error, kind, &configured_backends)
+                ))
+            }
+        }
     }
 }
 
@@ -579,5 +1077,154 @@ mod tests {
             "searxng".to_string(),
             "duckduckgo".to_string(),
         ]));
+    }
+
+    #[test]
+    fn browser_search_builds_search_urls() {
+        let duckduckgo = browser_search_url("duckduckgo", "rust async").unwrap();
+        let bing = browser_search_url("bing", "rust async").unwrap();
+
+        assert!(duckduckgo.starts_with("https://duckduckgo.com/html/"));
+        assert!(duckduckgo.contains("q=rust+async"));
+        assert!(bing.starts_with("https://www.bing.com/search"));
+        assert!(bing.contains("q=rust+async"));
+    }
+
+    #[test]
+    fn browser_search_extracts_and_dedupes_result_links() {
+        let html = r#"
+            <a href="https://example.com/a"><h2>A</h2></a>
+            <a href="/l/?uddg=https%3A%2F%2Fexample.com%2Fb">B</a>
+            <a href="https://example.com/a">Duplicate</a>
+            <a href="javascript:void(0)">Ignore</a>
+        "#;
+
+        let results = extract_browser_search_results("duckduckgo", html, 10);
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["url"], "https://example.com/a");
+        assert_eq!(results[1]["url"], "https://example.com/b");
+    }
+
+    #[test]
+    fn browser_search_tool_metadata_is_web_safe() {
+        let tool = SearchXyzBrowserSearchTool;
+        assert_eq!(tool.name(), "searchxyz_browser_search");
+        assert_eq!(tool.metadata().domain, "web");
+        assert!(tool.parameters()["properties"].get("query").is_some());
+        assert!(tool.parameters()["properties"].get("engine").is_some());
+    }
+
+    #[test]
+    fn browser_search_read_options_default_to_links_only() {
+        let args = json!({ "query": "rust async", "max_results": 4 });
+        assert!(!browser_search_read_top_results_enabled(&args));
+        assert_eq!(browser_search_max_pages(&args, 4), 3);
+
+        let tool = SearchXyzBrowserSearchTool;
+        let properties = &tool.parameters()["properties"];
+        assert!(properties.get("read_top_results").is_some());
+        assert!(properties.get("max_pages").is_some());
+        assert!(properties.get("save_mode").is_some());
+    }
+
+    #[test]
+    fn browser_search_read_limits_are_clamped() {
+        assert_eq!(browser_search_max_pages(&json!({ "max_pages": 0 }), 10), 1);
+        assert_eq!(browser_search_max_pages(&json!({ "max_pages": 99 }), 10), 5);
+        assert_eq!(browser_search_max_pages(&json!({}), 2), 2);
+    }
+
+    #[test]
+    fn search_failure_classification_covers_blocking_and_empty_results() {
+        assert_eq!(
+            classify_search_failure("HTTP 403 Forbidden"),
+            SearchFailureKind::Blocked
+        );
+        assert_eq!(
+            classify_search_failure("HTTP 429 Too Many Requests"),
+            SearchFailureKind::RateLimited
+        );
+        assert_eq!(
+            classify_search_failure("All search backends exhausted: 0 usable results"),
+            SearchFailureKind::NoUsableResults
+        );
+        assert_eq!(
+            classify_search_failure("request timed out after 30 seconds"),
+            SearchFailureKind::Timeout
+        );
+    }
+
+    #[test]
+    fn search_failure_cooldowns_are_bounded_by_kind() {
+        assert_eq!(
+            search_failure_cooldown_secs(SearchFailureKind::RateLimited),
+            1800
+        );
+        assert_eq!(
+            search_failure_cooldown_secs(SearchFailureKind::Blocked),
+            3600
+        );
+        assert_eq!(
+            search_failure_cooldown_secs(SearchFailureKind::Timeout),
+            300
+        );
+        assert_eq!(
+            search_failure_cooldown_secs(SearchFailureKind::NoUsableResults),
+            600
+        );
+    }
+
+    #[test]
+    fn search_failure_payload_is_machine_readable() {
+        let payload = search_failure_error_value(
+            "native search failed",
+            SearchFailureKind::RateLimited,
+            &["duckduckgo".to_string(), "google".to_string()],
+        );
+        assert_eq!(payload["status"], "search_failed");
+        assert_eq!(payload["error_kind"], "rate_limited");
+        assert_eq!(payload["retryable"], true);
+        assert!(payload["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("searchxyz_browser_search"));
+    }
+
+    #[test]
+    fn search_backend_cooldown_records_active_backends() {
+        clear_search_backend_cooldowns_for_tests();
+        record_search_backend_failure(
+            &["duckduckgo".to_string(), "google".to_string()],
+            SearchFailureKind::Blocked,
+        );
+        let active = active_search_backend_cooldowns();
+        assert_eq!(active.len(), 2);
+        assert!(active.iter().any(|entry| entry["backend"] == "duckduckgo"));
+        assert!(active.iter().any(|entry| entry["error_kind"] == "blocked"));
+        assert!(active
+            .iter()
+            .all(|entry| entry["cooldown_remaining_secs"].as_u64().unwrap() > 0));
+        clear_search_backend_cooldowns_for_tests();
+    }
+
+    #[tokio::test]
+    async fn searchxyz_doctor_reports_active_cooldowns() -> Result<()> {
+        clear_search_backend_cooldowns_for_tests();
+        record_search_backend_failure(&["duckduckgo".to_string()], SearchFailureKind::RateLimited);
+        let report = build_searchxyz_doctor_report(false).await?;
+        assert!(report.contains("## Backend Cooldowns"));
+        assert!(report.contains("duckduckgo"));
+        assert!(report.contains("rate_limited"));
+        clear_search_backend_cooldowns_for_tests();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn searchxyz_doctor_mentions_automatic_browser_fallback() -> Result<()> {
+        let report = build_searchxyz_doctor_report(false).await?;
+        assert!(report.contains("searchxyz_browser_search"));
+        assert!(report.contains("Provider-free browser fallback is automatic"));
+        Ok(())
     }
 }

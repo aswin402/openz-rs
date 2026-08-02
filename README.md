@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.112`
+# OpenZ 🦊 `v0.0.114`
 
 <p align="center">
   <img src="assets/logo.png" width="200" alt="OpenZ Logo">
@@ -11,6 +11,29 @@ OpenZ is a high-performance personal AI agent framework built in Rust by **Aswin
 OpenZ was rebranded from `nanobot` and is inspired by Zeroclaw, Nanobot, hermes-agent, loops!, DOX, Headroom, OpenMemory, SearchXyz-style research systems, OpenMedia, OpenDoc, and Rust-native MCP tooling.
 
 ---
+
+## What Changed In `v0.0.114`
+
+- **Private Trace By Default**: Provider reasoning, workflow notices, memory-capture notices, and trace debug events are hidden from normal user-facing output unless explicitly enabled.
+- **TUI Trace Controls**: Use `/tui trace full|compact|off` to choose trace visibility. Legacy `/tui thoughts ...` and `/thoughts ...` remain accepted aliases.
+- **Budgeted Research Recovery**: Research/search/browser failures now classify CAPTCHA, browser-driver, search-exhaustion, timeout, and network cases with bounded retry/fallback guidance instead of repeated blind retries.
+- **Source Ledger Caveats**: Live/current research answers track successful and failed sources and add an explicit caveat when source verification is missing or weak.
+- **Browser Preflight**: `inspect_browsers`, Firefox, GSD, and Obscura failures now expose structured browser health/preflight data and actionable backend recommendations.
+- **Partial Parallel Research**: `parallel_research` returns completed subagent results even when other branches timeout, preserving cancellation behavior for user aborts.
+- **Stable Long Output References**: Oversized tool outputs save the exact raw JSON to `~/.openz/tool_outputs/` and attach structured retrieval metadata while `retrieve_original` still bypasses truncation.
+- **Automatic Saved-Output Retrieval**: Generic `read_file` calls aimed at saved `~/.openz/tool_outputs/` files are rewritten to `retrieve_original`, so users can ask for full output without naming the Headroom tool.
+- **Automatic OCR Fallback**: `read_doc` now OCRs scanned PDFs and image files automatically when native text extraction is empty; build with `--features ocr` plus Tesseract/Poppler for full OCR support.
+- **Automatic Document Complexity Preflight**: `read_doc` now runs PDF complexity analysis by default before extraction/OCR so scanned-page and chunk/render decisions are captured without naming OpenDoc analysis tools.
+- **Automatic Artifact Opening**: When the user asks to show/open/view/play a generated local artifact, successful generator/conversion outputs auto-run `open_path` once per path and record device-inventory success.
+- **Automatic Open Failure Suggestions**: If `open_path` fails, OpenZ automatically asks device inventory for matching local viewers/apps so the agent can suggest the next viable way to open the artifact.
+- **Marketplace Intent Clarification**: Ambiguous AI-agent marketplace prompts ask one buy-vs-sell clarification before launching broad research; explicit buy or sell prompts proceed directly.
+- **Provider-Free Browser Search**: Added `searchxyz_browser_search`; default `web_search` now automatically falls back to local browser discovery when DuckDuckGo/Google/Bing scrapers are blocked and no Brave/SearXNG is configured.
+- **Automatic Search Diagnostics**: SearchXyz search failures now classify blocked/rate-limited/timeout/no-result cases, record temporary backend cooldowns, and append `searchxyz_doctor` diagnostics automatically unless `diagnose_on_failure=false` is set.
+- **Browser Search Readers**: Research-style `web_search` queries automatically read top browser-discovered pages through `searchxyz_read_url`; `read_top_results`, `max_pages`, and `save_mode` remain debug/override controls.
+- **Automatic JS Render Retry**: `web_fetch` detects empty JavaScript app shells and retries through brokered local browser rendering automatically (GSD → Firefox → Obscura); `render_js=false` remains an explicit opt-out.
+- **GitHub Ingest Auto-Sizing**: `searchxyz_read_github_repo` automatically retries small repositories when `max_files` is too low, instead of forcing users to manually tune the limit.
+- **Automatic Fresh Fetches**: When the user asks for latest/current/verify/check-again data, `web_fetch` calls are upgraded to `cache_mode=revalidate` automatically unless a cache mode is explicit.
+- **Automatic Edit Scoping**: First write/patch/replace/zenflow edit for a target path is converted into `scope_context`, so project instructions load before edits without user/tool-name prompting.
 
 ## What Changed In `v0.0.107`
 

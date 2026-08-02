@@ -14,6 +14,21 @@ fn get_driver_mutex() -> &'static Mutex<Option<WebDriver>> {
     DRIVER.get_or_init(|| Mutex::new(None))
 }
 
+fn geckodriver_missing_message() -> String {
+    "Browser preflight failed: geckodriver is missing or not runnable on port 4444. Run inspect_browsers, install geckodriver, or use Chrome CDP/obscura browser fallback instead.".to_string()
+}
+
+fn geckodriver_missing_preflight_error() -> serde_json::Value {
+    crate::tools::browser_status::browser_preflight_error_value(
+        &geckodriver_missing_message(),
+        crate::tools::browser_status::BrowserHealth {
+            chrome_cdp: crate::tools::browser_status::BrowserBackendStatus::Stopped,
+            gsd_browser: crate::tools::browser_status::BrowserBackendStatus::Stopped,
+            geckodriver: crate::tools::browser_status::BrowserBackendStatus::Missing,
+        },
+    )
+}
+
 async fn ensure_geckodriver_running() -> Result<()> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(500))
@@ -49,7 +64,7 @@ async fn ensure_geckodriver_running() -> Result<()> {
         }
     }
 
-    Err(anyhow!("Failed to start geckodriver on port 4444. Please ensure geckodriver is installed and in your PATH."))
+    Err(anyhow!(geckodriver_missing_preflight_error().to_string()))
 }
 
 async fn get_or_create_driver() -> Result<WebDriver> {
@@ -251,6 +266,27 @@ impl Tool for FirefoxBrowserTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn geckodriver_missing_message_mentions_preflight_and_inspection() {
+        let msg = geckodriver_missing_message();
+        assert!(msg.contains("Browser preflight failed"));
+        assert!(msg.contains("inspect_browsers"));
+        assert!(msg.contains("Chrome CDP"));
+    }
+
+    #[test]
+    fn geckodriver_missing_preflight_error_is_structured() {
+        let payload = geckodriver_missing_preflight_error();
+        assert_eq!(
+            payload["browser_preflight"]["health"]["geckodriver"],
+            "missing"
+        );
+        assert!(payload["error"]
+            .as_str()
+            .expect("error string")
+            .contains("Browser preflight failed"));
+    }
 
     #[tokio::test]
     async fn test_firefox_browser_tool_metadata() -> Result<()> {

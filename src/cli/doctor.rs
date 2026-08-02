@@ -76,6 +76,113 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SecretScrubResult {
+    text: String,
+    replacements: usize,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct SecretScrubReport {
+    files_scanned: usize,
+    files_changed: usize,
+    replacements: usize,
+}
+
+fn secret_patterns() -> Vec<regex::Regex> {
+    vec![
+        regex::Regex::new(r"\d{8,}:[A-Za-z0-9_-]{16,}\b").expect("valid telegram token regex"),
+        regex::Regex::new(r"\bsk-[A-Za-z0-9_-]{16,}\b").expect("valid sk token regex"),
+        regex::Regex::new(r"\d{8,}:[A-Za-z0-9_-]{3,}\.\.\.")
+            .expect("valid partial telegram token regex"),
+        regex::Regex::new(r"\bsk-[A-Za-z0-9_-]{4,}\.\.\.").expect("valid partial sk token regex"),
+    ]
+}
+
+fn scrub_secret_text(text: &str) -> SecretScrubResult {
+    let mut scrubbed = text.to_string();
+    let mut replacements = 0usize;
+    for pattern in secret_patterns() {
+        let count = pattern.find_iter(&scrubbed).count();
+        if count > 0 {
+            scrubbed = pattern
+                .replace_all(&scrubbed, "[REDACTED_SECRET]")
+                .into_owned();
+            replacements = replacements.saturating_add(count);
+        }
+    }
+    SecretScrubResult {
+        text: scrubbed,
+        replacements,
+    }
+}
+
+fn scrub_secret_file(path: &Path) -> Result<SecretScrubResult> {
+    let original = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {
+            return Ok(SecretScrubResult {
+                text: String::new(),
+                replacements: 0,
+            });
+        }
+        Err(err) => return Err(err.into()),
+    };
+    let result = scrub_secret_text(&original);
+    if result.replacements > 0 && result.text != original {
+        std::fs::write(path, &result.text)?;
+    }
+    Ok(result)
+}
+
+fn scrub_secret_roots(data_dir: &Path) -> Vec<std::path::PathBuf> {
+    [
+        "sessions",
+        "traces",
+        "tool_outputs",
+        "data",
+        "memory",
+        "shared",
+        "active_tui",
+    ]
+    .into_iter()
+    .map(|name| data_dir.join(name))
+    .collect()
+}
+
+fn scrub_secrets_in_runtime_state(data_dir: &Path) -> Result<SecretScrubReport> {
+    let mut report = SecretScrubReport::default();
+    let mut stack = scrub_secret_roots(data_dir);
+    while let Some(path) = stack.pop() {
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            let Ok(entries) = std::fs::read_dir(&path) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                stack.push(entry.path());
+            }
+            continue;
+        }
+        if !meta.is_file() {
+            continue;
+        }
+
+        report.files_scanned = report.files_scanned.saturating_add(1);
+        let result = scrub_secret_file(&path)?;
+        if result.replacements > 0 {
+            report.files_changed = report.files_changed.saturating_add(1);
+            report.replacements = report.replacements.saturating_add(result.replacements);
+        }
+    }
+    Ok(report)
+}
+
 fn path_size_bytes(path: &Path) -> Option<u64> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
     if metadata.is_file() {
@@ -285,7 +392,7 @@ fn archive_stale_graph_branches(data_dir: &Path) -> usize {
 /// `openz doctor` — verify runtime databases live under the global data dir
 /// (~/.openz), relocate any stray artifacts found in the working directory,
 /// and prune stale graph-memory branch databases. No data is ever deleted.
-pub async fn handle_doctor() -> Result<()> {
+pub async fn handle_doctor(scrub_secrets: bool) -> Result<()> {
     println!("🩺 OpenZ doctor — runtime database placement check");
     println!("────────────────────────────────────────────");
 
@@ -358,7 +465,23 @@ pub async fn handle_doctor() -> Result<()> {
     }
     println!();
 
-    // ── Step 4: Disk/cache pressure report ──
+    // ── Step 4: Optional historical secret scrub ──
+    if scrub_secrets {
+        println!("🔐 Scrubbing historical secrets from runtime transcripts...");
+        match scrub_secrets_in_runtime_state(&data_dir) {
+            Ok(report) => {
+                println!(
+                    "✅ Secret scrub complete: {} replacement(s) across {} changed file(s), {} file(s) scanned.",
+                    report.replacements, report.files_changed, report.files_scanned
+                );
+                println!("   Config files and backups are not scanned by this action.");
+            }
+            Err(err) => println!("⚠️  Secret scrub failed: {err}"),
+        }
+        println!();
+    }
+
+    // ── Step 5: Disk/cache pressure report ──
     print_disk_report(&data_dir);
     println!();
 
@@ -373,6 +496,41 @@ pub async fn handle_doctor() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scrub_secret_text_redacts_full_and_partial_key_patterns() {
+        let input = "curl https://api.telegram.org/bot1234567890:AAEabcDEFghiJKLmnopQRSTuvwxYZ012345/getWebhookInfo\nprovider sk-AbCdEfGhIjKlMnOpQrStUvWxYz1234567890 and sk-AbCdEf...";
+
+        let result = scrub_secret_text(input);
+
+        assert_eq!(result.replacements, 3);
+        assert!(result.text.contains("bot[REDACTED_SECRET]"));
+        assert!(result.text.contains("provider [REDACTED_SECRET]"));
+        assert!(!result.text.contains("1234567890:AAEabc"));
+        assert!(!result.text.contains("sk-AbCdEf"));
+    }
+
+    #[test]
+    fn scrub_secret_file_preserves_json_validity() -> Result<()> {
+        let dir =
+            std::env::temp_dir().join(format!("openz_doctor_scrub_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("session.json");
+        std::fs::write(
+            &path,
+            r#"{"cmd":"curl https://api.telegram.org/bot1234567890:AAEabcDEFghiJKLmnopQRSTuvwxYZ012345/getMe","key":"sk-AbCdEfGhIjKlMnOpQrStUvWxYz1234567890"}"#,
+        )?;
+
+        let changed = scrub_secret_file(&path)?;
+
+        assert_eq!(changed.replacements, 2);
+        let updated = std::fs::read_to_string(&path)?;
+        serde_json::from_str::<serde_json::Value>(&updated)?;
+        assert!(!updated.contains("1234567890:AAEabc"));
+        assert!(!updated.contains("sk-AbCdEf"));
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
 
     #[test]
     fn format_bytes_uses_binary_units() {
