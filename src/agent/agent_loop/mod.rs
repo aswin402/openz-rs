@@ -57,6 +57,7 @@ pub struct TurnContext<'a> {
     pub session_file_lock: Option<std::fs::File>,
     pub streamed: bool,
     pub config: Config,
+    pub workflow_notice_names: std::collections::HashSet<String>,
 }
 
 struct ActivityGuard<'a> {
@@ -492,6 +493,7 @@ impl AgentLoop {
             session_file_lock: None,
             streamed: false,
             config: self.config.clone(),
+            workflow_notice_names: std::collections::HashSet::new(),
         };
 
         let mut state = TurnState::Restore;

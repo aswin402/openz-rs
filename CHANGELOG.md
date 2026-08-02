@@ -1,4 +1,14 @@
-### v0.0.114 (Latest Release)
+### v0.0.115 (Latest Release)
+**TUI Ergonomics, Cursor Visibility, and Multi-line Prompt Wrapping:**
+
+#### TUI and Input Rendering
+- **Visible Terminal Cursor**: Enabled explicit terminal cursor (`crossterm::cursor::Show`) on raw mode start and every render frame, placing the hardware cursor directly at the active typing location.
+- **Multi-line Input Prompt Wrapping**: Replaced horizontal single-line scrolling with vertical multi-line prompt wrapping.
+- **Dynamic Prompt Prefixes**: Line 0 of the input area displays `> `, while all subsequent wrapped lines display `- `.
+- **Formatted Input Submission**: On Enter, submitted user prompts render formatted line-by-line (`> ` for line 0, `- ` for lines 1+).
+- **Accurate Cursor Placement**: Calculated exact vertical line index (`cursor_line_idx`) and horizontal column offset (`cursor_col_offset`) for wrapped multi-line input lines.
+
+### v0.0.114
 **Automation, Research Reliability, Privacy, and Workspace Safety:**
 
 #### Automatic tool routing

@@ -1,4 +1,4 @@
-# OpenZ 🦊 `v0.0.114`
+# OpenZ 🦊 `v0.0.115`
 
 OpenZ is a local-first AI agent runtime built in Rust. It combines an interactive terminal agent, native tools, durable memory, browser-backed research, document/media automation, background channels, and isolated subagents in one fast desktop-oriented binary.
 
@@ -43,9 +43,16 @@ The goal is simple: users describe outcomes; OpenZ handles tool orchestration.
 
 ---
 
-## What Changed In `v0.0.114`
+## What Changed In `v0.0.115`
 
-`v0.0.114` focuses on reliability, privacy, and automatic tool routing.
+`v0.0.115` introduces TUI input area cursor visibility and multi-line input prompt wrapping.
+
+### TUI and User Experience
+
+- **Visible Terminal Cursor**: Enabled explicit terminal cursor (`crossterm::cursor::Show`) on raw mode start and every render frame, placing the hardware cursor directly at the active typing location.
+- **Multi-line Input Prompt Wrapping**: Replaced horizontal single-line scrolling with vertical multi-line prompt wrapping.
+- **Dynamic Prompt Prefixes**: Line 0 of the input area displays `> `, while all subsequent wrapped lines display `- `.
+- **Formatted Input Submission**: On Enter, submitted user prompts render formatted line-by-line (`> ` for line 0, `- ` for lines 1+).
 
 ### Privacy and trace handling
 

@@ -1,5 +1,6 @@
 use super::{AgentLoop, TurnContext, TurnState};
 use anyhow::Result;
+use std::collections::HashSet;
 
 pub const MIN_MATCH_SCORE: f64 = 6.0;
 
@@ -130,7 +131,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     let recent_session_part = recent_session_context(&ctx.session.messages, 2000);
     let brief_context = retrieve_research_brief_context(ctx.user_content).await;
     let source_context = retrieve_source_context(ctx.user_content, !brief_context.is_empty()).await;
-    let workflow_context = retrieve_workflow_context(ctx.user_content).await;
+    let workflow_context =
+        retrieve_workflow_context(ctx.user_content, &mut ctx.workflow_notice_names).await;
     let weak_model_rules = weak_model_operating_rules(&config.agents.defaults.model);
     let mut cross_session_memory = retrieve_cross_session_memories(ctx.user_content).await;
 
@@ -629,14 +631,23 @@ fn format_workflow_context_items(items: &[crate::tools::shared_memory::WorkflowC
     out
 }
 
-async fn retrieve_workflow_context(user_content: &str) -> String {
+fn should_emit_workflow_notice(seen: &mut HashSet<String>, workflow_name: &str) -> bool {
+    seen.insert(workflow_name.to_string())
+}
+
+async fn retrieve_workflow_context(
+    user_content: &str,
+    seen_workflow_notices: &mut HashSet<String>,
+) -> String {
     match crate::tools::shared_memory::search_workflow_cards(user_content, 3, true).await {
         Ok(items) => {
             if let Some(best) = items.first().filter(|item| item.score >= 4.0) {
-                crate::channels::cli::send_notification(&format!(
-                    "◇ Workflow matched: {}",
-                    best.name
-                ));
+                if should_emit_workflow_notice(seen_workflow_notices, &best.name) {
+                    crate::channels::cli::send_notification(&format!(
+                        "◇ Workflow matched: {}",
+                        best.name
+                    ));
+                }
             }
             format_workflow_context_items(&items)
         }
@@ -1138,6 +1149,21 @@ mod tests {
         assert!(should_show_saved_context_notification(
             "what is hermes agent"
         ));
+    }
+
+    #[test]
+    fn workflow_notice_is_emitted_once_per_turn() {
+        let mut seen = std::collections::HashSet::new();
+
+        assert!(should_emit_workflow_notice(
+            &mut seen,
+            "test_web_tools_health"
+        ));
+        assert!(!should_emit_workflow_notice(
+            &mut seen,
+            "test_web_tools_health"
+        ));
+        assert!(should_emit_workflow_notice(&mut seen, "another_workflow"));
     }
 
     #[test]

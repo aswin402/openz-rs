@@ -28,7 +28,7 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/workflows", "Search reusable workflows"),
 ];
 
-fn char_display_width(c: char) -> usize {
+pub(super) fn char_display_width(c: char) -> usize {
     let cp = c as u32;
     if cp == 0xFE0F {
         0
@@ -565,6 +565,27 @@ pub fn print_colored_markdown(content: &str) {
 }
 
 #[allow(clippy::too_many_arguments)]
+pub static LAST_CURSOR_LINE: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+pub fn get_last_cursor_line() -> usize {
+    LAST_CURSOR_LINE.load(Ordering::Relaxed)
+}
+
+pub fn clear_input_rendering(lines_printed: usize) {
+    let prev_cursor_line = get_last_cursor_line();
+    if prev_cursor_line > 0 {
+        print!("\x1b[{}A\r", prev_cursor_line);
+    }
+    if lines_printed > 1 {
+        for _ in 0..(lines_printed - 1) {
+            print!("\r\n\x1b[2K");
+        }
+        print!("\x1b[{}A\r", lines_printed - 1);
+    }
+    print!("\r\x1b[2K");
+}
+
 pub fn render_box(
     model: &str,
     provider: &str,
@@ -579,15 +600,7 @@ pub fn render_box(
     lines_printed: &mut usize,
 ) -> anyhow::Result<()> {
     // First, clear the previous rendering below the input line
-    if *lines_printed > 1 {
-        for _ in 0..(*lines_printed - 1) {
-            print!("\r\n\x1b[2K");
-        }
-        // Move cursor back up to the input line
-        print!("\x1b[{}A\r", *lines_printed - 1);
-    }
-    // Clear the input line itself
-    print!("\r\x1b[2K");
+    clear_input_rendering(*lines_printed);
 
     // 1. Calculate token usage
     let session = session_manager.get_or_create(session_key);
@@ -802,10 +815,9 @@ pub fn render_box(
         typed_input
     };
 
-    // Print input line prefix and input using cursor-aware viewport
+    // Print input lines with multi-line wrapping (> for first line, - for subsequent lines)
     let display_chars: Vec<char> = display_text.chars().collect();
     let char_count = display_chars.len();
-    let max_input_width = width.saturating_sub(3);
 
     let active_cursor_idx = if selected_index.is_some() {
         char_count
@@ -813,64 +825,68 @@ pub fn render_box(
         cursor_idx.min(char_count)
     };
 
-    let mut v_start = *viewport_start;
-    v_start = v_start.min(char_count);
+    let prompt_prefix_width = 2; // "> " or "- "
+    let max_line_content_width = width.saturating_sub(prompt_prefix_width).max(1);
 
-    if active_cursor_idx < v_start {
-        v_start = active_cursor_idx;
+    struct InputLine {
+        chars: Vec<char>,
+        display_width: usize,
     }
 
-    let mut cursor_offset_width: usize = 0;
-    for item in display_chars.iter().take(active_cursor_idx).skip(v_start) {
-        cursor_offset_width += char_display_width(*item);
-    }
-
-    while cursor_offset_width > max_input_width && v_start < active_cursor_idx {
-        cursor_offset_width -= char_display_width(display_chars[v_start]);
-        v_start += 1;
-    }
-
-    let mut total_width_from_v_start = cursor_offset_width;
-    for item in display_chars
-        .iter()
-        .take(char_count)
-        .skip(active_cursor_idx)
-    {
-        total_width_from_v_start += char_display_width(*item);
-    }
-    while v_start > 0 {
-        let prev_width = char_display_width(display_chars[v_start - 1]);
-        if total_width_from_v_start + prev_width <= max_input_width {
-            v_start -= 1;
-            total_width_from_v_start += prev_width;
-        } else {
-            break;
-        }
-    }
-
-    *viewport_start = v_start;
-
-    let mut display_input = String::new();
-    let mut display_width = 0;
+    let mut input_lines: Vec<InputLine> = Vec::new();
+    let mut current_chars = Vec::new();
+    let mut current_width = 0;
+    let mut cursor_line_idx = 0;
     let mut cursor_col_offset = 0;
 
-    for (idx, &c) in display_chars.iter().enumerate().skip(v_start) {
-        let w = char_display_width(c);
-        if display_width + w <= max_input_width {
-            display_input.push(c);
-            display_width += w;
-            if idx < active_cursor_idx {
-                cursor_col_offset += w;
-            }
-        } else {
-            break;
+    for (idx, &c) in display_chars.iter().enumerate() {
+        if idx == active_cursor_idx {
+            cursor_line_idx = input_lines.len();
+            cursor_col_offset = current_width;
+        }
+
+        let cw = char_display_width(c);
+        if c == '\n' || (current_width + cw > max_line_content_width && !current_chars.is_empty()) {
+            input_lines.push(InputLine {
+                chars: current_chars,
+                display_width: current_width,
+            });
+            current_chars = Vec::new();
+            current_width = 0;
+        }
+
+        if c != '\n' {
+            current_chars.push(c);
+            current_width += cw;
         }
     }
 
-    print!("{}> {}{}", LIGHT_WHITE, COLOR_RESET, display_input);
-    let mut new_lines_printed = 1;
+    if active_cursor_idx == display_chars.len() {
+        cursor_line_idx = input_lines.len();
+        cursor_col_offset = current_width;
+    }
 
-    // Status line immediately below the input line
+    input_lines.push(InputLine {
+        chars: current_chars,
+        display_width: current_width,
+    });
+
+    LAST_CURSOR_LINE.store(cursor_line_idx, Ordering::Relaxed);
+
+    let mut new_lines_printed: usize = 0;
+    for (line_idx, line) in input_lines.iter().enumerate() {
+        let prefix_str = if line_idx == 0 { "> " } else { "- " };
+        let line_content: String = line.chars.iter().collect();
+
+        if line_idx == 0 {
+            print!("{}{}{}{}", LIGHT_WHITE, prefix_str, COLOR_RESET, line_content);
+        } else {
+            print!("\r\n\x1b[2K{}{}{}{}", LIGHT_WHITE, prefix_str, COLOR_RESET, line_content);
+        }
+        new_lines_printed += 1;
+    }
+
+    // Status line immediately below the input lines
     print!("\r\n\x1b[2K{}", status_line);
     new_lines_printed += 1;
 
@@ -942,9 +958,17 @@ pub fn render_box(
         new_lines_printed += 2;
     }
 
-    // Move cursor back up to the input line and place it at the active cursor position
+    // Move terminal cursor back up to cursor_line_idx line and place it at active cursor position
+    let up_lines = new_lines_printed.saturating_sub(1 + cursor_line_idx);
     let cursor_col = 3 + cursor_col_offset;
-    print!("\x1b[{}A\x1b[{}G", new_lines_printed - 1, cursor_col);
+
+    if up_lines > 0 {
+        print!("\x1b[{}A\x1b[{}G", up_lines, cursor_col);
+    } else {
+        print!("\x1b[{}G", cursor_col);
+    }
+
+    let _ = crossterm::execute!(stdout(), crossterm::cursor::Show);
 
     *lines_printed = new_lines_printed;
     stdout().flush()?;
@@ -954,6 +978,36 @@ pub fn render_box(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_multiline_prompt_wrapping() {
+        let text = "012345678901234567890123456789";
+        let width: usize = 12;
+        let prompt_prefix_width: usize = 2;
+        let max_line_content_width = width.saturating_sub(prompt_prefix_width).max(1);
+
+        let display_chars: Vec<char> = text.chars().collect();
+        let mut lines = Vec::new();
+        let mut cur = String::new();
+        let mut cur_w = 0;
+
+        for &c in &display_chars {
+            let cw = char_display_width(c);
+            if cur_w + cw > max_line_content_width && !cur.is_empty() {
+                lines.push(cur);
+                cur = String::new();
+                cur_w = 0;
+            }
+            cur.push(c);
+            cur_w += cw;
+        }
+        lines.push(cur);
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "0123456789");
+        assert_eq!(lines[1], "0123456789");
+        assert_eq!(lines[2], "0123456789");
+    }
 
     #[test]
     fn test_is_table_row() {

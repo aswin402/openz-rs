@@ -13,6 +13,7 @@ struct RawInputGuard;
 impl Drop for RawInputGuard {
     fn drop(&mut self) {
         let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
+        let _ = crossterm::execute!(stdout(), crossterm::cursor::Show);
         let _ = crossterm::terminal::disable_raw_mode();
         IS_RAW_INPUT_ACTIVE.store(false, Ordering::SeqCst);
     }
@@ -70,7 +71,12 @@ pub fn read_line_raw(
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
     enable_raw_mode()?;
-    let _ = crossterm::execute!(stdout(), crossterm::event::EnableBracketedPaste);
+    let _ = crossterm::execute!(
+        stdout(),
+        crossterm::event::EnableBracketedPaste,
+        crossterm::cursor::Show
+    );
+    super::render::LAST_CURSOR_LINE.store(0, std::sync::atomic::Ordering::Relaxed);
     IS_RAW_INPUT_ACTIVE.store(true, Ordering::SeqCst);
     let _guard = RawInputGuard;
 
@@ -106,12 +112,7 @@ pub fn read_line_raw(
     loop {
         if let Some(rx) = crate::shutdown::receiver() {
             if *rx.borrow() {
-                if lines_printed > 1 {
-                    for _ in 0..(lines_printed - 1) {
-                        print!("\r\n\x1b[2K");
-                    }
-                    print!("\x1b[{}A\r", lines_printed - 1);
-                }
+                super::render::clear_input_rendering(lines_printed);
                 let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
                 let _ = disable_raw_mode();
                 return Ok(("/exit".to_string(), None));
@@ -126,13 +127,7 @@ pub fn read_line_raw(
         }
 
         if !notifications.is_empty() {
-            if lines_printed > 1 {
-                for _ in 0..(lines_printed - 1) {
-                    print!("\r\n\x1b[2K");
-                }
-                print!("\x1b[{}A\r", lines_printed - 1);
-            }
-            print!("\r\x1b[2K");
+            super::render::clear_input_rendering(lines_printed);
             let _ = stdout().flush();
 
             for notif in notifications {
@@ -142,6 +137,7 @@ pub fn read_line_raw(
             let _ = stdout().flush();
 
             lines_printed = 1;
+            super::render::LAST_CURSOR_LINE.store(0, std::sync::atomic::Ordering::Relaxed);
             let typed_input_str: String = typed_input.iter().collect();
             super::render::render_box(
                 model,
@@ -166,13 +162,7 @@ pub fn read_line_raw(
             }
         });
         if let Some(inbox_msg) = inbox_msg {
-            if lines_printed > 1 {
-                for _ in 0..(lines_printed - 1) {
-                    print!("\r\n\x1b[2K");
-                }
-                print!("\x1b[{}A\r", lines_printed - 1);
-            }
-            print!("\r\x1b[2K");
+            super::render::clear_input_rendering(lines_printed);
             let _ = stdout().flush();
             let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
             let _ = disable_raw_mode();
@@ -252,12 +242,7 @@ pub fn read_line_raw(
             // uppercase chars or literal ETX/EOT control chars, so keep this broader
             // than the printable-input branch below.
             if is_ctrl_exit_key(&key_event) {
-                if lines_printed > 1 {
-                    for _ in 0..(lines_printed - 1) {
-                        print!("\r\n\x1b[2K");
-                    }
-                    print!("\x1b[{}A\r", lines_printed - 1);
-                }
+                super::render::clear_input_rendering(lines_printed);
                 let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
                 let _ = disable_raw_mode();
                 println!();
@@ -322,17 +307,13 @@ pub fn read_line_raw(
                         )?;
                     }
                     Err(e) => {
-                        if lines_printed > 1 {
-                            for _ in 0..(lines_printed - 1) {
-                                print!("\r\n\x1b[2K");
-                            }
-                            print!("\x1b[{}A\r", lines_printed - 1);
-                        }
+                        super::render::clear_input_rendering(lines_printed);
                         print!(
-                            "\r\n\x1b[2K{}✕ Error: No image found in clipboard: {}{}\r\n",
+                            "{}✕ Error: No image found in clipboard: {}{}\r\n",
                             ERROR_RED, e, COLOR_RESET
                         );
                         lines_printed = 1;
+                        super::render::LAST_CURSOR_LINE.store(0, std::sync::atomic::Ordering::Relaxed);
                         if let Ok((w, _)) = crossterm::terminal::size() {
                             width_usize = w as usize;
                         }
@@ -676,12 +657,7 @@ pub fn read_line_raw(
                 }
                 KeyCode::Esc => {
                     if typed_input.is_empty() {
-                        if lines_printed > 1 {
-                            for _ in 0..(lines_printed - 1) {
-                                print!("\r\n\x1b[2K");
-                            }
-                            print!("\x1b[{}A\r", lines_printed - 1);
-                        }
+                        super::render::clear_input_rendering(lines_printed);
                         let _ =
                             crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
                         let _ = disable_raw_mode();
@@ -720,21 +696,45 @@ pub fn read_line_raw(
                         }
                     }
                     typed_input = final_cmd.chars().collect();
-                    if lines_printed > 1 {
-                        for _ in 0..(lines_printed - 1) {
-                            print!("\r\n\x1b[2K");
-                        }
-                        print!("\x1b[{}A\r", lines_printed - 1);
-                    }
-                    print!("\r\x1b[2K");
+                    super::render::clear_input_rendering(lines_printed);
                     let final_cmd_str: String = typed_input.iter().collect();
-                    print!(
-                        "{}{}> {}{}",
-                        COLOR_BOLD, AURA_SLATE, final_cmd_str, COLOR_RESET
-                    );
+
+                    let display_chars: Vec<char> = final_cmd_str.chars().collect();
+                    let prompt_prefix_width = 2;
+                    let max_line_content_width =
+                        width_usize.saturating_sub(prompt_prefix_width).max(1);
+
+                    let mut submit_lines = Vec::new();
+                    let mut cur_line = String::new();
+                    let mut cur_w = 0;
+
+                    for &c in &display_chars {
+                        let cw = super::render::char_display_width(c);
+                        if c == '\n'
+                            || (cur_w + cw > max_line_content_width && !cur_line.is_empty())
+                        {
+                            submit_lines.push(cur_line);
+                            cur_line = String::new();
+                            cur_w = 0;
+                        }
+                        if c != '\n' {
+                            cur_line.push(c);
+                            cur_w += cw;
+                        }
+                    }
+                    submit_lines.push(cur_line);
+
+                    for (i, line) in submit_lines.iter().enumerate() {
+                        let prefix = if i == 0 { "> " } else { "- " };
+                        if i > 0 {
+                            print!("\r\n");
+                        }
+                        print!("{}{}{}{}", COLOR_BOLD, AURA_SLATE, prefix, line);
+                    }
+                    print!("{}\r\n", COLOR_RESET);
+
                     let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
                     let _ = disable_raw_mode();
-                    print!("\r\n");
                     stdout().flush()?;
                     break;
                 }
