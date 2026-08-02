@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="OpenZ Logo" width="280"/>
+</p>
+
 # OpenZ 🦊 `v0.0.115`
 
 OpenZ is a local-first AI agent runtime built in Rust. It combines an interactive terminal agent, native tools, durable memory, browser-backed research, document/media automation, background channels, and isolated subagents in one fast desktop-oriented binary.
