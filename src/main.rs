@@ -90,8 +90,9 @@ async fn async_main() -> anyhow::Result<()> {
 
     use tracing_subscriber::prelude::*;
 
-    let is_agent = std::env::args().any(|arg| arg == "agent");
-    let is_logs = std::env::args().any(|arg| arg == "logs");
+    let args: Vec<String> = std::env::args().collect();
+    let is_tui = args.len() <= 1 || args.iter().any(|arg| arg == "agent");
+    let is_logs = args.iter().any(|arg| arg == "logs");
 
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
@@ -108,7 +109,7 @@ async fn async_main() -> anyhow::Result<()> {
         let _ = openz::logs::LOG_TX.set(tx);
         tokio::spawn(openz::logs::init_db_writer(rx));
 
-        if is_agent {
+        if is_tui {
             let file_layer = tracing_subscriber::fmt::layer()
                 .with_writer(make_writer)
                 .with_ansi(false)

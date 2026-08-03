@@ -74,6 +74,9 @@ pub async fn run_cli() -> Result<()> {
     match args.command {
         None => {
             channels::handle_ratatui_tui().await?;
+            let _ = crossterm::terminal::disable_raw_mode();
+            let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
+            std::process::exit(0);
         }
         Some(Command::Onboard) => {
             onboard::handle_onboard().await?;
