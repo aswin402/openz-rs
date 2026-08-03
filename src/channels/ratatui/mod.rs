@@ -26,14 +26,6 @@ impl Drop for RatatuiGuard {
 }
 
 pub async fn handle_ratatui_tui() -> Result<()> {
-    enable_raw_mode()?;
-    stdout().execute(EnterAlternateScreen)?;
-    IS_RATATUI_ACTIVE.store(true, Ordering::SeqCst);
-    let _guard = RatatuiGuard;
-
-    let backend = CrosstermBackend::new(stdout());
-    let mut terminal = Terminal::new(backend)?;
-
     let config = crate::config::loader::load_config().unwrap_or_default();
     let model = config.agents.defaults.model.clone();
     let provider = config.agents.defaults.provider.clone();
@@ -42,9 +34,40 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     let sessions_dir = crate::config::loader::resolve_path("~/.openz/sessions");
     let session_manager = crate::session::SessionManager::new(sessions_dir);
 
+    // Interactive Session History Menu on startup (Start New vs Restore Recent Session)
+    let history = crate::cli::load_session_history()?;
+    if history.is_empty() {
+        crate::cli::archive_current_session(&session_manager, &session_key).await?;
+    } else {
+        let selected = crate::agent::style::select_menu_with_history(
+            "Welcome to OpenZ! Select an option:",
+            &history,
+        )?;
+        if selected == 0 {
+            crate::cli::archive_current_session(&session_manager, &session_key).await?;
+        } else {
+            let selected_item = &history[selected - 1];
+            if selected_item.key != session_key {
+                crate::cli::archive_current_session(&session_manager, &session_key).await?;
+                if let Ok(mut session) = session_manager.load(&selected_item.key) {
+                    session.key = session_key.clone();
+                    let _ = session_manager.save(&session).await;
+                }
+            }
+        }
+    }
+
+    enable_raw_mode()?;
+    stdout().execute(EnterAlternateScreen)?;
+    IS_RATATUI_ACTIVE.store(true, Ordering::SeqCst);
+    let _guard = RatatuiGuard;
+
+    let backend = CrosstermBackend::new(stdout());
+    let mut terminal = Terminal::new(backend)?;
+
     let mut app = app::RatatuiApp::new(model, provider, session_key.clone());
 
-    // Load past session history from SessionManager if present
+    // Load selected session history into Ratatui conversation stream
     if let Ok(session) = session_manager.load(&session_key) {
         for msg in session.messages {
             let is_tool = msg.role == "tool";
