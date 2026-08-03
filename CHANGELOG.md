@@ -1,4 +1,15 @@
-### v0.0.115 (Latest Release)
+### v0.0.116 (Latest Release)
+**Ratatui OpenZ TUI Integration & Command Routing:**
+
+#### Full-Screen Ratatui TUI (`openz`)
+- **Default Entrypoint (`openz`)**: Default command execution now launches the brand new, ultra-fast **Ratatui TUI** interface (`src/channels/ratatui/`).
+- **Backward-Compatible Classic TUI (`openz agent`)**: `openz agent` continues launching the legacy Crossterm terminal UI without breaking existing scripts or workflows.
+- **OpenZ Visual Aesthetic**: Renders the 3D OPENZ ASCII block logo, version string, provider/model line, and working directory indicator.
+- **Multi-line Input Prompt & Hardware Cursor**: Features dark-highlighted input container, multi-line wrapping with `> ` (line 0) and `- ` (line 1+), and precise hardware terminal cursor positioning.
+- **Slash Command Autocomplete Overlay**: Typing `/` triggers an interactive autocomplete popup list for slash commands (`/clear`, `/model`, `/history`, `/logs`, `/mcps`, `/memory`, `/servers`, `/exit`).
+- **OpenZ Status Pill**: Integrated right-aligned status pill `[ ◇ MCP ... | provider | model | tokens/limit ]` displaying live loaded MCP count and token telemetry in OpenZ colors.
+
+### v0.0.115
 **TUI Ergonomics, Cursor Visibility, and Multi-line Prompt Wrapping:**
 
 #### TUI and Input Rendering
