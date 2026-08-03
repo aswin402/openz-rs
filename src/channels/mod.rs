@@ -1319,6 +1319,10 @@ pub use telegram::TelegramChannel;
 pub use websocket::WsGateway;
 pub use whatsapp::WhatsAppChannel;
 
+pub async fn handle_ratatui_tui() -> anyhow::Result<()> {
+    anyhow::bail!("Ratatui TUI channel handler will be implemented in Task 2")
+}
+
 use axum::extract::ws::Message;
 use std::collections::HashMap;
 use std::sync::Mutex;

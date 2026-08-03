@@ -8,6 +8,10 @@ use crate::cron::scheduler::start_scheduler;
 use crate::{eprintln, println};
 use anyhow::{anyhow, Result};
 
+pub async fn handle_ratatui_tui() -> Result<()> {
+    crate::channels::handle_ratatui_tui().await
+}
+
 pub async fn handle_gateway() -> Result<()> {
     let config = load_config()?;
     let ws_config = config.channels.websocket.clone().unwrap_or_else(|| {

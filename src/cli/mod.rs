@@ -17,7 +17,7 @@ use anyhow::Result;
 pub use args::{ChannelAction, CliArgs, Command, SopAction};
 pub use builder::build_agent_loop;
 pub use channels::{
-    handle_discord, handle_email, handle_gateway, handle_telegram, handle_whatsapp,
+    handle_discord, handle_email, handle_gateway, handle_ratatui_tui, handle_telegram, handle_whatsapp,
     is_email_configured, is_telegram_configured,
 };
 use clap::Parser;
@@ -72,59 +72,62 @@ pub async fn run_cli() -> Result<()> {
     crate::config::loader::check_root_runtime_dbs();
 
     match args.command {
-        Command::Onboard => {
+        None => {
+            channels::handle_ratatui_tui().await?;
+        }
+        Some(Command::Onboard) => {
             onboard::handle_onboard().await?;
         }
-        Command::Configure => {
+        Some(Command::Configure) => {
             configure::handle_configure().await?;
             let _ = crossterm::terminal::disable_raw_mode();
             std::process::exit(0);
         }
-        Command::Agent => {
+        Some(Command::Agent) => {
             agent::handle_agent().await?;
         }
-        Command::Gateway { action } => match action {
+        Some(Command::Gateway { action }) => match action {
             Some(ChannelAction::Logs { tail }) => {
                 logs::handle_logs(None, tail, Some("gateway".to_string()), None, false, None)
                     .await?;
             }
             None => channels::handle_gateway().await?,
         },
-        Command::Telegram { action } => match action {
+        Some(Command::Telegram { action }) => match action {
             Some(ChannelAction::Logs { tail }) => {
                 logs::handle_logs(None, tail, Some("telegram".to_string()), None, false, None)
                     .await?;
             }
             None => channels::handle_telegram().await?,
         },
-        Command::Discord { action } => match action {
+        Some(Command::Discord { action }) => match action {
             Some(ChannelAction::Logs { tail }) => {
                 logs::handle_logs(None, tail, Some("discord".to_string()), None, false, None)
                     .await?;
             }
             None => channels::handle_discord().await?,
         },
-        Command::Whatsapp { action } => match action {
+        Some(Command::Whatsapp { action }) => match action {
             Some(ChannelAction::Logs { tail }) => {
                 logs::handle_logs(None, tail, Some("whatsapp".to_string()), None, false, None)
                     .await?;
             }
             None => channels::handle_whatsapp().await?,
         },
-        Command::Email { action } => match action {
+        Some(Command::Email { action }) => match action {
             Some(ChannelAction::Logs { tail }) => {
                 logs::handle_logs(None, tail, Some("email".to_string()), None, false, None).await?;
             }
             None => channels::handle_email().await?,
         },
-        Command::Subagent => {
+        Some(Command::Subagent) => {
             let config = crate::config::loader::load_config()?;
             crate::subagents::run_subagent_manager(config).await?;
         }
-        Command::Doctor { scrub_secrets } => {
+        Some(Command::Doctor { scrub_secrets }) => {
             doctor::handle_doctor(scrub_secrets).await?;
         }
-        Command::McpBridge { port, command_args } => {
+        Some(Command::McpBridge { port, command_args }) => {
             if command_args.is_empty() {
                 return Err(anyhow::anyhow!("No target command specified. Usage: openz mcp-bridge --port <port> -- <command> [args...]"));
             }
@@ -135,23 +138,23 @@ pub async fn run_cli() -> Result<()> {
                 .map_err(|e| anyhow::anyhow!("Cannot bind to port {}: {}", port, e))?;
             crate::tools::mcp::run_mcp_bridge(port, port_guard, command, args, rx).await?;
         }
-        Command::Sop { action } => {
+        Some(Command::Sop { action }) => {
             sop::handle_sop(action).await?;
         }
-        Command::Logs {
+        Some(Command::Logs {
             path,
             tail,
             session,
             level,
             global,
             search,
-        } => {
+        }) => {
             logs::handle_logs(path, tail, session, level, global, search).await?;
         }
-        Command::Changelog => {
+        Some(Command::Changelog) => {
             changelog::handle_changelog().await?;
         }
-        Command::Streaming => {
+        Some(Command::Streaming) => {
             streaming::handle_streaming().await?;
         }
     }
