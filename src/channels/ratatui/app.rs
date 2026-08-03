@@ -20,6 +20,8 @@ pub struct RatatuiApp {
     pub approx_tokens: usize,
     pub limit_tokens: usize,
     pub cwd_display: String,
+    pub prompt_history: Vec<String>,
+    pub history_idx: Option<usize>,
     pub should_exit: bool,
 }
 
@@ -72,6 +74,8 @@ impl RatatuiApp {
             approx_tokens: 0,
             limit_tokens: 1_000_000,
             cwd_display,
+            prompt_history: Vec::new(),
+            history_idx: None,
             should_exit: false,
         }
     }
