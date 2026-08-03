@@ -12,6 +12,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io::stdout;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
 struct RatatuiGuard;
@@ -33,6 +34,9 @@ pub async fn handle_ratatui_tui() -> Result<()> {
 
     let sessions_dir = crate::config::loader::resolve_path("~/.openz/sessions");
     let session_manager = crate::session::SessionManager::new(sessions_dir);
+
+    // Build AgentLoop instance wired with full native tool registry and LLM provider
+    let agent_loop = Arc::new(crate::cli::builder::build_agent_loop(config.clone()).await?);
 
     // Interactive Session History Menu on startup (Start New vs Restore Recent Session)
     let history = crate::cli::load_session_history()?;
@@ -86,7 +90,22 @@ pub async fn handle_ratatui_tui() -> Result<()> {
         }
     }
 
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChatMessage>();
+
     loop {
+        // Drain any incoming background responses from AgentLoop
+        while let Ok(new_msg) = rx.try_recv() {
+            if let Some(last) = app.messages.last_mut() {
+                if last.role == "assistant" && last.content.starts_with("⏳") {
+                    *last = new_msg;
+                } else {
+                    app.messages.push(new_msg);
+                }
+            } else {
+                app.messages.push(new_msg);
+            }
+        }
+
         terminal.draw(|f| ui::render_ratatui_ui(f, &app))?;
 
         if event::poll(Duration::from_millis(50))? {
@@ -246,11 +265,53 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         content: format!("MCP Servers Status: {}/{} connected & active.", loaded, total),
                                         is_tool: false,
                                     });
-                                } else {
+                                } else if trimmed.starts_with('/') {
+                                    // System notice for unhandled slash commands
                                     app.messages.push(ChatMessage {
                                         role: "user".to_string(),
-                                        content: input_str,
+                                        content: input_str.clone(),
                                         is_tool: false,
+                                    });
+                                    app.messages.push(ChatMessage {
+                                        role: "assistant".to_string(),
+                                        content: format!("Executed slash command: {}. Type /help for options.", trimmed),
+                                        is_tool: false,
+                                    });
+                                } else {
+                                    // Standard User Prompt -> Dispatch to AgentLoop
+                                    app.messages.push(ChatMessage {
+                                        role: "user".to_string(),
+                                        content: input_str.clone(),
+                                        is_tool: false,
+                                    });
+                                    app.messages.push(ChatMessage {
+                                        role: "assistant".to_string(),
+                                        content: "⏳ OpenZ is thinking...".to_string(),
+                                        is_tool: false,
+                                    });
+
+                                    let agent_loop_clone = agent_loop.clone();
+                                    let session_key_clone = session_key.clone();
+                                    let prompt_text = input_str.clone();
+                                    let tx_clone = tx.clone();
+
+                                    tokio::spawn(async move {
+                                        match agent_loop_clone.run(&prompt_text, &session_key_clone).await {
+                                            Ok(res) => {
+                                                let _ = tx_clone.send(ChatMessage {
+                                                    role: "assistant".to_string(),
+                                                    content: res.content,
+                                                    is_tool: false,
+                                                });
+                                            }
+                                            Err(err) => {
+                                                let _ = tx_clone.send(ChatMessage {
+                                                    role: "assistant".to_string(),
+                                                    content: format!("⚠ Error: {}", err),
+                                                    is_tool: false,
+                                                });
+                                            }
+                                        }
                                     });
                                 }
                                 app.typed_input.clear();
