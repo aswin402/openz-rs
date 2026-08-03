@@ -8,76 +8,107 @@ use ratatui::{
 };
 
 pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
+    let matches = app.matching_slash_commands();
+    let has_popup = !app.typed_input.is_empty() && app.typed_input[0] == '/' && !matches.is_empty();
+
+    let popup_lines_count = if has_popup {
+        (matches.len().min(5) + 3) as u16
+    } else {
+        0
+    };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),    // Conversation Scrollback + Header
-            Constraint::Length(3), // Highlighted Input Box
-            Constraint::Length(1), // Status Line with Embedded Pill
+            Constraint::Min(1),                     // Conversation Scrollback + Header
+            Constraint::Length(1),                  // Input Line
+            Constraint::Length(1),                  // Status Line with Pill
+            Constraint::Length(popup_lines_count),  // Autocomplete Menu Popup
         ])
         .split(f.area());
 
     // 1. Chunk 0: Conversation Scrollback + Header
     let mut text_lines = Vec::new();
 
-    // 3D OPENZ ASCII logo banner lines (White letters lines 0-1 and Red-Orange lines 2-5)
+    // OPENZ 3D ASCII Logo
     text_lines.push(Line::from(vec![Span::styled(
-        "  ██████╗ ██████╗ ███████╗███╗   ██╗███████╗",
+        "     ██████╗ ██████╗ ███████╗███╗   ██╗███████╗",
         Style::default().fg(Color::Rgb(255, 255, 255)).add_modifier(Modifier::BOLD),
     )]));
     text_lines.push(Line::from(vec![Span::styled(
-        " ██╔═══██╗██╔══██╗██╔════╝████╗  ██║╚══███╔╝",
+        "    ██╔═══██╗██╔══██╗██╔════╝████╗  ██║╚══███╔╝",
         Style::default().fg(Color::Rgb(255, 255, 255)).add_modifier(Modifier::BOLD),
     )]));
+    text_lines.push(Line::from(vec![
+        Span::styled(
+            "    ██║   ██║██████╔╝█████╗  ██╔██╗ ██║  ",
+            Style::default().fg(Color::Rgb(255, 255, 255)).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "███╔╝ ",
+            Style::default().fg(Color::Rgb(255, 85, 51)).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    text_lines.push(Line::from(vec![
+        Span::styled(
+            "    ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║ ",
+            Style::default().fg(Color::Rgb(255, 255, 255)).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "███╔╝  ",
+            Style::default().fg(Color::Rgb(255, 85, 51)).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    text_lines.push(Line::from(vec![
+        Span::styled(
+            "    ╚██████╔╝██║     ███████╗██║ ╚████║",
+            Style::default().fg(Color::Rgb(255, 255, 255)).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "███████╗",
+            Style::default().fg(Color::Rgb(255, 85, 51)).add_modifier(Modifier::BOLD),
+        ),
+    ]));
     text_lines.push(Line::from(vec![Span::styled(
-        " ██║   ██║██████╔╝█████╗  ██╔██╗ ██║  ███╔╝ ",
-        Style::default().fg(Color::Rgb(255, 85, 51)).add_modifier(Modifier::BOLD),
-    )]));
-    text_lines.push(Line::from(vec![Span::styled(
-        " ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║ ███╔╝  ",
-        Style::default().fg(Color::Rgb(255, 85, 51)).add_modifier(Modifier::BOLD),
-    )]));
-    text_lines.push(Line::from(vec![Span::styled(
-        " ╚██████╔╝██║     ███████╗██║ ╚████║███████╗",
-        Style::default().fg(Color::Rgb(255, 85, 51)).add_modifier(Modifier::BOLD),
-    )]));
-    text_lines.push(Line::from(vec![Span::styled(
-        "  ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝╚══════╝",
+        "     ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝╚══════╝",
         Style::default().fg(Color::Rgb(255, 85, 51)).add_modifier(Modifier::BOLD),
     )]));
 
-    // Version text: openz v0.0.115 in RED_ORANGE (Rgb(255, 85, 51))
+    // Version text: openz v0.0.116
     text_lines.push(Line::from(vec![Span::styled(
         format!(" openz v{}", env!("CARGO_PKG_VERSION")),
         Style::default().fg(Color::Rgb(255, 85, 51)).add_modifier(Modifier::BOLD),
     )]));
 
-    // Provider & Model line: {} | {} in AURA_SLATE (Rgb(98, 114, 164))
+    // Provider & Model line: opencode_zen | deepseek-v4-flash-free
     text_lines.push(Line::from(vec![Span::styled(
         format!(" {} | {}", app.provider, app.model),
         Style::default().fg(Color::Rgb(98, 114, 164)),
     )]));
 
-    // Working directory line: ~ or path in AURA_SLATE
+    // Working directory line
     text_lines.push(Line::from(vec![Span::styled(
         format!(" {}", app.cwd_display),
         Style::default().fg(Color::Rgb(98, 114, 164)),
     )]));
 
     // Top thin divider rule line
+    let term_width = chunks[0].width as usize;
+    let divider_width = term_width.min(60);
     text_lines.push(Line::from(vec![Span::styled(
-        " ─────────────────────────────────────────────────────────────────────────────",
-        Style::default().fg(Color::Rgb(62, 72, 104)),
+        "─".repeat(divider_width),
+        Style::default().fg(Color::Rgb(98, 114, 164)),
     )]));
 
-    // Conversation messages from app.messages
+    // Render message stream
     for msg in &app.messages {
+        let lines: Vec<&str> = if msg.content.is_empty() {
+            vec![""]
+        } else {
+            msg.content.lines().collect()
+        };
+
         if msg.role == "user" {
-            let lines: Vec<&str> = if msg.content.is_empty() {
-                vec![""]
-            } else {
-                msg.content.lines().collect()
-            };
             for (i, line) in lines.into_iter().enumerate() {
                 if i == 0 {
                     text_lines.push(Line::from(vec![
@@ -98,54 +129,28 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
                 }
             }
         } else {
-            let lines: Vec<&str> = if msg.content.is_empty() {
-                vec![""]
-            } else {
-                msg.content.lines().collect()
-            };
             for line in lines {
-                if line.starts_with('⚠') {
-                    text_lines.push(Line::from(vec![
-                        Span::styled("  ", Style::default()),
-                        Span::styled("⚠", Style::default().fg(Color::Rgb(241, 250, 140))),
-                        Span::styled(
-                            &line["⚠".len()..],
-                            Style::default().fg(Color::Rgb(241, 250, 140)),
-                        ),
-                    ]));
-                } else if line.contains("Warning:") {
+                if line.starts_with('⚠') || line.contains("Warning:") {
                     text_lines.push(Line::from(vec![
                         Span::styled("  ", Style::default()),
                         Span::styled("⚠ ", Style::default().fg(Color::Rgb(241, 250, 140))),
-                        Span::styled(
-                            line,
-                            Style::default().fg(Color::Rgb(241, 250, 140)),
-                        ),
+                        Span::styled(line, Style::default().fg(Color::Rgb(241, 250, 140))),
                     ]));
                 } else if line.starts_with("- ") {
                     text_lines.push(Line::from(vec![
                         Span::styled("  ", Style::default()),
                         Span::styled("- ", Style::default().fg(Color::Rgb(80, 250, 123))),
-                        Span::styled(
-                            &line[2..],
-                            Style::default().fg(Color::Rgb(248, 248, 242)),
-                        ),
+                        Span::styled(&line[2..], Style::default().fg(Color::Rgb(248, 248, 242))),
                     ]));
                 } else if msg.is_tool || msg.role == "tool" {
                     text_lines.push(Line::from(vec![
                         Span::styled("  ", Style::default()),
-                        Span::styled(
-                            line,
-                            Style::default().fg(Color::Rgb(189, 147, 249)), // AURA_PURPLE
-                        ),
+                        Span::styled(line, Style::default().fg(Color::Rgb(189, 147, 249))),
                     ]));
                 } else {
                     text_lines.push(Line::from(vec![
                         Span::styled("  ", Style::default()),
-                        Span::styled(
-                            line,
-                            Style::default().fg(Color::Rgb(248, 248, 242)), // LIGHT_WHITE
-                        ),
+                        Span::styled(line, Style::default().fg(Color::Rgb(248, 248, 242))),
                     ]));
                 }
             }
@@ -157,29 +162,27 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
         .scroll((app.scroll_offset as u16, 0));
     f.render_widget(conversation, chunks[0]);
 
-    // 2. Chunk 1: Highlighted Input Box with Wrapping & Cursor Position
+    // 2. Chunk 1: Input Line (Transparent terminal background matching openz agent)
     let max_width = chunks[1].width.saturating_sub(3).max(1) as usize;
     let mut input_lines = Vec::new();
     if app.typed_input.is_empty() {
-        input_lines.push(Line::from(vec![
-            Span::styled("> ", Style::default().fg(Color::Rgb(255, 85, 51))),
-        ]));
+        input_lines.push(Line::from(vec![Span::styled(
+            "> ",
+            Style::default().fg(Color::Rgb(255, 255, 255)),
+        )]));
     } else {
         let chunks_chars: Vec<&[char]> = app.typed_input.chunks(max_width).collect();
         for (i, chunk) in chunks_chars.iter().enumerate() {
             let prefix = if i == 0 { "> " } else { "- " };
-            let prefix_color = if i == 0 { Color::Rgb(255, 85, 51) } else { Color::Rgb(98, 114, 164) };
             let line_content: String = chunk.iter().collect();
             input_lines.push(Line::from(vec![
-                Span::styled(prefix, Style::default().fg(prefix_color)),
+                Span::styled(prefix, Style::default().fg(Color::Rgb(255, 255, 255))),
                 Span::styled(line_content, Style::default().fg(Color::Rgb(255, 255, 255))),
             ]));
         }
     }
 
-    let input_block = Block::default().style(Style::default().bg(Color::Rgb(25, 25, 35)));
-    let input_p = Paragraph::new(Text::from(input_lines))
-        .block(input_block);
+    let input_p = Paragraph::new(Text::from(input_lines));
     f.render_widget(input_p, chunks[1]);
 
     let cursor_row = app.cursor_idx / max_width;
@@ -189,7 +192,7 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
         chunks[1].y + cursor_row as u16,
     ));
 
-    // 3. Chunk 2: Status Line with Embedded Pill
+    // 3. Chunk 2: Status Line with Embedded Right-Aligned Pill
     let (mcp_loaded, _, _) = crate::tools::mcp::get_mcp_stats();
     let pill_text = format!(
         "[ ◇ MCP {}✓ | {} | {} | {}/1M ]",
@@ -201,70 +204,68 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
     let rule_str: String = "─".repeat(rule_len);
 
     let status_line = Line::from(vec![
-        Span::styled(rule_str, Style::default().fg(Color::Rgb(62, 72, 104))),
+        Span::styled(rule_str, Style::default().fg(Color::Rgb(98, 114, 164))),
         Span::styled(
             format!("[ ◇ MCP {}✓ ", mcp_loaded),
-            Style::default().fg(Color::Rgb(189, 147, 249)), // AURA_PURPLE
+            Style::default().fg(Color::Rgb(189, 147, 249)),
         ),
         Span::styled(
             format!("| {} | {} ", app.provider, app.model),
-            Style::default().fg(Color::Rgb(255, 85, 51)), // RED_ORANGE
+            Style::default().fg(Color::Rgb(255, 85, 51)),
         ),
         Span::styled(
             format!("| {}/1M ]", app.approx_tokens),
-            Style::default().fg(Color::Rgb(255, 85, 51)), // RED_ORANGE
+            Style::default().fg(Color::Rgb(255, 85, 51)),
         ),
     ]);
 
     let status_p = Paragraph::new(status_line);
     f.render_widget(status_p, chunks[2]);
 
-    // 4. Slash Command Autocomplete Overlay
-    let typed_str: String = app.typed_input.iter().collect();
-    if typed_str.starts_with('/') {
-        let matches = app.matching_slash_commands();
-        if !matches.is_empty() {
-            let popup_height = (matches.len() as u16 + 2).min(chunks[0].height);
-            let popup_width = 30.min(chunks[1].width);
-            let popup_area = Rect::new(
-                chunks[1].x + 2,
-                chunks[1].y.saturating_sub(popup_height),
-                popup_width,
-                popup_height,
-            );
+    // 4. Chunk 3: Autocomplete Overlay matching classic CLI menu
+    if has_popup {
+        let mut popup_lines = Vec::new();
+        let display_limit = 5;
+        let start_idx = if let Some(idx) = app.selected_index {
+            if idx >= display_limit {
+                idx - display_limit + 1
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        let end_idx = (start_idx + display_limit).min(matches.len());
 
-            f.render_widget(Clear, popup_area);
-
-            let popup_block = Block::default()
-                .title(Span::styled(
-                    " Commands ",
-                    Style::default()
-                        .fg(Color::Rgb(189, 147, 249))
-                        .add_modifier(Modifier::BOLD),
-                ))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Rgb(98, 114, 164)))
-                .style(Style::default().bg(Color::Rgb(25, 25, 35)));
-
-            let items: Vec<Line> = matches
-                .iter()
-                .enumerate()
-                .map(|(idx, cmd)| {
-                    let is_selected = app.selected_index == Some(idx);
-                    let style = if is_selected {
-                        Style::default()
-                            .fg(Color::Rgb(255, 255, 255))
-                            .bg(Color::Rgb(98, 114, 164))
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(Color::Rgb(80, 250, 123))
-                    };
-                    Line::from(Span::styled(format!(" {}", cmd), style))
-                })
-                .collect();
-
-            let popup_p = Paragraph::new(items).block(popup_block);
-            f.render_widget(popup_p, popup_area);
+        for (i, (cmd, desc)) in matches.iter().enumerate().take(end_idx).skip(start_idx) {
+            let is_selected = app.selected_index == Some(i);
+            if is_selected {
+                popup_lines.push(Line::from(vec![
+                    Span::styled("> ", Style::default().fg(Color::Rgb(255, 85, 51))),
+                    Span::styled(
+                        format!("{:<30}", cmd),
+                        Style::default().fg(Color::Rgb(255, 85, 51)).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(*desc, Style::default().fg(Color::Rgb(98, 114, 164))),
+                ]));
+            } else {
+                popup_lines.push(Line::from(vec![
+                    Span::styled("  ", Style::default()),
+                    Span::styled(
+                        format!("{:<30}", cmd),
+                        Style::default().fg(Color::Rgb(248, 248, 242)),
+                    ),
+                    Span::styled(*desc, Style::default().fg(Color::Rgb(98, 114, 164))),
+                ]));
+            }
         }
+
+        popup_lines.push(Line::from(Span::styled(
+            "  ↑/↓ Navigate · enter Select · tab Complete",
+            Style::default().fg(Color::Rgb(98, 114, 164)),
+        )));
+
+        let help_p = Paragraph::new(Text::from(popup_lines));
+        f.render_widget(help_p, chunks[3]);
     }
 }

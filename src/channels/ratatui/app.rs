@@ -23,15 +23,25 @@ pub struct RatatuiApp {
     pub should_exit: bool,
 }
 
-pub const SLASH_COMMANDS: &[&str] = &[
-    "/clear",
-    "/model",
-    "/history",
-    "/logs",
-    "/mcps",
-    "/memory",
-    "/servers",
-    "/exit",
+pub const SLASH_COMMANDS: &[(&str, &str)] = &[
+    ("/clear", "Clear screen"),
+    ("/device", "Manage local app/device inventory"),
+    ("/exit", "Exit OpenZ"),
+    ("/help", "List slash commands"),
+    ("/history", "Restore/switch sessions using selection menu"),
+    ("/logs", "Show recent logs"),
+    ("/mcps", "List configured MCP servers"),
+    ("/memory", "View metadata memory"),
+    ("/model", "Show or change active default model"),
+    ("/new-session", "Start a new session"),
+    ("/servers", "List OpenZ-launched background servers"),
+    ("/settings", "Show active settings"),
+    ("/skill", "List active skills"),
+    ("/sources", "Search saved source bookmarks"),
+    ("/stop-server", "Stop a background server by id, or all"),
+    ("/streaming", "Manage response streaming mode"),
+    ("/tui", "Manage TUI display settings"),
+    ("/workflows", "Search reusable workflows"),
 ];
 
 impl RatatuiApp {
@@ -66,13 +76,13 @@ impl RatatuiApp {
         }
     }
 
-    pub fn matching_slash_commands(&self) -> Vec<&'static str> {
+    pub fn matching_slash_commands(&self) -> Vec<(&'static str, &'static str)> {
         let input_str: String = self.typed_input.iter().collect();
         if input_str.starts_with('/') {
             SLASH_COMMANDS
                 .iter()
                 .copied()
-                .filter(|cmd| cmd.starts_with(&input_str))
+                .filter(|(cmd, _)| cmd.starts_with(&input_str))
                 .collect()
         } else {
             Vec::new()

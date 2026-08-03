@@ -48,14 +48,62 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
                         break;
                     }
+                    let matches = app.matching_slash_commands();
+                    let has_matches = !matches.is_empty();
+
                     match key.code {
                         KeyCode::Esc => {
                             app.typed_input.clear();
                             app.cursor_idx = 0;
+                            app.selected_index = None;
+                        }
+                        KeyCode::Tab => {
+                            if has_matches {
+                                let idx = app.selected_index.unwrap_or(0);
+                                if idx < matches.len() {
+                                    let (cmd, _) = matches[idx];
+                                    app.typed_input = cmd.chars().collect();
+                                    app.cursor_idx = app.typed_input.len();
+                                    app.selected_index = None;
+                                }
+                            }
+                        }
+                        KeyCode::Up => {
+                            if has_matches {
+                                if let Some(idx) = app.selected_index {
+                                    if idx > 0 {
+                                        app.selected_index = Some(idx - 1);
+                                    }
+                                } else {
+                                    app.selected_index = Some(matches.len() - 1);
+                                }
+                            } else {
+                                app.scroll_offset = app.scroll_offset.saturating_add(1);
+                            }
+                        }
+                        KeyCode::Down => {
+                            if has_matches {
+                                if let Some(idx) = app.selected_index {
+                                    if idx + 1 < matches.len() {
+                                        app.selected_index = Some(idx + 1);
+                                    }
+                                } else {
+                                    app.selected_index = Some(0);
+                                }
+                            } else {
+                                app.scroll_offset = app.scroll_offset.saturating_sub(1);
+                            }
+                        }
+                        KeyCode::PageUp => {
+                            app.scroll_offset = app.scroll_offset.saturating_add(5);
+                        }
+                        KeyCode::PageDown => {
+                            app.scroll_offset = app.scroll_offset.saturating_sub(5);
                         }
                         KeyCode::Char(c) => {
                             app.typed_input.insert(app.cursor_idx, c);
                             app.cursor_idx += 1;
+                            app.selected_index = None;
                         }
                         KeyCode::Left => {
                             app.cursor_idx = app.cursor_idx.saturating_sub(1);
@@ -76,15 +124,19 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                 app.typed_input.remove(app.cursor_idx - 1);
                                 app.cursor_idx -= 1;
                             }
-                        }
-                        KeyCode::Up | KeyCode::PageUp => {
-                            app.scroll_offset = app.scroll_offset.saturating_add(1);
-                        }
-                        KeyCode::Down | KeyCode::PageDown => {
-                            app.scroll_offset = app.scroll_offset.saturating_sub(1);
+                            app.selected_index = None;
                         }
                         KeyCode::Enter => {
-                            let input_str: String = app.typed_input.iter().collect();
+                            let input_str = if let Some(idx) = app.selected_index {
+                                if idx < matches.len() {
+                                    matches[idx].0.to_string()
+                                } else {
+                                    app.typed_input.iter().collect::<String>()
+                                }
+                            } else {
+                                app.typed_input.iter().collect::<String>()
+                            };
+
                             let trimmed = input_str.trim();
                             if !trimmed.is_empty() {
                                 if trimmed == "/exit" || trimmed == "/quit" {
@@ -101,6 +153,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                 }
                                 app.typed_input.clear();
                                 app.cursor_idx = 0;
+                                app.selected_index = None;
                             }
                         }
                         _ => {}
