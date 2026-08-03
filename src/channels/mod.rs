@@ -1308,6 +1308,7 @@ pub fn secure_compare(a: &str, b: &str) -> bool {
 pub mod cli;
 pub mod discord;
 pub mod email;
+pub mod ratatui;
 pub mod telegram;
 pub mod websocket;
 pub mod whatsapp;
@@ -1315,13 +1316,10 @@ pub mod whatsapp;
 pub use cli::CliChannel;
 pub use discord::DiscordChannel;
 pub use email::EmailChannel;
+pub use ratatui::handle_ratatui_tui;
 pub use telegram::TelegramChannel;
 pub use websocket::WsGateway;
 pub use whatsapp::WhatsAppChannel;
-
-pub async fn handle_ratatui_tui() -> anyhow::Result<()> {
-    anyhow::bail!("Ratatui TUI channel handler will be implemented in Task 2")
-}
 
 use axum::extract::ws::Message;
 use std::collections::HashMap;
