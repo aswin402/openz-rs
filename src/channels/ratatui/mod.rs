@@ -49,6 +49,10 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                         break;
                     }
                     match key.code {
+                        KeyCode::Esc => {
+                            app.typed_input.clear();
+                            app.cursor_idx = 0;
+                        }
                         KeyCode::Char(c) => {
                             app.typed_input.insert(app.cursor_idx, c);
                             app.cursor_idx += 1;

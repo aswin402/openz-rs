@@ -23,6 +23,17 @@ pub struct RatatuiApp {
     pub should_exit: bool,
 }
 
+pub const SLASH_COMMANDS: &[&str] = &[
+    "/clear",
+    "/model",
+    "/history",
+    "/logs",
+    "/mcps",
+    "/memory",
+    "/servers",
+    "/exit",
+];
+
 impl RatatuiApp {
     pub fn new(model: String, provider: String, session_key: String) -> Self {
         let cwd = std::env::current_dir()
@@ -54,4 +65,18 @@ impl RatatuiApp {
             should_exit: false,
         }
     }
+
+    pub fn matching_slash_commands(&self) -> Vec<&'static str> {
+        let input_str: String = self.typed_input.iter().collect();
+        if input_str.starts_with('/') {
+            SLASH_COMMANDS
+                .iter()
+                .copied()
+                .filter(|cmd| cmd.starts_with(&input_str))
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
 }
+
