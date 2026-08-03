@@ -39,10 +39,17 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     if history.is_empty() {
         crate::cli::archive_current_session(&session_manager, &session_key).await?;
     } else {
-        let selected = crate::agent::style::select_menu_with_history(
+        let selected = match crate::agent::style::select_menu_with_history(
             "Welcome to OpenZ! Select an option:",
             &history,
-        )?;
+        ) {
+            Ok(s) => s,
+            Err(_) => {
+                let _ = crossterm::terminal::disable_raw_mode();
+                let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
+                std::process::exit(0);
+            }
+        };
         if selected == 0 {
             crate::cli::archive_current_session(&session_manager, &session_key).await?;
         } else {

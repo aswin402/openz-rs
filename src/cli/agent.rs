@@ -99,18 +99,25 @@ pub async fn handle_agent() -> Result<()> {
     if history.is_empty() {
         archive_current_session(&session_manager, &session_key).await?;
     } else {
-        let selected = select_menu_with_history("Welcome to OpenZ! Select an option:", &history)?;
-        if selected == 0 {
-            archive_current_session(&session_manager, &session_key).await?;
-        } else {
-            let selected_item = &history[selected - 1];
-            if selected_item.key != session_key {
-                archive_current_session(&session_manager, &session_key).await?;
-                let mut session = session_manager.load(&selected_item.key)?;
-                session.key = session_key.clone();
-                session_manager.save(&session).await?;
-            }
+    let selected = match select_menu_with_history("Welcome to OpenZ! Select an option:", &history) {
+        Ok(s) => s,
+        Err(_) => {
+            let _ = crossterm::terminal::disable_raw_mode();
+            let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
+            std::process::exit(0);
         }
+    };
+    if selected == 0 {
+        archive_current_session(&session_manager, &session_key).await?;
+    } else {
+        let selected_item = &history[selected - 1];
+        if selected_item.key != session_key {
+            archive_current_session(&session_manager, &session_key).await?;
+            let mut session = session_manager.load(&selected_item.key)?;
+            session.key = session_key.clone();
+            session_manager.save(&session).await?;
+        }
+    }
     }
 
     let agent_loop = build_agent_loop(config.clone()).await?;

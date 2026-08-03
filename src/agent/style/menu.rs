@@ -171,6 +171,17 @@ pub fn select_menu_with_history_first_option(
                         disable_raw_mode()?;
                         return Ok(selected);
                     }
+                    KeyCode::Esc => {
+                        for _ in 0..num_lines_to_clear {
+                            print!("\r\x1b[1A\x1b[2K");
+                        }
+                        print!("\r\x1b[1A\x1b[2K");
+                        print!("\r");
+                        let _ = stdout.execute(crossterm::cursor::Show);
+                        let _ = stdout.flush();
+                        disable_raw_mode()?;
+                        return Err(anyhow::anyhow!("Cancelled"));
+                    }
                     KeyCode::Char('c')
                         if key_event
                             .modifiers
