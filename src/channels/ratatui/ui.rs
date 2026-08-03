@@ -1,9 +1,9 @@
 use super::app::RatatuiApp;
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
     Frame,
 };
 
@@ -20,10 +20,11 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),                     // Conversation Scrollback + Header
-            Constraint::Length(1),                  // Input Line
-            Constraint::Length(1),                  // Status Line with Pill
-            Constraint::Length(popup_lines_count),  // Autocomplete Menu Popup
+            Constraint::Min(1),                     // Chunk 0: Conversation Scrollback + Header
+            Constraint::Length(1),                  // Chunk 1: Upper Small Divider Line above Input
+            Constraint::Length(1),                  // Chunk 2: Input Prompt Line
+            Constraint::Length(1),                  // Chunk 3: Lower Status Line with Pill
+            Constraint::Length(popup_lines_count),  // Chunk 4: Autocomplete Menu Popup
         ])
         .split(f.area());
 
@@ -92,14 +93,6 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
         Style::default().fg(Color::Rgb(98, 114, 164)),
     )]));
 
-    // Top thin divider rule line
-    let term_width = chunks[0].width as usize;
-    let divider_width = term_width.min(60);
-    text_lines.push(Line::from(vec![Span::styled(
-        "─".repeat(divider_width),
-        Style::default().fg(Color::Rgb(98, 114, 164)),
-    )]));
-
     // Render message stream
     for msg in &app.messages {
         let lines: Vec<&str> = if msg.content.is_empty() {
@@ -162,8 +155,17 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
         .scroll((app.scroll_offset as u16, 0));
     f.render_widget(conversation, chunks[0]);
 
-    // 2. Chunk 1: Input Line (Transparent terminal background matching openz agent)
-    let max_width = chunks[1].width.saturating_sub(3).max(1) as usize;
+    // 2. Chunk 1: Upper Small Divider Line directly above input prompt (~45 chars long)
+    let term_width = chunks[1].width as usize;
+    let upper_rule_len = term_width.min(45);
+    let upper_rule_p = Paragraph::new(Line::from(vec![Span::styled(
+        "─".repeat(upper_rule_len),
+        Style::default().fg(Color::Rgb(98, 114, 164)),
+    )]));
+    f.render_widget(upper_rule_p, chunks[1]);
+
+    // 3. Chunk 2: Input Prompt Line (> |)
+    let max_width = chunks[2].width.saturating_sub(3).max(1) as usize;
     let mut input_lines = Vec::new();
     if app.typed_input.is_empty() {
         input_lines.push(Line::from(vec![Span::styled(
@@ -183,22 +185,22 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
     }
 
     let input_p = Paragraph::new(Text::from(input_lines));
-    f.render_widget(input_p, chunks[1]);
+    f.render_widget(input_p, chunks[2]);
 
     let cursor_row = app.cursor_idx / max_width;
     let cursor_col = app.cursor_idx % max_width;
     f.set_cursor_position((
-        chunks[1].x + 2 + cursor_col as u16,
-        chunks[1].y + cursor_row as u16,
+        chunks[2].x + 2 + cursor_col as u16,
+        chunks[2].y + cursor_row as u16,
     ));
 
-    // 3. Chunk 2: Status Line with Embedded Right-Aligned Pill
+    // 4. Chunk 3: Lower Status Line with Embedded Full-Width Right-Aligned Pill
     let (mcp_loaded, _, _) = crate::tools::mcp::get_mcp_stats();
     let pill_text = format!(
         "[ ◇ MCP {}✓ | {} | {} | {}/1M ]",
         mcp_loaded, app.provider, app.model, app.approx_tokens
     );
-    let total_width = chunks[2].width as usize;
+    let total_width = chunks[3].width as usize;
     let pill_len = pill_text.chars().count();
     let rule_len = total_width.saturating_sub(pill_len);
     let rule_str: String = "─".repeat(rule_len);
@@ -220,9 +222,9 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
     ]);
 
     let status_p = Paragraph::new(status_line);
-    f.render_widget(status_p, chunks[2]);
+    f.render_widget(status_p, chunks[3]);
 
-    // 4. Chunk 3: Autocomplete Overlay matching classic CLI menu
+    // 5. Chunk 4: Autocomplete Overlay matching classic CLI menu
     if has_popup {
         let mut popup_lines = Vec::new();
         let display_limit = 5;
@@ -266,6 +268,6 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
         )));
 
         let help_p = Paragraph::new(Text::from(popup_lines));
-        f.render_widget(help_p, chunks[3]);
+        f.render_widget(help_p, chunks[4]);
     }
 }
