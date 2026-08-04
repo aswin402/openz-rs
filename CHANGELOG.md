@@ -1,4 +1,12 @@
-### v0.0.116 (Latest Release)
+### v0.0.117 (Latest Release)
+**WebUI Optimization & Smooth Animations:**
+- **Smooth Sidebar Transitions**: Refactored the collapse/expand animations in the left menubar (Sidebar). Nav links, settings, and badges now fade and contract using `opacity` and `max-width` transitions rather than disappearing abruptly.
+- **Icon Centering**: The "+ New Session", "Clear Active Session", and nav links now transition their padding-left to `20px` when collapsed, centering their icons perfectly on the 68px rail.
+- **Clean Header Style**: Removed the permanent brand logo from the sidebar header. Now it only shows the toggle button when collapsed, and displays a styled "OpenZ Agent 🦊" next to the button when expanded.
+- **Top Header Removal**: Removed the top header completely. The theme toggle has been moved to the sidebar footer (under Settings), and the model selector was removed to declutter the UI.
+- **Mobile Sidebar Toggle**: Added a floating hamburger menu button on mobile views to allow opening the sidebar drawer.
+
+### v0.0.116
 **Ratatui OpenZ TUI Integration & Command Routing:**
 
 #### Full-Screen Ratatui TUI (`openz`)

@@ -88,6 +88,25 @@ impl Drop for McpClientInner {
     }
 }
 
+/// Returns the live count of tools advertised by a previously spawned MCP server,
+/// keyed by the same `command:args` cache key used during `McpClient::spawn`.
+/// Returns 0 when the server has not been spawned (e.g. disabled or not yet started).
+pub async fn spawned_tools_count(command: &str, args: &[String]) -> usize {
+    let cache_key = format!("{}:{}", command, args.join(" "));
+    let cell = SPAWNED_MCP_CLIENTS.get();
+    let Some(mutex) = cell else {
+        return 0;
+    };
+    let lock = mutex.lock().await;
+    let Some(client) = lock.get(&cache_key) else {
+        return 0;
+    };
+    match client.list_tools().await {
+        Ok(tools) => tools.len(),
+        Err(_) => 0,
+    }
+}
+
 #[derive(Clone)]
 pub struct McpClient(Arc<Mutex<Option<McpClientInner>>>);
 

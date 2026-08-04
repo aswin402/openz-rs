@@ -214,12 +214,18 @@ check_target_disk_usage
 echo "📦 Compiling and installing openz globally via Cargo..."
 cargo install $CARGO_FLAGS $CARGO_PROFILE_FLAG --locked --path .
 
-# 3. Setup folder architecture
+# 3. Setup folder architecture & WebUI
 echo "📁 Setting up directory structures at ~/.openz..."
 mkdir -p ~/.openz/workspace
 mkdir -p ~/.openz/sessions
 mkdir -p ~/.openz/skills
 mkdir -p ~/.openz/traces
+mkdir -p ~/.openz/web/dist
+
+if [ -d "./web/dist" ]; then
+    echo "🌐 Installing WebUI static bundle into ~/.openz/web/dist..."
+    cp -r ./web/dist/* ~/.openz/web/dist/ 2>/dev/null || true
+fi
 
 # 4. Initialize config if missing by running the version command once
 echo "⚙️  Verifying configuration..."

@@ -27,8 +27,22 @@ pub async fn handle_gateway() -> Result<()> {
     start_scheduler(config.clone());
     let agent_loop = build_agent_loop(config).await?;
     let gateway = WsGateway::new(ws_config, agent_loop);
-    gateway.start().await?;
-    Ok(())
+
+    tokio::select! {
+        biased;
+        _ = tokio::signal::ctrl_c() => {
+            crate::println!("\r\nExiting Gateway server...");
+        }
+        res = gateway.start() => {
+            if let Err(e) = res {
+                crate::eprintln!("Gateway error: {}", e);
+            }
+        }
+    }
+
+    crate::shutdown::trigger();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    std::process::exit(0);
 }
 
 pub async fn handle_telegram() -> Result<()> {

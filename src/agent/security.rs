@@ -901,6 +901,27 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
             }
             _ => Ok(false), // Deny or Cancel
         }
+    } else if let Some(chat_id) = actual_session.strip_prefix("ws:") {
+        // WebUI approval flow: publish a security_request event and wait for a
+        // `security_response` WS message with the matching req_id.
+        let req_id = uuid::Uuid::new_v4().to_string();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        crate::channels::websocket::register_ws_approval(req_id.clone(), tx);
+
+        crate::channels::websocket::publish_ws_event(serde_json::json!({
+            "event": "security_request",
+            "chat_id": chat_id,
+            "req_id": req_id,
+            "tool_name": tool_name,
+            "description": description,
+            "arguments": arguments,
+            "status": "pending",
+        }));
+
+        match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
+            Ok(Ok(approved)) => Ok(approved),
+            _ => Ok(false),
+        }
     } else {
         tracing::warn!(
             "Auto-rejecting sensitive action for background session: {}",

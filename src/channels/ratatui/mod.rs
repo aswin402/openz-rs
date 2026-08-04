@@ -2,7 +2,7 @@ pub mod app;
 pub mod ui;
 
 use anyhow::Result;
-use app::{ChatMessage, RatatuiApp, IS_RATATUI_ACTIVE};
+use app::{ChatMessage, IS_RATATUI_ACTIVE};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,

@@ -106,6 +106,7 @@
       "plotters",
       "prost",
       "rand",
+      "ratatui",
       "regex",
       "reqwest",
       "rmcp",
@@ -137,7 +138,7 @@
   },
   "project": {
     "name": "openz",
-    "version": "0.0.116",
+    "version": "0.0.117",
     "package_manager": "cargo",
     "runtime": "rust",
     "stack": "rust-cli"

@@ -1,0 +1,132 @@
+{
+  "agent_instructions": {
+    "active_skills": [
+      "react.md",
+      "vite.md"
+    ],
+    "docs_directory": "onpkg_docs/"
+  },
+  "architecture": {
+    "components": "src/components",
+    "entrypoint": "src/main.tsx",
+    "routing": "src/pages",
+    "styles": "src/index.css"
+  },
+  "packages": {
+    "added_by_agent": [],
+    "core": [
+      "@eslint/js",
+      "@fontsource-variable/inter",
+      "@hookform/resolvers",
+      "@lordicon/react",
+      "@tailwindcss/vite",
+      "@tanstack/react-query",
+      "@types/node",
+      "@types/react",
+      "@types/react-dom",
+      "@vitejs/plugin-react",
+      "axios",
+      "class-variance-authority",
+      "clsx",
+      "eslint",
+      "eslint-plugin-react-hooks",
+      "eslint-plugin-react-refresh",
+      "framer-motion",
+      "globals",
+      "gsap",
+      "lenis",
+      "lottie-react",
+      "lottie-web",
+      "lucide-react",
+      "radix-ui",
+      "react",
+      "react-dom",
+      "react-hook-form",
+      "react-router-dom",
+      "shadcn",
+      "tailwind-merge",
+      "tailwindcss",
+      "tw-animate-css",
+      "typescript",
+      "typescript-eslint",
+      "vite",
+      "zod",
+      "zustand"
+    ]
+  },
+  "project": {
+    "name": "web",
+    "package_manager": "bun",
+    "runtime": "bun",
+    "stack": "react-vite-gsap"
+  },
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "dev": "vite",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "sources": {
+    "directories": [
+      "src",
+      "src/api",
+      "src/components",
+      "src/components/ui",
+      "src/hooks",
+      "src/layouts",
+      "src/lib",
+      "src/pages",
+      "src/providers",
+      "src/store",
+      "src/types"
+    ],
+    "file_patterns": [
+      "*.css",
+      "*.html",
+      "*.js",
+      "*.json",
+      "*.md",
+      "*.ts",
+      "*.tsx"
+    ],
+    "files": [
+      "README.md",
+      "components.json",
+      "eslint.config.js",
+      "index.html",
+      "package.json",
+      "src/App.css",
+      "src/App.tsx",
+      "src/api/axios.ts",
+      "src/components/Footer.tsx",
+      "src/components/LordIcon.tsx",
+      "src/components/LottieAnimation.tsx",
+      "src/components/Navbar.tsx",
+      "src/components/ThemeProvider.tsx",
+      "src/components/ThemeToggleButton.tsx",
+      "src/components/button.tsx",
+      "src/components/ui/accordion.tsx",
+      "src/components/ui/button.tsx",
+      "src/components/ui/dialog.tsx",
+      "src/components/ui/tabs.tsx",
+      "src/hooks/useUser.ts",
+      "src/index.css",
+      "src/layouts/RootLayout.tsx",
+      "src/lib/logger.ts",
+      "src/lib/utils.ts",
+      "src/main.tsx",
+      "src/pages/AboutPage.tsx",
+      "src/pages/ContactPage.tsx",
+      "src/pages/HomePage.tsx",
+      "src/pages/NotFoundPage.tsx",
+      "src/providers/QueryProvider.tsx",
+      "src/store/useAppStore.ts",
+      "src/store/useThemeStore.ts",
+      "src/types/schema.ts",
+      "tsconfig.app.json",
+      "tsconfig.json",
+      "tsconfig.node.json",
+      "vite.config.ts"
+    ]
+  }
+}

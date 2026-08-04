@@ -1070,11 +1070,29 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             }
                         }
                         super::tool_execution::send_progress_update(ctx.session_key, &text).await;
+                        if let Some(chat_id) =
+                            crate::channels::websocket::ws_chat_id(ctx.session_key)
+                        {
+                            crate::channels::websocket::publish_ws_event(serde_json::json!({
+                                "event": "delta",
+                                "chat_id": chat_id,
+                                "content": text,
+                            }));
+                        }
                         streaming_assembly
                             .push_chunk(crate::providers::ChatStreamChunk::Content(text));
                     }
                     crate::providers::ChatStreamChunk::Reasoning(text) => {
                         full_reasoning.push_str(&text);
+                        if let Some(chat_id) =
+                            crate::channels::websocket::ws_chat_id(ctx.session_key)
+                        {
+                            crate::channels::websocket::publish_ws_event(serde_json::json!({
+                                "event": "reasoning_delta",
+                                "chat_id": chat_id,
+                                "content": text,
+                            }));
+                        }
                         in_reasoning_phase = true;
                         // Show old live thinking indicator only when TUI thoughts are enabled.
                         if !silent && should_show_tui_thoughts(tui_thought_display) {
@@ -1692,6 +1710,17 @@ Now provide only the final user-facing answer to my last message. Do not include
             let tool_msg = format!("▸ Running *{}*...", formatted_args);
             super::tool_execution::send_progress_update(ctx.session_key, &tool_msg).await;
 
+            if let Some(chat_id) = crate::channels::websocket::ws_chat_id(ctx.session_key) {
+                crate::channels::websocket::publish_ws_event(serde_json::json!({
+                    "event": "tool_start",
+                    "chat_id": chat_id,
+                    "tool_call_id": call.id.clone(),
+                    "name": call.name.clone(),
+                    "args": call.arguments.clone(),
+                    "status": "running",
+                }));
+            }
+
             if !silent {
                 crate::agent::style::print_tree_tool_start(&call.name, &formatted_args);
             }
@@ -1980,6 +2009,26 @@ Now provide only the final user-facing answer to my last message. Do not include
                     }
                 }
             };
+            if let Some(chat_id) = crate::channels::websocket::ws_chat_id(ctx.session_key) {
+                let (status, output) = if result_val.get("error").is_some() {
+                    ("error", result_val.to_string())
+                } else {
+                    ("success", result_val.to_string())
+                };
+                let mut output = output;
+                if output.len() > 2000 {
+                    output.truncate(2000);
+                    output.push_str("...");
+                }
+                crate::channels::websocket::publish_ws_event(serde_json::json!({
+                    "event": "tool_end",
+                    "chat_id": chat_id,
+                    "tool_call_id": call.id.clone(),
+                    "name": call.name.clone(),
+                    "status": status,
+                    "output": output,
+                }));
+            }
             if is_research_lookup_tool(&call.name) {
                 turn_source_ledger.record_tool_result(&call.name, &call.arguments, &result_val);
             }

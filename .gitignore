@@ -36,3 +36,9 @@
 .crush/
 # Workspace-local OpenZ runtime state (<workspace>/.openz/).
 .openz/
+
+# Node dependencies and build artifacts
+node_modules/
+dist/
+web/node_modules/
+web/dist/

@@ -593,7 +593,7 @@ pub fn render_box(
     session_key: &str,
     typed_input: &str,
     cursor_idx: usize,
-    viewport_start: &mut usize,
+    _viewport_start: &mut usize,
     selected_index: Option<usize>,
     autocomplete_visible: bool,
     width: usize,
@@ -830,7 +830,6 @@ pub fn render_box(
 
     struct InputLine {
         chars: Vec<char>,
-        display_width: usize,
     }
 
     let mut input_lines: Vec<InputLine> = Vec::new();
@@ -849,7 +848,6 @@ pub fn render_box(
         if c == '\n' || (current_width + cw > max_line_content_width && !current_chars.is_empty()) {
             input_lines.push(InputLine {
                 chars: current_chars,
-                display_width: current_width,
             });
             current_chars = Vec::new();
             current_width = 0;
@@ -868,7 +866,6 @@ pub fn render_box(
 
     input_lines.push(InputLine {
         chars: current_chars,
-        display_width: current_width,
     });
 
     LAST_CURSOR_LINE.store(cursor_line_idx, Ordering::Relaxed);

@@ -39,7 +39,7 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
-        .thread_stack_size(512 * 1024)
+        .thread_stack_size(8 * 1024 * 1024)
         .thread_name("openz-worker")
         .enable_all()
         .build()?;
@@ -168,11 +168,18 @@ async fn async_main() -> anyhow::Result<()> {
                 }
             };
 
+            let mut sigint_count = 0;
             match (sigint.as_mut(), sigterm.as_mut()) {
                 (Some(sigint), Some(sigterm)) => loop {
                     tokio::select! {
                         _ = sigint.recv() => {
-                            tracing::info!("Received SIGINT/Ctrl+C");
+                            sigint_count += 1;
+                            tracing::info!("Received SIGINT/Ctrl+C (signal #{})", sigint_count);
+                            if sigint_count >= 2 {
+                                tracing::warn!("Forced exit requested by user via double Ctrl+C");
+                                let _ = crossterm::terminal::disable_raw_mode();
+                                std::process::exit(130);
+                            }
                             match openz::shutdown::sigint_action(
                                 openz::shutdown::is_cli_active(),
                                 openz::channels::cli::is_raw_input_active(),
@@ -191,7 +198,13 @@ async fn async_main() -> anyhow::Result<()> {
                 },
                 (Some(sigint), None) => loop {
                     sigint.recv().await;
-                    tracing::info!("Received SIGINT/Ctrl+C");
+                    sigint_count += 1;
+                    tracing::info!("Received SIGINT/Ctrl+C (signal #{})", sigint_count);
+                    if sigint_count >= 2 {
+                        tracing::warn!("Forced exit requested by user via double Ctrl+C");
+                        let _ = crossterm::terminal::disable_raw_mode();
+                        std::process::exit(130);
+                    }
                     match openz::shutdown::sigint_action(
                         openz::shutdown::is_cli_active(),
                         openz::channels::cli::is_raw_input_active(),

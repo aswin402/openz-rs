@@ -30,6 +30,45 @@ pub struct WsGateway {
 struct WsState {
     config: WebSocketChannelConfig,
     agent_loop: Arc<AgentLoop>,
+    live_config: Arc<std::sync::RwLock<crate::config::schema::Config>>,
+}
+
+/// Broadcast a JSON event to every connected WebSocket client.
+pub fn publish_ws_event(event: serde_json::Value) {
+    if let Ok(senders) = crate::channels::get_active_ws_senders().lock() {
+        if let Ok(evt_str) = serde_json::to_string(&event) {
+            for sender in senders.values() {
+                let _ = sender.try_send(Message::Text(evt_str.clone()));
+            }
+        }
+    }
+}
+
+/// Extract the chat id from a `ws:<chat_id>` agent session key.
+pub fn ws_chat_id(session_key: &str) -> Option<&str> {
+    session_key.strip_prefix("ws:")
+}
+
+static WS_APPROVALS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
+> = std::sync::OnceLock::new();
+
+/// Register a pending security-approval request for a WebSocket client.
+pub fn register_ws_approval(req_id: String, tx: tokio::sync::oneshot::Sender<bool>) {
+    let map = WS_APPROVALS.get_or_init(std::sync::Mutex::default);
+    if let Ok(mut approvals) = map.lock() {
+        approvals.insert(req_id, tx);
+    }
+}
+
+/// Resolve a pending security-approval request from a client response.
+pub fn resolve_ws_approval(req_id: &str, approved: bool) {
+    let map = WS_APPROVALS.get_or_init(std::sync::Mutex::default);
+    if let Ok(mut approvals) = map.lock() {
+        if let Some(tx) = approvals.remove(req_id) {
+            let _ = tx.send(approved);
+        }
+    }
 }
 
 impl WsGateway {
@@ -53,6 +92,7 @@ impl super::Channel for WsGateway {
 
         let state = WsState {
             config: self.config.clone(),
+            live_config: Arc::new(std::sync::RwLock::new(self.agent_loop.config.clone())),
             agent_loop: self.agent_loop.clone(),
         };
         // Restrict CORS to localhost origins only for security
@@ -90,23 +130,20 @@ impl super::Channel for WsGateway {
             .with_state(state);
 
         let silent = std::env::var("OPENZ_SILENT").is_ok();
-        let dist_path = Path::new("./nanobot/nanobot/web/dist");
-        if dist_path.exists() {
+        if let Some(dist_path) = find_web_dist() {
             if !silent {
                 println!("🌐 Serving WebUI static files from {:?}", dist_path);
             }
-            app = app.fallback_service(ServeDir::new(dist_path));
+            let index_file = dist_path.join("index.html");
+            let serve_dir = ServeDir::new(&dist_path)
+                .fallback(tower_http::services::ServeFile::new(index_file));
+            app = app.fallback_service(serve_dir);
         } else {
-            let alt_path = Path::new("./web/dist");
-            if alt_path.exists() {
-                if !silent {
-                    println!("🌐 Serving WebUI static files from {:?}", alt_path);
-                }
-                app = app.fallback_service(ServeDir::new(alt_path));
-            } else {
-                if !silent {
-                    println!("⚠️ WebUI static directory not found. Serving WebSocket API only at ws://{}/ws", addr_str);
-                }
+            if !silent {
+                println!(
+                    "⚠️ WebUI static directory not found. Serving WebSocket API only at ws://{}/ws",
+                    addr_str
+                );
             }
         }
 
@@ -116,7 +153,8 @@ impl super::Channel for WsGateway {
                 .map(|t| t.is_empty())
                 .unwrap_or(true)
             {
-                println!("⚠️ WARNING: OPENZ_GATEWAY_TOKEN is not set or is empty. All gateway requests will be rejected for security!");
+                println!("ℹ️  OPENZ_GATEWAY_TOKEN is not set. Gateway is open for local access.");
+                println!("   Set OPENZ_GATEWAY_TOKEN to require authentication for remote clients.");
             }
         }
         let mut shutdown_rx = match crate::shutdown::receiver() {
@@ -142,6 +180,71 @@ impl super::Channel for WsGateway {
 }
 
 const MAX_WS_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16 MB
+const MAX_ATTACHMENT_BYTES: usize = 15 * 1024 * 1024; // 15 MB each
+
+/// Persist base64 attachment payloads (sent by the WebUI) to
+/// `<config_dir>/attachments/` and return a list of markdown reference lines
+/// that get prepended to the outgoing message content before it reaches the
+/// agent loop. Image mime types become `![](file://…)` links so the provider
+/// layer (via `parse_multimodal_content`) turns them into vision image parts;
+/// everything else becomes a `📎 [name](file://…)` link the agent can read
+/// with its file/document tools.
+async fn persist_attachments(attachments: &Value) -> Vec<String> {
+    let mut refs = Vec::new();
+    let Some(arr) = attachments.as_array() else {
+        return refs;
+    };
+    if arr.is_empty() {
+        return refs;
+    }
+    let attach_dir = crate::config::loader::config_dir().join("attachments");
+    if tokio::fs::create_dir_all(&attach_dir).await.is_err() {
+        return refs;
+    }
+    use base64::{engine::general_purpose, Engine as _};
+    for att in arr.iter().take(8) {
+        let Some(data_b64) = att.get("data").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Ok(bytes) = general_purpose::STANDARD.decode(data_b64) else {
+            continue;
+        };
+        if bytes.is_empty() || bytes.len() > MAX_ATTACHMENT_BYTES {
+            continue;
+        }
+        let mime = att
+            .get("mime")
+            .and_then(|v| v.as_str())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let raw_name = att.get("name").and_then(|v| v.as_str()).unwrap_or("attachment");
+        // Sanitize the filename: keep safe characters, strip path separators.
+        let clean_name: String = raw_name
+            .chars()
+            .filter(|c| c.is_alphanumeric() || matches!(c, '.' | '-' | '_' | ' '))
+            .take(64)
+            .collect::<String>()
+            .trim()
+            .to_string();
+        let clean_name = if clean_name.is_empty() {
+            "attachment".to_string()
+        } else {
+            clean_name
+        };
+        let file_name = format!("{}_{}", &uuid::Uuid::new_v4().to_string()[..8], clean_name);
+        let path = attach_dir.join(&file_name);
+        if tokio::fs::write(&path, &bytes).await.is_err() {
+            continue;
+        }
+        let link = format!("file://{}", path.to_string_lossy());
+        if mime.starts_with("image/") {
+            refs.push(format!("![]({link})"));
+        } else {
+            refs.push(format!("📎 [{}]({link})", clean_name));
+        }
+    }
+    refs
+}
 
 async fn ws_handler(
     ws: WebSocketUpgrade,
@@ -231,6 +334,44 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             "chat_id": chat_id
                         });
                         if let Ok(evt_str) = serde_json::to_string(&attached_evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                        let history_evt = fetch_real_session_history(&state.agent_loop.session_manager, &chat_id).await;
+                        if let Ok(evt_str) = serde_json::to_string(&history_evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "list_sessions" => {
+                        let evt = fetch_real_sessions_list(&state.agent_loop.session_manager).await;
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "load_history" => {
+                        let evt = fetch_real_session_history(&state.agent_loop.session_manager, &chat_id).await;
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "get_cognitive_memory" => {
+                        let evt = fetch_real_cognitive_memory().await;
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "get_mcp_servers" => {
+                        let live = match state.live_config.read() {
+                            Ok(g) => g.clone(),
+                            Err(_) => state.agent_loop.config.clone(),
+                        };
+                        let evt = fetch_real_mcp_servers(&live).await;
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "get_logs" => {
+                        let evt = fetch_real_logs().await;
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
                             let _ = tx.send(Message::Text(evt_str)).await;
                         }
                     }
@@ -325,13 +466,18 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 .await
                             {
                                 Ok(res) => {
-                                    let delta_evt = serde_json::json!({
-                                        "event": "delta",
-                                        "chat_id": chat_id_clone,
-                                        "content": res.content
-                                    });
-                                    if let Ok(evt_str) = serde_json::to_string(&delta_evt) {
-                                        let _ = tx_clone.send(Message::Text(evt_str)).await;
+                                    // Streaming deltas are emitted live from the agent loop
+                                    // (event "delta"); only send a full-content delta when
+                                    // the turn did not stream.
+                                    if !res.streamed {
+                                        let delta_evt = serde_json::json!({
+                                            "event": "delta",
+                                            "chat_id": chat_id_clone,
+                                            "content": res.content
+                                        });
+                                        if let Ok(evt_str) = serde_json::to_string(&delta_evt) {
+                                            let _ = tx_clone.send(Message::Text(evt_str)).await;
+                                        }
                                     }
 
                                     let turn_end_evt = serde_json::json!({
@@ -354,6 +500,181 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 }
                             }
                         });
+                    }
+                    "security_response" => {
+                        let req_id = envelope
+                            .get("req_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let approved = envelope
+                            .get("approved")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        crate::channels::websocket::resolve_ws_approval(&req_id, approved);
+                    }
+                    "get_models" => {
+                        let config = match state.live_config.read() {
+                            Ok(g) => g.clone(),
+                            Err(_) => state.agent_loop.config.clone(),
+                        };
+                        let mut providers = Vec::new();
+                        for opt in crate::channels::configured_provider_model_options(&config) {
+                            providers.push(serde_json::json!({
+                                "name": opt.name,
+                                "display": opt.display,
+                                "models": opt.models,
+                            }));
+                        }
+                        let active_provider = config.agents.defaults.provider.clone();
+                        let active_model = config.agents.defaults.model.clone();
+                        let evt = serde_json::json!({
+                            "event": "models_list",
+                            "providers": providers,
+                            "active_provider": active_provider,
+                            "active_model": active_model,
+                        });
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "get_config" => {
+                        let config = match state.live_config.read() {
+                            Ok(g) => g.clone(),
+                            Err(_) => state.agent_loop.config.clone(),
+                        };
+                        let skills = crate::agent::skills::load_skills()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|s| serde_json::json!({ "name": s.name, "content": s.content }))
+                            .collect::<Vec<_>>();
+                        let d = &config.agents.defaults;
+                        let defaults = serde_json::json!({
+                            "model": d.model,
+                            "provider": d.provider,
+                            "temperature": d.temperature,
+                            "max_tokens": d.max_tokens,
+                            "streaming": d.streaming,
+                            "caveman_mode": d.caveman_mode,
+                            "security_mode": d.security_mode,
+                            "workspace": d.workspace,
+                            "bot_name": d.bot_name,
+                            "max_messages": d.max_messages,
+                            "max_tool_iterations": d.max_tool_iterations,
+                            "tool_timeout_secs": d.tool_timeout_secs,
+                            "enable_sandbox": d.enable_sandbox,
+                            "context_limit": d.context_limit,
+                            "tool_output_limit": d.tool_output_limit,
+                            "tui_thought_display": d.tui_thought_display,
+                        });
+                        let mcp_resp = fetch_real_mcp_servers(&config).await;
+                        let mcp_servers = mcp_resp["servers"].clone();
+                        let evt = serde_json::json!({
+                            "event": "config_data",
+                            "defaults": defaults,
+                            "skills": skills,
+                            "mcp_servers": mcp_servers,
+                            "version": env!("CARGO_PKG_VERSION"),
+                        });
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "set_config" => {
+                        let mut config = match state.live_config.read() {
+                            Ok(guard) => guard.clone(),
+                            Err(_) => state.agent_loop.config.clone(),
+                        };
+                        if let Some(defaults) = envelope.get("defaults") {
+                            let d = &mut config.agents.defaults;
+                            if let Some(v) = defaults.get("model").and_then(|v| v.as_str()) {
+                                d.model = v.to_string();
+                            }
+                            if let Some(v) = defaults.get("provider").and_then(|v| v.as_str()) {
+                                d.provider = v.to_string();
+                            }
+                            if let Some(v) = defaults.get("temperature").and_then(|v| v.as_f64()) {
+                                d.temperature = v as f32;
+                            }
+                            if let Some(v) = defaults.get("max_tokens").and_then(|v| v.as_u64()) {
+                                d.max_tokens = v as usize;
+                            }
+                            if let Some(v) = defaults.get("streaming").and_then(|v| v.as_bool()) {
+                                d.streaming = v;
+                            }
+                            if let Some(v) = defaults.get("caveman_mode").and_then(|v| v.as_bool()) {
+                                d.caveman_mode = v;
+                            }
+                            if let Some(v) = defaults.get("security_mode").and_then(|v| v.as_str()) {
+                                d.security_mode = v.to_string();
+                            }
+                            if let Some(v) = defaults.get("bot_name").and_then(|v| v.as_str()) {
+                                d.bot_name = v.to_string();
+                            }
+                            if let Some(v) = defaults.get("max_messages").and_then(|v| v.as_u64()) {
+                                d.max_messages = v as usize;
+                            }
+                            if let Some(v) = defaults.get("max_tool_iterations").and_then(|v| v.as_u64()) {
+                                d.max_tool_iterations = v as usize;
+                            }
+                            if let Some(v) = defaults.get("tool_timeout_secs").and_then(|v| v.as_u64()) {
+                                d.tool_timeout_secs = v as u64;
+                            }
+                        }
+                        let _ = crate::config::loader::save_config(&config);
+                        if let Ok(mut live) = state.live_config.write() {
+                            *live = config.clone();
+                        }
+                        let d = &config.agents.defaults;
+                        let evt = serde_json::json!({
+                            "event": "config_updated",
+                            "defaults": {
+                                "model": d.model,
+                                "provider": d.provider,
+                                "temperature": d.temperature,
+                                "max_tokens": d.max_tokens,
+                                "streaming": d.streaming,
+                                "caveman_mode": d.caveman_mode,
+                                "security_mode": d.security_mode,
+                                "workspace": d.workspace,
+                                "bot_name": d.bot_name,
+                                "max_messages": d.max_messages,
+                                "max_tool_iterations": d.max_tool_iterations,
+                                "tool_timeout_secs": d.tool_timeout_secs,
+                                "enable_sandbox": d.enable_sandbox,
+                            }
+                        });
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "get_slash_commands" => {
+                        let commands = crate::channels::cli::render::SLASH_COMMANDS
+                            .iter()
+                            .map(|(cmd, desc)| serde_json::json!({ "cmd": cmd, "desc": desc }))
+                            .collect::<Vec<_>>();
+                        let evt = serde_json::json!({
+                            "event": "slash_commands",
+                            "commands": commands,
+                        });
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "get_status" => {
+                        let (loaded, failed, total) = crate::channels::cli::mcp::get_mcp_stats();
+                        let evt = serde_json::json!({
+                            "event": "status",
+                            "version": env!("CARGO_PKG_VERSION"),
+                            "mcp": {
+                                "loaded": loaded,
+                                "failed": failed,
+                                "total": total,
+                            },
+                        });
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
                     }
                     _ => {}
                 }
@@ -380,7 +701,10 @@ async fn trigger_sop_handler(
         )
             .into_response();
     }
-    let config = state.agent_loop.config.clone();
+    let config = match state.live_config.read() {
+        Ok(g) => g.clone(),
+        Err(_) => state.agent_loop.config.clone(),
+    };
     match crate::sop::engine::trigger_sop(config, sop_id, payload).await {
         Ok(instance_id) => (
             StatusCode::OK,
@@ -412,7 +736,10 @@ async fn resume_sop_handler(
         )
             .into_response();
     }
-    let config = state.agent_loop.config.clone();
+    let config = match state.live_config.read() {
+        Ok(g) => g.clone(),
+        Err(_) => state.agent_loop.config.clone(),
+    };
     match crate::sop::engine::resume_sop(config, instance_id).await {
         Ok(_) => (
             StatusCode::OK,
@@ -585,7 +912,10 @@ async fn openai_chat_completions(
         })
         .unwrap_or_default();
 
-    let mut config = state.agent_loop.config.clone();
+    let mut config = match state.live_config.read() {
+        Ok(g) => g.clone(),
+        Err(_) => state.agent_loop.config.clone(),
+    };
     let req_model = normalize_model_name(&payload.model);
     let routed_model = determine_routed_model(&config, &req_model, &last_user_content);
 
@@ -718,16 +1048,16 @@ mod tests {
     fn test_is_authorized() {
         use axum::http::HeaderMap;
 
-        // Unset token -> unauthorized
+        // Unset token -> open access (allow all)
         std::env::remove_var("OPENZ_GATEWAY_TOKEN");
         let headers = HeaderMap::new();
-        assert!(!is_authorized(&headers, None));
-        assert!(!is_authorized(&headers, Some("test")));
+        assert!(is_authorized(&headers, None));
+        assert!(is_authorized(&headers, Some("test")));
 
-        // Empty token -> unauthorized
+        // Empty token -> open access (allow all)
         std::env::set_var("OPENZ_GATEWAY_TOKEN", "");
-        assert!(!is_authorized(&headers, None));
-        assert!(!is_authorized(&headers, Some("")));
+        assert!(is_authorized(&headers, None));
+        assert!(is_authorized(&headers, Some("")));
 
         // Set token -> verify query token and header
         std::env::set_var("OPENZ_GATEWAY_TOKEN", "super-secret-token");
@@ -756,24 +1086,244 @@ mod tests {
 use super::secure_compare;
 
 fn is_authorized(headers: &axum::http::HeaderMap, query_token: Option<&str>) -> bool {
-    if let Ok(expected) = std::env::var("OPENZ_GATEWAY_TOKEN") {
-        if expected.is_empty() {
-            return false;
+    let expected = std::env::var("OPENZ_GATEWAY_TOKEN").unwrap_or_default();
+    // When no token is configured, allow all connections (open local access).
+    if expected.is_empty() {
+        return true;
+    }
+    // Token is configured — enforce it via query param or Authorization header.
+    if let Some(tok) = query_token {
+        if secure_compare(tok, &expected) {
+            return true;
         }
-        if let Some(tok) = query_token {
-            if secure_compare(tok, &expected) {
-                return true;
-            }
-        }
-        if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
-            if let Ok(auth_str) = auth_header.to_str() {
-                if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                    if secure_compare(token.trim(), &expected) {
-                        return true;
-                    }
+    }
+    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                if secure_compare(token.trim(), &expected) {
+                    return true;
                 }
             }
         }
     }
     false
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all(&entry.path(), &dst_path)?;
+        } else {
+            std::fs::copy(entry.path(), dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn find_web_dist() -> Option<std::path::PathBuf> {
+    // 1. Local ./web/dist
+    let local = Path::new("./web/dist");
+    if local.exists() && local.is_dir() && local.join("index.html").exists() {
+        let global = crate::config::loader::config_dir().join("web/dist");
+        let _ = copy_dir_all(local, &global);
+        return Some(local.to_path_buf());
+    }
+
+    // 2. Global ~/.openz/web/dist
+    let global = crate::config::loader::config_dir().join("web/dist");
+    if global.exists() && global.is_dir() && global.join("index.html").exists() {
+        return Some(global);
+    }
+
+    // 3. Alternative legacy path
+    let legacy = Path::new("./nanobot/nanobot/web/dist");
+    if legacy.exists() && legacy.is_dir() && legacy.join("index.html").exists() {
+        return Some(legacy.to_path_buf());
+    }
+
+    None
+}
+
+async fn fetch_real_sessions_list(session_mgr: &crate::session::SessionManager) -> serde_json::Value {
+    let mut sessions = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&session_mgr.dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map_or(false, |ext| ext == "json") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    let key = stem.to_string();
+                    if let Ok(session) = session_mgr.load(&key) {
+                        let title = session
+                            .messages
+                            .iter()
+                            .find(|m| m.role == "user")
+                            .map(|m| {
+                                let c = m.content.trim();
+                                if c.len() > 36 {
+                                    format!("{}...", &c[..36])
+                                } else {
+                                    c.to_string()
+                                }
+                            })
+                            .unwrap_or_else(|| key.clone());
+
+                        let msg_count = session.messages.len();
+                        let last_msg_at = path
+                            .metadata()
+                            .and_then(|m| m.modified())
+                            .unwrap_or(std::time::SystemTime::now())
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis();
+
+                        sessions.push(serde_json::json!({
+                            "id": key,
+                            "title": title,
+                            "createdAt": last_msg_at,
+                            "lastMessageAt": last_msg_at,
+                            "messageCount": msg_count
+                        }));
+                    }
+                }
+            }
+        }
+    }
+    sessions.sort_by(|a, b| {
+        let ta = a["lastMessageAt"].as_u64().unwrap_or(0);
+        let tb = b["lastMessageAt"].as_u64().unwrap_or(0);
+        tb.cmp(&ta)
+    });
+    serde_json::json!({
+        "event": "sessions_list",
+        "sessions": sessions
+    })
+}
+
+async fn fetch_real_session_history(
+    session_mgr: &crate::session::SessionManager,
+    chat_id: &str,
+) -> serde_json::Value {
+    let mut messages = Vec::new();
+    if let Ok(session) = session_mgr.load(chat_id) {
+        for (idx, msg) in session.messages.iter().enumerate() {
+            let ts = msg
+                .timestamp
+                .as_deref()
+                .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                .map(|dt| dt.timestamp_millis())
+                .unwrap_or_else(|| (idx as i64) * 1000);
+
+            messages.push(serde_json::json!({
+                "id": format!("msg-{}-{}", idx, ts),
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": ts,
+            }));
+        }
+    }
+    serde_json::json!({
+        "event": "session_history",
+        "chat_id": chat_id,
+        "messages": messages
+    })
+}
+
+async fn fetch_real_cognitive_memory() -> serde_json::Value {
+    let mut entities_count = 0i64;
+    let mut relations_count = 0i64;
+    let mut facts_count = 0i64;
+
+    let memory_db = crate::config::loader::runtime_db_path("memory.db");
+    if memory_db.exists() {
+        if let Ok(conn) = rusqlite::Connection::open(&memory_db) {
+            let _ = conn.query_row("SELECT COUNT(*) FROM facts", [], |r| r.get(0)).map(|c: i64| facts_count = c);
+        }
+    }
+
+    let graph_db = crate::config::loader::runtime_db_path("graph_memory.db");
+    if graph_db.exists() {
+        if let Ok(conn) = rusqlite::Connection::open(&graph_db) {
+            let _ = conn.query_row("SELECT COUNT(*) FROM entities", [], |r| r.get(0)).map(|c: i64| entities_count = c);
+            let _ = conn.query_row("SELECT COUNT(*) FROM relations", [], |r| r.get(0)).map(|c: i64| relations_count = c);
+        }
+    }
+
+    serde_json::json!({
+        "event": "cognitive_memory",
+        "stats": {
+            "entitiesCount": entities_count,
+            "relationsCount": relations_count,
+            "factsCount": facts_count,
+            "workingMemoryKeys": ["active_workspace", "session_scope", "security_level", "caveman_mode"]
+        }
+    })
+}
+
+async fn fetch_real_mcp_servers(config: &crate::config::schema::Config) -> serde_json::Value {
+    let (loaded, failed, _total) = crate::channels::cli::mcp::get_mcp_stats();
+    let mcp_done = crate::channels::cli::mcp::is_mcp_done();
+    let mut servers = Vec::new();
+    for (name, server_cfg) in &config.mcp_servers {
+        let status = if !server_cfg.enabled {
+            "disabled"
+        } else if !mcp_done {
+            "starting"
+        } else {
+            "connected"
+        };
+        let tools_count = if server_cfg.enabled {
+            crate::tools::mcp::spawned_tools_count(&server_cfg.command, &server_cfg.args).await
+        } else {
+            0
+        };
+        servers.push(serde_json::json!({
+            "name": name,
+            "command": server_cfg.command,
+            "status": status,
+            "enabled": server_cfg.enabled,
+            "args": server_cfg.args,
+            "toolsCount": tools_count,
+        }));
+    }
+    serde_json::json!({
+        "event": "mcp_servers",
+        "servers": servers,
+        "stats": {
+            "loaded": loaded,
+            "failed": failed,
+            "total": failed + loaded,
+        }
+    })
+}
+
+async fn fetch_real_logs() -> serde_json::Value {
+    let mut log_entries = Vec::new();
+    let log_path = crate::logs::default_log_path();
+    if let Ok(content) = std::fs::read_to_string(&log_path) {
+        let lines: Vec<&str> = content.lines().rev().take(100).collect();
+        for (idx, line) in lines.iter().enumerate() {
+            if line.trim().is_empty() { continue; }
+            let level = if line.contains("ERROR") { "ERROR" } else if line.contains("WARN") { "WARN" } else { "INFO" };
+            let ts = if line.len() >= 19 && line.as_bytes()[10] == b'T' {
+                line[11..19].to_string()
+            } else {
+                chrono::Local::now().format("%H:%M:%S").to_string()
+            };
+            log_entries.push(serde_json::json!({
+                "id": format!("log-{}", idx),
+                "timestamp": ts,
+                "level": level,
+                "target": "openz::gateway",
+                "message": line.to_string()
+            }));
+        }
+    }
+    serde_json::json!({
+        "event": "logs_data",
+        "logs": log_entries
+    })
 }

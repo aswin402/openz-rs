@@ -75,7 +75,7 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
         Style::default().fg(Color::Rgb(255, 85, 51)).add_modifier(Modifier::BOLD),
     )]));
 
-    // Version text: openz v0.0.116
+    // Version text: openz v0.0.117
     text_lines.push(Line::from(vec![Span::styled(
         format!(" openz v{}", env!("CARGO_PKG_VERSION")),
         Style::default().fg(Color::Rgb(255, 85, 51)).add_modifier(Modifier::BOLD),
