@@ -1,7 +1,6 @@
 import React from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
 import type { WorkspaceView } from '../store/useOpenZStore';
-import { wsService } from '../services/websocket';
 import { cn } from '../lib/utils';
 import { useThemeStore } from '../store/useThemeStore';
 import {

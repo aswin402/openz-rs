@@ -3,17 +3,13 @@ import { useOpenZStore } from '../store/useOpenZStore';
 import { wsService } from '../services/websocket';
 import {
   Activity,
-  Brain,
   Cpu,
   Database,
   MessageSquare,
   Network,
   Plus,
-  Settings,
   ScrollText,
-  SlashSquare,
   Sparkles,
-  TerminalSquare,
   Zap,
   Bot,
   BookOpen,
@@ -95,9 +91,7 @@ export const DashboardView: React.FC = () => {
   const sessions = useOpenZStore((s) => s.sessions);
   const activeChatId = useOpenZStore((s) => s.activeChatId);
   const mcpStats = useOpenZStore((s) => s.mcpStats);
-  const mcpServers = useOpenZStore((s) => s.mcpServers);
   const cognitiveStats = useOpenZStore((s) => s.cognitiveStats);
-  const slashCommands = useOpenZStore((s) => s.slashCommands);
   const logs = useOpenZStore((s) => s.logs);
   const servers = useOpenZStore((s) => s.servers);
   const streamingMode = useOpenZStore((s) => s.streamingMode);
@@ -114,7 +108,6 @@ export const DashboardView: React.FC = () => {
   const newSession = useOpenZStore((s) => s.newSession);
 
   const activeSession = sessions.find((s) => s.id === activeChatId);
-  const failedMcps = mcpServers.filter((s) => s.status === 'error' || s.status === 'disabled').length;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
