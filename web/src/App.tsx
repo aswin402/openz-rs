@@ -30,6 +30,59 @@ export const App: React.FC = () => {
     init();
   }, [init]);
 
+  // Keep track of the message count to detect additions
+  const prevMsgCountRef = useRef(0);
+
+  // 1. Scroll to bottom on initial load / chat switch
+  useEffect(() => {
+    if (activeView === 'chats') {
+      // Small timeout to allow content layout to finish
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      }, 50);
+      prevMsgCountRef.current = activeMessages.length;
+    }
+  }, [activeChatId, activeView]);
+
+  // 2. Smart auto-scroll during streams or new message additions
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container || activeMessages.length === 0 || activeView !== 'chats') {
+      prevMsgCountRef.current = activeMessages.length;
+      return;
+    }
+
+    const currentCount = activeMessages.length;
+    const prevCount = prevMsgCountRef.current;
+    prevMsgCountRef.current = currentCount;
+
+    const lastMsg = activeMessages[currentCount - 1];
+    let shouldScroll = false;
+
+    if (currentCount > prevCount) {
+      // If user sent a message, scroll down unconditionally
+      if (lastMsg.role === 'user') {
+        shouldScroll = true;
+      } else {
+        // If it's a new assistant message, scroll if near bottom
+        const scrollOffset = container.scrollHeight - container.scrollTop - container.clientHeight;
+        if (scrollOffset <= 120) {
+          shouldScroll = true;
+        }
+      }
+    } else if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
+      // During stream content updates, scroll if near bottom
+      const scrollOffset = container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (scrollOffset <= 120) {
+        shouldScroll = true;
+      }
+    }
+
+    if (shouldScroll) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [activeMessages, activeView]);
+
   const renderWorkspace = () => {
     switch (activeView) {
       case 'dashboard':
