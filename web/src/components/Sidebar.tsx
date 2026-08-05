@@ -9,18 +9,11 @@ import {
   MessageSquare,
   Trash2,
   LayoutDashboard,
-  Bot,
-  BookOpen,
-  BrainCircuit,
-  Database,
-  Cpu,
-  ScrollText,
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
   Sun,
   Moon,
-  Server,
 } from 'lucide-react';
 
 interface NavItem {
@@ -42,8 +35,6 @@ export const Sidebar: React.FC = () => {
   const clearActiveSession = useOpenZStore((s) => s.clearActiveSession);
   const connectionStatus = useOpenZStore((s) => s.connectionStatus);
   const mcpStats = useOpenZStore((s) => s.mcpStats);
-  const logs = useOpenZStore((s) => s.logs);
-  const cognitiveStats = useOpenZStore((s) => s.cognitiveStats);
 
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
@@ -58,31 +49,20 @@ export const Sidebar: React.FC = () => {
     setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
   };
 
-
-
   const isSidebarOpen = useOpenZStore((s) => s.isSidebarOpen);
   const setIsSidebarOpen = useOpenZStore((s) => s.setIsSidebarOpen);
   const collapsed = useOpenZStore((s) => s.isSidebarCollapsed);
   const setSidebarCollapsed = useOpenZStore((s) => s.setSidebarCollapsed);
   const setActiveView = useOpenZStore((s) => s.setActiveView);
 
-  const setIsMemoryOpen = useOpenZStore((s) => s.setIsMemoryOpen);
-  const setIsLogsOpen = useOpenZStore((s) => s.setIsLogsOpen);
-  const setIsMcpsOpen = useOpenZStore((s) => s.setIsMcpsOpen);
   const setIsSettingsOpen = useOpenZStore((s) => s.setIsSettingsOpen);
-  const setIsServersOpen = useOpenZStore((s) => s.setIsServersOpen);
-  const servers = useOpenZStore((s) => s.servers);
 
   const go = (fn: () => void) => {
     fn();
     setIsSidebarOpen(false); // close the mobile drawer on pick
   };
 
-  // Label/decoration visibility: hidden on desktop when the rail is collapsed,
-  // always visible on mobile (the drawer is full-width when opened).
-
-
-  const workspaceItems: NavItem[] = [
+  const bottomItems: NavItem[] = [
     {
       key: 'dashboard',
       label: 'Dashboard',
@@ -91,87 +71,13 @@ export const Sidebar: React.FC = () => {
     },
     {
       key: 'chats',
-      label: 'Chats',
-      icon: MessageSquare,
-      action: () => setActiveView('chats'),
-      badge: sessions.length > 0 ? String(sessions.length) : undefined,
-    },
-    {
-      key: 'agents',
-      label: 'Agents',
-      icon: Bot,
-      action: () => setActiveView('agents'),
-    },
-    {
-      key: 'skills',
-      label: 'Skills',
-      icon: BookOpen,
-      action: () => setActiveView('skills'),
-    },
-    {
-      key: 'knowledge',
-      label: 'Knowledge',
-      icon: BrainCircuit,
-      action: () => setActiveView('knowledge'),
-    },
-  ];
-
-  const systemItems: NavItem[] = [
-    {
-      key: 'dashboard',
-      label: 'Memory',
-      icon: Database,
-      action: () => {
-        setIsMemoryOpen(true);
-        wsService.requestCognitiveMemory();
-      },
-      openPanel: true,
-      badge: (cognitiveStats.entitiesCount + cognitiveStats.factsCount) > 0
-        ? String(cognitiveStats.entitiesCount + cognitiveStats.factsCount)
-        : undefined,
-    },
-    {
-      key: 'dashboard',
-      label: 'MCP Servers',
-      icon: Cpu,
-      action: () => {
-        setIsMcpsOpen(true);
-        wsService.requestMcpServers();
-      },
-      openPanel: true,
-      badge: mcpStats.total > 0 ? `${mcpStats.loaded}/${mcpStats.total}` : undefined,
-    },
-    {
-      key: 'dashboard',
-      label: 'Background Bots',
-      icon: Server,
-      action: () => {
-        setIsServersOpen(true);
-        wsService.requestServers();
-      },
-      openPanel: true,
-      badge: servers.length > 0 ? String(servers.length) : undefined,
-    },
-    {
-      key: 'dashboard',
-      label: 'Logs',
-      icon: ScrollText,
-      action: () => {
-        setIsLogsOpen(true);
-        wsService.requestLogs();
-      },
-      openPanel: true,
-      badge: logs.length > 0 ? String(logs.length) : undefined,
-    },
-    {
-      key: 'dashboard',
       label: 'Settings',
       icon: Settings,
       action: () => setIsSettingsOpen(true),
       openPanel: true,
     },
     {
-      key: 'dashboard',
+      key: 'chats',
       label: resolvedTheme === 'dark' ? 'Light Theme' : 'Dark Theme',
       icon: resolvedTheme === 'dark' ? Sun : Moon,
       action: handleThemeClick,
@@ -215,7 +121,7 @@ export const Sidebar: React.FC = () => {
             </span>
           )}
           {collapsed && (
-            <span className="pointer-events-none absolute left-full top-1/2 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] font-medium text-foreground shadow-lg md:group-hover:block">
+            <span className="pointer-events-none absolute left-full top-1/2 ml-2 hidden -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] font-medium text-foreground shadow-lg md:group-hover:block z-50">
               {item.label}
             </span>
           )}
@@ -275,7 +181,7 @@ export const Sidebar: React.FC = () => {
           </button>
         </div>
 
-        {/* New Session */}
+        {/* New Session Button */}
         <div className={cn('shrink-0 p-3 transition-all duration-300', collapsed && 'md:p-2 md:px-1.5')}>
           <button
             onClick={() => go(newSession)}
@@ -295,76 +201,60 @@ export const Sidebar: React.FC = () => {
           </button>
         </div>
 
-        {/* Navigation */}
-        <nav className={cn('shrink-0 space-y-1 px-3 transition-all duration-300', collapsed && 'md:px-1.5')}>
-          <div className={cn(
-            'px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground transition-all duration-300 ease-in-out origin-left',
-            collapsed ? 'opacity-0 max-w-0 overflow-hidden py-0' : 'opacity-100 max-w-[200px]'
-          )}>
-            Workspace
-          </div>
-          {renderNav(workspaceItems)}
-          <div className={cn(
-            'px-2 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground transition-all duration-300 ease-in-out origin-left',
-            collapsed ? 'opacity-0 max-w-0 overflow-hidden py-0' : 'opacity-100 max-w-[200px]'
-          )}>
-            System
-          </div>
-          {renderNav(systemItems)}
-        </nav>
-
-        <div className={cn('mt-3 h-px shrink-0 bg-border/40 transition-all duration-300', collapsed && 'md:mx-2')} />
-
-        {/* Sessions (desktop-expanded / always on mobile drawer) */}
+        {/* Sessions List */}
         <div className={cn('flex-1 overflow-y-auto px-2 pb-2 transition-all duration-300 ease-in-out', collapsed && 'md:opacity-0 md:pointer-events-none md:max-h-0 md:overflow-hidden')}>
-          {activeView === 'chats' && (
-            <>
-              <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Sessions
-              </div>
-              {sessions.length === 0 ? (
-                <div className="px-2 py-3 text-[11px] text-muted-foreground/70">
-                  No sessions yet. Start a new one to begin.
-                </div>
-              ) : (
-                sessions.map((session) => {
-                  const isActive = session.id === activeChatId;
-                  return (
-                    <div
-                      key={session.id}
-                      onClick={() => go(() => selectSession(session.id))}
-                      className={cn(
-                        'group flex cursor-pointer select-none items-center justify-between rounded-lg px-2.5 py-2 text-xs transition',
-                        isActive
-                          ? 'border border-amber-500/30 bg-amber-500/15 font-medium text-amber-400'
-                          : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-                      )}
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        <MessageSquare className="h-3.5 w-3.5 shrink-0" />
-                        <span className="truncate">{session.title}</span>
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteSession(session.id);
-                        }}
-                        className="shrink-0 p-1 opacity-0 transition hover:text-red-400 group-hover:opacity-100"
-                        title="Delete session"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
+          <div className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60">
+            Sessions
+          </div>
+          {sessions.length === 0 ? (
+            <div className="px-2.5 py-3 text-[11px] text-muted-foreground/50 italic">
+              No sessions yet.
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {sessions.map((session) => {
+                const isActive = session.id === activeChatId && activeView === 'chats';
+                return (
+                  <div
+                    key={session.id}
+                    onClick={() => go(() => selectSession(session.id))}
+                    className={cn(
+                      'group flex cursor-pointer select-none items-center justify-between rounded-lg px-2.5 py-2 text-xs transition duration-200',
+                      isActive
+                        ? 'border border-amber-500/30 bg-amber-500/15 font-semibold text-amber-400'
+                        : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                    )}
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">{session.title}</span>
                     </div>
-                  );
-                })
-              )}
-            </>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteSession(session.id);
+                      }}
+                      className="shrink-0 p-1 opacity-0 transition hover:text-red-400 group-hover:opacity-100"
+                      title="Delete session"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
-        {/* Footer */}
-        <div className={cn('shrink-0 space-y-2 border-t border-border/40 p-3 transition-all duration-300', collapsed && 'md:space-y-3 md:p-2')}>
-          {/* Connection pill */}
-          <div className="flex items-center justify-between px-1 transition-all duration-300">
+
+        {/* Footer & Bottom Navigation */}
+        <div className={cn('shrink-0 border-t border-border/40 p-3 transition-all duration-300', collapsed && 'md:p-2')}>
+          {/* Bottom Items Grid */}
+          <nav className="space-y-1 mb-3">
+            {renderNav(bottomItems)}
+          </nav>
+
+          {/* Connection and telemetry */}
+          <div className="flex items-center justify-between px-1.5 mb-2.5 transition-all duration-300">
             <div className={cn(
               'flex items-center gap-1.5 transition-all duration-300 ease-in-out origin-left',
               collapsed ? 'opacity-0 max-w-0 overflow-hidden' : 'opacity-100 max-w-[150px]'

@@ -15,6 +15,10 @@ import {
   Sparkles,
   TerminalSquare,
   Zap,
+  Bot,
+  BookOpen,
+  BrainCircuit,
+  Server,
 } from 'lucide-react';
 
 interface StatCardProps {
@@ -48,6 +52,40 @@ const cnCard = (onClick?: () => void) =>
     onClick ? 'cursor-pointer hover:border-amber-500/40 hover:bg-card' : 'cursor-default',
   ].join(' ');
 
+interface LauncherCardProps {
+  label: string;
+  desc: string;
+  badge?: string;
+  icon: React.ComponentType<{ className?: string }>;
+  accent?: string;
+  onClick: () => void;
+}
+
+const LauncherCard: React.FC<LauncherCardProps> = ({ label, desc, badge, icon: Icon, accent = 'text-amber-500 bg-amber-500/10 border-amber-500/20', onClick }) => (
+  <button
+    onClick={onClick}
+    className="group flex flex-col justify-between rounded-2xl border border-border/60 bg-card/40 p-5 text-left shadow-sm backdrop-blur-md transition-all duration-300 hover:-translate-y-1 hover:border-amber-500/40 hover:bg-card hover:shadow-md focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+  >
+    <div className="w-full">
+      <div className="flex items-start justify-between">
+        <div className={`rounded-xl p-2.5 transition-colors duration-300 group-hover:scale-110 ${accent}`}>
+          <Icon className="h-5 w-5" />
+        </div>
+        {badge && (
+          <span className="rounded-full bg-amber-500/10 px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-500">
+            {badge}
+          </span>
+        )}
+      </div>
+      <h3 className="mt-4 text-sm font-bold text-foreground transition-colors group-hover:text-amber-500">{label}</h3>
+      <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">{desc}</p>
+    </div>
+    <div className="mt-4 flex items-center gap-1 text-[10px] font-bold text-amber-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+      Launch <span>→</span>
+    </div>
+  </button>
+);
+
 export const DashboardView: React.FC = () => {
   const connectionStatus = useOpenZStore((s) => s.connectionStatus);
   const wsUrl = useOpenZStore((s) => s.wsUrl);
@@ -61,27 +99,30 @@ export const DashboardView: React.FC = () => {
   const cognitiveStats = useOpenZStore((s) => s.cognitiveStats);
   const slashCommands = useOpenZStore((s) => s.slashCommands);
   const logs = useOpenZStore((s) => s.logs);
+  const servers = useOpenZStore((s) => s.servers);
   const streamingMode = useOpenZStore((s) => s.streamingMode);
   const cavemanMode = useOpenZStore((s) => s.cavemanMode);
   const toggleStreamingMode = useOpenZStore((s) => s.toggleStreamingMode);
   const toggleCavemanMode = useOpenZStore((s) => s.toggleCavemanMode);
 
+  const setActiveView = useOpenZStore((s) => s.setActiveView);
   const setIsMemoryOpen = useOpenZStore((s) => s.setIsMemoryOpen);
   const setIsMcpsOpen = useOpenZStore((s) => s.setIsMcpsOpen);
   const setIsLogsOpen = useOpenZStore((s) => s.setIsLogsOpen);
   const setIsSettingsOpen = useOpenZStore((s) => s.setIsSettingsOpen);
+  const setIsServersOpen = useOpenZStore((s) => s.setIsServersOpen);
   const newSession = useOpenZStore((s) => s.newSession);
 
   const activeSession = sessions.find((s) => s.id === activeChatId);
   const failedMcps = mcpServers.filter((s) => s.status === 'error' || s.status === 'disabled').length;
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6">
+    <div className="mx-auto max-w-5xl px-4 py-8">
       {/* Hero strip */}
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight text-foreground">
-            <Sparkles className="h-5 w-5 text-amber-500" />
+            <Sparkles className="h-5 w-5 text-amber-500 animate-pulse" />
             Dashboard
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -118,61 +159,96 @@ export const DashboardView: React.FC = () => {
           value={String(sessions.length)}
           sub={activeSession?.title ? `Active: ${activeSession.title}` : 'No active session'}
           icon={MessageSquare}
-        />
-        <StatCard
-          label="MCP Servers"
-          value={`${mcpStats.loaded}/${mcpStats.total}`}
-          sub={failedMcps > 0 ? `${failedMcps} failing` : 'all healthy'}
-          icon={Cpu}
-          accent={failedMcps > 0 ? 'text-red-400' : 'text-amber-500'}
-          onClick={() => {
-            setIsMcpsOpen(true);
-            wsService.requestMcpServers();
-          }}
-        />
-        <StatCard
-          label="Cognitive Memory"
-          value={`${cognitiveStats.entitiesCount} entities`}
-          sub={`${cognitiveStats.relationsCount} relations · ${cognitiveStats.factsCount} facts`}
-          icon={Brain}
-          onClick={() => {
-            setIsMemoryOpen(true);
-            wsService.requestCognitiveMemory();
-          }}
-        />
-        <StatCard
-          label="Slash Commands"
-          value={String(slashCommands.length)}
-          sub="loaded from gateway"
-          icon={SlashSquare}
-        />
-        <StatCard
-          label="Runtime Logs"
-          value={logs.length > 0 ? `${logs.length} entries` : 'live stream'}
-          sub="live stream available"
-          icon={ScrollText}
-          onClick={() => {
-            setIsLogsOpen(true);
-            wsService.requestLogs();
-          }}
-        />
-        <StatCard
-          label="Agent Defaults"
-          value={`${settings?.max_tokens ?? '—'} tokens`}
-          sub={`${settings?.max_messages ?? '—'} max messages`}
-          icon={TerminalSquare}
-          onClick={() => setIsSettingsOpen(true)}
-        />
-        <StatCard
-          label="Activity"
-          value={status?.version ? 'running' : 'unknown'}
-          sub="background curator active"
-          icon={Activity}
+          onClick={() => setActiveView('chats')}
         />
       </div>
 
+      {/* Workspace Section */}
+      <div className="mt-8">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80 mb-3.5">
+          Workspace Panel
+        </h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <LauncherCard
+            label="Agents"
+            desc="Configure LLM profiles, tool sets, instructions, and default credentials."
+            icon={Bot}
+            accent="text-indigo-400 bg-indigo-500/10 border-indigo-500/20"
+            onClick={() => setActiveView('agents')}
+          />
+          <LauncherCard
+            label="Skills"
+            desc="Teach custom markdown skills for formatting, design systems, and integrations."
+            icon={BookOpen}
+            accent="text-sky-400 bg-sky-500/10 border-sky-500/20"
+            onClick={() => setActiveView('skills')}
+          />
+          <LauncherCard
+            label="Knowledge Graph"
+            desc="Audit structural memory nodes, relationships, and context compactor graphs."
+            icon={BrainCircuit}
+            badge="Cognitive"
+            accent="text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
+            onClick={() => setActiveView('knowledge')}
+          />
+        </div>
+      </div>
+
+      {/* System Services Section */}
+      <div className="mt-8">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground/80 mb-3.5">
+          System Services
+        </h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <LauncherCard
+            label="Memory"
+            desc="Manage the entity-relation database store and recall facts."
+            icon={Database}
+            badge={(cognitiveStats.entitiesCount + cognitiveStats.factsCount) > 0 ? String(cognitiveStats.entitiesCount + cognitiveStats.factsCount) : undefined}
+            accent="text-amber-500 bg-amber-500/10 border-amber-500/20"
+            onClick={() => {
+              setIsMemoryOpen(true);
+              wsService.requestCognitiveMemory();
+            }}
+          />
+          <LauncherCard
+            label="MCP Servers"
+            desc="Configure and inspect connected Model Context Protocol tool servers."
+            icon={Cpu}
+            badge={mcpStats.total > 0 ? `${mcpStats.loaded}/${mcpStats.total}` : undefined}
+            accent="text-rose-400 bg-rose-500/10 border-rose-500/20"
+            onClick={() => {
+              setIsMcpsOpen(true);
+              wsService.requestMcpServers();
+            }}
+          />
+          <LauncherCard
+            label="Background Bots"
+            desc="Configure Slack, Discord, Telegram, and WhatsApp bot listeners."
+            icon={Server}
+            badge={servers.length > 0 ? String(servers.length) : undefined}
+            accent="text-cyan-400 bg-cyan-500/10 border-cyan-500/20"
+            onClick={() => {
+              setIsServersOpen(true);
+              wsService.requestServers();
+            }}
+          />
+          <LauncherCard
+            label="Gateway Logs"
+            desc="Stream server traces and debug logs in real time."
+            icon={ScrollText}
+            badge={logs.length > 0 ? String(logs.length) : undefined}
+            accent="text-fuchsia-400 bg-fuchsia-500/10 border-fuchsia-500/20"
+            onClick={() => {
+              setIsLogsOpen(true);
+              wsService.requestLogs();
+            }}
+          />
+        </div>
+      </div>
+
       {/* Toggles */}
-      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <ToggleRow
           label="Streaming Responses"
           desc="Deltas are broadcast as they are generated"
@@ -187,14 +263,6 @@ export const DashboardView: React.FC = () => {
           onToggle={toggleCavemanMode}
           icon={Database}
         />
-      </div>
-
-      {/* Quick actions */}
-      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <QuickAction label="Memory" icon={Brain} onClick={() => { setIsMemoryOpen(true); wsService.requestCognitiveMemory(); }} />
-        <QuickAction label="MCP Servers" icon={Cpu} onClick={() => { setIsMcpsOpen(true); wsService.requestMcpServers(); }} />
-        <QuickAction label="Logs" icon={ScrollText} onClick={() => { setIsLogsOpen(true); wsService.requestLogs(); }} />
-        <QuickAction label="Settings" icon={Settings} onClick={() => setIsSettingsOpen(true)} />
       </div>
     </div>
   );
@@ -226,19 +294,5 @@ const ToggleRow: React.FC<{
         className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${on ? 'left-[18px]' : 'left-0.5'}`}
       />
     </span>
-  </button>
-);
-
-const QuickAction: React.FC<{
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  onClick: () => void;
-}> = ({ label, icon: Icon, onClick }) => (
-  <button
-    onClick={onClick}
-    className="flex flex-col items-center gap-1.5 rounded-xl border border-border/60 bg-card/60 py-4 text-xs font-semibold text-muted-foreground shadow-sm transition hover:border-amber-500/40 hover:bg-card hover:text-foreground"
-  >
-    <Icon className="h-4 w-4 text-amber-500" />
-    {label}
   </button>
 );
