@@ -47,6 +47,19 @@ export const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ nodes, edges }
   const [hoveredNode, setHoveredNode] = useState<SimNode | null>(null);
   const [selectedNode, setSelectedNode] = useState<SimNode | null>(null);
 
+  const simNodesRef = useRef<SimNode[]>([]);
+  const simEdgesRef = useRef<SimEdge[]>([]);
+  const hoveredNodeRef = useRef<SimNode | null>(null);
+  const selectedNodeRef = useRef<SimNode | null>(null);
+
+  useEffect(() => {
+    hoveredNodeRef.current = hoveredNode;
+  }, [hoveredNode]);
+
+  useEffect(() => {
+    selectedNodeRef.current = selectedNode;
+  }, [selectedNode]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -65,36 +78,52 @@ export const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ nodes, edges }
 
     const getColor = (type: string) => {
       switch (type.toLowerCase()) {
-        case 'user': return '#3b82f6';
-        case 'agent': return '#f59e0b';
-        case 'workspace': return '#10b981';
-        case 'file': return '#ec4899';
-        case 'concept': return '#8b5cf6';
-        default: return '#a1a1aa';
+        case 'user': return '#60a5fa'; // soft blue
+        case 'agent': return '#fbbf24'; // soft amber
+        case 'workspace': return '#34d399'; // soft emerald
+        case 'file': return '#f472b6'; // soft pink
+        case 'concept': return '#a78bfa'; // soft purple
+        default: return '#a1a1aa'; // zinc-400
       }
     };
 
-    // Keep track of positions if nodes persist across triggers
-    const simNodes: SimNode[] = nodes.map((n) => {
+    const w = canvas.width || 800;
+    const h = canvas.height || 420;
+
+    // Sync simulation nodes from prop updates (keeping positions of existing nodes)
+    const existingNodesMap = new Map<string, SimNode>();
+    simNodesRef.current.forEach((n) => existingNodesMap.set(n.name, n));
+
+    const updatedSimNodes: SimNode[] = nodes.map((n) => {
+      const existing = existingNodesMap.get(n.name);
+      if (existing) {
+        existing.color = getColor(n.entity_type);
+        existing.observations = n.observations;
+        return existing;
+      }
+      
       const angle = Math.random() * Math.PI * 2;
-      const distance = 40 + Math.random() * 80;
+      const distance = 30 + Math.random() * 90;
       return {
         name: n.name,
         type: n.entity_type,
-        x: canvas.width / 2 + Math.cos(angle) * distance,
-        y: canvas.height / 2 + Math.sin(angle) * distance,
+        x: w / 2 + Math.cos(angle) * distance,
+        y: h / 2 + Math.sin(angle) * distance,
         vx: 0,
         vy: 0,
-        radius: n.entity_type.toLowerCase() === 'agent' ? 8 : 5,
+        radius: n.entity_type.toLowerCase() === 'agent' ? 3.5 : 2.2,
         color: getColor(n.entity_type),
         observations: n.observations,
       };
     });
 
-    const nodeMap = new Map<string, SimNode>();
-    simNodes.forEach((sn) => nodeMap.set(sn.name, sn));
+    simNodesRef.current = updatedSimNodes;
 
-    const simEdges: SimEdge[] = edges
+    const nodeMap = new Map<string, SimNode>();
+    simNodesRef.current.forEach((sn) => nodeMap.set(sn.name, sn));
+
+    // Sync edges
+    simEdgesRef.current = edges
       .map((e) => {
         const source = nodeMap.get(e.from_name);
         const target = nodeMap.get(e.to_name);
@@ -105,13 +134,16 @@ export const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ nodes, edges }
       })
       .filter((e): e is SimEdge => e !== null);
 
+    const simNodes = simNodesRef.current;
+    const simEdges = simEdgesRef.current;
+
     let animationId: number;
     let draggedNode: SimNode | null = null;
 
-    const gravity = 0.05;
-    const repulsion = 100;
-    const linkForce = 0.05;
-    const damping = 0.82;
+    const gravity = 0.04;
+    const repulsion = 80;
+    const linkForce = 0.08;
+    const damping = 0.85;
 
     const tick = () => {
       if (!canvas || !ctx) return;
@@ -131,7 +163,7 @@ export const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ nodes, edges }
           const distSq = dx * dx + dy * dy + 0.1;
           const dist = Math.sqrt(distSq);
 
-          if (dist < 140) {
+          if (dist < 120) {
             const force = (repulsion / distSq) * 1.2;
             const fx = (dx / dist) * force;
             const fy = (dy / dist) * force;
@@ -153,7 +185,7 @@ export const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ nodes, edges }
         const dx = link.target.x - link.source.x;
         const dy = link.target.y - link.source.y;
         const dist = Math.sqrt(dx * dx + dy * dy) || 0.1;
-        const targetDist = 55;
+        const targetDist = 45;
         const k = (dist - targetDist) * linkForce;
         const fx = (dx / dist) * k;
         const fy = (dy / dist) * k;
@@ -174,8 +206,8 @@ export const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ nodes, edges }
 
         const dx = centerX - node.x;
         const dy = centerY - node.y;
-        node.vx += dx * gravity * 0.04;
-        node.vy += dy * gravity * 0.04;
+        node.vx += dx * gravity * 0.03;
+        node.vy += dy * gravity * 0.03;
 
         node.x += node.vx;
         node.y += node.vy;
@@ -189,25 +221,43 @@ export const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ nodes, edges }
         if (node.y > height - pad) { node.y = height - pad; node.vy = 0; }
       });
 
-      // Draw background grids
+      // Render clean dark background
       ctx.clearRect(0, 0, width, height);
-      ctx.strokeStyle = '#18181b';
-      ctx.lineWidth = 0.5;
-      const gridSize = 40;
-      for (let x = 0; x < width; x += gridSize) {
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
-      }
-      for (let y = 0; y < height; y += gridSize) {
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+
+      // Determine active hovered/selected scope for dimmed render highlights
+      const hovered = hoveredNodeRef.current;
+      const selected = selectedNodeRef.current;
+      const activeNode = hovered || selected;
+
+      const connectedNodeNames = new Set<string>();
+      if (activeNode) {
+        connectedNodeNames.add(activeNode.name);
+        simEdges.forEach((link) => {
+          if (link.source.name === activeNode.name) {
+            connectedNodeNames.add(link.target.name);
+          }
+          if (link.target.name === activeNode.name) {
+            connectedNodeNames.add(link.source.name);
+          }
+        });
       }
 
       // Draw links
-      ctx.lineWidth = 1;
       simEdges.forEach((link) => {
         ctx.beginPath();
         ctx.moveTo(link.source.x, link.source.y);
         ctx.lineTo(link.target.x, link.target.y);
-        ctx.strokeStyle = 'rgba(113, 113, 122, 0.15)';
+        
+        let alpha = 0.08;
+        let lineWidth = 0.4;
+        if (activeNode) {
+          const isConnected = (link.source.name === activeNode.name || link.target.name === activeNode.name);
+          alpha = isConnected ? 0.35 : 0.02;
+          lineWidth = isConnected ? 0.75 : 0.2;
+        }
+
+        ctx.strokeStyle = `rgba(228, 228, 231, ${alpha})`;
+        ctx.lineWidth = lineWidth;
         ctx.stroke();
       });
 
@@ -215,24 +265,33 @@ export const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ nodes, edges }
       simNodes.forEach((node) => {
         ctx.beginPath();
         ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+        
+        let alpha = 1;
+        if (activeNode) {
+          alpha = connectedNodeNames.has(node.name) ? 1 : 0.15;
+        }
+
         ctx.fillStyle = node.color;
+        ctx.globalAlpha = alpha;
         ctx.fill();
 
-        ctx.lineWidth = 1.2;
+        ctx.lineWidth = 0.6;
         ctx.strokeStyle = '#09090b';
         ctx.stroke();
 
-        if (node === hoveredNode || node === selectedNode) {
+        ctx.globalAlpha = 1; // reset alpha
+
+        if (node === hovered || node === selected) {
           ctx.beginPath();
-          ctx.arc(node.x, node.y, node.radius + 3, 0, Math.PI * 2);
+          ctx.arc(node.x, node.y, node.radius + 3.5, 0, Math.PI * 2);
           ctx.strokeStyle = node.color;
-          ctx.lineWidth = 1;
+          ctx.lineWidth = 0.8;
           ctx.stroke();
         }
 
-        if (node.radius > 7 || node === hoveredNode || node === selectedNode) {
+        if (node === hovered || node === selected || (activeNode && connectedNodeNames.has(node.name))) {
           ctx.font = '9px monospace';
-          ctx.fillStyle = '#f4f4f5';
+          ctx.fillStyle = '#e4e4e7';
           ctx.fillText(node.name, node.x + node.radius + 4, node.y + 3);
         }
       });
@@ -257,6 +316,7 @@ export const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ nodes, edges }
         draggedNode.vy = 0;
         return;
       }
+
 
       let foundHover: SimNode | null = null;
       for (const node of simNodes) {
@@ -309,7 +369,7 @@ export const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ nodes, edges }
       }
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [nodes, edges, hoveredNode, selectedNode]);
+  }, [nodes, edges]);
 
   return (
     <div ref={containerRef} className="relative w-full rounded-xl border border-border bg-black/45 overflow-hidden shadow-inner">
