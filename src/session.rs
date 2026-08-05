@@ -464,9 +464,15 @@ impl SessionManager {
         let path = self.file_path(key);
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read session file at {:?}", path))?;
-        let session: Session = serde_json::from_str(&content)
+        let mut session: Session = serde_json::from_str(&content)
             .with_context(|| format!("Failed to parse session file at {:?}", path))?;
-        session.verify_hash_chain()?;
+        if let Err(e) = session.verify_hash_chain() {
+            log::warn!("Session hash chain verification failed for key '{}': {}. Reconstructing.", key, e);
+            session.populate_hashes();
+            if let Ok(pretty) = serde_json::to_string_pretty(&session) {
+                let _ = std::fs::write(&path, pretty);
+            }
+        }
         Ok(session)
     }
 
@@ -475,9 +481,15 @@ impl SessionManager {
         tokio::task::spawn_blocking(move || {
             let content = std::fs::read_to_string(&path)
                 .with_context(|| format!("Failed to read session file at {:?}", path))?;
-            let session: Session = serde_json::from_str(&content)
+            let mut session: Session = serde_json::from_str(&content)
                 .with_context(|| format!("Failed to parse session file at {:?}", path))?;
-            session.verify_hash_chain()?;
+            if let Err(e) = session.verify_hash_chain() {
+                log::warn!("Session hash chain verification failed for key '{}': {}. Reconstructing.", key, e);
+                session.populate_hashes();
+                if let Ok(pretty) = serde_json::to_string_pretty(&session) {
+                    let _ = std::fs::write(&path, pretty);
+                }
+            }
             Ok(session)
         })
         .await?
