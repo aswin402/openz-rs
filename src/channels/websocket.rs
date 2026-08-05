@@ -1385,6 +1385,7 @@ async fn fetch_real_session_history(
                 "role": msg.role,
                 "content": msg.content,
                 "timestamp": ts,
+                "extra": msg.extra,
             }));
         }
     }

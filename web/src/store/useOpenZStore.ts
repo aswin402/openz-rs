@@ -455,25 +455,107 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     wsService.on('session_history', (payload) => {
       if (payload.chat_id && Array.isArray(payload.messages)) {
-        const normalized: OpenZMessage[] = payload.messages.map((m: any) => {
-          const base: OpenZMessage = {
-            id: m.id || newMsgId('msg'),
-            role: m.role === 'user' || m.role === 'assistant' || m.role === 'tool' || m.role === 'system' ? m.role : 'assistant',
-            content: m.content || '',
-            timestamp: typeof m.timestamp === 'number' ? m.timestamp : Date.now(),
-          };
-          if (m.role === 'tool') {
-            base.toolCalls = [
-              {
-                id: newMsgId('tool'),
-                name: 'tool',
-                status: 'success',
-                output: m.content || '',
-              },
-            ];
+        const normalized: OpenZMessage[] = [];
+
+        for (let i = 0; i < payload.messages.length; i++) {
+          const m = payload.messages[i];
+          const role = m.role;
+
+          if (role === 'user') {
+            normalized.push({
+              id: m.id || `msg-${i}`,
+              role: 'user',
+              content: m.content || '',
+              timestamp: typeof m.timestamp === 'number' ? m.timestamp : Date.now(),
+            });
+          } else if (role === 'assistant') {
+            const toolCalls: ToolExecution[] = [];
+            if (m.extra && Array.isArray(m.extra.tool_calls)) {
+              m.extra.tool_calls.forEach((tc: any) => {
+                const tcName = tc.function?.name || tc.name || 'tool';
+                let tcArgs = tc.function?.arguments || tc.arguments || '';
+                try {
+                  if (typeof tcArgs === 'string' && tcArgs.trim().startsWith('{')) {
+                    tcArgs = JSON.parse(tcArgs);
+                  }
+                } catch (e) {}
+
+                toolCalls.push({
+                  id: tc.id || `tool-${i}-${tcName}`,
+                  name: tcName,
+                  args: tcArgs,
+                  status: 'success',
+                  output: '',
+                });
+              });
+            }
+
+            const reasoningContent = m.extra?.reasoning_content || undefined;
+
+            normalized.push({
+              id: m.id || `msg-${i}`,
+              role: 'assistant',
+              content: m.content || '',
+              timestamp: typeof m.timestamp === 'number' ? m.timestamp : Date.now(),
+              model: m.extra?.model || undefined,
+              reasoningContent,
+              toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+            });
+          } else if (role === 'tool') {
+            const toolCallId = m.extra?.tool_call_id;
+            const toolName = m.extra?.name || 'tool';
+
+            let lastAssistant: OpenZMessage | undefined;
+            for (let j = normalized.length - 1; j >= 0; j--) {
+              if (normalized[j].role === 'assistant') {
+                lastAssistant = normalized[j];
+                break;
+              }
+            }
+
+            if (lastAssistant) {
+              if (!lastAssistant.toolCalls) {
+                lastAssistant.toolCalls = [];
+              }
+
+              let matched = lastAssistant.toolCalls.find(
+                (tc) => (toolCallId && tc.id === toolCallId) || (!toolCallId && tc.name === toolName && !tc.output)
+              );
+
+              if (matched) {
+                matched.output = m.content || '';
+                if (m.content && (m.content.includes('"error"') || m.content.toLowerCase().startsWith('error:'))) {
+                  matched.status = 'error';
+                  matched.error = m.content;
+                }
+              } else {
+                lastAssistant.toolCalls.push({
+                  id: toolCallId || `tool-${i}`,
+                  name: toolName,
+                  status: m.content && (m.content.includes('"error"') || m.content.toLowerCase().startsWith('error:')) ? 'error' : 'success',
+                  output: m.content || '',
+                  error: m.content && (m.content.includes('"error"') || m.content.toLowerCase().startsWith('error:')) ? m.content : undefined,
+                });
+              }
+            } else {
+              normalized.push({
+                id: m.id || `msg-${i}`,
+                role: 'system',
+                content: `Tool Execution [${toolName}]: ${m.content}`,
+                timestamp: typeof m.timestamp === 'number' ? m.timestamp : Date.now(),
+                isNotice: true,
+              });
+            }
+          } else if (role === 'system') {
+            normalized.push({
+              id: m.id || `msg-${i}`,
+              role: 'system',
+              content: m.content || '',
+              timestamp: typeof m.timestamp === 'number' ? m.timestamp : Date.now(),
+            });
           }
-          return base;
-        });
+        }
+
         set({
           messages: { ...get().messages, [payload.chat_id]: normalized },
         });
