@@ -541,11 +541,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 }
                             };
 
-                            let session_key = if chat_id_clone.starts_with("ws:") {
-                                chat_id_clone.clone()
-                            } else {
-                                format!("ws:{}", chat_id_clone)
-                            };
+                            let session_key = resolve_session_key(&agent.session_manager, &chat_id_clone);
 
                             match agent
                                 .run(&content_str, &session_key)
@@ -1338,16 +1334,43 @@ async fn fetch_real_sessions_list(session_mgr: &crate::session::SessionManager) 
     })
 }
 
+fn resolve_session_key(session_mgr: &crate::session::SessionManager, chat_id: &str) -> String {
+    if chat_id.contains(':') {
+        return chat_id.to_string();
+    }
+    let safe_key = chat_id.replace(":", "_").replace("/", "_").replace("\\", "_");
+    let path = session_mgr.dir.join(format!("{}.json", safe_key));
+    if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(key) = val.get("key").and_then(|k| k.as_str()) {
+                    return key.to_string();
+                }
+            }
+        }
+        return chat_id.to_string();
+    }
+    if chat_id.starts_with("cli_") {
+        return format!("cli:{}", &chat_id[4..]);
+    }
+    if chat_id.starts_with("subagent_") {
+        return format!("subagent:{}", &chat_id[9..]);
+    }
+    if chat_id.starts_with("telegram_") {
+        return format!("telegram:{}", &chat_id[9..]);
+    }
+    if chat_id.starts_with("ws_") {
+        return format!("ws:{}", &chat_id[3..]);
+    }
+    format!("ws:{}", chat_id)
+}
+
 async fn fetch_real_session_history(
     session_mgr: &crate::session::SessionManager,
     chat_id: &str,
 ) -> serde_json::Value {
     let mut messages = Vec::new();
-    let load_key = if chat_id.starts_with("ws:") {
-        chat_id.to_string()
-    } else {
-        format!("ws:{}", chat_id)
-    };
+    let load_key = resolve_session_key(session_mgr, chat_id);
     if let Ok(session) = session_mgr.load(&load_key) {
         for (idx, msg) in session.messages.iter().enumerate() {
             let ts = msg
