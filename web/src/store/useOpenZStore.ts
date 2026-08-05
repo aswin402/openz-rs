@@ -97,6 +97,9 @@ const EMPTY_MEMORY: CognitiveMemoryStats = {
   relationsCount: 0,
   factsCount: 0,
   workingMemoryKeys: [],
+  nodes: [],
+  edges: [],
+  facts: [],
 };
 
 const EMPTY_MCP_STATS: McpStats = { loaded: 0, failed: 0, total: 0 };
@@ -572,6 +575,9 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
             workingMemoryKeys: Array.isArray(payload.stats.workingMemoryKeys)
               ? payload.stats.workingMemoryKeys
               : [],
+            nodes: Array.isArray(payload.nodes) ? payload.nodes : [],
+            edges: Array.isArray(payload.edges) ? payload.edges : [],
+            facts: Array.isArray(payload.facts) ? payload.facts : [],
           },
         });
       }

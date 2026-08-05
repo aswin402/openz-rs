@@ -1401,6 +1401,9 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
     let mut relations_count = 0i64;
     let mut facts_count = 0i64;
     let mut working_memory_keys: Vec<String> = Vec::new();
+    let mut nodes: Vec<serde_json::Value> = Vec::new();
+    let mut edges: Vec<serde_json::Value> = Vec::new();
+    let mut facts: Vec<serde_json::Value> = Vec::new();
 
     // graph_memory.db uses graph_nodes and graph_edges
     let graph_db = crate::config::loader::runtime_db_path("graph_memory.db");
@@ -1408,6 +1411,32 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
         if let Ok(conn) = rusqlite::Connection::open(&graph_db) {
             let _ = conn.query_row("SELECT COUNT(*) FROM graph_nodes", [], |r| r.get(0)).map(|c: i64| entities_count = c);
             let _ = conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |r| r.get(0)).map(|c: i64| relations_count = c);
+
+            // Fetch nodes
+            if let Ok(mut stmt) = conn.prepare("SELECT name, entity_type, observations FROM graph_nodes LIMIT 100") {
+                if let Ok(rows) = stmt.query_map([], |r| {
+                    Ok(serde_json::json!({
+                        "name": r.get::<_, String>(0)?,
+                        "entity_type": r.get::<_, String>(1)?,
+                        "observations": r.get::<_, String>(2)?,
+                    }))
+                }) {
+                    nodes = rows.filter_map(|r| r.ok()).collect();
+                }
+            }
+
+            // Fetch edges
+            if let Ok(mut stmt) = conn.prepare("SELECT from_name, to_name, relation_type FROM graph_edges LIMIT 200") {
+                if let Ok(rows) = stmt.query_map([], |r| {
+                    Ok(serde_json::json!({
+                        "from_name": r.get::<_, String>(0)?,
+                        "to_name": r.get::<_, String>(1)?,
+                        "relation_type": r.get::<_, String>(2)?,
+                    }))
+                }) {
+                    edges = rows.filter_map(|r| r.ok()).collect();
+                }
+            }
         }
     }
 
@@ -1420,6 +1449,20 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
             if let Ok(mut stmt) = conn.prepare("SELECT name FROM skills LIMIT 10") {
                 if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
                     working_memory_keys = rows.filter_map(|r| r.ok()).collect();
+                }
+            }
+
+            // Fetch facts
+            if let Ok(mut stmt) = conn.prepare("SELECT text, timestamp, tags, importance FROM cognitive_memory LIMIT 100") {
+                if let Ok(rows) = stmt.query_map([], |r| {
+                    Ok(serde_json::json!({
+                        "text": r.get::<_, String>(0)?,
+                        "timestamp": r.get::<_, String>(1)?,
+                        "tags": r.get::<_, String>(2)?,
+                        "importance": r.get::<_, f64>(3)?,
+                    }))
+                }) {
+                    facts = rows.filter_map(|r| r.ok()).collect();
                 }
             }
         }
@@ -1441,7 +1484,10 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
             "relationsCount": relations_count,
             "factsCount": facts_count,
             "workingMemoryKeys": working_memory_keys
-        }
+        },
+        "nodes": nodes,
+        "edges": edges,
+        "facts": facts
     })
 }
 

@@ -43,11 +43,33 @@ export interface OpenZSession {
   messageCount: number;
 }
 
+export interface CognitiveNode {
+  name: string;
+  entity_type: string;
+  observations: string;
+}
+
+export interface CognitiveEdge {
+  from_name: string;
+  to_name: string;
+  relation_type: string;
+}
+
+export interface CognitiveFact {
+  text: string;
+  timestamp: string;
+  tags: string;
+  importance: number;
+}
+
 export interface CognitiveMemoryStats {
   entitiesCount: number;
   relationsCount: number;
   factsCount: number;
   workingMemoryKeys: string[];
+  nodes?: CognitiveNode[];
+  edges?: CognitiveEdge[];
+  facts?: CognitiveFact[];
 }
 
 export interface McpServerInfo {
