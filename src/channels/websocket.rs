@@ -180,6 +180,7 @@ impl super::Channel for WsGateway {
 }
 
 const MAX_WS_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16 MB
+#[allow(dead_code)]
 const MAX_ATTACHMENT_BYTES: usize = 15 * 1024 * 1024; // 15 MB each
 
 /// Persist base64 attachment payloads (sent by the WebUI) to
@@ -189,6 +190,7 @@ const MAX_ATTACHMENT_BYTES: usize = 15 * 1024 * 1024; // 15 MB each
 /// layer (via `parse_multimodal_content`) turns them into vision image parts;
 /// everything else becomes a `📎 [name](file://…)` link the agent can read
 /// with its file/document tools.
+#[allow(dead_code)]
 async fn persist_attachments(attachments: &Value) -> Vec<String> {
     let mut refs = Vec::new();
     let Some(arr) = attachments.as_array() else {
@@ -437,6 +439,84 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
                                 let _ = tx.send(Message::Text(evt_str)).await;
                             }
+                            }
+                        if content.trim() == "/servers" {
+                            let servers = crate::shutdown::list_registered_children();
+                            let response = if servers.is_empty() {
+                                "No OpenZ-launched background servers running.".to_string()
+                            } else {
+                                let mut res = "OpenZ background servers:\n".to_string();
+                                for server in servers {
+                                    res.push_str(&format!(
+                                        "  #{} pid={} {} - {}\n",
+                                        server.id, server.pid, server.kind, server.command
+                                    ));
+                                }
+                                res.push_str("Use `/stop-server <id>` or `/stop-server all`.");
+                                res
+                            };
+                            let delta_evt = serde_json::json!({
+                                "event": "delta",
+                                "chat_id": chat_id,
+                                "content": response
+                            });
+                            if let Ok(evt_str) = serde_json::to_string(&delta_evt) {
+                                let _ = tx.send(Message::Text(evt_str)).await;
+                            }
+                            let turn_end_evt = serde_json::json!({
+                                "event": "turn_end",
+                                "chat_id": chat_id
+                            });
+                            if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
+                                let _ = tx.send(Message::Text(evt_str)).await;
+                            }
+                            continue;
+                        }
+                        if let Some(stripped) = content.trim().strip_prefix("/stop-server") {
+                            let target = stripped.trim();
+                            let response = if target.is_empty() {
+                                "Usage: /stop-server <id|all>".to_string()
+                            } else {
+                                match crate::shutdown::stop_registered_child(target) {
+                                    Ok(0) => "No matching background server found.".to_string(),
+                                    Ok(count) => format!("✓ Stopped {count} background server(s)."),
+                                    Err(e) => format!("✕ Failed to stop server: {e}"),
+                                }
+                            };
+                            let delta_evt = serde_json::json!({
+                                "event": "delta",
+                                "chat_id": chat_id,
+                                "content": response
+                            });
+                            if let Ok(evt_str) = serde_json::to_string(&delta_evt) {
+                                let _ = tx.send(Message::Text(evt_str)).await;
+                            }
+                            let turn_end_evt = serde_json::json!({
+                                "event": "turn_end",
+                                "chat_id": chat_id
+                            });
+                            if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
+                                let _ = tx.send(Message::Text(evt_str)).await;
+                            }
+                            continue;
+                        }
+                        if let Some(_stripped) = content.trim().strip_prefix("/device") {
+                            let response = "Device clipboard and app suggestions are currently managed locally. To audit device details, use the CLI `openz agent`.".to_string();
+                            let delta_evt = serde_json::json!({
+                                "event": "delta",
+                                "chat_id": chat_id,
+                                "content": response
+                            });
+                            if let Ok(evt_str) = serde_json::to_string(&delta_evt) {
+                                let _ = tx.send(Message::Text(evt_str)).await;
+                            }
+                            let turn_end_evt = serde_json::json!({
+                                "event": "turn_end",
+                                "chat_id": chat_id
+                            });
+                            if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
+                                let _ = tx.send(Message::Text(evt_str)).await;
+                            }
                             continue;
                         }
                         let agent = state.agent_loop.clone();
@@ -461,8 +541,14 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 }
                             };
 
+                            let session_key = if chat_id_clone.starts_with("ws:") {
+                                chat_id_clone.clone()
+                            } else {
+                                format!("ws:{}", chat_id_clone)
+                            };
+
                             match agent
-                                .run(&content_str, &format!("ws:{}", chat_id_clone))
+                                .run(&content_str, &session_key)
                                 .await
                             {
                                 Ok(res) => {
@@ -569,11 +655,32 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         });
                         let mcp_resp = fetch_real_mcp_servers(&config).await;
                         let mcp_servers = mcp_resp["servers"].clone();
+                        let subagents = crate::subagents::load_profiles()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|p| {
+                                let model_str = p.model.clone().unwrap_or_else(|| "auto".to_string());
+                                let parts: Vec<&str> = model_str.split('/').collect();
+                                let (provider, model) = if parts.len() > 1 {
+                                    (parts[0].to_string(), parts[1..].join("/"))
+                                } else {
+                                    ("auto".to_string(), model_str)
+                                };
+                                serde_json::json!({
+                                    "name": p.name,
+                                    "description": p.description,
+                                    "systemPrompt": p.system_prompt,
+                                    "model": model,
+                                    "provider": provider,
+                                })
+                            })
+                            .collect::<Vec<_>>();
                         let evt = serde_json::json!({
                             "event": "config_data",
                             "defaults": defaults,
                             "skills": skills,
                             "mcp_servers": mcp_servers,
+                            "subagents": subagents,
                             "version": env!("CARGO_PKG_VERSION"),
                         });
                         if let Ok(evt_str) = serde_json::to_string(&evt) {
@@ -671,6 +778,34 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 "failed": failed,
                                 "total": total,
                             },
+                        });
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "get_servers" => {
+                        let config = match state.live_config.read() {
+                            Ok(g) => g.clone(),
+                            Err(_) => state.agent_loop.config.clone(),
+                        };
+                        let evt = fetch_real_servers(&config).await;
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "stop_server" => {
+                        let target = envelope
+                            .get("target")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let result = match crate::shutdown::stop_registered_child(target) {
+                            Ok(count) => format!("Stopped {count} server(s) successfully."),
+                            Err(e) => format!("Failed to stop server: {e}"),
+                        };
+                        let evt = serde_json::json!({
+                            "event": "server_stopped",
+                            "target": target,
+                            "result": result,
                         });
                         if let Ok(evt_str) = serde_json::to_string(&evt) {
                             let _ = tx.send(Message::Text(evt_str)).await;
@@ -1208,7 +1343,12 @@ async fn fetch_real_session_history(
     chat_id: &str,
 ) -> serde_json::Value {
     let mut messages = Vec::new();
-    if let Ok(session) = session_mgr.load(chat_id) {
+    let load_key = if chat_id.starts_with("ws:") {
+        chat_id.to_string()
+    } else {
+        format!("ws:{}", chat_id)
+    };
+    if let Ok(session) = session_mgr.load(&load_key) {
         for (idx, msg) in session.messages.iter().enumerate() {
             let ts = msg
                 .timestamp
@@ -1236,20 +1376,38 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
     let mut entities_count = 0i64;
     let mut relations_count = 0i64;
     let mut facts_count = 0i64;
+    let mut working_memory_keys: Vec<String> = Vec::new();
 
-    let memory_db = crate::config::loader::runtime_db_path("memory.db");
-    if memory_db.exists() {
-        if let Ok(conn) = rusqlite::Connection::open(&memory_db) {
-            let _ = conn.query_row("SELECT COUNT(*) FROM facts", [], |r| r.get(0)).map(|c: i64| facts_count = c);
-        }
-    }
-
+    // graph_memory.db uses graph_nodes and graph_edges
     let graph_db = crate::config::loader::runtime_db_path("graph_memory.db");
     if graph_db.exists() {
         if let Ok(conn) = rusqlite::Connection::open(&graph_db) {
-            let _ = conn.query_row("SELECT COUNT(*) FROM entities", [], |r| r.get(0)).map(|c: i64| entities_count = c);
-            let _ = conn.query_row("SELECT COUNT(*) FROM relations", [], |r| r.get(0)).map(|c: i64| relations_count = c);
+            let _ = conn.query_row("SELECT COUNT(*) FROM graph_nodes", [], |r| r.get(0)).map(|c: i64| entities_count = c);
+            let _ = conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |r| r.get(0)).map(|c: i64| relations_count = c);
         }
+    }
+
+    // memory.db uses cognitive_memory table for stored facts/memories
+    let memory_db = crate::config::loader::runtime_db_path("memory.db");
+    if memory_db.exists() {
+        if let Ok(conn) = rusqlite::Connection::open(&memory_db) {
+            let _ = conn.query_row("SELECT COUNT(*) FROM cognitive_memory", [], |r| r.get(0)).map(|c: i64| facts_count = c);
+            // Fetch working memory keys from interaction_history or skills if available
+            if let Ok(mut stmt) = conn.prepare("SELECT name FROM skills LIMIT 10") {
+                if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
+                    working_memory_keys = rows.filter_map(|r| r.ok()).collect();
+                }
+            }
+        }
+    }
+
+    if working_memory_keys.is_empty() {
+        working_memory_keys = vec![
+            "active_workspace".to_string(),
+            "session_scope".to_string(),
+            "security_level".to_string(),
+            "caveman_mode".to_string(),
+        ];
     }
 
     serde_json::json!({
@@ -1258,7 +1416,7 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
             "entitiesCount": entities_count,
             "relationsCount": relations_count,
             "factsCount": facts_count,
-            "workingMemoryKeys": ["active_workspace", "session_scope", "security_level", "caveman_mode"]
+            "workingMemoryKeys": working_memory_keys
         }
     })
 }
@@ -1325,5 +1483,46 @@ async fn fetch_real_logs() -> serde_json::Value {
     serde_json::json!({
         "event": "logs_data",
         "logs": log_entries
+    })
+}
+
+async fn fetch_real_servers(config: &crate::config::schema::Config) -> serde_json::Value {
+    let servers = crate::shutdown::list_registered_children();
+    let mut list = Vec::new();
+    for s in servers {
+        list.push(serde_json::json!({
+            "id": s.id,
+            "pid": s.pid,
+            "kind": s.kind,
+            "command": s.command,
+        }));
+    }
+    let mut channels = Vec::new();
+    let tg = config.channels.telegram.as_ref();
+    let dc = config.channels.discord.as_ref();
+    let wa = config.channels.whatsapp.as_ref();
+
+    channels.push(serde_json::json!({
+        "name": "telegram",
+        "enabled": tg.map(|c| c.enabled).unwrap_or(false),
+        "status": if tg.map(|c| c.enabled).unwrap_or(false) { "configured" } else { "disabled" },
+        "token_configured": tg.map(|c| !c.bot_token.is_empty()).unwrap_or(false),
+    }));
+    channels.push(serde_json::json!({
+        "name": "discord",
+        "enabled": dc.map(|c| c.enabled).unwrap_or(false),
+        "status": if dc.map(|c| c.enabled).unwrap_or(false) { "configured" } else { "disabled" },
+        "token_configured": dc.map(|c| !c.bot_token.is_empty()).unwrap_or(false),
+    }));
+    channels.push(serde_json::json!({
+        "name": "whatsapp",
+        "enabled": wa.map(|c| c.enabled).unwrap_or(false),
+        "status": if wa.map(|c| c.enabled).unwrap_or(false) { "configured" } else { "disabled" },
+        "token_configured": wa.map(|c| !c.api_key.is_empty()).unwrap_or(false),
+    }));
+    serde_json::json!({
+        "event": "servers_list",
+        "servers": list,
+        "channels": channels
     })
 }

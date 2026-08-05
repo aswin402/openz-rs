@@ -1,4 +1,4 @@
-import React, { useLayoutEffect } from 'react';
+import React, { useLayoutEffect, useRef } from 'react';
 import { useThemeStore } from '../store/useThemeStore';
 
 interface ThemeProviderProps {
@@ -11,22 +11,43 @@ export function ThemeProvider({
   inlineTheme,
 }: ThemeProviderProps) {
   const { theme } = useThemeStore();
+  const isFirstMount = useRef(true);
 
   useLayoutEffect(() => {
     const root = window.document.documentElement;
 
-    root.classList.remove('light', 'dark');
+    const updateTheme = () => {
+      root.classList.remove('light', 'dark');
 
-    if (theme === 'system') {
-      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches
-        ? 'dark'
-        : 'light';
+      if (theme === 'system') {
+        const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark'
+          : 'light';
 
-      root.classList.add(systemTheme);
+        root.classList.add(systemTheme);
+        return;
+      }
+
+      root.classList.add(theme);
+    };
+
+    if (isFirstMount.current) {
+      updateTheme();
+      isFirstMount.current = false;
       return;
     }
 
-    root.classList.add(theme);
+    const supportsViewTransition = (document as any).startViewTransition !== undefined;
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (!supportsViewTransition || prefersReducedMotion) {
+      updateTheme();
+      return;
+    }
+
+    (document as any).startViewTransition(() => {
+      updateTheme();
+    });
   }, [theme]);
 
   return (

@@ -33,29 +33,35 @@ export const McpServersModal: React.FC = () => {
         </div>
 
         <div className="mt-4 space-y-2.5 text-xs">
-          {mcpServers.map((server) => (
-            <div
-              key={server.name}
-              className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/30 p-3"
-            >
-              <div>
-                <div className="font-semibold text-foreground flex items-center gap-2">
-                  {server.name}
-                  <span
-                    className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-normal ${STATUS_BADGE[server.status].cls}`}
-                  >
-                    <span className={`h-1.5 w-1.5 rounded-full ${STATUS_BADGE[server.status].dot} ${server.status === 'starting' ? 'animate-pulse' : ''}`} />
-                    {STATUS_BADGE[server.status].label}
-                  </span>
-                </div>
-                <div className="font-mono text-[11px] text-muted-foreground mt-1">{server.command}</div>
-              </div>
-              <div className="text-right">
-                <span className="font-bold text-amber-500 text-sm">{server.toolsCount}</span>
-                <div className="text-[10px] text-muted-foreground">Registered Tools</div>
-              </div>
+          {mcpServers.length === 0 ? (
+            <div className="py-6 text-center text-muted-foreground">
+              No external MCP servers configured. OpenZ uses its built-in native tools (filesystem, shell, semantic search, reasoning) by default.
             </div>
-          ))}
+          ) : (
+            mcpServers.map((server) => (
+              <div
+                key={server.name}
+                className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/30 p-3"
+              >
+                <div>
+                  <div className="font-semibold text-foreground flex items-center gap-2">
+                    {server.name}
+                    <span
+                      className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-normal ${STATUS_BADGE[server.status].cls}`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${STATUS_BADGE[server.status].dot} ${server.status === 'starting' ? 'animate-pulse' : ''}`} />
+                      {STATUS_BADGE[server.status].label}
+                    </span>
+                  </div>
+                  <div className="font-mono text-[11px] text-muted-foreground mt-1">{server.command}</div>
+                </div>
+                <div className="text-right">
+                  <span className="font-bold text-amber-500 text-sm">{server.toolsCount}</span>
+                  <div className="text-[10px] text-muted-foreground">Registered Tools</div>
+                </div>
+              </div>
+            ))
+          )}
         </div>
 
         <div className="mt-6 flex justify-end">

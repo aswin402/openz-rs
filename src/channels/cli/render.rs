@@ -486,40 +486,199 @@ pub fn print_session_history(session: &crate::session::Session) {
         return;
     }
     println!("{}=== Session History ==={}", COLOR_BOLD, COLOR_RESET);
+
+    // Build a map of tool_call_id -> (tool_name, tool_arguments)
+    let mut tool_calls_map = std::collections::HashMap::new();
     for msg in &session.messages {
-        let role_str = match msg.role.as_str() {
-            "user" => format!("{}◇ User:{}", COLOR_BOLD, COLOR_RESET),
-            "assistant" => format!("{}🤖 OpenZ:{}", EMERALD_GREEN, COLOR_RESET),
-            "tool" => format!("{}🛠 Tool:{}", AURA_GOLD, COLOR_RESET),
-            other => format!("{}{}:{}{}", AURA_SLATE, other, COLOR_BOLD, COLOR_RESET),
-        };
-        let content = msg.content.trim();
-        if !content.is_empty() {
-            println!("{} {}", role_str, COLOR_RESET);
-            print_colored_markdown(content);
-            println!();
-        } else if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
-            let names: Vec<String> = tool_calls
-                .iter()
-                .filter_map(|tc| {
+        if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
+            for tc in tool_calls {
+                if let (Some(id), Some(name)) = (
+                    tc.get("id").and_then(|v| v.as_str()),
                     tc.get("function")
                         .and_then(|f| f.get("name"))
-                        .and_then(|n| n.as_str())
-                })
-                .map(|n| n.to_string())
-                .collect();
-            if !names.is_empty() {
-                println!(
-                    "{} [Called tool(s): {}] {}",
-                    role_str,
-                    names.join(", "),
-                    COLOR_RESET
-                );
-            } else {
-                println!("{} [Called tool(s)] {}", role_str, COLOR_RESET);
+                        .and_then(|v| v.as_str()),
+                ) {
+                    let args = tc
+                        .get("function")
+                        .and_then(|f| f.get("arguments"))
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
+                    tool_calls_map.insert(id.to_string(), (name.to_string(), args));
+                }
             }
         }
     }
+
+    let mut first_user = true;
+    for msg in &session.messages {
+        let content = msg.content.trim();
+
+        match msg.role.as_str() {
+            "user" => {
+                if !content.is_empty() {
+                    if !first_user {
+                        println!(
+                            "{}────────────────────────────────────────────────────────────{}",
+                            LIGHT_WHITE, COLOR_RESET
+                        );
+                    }
+                    first_user = false;
+
+                    let lines: Vec<&str> = content.lines().collect();
+                    for (idx, line) in lines.iter().enumerate() {
+                        let prefix = if idx == 0 { "> " } else { "- " };
+                        println!("{}{}{}{}", COLOR_BOLD, AURA_SLATE, prefix, line);
+                    }
+                }
+            }
+            "assistant" => {
+                // 1. Print thoughts / reasoning_content if any
+                if let Some(reasoning_val) = msg.extra.get("reasoning_content") {
+                    if let Some(reasoning_str) = reasoning_val.as_str() {
+                        let trimmed_reasoning = reasoning_str.trim();
+                        if !trimmed_reasoning.is_empty() {
+                            println!("{}● {}Thought{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET);
+                            crate::agent::style::print_tree_monologue("  L ", trimmed_reasoning);
+                            println!();
+                        }
+                    }
+                }
+
+                // 2. Print assistant message content if any
+                if !content.is_empty() {
+                    print_colored_markdown(content);
+                    println!();
+                }
+
+            }
+            "tool" => {
+                let tool_call_id = msg
+                    .extra
+                    .get("tool_call_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let leaf_prefix = "  L ";
+
+                if let Some((name, args_val)) = tool_calls_map.get(tool_call_id) {
+                    if crate::agent::style::is_profile_subagent(name)
+                        || name == "parallel_research"
+                    {
+                        continue;
+                    }
+                    let parsed_args = if let Some(s) = args_val.as_str() {
+                        serde_json::from_str(s).unwrap_or(serde_json::Value::Null)
+                    } else {
+                        args_val.clone()
+                    };
+
+                    // Print tool call header
+                    let formatted_args =
+                        crate::agent::agent_loop::tool_execution::format_tool_args(name, &parsed_args);
+                    let title = crate::agent::style::get_tool_clean_name(name);
+                    let details = crate::agent::style::clean_tool_args_msg(
+                        name,
+                        &formatted_args,
+                    );
+
+                    if details.is_empty() {
+                        println!(
+                            "{}● {}{}{}{}{}",
+                            RED_ORANGE,
+                            COLOR_RESET,
+                            COLOR_BOLD,
+                            LIGHT_WHITE,
+                            title,
+                            COLOR_RESET
+                        );
+                    } else {
+                        println!(
+                            "{}● {}{}{}{} {}{}{}{}",
+                            RED_ORANGE,
+                            COLOR_RESET,
+                            COLOR_BOLD,
+                            LIGHT_WHITE,
+                            title,
+                            COLOR_RESET,
+                            AURA_SLATE,
+                            details,
+                            COLOR_RESET
+                        );
+                    }
+
+                    // Print security guard approval if sensitive
+                    if crate::agent::security::SecurityGuard::is_sensitive(name, &parsed_args) {
+                        println!(
+                            "{}> Authorize execution?: {}{}Approve (Allow once){}",
+                            COLOR_BOLD,
+                            COLOR_RESET,
+                            RED_ORANGE,
+                            COLOR_RESET
+                        );
+                    }
+
+                    let outcome_val: serde_json::Value =
+                        serde_json::from_str(content).unwrap_or_else(|_| {
+                            serde_json::json!({
+                                "status": "success",
+                                "output": content
+                            })
+                        });
+
+                    let summary = crate::agent::style::format_tool_outcome_summary(
+                        name,
+                        &parsed_args,
+                        &outcome_val,
+                    );
+
+                    let has_symbol = summary.contains('\u{2713}') || summary.contains('\u{2715}');
+
+                    if has_symbol {
+                        println!(
+                            "{}{}{}{}",
+                            AURA_SLATE, leaf_prefix, COLOR_RESET, summary
+                        );
+                    } else if name == "write_file"
+                        || name == "patch_file"
+                        || name == "replace_lines"
+                    {
+                        println!(
+                            "{}{}{}{}",
+                            AURA_SLATE, leaf_prefix, COLOR_RESET, summary
+                        );
+                    } else {
+                        println!(
+                            "{}{}{}✓ {}{}",
+                            AURA_SLATE, leaf_prefix, AURA_GREEN, summary, COLOR_RESET
+                        );
+                    }
+                } else {
+                    let name = msg
+                        .extra
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Tool");
+                    let summary = if content.len() > 100 {
+                        format!("{}...", &content[..100])
+                    } else {
+                        content.to_string()
+                    };
+                    println!(
+                        "{}{}{}✓ {}: {}{}",
+                        AURA_SLATE, leaf_prefix, AURA_GREEN, name, summary, COLOR_RESET
+                    );
+                }
+            }
+            other => {
+                if !content.is_empty() {
+                    println!(
+                        "{}{}:{}{} {}",
+                        AURA_SLATE, other, COLOR_BOLD, COLOR_RESET, content
+                    );
+                }
+            }
+        }
+    }
+
     println!(
         "{}────────────────────────────────────────────────────────────{}",
         LIGHT_WHITE, COLOR_RESET

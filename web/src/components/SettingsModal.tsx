@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
-import { X, Settings, Link, Key, Zap, Radio, Save, Cpu } from 'lucide-react';
+import { X, Settings, Link, Key, Zap, Radio, Save, Cpu, ShieldAlert } from 'lucide-react';
 
 export const SettingsModal: React.FC = () => {
   const isSettingsOpen = useOpenZStore((s) => s.isSettingsOpen);
@@ -71,8 +71,9 @@ export const SettingsModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-      <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between pb-4 border-b border-border/50">
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-card shadow-2xl animate-in fade-in zoom-in-95 duration-150 max-h-[85vh] flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 pb-4 border-b border-border/50 shrink-0">
           <div className="flex items-center gap-2 text-foreground font-semibold text-base">
             <Settings className="h-5 w-5 text-amber-500" /> Gateway & Agent Settings
           </div>
@@ -84,10 +85,11 @@ export const SettingsModal: React.FC = () => {
           </button>
         </div>
 
-        <div className="mt-4 space-y-4 text-xs">
+        {/* Scrollable Body */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-5 text-xs">
           {/* WebSocket Server Endpoint */}
           <div>
-            <label className="mb-1 block font-medium text-foreground flex items-center gap-1.5">
+            <label className="mb-1 block font-medium text-foreground flex items-center gap-1.5 select-none">
               <Link className="h-3.5 w-3.5 text-amber-500" /> OpenZ Gateway WebSocket URL
             </label>
             <input
@@ -101,7 +103,7 @@ export const SettingsModal: React.FC = () => {
 
           {/* Gateway Token */}
           <div>
-            <label className="mb-1 block font-medium text-foreground flex items-center gap-1.5">
+            <label className="mb-1 block font-medium text-foreground flex items-center gap-1.5 select-none">
               <Key className="h-3.5 w-3.5 text-amber-500" /> Gateway Authorization Token (OPENZ_GATEWAY_TOKEN)
             </label>
             <input
@@ -117,7 +119,7 @@ export const SettingsModal: React.FC = () => {
           {settings ? (
             <>
               <div className="pt-1">
-                <div className="mb-2 flex items-center gap-1.5 font-semibold text-foreground">
+                <div className="mb-3 flex items-center gap-1.5 font-semibold text-foreground border-b border-border/40 pb-1.5 select-none">
                   <Cpu className="h-3.5 w-3.5 text-amber-500" /> Agent Defaults
                 </div>
                 <div className="space-y-3">
@@ -165,7 +167,7 @@ export const SettingsModal: React.FC = () => {
                         step="0.1"
                         min="0"
                         max="2"
-                        value={Number(form.temperature ?? settings.temperature)}
+                        value={form.temperature !== undefined ? Math.round(Number(form.temperature) * 100) / 100 : Math.round(Number(settings.temperature) * 100) / 100}
                         onChange={(e) => setField('temperature', Number(e.target.value))}
                         className="w-full rounded-lg border border-border bg-muted/40 p-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
                       />
@@ -240,7 +242,7 @@ export const SettingsModal: React.FC = () => {
               <div className="pt-2 space-y-3">
                 <div className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/20 p-3">
                   <div>
-                    <div className="font-semibold text-foreground flex items-center gap-1.5">
+                    <div className="font-semibold text-foreground flex items-center gap-1.5 select-none">
                       <Zap className="h-3.5 w-3.5 text-amber-500" /> Caveman Terseness Mode
                     </div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">
@@ -266,7 +268,7 @@ export const SettingsModal: React.FC = () => {
 
                 <div className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/20 p-3">
                   <div>
-                    <div className="font-semibold text-foreground flex items-center gap-1.5">
+                    <div className="font-semibold text-foreground flex items-center gap-1.5 select-none">
                       <Radio className="h-3.5 w-3.5 text-amber-500" /> Real-Time Response Streaming
                     </div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">
@@ -287,16 +289,41 @@ export const SettingsModal: React.FC = () => {
                     />
                   </button>
                 </div>
+
+                <div className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/20 p-3">
+                  <div>
+                    <div className="font-semibold text-foreground flex items-center gap-1.5 select-none">
+                      <ShieldAlert className="h-3.5 w-3.5 text-amber-500" /> Linux seccomp BPF Sandbox
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">
+                      Restricts subprocess syscalls to block raw network access and loading modules
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => updateSettings({ enable_sandbox: !settings.enable_sandbox })}
+                    aria-pressed={settings.enable_sandbox}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      settings.enable_sandbox ? 'bg-amber-500' : 'bg-muted'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                        settings.enable_sandbox ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
             </>
           ) : (
-            <div className="rounded-lg border border-border/40 bg-muted/20 p-3 text-[11px] text-muted-foreground">
+            <div className="rounded-lg border border-border/40 bg-muted/20 p-3 text-[11px] text-muted-foreground select-none">
               Agent defaults are not loaded yet — they appear once the gateway responds.
             </div>
           )}
         </div>
 
-        <div className="mt-6 flex justify-end gap-2">
+        {/* Footer Buttons */}
+        <div className="flex justify-end gap-2.5 p-6 pt-4 border-t border-border/50 bg-muted/20 shrink-0">
           <button
             onClick={() => setIsSettingsOpen(false)}
             className="rounded-lg border border-border px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted"
@@ -305,7 +332,7 @@ export const SettingsModal: React.FC = () => {
           </button>
           <button
             onClick={handleSave}
-            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2 text-xs font-semibold text-white shadow-md hover:opacity-90"
+            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2 text-xs font-semibold text-white shadow-md hover:opacity-90 transition duration-150 active:scale-95"
           >
             <Save className="h-3.5 w-3.5" /> Save & Apply
           </button>

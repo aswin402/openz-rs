@@ -98,6 +98,7 @@ export const ChatInput: React.FC = () => {
 
   return (
     <div className="relative w-full max-w-3xl mx-auto px-4 pb-4">
+      {/* Fade gradient shadow above the input - removed */}
       {/* Slash Commands Suggestion Popover */}
       {showCommands && filteredCmds.length > 0 && (
         <div className="absolute bottom-full left-4 right-4 mb-2 max-h-56 overflow-y-auto rounded-xl border border-border bg-card/95 p-1.5 shadow-xl backdrop-blur-md z-30">

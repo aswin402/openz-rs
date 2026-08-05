@@ -1,6 +1,6 @@
 import React from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
-import { Sparkles, Code2, Search, Brain, FileText } from 'lucide-react';
+import { Code2, Search, Brain, FileText } from 'lucide-react';
 
 export const HeroWelcome: React.FC = () => {
   const sendMessage = useOpenZStore((s) => s.sendMessage);

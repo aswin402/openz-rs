@@ -13,6 +13,10 @@ import type {
   AgentDefaultsConfig,
   SlashCommand,
   AgentStatus,
+  BackgroundServerInfo,
+  SkillInfo,
+  SubagentInfo,
+  ChannelConfigInfo,
 } from '../types';
 import { wsService } from '../services/websocket';
 
@@ -55,6 +59,7 @@ interface OpenZState {
   isLogsOpen: boolean;
   isMcpsOpen: boolean;
   isSettingsOpen: boolean;
+  isServersOpen: boolean;
   setIsSidebarOpen: (open: boolean) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setActiveView: (view: WorkspaceView) => void;
@@ -62,12 +67,17 @@ interface OpenZState {
   setIsLogsOpen: (open: boolean) => void;
   setIsMcpsOpen: (open: boolean) => void;
   setIsSettingsOpen: (open: boolean) => void;
+  setIsServersOpen: (open: boolean) => void;
 
   // Memory & Logs State (real event payloads)
   cognitiveStats: CognitiveMemoryStats;
   mcpServers: McpServerInfo[];
   mcpStats: McpStats;
   logs: LogEntry[];
+  servers: BackgroundServerInfo[];
+  skills: SkillInfo[];
+  subagents: SubagentInfo[];
+  channels: ChannelConfigInfo[];
 
   // Actions
   init: () => void;
@@ -78,6 +88,8 @@ interface OpenZState {
   sendMessage: (content: string) => void;
   stopTurn: () => void;
   handleSecurityChoice: (reqId: string, choice: 'approve' | 'deny') => void;
+  requestServers: () => void;
+  stopServer: (id: string) => void;
 }
 
 const EMPTY_MEMORY: CognitiveMemoryStats = {
@@ -122,11 +134,16 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   isLogsOpen: false,
   isMcpsOpen: false,
   isSettingsOpen: false,
+  isServersOpen: false,
 
   cognitiveStats: EMPTY_MEMORY,
   mcpServers: [],
   mcpStats: EMPTY_MCP_STATS,
   logs: [],
+  servers: [],
+  skills: [],
+  subagents: [],
+  channels: [],
 
   setIsSidebarOpen: (open) => set({ isSidebarOpen: open }),
   setSidebarCollapsed: (collapsed) => {
@@ -138,6 +155,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   setIsLogsOpen: (open) => set({ isLogsOpen: open }),
   setIsMcpsOpen: (open) => set({ isMcpsOpen: open }),
   setIsSettingsOpen: (open) => set({ isSettingsOpen: open }),
+  setIsServersOpen: (open) => set({ isServersOpen: open }),
 
   setWsConfig: (url, token) => {
     set({ wsUrl: url, wsToken: token });
@@ -385,8 +403,20 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       wsService.requestSessions();
     });
 
-    wsService.on('stopped', () => {
+    wsService.on('stopped', (payload: any) => {
       set({ isStreaming: false });
+      const chatId = (payload && payload.chat_id) || get().activeChatId;
+      const chatMessages = get().messages[chatId] || [];
+      const lastMsg = chatMessages[chatMessages.length - 1];
+      if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
+        const updatedMsg = { ...lastMsg, isStreaming: false };
+        set({
+          messages: {
+            ...get().messages,
+            [chatId]: [...chatMessages.slice(0, -1), updatedMsg],
+          },
+        });
+      }
     });
 
     // ----- Data events (replace every hardcoded value) -----
@@ -486,6 +516,19 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       }
     });
 
+    wsService.on('servers_list', (payload) => {
+      if (Array.isArray(payload.servers)) {
+        set({ servers: payload.servers });
+      }
+      if (Array.isArray(payload.channels)) {
+        set({ channels: payload.channels });
+      }
+    });
+
+    wsService.on('server_stopped', () => {
+      wsService.requestServers();
+    });
+
     wsService.on('models_list', (payload) => {
       if (Array.isArray(payload.providers)) {
         set({ providers: payload.providers });
@@ -514,6 +557,12 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       }
       if (Array.isArray(payload.mcp_servers)) {
         set({ mcpServers: payload.mcp_servers });
+      }
+      if (Array.isArray(payload.skills)) {
+        set({ skills: payload.skills });
+      }
+      if (Array.isArray(payload.subagents)) {
+        set({ subagents: payload.subagents });
       }
     });
 
@@ -558,6 +607,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       set({ isStreaming: false });
       const chatId = payload.chat_id || get().activeChatId;
       const chatMessages = get().messages[chatId] || [];
+      const lastMsg = chatMessages[chatMessages.length - 1];
       const errorMsg: OpenZMessage = {
         id: newMsgId('err'),
         role: 'assistant',
@@ -566,12 +616,46 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
         isStreaming: false,
         isNotice: true,
       };
-      set({
-        messages: { ...get().messages, [chatId]: [...chatMessages, errorMsg] },
-      });
+
+      if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming && !lastMsg.content && !lastMsg.reasoningContent) {
+        // Replace empty placeholder with error
+        set({
+          messages: {
+            ...get().messages,
+            [chatId]: [...chatMessages.slice(0, -1), errorMsg],
+          },
+        });
+      } else {
+        // Otherwise append/update
+        if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
+          const updatedMsg = {
+            ...lastMsg,
+            isStreaming: false,
+            content: lastMsg.content + `\n\n⚠️ **Error**: ${payload.detail || 'Gateway error occurred.'}`,
+          };
+          set({
+            messages: {
+              ...get().messages,
+              [chatId]: [...chatMessages.slice(0, -1), updatedMsg],
+            },
+          });
+        } else {
+          set({
+            messages: { ...get().messages, [chatId]: [...chatMessages, errorMsg] },
+          });
+        }
+      }
     });
 
     wsService.connect();
+  },
+
+  requestServers: () => {
+    wsService.requestServers();
+  },
+
+  stopServer: (id) => {
+    wsService.stopServer(id);
   },
 
   selectSession: (chatId) => {
@@ -621,9 +705,18 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       timestamp: Date.now(),
     };
 
+    const assistantPlaceholder: OpenZMessage = {
+      id: newMsgId('msg-assistant'),
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      isStreaming: true,
+      model: get().activeModel || undefined,
+    };
+
     const nextMessages = {
       ...get().messages,
-      [chatId]: [...chatMessages, userMsg],
+      [chatId]: [...chatMessages, userMsg, assistantPlaceholder],
     };
     set({ messages: nextMessages, isStreaming: true });
 
@@ -632,9 +725,10 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     } catch (err: any) {
       set({ isStreaming: false });
       const errMsgs = {
-        ...nextMessages,
+        ...get().messages,
         [chatId]: [
-          ...nextMessages[chatId],
+          ...chatMessages,
+          userMsg,
           {
             id: newMsgId('err'),
             role: 'assistant' as const,

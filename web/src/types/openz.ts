@@ -126,3 +126,30 @@ export type ConnectionStatus =
   | 'connected'
   | 'unauthorized'
   | 'error';
+
+export interface BackgroundServerInfo {
+  id: string;
+  pid: number;
+  kind: string;
+  command: string;
+}
+
+export interface SkillInfo {
+  name: string;
+  content: string;
+}
+
+export interface SubagentInfo {
+  name: string;
+  description: string;
+  systemPrompt: string;
+  model: string;
+  provider: string;
+}
+
+export interface ChannelConfigInfo {
+  name: string;
+  enabled: boolean;
+  status: string;
+  token_configured: boolean;
+}

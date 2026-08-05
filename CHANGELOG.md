@@ -1,10 +1,23 @@
-### v0.0.117 (Latest Release)
+### v0.0.119 (Latest Release)
+**WebUI & TUI Layout Real-Time Alignment:**
+- **TUI Session History Visual Alignment**: Upgraded the session history printer (`print_session_history` in `render.rs`) to format loaded chat logs identically to active live TUI sessions—displaying user prompts (`> ` and `- ` prefixes), formatting thoughts (`● Thought`), interleaving tool call headers (`● Bash ...`), re-injecting interactive authorization prompts (`> Authorize execution?: Approve (Allow once)`), and formatting outcome checkmarks cleanly without double symbols.
+- **WebUI Real-Time Pages**: Wired real-time data for "Skills" and "Agents" views, loading active guidelines and subagent configurations directly from the backend. Fixed the Background Bots & Servers modal configuration status checks for Telegram, Discord, and WhatsApp, and added descriptive empty fallbacks for MCP servers.
+- **WebUI Layout Tweaks**: Added smooth rounded corners (`rounded-lg`) to sidebar selection/hover highlights. Fixed the settings dialog scrollbar clipping issue by making the middle form body scrollable and keeping the modal container border clean. Fixed float precision display for settings values (e.g. Temperature).
+
+### v0.0.118
+**WebUI Layout & Scrollbar track Fixes:**
+- **Double Scrollbar Reset**: Added standard full-viewport reset (`margin: 0; padding: 0; overflow: hidden; height: 100%; width: 100%;`) to `html` and `body` base CSS rules, preventing unexpected browser default scrollbars from appearing on full-screen layouts.
+- **Scrollbar Color Evaluation**: Wrapped raw oklch custom properties (like `var(--border)` and `var(--muted-foreground)`) inside `oklch()` calls in base scrollbar declarations. This fixes invalid CSS rules, restoring transparent scrollbar tracks and styled scrollbar thumbs.
+- **WebSocket Channel Cleanup**: Removed unused mutable variables in `websocket.rs` command parsing for `/servers` routing.
+
+### v0.0.117
 **WebUI Optimization & Smooth Animations:**
 - **Smooth Sidebar Transitions**: Refactored the collapse/expand animations in the left menubar (Sidebar). Nav links, settings, and badges now fade and contract using `opacity` and `max-width` transitions rather than disappearing abruptly.
 - **Icon Centering**: The "+ New Session", "Clear Active Session", and nav links now transition their padding-left to `20px` when collapsed, centering their icons perfectly on the 68px rail.
 - **Clean Header Style**: Removed the permanent brand logo from the sidebar header. Now it only shows the toggle button when collapsed, and displays a styled "OpenZ Agent 🦊" next to the button when expanded.
 - **Top Header Removal**: Removed the top header completely. The theme toggle has been moved to the sidebar footer (under Settings), and the model selector was removed to declutter the UI.
 - **Mobile Sidebar Toggle**: Added a floating hamburger menu button on mobile views to allow opening the sidebar drawer.
+
 
 ### v0.0.116
 **Ratatui OpenZ TUI Integration & Command Routing:**

@@ -6,11 +6,13 @@ import { ChatInput } from './components/ChatInput';
 import { HeroWelcome } from './components/HeroWelcome';
 import { DashboardView } from './components/DashboardView';
 import { KnowledgeView } from './components/KnowledgeView';
-import { WorkspacePlaceholder } from './components/WorkspacePlaceholder';
+import { SkillsView } from './components/SkillsView';
+import { AgentsView } from './components/AgentsView';
 import { CognitiveMemoryModal } from './components/CognitiveMemoryModal';
 import { LogsDrawer } from './components/LogsDrawer';
 import { McpServersModal } from './components/McpServersModal';
 import { SettingsModal } from './components/SettingsModal';
+import { ServersModal } from './components/ServersModal';
 import { Menu } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -20,16 +22,13 @@ export const App: React.FC = () => {
   const setIsSidebarOpen = useOpenZStore((s) => s.setIsSidebarOpen);
   const messages = useOpenZStore((s) => s.messages);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const activeMessages = messages[activeChatId] || [];
 
   useEffect(() => {
     init();
   }, [init]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [activeMessages]);
 
   const renderWorkspace = () => {
     switch (activeView) {
@@ -38,9 +37,9 @@ export const App: React.FC = () => {
       case 'knowledge':
         return <KnowledgeView />;
       case 'agents':
-        return <WorkspacePlaceholder kind="agents" />;
+        return <AgentsView />;
       case 'skills':
-        return <WorkspacePlaceholder kind="skills" />;
+        return <SkillsView />;
       default:
         return null;
     }
@@ -66,9 +65,9 @@ export const App: React.FC = () => {
 
 
         {activeView === 'chats' ? (
-          <>
+          <div className="relative flex-1 overflow-hidden">
             {/* Message Stream Scroll Area */}
-            <div className="flex-1 overflow-y-auto px-4 py-6">
+            <div ref={scrollContainerRef} className="h-full overflow-y-auto px-4 py-6 pb-36">
               <div className="mx-auto max-w-3xl space-y-4">
                 {activeMessages.length === 0 ? (
                   <HeroWelcome />
@@ -79,9 +78,15 @@ export const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Floating Bottom Input Bar */}
-            <ChatInput />
-          </>
+            {/* Floating Bottom Input Bar — floats over messages, transparent sides */}
+            <div className="absolute bottom-0 left-0 right-0">
+              <ChatInput />
+              {/* Shadow strip in the gap below the input card */}
+              <div className="mx-auto max-w-3xl px-6">
+                <div className="h-5 rounded-b-2xl bg-black/60 blur-2xl -mt-2 pointer-events-none" />
+              </div>
+            </div>
+          </div>
         ) : (
           <div className="flex-1 overflow-y-auto">{renderWorkspace()}</div>
         )}
@@ -92,6 +97,7 @@ export const App: React.FC = () => {
       <LogsDrawer />
       <McpServersModal />
       <SettingsModal />
+      <ServersModal />
     </div>
   );
 };

@@ -18,10 +18,9 @@ import {
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
-  ChevronsLeft,
-  ChevronsRight,
   Sun,
   Moon,
+  Server,
 } from 'lucide-react';
 
 interface NavItem {
@@ -41,15 +40,10 @@ export const Sidebar: React.FC = () => {
   const newSession = useOpenZStore((s) => s.newSession);
   const deleteSession = useOpenZStore((s) => s.deleteSession);
   const clearActiveSession = useOpenZStore((s) => s.clearActiveSession);
-  const status = useOpenZStore((s) => s.status);
   const connectionStatus = useOpenZStore((s) => s.connectionStatus);
   const mcpStats = useOpenZStore((s) => s.mcpStats);
   const logs = useOpenZStore((s) => s.logs);
   const cognitiveStats = useOpenZStore((s) => s.cognitiveStats);
-
-  const activeModel = useOpenZStore((s) => s.activeModel);
-  const providers = useOpenZStore((s) => s.providers);
-  const setActiveModel = useOpenZStore((s) => s.setActiveModel);
 
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
@@ -64,11 +58,7 @@ export const Sidebar: React.FC = () => {
     setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
   };
 
-  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setActiveModel(e.target.value);
-  };
 
-  const groups = providers.filter((p) => p.models.length > 0);
 
   const isSidebarOpen = useOpenZStore((s) => s.isSidebarOpen);
   const setIsSidebarOpen = useOpenZStore((s) => s.setIsSidebarOpen);
@@ -80,6 +70,8 @@ export const Sidebar: React.FC = () => {
   const setIsLogsOpen = useOpenZStore((s) => s.setIsLogsOpen);
   const setIsMcpsOpen = useOpenZStore((s) => s.setIsMcpsOpen);
   const setIsSettingsOpen = useOpenZStore((s) => s.setIsSettingsOpen);
+  const setIsServersOpen = useOpenZStore((s) => s.setIsServersOpen);
+  const servers = useOpenZStore((s) => s.servers);
 
   const go = (fn: () => void) => {
     fn();
@@ -88,7 +80,7 @@ export const Sidebar: React.FC = () => {
 
   // Label/decoration visibility: hidden on desktop when the rail is collapsed,
   // always visible on mobile (the drawer is full-width when opened).
-  const lbl = collapsed ? 'md:hidden' : '';
+
 
   const workspaceItems: NavItem[] = [
     {
@@ -151,6 +143,17 @@ export const Sidebar: React.FC = () => {
     },
     {
       key: 'dashboard',
+      label: 'Background Bots',
+      icon: Server,
+      action: () => {
+        setIsServersOpen(true);
+        wsService.requestServers();
+      },
+      openPanel: true,
+      badge: servers.length > 0 ? String(servers.length) : undefined,
+    },
+    {
+      key: 'dashboard',
       label: 'Logs',
       icon: ScrollText,
       action: () => {
@@ -185,7 +188,7 @@ export const Sidebar: React.FC = () => {
           key={item.label}
           onClick={() => go(item.action)}
           className={cn(
-            'group relative flex w-full items-center text-[13px] transition-all duration-300 ease-in-out',
+            'group relative flex w-full items-center rounded-lg text-[13px] transition-all duration-300 ease-in-out',
             collapsed ? 'md:pl-[20px] md:pr-0 md:gap-0' : 'md:pl-2.5 md:pr-2.5 md:gap-2.5',
             isActive
               ? 'bg-amber-500/15 font-medium text-amber-400'

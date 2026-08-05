@@ -177,6 +177,14 @@ export class OpenZWebSocketService {
     this.send({ type: 'get_logs' });
   }
 
+  public requestServers() {
+    this.send({ type: 'get_servers' });
+  }
+
+  public stopServer(target: string) {
+    this.send({ type: 'stop_server', target });
+  }
+
   // ---- Realtime data commands (replaces hardcoded frontend values) ----
 
   /** Fetch providers + model list, active provider and active model. */
