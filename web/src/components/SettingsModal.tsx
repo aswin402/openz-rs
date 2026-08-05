@@ -1,6 +1,62 @@
 import React, { useState, useEffect } from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
-import { X, Settings, Link, Key, Zap, Radio, Save, Cpu, ShieldAlert } from 'lucide-react';
+import { X, Settings, Link, Key, Zap, Radio, Save, Cpu, ShieldAlert, ChevronUp, ChevronDown } from 'lucide-react';
+
+interface NumberInputProps {
+  label: string;
+  value: number;
+  onChange: (val: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+const NumberInput: React.FC<NumberInputProps> = ({ label, value, onChange, min = 1, max, step = 1 }) => {
+  const handleIncrement = () => {
+    const newVal = value + step;
+    if (max !== undefined && newVal > max) return;
+    onChange(Number(newVal.toFixed(2)));
+  };
+
+  const handleDecrement = () => {
+    const newVal = value - step;
+    if (min !== undefined && newVal < min) return;
+    onChange(Number(newVal.toFixed(2)));
+  };
+
+  return (
+    <div>
+      <label className="mb-1 block font-medium text-foreground">{label}</label>
+      <div className="relative flex items-center">
+        <input
+          type="number"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="w-full rounded-lg border border-border bg-muted/40 p-2.5 pr-8 text-xs text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-amber-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        />
+        <div className="absolute right-1.5 flex flex-col gap-0.5 select-none">
+          <button
+            type="button"
+            onClick={handleIncrement}
+            className="flex h-3.5 w-4 items-center justify-center rounded-sm bg-muted/50 hover:bg-amber-500 hover:text-white text-muted-foreground/80 transition-colors"
+          >
+            <ChevronUp className="h-2 w-2" strokeWidth={3} />
+          </button>
+          <button
+            type="button"
+            onClick={handleDecrement}
+            className="flex h-3.5 w-4 items-center justify-center rounded-sm bg-muted/50 hover:bg-amber-500 hover:text-white text-muted-foreground/80 transition-colors"
+          >
+            <ChevronDown className="h-2 w-2" strokeWidth={3} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export const SettingsModal: React.FC = () => {
   const isSettingsOpen = useOpenZStore((s) => s.isSettingsOpen);
@@ -160,58 +216,42 @@ export const SettingsModal: React.FC = () => {
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="mb-1 block font-medium text-foreground">Temperature</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        max="2"
-                        value={form.temperature !== undefined ? Math.round(Number(form.temperature) * 100) / 100 : Math.round(Number(settings.temperature) * 100) / 100}
-                        onChange={(e) => setField('temperature', Number(e.target.value))}
-                        className="w-full rounded-lg border border-border bg-muted/40 p-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block font-medium text-foreground">Max Tokens</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={Number(form.max_tokens ?? settings.max_tokens)}
-                        onChange={(e) => setField('max_tokens', Number(e.target.value))}
-                        className="w-full rounded-lg border border-border bg-muted/40 p-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block font-medium text-foreground">Max Messages</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={Number(form.max_messages ?? settings.max_messages)}
-                        onChange={(e) => setField('max_messages', Number(e.target.value))}
-                        className="w-full rounded-lg border border-border bg-muted/40 p-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block font-medium text-foreground">Max Tool Iterations</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={Number(form.max_tool_iterations ?? settings.max_tool_iterations)}
-                        onChange={(e) => setField('max_tool_iterations', Number(e.target.value))}
-                        className="w-full rounded-lg border border-border bg-muted/40 p-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-1 block font-medium text-foreground">Tool Timeout (sec)</label>
-                      <input
-                        type="number"
-                        min="1"
-                        value={Number(form.tool_timeout_secs ?? settings.tool_timeout_secs)}
-                        onChange={(e) => setField('tool_timeout_secs', Number(e.target.value))}
-                        className="w-full rounded-lg border border-border bg-muted/40 p-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
-                      />
-                    </div>
+                    <NumberInput
+                      label="Temperature"
+                      step={0.1}
+                      min={0}
+                      max={2}
+                      value={form.temperature !== undefined ? Math.round(Number(form.temperature) * 100) / 100 : Math.round(Number(settings.temperature) * 100) / 100}
+                      onChange={(val) => setField('temperature', val)}
+                    />
+                    <NumberInput
+                      label="Max Tokens"
+                      min={1}
+                      step={1}
+                      value={Number(form.max_tokens ?? settings.max_tokens)}
+                      onChange={(val) => setField('max_tokens', val)}
+                    />
+                    <NumberInput
+                      label="Max Messages"
+                      min={1}
+                      step={1}
+                      value={Number(form.max_messages ?? settings.max_messages)}
+                      onChange={(val) => setField('max_messages', val)}
+                    />
+                    <NumberInput
+                      label="Max Tool Iterations"
+                      min={1}
+                      step={1}
+                      value={Number(form.max_tool_iterations ?? settings.max_tool_iterations)}
+                      onChange={(val) => setField('max_tool_iterations', val)}
+                    />
+                    <NumberInput
+                      label="Tool Timeout (sec)"
+                      min={1}
+                      step={1}
+                      value={Number(form.tool_timeout_secs ?? settings.tool_timeout_secs)}
+                      onChange={(val) => setField('tool_timeout_secs', val)}
+                    />
                     <div>
                       <label className="mb-1 block font-medium text-foreground">Security Mode</label>
                       <select

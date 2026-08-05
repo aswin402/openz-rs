@@ -276,3 +276,26 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(156, 163, 175, 0.4) !important;
 }
+
+/* Premium styled native selects */
+select {
+  appearance: none !important;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%23f59e0b' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m6 8 4 4 4-4'/%3E%3C/svg%3E") !important;
+  background-position: right 0.75rem center !important;
+  background-repeat: no-repeat !important;
+  background-size: 1.25em 1.25em !important;
+  padding-right: 2.5rem !important;
+}
+
+select option, select optgroup {
+  background-color: #1e1e24 !important;
+  color: #f3f4f6 !important;
+  font-family: inherit !important;
+  font-size: 0.75rem !important;
+  padding: 0.5rem !important;
+}
+
+.dark select option, .dark select optgroup {
+  background-color: #16161a !important;
+  color: #f4f4f5 !important;
+}
