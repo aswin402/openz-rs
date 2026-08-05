@@ -217,12 +217,12 @@ export class OpenZWebSocketService {
     this.send({ type: 'get_config' });
   }
 
-  /**
-   * Hot-edit agent defaults via the backend. Only keys present in `patch`
-   * are applied and persisted to the config file.
-   */
   public updateConfig(patch: Record<string, unknown>) {
     this.send({ type: 'set_config', defaults: patch });
+  }
+
+  public sendSetConfig(data: { defaults?: any; providers?: any; channels?: any }) {
+    this.send({ type: 'set_config', ...data });
   }
 
   /** Fetch the real slash command list from the backend. */

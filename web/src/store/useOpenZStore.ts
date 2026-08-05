@@ -78,8 +78,11 @@ interface OpenZState {
   skills: SkillInfo[];
   subagents: SubagentInfo[];
   channels: ChannelConfigInfo[];
+  providersConfig: any;
+  channelsConfig: any;
 
   // Actions
+  updateConfig: (data: { defaults?: any; providers?: any; channels?: any }) => void;
   init: () => void;
   selectSession: (chatId: string) => void;
   newSession: () => void;
@@ -147,6 +150,8 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   skills: [],
   subagents: [],
   channels: [],
+  providersConfig: {},
+  channelsConfig: {},
 
   setIsSidebarOpen: (open) => set({ isSidebarOpen: open }),
   setSidebarCollapsed: (collapsed) => {
@@ -166,6 +171,24 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   },
 
   // ---- Realtime config actions (persisted through the backend) ----
+
+  updateConfig: (data) => {
+    if (data.defaults) {
+      const settings = get().settings;
+      if (settings) {
+        set({ settings: { ...settings, ...data.defaults } });
+      }
+    }
+    if (data.providers) {
+      const pc = get().providersConfig;
+      set({ providersConfig: { ...pc, ...data.providers } });
+    }
+    if (data.channels) {
+      const cc = get().channelsConfig;
+      set({ channelsConfig: { ...cc, ...data.channels } });
+    }
+    wsService.sendSetConfig(data);
+  },
 
   setActiveModel: (model) => {
     set({ activeModel: model });
@@ -638,6 +661,12 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
           cavemanMode: !!payload.defaults.caveman_mode,
           streamingMode: payload.defaults.streaming !== false,
         });
+      }
+      if (payload.providers) {
+        set({ providersConfig: payload.providers });
+      }
+      if (payload.channels) {
+        set({ channelsConfig: payload.channels });
       }
       if (payload.version && payload.version !== (get().status?.version || '')) {
         const status = get().status;

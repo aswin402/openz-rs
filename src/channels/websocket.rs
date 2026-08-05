@@ -671,12 +671,74 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 })
                             })
                             .collect::<Vec<_>>();
+                        // Expose providers with masked api_keys
+                        let mut providers_config = serde_json::Map::new();
+                        let p = &config.providers;
+                        
+                        let mask_key = |key: &Option<String>| {
+                            key.as_ref().map(|k| if k.is_empty() { "" } else { "••••••••" })
+                        };
+                        
+                        let map_provider = |c: &Option<crate::config::schema::ProviderConfig>| {
+                            c.as_ref().map(|cfg| serde_json::json!({
+                                "api_key": mask_key(&cfg.api_key),
+                                "api_base": cfg.api_base,
+                                "default_model": cfg.default_model
+                            }))
+                        };
+
+                        providers_config.insert("openai".to_string(), serde_json::to_value(map_provider(&p.openai)).unwrap_or(serde_json::Value::Null));
+                        providers_config.insert("anthropic".to_string(), serde_json::to_value(map_provider(&p.anthropic)).unwrap_or(serde_json::Value::Null));
+                        providers_config.insert("openrouter".to_string(), serde_json::to_value(map_provider(&p.openrouter)).unwrap_or(serde_json::Value::Null));
+                        providers_config.insert("deepseek".to_string(), serde_json::to_value(map_provider(&p.deepseek)).unwrap_or(serde_json::Value::Null));
+                        providers_config.insert("groq".to_string(), serde_json::to_value(map_provider(&p.groq)).unwrap_or(serde_json::Value::Null));
+                        providers_config.insert("ollama".to_string(), serde_json::to_value(map_provider(&p.ollama)).unwrap_or(serde_json::Value::Null));
+                        providers_config.insert("minimax".to_string(), serde_json::to_value(map_provider(&p.minimax)).unwrap_or(serde_json::Value::Null));
+                        providers_config.insert("mistral".to_string(), serde_json::to_value(map_provider(&p.mistral)).unwrap_or(serde_json::Value::Null));
+                        providers_config.insert("z_ai".to_string(), serde_json::to_value(map_provider(&p.z_ai)).unwrap_or(serde_json::Value::Null));
+                        providers_config.insert("nvidia".to_string(), serde_json::to_value(map_provider(&p.nvidia)).unwrap_or(serde_json::Value::Null));
+                        providers_config.insert("opencode_zen".to_string(), serde_json::to_value(map_provider(&p.opencode_zen)).unwrap_or(serde_json::Value::Null));
+                        providers_config.insert("cerebras".to_string(), serde_json::to_value(map_provider(&p.cerebras)).unwrap_or(serde_json::Value::Null));
+                        providers_config.insert("google_ai_studio".to_string(), serde_json::to_value(map_provider(&p.google_ai_studio)).unwrap_or(serde_json::Value::Null));
+
+                        // Expose channel configurations
+                        let mut channels_config = serde_json::Map::new();
+                        let ch = &config.channels;
+                        
+                        let map_tg = |c: &Option<crate::config::schema::TelegramChannelConfig>| {
+                            c.as_ref().map(|cfg| serde_json::json!({
+                                "enabled": cfg.enabled,
+                                "bot_token": if cfg.bot_token.is_empty() { "" } else { "••••••••" }
+                            }))
+                        };
+                        let map_dc = |c: &Option<crate::config::schema::DiscordChannelConfig>| {
+                            c.as_ref().map(|cfg| serde_json::json!({
+                                "enabled": cfg.enabled,
+                                "bot_token": if cfg.bot_token.is_empty() { "" } else { "••••••••" }
+                            }))
+                        };
+                        let map_wa = |c: &Option<crate::config::schema::WhatsAppChannelConfig>| {
+                            c.as_ref().map(|cfg| serde_json::json!({
+                                "enabled": cfg.enabled,
+                                "api_key": if cfg.api_key.is_empty() { "" } else { "••••••••" },
+                                "phone_number_id": cfg.phone_number_id,
+                                "webhook_port": cfg.webhook_port,
+                                "verify_token": cfg.verify_token
+                            }))
+                        };
+
+                        channels_config.insert("telegram".to_string(), serde_json::to_value(map_tg(&ch.telegram)).unwrap_or(serde_json::Value::Null));
+                        channels_config.insert("discord".to_string(), serde_json::to_value(map_dc(&ch.discord)).unwrap_or(serde_json::Value::Null));
+                        channels_config.insert("whatsapp".to_string(), serde_json::to_value(map_wa(&ch.whatsapp)).unwrap_or(serde_json::Value::Null));
+
                         let evt = serde_json::json!({
                             "event": "config_data",
                             "defaults": defaults,
                             "skills": skills,
                             "mcp_servers": mcp_servers,
                             "subagents": subagents,
+                            "providers": providers_config,
+                            "channels": channels_config,
                             "version": env!("CARGO_PKG_VERSION"),
                         });
                         if let Ok(evt_str) = serde_json::to_string(&evt) {
@@ -724,6 +786,106 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 d.tool_timeout_secs = v as u64;
                             }
                         }
+
+                        // 2. Providers updates
+                        if let Some(providers_val) = envelope.get("providers") {
+                            if let Some(obj) = providers_val.as_object() {
+                                let p = &mut config.providers;
+                                let mut update_provider = |field: &mut Option<crate::config::schema::ProviderConfig>, data: &serde_json::Value| {
+                                    if let Some(data_obj) = data.as_object() {
+                                        let mut cfg = field.clone().unwrap_or_default();
+                                        if let Some(key) = data_obj.get("api_key").and_then(|v| v.as_str()) {
+                                            if key != "••••••••" {
+                                                cfg.api_key = if key.is_empty() { None } else { Some(key.to_string()) };
+                                            }
+                                        }
+                                        if let Some(base) = data_obj.get("api_base") {
+                                            cfg.api_base = base.as_str().map(|s| s.to_string());
+                                        }
+                                        if let Some(m) = data_obj.get("default_model") {
+                                            cfg.default_model = m.as_str().map(|s| s.to_string());
+                                        }
+                                        *field = Some(cfg);
+                                    }
+                                };
+
+                                if let Some(val) = obj.get("openai") { update_provider(&mut p.openai, val); }
+                                if let Some(val) = obj.get("anthropic") { update_provider(&mut p.anthropic, val); }
+                                if let Some(val) = obj.get("openrouter") { update_provider(&mut p.openrouter, val); }
+                                if let Some(val) = obj.get("deepseek") { update_provider(&mut p.deepseek, val); }
+                                if let Some(val) = obj.get("groq") { update_provider(&mut p.groq, val); }
+                                if let Some(val) = obj.get("ollama") { update_provider(&mut p.ollama, val); }
+                                if let Some(val) = obj.get("minimax") { update_provider(&mut p.minimax, val); }
+                                if let Some(val) = obj.get("mistral") { update_provider(&mut p.mistral, val); }
+                                if let Some(val) = obj.get("z_ai") { update_provider(&mut p.z_ai, val); }
+                                if let Some(val) = obj.get("nvidia") { update_provider(&mut p.nvidia, val); }
+                                if let Some(val) = obj.get("opencode_zen") { update_provider(&mut p.opencode_zen, val); }
+                                if let Some(val) = obj.get("cerebras") { update_provider(&mut p.cerebras, val); }
+                                if let Some(val) = obj.get("google_ai_studio") { update_provider(&mut p.google_ai_studio, val); }
+                            }
+                        }
+
+                        // 3. Channels updates
+                        if let Some(channels_val) = envelope.get("channels") {
+                            if let Some(obj) = channels_val.as_object() {
+                                let ch = &mut config.channels;
+                                
+                                if let Some(val) = obj.get("telegram") {
+                                    if let Some(data_obj) = val.as_object() {
+                                        let mut cfg = ch.telegram.clone().unwrap_or_default();
+                                        if let Some(enabled) = data_obj.get("enabled").and_then(|v| v.as_bool()) {
+                                            cfg.enabled = enabled;
+                                        }
+                                        if let Some(token) = data_obj.get("bot_token").and_then(|v| v.as_str()) {
+                                            if token != "••••••••" {
+                                                cfg.bot_token = token.to_string();
+                                            }
+                                        }
+                                        ch.telegram = Some(cfg);
+                                    }
+                                }
+
+                                if let Some(val) = obj.get("discord") {
+                                    if let Some(data_obj) = val.as_object() {
+                                        let mut cfg = ch.discord.clone().unwrap_or_default();
+                                        if let Some(enabled) = data_obj.get("enabled").and_then(|v| v.as_bool()) {
+                                            cfg.enabled = enabled;
+                                        }
+                                        if let Some(token) = data_obj.get("bot_token").and_then(|v| v.as_str()) {
+                                            if token != "••••••••" {
+                                                cfg.bot_token = token.to_string();
+                                            }
+                                        }
+                                        ch.discord = Some(cfg);
+                                    }
+                                }
+
+                                if let Some(val) = obj.get("whatsapp") {
+                                    if let Some(data_obj) = val.as_object() {
+                                        let mut cfg = ch.whatsapp.clone().unwrap_or_default();
+                                        if let Some(enabled) = data_obj.get("enabled").and_then(|v| v.as_bool()) {
+                                            cfg.enabled = enabled;
+                                        }
+                                        if let Some(key) = data_obj.get("api_key").and_then(|v| v.as_str()) {
+                                            if key != "••••••••" {
+                                                cfg.api_key = key.to_string();
+                                            }
+                                        }
+                                        if let Some(num_id) = data_obj.get("phone_number_id").and_then(|v| v.as_str()) {
+                                            cfg.phone_number_id = num_id.to_string();
+                                        }
+                                        if let Some(port) = data_obj.get("webhook_port").and_then(|v| v.as_u64()) {
+                                            cfg.webhook_port = port as u16;
+                                        }
+                                        if let Some(verify) = data_obj.get("verify_token").and_then(|v| v.as_str()) {
+                                            cfg.verify_token = verify.to_string();
+                                        }
+                                        ch.whatsapp = Some(cfg);
+                                    }
+                                }
+                            }
+                        }
+
                         let _ = crate::config::loader::save_config(&config);
                         if let Ok(mut live) = state.live_config.write() {
                             *live = config.clone();

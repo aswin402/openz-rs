@@ -98,6 +98,8 @@ export const DashboardView: React.FC = () => {
   const cavemanMode = useOpenZStore((s) => s.cavemanMode);
   const toggleStreamingMode = useOpenZStore((s) => s.toggleStreamingMode);
   const toggleCavemanMode = useOpenZStore((s) => s.toggleCavemanMode);
+  const providersConfig = useOpenZStore((s) => s.providersConfig) || {};
+  const channelsConfig = useOpenZStore((s) => s.channelsConfig) || {};
 
   const setActiveView = useOpenZStore((s) => s.setActiveView);
   const setIsMemoryOpen = useOpenZStore((s) => s.setIsMemoryOpen);
@@ -257,6 +259,70 @@ export const DashboardView: React.FC = () => {
           onToggle={toggleCavemanMode}
           icon={Database}
         />
+      </div>
+
+      {/* Configuration Status Overview */}
+      <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2">
+        {/* Providers card */}
+        <div className="rounded-2xl border border-border/60 bg-card/45 p-6 backdrop-blur-md">
+          <div className="flex items-center gap-2 mb-4 border-b border-border/40 pb-2 select-none">
+            <Cpu className="h-4 w-4 text-amber-500" />
+            <h2 className="text-sm font-bold text-foreground">LLM Provider Integrations</h2>
+          </div>
+          <div className="space-y-3.5 max-h-[260px] overflow-y-auto pr-1">
+            {['openai', 'anthropic', 'deepseek', 'groq', 'openrouter', 'google_ai_studio', 'ollama'].map((provKey) => {
+              const cfg = providersConfig[provKey] || {};
+              const isConfigured = !!cfg.api_key;
+              const displayName = provKey === 'google_ai_studio' ? 'Google AI Studio' : provKey.toUpperCase();
+              return (
+                <div key={provKey} className="flex items-center justify-between py-1 border-b border-border/10 last:border-0 text-xs">
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-foreground capitalize">{displayName}</span>
+                    <span className="text-[10px] text-muted-foreground font-mono truncate max-w-[200px]">
+                      {cfg.api_base ? cfg.api_base : 'Default endpoint'}
+                    </span>
+                  </div>
+                  <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider select-none ${
+                    isConfigured ? 'bg-emerald-500/10 text-emerald-400' : 'bg-muted text-muted-foreground'
+                  }`}>
+                    {isConfigured ? 'Ready' : 'Not Setup'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Bot Channels card */}
+        <div className="rounded-2xl border border-border/60 bg-card/45 p-6 backdrop-blur-md">
+          <div className="flex items-center gap-2 mb-4 border-b border-border/40 pb-2 select-none">
+            <Server className="h-4 w-4 text-amber-500" />
+            <h2 className="text-sm font-bold text-foreground">Active Bot Listeners</h2>
+          </div>
+          <div className="space-y-4">
+            {['telegram', 'discord', 'whatsapp'].map((chanKey) => {
+              const cfg = channelsConfig[chanKey] || {};
+              const isEnabled = !!cfg.enabled;
+              return (
+                <div key={chanKey} className="flex items-center justify-between text-xs py-1 border-b border-border/10 last:border-0">
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-foreground capitalize">{chanKey} Listener</span>
+                    <span className="text-[10px] text-muted-foreground font-mono">
+                      {chanKey === 'whatsapp' ? `Webhook Port: ${cfg.webhook_port || 8090}` : isEnabled ? 'Background polling' : 'Offline'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 select-none">
+                    <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider ${
+                      isEnabled ? 'bg-amber-500/10 text-amber-400' : 'bg-muted text-muted-foreground'
+                    }`}>
+                      {isEnabled ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
     </div>
   );
