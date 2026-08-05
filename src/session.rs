@@ -478,13 +478,14 @@ impl SessionManager {
 
     pub async fn load_async(&self, key: &str) -> Result<Session> {
         let path = self.file_path(key);
+        let key_owned = key.to_string();
         tokio::task::spawn_blocking(move || {
             let content = std::fs::read_to_string(&path)
                 .with_context(|| format!("Failed to read session file at {:?}", path))?;
             let mut session: Session = serde_json::from_str(&content)
                 .with_context(|| format!("Failed to parse session file at {:?}", path))?;
             if let Err(e) = session.verify_hash_chain() {
-                tracing::warn!("Session hash chain verification failed for key '{}': {}. Reconstructing.", key, e);
+                tracing::warn!("Session hash chain verification failed for key '{}': {}. Reconstructing.", key_owned, e);
                 session.populate_hashes();
                 if let Ok(pretty) = serde_json::to_string_pretty(&session) {
                     let _ = std::fs::write(&path, pretty);
