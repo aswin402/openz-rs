@@ -35,10 +35,11 @@ export const App: React.FC = () => {
 
   // 1. Scroll to bottom on initial load / chat switch
   useEffect(() => {
-    if (activeView === 'chats') {
+    const container = scrollContainerRef.current;
+    if (container && activeView === 'chats') {
       // Small timeout to allow content layout to finish
       setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+        container.scrollTop = container.scrollHeight;
       }, 50);
       prevMsgCountRef.current = activeMessages.length;
     }
@@ -60,26 +61,34 @@ export const App: React.FC = () => {
     let shouldScroll = false;
 
     if (currentCount > prevCount) {
-      // If user sent a message, scroll down unconditionally
-      if (lastMsg.role === 'user') {
+      // Since user message and assistant placeholder are added together (incrementing length by 2),
+      // we check if any of the newly added messages is a user message.
+      const hasNewUserMsg = activeMessages
+        .slice(prevCount, currentCount)
+        .some((m) => m.role === 'user');
+
+      if (hasNewUserMsg) {
         shouldScroll = true;
       } else {
-        // If it's a new assistant message, scroll if near bottom
+        // If it's just a new assistant message (without a user message), scroll if near bottom
         const scrollOffset = container.scrollHeight - container.scrollTop - container.clientHeight;
-        if (scrollOffset <= 120) {
+        if (scrollOffset <= 150) {
           shouldScroll = true;
         }
       }
     } else if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
       // During stream content updates, scroll if near bottom
       const scrollOffset = container.scrollHeight - container.scrollTop - container.clientHeight;
-      if (scrollOffset <= 120) {
+      if (scrollOffset <= 150) {
         shouldScroll = true;
       }
     }
 
     if (shouldScroll) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: 'smooth',
+      });
     }
   }, [activeMessages, activeView]);
 
