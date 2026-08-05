@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
-import { Bot, Search, Cpu, Terminal, X } from 'lucide-react';
+import { ArrowLeft, Bot, Search, Cpu, Terminal, X } from 'lucide-react';
 
 export const AgentsView: React.FC = () => {
   const subagents = useOpenZStore((s) => s.subagents);
+  const setActiveView = useOpenZStore((s) => s.setActiveView);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAgentName, setSelectedAgentName] = useState<string | null>(null);
 
@@ -17,8 +18,18 @@ export const AgentsView: React.FC = () => {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 h-full flex flex-col overflow-hidden">
+      {/* Back button */}
+      <div className="mb-4 shrink-0">
+        <button
+          onClick={() => setActiveView('dashboard')}
+          className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-muted/20 px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> Go Back
+        </button>
+      </div>
+
       {/* Header section */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-border/50">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-border/50 shrink-0">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight text-foreground">
             <Bot className="h-5 w-5 text-amber-500" /> Subagent Profiles

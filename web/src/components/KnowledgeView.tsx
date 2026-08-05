@@ -1,11 +1,12 @@
 import React from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
 import { wsService } from '../services/websocket';
-import { BrainCircuit, Database, ExternalLink, KeyRound, Share2 } from 'lucide-react';
+import { ArrowLeft, BrainCircuit, Database, ExternalLink, KeyRound, Share2 } from 'lucide-react';
 
 export const KnowledgeView: React.FC = () => {
   const cognitiveStats = useOpenZStore((s) => s.cognitiveStats);
   const setIsMemoryOpen = useOpenZStore((s) => s.setIsMemoryOpen);
+  const setActiveView = useOpenZStore((s) => s.setActiveView);
 
   const cards = [
     { label: 'Entities', value: cognitiveStats.entitiesCount, icon: BrainCircuit },
@@ -15,6 +16,16 @@ export const KnowledgeView: React.FC = () => {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6">
+      {/* Back button */}
+      <div className="mb-4">
+        <button
+          onClick={() => setActiveView('dashboard')}
+          className="flex items-center gap-1.5 rounded-lg border border-border/60 bg-muted/20 px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" /> Go Back
+        </button>
+      </div>
+
       <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight text-foreground">
         <BrainCircuit className="h-5 w-5 text-amber-500" /> Knowledge Graph
       </h1>

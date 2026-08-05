@@ -146,6 +146,7 @@ export const DashboardView: React.FC = () => {
           value={activeModel || '—'}
           sub={settings?.provider || 'provider unknown'}
           icon={Zap}
+          onClick={() => setIsSettingsOpen(true)}
         />
         <StatCard
           label="Sessions"
