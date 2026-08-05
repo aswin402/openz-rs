@@ -701,6 +701,17 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         providers_config.insert("cerebras".to_string(), serde_json::to_value(map_provider(&p.cerebras)).unwrap_or(serde_json::Value::Null));
                         providers_config.insert("google_ai_studio".to_string(), serde_json::to_value(map_provider(&p.google_ai_studio)).unwrap_or(serde_json::Value::Null));
 
+                        for (key, cfg) in &p.others {
+                            providers_config.insert(
+                                key.clone(),
+                                serde_json::json!({
+                                    "api_key": mask_key(&cfg.api_key),
+                                    "api_base": cfg.api_base,
+                                    "default_model": cfg.default_model
+                                })
+                            );
+                        }
+
                         // Expose channel configurations
                         let mut channels_config = serde_json::Map::new();
                         let ch = &config.channels;
@@ -822,6 +833,32 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 if let Some(val) = obj.get("opencode_zen") { update_provider(&mut p.opencode_zen, val); }
                                 if let Some(val) = obj.get("cerebras") { update_provider(&mut p.cerebras, val); }
                                 if let Some(val) = obj.get("google_ai_studio") { update_provider(&mut p.google_ai_studio, val); }
+
+                                for (key, val) in obj {
+                                    let is_builtin = matches!(
+                                        key.as_str(),
+                                        "openai" | "anthropic" | "openrouter" | "deepseek" | "groq" | "ollama" |
+                                        "minimax" | "mistral" | "z_ai" | "nvidia" | "opencode_zen" | "cerebras" |
+                                        "google_ai_studio"
+                                    );
+                                    if !is_builtin {
+                                        if let Some(data_obj) = val.as_object() {
+                                            let mut cfg = p.others.get(key).cloned().unwrap_or_default();
+                                            if let Some(k) = data_obj.get("api_key").and_then(|v| v.as_str()) {
+                                                if k != "••••••••" {
+                                                    cfg.api_key = if k.is_empty() { None } else { Some(k.to_string()) };
+                                                }
+                                            }
+                                            if let Some(base) = data_obj.get("api_base") {
+                                                cfg.api_base = base.as_str().map(|s| s.to_string());
+                                            }
+                                            if let Some(m) = data_obj.get("default_model") {
+                                                cfg.default_model = m.as_str().map(|s| s.to_string());
+                                            }
+                                            p.others.insert(key.clone(), cfg);
+                                        }
+                                    }
+                                }
                             }
                         }
 

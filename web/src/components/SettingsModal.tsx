@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
-import { X, Settings, Link, Key, Zap, Radio, Save, Cpu, ShieldAlert, ChevronUp, ChevronDown } from 'lucide-react';
+import { X, Settings, Link, Key, Zap, Radio, Save, Cpu, ShieldAlert, ChevronUp, ChevronDown, Trash2 } from 'lucide-react';
 
 interface SelectOption {
   value: string;
@@ -197,6 +197,10 @@ export const SettingsModal: React.FC = () => {
   const [providersForm, setProvidersForm] = useState<any>({});
   const [channelsForm, setChannelsForm] = useState<any>({});
 
+  const [newProvKey, setNewProvKey] = useState('');
+  const [newProvKeyErr, setNewProvKeyErr] = useState('');
+  const [showAddCustom, setShowAddCustom] = useState(false);
+
   useEffect(() => {
     if (isSettingsOpen) {
       setUrlInput(wsUrl);
@@ -220,6 +224,9 @@ export const SettingsModal: React.FC = () => {
       if (channelsConfig) {
         setChannelsForm(JSON.parse(JSON.stringify(channelsConfig)));
       }
+      setShowAddCustom(false);
+      setNewProvKey('');
+      setNewProvKeyErr('');
     }
   }, [isSettingsOpen, wsUrl, wsToken, settings, providersConfig, channelsConfig]);
 
@@ -274,6 +281,10 @@ export const SettingsModal: React.FC = () => {
     ...providers.map((p) => ({ value: p.name, label: p.display || p.name })),
   ] : [];
   const uniqueProviders = Array.from(new Map(providerOptions.map(item => [item.value, item])).values());
+
+  const builtins = ['openai', 'anthropic', 'deepseek', 'groq', 'openrouter', 'google_ai_studio', 'ollama'];
+  const customKeys = Object.keys(providersForm).filter(k => !builtins.includes(k));
+  const allProviderKeys = [...builtins, ...customKeys];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
@@ -526,11 +537,11 @@ export const SettingsModal: React.FC = () => {
           )}
 
           {activeTab === 'providers' && (
-            <div className="space-y-6">
+            <div className="space-y-6 animate-in fade-in duration-150">
               <div className="text-muted-foreground mb-2 text-[11px] leading-relaxed select-none">
                 Configure API keys and model endpoints. Masked entries (••••••••) mean a key is stored. Overwrite them to edit.
               </div>
-              {['openai', 'anthropic', 'deepseek', 'groq', 'openrouter', 'google_ai_studio', 'ollama'].map((provKey) => {
+              {allProviderKeys.map((provKey) => {
                 const provData = providersForm[provKey] || {};
                 const setProvField = (fld: string, val: string) => {
                   setProvidersForm((pf: any) => ({
@@ -542,10 +553,29 @@ export const SettingsModal: React.FC = () => {
                   }));
                 };
                 const label = provKey === 'google_ai_studio' ? 'Google AI Studio' : provKey.toUpperCase();
+                const isCustom = !builtins.includes(provKey);
+
                 return (
-                  <div key={provKey} className="rounded-xl border border-border/50 bg-muted/15 p-4 space-y-3">
-                    <div className="font-semibold text-foreground border-b border-border/30 pb-1.5 capitalize select-none">
-                      {label} Setup
+                  <div key={provKey} className="rounded-xl border border-border/50 bg-muted/15 p-4 space-y-3 relative">
+                    <div className="flex items-center justify-between border-b border-border/30 pb-1.5">
+                      <div className="font-semibold text-foreground capitalize select-none flex items-center gap-1.5">
+                        {label} Setup {isCustom && <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[9px] font-bold text-amber-500 select-none">Custom</span>}
+                      </div>
+                      {isCustom && (
+                        <button
+                          onClick={() => {
+                            setProvidersForm((pf: any) => {
+                              const copy = { ...pf };
+                              delete copy[provKey];
+                              return copy;
+                            });
+                          }}
+                          className="rounded-lg p-1 text-muted-foreground/60 hover:text-red-500 hover:bg-red-500/10 transition"
+                          title="Delete custom provider"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
                     <div className="grid grid-cols-1 gap-2.5">
                       <div>
@@ -558,14 +588,14 @@ export const SettingsModal: React.FC = () => {
                           className="w-full rounded-lg border border-border bg-muted/40 p-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
                         />
                       </div>
-                      {provKey !== 'anthropic' && provKey !== 'google_ai_studio' && (
+                      {(provKey !== 'anthropic' && provKey !== 'google_ai_studio') && (
                         <div>
                           <label className="mb-1 block font-medium text-muted-foreground select-none">API Base Endpoint</label>
                           <input
                             type="text"
                             value={provData.api_base || ''}
                             onChange={(e) => setProvField('api_base', e.target.value)}
-                            placeholder={`https://api.${provKey}.com/v1`}
+                            placeholder={isCustom ? "http://127.0.0.1:8080/v1" : `https://api.${provKey}.com/v1`}
                             className="w-full rounded-lg border border-border bg-muted/40 p-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
                           />
                         </div>
@@ -584,6 +614,70 @@ export const SettingsModal: React.FC = () => {
                   </div>
                 );
               })}
+
+              {/* Add Custom Provider Form */}
+              {showAddCustom ? (
+                <div className="rounded-xl border border-dashed border-amber-500/50 bg-amber-500/5 p-4 space-y-3 animate-in slide-in-from-bottom-2 duration-150">
+                  <div className="font-semibold text-foreground border-b border-border/30 pb-1.5 select-none">
+                    Add New Custom LLM Provider Setup
+                  </div>
+                  <div className="space-y-2.5">
+                    <div>
+                      <label className="mb-1 block font-medium text-muted-foreground select-none">Unique Provider Key (e.g. `llama-local` / `corp-gateway` / `vllm-host` ...)</label>
+                      <input
+                        type="text"
+                        value={newProvKey}
+                        onChange={(e) => {
+                          setNewProvKey(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''));
+                          setNewProvKeyErr('');
+                        }}
+                        placeholder="my-custom-provider"
+                        className="w-full rounded-lg border border-border bg-muted/40 p-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                      {newProvKeyErr && (
+                        <span className="text-red-500 text-[10px] mt-0.5 block">{newProvKeyErr}</span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (!newProvKey.trim()) {
+                          setNewProvKeyErr('Provider key cannot be empty.');
+                          return;
+                        }
+                        if (allProviderKeys.includes(newProvKey)) {
+                          setNewProvKeyErr('This provider key already exists.');
+                          return;
+                        }
+                        setProvidersForm((pf: any) => ({
+                          ...pf,
+                          [newProvKey]: { api_key: '', api_base: '', default_model: '' }
+                        }));
+                        setNewProvKey('');
+                        setShowAddCustom(false);
+                      }}
+                      className="w-full rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 font-semibold py-2.5 text-xs transition duration-150"
+                    >
+                      Confirm Add Provider
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowAddCustom(false);
+                        setNewProvKeyErr('');
+                      }}
+                      className="w-full text-center text-muted-foreground hover:text-foreground text-[10px] pt-1 transition"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowAddCustom(true)}
+                  className="w-full flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-border hover:border-amber-500/40 bg-muted/10 hover:bg-muted/30 py-3.5 text-xs font-semibold text-muted-foreground hover:text-foreground transition duration-150"
+                >
+                  + Add Custom LLM Provider Endpoint
+                </button>
+              )}
             </div>
           )}
 
