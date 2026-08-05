@@ -250,3 +250,29 @@
                 box-shadow 300ms cubic-bezier(0.4, 0, 0.2, 1);
   }
 }
+
+/* Premium Global Scrollbar styling - removes default browser track background */
+* {
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(156, 163, 175, 0.25) transparent !important;
+}
+
+::-webkit-scrollbar {
+  width: 6px !important;
+  height: 6px !important;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.2) !important;
+  border-radius: 9999px !important;
+  border: 1px solid transparent !important;
+  background-clip: padding-box !important;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.4) !important;
+}
