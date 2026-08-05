@@ -1,6 +1,123 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
 import { X, Settings, Link, Key, Zap, Radio, Save, Cpu, ShieldAlert, ChevronUp, ChevronDown } from 'lucide-react';
+
+interface SelectOption {
+  value: string;
+  label: string;
+}
+
+interface SelectGroup {
+  label: string;
+  options: SelectOption[];
+}
+
+interface CustomSelectProps {
+  label: string;
+  value: string;
+  onChange: (val: string) => void;
+  options?: SelectOption[];
+  groups?: SelectGroup[];
+}
+
+const CustomSelect: React.FC<CustomSelectProps> = ({ label, value, onChange, options, groups }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  let displayValue = value;
+  if (options) {
+    const matched = options.find((o) => o.value === value);
+    if (matched) displayValue = matched.label;
+  } else if (groups) {
+    for (const g of groups) {
+      const matched = g.options.find((o) => o.value === value);
+      if (matched) {
+        displayValue = matched.label;
+        break;
+      }
+    }
+  }
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      <label className="mb-1 block font-medium text-foreground">{label}</label>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex w-full items-center justify-between rounded-lg border border-border bg-muted/40 p-2.5 text-xs text-foreground hover:bg-muted/60 transition-colors focus:outline-none focus:ring-1 focus:ring-amber-500"
+      >
+        <span className="truncate">{displayValue}</span>
+        <ChevronDown
+          className="h-4 w-4 shrink-0 text-amber-500 transition-transform duration-200"
+          style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0)' }}
+        />
+      </button>
+
+      {isOpen && (
+        <div className="absolute left-0 right-0 z-50 mt-1 max-h-60 overflow-y-auto rounded-lg border border-border bg-card p-1.5 shadow-xl animate-in fade-in slide-in-from-top-1 duration-150 scrollbar-thin">
+          {options && (
+            <div className="space-y-0.5">
+              {options.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => {
+                    onChange(opt.value);
+                    setIsOpen(false);
+                  }}
+                  className={`flex w-full items-center rounded-md px-2.5 py-2 text-left text-xs transition-colors hover:bg-amber-500 hover:text-white ${
+                    value === opt.value ? 'bg-amber-500/10 text-amber-500 font-semibold' : 'text-foreground'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {groups && (
+            <div className="space-y-3">
+              {groups.map((group) => (
+                <div key={group.label}>
+                  <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60 select-none">
+                    {group.label}
+                  </div>
+                  <div className="mt-1 space-y-0.5 pl-1 border-l border-border/40 ml-1">
+                    {group.options.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => {
+                          onChange(opt.value);
+                          setIsOpen(false);
+                        }}
+                        className={`flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-amber-500 hover:text-white ${
+                          value === opt.value ? 'bg-amber-500/10 text-amber-500 font-semibold' : 'text-foreground'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 interface NumberInputProps {
   label: string;
@@ -125,6 +242,20 @@ export const SettingsModal: React.FC = () => {
 
   const groups = providers.filter((p) => p.models.length > 0);
 
+  const customModelGroups = groups.map((g) => ({
+    label: g.display || g.name,
+    options: g.models.map((m) => ({ value: m, label: m })),
+  }));
+  const finalModelGroups = customModelGroups.length > 0
+    ? customModelGroups
+    : settings ? [{ label: 'Default', options: [{ value: settings.model, label: settings.model }] }] : [];
+
+  const providerOptions = settings ? [
+    { value: settings.provider, label: settings.provider },
+    ...providers.map((p) => ({ value: p.name, label: p.display || p.name })),
+  ] : [];
+  const uniqueProviders = Array.from(new Map(providerOptions.map(item => [item.value, item])).values());
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
       <div className="w-full max-w-lg rounded-2xl border border-border bg-card shadow-2xl animate-in fade-in zoom-in-95 duration-150 max-h-[85vh] flex flex-col overflow-hidden">
@@ -179,41 +310,19 @@ export const SettingsModal: React.FC = () => {
                   <Cpu className="h-3.5 w-3.5 text-amber-500" /> Agent Defaults
                 </div>
                 <div className="space-y-3">
-                  <div>
-                    <label className="mb-1 block font-medium text-foreground">Default Model</label>
-                    <select
-                      value={String(form.model ?? settings.model)}
-                      onChange={(e) => setField('model', e.target.value)}
-                      className="w-full rounded-lg border border-border bg-muted/40 p-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    >
-                      {groups.length === 0 && <option value={settings.model}>{settings.model}</option>}
-                      {groups.map((g) => (
-                        <optgroup key={g.name} label={g.display || g.name}>
-                          {g.models.map((m) => (
-                            <option key={m} value={m}>
-                              {m}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                  </div>
+                  <CustomSelect
+                    label="Default Model"
+                    value={String(form.model ?? settings.model)}
+                    onChange={(val) => setField('model', val)}
+                    groups={finalModelGroups}
+                  />
 
-                  <div>
-                    <label className="mb-1 block font-medium text-foreground">Default Provider</label>
-                    <select
-                      value={String(form.provider ?? settings.provider)}
-                      onChange={(e) => setField('provider', e.target.value)}
-                      className="w-full rounded-lg border border-border bg-muted/40 p-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    >
-                      <option value={settings.provider}>{settings.provider}</option>
-                      {providers.map((p) => (
-                        <option key={p.name} value={p.name}>
-                          {p.display || p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  <CustomSelect
+                    label="Default Provider"
+                    value={String(form.provider ?? settings.provider)}
+                    onChange={(val) => setField('provider', val)}
+                    options={uniqueProviders}
+                  />
 
                   <div className="grid grid-cols-2 gap-3">
                     <NumberInput
@@ -252,18 +361,16 @@ export const SettingsModal: React.FC = () => {
                       value={Number(form.tool_timeout_secs ?? settings.tool_timeout_secs)}
                       onChange={(val) => setField('tool_timeout_secs', val)}
                     />
-                    <div>
-                      <label className="mb-1 block font-medium text-foreground">Security Mode</label>
-                      <select
-                        value={String(form.security_mode ?? settings.security_mode)}
-                        onChange={(e) => setField('security_mode', e.target.value)}
-                        className="w-full rounded-lg border border-border bg-muted/40 p-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
-                      >
-                        <option value="strict">strict</option>
-                        <option value="moderate">moderate</option>
-                        <option value="permissive">permissive</option>
-                      </select>
-                    </div>
+                    <CustomSelect
+                      label="Security Mode"
+                      value={String(form.security_mode ?? settings.security_mode)}
+                      onChange={(val) => setField('security_mode', val)}
+                      options={[
+                        { value: 'strict', label: 'strict' },
+                        { value: 'moderate', label: 'moderate' },
+                        { value: 'permissive', label: 'permissive' },
+                      ]}
+                    />
                   </div>
 
                   <div>
