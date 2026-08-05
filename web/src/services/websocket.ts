@@ -8,6 +8,7 @@ export class OpenZWebSocketService {
   private token: string = '';
   private listeners: Map<string, Set<EventListener>> = new Map();
   private reconnectTimer: any = null;
+  private heartbeatTimer: any = null;
   private status: ConnectionStatus = 'disconnected';
   private onStatusChange: ((status: ConnectionStatus) => void) | null = null;
 
@@ -77,6 +78,7 @@ export class OpenZWebSocketService {
           clearTimeout(this.reconnectTimer);
           this.reconnectTimer = null;
         }
+        this.startHeartbeat();
       };
 
       this.ws.onmessage = (event) => {
@@ -101,6 +103,7 @@ export class OpenZWebSocketService {
       };
 
       this.ws.onclose = (event) => {
+        this.stopHeartbeat();
         if (event.code === 4001 || event.reason === 'Unauthorized') {
           this.updateStatus('unauthorized');
         } else {
@@ -115,6 +118,22 @@ export class OpenZWebSocketService {
     }
   }
 
+  private startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (this.socketOpen) {
+        this.send({ type: 'ping' });
+      }
+    }, 15000);
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
   private scheduleReconnect() {
     if (!this.reconnectTimer) {
       this.reconnectTimer = setTimeout(() => {
@@ -125,6 +144,7 @@ export class OpenZWebSocketService {
   }
 
   public disconnect() {
+    this.stopHeartbeat();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
