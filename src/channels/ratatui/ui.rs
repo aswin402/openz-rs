@@ -1,7 +1,7 @@
 use super::app::RatatuiApp;
 use super::theme;
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Paragraph, Wrap},
@@ -177,14 +177,13 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
         0
     };
 
-    // Codex-style layout: chat (flex) → separator → input → status → (popup above input)
+    // Codex-style layout: chat (flex) → (popup above input) → input (padded, height 3) → status (bottom right)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),                     // Chat scrollback
-            Constraint::Length(popup_lines_count),   // Autocomplete popup (above separator)
-            Constraint::Length(1),                   // Thin separator line
-            Constraint::Length(1),                   // Input line
+            Constraint::Length(popup_lines_count),   // Autocomplete popup (above input)
+            Constraint::Length(3),                   // Big Input box (height 3)
             Constraint::Length(1),                   // Status bar
         ])
         .split(f.area());
@@ -197,24 +196,16 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
         .scroll((app.scroll_offset as u16, 0));
     f.render_widget(conversation, chunks[0]);
 
-    // ── 2. Autocomplete Popup (above separator) ─────────────────────────────
+    // ── 2. Autocomplete Popup (above input) ─────────────────────────────────
     if has_popup {
         render_autocomplete(f, app, &matches, chunks[1]);
     }
 
-    // ── 3. Thin Separator Line ──────────────────────────────────────────────
-    let term_width = chunks[2].width as usize;
-    let separator = Paragraph::new(Line::from(vec![Span::styled(
-        "─".repeat(term_width),
-        theme::divider_style(),
-    )]));
-    f.render_widget(separator, chunks[2]);
+    // ── 3. Input Line (Codex-style: big input box with padded height 3) ───
+    render_input(f, app, chunks[2]);
 
-    // ── 4. Input Line (Codex-style: `› input`) ─────────────────────────────
-    render_input(f, app, chunks[3]);
-
-    // ── 5. Status Bar (model · provider · MCP · cwd) ────────────────────────
-    render_status_bar(f, app, chunks[4]);
+    // ── 4. Status Bar (model · provider · MCP · context) ───────────────────
+    render_status_bar(f, app, chunks[3]);
 }
 
 // ── Conversation Renderer ───────────────────────────────────────────────────
@@ -495,21 +486,27 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
 
 fn render_input(f: &mut Frame, app: &RatatuiApp, area: Rect) {
     let max_width = area.width.saturating_sub(3).max(1) as usize;
+    let input_bg = Color::Rgb(40, 44, 52); // Subtle grey background block
 
-    // Codex-style: subtle background highlight on the input line
-    let input_bg = Color::Rgb(40, 44, 52); // Slightly lighter than terminal bg
+    let mut lines = Vec::new();
 
-    let input_line = if app.typed_input.is_empty() {
+    // Line 1: Empty padding top
+    lines.push(Line::from(Span::styled(
+        " ".repeat(area.width as usize),
+        Style::default().bg(input_bg),
+    )));
+
+    // Line 2: The actual input content
+    if app.typed_input.is_empty() {
         // Placeholder
-        Line::from(vec![
+        lines.push(Line::from(vec![
             Span::styled("› ", Style::default().fg(theme::EMERALD).bg(input_bg)),
             Span::styled(
                 format!("{:<width$}", "type here...", width = max_width),
                 Style::default().fg(theme::AURA_SLATE).bg(input_bg),
             ),
-        ])
+        ]));
     } else {
-        // Show the input content
         let input_str: String = app.typed_input.iter().collect();
         let display = if input_str.len() > max_width {
             let start = input_str.len().saturating_sub(max_width);
@@ -518,16 +515,22 @@ fn render_input(f: &mut Frame, app: &RatatuiApp, area: Rect) {
             input_str
         };
         let padded = format!("{:<width$}", display, width = max_width);
-        Line::from(vec![
+        lines.push(Line::from(vec![
             Span::styled("› ", Style::default().fg(theme::EMERALD).bg(input_bg)),
             Span::styled(padded, Style::default().fg(Color::White).bg(input_bg)),
-        ])
-    };
+        ]));
+    }
 
-    let input_p = Paragraph::new(input_line);
+    // Line 3: Empty padding bottom
+    lines.push(Line::from(Span::styled(
+        " ".repeat(area.width as usize),
+        Style::default().bg(input_bg),
+    )));
+
+    let input_p = Paragraph::new(Text::from(lines));
     f.render_widget(input_p, area);
 
-    // Cursor position
+    // Cursor position (on the middle line of the 3-line block)
     let cursor_col = if app.typed_input.is_empty() {
         2 // After "› "
     } else {
@@ -538,38 +541,65 @@ fn render_input(f: &mut Frame, app: &RatatuiApp, area: Rect) {
             app.cursor_idx
         }
     };
-    f.set_cursor_position((area.x + cursor_col as u16, area.y));
+    f.set_cursor_position((area.x + cursor_col as u16, area.y + 1));
 }
 
 // ── Status Bar Renderer ─────────────────────────────────────────────────────
 
 fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
-    // Codex-style: minimal status — just "model · ~"
+    let (mcp_loaded, mcp_failed, _mcp_total) = crate::tools::mcp::get_mcp_stats();
+    let mcp_done = crate::channels::cli::mcp::is_mcp_done();
+
+    let mut spans = Vec::new();
+
+    // 1. Model name
     let model_display = if app.model.len() > 30 {
         format!("{}…", &app.model[..29])
     } else {
         app.model.clone()
     };
+    spans.push(Span::styled(model_display, theme::status_accent_style()));
+    spans.push(Span::styled(" · ", theme::status_bar_style()));
 
-    // Shorten cwd: just show last component or ~
-    let short_cwd = if app.cwd_display == "~" {
-        "~".to_string()
+    // 2. Provider
+    spans.push(Span::styled(app.provider.clone(), theme::status_accent_style()));
+    spans.push(Span::styled(" · ", theme::status_bar_style()));
+
+    // 3. MCP status
+    spans.push(Span::styled("◇ ", theme::mcp_diamond_style()));
+    if !mcp_done {
+        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let frame_idx = app.spinner_idx % spinner_frames.len();
+        spans.push(Span::styled(
+            format!("MCP {} ", spinner_frames[frame_idx]),
+            theme::status_bar_style(),
+        ));
+    } else if mcp_failed == 0 {
+        spans.push(Span::styled(
+            format!("MCP {}✓", mcp_loaded),
+            theme::mcp_success_style(),
+        ));
     } else {
-        app.cwd_display
-            .rsplit('/')
-            .next()
-            .unwrap_or("~")
-            .to_string()
-    };
+        spans.push(Span::styled(
+            format!("MCP {}✓ ", mcp_loaded),
+            theme::mcp_success_style(),
+        ));
+        spans.push(Span::styled(
+            format!("{}✗", mcp_failed),
+            theme::error_style(),
+        ));
+    }
+    spans.push(Span::styled(" · ", theme::status_bar_style()));
 
-    let status_line = Line::from(vec![
-        Span::styled(" ", Style::default()),
-        Span::styled(model_display, theme::status_accent_style()),
-        Span::styled(" · ", theme::status_bar_style()),
-        Span::styled(short_cwd, theme::status_accent_style()),
-    ]);
+    // 4. Token Context
+    let token_context = format!("{}/1M", app.approx_tokens);
+    spans.push(Span::styled(token_context, theme::status_accent_style()));
 
-    let status_p = Paragraph::new(status_line);
+    // Add trailing space for padding on the right
+    spans.push(Span::raw(" "));
+
+    let status_line = Line::from(spans);
+    let status_p = Paragraph::new(status_line).alignment(Alignment::Right);
     f.render_widget(status_p, area);
 }
 
