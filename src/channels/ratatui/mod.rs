@@ -246,13 +246,183 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     for (cmd, desc) in app::SLASH_COMMANDS {
                                         help_msg.push_str(&format!("  {:<18} {}\n", cmd, desc));
                                     }
+                                    help_msg.push_str("  /load <key>        Load a session from history\n");
                                     app.messages.push(ChatMessage::simple("assistant", help_msg));
                                 } else if trimmed == "/mcps" {
                                     app.messages.push(ChatMessage::simple("user", input_str.clone()));
-                                    let (loaded, total, _) = crate::tools::mcp::get_mcp_stats();
-                                    app.messages.push(ChatMessage::simple("assistant", format!("MCP Servers Status: {}/{} connected & active.", loaded, total)));
+                                    let mut mcp_msg = String::from("Configured MCP Servers:\n");
+                                    if agent_loop.config.mcp_servers.is_empty() {
+                                        mcp_msg.push_str("  No MCP servers configured.\n");
+                                    } else {
+                                        for (name, mcp_cfg) in &agent_loop.config.mcp_servers {
+                                            let status = if mcp_cfg.enabled { "enabled" } else { "disabled" };
+                                            mcp_msg.push_str(&format!("  • {} ({}) - {}\n", name, status, mcp_cfg.command));
+                                        }
+                                    }
+                                    app.messages.push(ChatMessage::simple("assistant", mcp_msg));
+                                } else if trimmed == "/settings" {
+                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    let mut settings_msg = String::from("Active Settings:\n");
+                                    settings_msg.push_str(&format!("  Model:          {}\n", app.model));
+                                    settings_msg.push_str(&format!("  Provider:       {}\n", app.provider));
+                                    settings_msg.push_str(&format!("  CWD:            {}\n", app.cwd_display));
+                                    settings_msg.push_str(&format!("  Session Key:    {}\n", app.session_key));
+                                    app.messages.push(ChatMessage::simple("assistant", settings_msg));
+                                } else if trimmed == "/skill" {
+                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    let mut skill_msg = String::new();
+                                    match crate::agent::skills::load_skills() {
+                                        Ok(skills) => {
+                                            if skills.is_empty() {
+                                                skill_msg.push_str("No active skills found in ~/.openz/skills\n");
+                                            } else {
+                                                skill_msg.push_str("Active skills:\n");
+                                                for skill in skills {
+                                                    skill_msg.push_str(&format!("  • {}\n", skill.name));
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            skill_msg.push_str(&format!("Error loading skills: {}\n", e));
+                                        }
+                                    }
+                                    app.messages.push(ChatMessage::simple("assistant", skill_msg));
+                                } else if trimmed == "/new-session" {
+                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    let _ = crate::cli::archive_current_session(&session_manager, &session_key).await;
+                                    app.messages.clear();
+                                    app.scroll_offset = 0;
+                                    app.messages.push(ChatMessage::simple("assistant", "Session reset. Started a new session.".to_string()));
+                                } else if trimmed == "/memory" {
+                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    let mut memory_msg = String::new();
+                                    if let Ok(session) = session_manager.load(&session_key) {
+                                        memory_msg.push_str("Session Metadata & Memory:\n");
+                                        if session.metadata.is_empty() {
+                                            memory_msg.push_str("  No memory or metadata recorded for this session.\n");
+                                        } else {
+                                            for (k, v) in &session.metadata {
+                                                memory_msg.push_str(&format!("  • {}: {}\n", k, v));
+                                            }
+                                        }
+                                    } else {
+                                        memory_msg.push_str("No active session found.\n");
+                                    }
+                                    app.messages.push(ChatMessage::simple("assistant", memory_msg));
+                                } else if trimmed == "/streaming" {
+                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    let mut msg = String::new();
+                                    match crate::config::loader::load_config() {
+                                        Ok(mut cfg) => {
+                                            cfg.agents.defaults.streaming = !cfg.agents.defaults.streaming;
+                                            match crate::config::loader::save_config(&cfg) {
+                                                Ok(()) => {
+                                                    msg.push_str(&format!("Response streaming is now {}.", if cfg.agents.defaults.streaming { "enabled" } else { "disabled" }));
+                                                }
+                                                Err(e) => {
+                                                    msg.push_str(&format!("Failed to save config: {}", e));
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            msg.push_str(&format!("Failed to load config: {}", e));
+                                        }
+                                    }
+                                    app.messages.push(ChatMessage::simple("assistant", msg));
+                                } else if trimmed.starts_with("/model") {
+                                    let model_arg = trimmed.strip_prefix("/model").unwrap_or("").trim();
+                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    if model_arg.is_empty() {
+                                        app.messages.push(ChatMessage::simple("assistant", format!("Active Model: {}\nUse '/model <name>' to switch it.", app.model)));
+                                    } else {
+                                        app.model = model_arg.to_string();
+                                        app.messages.push(ChatMessage::simple("assistant", format!("Switched active model to: {}", model_arg)));
+                                    }
+                                } else if trimmed == "/history" {
+                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    let mut hist_msg = String::from("Available Sessions:\n");
+                                    match crate::cli::load_session_history() {
+                                        Ok(history) => {
+                                            if history.is_empty() {
+                                                hist_msg.push_str("  No session history found.\n");
+                                            } else {
+                                                for item in history {
+                                                    hist_msg.push_str(&format!("  • Key: {} | Title: {}\n", item.key, item.display_title));
+                                                }
+                                                hist_msg.push_str("\nTo load a session, use: /load <session_key>\n");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            hist_msg.push_str(&format!("  Error loading history: {}\n", e));
+                                        }
+                                    }
+                                    app.messages.push(ChatMessage::simple("assistant", hist_msg));
+                                } else if trimmed.starts_with("/load") {
+                                    let key = trimmed.strip_prefix("/load").unwrap_or("").trim();
+                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    if key.is_empty() {
+                                        app.messages.push(ChatMessage::simple("assistant", "Usage: /load <session_key>".to_string()));
+                                    } else {
+                                        let _ = crate::cli::archive_current_session(&session_manager, &session_key).await;
+                                        match session_manager.load(key) {
+                                            Ok(session) => {
+                                                app.messages.clear();
+                                                app.scroll_offset = 0;
+                                                for msg in session.messages {
+                                                    app.messages.push(ChatMessage::simple(&msg.role, msg.content));
+                                                }
+                                                app.messages.push(ChatMessage::simple("assistant", format!("Loaded session: {}", key)));
+                                            }
+                                            Err(e) => {
+                                                app.messages.push(ChatMessage::simple("assistant", format!("Error loading session {}: {}", key, e)));
+                                            }
+                                        }
+                                    }
+                                } else if trimmed.starts_with("/sources") {
+                                    let query = trimmed.strip_prefix("/sources").unwrap_or("").trim();
+                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    let mut sources_msg = String::new();
+                                    match crate::tools::shared_memory::search_source_bookmarks(query, 10).await {
+                                        Ok(items) if items.is_empty() => {
+                                            sources_msg.push_str("No saved sources matched.\n");
+                                        }
+                                        Ok(items) => {
+                                            sources_msg.push_str("Saved sources:\n");
+                                            for item in items {
+                                                sources_msg.push_str(&format!("  • {} [{}] {}\n", item.label, item.kind, item.uri));
+                                                if !item.summary.trim().is_empty() {
+                                                    sources_msg.push_str(&format!("    {}\n", item.summary.trim()));
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            sources_msg.push_str(&format!("Error searching sources: {}\n", e));
+                                        }
+                                    }
+                                    app.messages.push(ChatMessage::simple("assistant", sources_msg));
+                                } else if trimmed.starts_with("/workflows") {
+                                    let query = trimmed.strip_prefix("/workflows").unwrap_or("").trim();
+                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    let mut workflows_msg = String::new();
+                                    match crate::tools::shared_memory::search_workflow_cards(query, 10, false).await {
+                                        Ok(items) if items.is_empty() => {
+                                            workflows_msg.push_str("No reusable workflows matched.\n");
+                                        }
+                                        Ok(items) => {
+                                            workflows_msg.push_str("Reusable workflows:\n");
+                                            for item in items {
+                                                workflows_msg.push_str(&format!(
+                                                    "  • {} [{}] success={} failure={}\n    {}\n",
+                                                    item.name, item.status, item.success_count, item.failure_count, item.summary.trim()
+                                                ));
+                                            }
+                                        }
+                                        Err(e) => {
+                                            workflows_msg.push_str(&format!("Error searching workflows: {}\n", e));
+                                        }
+                                    }
+                                    app.messages.push(ChatMessage::simple("assistant", workflows_msg));
                                 } else if trimmed.starts_with('/') {
-                                    // System notice for unhandled slash commands
                                     app.messages.push(ChatMessage::simple("user", input_str.clone()));
                                     app.messages.push(ChatMessage::simple("assistant", format!("Executed slash command: {}. Type /help for options.", trimmed)));
                                 } else {
