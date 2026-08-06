@@ -1,5 +1,6 @@
 pub mod app;
 pub mod ui;
+pub mod theme;
 
 use anyhow::Result;
 use app::{ChatMessage, IS_RATATUI_ACTIVE};
@@ -81,12 +82,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     // Load selected session history into Ratatui conversation stream
     if let Ok(session) = session_manager.load(&session_key) {
         for msg in session.messages {
-            let is_tool = msg.role == "tool";
-            app.messages.push(ChatMessage {
-                role: msg.role,
-                content: msg.content,
-                is_tool,
-            });
+            app.messages.push(ChatMessage::simple(&msg.role, msg.content));
         }
     }
 
@@ -95,6 +91,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     loop {
         // Drain any incoming background responses from AgentLoop
         while let Ok(new_msg) = rx.try_recv() {
+            app.is_thinking = false;
             if let Some(last) = app.messages.last_mut() {
                 if last.role == "assistant" && last.content.starts_with("⏳") {
                     *last = new_msg;
@@ -104,7 +101,12 @@ pub async fn handle_ratatui_tui() -> Result<()> {
             } else {
                 app.messages.push(new_msg);
             }
+            // Auto-scroll to bottom when new message arrives
+            app.scroll_offset = 0;
         }
+
+        // Tick spinner animation
+        app.spinner_idx = app.spinner_idx.wrapping_add(1);
 
         terminal.draw(|f| ui::render_ratatui_ui(f, &app))?;
 
@@ -239,56 +241,25 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     app.messages.clear();
                                     app.scroll_offset = 0;
                                 } else if trimmed == "/help" {
-                                    app.messages.push(ChatMessage {
-                                        role: "user".to_string(),
-                                        content: input_str.clone(),
-                                        is_tool: false,
-                                    });
+                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
                                     let mut help_msg = String::from("Available Slash Commands:\n");
                                     for (cmd, desc) in app::SLASH_COMMANDS {
                                         help_msg.push_str(&format!("  {:<18} {}\n", cmd, desc));
                                     }
-                                    app.messages.push(ChatMessage {
-                                        role: "assistant".to_string(),
-                                        content: help_msg,
-                                        is_tool: false,
-                                    });
+                                    app.messages.push(ChatMessage::simple("assistant", help_msg));
                                 } else if trimmed == "/mcps" {
-                                    app.messages.push(ChatMessage {
-                                        role: "user".to_string(),
-                                        content: input_str.clone(),
-                                        is_tool: false,
-                                    });
+                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
                                     let (loaded, total, _) = crate::tools::mcp::get_mcp_stats();
-                                    app.messages.push(ChatMessage {
-                                        role: "assistant".to_string(),
-                                        content: format!("MCP Servers Status: {}/{} connected & active.", loaded, total),
-                                        is_tool: false,
-                                    });
+                                    app.messages.push(ChatMessage::simple("assistant", format!("MCP Servers Status: {}/{} connected & active.", loaded, total)));
                                 } else if trimmed.starts_with('/') {
                                     // System notice for unhandled slash commands
-                                    app.messages.push(ChatMessage {
-                                        role: "user".to_string(),
-                                        content: input_str.clone(),
-                                        is_tool: false,
-                                    });
-                                    app.messages.push(ChatMessage {
-                                        role: "assistant".to_string(),
-                                        content: format!("Executed slash command: {}. Type /help for options.", trimmed),
-                                        is_tool: false,
-                                    });
+                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    app.messages.push(ChatMessage::simple("assistant", format!("Executed slash command: {}. Type /help for options.", trimmed)));
                                 } else {
                                     // Standard User Prompt -> Dispatch to AgentLoop
-                                    app.messages.push(ChatMessage {
-                                        role: "user".to_string(),
-                                        content: input_str.clone(),
-                                        is_tool: false,
-                                    });
-                                    app.messages.push(ChatMessage {
-                                        role: "assistant".to_string(),
-                                        content: "⏳ OpenZ is thinking...".to_string(),
-                                        is_tool: false,
-                                    });
+                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    app.messages.push(ChatMessage::simple("assistant", "⏳ OpenZ is thinking...".to_string()));
+                                    app.is_thinking = true;
 
                                     let agent_loop_clone = agent_loop.clone();
                                     let session_key_clone = session_key.clone();
@@ -298,18 +269,10 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     tokio::spawn(async move {
                                         match agent_loop_clone.run(&prompt_text, &session_key_clone).await {
                                             Ok(res) => {
-                                                let _ = tx_clone.send(ChatMessage {
-                                                    role: "assistant".to_string(),
-                                                    content: res.content,
-                                                    is_tool: false,
-                                                });
+                                                let _ = tx_clone.send(ChatMessage::simple("assistant", res.content));
                                             }
                                             Err(err) => {
-                                                let _ = tx_clone.send(ChatMessage {
-                                                    role: "assistant".to_string(),
-                                                    content: format!("⚠ Error: {}", err),
-                                                    is_tool: false,
-                                                });
+                                                let _ = tx_clone.send(ChatMessage::simple("assistant", format!("⚠ Error: {}", err)));
                                             }
                                         }
                                     });

@@ -6,6 +6,29 @@ pub struct ChatMessage {
     pub role: String,
     pub content: String,
     pub is_tool: bool,
+    /// Name of the tool if this is a tool call message
+    pub tool_name: Option<String>,
+    /// Tool arguments/details string
+    pub tool_details: Option<String>,
+    /// Reasoning/thinking content from the LLM
+    pub reasoning: Option<String>,
+    /// Time spent thinking (in seconds)
+    pub thinking_time: Option<f64>,
+}
+
+impl ChatMessage {
+    /// Quick constructor — sets role + content, everything else defaults
+    pub fn simple(role: &str, content: String) -> Self {
+        Self {
+            role: role.to_string(),
+            content,
+            is_tool: role == "tool",
+            tool_name: None,
+            tool_details: None,
+            reasoning: None,
+            thinking_time: None,
+        }
+    }
 }
 
 pub struct RatatuiApp {
@@ -23,6 +46,10 @@ pub struct RatatuiApp {
     pub prompt_history: Vec<String>,
     pub history_idx: Option<usize>,
     pub should_exit: bool,
+    /// Whether the agent is currently processing (shows spinner)
+    pub is_thinking: bool,
+    /// Spinner frame index for animation
+    pub spinner_idx: usize,
 }
 
 pub const SLASH_COMMANDS: &[(&str, &str)] = &[
@@ -77,6 +104,8 @@ impl RatatuiApp {
             prompt_history: Vec::new(),
             history_idx: None,
             should_exit: false,
+            is_thinking: false,
+            spinner_idx: 0,
         }
     }
 
