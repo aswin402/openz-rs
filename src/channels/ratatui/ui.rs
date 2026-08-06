@@ -177,14 +177,14 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
         0
     };
 
-    // Codex-style layout: chat (flex) → (popup above input) → input (padded, height 3) → status (bottom right)
+    // Codex-style layout: chat (flex) → input (padded, height 3) → status (bottom right) → (popup below status)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),                     // Chat scrollback
-            Constraint::Length(popup_lines_count),   // Autocomplete popup (above input)
             Constraint::Length(3),                   // Big Input box (height 3)
             Constraint::Length(1),                   // Status bar
+            Constraint::Length(popup_lines_count),   // Autocomplete popup (below input)
         ])
         .split(f.area());
 
@@ -196,16 +196,16 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
         .scroll((app.scroll_offset as u16, 0));
     f.render_widget(conversation, chunks[0]);
 
-    // ── 2. Autocomplete Popup (above input) ─────────────────────────────────
+    // ── 2. Input Line (Codex-style: big input box with padded height 3) ───
+    render_input(f, app, chunks[1]);
+
+    // ── 3. Status Bar (model · provider · MCP · context) ───────────────────
+    render_status_bar(f, app, chunks[2]);
+
+    // ── 4. Autocomplete Popup (below status bar) ─────────────────────────────
     if has_popup {
-        render_autocomplete(f, app, &matches, chunks[1]);
+        render_autocomplete(f, app, &matches, chunks[3]);
     }
-
-    // ── 3. Input Line (Codex-style: big input box with padded height 3) ───
-    render_input(f, app, chunks[2]);
-
-    // ── 4. Status Bar (model · provider · MCP · context) ───────────────────
-    render_status_bar(f, app, chunks[3]);
 }
 
 // ── Conversation Renderer ───────────────────────────────────────────────────
@@ -565,24 +565,24 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
     spans.push(Span::styled(app.provider.clone(), theme::status_accent_style()));
     spans.push(Span::styled(" · ", theme::status_bar_style()));
 
-    // 3. MCP status
-    spans.push(Span::styled("◇ ", theme::mcp_diamond_style()));
+    // 3. MCP status (Styled RED_ORANGE without ◇ diamond symbol)
+    let mcp_style = Style::default().fg(theme::RED_ORANGE);
     if !mcp_done {
         let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let frame_idx = app.spinner_idx % spinner_frames.len();
         spans.push(Span::styled(
             format!("MCP {} ", spinner_frames[frame_idx]),
-            theme::status_bar_style(),
+            mcp_style,
         ));
     } else if mcp_failed == 0 {
         spans.push(Span::styled(
             format!("MCP {}✓", mcp_loaded),
-            theme::mcp_success_style(),
+            mcp_style,
         ));
     } else {
         spans.push(Span::styled(
             format!("MCP {}✓ ", mcp_loaded),
-            theme::mcp_success_style(),
+            mcp_style,
         ));
         spans.push(Span::styled(
             format!("{}✗", mcp_failed),
