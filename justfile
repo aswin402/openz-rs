@@ -31,12 +31,21 @@ list-packages:
 check package="openz":
     cargo check -p {{package}} -j 2
 
+# Run cargo check on all workspace crates with capped concurrency (2 parallel jobs)
+check-all:
+    cargo check --workspace -j 2
+
 # Run cargo test on a specific package (defaults to "openz") using at most 2 parallel jobs
 test package="openz":
     cargo test -p {{package}} -j 2
 
+# Run cargo test on all workspace crates with capped concurrency (2 parallel jobs)
+test-all:
+    cargo test --workspace -j 2
+
 # Run a specific test by name in a package/crate (uses 2 jobs)
-test-one package="openz" name="":
+# Usage: just test-one <test_name> [package_name]
+test-one name package="openz":
     cargo test -p {{package}} {{name}} -j 2
 
 # Run cargo clippy on a specific package (defaults to "openz") using at most 2 parallel jobs
