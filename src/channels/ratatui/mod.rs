@@ -339,10 +339,89 @@ pub async fn handle_ratatui_tui() -> Result<()> {
 
                             let trimmed = input_str.trim();
 
-                            // Handle partial auto-completions for commands expecting arguments
+                            // Handle autocomplete selection for model commands
                             let is_menu_selection = app.selected_index.is_some();
-                            let is_partial = (trimmed == "/model" || (trimmed.starts_with("/model") && !trimmed.contains('/')))
-                                || (trimmed == "/load")
+                            if is_menu_selection && (trimmed == "/model" || trimmed == "/models") {
+                                use crate::config::loader::load_config;
+                                let config = load_config().unwrap_or_default();
+                                let provider_list = &[
+                                    ("mivi", "Mivi Local (custom)"),
+                                    ("openai", "OpenAI"),
+                                    ("anthropic", "Anthropic"),
+                                    ("deepseek", "DeepSeek"),
+                                    ("google_ai_studio", "Google AI Studio"),
+                                    ("opencode_zen", "OpenCode Zen"),
+                                    ("groq", "Groq"),
+                                    ("ollama", "Ollama Local"),
+                                ];
+                                let mut configured = Vec::new();
+                                for &(name, display) in provider_list {
+                                    if config.is_provider_configured(name) {
+                                        configured.push((name.to_string(), display.to_string()));
+                                    }
+                                }
+                                if configured.is_empty() {
+                                    for &(name, display) in provider_list {
+                                        configured.push((name.to_string(), display.to_string()));
+                                    }
+                                }
+                                app.model_select = app::ModelSelectState::ChoosingProvider {
+                                    providers: configured,
+                                    selected_idx: 0,
+                                };
+                                app.typed_input.clear();
+                                app.cursor_idx = 0;
+                                app.selected_index = None;
+                                app.history_idx = None;
+                                continue;
+                            }
+
+                            if is_menu_selection && (trimmed.starts_with("/model ") || trimmed.starts_with("/models ")) {
+                                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                                if parts.len() == 2 {
+                                    let prov = parts[1];
+                                    let provider_list = &[
+                                        ("mivi", "Mivi Local (custom)"),
+                                        ("openai", "OpenAI"),
+                                        ("anthropic", "Anthropic"),
+                                        ("deepseek", "DeepSeek"),
+                                        ("google_ai_studio", "Google AI Studio"),
+                                        ("opencode_zen", "OpenCode Zen"),
+                                        ("groq", "Groq"),
+                                        ("ollama", "Ollama Local"),
+                                    ];
+                                    if let Some(&(name, display)) = provider_list.iter().find(|(name, _)| name == &prov) {
+                                        let curated_models = match name {
+                                            "mivi" => vec!["mivi"],
+                                            "openai" => vec!["gpt-4.5", "gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "o3-mini"],
+                                            "anthropic" => vec!["claude-3-5-sonnet", "claude-3-5-haiku", "claude-3-opus"],
+                                            "deepseek" => vec!["deepseek-chat", "deepseek-reasoner"],
+                                            "google_ai_studio" => vec!["gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+                                            "opencode_zen" => vec!["deepseek-v4-flash-free", "mimo-v2.5-free", "north-mini-code-free"],
+                                            "groq" => vec!["deepseek-r1-distill-llama-70b", "llama-3.3-70b-versatile"],
+                                            "ollama" => vec!["llama3", "mistral", "qwen2.5", "deepseek-r1"],
+                                            _ => vec!["default"],
+                                        };
+                                        let mut models_list: Vec<String> = curated_models.into_iter().map(|s| s.to_string()).collect();
+                                        models_list.push("Exit".to_string());
+
+                                        app.model_select = app::ModelSelectState::ChoosingModel {
+                                            provider_name: name.to_string(),
+                                            provider_display: display.to_string(),
+                                            models: models_list,
+                                            selected_idx: 0,
+                                        };
+                                        app.typed_input.clear();
+                                        app.cursor_idx = 0;
+                                        app.selected_index = None;
+                                        app.history_idx = None;
+                                        continue;
+                                    }
+                                }
+                            }
+
+                            // Handle partial auto-completions for commands expecting arguments
+                            let is_partial = (trimmed == "/load")
                                 || (trimmed == "/sources")
                                 || (trimmed == "/workflows");
 
