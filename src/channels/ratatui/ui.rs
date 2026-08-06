@@ -608,7 +608,7 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
 fn render_autocomplete(
     f: &mut Frame,
     app: &RatatuiApp,
-    matches: &[(&str, &str)],
+    matches: &[(String, String)],
     area: Rect,
 ) {
     let mut popup_lines = Vec::new();
@@ -629,7 +629,7 @@ fn render_autocomplete(
                     format!("{:<30}", cmd),
                     Style::default().fg(theme::RED_ORANGE).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(*desc, theme::status_accent_style()),
+                Span::styled(desc.as_str(), theme::status_accent_style()),
             ]));
         } else {
             popup_lines.push(Line::from(vec![
@@ -638,7 +638,7 @@ fn render_autocomplete(
                     format!("{:<30}", cmd),
                     theme::assistant_text_style(),
                 ),
-                Span::styled(*desc, theme::status_accent_style()),
+                Span::styled(desc.as_str(), theme::status_accent_style()),
             ]));
         }
     }

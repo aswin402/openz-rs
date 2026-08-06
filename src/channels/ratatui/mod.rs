@@ -36,8 +36,10 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     let sessions_dir = crate::config::loader::resolve_path("~/.openz/sessions");
     let session_manager = crate::session::SessionManager::new(sessions_dir);
 
-    // Build AgentLoop instance wired with full native tool registry and LLM provider
-    let agent_loop = Arc::new(crate::cli::builder::build_agent_loop(config.clone()).await?);
+    // Build AgentLoop instance wrapped in a Mutex so it can be updated dynamically
+    let agent_loop = Arc::new(tokio::sync::Mutex::new(
+        crate::cli::builder::build_agent_loop(config.clone()).await?,
+    ));
 
     // Interactive Session History Menu on startup (Start New vs Restore Recent Session)
     let history = crate::cli::load_session_history()?;
@@ -130,7 +132,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                             if has_matches {
                                 let idx = app.selected_index.unwrap_or(0);
                                 if idx < matches.len() {
-                                    let (cmd, _) = matches[idx];
+                                    let (cmd, _) = &matches[idx];
                                     app.typed_input = cmd.chars().collect();
                                     app.cursor_idx = app.typed_input.len();
                                     app.selected_index = None;
@@ -232,7 +234,23 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                             };
 
                             let trimmed = input_str.trim();
-                            if !trimmed.is_empty() {
+
+                            // Handle partial auto-completions for commands expecting arguments
+                            let is_menu_selection = app.selected_index.is_some();
+                            let is_partial = (trimmed == "/model" || (trimmed.starts_with("/model") && !trimmed.contains('/')))
+                                || (trimmed == "/load")
+                                || (trimmed == "/sources")
+                                || (trimmed == "/workflows");
+
+                            if is_menu_selection && is_partial {
+                                let mut completed = trimmed.to_string();
+                                if !completed.ends_with(' ') {
+                                    completed.push(' ');
+                                }
+                                app.typed_input = completed.chars().collect();
+                                app.cursor_idx = app.typed_input.len();
+                                app.selected_index = None;
+                            } else if !trimmed.is_empty() {
                                 app.prompt_history.push(input_str.clone());
 
                                 if trimmed == "/exit" || trimmed == "/quit" {
@@ -251,10 +269,11 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                 } else if trimmed == "/mcps" {
                                     app.messages.push(ChatMessage::simple("user", input_str.clone()));
                                     let mut mcp_msg = String::from("Configured MCP Servers:\n");
-                                    if agent_loop.config.mcp_servers.is_empty() {
+                                    let loop_guard = agent_loop.lock().await;
+                                    if loop_guard.config.mcp_servers.is_empty() {
                                         mcp_msg.push_str("  No MCP servers configured.\n");
                                     } else {
-                                        for (name, mcp_cfg) in &agent_loop.config.mcp_servers {
+                                        for (name, mcp_cfg) in &loop_guard.config.mcp_servers {
                                             let status = if mcp_cfg.enabled { "enabled" } else { "disabled" };
                                             mcp_msg.push_str(&format!("  • {} ({}) - {}\n", name, status, mcp_cfg.command));
                                         }
@@ -333,10 +352,44 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     let model_arg = trimmed.strip_prefix("/model").unwrap_or("").trim();
                                     app.messages.push(ChatMessage::simple("user", input_str.clone()));
                                     if model_arg.is_empty() {
-                                        app.messages.push(ChatMessage::simple("assistant", format!("Active Model: {}\nUse '/model <name>' to switch it.", app.model)));
+                                        app.messages.push(ChatMessage::simple("assistant", format!("Active Model: {}\nUse '/model <provider>/<model>' (e.g. /model openai/gpt-4o) to switch it.", app.model)));
                                     } else {
-                                        app.model = model_arg.to_string();
-                                        app.messages.push(ChatMessage::simple("assistant", format!("Switched active model to: {}", model_arg)));
+                                        let (prov, mdl) = if let Some(idx) = model_arg.find('/') {
+                                            (&model_arg[..idx], &model_arg[idx + 1..])
+                                        } else {
+                                            ("", model_arg)
+                                        };
+
+                                        if prov.is_empty() {
+                                            app.messages.push(ChatMessage::simple("assistant", "Error: Please specify provider, e.g. '/model openai/gpt-4o'.".to_string()));
+                                        } else {
+                                            use crate::config::loader::{load_config, save_config};
+                                            match load_config() {
+                                                Ok(mut cfg) => {
+                                                    cfg.agents.defaults.provider = prov.to_string();
+                                                    cfg.agents.defaults.model = mdl.to_string();
+                                                    if let Err(e) = save_config(&cfg) {
+                                                        app.messages.push(ChatMessage::simple("assistant", format!("Error saving config: {}", e)));
+                                                    } else {
+                                                        match crate::providers::resolver::resolve_provider_full(&cfg, mdl) {
+                                                            Ok(resolved) => {
+                                                                let mut loop_lock = agent_loop.lock().await;
+                                                                loop_lock.update_model_and_provider(cfg, resolved.instance);
+                                                                app.model = mdl.to_string();
+                                                                app.provider = prov.to_string();
+                                                                app.messages.push(ChatMessage::simple("assistant", format!("Switched active model to: {} ({})", mdl, prov)));
+                                                            }
+                                                            Err(e) => {
+                                                                app.messages.push(ChatMessage::simple("assistant", format!("Error resolving provider: {}", e)));
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    app.messages.push(ChatMessage::simple("assistant", format!("Error loading config: {}", e)));
+                                                }
+                                            }
+                                        }
                                     }
                                 } else if trimmed == "/history" {
                                     app.messages.push(ChatMessage::simple("user", input_str.clone()));
@@ -437,7 +490,8 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     let tx_clone = tx.clone();
 
                                     tokio::spawn(async move {
-                                        match agent_loop_clone.run(&prompt_text, &session_key_clone).await {
+                                        let loop_guard = agent_loop_clone.lock().await;
+                                        match loop_guard.run(&prompt_text, &session_key_clone).await {
                                             Ok(res) => {
                                                 let _ = tx_clone.send(ChatMessage::simple("assistant", res.content));
                                             }

@@ -109,17 +109,104 @@ impl RatatuiApp {
         }
     }
 
-    pub fn matching_slash_commands(&self) -> Vec<(&'static str, &'static str)> {
+    pub fn matching_slash_commands(&self) -> Vec<(String, String)> {
         let input_str: String = self.typed_input.iter().collect();
-        if input_str.starts_with('/') {
-            SLASH_COMMANDS
-                .iter()
-                .copied()
-                .filter(|(cmd, _)| cmd.starts_with(&input_str))
-                .collect()
-        } else {
-            Vec::new()
+        if !input_str.starts_with('/') {
+            return Vec::new();
         }
+
+        // Check if they typed /model ...
+        if input_str.starts_with("/model") {
+            let mut results = Vec::new();
+            let arg = input_str.strip_prefix("/model").unwrap_or("").trim_start();
+            
+            // Standard provider lists with their display names and models
+            let provider_list = &[
+                ("mivi", "Mivi Local", vec!["mivi"]),
+                ("openai", "OpenAI", vec!["gpt-4.5", "gpt-4o", "gpt-4o-mini", "o1", "o1-mini"]),
+                ("anthropic", "Anthropic", vec!["claude-3-5-sonnet", "claude-3-5-haiku", "claude-3-opus"]),
+                ("deepseek", "DeepSeek", vec!["deepseek-chat", "deepseek-reasoner"]),
+                ("google_ai_studio", "Google AI Studio", vec!["gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.5-flash"]),
+                ("opencode_zen", "OpenCode Zen", vec!["deepseek-v4-flash-free", "mimo-v2.5-free", "north-mini-code-free"]),
+                ("groq", "Groq", vec!["deepseek-r1-distill-llama-70b", "llama-3.3-70b-versatile"]),
+                ("ollama", "Ollama Local", vec!["llama3", "mistral", "qwen2.5", "deepseek-r1"]),
+            ];
+
+            // If input is exactly "/model" or starts with "/model " (no provider specified yet)
+            if arg.is_empty() {
+                // List configured/available providers
+                if let Ok(config) = crate::config::loader::load_config() {
+                    for (name, display, _) in provider_list {
+                        if config.is_provider_configured(name) {
+                            results.push((
+                                format!("/model {}", name),
+                                format!("Select provider: {}", display),
+                            ));
+                        }
+                    }
+                }
+                // If config load failed or list is empty, return static list of popular ones
+                if results.is_empty() {
+                    for (name, display, _) in provider_list {
+                        results.push((
+                            format!("/model {}", name),
+                            format!("Select provider: {}", display),
+                        ));
+                    }
+                }
+            } else {
+                // Provider is specified. Check if there's a space after provider
+                // e.g. "/model openai" (no space at end) vs "/model openai " (space at end)
+                let parts: Vec<&str> = arg.split_whitespace().collect();
+                if parts.len() == 1 {
+                    let prov_query = parts[0];
+                    // Filter matching providers
+                    for (name, display, _) in provider_list {
+                        if name.starts_with(prov_query) {
+                            results.push((
+                                format!("/model {}", name),
+                                format!("Select provider: {}", display),
+                            ));
+                        }
+                    }
+                    
+                    // If the user typed a complete provider name but no trailing space,
+                    // also show option to press space to list models
+                    if results.len() == 1 && results[0].0 == input_str {
+                        let name = results[0].0.strip_prefix("/model ").unwrap_or("");
+                        results.push((
+                            format!("/model {} ", name),
+                            "Press Space to list models".to_string(),
+                        ));
+                    }
+                } else if parts.len() >= 2 {
+                    let provider = parts[0];
+                    let model_query = if arg.ends_with(' ') { "" } else { parts[1] };
+                    
+                    // Find models for this provider
+                    if let Some((_, _, models)) = provider_list.iter().find(|(name, _, _)| name == &provider) {
+                        for model in models {
+                            if model_query.is_empty() || model.starts_with(model_query) {
+                                results.push((
+                                    format!("/model {}/{}", provider, model),
+                                    format!("Select model: {}", model),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+
+            return results;
+        }
+
+        // Default: match standard static list of slash commands
+        SLASH_COMMANDS
+            .iter()
+            .copied()
+            .filter(|(cmd, _)| cmd.starts_with(&input_str))
+            .map(|(cmd, desc)| (cmd.to_string(), desc.to_string()))
+            .collect()
     }
 }
 
