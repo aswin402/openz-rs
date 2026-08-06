@@ -257,7 +257,7 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
         Style::default().fg(theme::RED_ORANGE).add_modifier(Modifier::BOLD),
     )]));
 
-    // Version + Provider info
+    // Version line only (provider/model/cwd are in the status bar)
     lines.push(Line::from(vec![Span::styled(
         format!(" openz v{}", env!("CARGO_PKG_VERSION")),
         Style::default().fg(theme::RED_ORANGE).add_modifier(Modifier::BOLD),
@@ -266,16 +266,7 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
         format!(" {} | {}", app.provider, app.model),
         theme::status_accent_style(),
     )]));
-    lines.push(Line::from(vec![Span::styled(
-        format!(" {}", app.cwd_display),
-        theme::status_accent_style(),
-    )]));
-
-    // Initial divider after header
-    lines.push(Line::from(vec![Span::styled(
-        "─".repeat(50),
-        theme::divider_style(),
-    )]));
+    lines.push(Line::from(""));
 
     // Empty line for breathing room
     lines.push(Line::from(""));
@@ -505,14 +496,20 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
 fn render_input(f: &mut Frame, app: &RatatuiApp, area: Rect) {
     let max_width = area.width.saturating_sub(3).max(1) as usize;
 
+    // Codex-style: subtle background highlight on the input line
+    let input_bg = Color::Rgb(40, 44, 52); // Slightly lighter than terminal bg
+
     let input_line = if app.typed_input.is_empty() {
         // Placeholder
         Line::from(vec![
-            Span::styled("› ", theme::input_prefix_style()),
-            Span::styled("type here...", theme::placeholder_style()),
+            Span::styled("› ", Style::default().fg(theme::EMERALD).bg(input_bg)),
+            Span::styled(
+                format!("{:<width$}", "type here...", width = max_width),
+                Style::default().fg(theme::AURA_SLATE).bg(input_bg),
+            ),
         ])
     } else {
-        // Show the input content (first chunk only for single-line view)
+        // Show the input content
         let input_str: String = app.typed_input.iter().collect();
         let display = if input_str.len() > max_width {
             let start = input_str.len().saturating_sub(max_width);
@@ -520,9 +517,10 @@ fn render_input(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         } else {
             input_str
         };
+        let padded = format!("{:<width$}", display, width = max_width);
         Line::from(vec![
-            Span::styled("› ", theme::input_prefix_style()),
-            Span::styled(display, Style::default().fg(Color::White)),
+            Span::styled("› ", Style::default().fg(theme::EMERALD).bg(input_bg)),
+            Span::styled(padded, Style::default().fg(Color::White).bg(input_bg)),
         ])
     };
 
@@ -535,7 +533,6 @@ fn render_input(f: &mut Frame, app: &RatatuiApp, area: Rect) {
     } else {
         let visible_len = app.typed_input.len().min(max_width);
         2 + if app.typed_input.len() > max_width {
-            // Scrolled view: cursor is at end
             visible_len
         } else {
             app.cursor_idx
@@ -547,62 +544,31 @@ fn render_input(f: &mut Frame, app: &RatatuiApp, area: Rect) {
 // ── Status Bar Renderer ─────────────────────────────────────────────────────
 
 fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
-    let (mcp_loaded, mcp_failed, _mcp_total) = crate::tools::mcp::get_mcp_stats();
-    let mcp_done = crate::channels::cli::mcp::is_mcp_done();
-
-    // Build status spans: model · provider · ◇ MCP X✓ · ~
-    let mut spans = Vec::new();
-
-    // Padding
-    spans.push(Span::styled(" ", Style::default()));
-
-    // Model name
+    // Codex-style: minimal status — just "model · ~"
     let model_display = if app.model.len() > 30 {
         format!("{}…", &app.model[..29])
     } else {
         app.model.clone()
     };
-    spans.push(Span::styled(model_display, theme::status_accent_style()));
-    spans.push(Span::styled(" · ", theme::status_bar_style()));
 
-    // Provider
-    spans.push(Span::styled(app.provider.clone(), theme::status_accent_style()));
-    spans.push(Span::styled(" · ", theme::status_bar_style()));
-
-    // MCP status
-    spans.push(Span::styled("◇ ", theme::mcp_diamond_style()));
-    if !mcp_done {
-        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let frame_idx = app.spinner_idx % spinner_frames.len();
-        spans.push(Span::styled(
-            format!("MCP {} ", spinner_frames[frame_idx]),
-            theme::status_bar_style(),
-        ));
-    } else if mcp_failed == 0 {
-        spans.push(Span::styled(
-            format!("MCP {}✓", mcp_loaded),
-            theme::mcp_success_style(),
-        ));
+    // Shorten cwd: just show last component or ~
+    let short_cwd = if app.cwd_display == "~" {
+        "~".to_string()
     } else {
-        spans.push(Span::styled(
-            format!("MCP {}✓ ", mcp_loaded),
-            theme::mcp_success_style(),
-        ));
-        spans.push(Span::styled(
-            format!("{}✗", mcp_failed),
-            theme::error_style(),
-        ));
-    }
+        app.cwd_display
+            .rsplit('/')
+            .next()
+            .unwrap_or("~")
+            .to_string()
+    };
 
-    spans.push(Span::styled(" · ", theme::status_bar_style()));
+    let status_line = Line::from(vec![
+        Span::styled(" ", Style::default()),
+        Span::styled(model_display, theme::status_accent_style()),
+        Span::styled(" · ", theme::status_bar_style()),
+        Span::styled(short_cwd, theme::status_accent_style()),
+    ]);
 
-    // Working directory
-    spans.push(Span::styled(
-        app.cwd_display.clone(),
-        theme::status_accent_style(),
-    ));
-
-    let status_line = Line::from(spans);
     let status_p = Paragraph::new(status_line);
     f.render_widget(status_p, area);
 }
