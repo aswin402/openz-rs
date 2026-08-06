@@ -31,6 +31,21 @@ impl ChatMessage {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum ModelSelectState {
+    Closed,
+    ChoosingProvider {
+        providers: Vec<(String, String)>, // (name, display_name)
+        selected_idx: usize,
+    },
+    ChoosingModel {
+        provider_name: String,
+        provider_display: String,
+        models: Vec<String>,
+        selected_idx: usize,
+    },
+}
+
 pub struct RatatuiApp {
     pub model: String,
     pub provider: String,
@@ -50,6 +65,8 @@ pub struct RatatuiApp {
     pub is_thinking: bool,
     /// Spinner frame index for animation
     pub spinner_idx: usize,
+    /// Active interactive model selection state
+    pub model_select: ModelSelectState,
 }
 
 pub const SLASH_COMMANDS: &[(&str, &str)] = &[
@@ -106,6 +123,7 @@ impl RatatuiApp {
             should_exit: false,
             is_thinking: false,
             spinner_idx: 0,
+            model_select: ModelSelectState::Closed,
         }
     }
 

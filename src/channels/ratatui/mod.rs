@@ -118,6 +118,110 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
                         break;
                     }
+
+                    // Intercept key events for active interactive model selection menu
+                    match &mut app.model_select {
+                        app::ModelSelectState::ChoosingProvider { providers, selected_idx } => {
+                            match key.code {
+                                KeyCode::Up => {
+                                    if *selected_idx > 0 {
+                                        *selected_idx -= 1;
+                                    } else {
+                                        *selected_idx = providers.len().saturating_sub(1);
+                                    }
+                                }
+                                KeyCode::Down => {
+                                    if *selected_idx + 1 < providers.len() {
+                                        *selected_idx += 1;
+                                    } else {
+                                        *selected_idx = 0;
+                                    }
+                                }
+                                KeyCode::Esc => {
+                                    app.model_select = app::ModelSelectState::Closed;
+                                }
+                                KeyCode::Enter => {
+                                    let (prov_name, prov_display) = providers[*selected_idx].clone();
+                                    
+                                    // Curated models mapping
+                                    let curated_models = match prov_name.as_str() {
+                                        "mivi" => vec!["mivi"],
+                                        "openai" => vec!["gpt-4.5", "gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "o3-mini"],
+                                        "anthropic" => vec!["claude-3-5-sonnet", "claude-3-5-haiku", "claude-3-opus"],
+                                        "deepseek" => vec!["deepseek-chat", "deepseek-reasoner"],
+                                        "google_ai_studio" => vec!["gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+                                        "opencode_zen" => vec!["deepseek-v4-flash-free", "mimo-v2.5-free", "north-mini-code-free"],
+                                        "groq" => vec!["deepseek-r1-distill-llama-70b", "llama-3.3-70b-versatile"],
+                                        "ollama" => vec!["llama3", "mistral", "qwen2.5", "deepseek-r1"],
+                                        _ => vec!["default"],
+                                    };
+                                    let mut models_list: Vec<String> = curated_models.into_iter().map(|s| s.to_string()).collect();
+                                    models_list.push("Exit".to_string());
+
+                                    app.model_select = app::ModelSelectState::ChoosingModel {
+                                        provider_name: prov_name,
+                                        provider_display: prov_display,
+                                        models: models_list,
+                                        selected_idx: 0,
+                                    };
+                                }
+                                _ => {}
+                            }
+                            continue;
+                        }
+                        app::ModelSelectState::ChoosingModel { provider_name, provider_display, models, selected_idx } => {
+                            match key.code {
+                                KeyCode::Up => {
+                                    if *selected_idx > 0 {
+                                        *selected_idx -= 1;
+                                    } else {
+                                        *selected_idx = models.len().saturating_sub(1);
+                                    }
+                                }
+                                KeyCode::Down => {
+                                    if *selected_idx + 1 < models.len() {
+                                        *selected_idx += 1;
+                                    } else {
+                                        *selected_idx = 0;
+                                    }
+                                }
+                                KeyCode::Esc => {
+                                    app.model_select = app::ModelSelectState::Closed;
+                                }
+                                KeyCode::Enter => {
+                                    if *selected_idx == models.len() - 1 {
+                                        // Exit selected
+                                        app.model_select = app::ModelSelectState::Closed;
+                                    } else {
+                                        let selected_model = models[*selected_idx].clone();
+                                        let prov = provider_name.clone();
+                                        let prov_display_str = provider_display.clone();
+                                        
+                                        // Apply the choice to config and agent loop
+                                        use crate::config::loader::{load_config, save_config};
+                                        if let Ok(mut cfg) = load_config() {
+                                            cfg.agents.defaults.provider = prov.clone();
+                                            cfg.agents.defaults.model = selected_model.clone();
+                                            if let Ok(()) = save_config(&cfg) {
+                                                if let Ok(resolved) = crate::providers::resolver::resolve_provider_full(&cfg, &selected_model) {
+                                                    let mut loop_lock = agent_loop.lock().await;
+                                                    loop_lock.update_model_and_provider(cfg, resolved.instance);
+                                                    app.model = selected_model.clone();
+                                                    app.provider = prov.clone();
+                                                    app.messages.push(ChatMessage::simple("assistant", format!("✓ Switched active model to {} ({})", selected_model, prov_display_str)));
+                                                }
+                                            }
+                                        }
+                                        app.model_select = app::ModelSelectState::Closed;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            continue;
+                        }
+                        _ => {}
+                    }
+
                     let matches = app.matching_slash_commands();
                     let has_matches = !matches.is_empty();
 
@@ -348,11 +452,39 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         }
                                     }
                                     app.messages.push(ChatMessage::simple("assistant", msg));
+                                } else if trimmed == "/model" {
+                                    use crate::config::loader::load_config;
+                                    let config = load_config().unwrap_or_default();
+                                    let provider_list = &[
+                                        ("mivi", "Mivi Local (custom)"),
+                                        ("openai", "OpenAI"),
+                                        ("anthropic", "Anthropic"),
+                                        ("deepseek", "DeepSeek"),
+                                        ("google_ai_studio", "Google AI Studio"),
+                                        ("opencode_zen", "OpenCode Zen"),
+                                        ("groq", "Groq"),
+                                        ("ollama", "Ollama Local"),
+                                    ];
+                                    let mut configured = Vec::new();
+                                    for &(name, display) in provider_list {
+                                        if config.is_provider_configured(name) {
+                                            configured.push((name.to_string(), display.to_string()));
+                                        }
+                                    }
+                                    if configured.is_empty() {
+                                        for &(name, display) in provider_list {
+                                            configured.push((name.to_string(), display.to_string()));
+                                        }
+                                    }
+                                    app.model_select = app::ModelSelectState::ChoosingProvider {
+                                        providers: configured,
+                                        selected_idx: 0,
+                                    };
                                 } else if trimmed.starts_with("/model") {
                                     let model_arg = trimmed.strip_prefix("/model").unwrap_or("").trim();
                                     app.messages.push(ChatMessage::simple("user", input_str.clone()));
                                     if model_arg.is_empty() {
-                                        app.messages.push(ChatMessage::simple("assistant", format!("Active Model: {}\nUse '/model <provider>/<model>' (e.g. /model openai/gpt-4o) to switch it.", app.model)));
+                                        app.messages.push(ChatMessage::simple("assistant", format!("Active Model: {}\nUse '/model' to open the interactive selector.", app.model)));
                                     } else {
                                         let (prov, mdl) = if let Some(idx) = model_arg.find('/') {
                                             (&model_arg[..idx], &model_arg[idx + 1..])

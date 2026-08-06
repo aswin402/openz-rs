@@ -1,4 +1,4 @@
-use super::app::RatatuiApp;
+use super::app::{ModelSelectState, RatatuiApp};
 use super::theme;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -177,14 +177,25 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
         0
     };
 
-    // Codex-style layout: chat (flex) → input (padded, height 3) → status (bottom right) → (popup below status)
+    let is_menu_active = match &app.model_select {
+        ModelSelectState::Closed => false,
+        _ => true,
+    };
+
+    let (input_height, menu_height) = if is_menu_active {
+        (9, 0) // Allocate 9 lines for the model selection menu
+    } else {
+        (3, popup_lines_count)
+    };
+
+    // Codex-style layout: chat (flex) → input (padded, height 3 or menu height 9) → status (bottom right) → (popup below status)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),                     // Chat scrollback
-            Constraint::Length(3),                   // Big Input box (height 3)
+            Constraint::Length(input_height),        // Input Box or Selection Menu
             Constraint::Length(1),                   // Status bar
-            Constraint::Length(popup_lines_count),   // Autocomplete popup (below input)
+            Constraint::Length(menu_height),         // Autocomplete popup
         ])
         .split(f.area());
 
@@ -196,14 +207,18 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
         .scroll((app.scroll_offset as u16, 0));
     f.render_widget(conversation, chunks[0]);
 
-    // ── 2. Input Line (Codex-style: big input box with padded height 3) ───
-    render_input(f, app, chunks[1]);
+    // ── 2. Content Area (Menu or Input box) ──────────────────────────────────
+    if is_menu_active {
+        render_model_menu(f, app, chunks[1]);
+    } else {
+        render_input(f, app, chunks[1]);
+    }
 
     // ── 3. Status Bar (model · provider · MCP · context) ───────────────────
     render_status_bar(f, app, chunks[2]);
 
     // ── 4. Autocomplete Popup (below status bar) ─────────────────────────────
-    if has_popup {
+    if !is_menu_active && has_popup {
         render_autocomplete(f, app, &matches, chunks[3]);
     }
 }
@@ -650,4 +665,99 @@ fn render_autocomplete(
 
     let help_p = Paragraph::new(Text::from(popup_lines));
     f.render_widget(help_p, area);
+}
+
+// ── Interactive Model Selection Menu ────────────────────────────────────────
+
+fn render_model_menu(f: &mut Frame, app: &RatatuiApp, area: Rect) {
+    let mut lines = Vec::new();
+    let menu_bg = Color::Rgb(33, 37, 43); // Darker charcoal background for menu
+
+    // Header info line
+    lines.push(Line::from(vec![
+        Span::styled("Current active model: ", Style::default().fg(theme::AURA_SLATE).bg(menu_bg)),
+        Span::styled(app.model.clone(), Style::default().fg(Color::White).bg(menu_bg)),
+        Span::styled(" | Provider: ", Style::default().fg(theme::AURA_SLATE).bg(menu_bg)),
+        Span::styled(app.provider.clone(), Style::default().fg(Color::White).bg(menu_bg)),
+    ]));
+
+    // Title / Prompt line
+    let prompt = match &app.model_select {
+        ModelSelectState::ChoosingProvider { .. } => "> Choose an LLM provider:",
+        ModelSelectState::ChoosingModel { provider_display, .. } => {
+            &format!("> Choose a model from {}:", provider_display)
+        }
+        _ => "",
+    };
+    lines.push(Line::from(Span::styled(
+        prompt.to_string(),
+        Style::default().fg(theme::RED_ORANGE).add_modifier(Modifier::BOLD).bg(menu_bg),
+    )));
+
+    // Render list items
+    let (items, selected_idx): (Vec<String>, usize) = match &app.model_select {
+        ModelSelectState::ChoosingProvider { providers, selected_idx } => {
+            let list = providers.iter().map(|(_, display)| display.clone()).collect::<Vec<_>>();
+            (list, *selected_idx)
+        }
+        ModelSelectState::ChoosingModel { models, selected_idx, .. } => {
+            (models.clone(), *selected_idx)
+        }
+        _ => (Vec::new(), 0),
+    };
+
+    // Calculate vertical scroll/slice for large lists (we have 4 lines for items in a 9-line menu block)
+    let display_limit = 4;
+    let start_idx = if selected_idx >= display_limit {
+        selected_idx - display_limit + 1
+    } else {
+        0
+    };
+    let end_idx = (start_idx + display_limit).min(items.len());
+
+    for i in start_idx..end_idx {
+        let is_selected = selected_idx == i;
+        if is_selected {
+            lines.push(Line::from(vec![
+                Span::styled("> ", Style::default().fg(theme::RED_ORANGE).add_modifier(Modifier::BOLD).bg(menu_bg)),
+                Span::styled(
+                    items[i].clone(),
+                    Style::default().fg(theme::RED_ORANGE).add_modifier(Modifier::BOLD).bg(menu_bg),
+                ),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled("  ", Style::default().bg(menu_bg)),
+                Span::styled(items[i].clone(), Style::default().fg(Color::White).bg(menu_bg)),
+            ]));
+        }
+    }
+
+    // Add scroll down helper if there are more items
+    if end_idx < items.len() {
+        lines.push(Line::from(Span::styled(
+            format!("  ↓ {} more", items.len() - end_idx),
+            Style::default().fg(theme::AURA_SLATE).bg(menu_bg),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled("", Style::default().bg(menu_bg))));
+    }
+
+    // Help instructions line
+    lines.push(Line::from(Span::styled(
+        "  ↑/↓ Navigate · enter Select · esc to cancel",
+        Style::default().fg(theme::AURA_SLATE).bg(menu_bg),
+    )));
+
+    // Fill remaining lines to area height with background to avoid background bleed
+    let current_len = lines.len();
+    for _ in current_len..(area.height as usize) {
+        lines.push(Line::from(Span::styled(
+            " ".repeat(area.width as usize),
+            Style::default().bg(menu_bg),
+        )));
+    }
+
+    let p = Paragraph::new(Text::from(lines));
+    f.render_widget(p, area);
 }
