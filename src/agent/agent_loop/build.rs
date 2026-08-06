@@ -664,7 +664,7 @@ async fn retrieve_pinned_identity_memories() -> String {
     let _lock = crate::tools::shared_memory::get_db_mutex().lock().await;
     let cognitive_rows = crate::tools::shared_memory::with_db(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT text FROM cognitive_memory WHERE importance >= 0.85 ORDER BY importance DESC, last_accessed DESC LIMIT 24",
+            "SELECT text FROM cognitive_memory WHERE importance >= 0.75 ORDER BY importance DESC, last_accessed DESC LIMIT 24",
         )?;
         let mapped = stmt.query_map([], |row| row.get::<_, String>(0))?;
         let mut collected = Vec::new();
@@ -683,7 +683,7 @@ async fn retrieve_pinned_identity_memories() -> String {
 
     let semantic_rows = crate::tools::graph_memory::with_db(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT raw_text FROM semantic_metadata WHERE valid_until IS NULL AND importance >= 0.85 ORDER BY timestamp DESC LIMIT 48",
+            "SELECT raw_text FROM semantic_metadata WHERE valid_until IS NULL AND importance >= 0.75 ORDER BY timestamp DESC LIMIT 48",
         )?;
         let mapped = stmt.query_map([], |row| row.get::<_, String>(0))?;
         let mut collected = Vec::new();
