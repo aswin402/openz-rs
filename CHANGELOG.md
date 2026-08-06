@@ -1,4 +1,10 @@
-### v0.0.119 (Latest Release)
+### v0.0.120 (Latest Release)
+**Custom Providers UI, Identity Recall, and WebSocket Divergence Fixes:**
+- **Dynamic Custom LLM Providers**: Added a form and "+ Add Custom LLM Provider Endpoint" button to the "LLM Providers" tab in settings. Users can now input a unique provider key, custom API base, default model, and API key, which are serialized directly to the backend's `others` HashMap in `~/.openz/config.json`.
+- **Identity/Persona Memory Pinning**: Lowered the memory importance threshold in `retrieve_pinned_identity_memories` from `0.85` to `0.75` inside `src/agent/agent_loop/build.rs`. This ensures automatically extracted user/agent name, home directory, and persona observations (which carry `0.8` importance) are loaded unconditionally on session start.
+- **WebSocket Agent Sync & Streaming**: Resolved a bug where WebUI turns were using a frozen startup copy of the `AgentLoop` by dynamically rebuilding it with live config for every message. Also updated `ws_chat_id` namespace translation to support streaming tokens back to CLI and other channel sessions selected in the WebUI.
+
+### v0.0.119
 **WebUI & TUI Layout Real-Time Alignment:**
 - **TUI Session History Visual Alignment**: Upgraded the session history printer (`print_session_history` in `render.rs`) to format loaded chat logs identically to active live TUI sessions—displaying user prompts (`> ` and `- ` prefixes), formatting thoughts (`● Thought`), interleaving tool call headers (`● Bash ...`), re-injecting interactive authorization prompts (`> Authorize execution?: Approve (Allow once)`), and formatting outcome checkmarks cleanly without double symbols.
 - **WebUI Real-Time Pages**: Wired real-time data for "Skills" and "Agents" views, loading active guidelines and subagent configurations directly from the backend. Fixed the Background Bots & Servers modal configuration status checks for Telegram, Discord, and WhatsApp, and added descriptive empty fallbacks for MCP servers.
