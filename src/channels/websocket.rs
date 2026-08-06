@@ -44,9 +44,12 @@ pub fn publish_ws_event(event: serde_json::Value) {
     }
 }
 
-/// Extract the chat id from a `ws:<chat_id>` agent session key.
-pub fn ws_chat_id(session_key: &str) -> Option<&str> {
-    session_key.strip_prefix("ws:")
+/// Extract the chat id from a session key (mapping colons to underscores to match WebUI format).
+pub fn ws_chat_id(session_key: &str) -> Option<String> {
+    if session_key.is_empty() {
+        return None;
+    }
+    Some(session_key.replace(':', "_"))
 }
 
 static WS_APPROVALS: std::sync::OnceLock<
@@ -519,7 +522,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             }
                             continue;
                         }
-                        let agent = state.agent_loop.clone();
+                        let state_clone = state.clone();
                         let tx_clone = tx.clone();
                         let chat_id_clone = chat_id.clone();
                         let content_str = content.to_string();
@@ -541,9 +544,28 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 }
                             };
 
-                            let session_key = resolve_session_key(&agent.session_manager, &chat_id_clone);
+                            let config = match state_clone.live_config.read() {
+                                Ok(g) => g.clone(),
+                                Err(_) => state_clone.agent_loop.config.clone(),
+                            };
+                            let agent_loop = match crate::cli::build_agent_loop(config).await {
+                                Ok(al) => al,
+                                Err(e) => {
+                                    let err_evt = serde_json::json!({
+                                        "event": "error",
+                                        "chat_id": chat_id_clone,
+                                        "detail": format!("Failed to build agent loop: {}", e)
+                                    });
+                                    if let Ok(evt_str) = serde_json::to_string(&err_evt) {
+                                        let _ = tx_clone.send(Message::Text(evt_str)).await;
+                                    }
+                                    return;
+                                }
+                            };
 
-                            match agent
+                            let session_key = resolve_session_key(&agent_loop.session_manager, &chat_id_clone);
+
+                            match agent_loop
                                 .run(&content_str, &session_key)
                                 .await
                             {
