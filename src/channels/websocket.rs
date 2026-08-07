@@ -129,6 +129,7 @@ impl super::Channel for WsGateway {
                 "/webhook/sop/instances/:instance_id/resume",
                 axum::routing::post(resume_sop_handler),
             )
+            .layer(axum::middleware::from_fn(hono_log_middleware))
             .layer(cors)
             .with_state(state);
 
@@ -180,6 +181,65 @@ impl super::Channel for WsGateway {
 
         Ok(())
     }
+}
+
+async fn hono_log_middleware(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> impl IntoResponse {
+    let start = std::time::Instant::now();
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    let query = req.uri().query().unwrap_or("");
+    let full_path = if query.is_empty() {
+        path.clone()
+    } else {
+        format!("{}?{}", path, query)
+    };
+
+    let method_str = method.as_str();
+    let method_colored = match method_str {
+        "GET" => "\x1b[1;36mGET\x1b[0m",    // Cyan
+        "POST" => "\x1b[1;35mPOST\x1b[0m",  // Magenta
+        "PUT" => "\x1b[1;33mPUT\x1b[0m",    // Yellow
+        "DELETE" => "\x1b[1;31mDELETE\x1b[0m", // Red
+        _ => "\x1b[1;32mGET\x1b[0m",
+    };
+
+    let silent = std::env::var("OPENZ_SILENT").is_ok();
+    if !silent {
+        println!("  \x1b[1;30m-->\x1b[0m {} \x1b[37m{}\x1b[0m", method_colored, full_path);
+    }
+
+    let response = next.run(req).await;
+
+    let duration = start.elapsed();
+    let status = response.status().as_u16();
+
+    let status_colored = if status >= 200 && status < 300 {
+        format!("\x1b[1;32m{}\x1b[0m", status) // Green
+    } else if status >= 300 && status < 400 {
+        format!("\x1b[1;33m{}\x1b[0m", status) // Yellow
+    } else {
+        format!("\x1b[1;31m{}\x1b[0m", status) // Red
+    };
+
+    let duration_str = if duration.as_secs() > 0 {
+        format!("{:.2}s", duration.as_secs_f64())
+    } else if duration.as_millis() > 0 {
+        format!("{}ms", duration.as_millis())
+    } else {
+        format!("{}μs", duration.as_micros())
+    };
+
+    if !silent {
+        println!(
+            "  \x1b[1;30m<--\x1b[0m {} \x1b[37m{}\x1b[0m {} \x1b[1;30m({})\x1b[0m",
+            method_colored, path, status_colored, duration_str
+        );
+    }
+
+    response
 }
 
 const MAX_WS_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16 MB
@@ -848,7 +908,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         if let Some(providers_val) = envelope.get("providers") {
                             if let Some(obj) = providers_val.as_object() {
                                 let p = &mut config.providers;
-                                let mut update_provider = |field: &mut Option<crate::config::schema::ProviderConfig>, data: &serde_json::Value| {
+                                let update_provider = |field: &mut Option<crate::config::schema::ProviderConfig>, data: &serde_json::Value| {
                                     if let Some(data_obj) = data.as_object() {
                                         let mut cfg = field.clone().unwrap_or_default();
                                         if let Some(key) = data_obj.get("api_key").and_then(|v| v.as_str()) {

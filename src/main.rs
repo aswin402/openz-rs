@@ -93,6 +93,7 @@ async fn async_main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let is_tui = args.len() <= 1 || args.iter().any(|arg| arg == "agent");
     let is_logs = args.iter().any(|arg| arg == "logs");
+    let is_gateway = args.iter().any(|arg| arg == "gateway");
 
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
@@ -129,20 +130,34 @@ async fn async_main() -> anyhow::Result<()> {
                 .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
 
             let stderr_secrets = log_secrets.clone();
-            let stderr_layer = tracing_subscriber::fmt::layer()
-                .with_writer(move || {
-                    openz::logs::SecretScrubWriter::new(std::io::stderr(), stderr_secrets.clone())
-                })
-                .with_ansi(true)
-                .with_target(true)
-                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
 
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(file_layer)
-                .with(stderr_layer)
-                .with(openz::logs::SqliteLogLayer)
-                .init();
+            if is_gateway {
+                let console_layer = tracing_subscriber::fmt::layer()
+                    .event_format(GatewayFormatter)
+                    .with_writer(std::io::stdout);
+
+                tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(file_layer)
+                    .with(console_layer)
+                    .with(openz::logs::SqliteLogLayer)
+                    .init();
+            } else {
+                let stderr_layer = tracing_subscriber::fmt::layer()
+                    .with_writer(move || {
+                        openz::logs::SecretScrubWriter::new(std::io::stderr(), stderr_secrets.clone())
+                    })
+                    .with_ansi(true)
+                    .with_target(true)
+                    .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
+
+                tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(file_layer)
+                    .with(stderr_layer)
+                    .with(openz::logs::SqliteLogLayer)
+                    .init();
+            }
         }
     }
 
@@ -253,4 +268,225 @@ async fn async_main() -> anyhow::Result<()> {
     });
 
     openz::cli::run_cli().await
+}
+
+struct GatewayFormatter;
+
+fn extract_value<'a>(text: &'a str, prefix: &str, suffix: &str) -> Option<&'a str> {
+    let start = text.find(prefix)? + prefix.len();
+    if suffix.is_empty() {
+        Some(&text[start..])
+    } else {
+        let end = text[start..].find(suffix)?;
+        Some(&text[start..start + end])
+    }
+}
+
+struct GatewayVisitor {
+    message: String,
+    session: String,
+    duration_ms: Option<u64>,
+    tool_calls: Option<usize>,
+    tool: String,
+    status: String,
+    chat_id: String,
+    provider: String,
+}
+
+impl tracing::field::Visit for GatewayVisitor {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        match field.name() {
+            "message" => self.message = value.to_string(),
+            "session" => self.session = value.to_string(),
+            "tool" => self.tool = value.to_string(),
+            "status" => self.status = value.to_string(),
+            "chat_id" => self.chat_id = value.to_string(),
+            "provider" => self.provider = value.to_string(),
+            _ => {}
+        }
+    }
+    
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        let val_str = format!("{:?}", value);
+        match field.name() {
+            "message" => self.message = val_str,
+            "session" => self.session = val_str,
+            "tool" => self.tool = val_str,
+            "status" => self.status = val_str,
+            "chat_id" => self.chat_id = val_str,
+            "provider" => self.provider = val_str,
+            _ => {}
+        }
+    }
+
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        match field.name() {
+            "duration_ms" => self.duration_ms = Some(value),
+            "tool_calls" => self.tool_calls = Some(value as usize),
+            _ => {}
+        }
+    }
+    
+    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+        match field.name() {
+            "duration_ms" => if value >= 0 { self.duration_ms = Some(value as u64) },
+            "tool_calls" => if value >= 0 { self.tool_calls = Some(value as usize) },
+            _ => {}
+        }
+    }
+}
+
+impl<S, N> tracing_subscriber::fmt::FormatEvent<S, N> for GatewayFormatter
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    N: for<'a> tracing_subscriber::fmt::FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        _ctx: &tracing_subscriber::fmt::FmtContext<'_, S, N>,
+        mut writer: tracing_subscriber::fmt::format::Writer<'_>,
+        event: &tracing::Event<'_>,
+    ) -> std::fmt::Result {
+        let level = *event.metadata().level();
+        let level_str = match level {
+            tracing::Level::ERROR => "\x1b[1;31m[ERR]\x1b[0m",
+            tracing::Level::WARN => "\x1b[1;33m[WRN]\x1b[0m",
+            tracing::Level::INFO => "\x1b[1;32m[INF]\x1b[0m",
+            tracing::Level::DEBUG => "\x1b[1;34m[DBG]\x1b[0m",
+            tracing::Level::TRACE => "\x1b[1;30m[TRC]\x1b[0m",
+        };
+
+        let mut visitor = GatewayVisitor {
+            message: String::new(),
+            session: String::new(),
+            duration_ms: None,
+            tool_calls: None,
+            tool: String::new(),
+            status: String::new(),
+            chat_id: String::new(),
+            provider: String::new(),
+        };
+        event.record(&mut visitor);
+        let msg = visitor.message;
+        let target = event.metadata().target();
+
+        if target.starts_with("openz::channels::websocket") {
+            if msg.starts_with("WS message received:") {
+                let chat_id = if !visitor.chat_id.is_empty() {
+                    visitor.chat_id.clone()
+                } else {
+                    extract_value(&msg, "chat_id='", "'").unwrap_or("unknown").to_string()
+                };
+                let short_id = if chat_id.len() > 11 { &chat_id[..11] } else { &chat_id };
+                let model = extract_value(&msg, "msg_model=Some(\"", "\")")
+                    .or_else(|| extract_value(&msg, "msg_model=", ","))
+                    .unwrap_or("default");
+                let provider = if !visitor.provider.is_empty() {
+                    visitor.provider.clone()
+                } else {
+                    extract_value(&msg, "msg_provider=Some(\"", "\")")
+                        .or_else(|| extract_value(&msg, "msg_provider=", ""))
+                        .unwrap_or("auto")
+                        .to_string()
+                };
+
+                write!(
+                    writer,
+                    "  \x1b[1;32m-->\x1b[0m \x1b[1;36mWS_MSG\x1b[0m chat_id=\x1b[35m{}\x1b[0m model=\x1b[1;33m{}\x1b[0m \x1b[1;30m({})\x1b[0m\n",
+                    short_id, model, provider
+                )?;
+            } else {
+                write!(writer, "  \x1b[1;30m...\x1b[0m \x1b[1;36mWS\x1b[0m  {}\n", msg)?;
+            }
+        } else if target.starts_with("openz::agent::agent_loop::run") {
+            if msg.starts_with("Sending completion request to LLM") {
+                let model = extract_value(&msg, "(model: ", ")").unwrap_or("unknown");
+                let iteration = extract_value(&msg, "iteration=", "").unwrap_or("0");
+                write!(
+                    writer,
+                    "  \x1b[1;33m⚡\x1b[0m \x1b[1;35mLLM_REQ\x1b[0m model=\x1b[1;33m{}\x1b[0m \x1b[1;30m[iter: {}]\x1b[0m\n",
+                    model, iteration
+                )?;
+            } else if msg.starts_with("Received LLM response") {
+                let reason = extract_value(&msg, "(finish_reason: ", ")").unwrap_or("stop");
+                let duration = visitor.duration_ms.unwrap_or(0);
+                write!(
+                    writer,
+                    "  \x1b[1;32m⚡\x1b[0m \x1b[1;36mLLM_RESP\x1b[0m status=\x1b[1;32m{}\x1b[0m \x1b[1;30m({}ms)\x1b[0m\n",
+                    reason, duration
+                )?;
+            } else if msg.starts_with("Executing tool call") {
+                let tool = if !visitor.tool.is_empty() {
+                    visitor.tool.clone()
+                } else {
+                    extract_value(&msg, "tool=", " ").unwrap_or("unknown").to_string()
+                };
+                write!(
+                    writer,
+                    "  \x1b[1;33m⚙️\x1b[0m \x1b[1;33mTOOL_CALL\x1b[0m tool=\x1b[1;34m{}\x1b[0m\n",
+                    tool
+                )?;
+            } else {
+                write!(writer, "  \x1b[1;30m...\x1b[0m \x1b[1;33mLOOP\x1b[0m {}\n", msg)?;
+            }
+        } else if target.starts_with("openz::agent::agent_loop::tool_execution") {
+            if msg.starts_with("Tool call completed") {
+                let tool = if !visitor.tool.is_empty() {
+                    visitor.tool.clone()
+                } else {
+                    extract_value(&msg, "tool=", " ").unwrap_or("unknown").to_string()
+                };
+                let status = if !visitor.status.is_empty() {
+                    visitor.status.clone()
+                } else {
+                    extract_value(&msg, "status=\"", "\"").unwrap_or("success").to_string()
+                };
+                let status_colored = if status == "success" {
+                    "\x1b[1;32mSUCCESS\x1b[0m"
+                } else {
+                    "\x1b[1;31mFAILED\x1b[0m"
+                };
+                write!(
+                    writer,
+                    "  \x1b[1;32m✓\x1b[0m \x1b[1;32mTOOL_RES\x1b[0m tool=\x1b[1;34m{}\x1b[0m status={}\n",
+                    tool, status_colored
+                )?;
+            } else {
+                write!(writer, "  \x1b[1;30m...\x1b[0m \x1b[1;33mTOOL\x1b[0m {}\n", msg)?;
+            }
+        } else if target.starts_with("openz::agent::agent_loop::restore") {
+            if msg.starts_with("Restored session history") {
+                let count = extract_value(&msg, "Restored session history (", " messages)").unwrap_or("0");
+                let prompt = extract_value(&msg, "User prompt: \"", "\"").unwrap_or("");
+                write!(
+                    writer,
+                    "  \x1b[1;34m◇\x1b[0m \x1b[1;32mRESTORED\x1b[0m ({} messages) \x1b[1;30mPrompt:\x1b[0m \"{}\"\n",
+                    count, prompt
+                )?;
+            } else {
+                write!(writer, "  \x1b[1;30m...\x1b[0m \x1b[1;32mREST\x1b[0m {}\n", msg)?;
+            }
+        } else if target.starts_with("openz::agent::agent_loop::save") {
+            if msg.starts_with("Session saved successfully") {
+                write!(
+                    writer,
+                    "  \x1b[1;32m✓\x1b[0m \x1b[1;32mTURN_COMPLETE\x1b[0m\n"
+                )?;
+            } else {
+                write!(writer, "  \x1b[1;30m...\x1b[0m \x1b[1;35mSAVE\x1b[0m {}\n", msg)?;
+            }
+        } else if target.starts_with("openz::providers::resolver") && msg.contains("No API key configured") {
+            let provider = extract_value(&msg, "provider '", "'").unwrap_or("unknown");
+            write!(
+                writer,
+                "  \x1b[1;33m⚠️\x1b[0m \x1b[1;31mNO_KEY\x1b[0m provider=\x1b[1;31m{}\x1b[0m\n",
+                provider
+            )?;
+        } else if target.starts_with("openz::cron") || target.starts_with("openz::config") {
+            // Silence startup setup warning logs to keep output clean and minimalist
+        } else {
+            write!(writer, "  {} {}\n", level_str, msg)?;
+        }
+        Ok(())
+    }
 }
