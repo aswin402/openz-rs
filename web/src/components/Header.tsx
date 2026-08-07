@@ -32,7 +32,10 @@ export const Header: React.FC = () => {
   const currentSession = sessions.find((s) => s.id === activeChatId);
 
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setActiveModel(e.target.value);
+    const model = e.target.value;
+    const group = groups.find((g) => g.models.includes(model));
+    const provider = group ? group.name : undefined;
+    setActiveModel(model, provider);
   };
 
   const groups = providers.filter((p) => p.models.length > 0);

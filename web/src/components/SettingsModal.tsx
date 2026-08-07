@@ -379,7 +379,13 @@ export const SettingsModal: React.FC = () => {
                       <CustomSelect
                         label="Default Model"
                         value={String(form.model ?? settings.model)}
-                        onChange={(val) => setField('model', val)}
+                        onChange={(val) => {
+                          setField('model', val);
+                          const group = groups.find((g) => g.models.includes(val));
+                          if (group) {
+                            setField('provider', group.name);
+                          }
+                        }}
                         groups={finalModelGroups}
                       />
 

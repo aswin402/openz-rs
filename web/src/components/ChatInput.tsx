@@ -139,7 +139,7 @@ export const ChatInput: React.FC = () => {
                     <button
                       key={model}
                       onClick={() => {
-                        setActiveModel(model);
+                        setActiveModel(model, g.name);
                         setShowModelPicker(false);
                       }}
                       className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition hover:bg-muted/70 ${

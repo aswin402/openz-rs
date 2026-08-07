@@ -38,6 +38,7 @@ interface OpenZState {
 
   // Realtime config (populated from backend events — never hardcoded)
   activeModel: string;
+  activeProvider: string;
   settings: AgentDefaultsConfig | null;
   providers: ProviderModelOption[];
   slashCommands: SlashCommand[];
@@ -48,7 +49,7 @@ interface OpenZState {
   streamingMode: boolean;
   toggleCavemanMode: () => void;
   toggleStreamingMode: () => void;
-  setActiveModel: (model: string) => void;
+  setActiveModel: (model: string, provider?: string) => void;
   updateSettings: (patch: Partial<AgentDefaultsConfig>) => void;
 
   // Modals & Panels
@@ -147,6 +148,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   isStreaming: false,
 
   activeModel: '',
+  activeProvider: '',
   settings: null,
   providers: [],
   slashCommands: [],
@@ -212,10 +214,10 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     wsService.sendSetConfig(data);
   },
 
-  setActiveModel: (model) => {
-    set({ activeModel: model });
-    const provider = inferProviderFromModel(model);
-    wsService.updateConfig({ model, provider });
+  setActiveModel: (model, provider) => {
+    const finalProvider = provider || inferProviderFromModel(model);
+    set({ activeModel: model, activeProvider: finalProvider });
+    wsService.updateConfig({ model, provider: finalProvider });
   },
 
   updateSettings: (patch) => {
@@ -670,9 +672,12 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       if (payload.active_model) {
         set({ activeModel: payload.active_model });
       }
-      if (payload.active_provider && get().settings) {
-        const settings = get().settings!;
-        set({ settings: { ...settings, provider: payload.active_provider } });
+      if (payload.active_provider) {
+        set({ activeProvider: payload.active_provider });
+        if (get().settings) {
+          const settings = get().settings!;
+          set({ settings: { ...settings, provider: payload.active_provider } });
+        }
       }
     });
 
@@ -681,6 +686,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
         set({
           settings: payload.defaults,
           activeModel: payload.defaults.model || get().activeModel,
+          activeProvider: payload.defaults.provider || get().activeProvider,
           cavemanMode: !!payload.defaults.caveman_mode,
           streamingMode: payload.defaults.streaming !== false,
         });
@@ -711,6 +717,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
         set({
           settings: payload.defaults,
           activeModel: payload.defaults.model || get().activeModel,
+          activeProvider: payload.defaults.provider || get().activeProvider,
           cavemanMode: !!payload.defaults.caveman_mode,
           streamingMode: payload.defaults.streaming !== false,
         });
@@ -862,7 +869,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     try {
       const model = get().activeModel || undefined;
-      const provider = model ? inferProviderFromModel(model) : undefined;
+      const provider = get().activeProvider || undefined;
       wsService.sendMessage(chatId, content, model, provider);
     } catch (err: any) {
       set({ isStreaming: false });
