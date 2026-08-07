@@ -133,6 +133,18 @@ function inferProviderFromModel(model: string): string {
   return 'auto';
 }
 
+/**
+ * Normalize the chat ID to have the 'ws:' prefix if it doesn't already
+ * contain a channel prefix.
+ */
+function normalizeChatId(chatId: string): string {
+  if (!chatId) return chatId;
+  if (chatId.includes(':')) {
+    return chatId;
+  }
+  return `ws:${chatId}`;
+}
+
 // Guards against duplicate listener registration (React StrictMode double-invokes
 // effects in dev, which would otherwise register every WS handler twice).
 let hasInitialized = false;
@@ -254,7 +266,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     // ----- Realtime turn events (streamed from the agent loop) -----
 
     wsService.on('delta', (payload) => {
-      const chatId = payload.chat_id || get().activeChatId;
+      const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
       const content = payload.content || '';
       const chatMessages = get().messages[chatId] || [];
       const lastMsg = chatMessages[chatMessages.length - 1];
@@ -285,7 +297,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     });
 
     wsService.on('reasoning_delta', (payload) => {
-      const chatId = payload.chat_id || get().activeChatId;
+      const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
       const content = payload.content || '';
       const chatMessages = get().messages[chatId] || [];
       const lastMsg = chatMessages[chatMessages.length - 1];
@@ -320,7 +332,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     });
 
     wsService.on('tool_start', (payload) => {
-      const chatId = payload.chat_id || get().activeChatId;
+      const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
       const tool: ToolExecution = {
         id: payload.tool_call_id || newMsgId('tool'),
         name: payload.name || 'tool',
@@ -364,7 +376,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     });
 
     wsService.on('tool_end', (payload) => {
-      const chatId = payload.chat_id || get().activeChatId;
+      const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
       const chatMessages = get().messages[chatId] || [];
       const lastMsg = chatMessages[chatMessages.length - 1];
       if (!lastMsg || lastMsg.role !== 'assistant') return;
@@ -396,7 +408,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     });
 
     wsService.on('security_request', (payload) => {
-      const chatId = payload.chat_id || get().activeChatId;
+      const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
       const prompt: SecurityPromptInfo = {
         id: payload.req_id || newMsgId('sec'),
         toolName: payload.tool_name || 'exec_command',
@@ -436,7 +448,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     });
 
     wsService.on('turn_end', (payload) => {
-      const chatId = payload.chat_id || get().activeChatId;
+      const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
       const chatMessages = get().messages[chatId] || [];
       const lastMsg = chatMessages[chatMessages.length - 1];
 
@@ -458,7 +470,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     wsService.on('stopped', (payload: any) => {
       set({ isStreaming: false });
-      const chatId = (payload && payload.chat_id) || get().activeChatId;
+      const chatId = normalizeChatId((payload && payload.chat_id) || get().activeChatId);
       const chatMessages = get().messages[chatId] || [];
       const lastMsg = chatMessages[chatMessages.length - 1];
       if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
