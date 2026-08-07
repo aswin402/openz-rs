@@ -9,6 +9,7 @@ export const ChatInput: React.FC = () => {
   const [filteredCmds, setFilteredCmds] = useState<{ cmd: string; desc: string }[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelButtonRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
   const sendMessage = useOpenZStore((s) => s.sendMessage);
   const stopTurn = useOpenZStore((s) => s.stopTurn);
@@ -32,6 +33,7 @@ export const ChatInput: React.FC = () => {
   useEffect(() => {
     const onClickOutside = (e: MouseEvent) => {
       if (modelButtonRef.current?.contains(e.target as Node)) return;
+      if (popoverRef.current?.contains(e.target as Node)) return;
       setShowModelPicker(false);
     };
     document.addEventListener('mousedown', onClickOutside);
@@ -120,7 +122,10 @@ export const ChatInput: React.FC = () => {
 
       {/* Model Picker Popover */}
       {showModelPicker && (
-        <div className="absolute bottom-full left-4 mb-2 w-72 overflow-hidden rounded-xl border border-border bg-card/95 shadow-xl backdrop-blur-md z-30">
+        <div
+          ref={popoverRef}
+          className="absolute bottom-full left-4 mb-2 w-72 overflow-hidden rounded-xl border border-border bg-card/95 shadow-xl backdrop-blur-md z-30"
+        >
           <div className="border-b border-border/40 px-3 py-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
             Available Models
           </div>
