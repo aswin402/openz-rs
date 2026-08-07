@@ -536,6 +536,13 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string());
 
+                        tracing::info!(
+                            "WS message received: chat_id='{}', msg_model={:?}, msg_provider={:?}",
+                            chat_id_clone,
+                            msg_model,
+                            msg_provider
+                        );
+
                         tokio::spawn(async move {
                             crate::agent::style::spinner::IS_WEBSOCKET.scope(true, async move {
                                 let _permit = match sem_clone.try_acquire() {

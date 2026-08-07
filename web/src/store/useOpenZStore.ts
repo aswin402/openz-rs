@@ -137,6 +137,8 @@ function inferProviderFromModel(model: string): string {
 // effects in dev, which would otherwise register every WS handler twice).
 let hasInitialized = false;
 
+console.log("OpenZ Store initialized - model selection fixes v2 active");
+
 export const useOpenZStore = create<OpenZState>((set, get) => ({
   connectionStatus: 'disconnected',
   wsUrl: localStorage.getItem('openz_ws_url') || 'ws://127.0.0.1:8765/ws',
