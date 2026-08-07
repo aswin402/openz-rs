@@ -119,15 +119,16 @@ pub fn apply_session_overrides(
 fn merge_latest_config_for_runtime(
     runtime_config: &Config,
     mut latest_config: Config,
-    session_key: &str,
+    _session_key: &str,
     session_metadata: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Config {
-    if session_key.starts_with("subagent:") {
-        latest_config.agents.defaults.model = runtime_config.agents.defaults.model.clone();
-        latest_config.agents.defaults.provider = runtime_config.agents.defaults.provider.clone();
-        latest_config.agents.defaults.fallback_models =
-            runtime_config.agents.defaults.fallback_models.clone();
-    }
+    // Preserve the runtime overridden model/provider for any active loop execution.
+    // This allows message-level overrides or dynamic updates to stick during the turn.
+    latest_config.agents.defaults.model = runtime_config.agents.defaults.model.clone();
+    latest_config.agents.defaults.provider = runtime_config.agents.defaults.provider.clone();
+    latest_config.agents.defaults.fallback_models =
+        runtime_config.agents.defaults.fallback_models.clone();
+
     if let Some(metadata) = session_metadata {
         apply_session_overrides(&mut latest_config, metadata);
     }

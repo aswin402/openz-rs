@@ -12,6 +12,10 @@ tokio::task_local! {
     pub static CURRENT_SESSION_KEY: String;
 }
 
+tokio::task_local! {
+    pub static IS_WEBSOCKET: bool;
+}
+
 pub fn is_silent() -> bool {
     IS_SILENT
         .try_with(|s| *s)
@@ -20,6 +24,10 @@ pub fn is_silent() -> bool {
 
 pub fn get_current_session_key() -> Option<String> {
     CURRENT_SESSION_KEY.try_with(|s| s.clone()).ok()
+}
+
+pub fn is_websocket() -> bool {
+    IS_WEBSOCKET.try_with(|w| *w).unwrap_or(false)
 }
 
 #[derive(Debug)]

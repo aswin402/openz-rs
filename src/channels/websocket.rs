@@ -527,82 +527,99 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         let chat_id_clone = chat_id.clone();
                         let content_str = content.to_string();
                         let sem_clone = semaphore.clone();
+                        let msg_model = envelope
+                            .get("model")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let msg_provider = envelope
+                            .get("provider")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
 
                         tokio::spawn(async move {
-                            let _permit = match sem_clone.try_acquire() {
-                                Ok(p) => p,
-                                Err(_) => {
-                                    let err_evt = serde_json::json!({
-                                        "event": "error",
-                                        "chat_id": chat_id_clone,
-                                        "detail": "Rate limit exceeded: Only one message can be processed at a time."
-                                    });
-                                    if let Ok(evt_str) = serde_json::to_string(&err_evt) {
-                                        let _ = tx_clone.send(Message::Text(evt_str)).await;
-                                    }
-                                    return;
-                                }
-                            };
-
-                            let config = match state_clone.live_config.read() {
-                                Ok(g) => g.clone(),
-                                Err(_) => state_clone.agent_loop.config.clone(),
-                            };
-                            let agent_loop = match crate::cli::build_agent_loop(config).await {
-                                Ok(al) => al,
-                                Err(e) => {
-                                    let err_evt = serde_json::json!({
-                                        "event": "error",
-                                        "chat_id": chat_id_clone,
-                                        "detail": format!("Failed to build agent loop: {}", e)
-                                    });
-                                    if let Ok(evt_str) = serde_json::to_string(&err_evt) {
-                                        let _ = tx_clone.send(Message::Text(evt_str)).await;
-                                    }
-                                    return;
-                                }
-                            };
-
-                            let session_key = resolve_session_key(&agent_loop.session_manager, &chat_id_clone);
-
-                            match agent_loop
-                                .run(&content_str, &session_key)
-                                .await
-                            {
-                                Ok(res) => {
-                                    // Streaming deltas are emitted live from the agent loop
-                                    // (event "delta"); only send a full-content delta when
-                                    // the turn did not stream.
-                                    if !res.streamed {
-                                        let delta_evt = serde_json::json!({
-                                            "event": "delta",
+                            crate::agent::style::spinner::IS_WEBSOCKET.scope(true, async move {
+                                let _permit = match sem_clone.try_acquire() {
+                                    Ok(p) => p,
+                                    Err(_) => {
+                                        let err_evt = serde_json::json!({
+                                            "event": "error",
                                             "chat_id": chat_id_clone,
-                                            "content": res.content
+                                            "detail": "Rate limit exceeded: Only one message can be processed at a time."
                                         });
-                                        if let Ok(evt_str) = serde_json::to_string(&delta_evt) {
+                                        if let Ok(evt_str) = serde_json::to_string(&err_evt) {
+                                            let _ = tx_clone.send(Message::Text(evt_str)).await;
+                                        }
+                                        return;
+                                    }
+                                };
+
+                                let mut config = match state_clone.live_config.read() {
+                                    Ok(g) => g.clone(),
+                                    Err(_) => state_clone.agent_loop.config.clone(),
+                                };
+                                // Apply model/provider overrides from the message payload
+                                if let Some(model) = msg_model {
+                                    config.agents.defaults.model = model;
+                                }
+                                if let Some(provider) = msg_provider {
+                                    config.agents.defaults.provider = provider;
+                                }
+                                let agent_loop = match crate::cli::build_agent_loop(config).await {
+                                    Ok(al) => al,
+                                    Err(e) => {
+                                        let err_evt = serde_json::json!({
+                                            "event": "error",
+                                            "chat_id": chat_id_clone,
+                                            "detail": format!("Failed to build agent loop: {}", e)
+                                        });
+                                        if let Ok(evt_str) = serde_json::to_string(&err_evt) {
+                                            let _ = tx_clone.send(Message::Text(evt_str)).await;
+                                        }
+                                        return;
+                                    }
+                                };
+
+                                let session_key = resolve_session_key(&agent_loop.session_manager, &chat_id_clone);
+
+                                match agent_loop
+                                    .run(&content_str, &session_key)
+                                    .await
+                                {
+                                    Ok(res) => {
+                                        // Streaming deltas are emitted live from the agent loop
+                                        // (event "delta"); only send a full-content delta when
+                                        // the turn did not stream.
+                                        if !res.streamed {
+                                            let delta_evt = serde_json::json!({
+                                                "event": "delta",
+                                                "chat_id": chat_id_clone,
+                                                "content": res.content
+                                            });
+                                            if let Ok(evt_str) = serde_json::to_string(&delta_evt) {
+                                                let _ = tx_clone.send(Message::Text(evt_str)).await;
+                                            }
+                                        }
+
+                                        let turn_end_evt = serde_json::json!({
+                                            "event": "turn_end",
+                                            "chat_id": chat_id_clone
+                                        });
+                                        if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
                                             let _ = tx_clone.send(Message::Text(evt_str)).await;
                                         }
                                     }
-
-                                    let turn_end_evt = serde_json::json!({
-                                        "event": "turn_end",
-                                        "chat_id": chat_id_clone
-                                    });
-                                    if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
-                                        let _ = tx_clone.send(Message::Text(evt_str)).await;
+                                    Err(e) => {
+                                        let err_evt = serde_json::json!({
+                                            "event": "error",
+                                            "chat_id": chat_id_clone,
+                                            "detail": e.to_string()
+                                        });
+                                        if let Ok(evt_str) = serde_json::to_string(&err_evt) {
+                                            let _ = tx_clone.send(Message::Text(evt_str)).await;
+                                        }
                                     }
                                 }
-                                Err(e) => {
-                                    let err_evt = serde_json::json!({
-                                        "event": "error",
-                                        "chat_id": chat_id_clone,
-                                        "detail": e.to_string()
-                                    });
-                                    if let Ok(evt_str) = serde_json::to_string(&err_evt) {
-                                        let _ = tx_clone.send(Message::Text(evt_str)).await;
-                                    }
-                                }
-                            }
+                            }).await
                         });
                     }
                     "security_response" => {

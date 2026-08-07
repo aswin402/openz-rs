@@ -1218,6 +1218,57 @@ pub async fn shutdown_gateways_bounded(config: &crate::config::schema::Config) {
     }
 }
 
+
+pub static PROVIDER_REGISTRY: &[ProviderModels] = &[
+    ProviderModels { name: "mivi", display: "Mivi Local (custom)", models: &["mivi llm", "mivi-llm", "mivi"] },
+    ProviderModels { name: "openai", display: "OpenAI", models: &["gpt-4.5", "gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "o3", "o3-mini", "o4-mini"] },
+    ProviderModels { name: "anthropic", display: "Anthropic", models: &["claude-3-5-sonnet-20241022", "claude-3-5-sonnet", "claude-3-5-haiku-20241022", "claude-3-5-haiku", "claude-3-opus-20240229", "claude-3-opus"] },
+    ProviderModels { name: "openrouter", display: "OpenRouter", models: &["google/gemini-2.5-pro", "google/gemini-2.5-flash", "anthropic/claude-3.5-sonnet", "meta-llama/llama-3.3-70b-instruct", "deepseek/deepseek-r1"] },
+    ProviderModels { name: "deepseek", display: "DeepSeek", models: &["deepseek-chat", "deepseek-reasoner"] },
+    ProviderModels { name: "groq", display: "Groq", models: &["deepseek-r1-distill-llama-70b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768", "gemma2-9b-it"] },
+    ProviderModels { name: "ollama_local", display: "Ollama Local (Auto-Start)", models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"] },
+    ProviderModels { name: "ollama", display: "Ollama", models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"] },
+    ProviderModels { name: "minimax", display: "minimax.io", models: &["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2.1", "MiniMax-M2", "MiniMax-M1"] },
+    ProviderModels { name: "mistral", display: "Mistral AI", models: &["mistral-large-latest", "pixtral-large-latest", "codestral-latest", "mistral-small-latest"] },
+    ProviderModels { name: "z.ai", display: "z.ai (Zhipu GLM)", models: &["glm-5.1", "glm-5", "glm-5v-turbo", "glm-4.7", "glm-4.7-flash", "glm-4-flash"] },
+    ProviderModels { name: "nvidia", display: "NVIDIA NIM", models: &["meta/llama3-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "meta/llama-3.1-70b-instruct"] },
+    ProviderModels { name: "opencode_zen", display: "OpenCode Zen", models: &["deepseek-v4-flash-free", "mimo-v2.5-free", "north-mini-code-free", "nemotron-3-ultra-free"] },
+    ProviderModels { name: "cerebras", display: "Cerebras", models: &["llama-3.3-70b", "llama3.1-8b", "llama3.1-70b"] },
+    ProviderModels { name: "google_ai_studio", display: "Google AI Studio (Gemini)", models: &["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"] },
+    ProviderModels { name: "cohere", display: "Cohere", models: &["command-a-plus-05-2026", "command-r7b-12-2024", "command-r7-12-2025", "command-r-plus-08-2024", "command-r-08-2024"] },
+    ProviderModels { name: "sambanova", display: "SambaNova", models: &["DeepSeek-V3.2", "Meta-Llama-3.3-70B-Instruct", "Qwen2.5-72B-Instruct", "QwQ-32B", "gemma-4-31B-it"] },
+    ProviderModels { name: "huggingface", display: "Hugging Face Inference", models: &["meta-llama/Llama-3.3-70B-Instruct", "Qwen/QwQ-32B", "deepseek-ai/DeepSeek-R1"] },
+    ProviderModels { name: "llm7", display: "LLM7", models: &["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"] },
+];
+
+/// Build provider list from real config — only configured/available providers + custom providers.
+pub fn build_configured_providers(config: &crate::config::schema::Config) -> Vec<(String, String)> {
+    let mut configured: Vec<(String, String)> = PROVIDER_REGISTRY
+        .iter()
+        .filter(|p| config.is_provider_configured(p.name))
+        .map(|p| (p.name.to_string(), p.display.to_string()))
+        .collect();
+
+    for name in config.custom_provider_names() {
+        if config.is_provider_available(&name) && !configured.iter().any(|(n, _)| n == &name) {
+            let default_model = config.custom_provider_default_model(&name);
+            let display = format!("Custom: {} ({})", name, default_model.as_deref().unwrap_or("custom model"));
+            configured.push((name, display));
+        }
+    }
+
+    configured
+}
+
+/// Get curated fallback models for a provider.
+pub fn curated_models_for(provider_name: &str) -> Vec<String> {
+    if let Some(p) = PROVIDER_REGISTRY.iter().find(|p| p.name == provider_name) {
+        p.models.iter().map(|s| s.to_string()).collect()
+    } else {
+        vec!["default".to_string()]
+    }
+}
+
 pub async fn fetch_provider_models(
     provider_name: &str,
     config: &crate::config::schema::Config,

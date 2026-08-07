@@ -89,8 +89,24 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     }
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChatMessage>();
+    // Channel for async model list fetching
+    let (model_tx, mut model_rx) = tokio::sync::mpsc::unbounded_channel::<(String, String, Vec<String>)>();
 
     loop {
+        // Drain any async model fetch results
+        while let Ok((prov_name, prov_display, fetched_models)) = model_rx.try_recv() {
+            if matches!(&app.model_select, app::ModelSelectState::FetchingModels { provider_name, .. } if provider_name == &prov_name) {
+                let mut models_list = fetched_models;
+                models_list.push("Type manually (Custom Model)".to_string());
+                models_list.push("Exit".to_string());
+                app.model_select = app::ModelSelectState::ChoosingModel {
+                    provider_name: prov_name,
+                    provider_display: prov_display,
+                    models: models_list,
+                    selected_idx: 0,
+                };
+            }
+        }
         // Drain any incoming background responses from AgentLoop
         while let Ok(new_msg) = rx.try_recv() {
             app.is_thinking = false;
@@ -143,29 +159,47 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                 KeyCode::Enter => {
                                     let (prov_name, prov_display) = providers[*selected_idx].clone();
                                     
-                                    // Curated models mapping
-                                    let curated_models = match prov_name.as_str() {
-                                        "mivi" => vec!["mivi"],
-                                        "openai" => vec!["gpt-4.5", "gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "o3-mini"],
-                                        "anthropic" => vec!["claude-3-5-sonnet", "claude-3-5-haiku", "claude-3-opus"],
-                                        "deepseek" => vec!["deepseek-chat", "deepseek-reasoner"],
-                                        "google_ai_studio" => vec!["gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
-                                        "opencode_zen" => vec!["deepseek-v4-flash-free", "mimo-v2.5-free", "north-mini-code-free"],
-                                        "groq" => vec!["deepseek-r1-distill-llama-70b", "llama-3.3-70b-versatile"],
-                                        "ollama" => vec!["llama3", "mistral", "qwen2.5", "deepseek-r1"],
-                                        _ => vec!["default"],
+                                    // Set FetchingModels state and spawn async model fetch
+                                    app.model_select = app::ModelSelectState::FetchingModels {
+                                        provider_name: prov_name.clone(),
+                                        provider_display: prov_display.clone(),
                                     };
-                                    let mut models_list: Vec<String> = curated_models.into_iter().map(|s| s.to_string()).collect();
-                                    models_list.push("Exit".to_string());
-
-                                    app.model_select = app::ModelSelectState::ChoosingModel {
-                                        provider_name: prov_name,
-                                        provider_display: prov_display,
-                                        models: models_list,
-                                        selected_idx: 0,
-                                    };
+                                    let fetch_tx = model_tx.clone();
+                                    let fetch_prov = prov_name.clone();
+                                    let fetch_display = prov_display.clone();
+                                    tokio::spawn(async move {
+                                        let config = crate::config::loader::load_config().unwrap_or_default();
+                                        let mut models = Vec::new();
+                                        // Try live API fetch first
+                                        if let Some(api_models) = crate::channels::fetch_provider_models(&fetch_prov, &config).await {
+                                            models = api_models;
+                                        }
+                                        // Merge curated fallbacks (deduped)
+                                        let curated = app::curated_models_for(&fetch_prov);
+                                        for m in curated {
+                                            if !models.iter().any(|existing| existing.eq_ignore_ascii_case(&m)) {
+                                                models.push(m);
+                                            }
+                                        }
+                                        // Also include custom default_model from config
+                                        if let Some(dm) = config.get_provider_config(&fetch_prov)
+                                            .and_then(|p| p.default_model.clone())
+                                            .filter(|m| !m.trim().is_empty()) {
+                                            if !models.iter().any(|existing| existing.eq_ignore_ascii_case(&dm)) {
+                                                models.push(dm);
+                                            }
+                                        }
+                                        let _ = fetch_tx.send((fetch_prov, fetch_display, models));
+                                    });
                                 }
                                 _ => {}
+                            }
+                            continue;
+                        }
+                        app::ModelSelectState::FetchingModels { .. } => {
+                            // While fetching, only allow Esc to cancel
+                            if key.code == KeyCode::Esc {
+                                app.model_select = app::ModelSelectState::Closed;
                             }
                             continue;
                         }
@@ -192,6 +226,13 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     if *selected_idx == models.len() - 1 {
                                         // Exit selected
                                         app.model_select = app::ModelSelectState::Closed;
+                                    } else if models[*selected_idx] == "Type manually (Custom Model)" {
+                                        // Switch to custom model input mode — put prefix in input box
+                                        let prov = provider_name.clone();
+                                        app.model_select = app::ModelSelectState::Closed;
+                                        let prefix = format!("/model {}/", prov);
+                                        app.typed_input = prefix.chars().collect();
+                                        app.cursor_idx = app.typed_input.len();
                                     } else {
                                         let selected_model = models[*selected_idx].clone();
                                         let prov = provider_name.clone();
@@ -199,17 +240,39 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         
                                         // Apply the choice to config and agent loop
                                         use crate::config::loader::{load_config, save_config};
-                                        if let Ok(mut cfg) = load_config() {
-                                            cfg.agents.defaults.provider = prov.clone();
-                                            cfg.agents.defaults.model = selected_model.clone();
-                                            if let Ok(()) = save_config(&cfg) {
-                                                if let Ok(resolved) = crate::providers::resolver::resolve_provider_full(&cfg, &selected_model) {
-                                                    let mut loop_lock = agent_loop.lock().await;
-                                                    loop_lock.update_model_and_provider(cfg, resolved.instance);
-                                                    app.model = selected_model.clone();
-                                                    app.provider = prov.clone();
-                                                    app.messages.push(ChatMessage::simple("assistant", format!("✓ Switched active model to {} ({})", selected_model, prov_display_str)));
+                                        match load_config() {
+                                            Ok(mut cfg) => {
+                                                cfg.agents.defaults.provider = prov.clone();
+                                                cfg.agents.defaults.model = selected_model.clone();
+                                                match save_config(&cfg) {
+                                                    Ok(()) => {
+                                                        match crate::providers::resolver::resolve_provider_full(&cfg, &selected_model) {
+                                                            Ok(resolved) => {
+                                                                // Use try_lock to avoid deadlocking the TUI if the agent is processing
+                                                                match agent_loop.try_lock() {
+                                                                    Ok(mut loop_lock) => {
+                                                                        loop_lock.update_model_and_provider(cfg, resolved.instance);
+                                                                    }
+                                                                    Err(_) => {
+                                                                        // Agent is busy — config is saved, will take effect on next turn
+                                                                    }
+                                                                }
+                                                                app.model = selected_model.clone();
+                                                                app.provider = prov.clone();
+                                                                app.messages.push(ChatMessage::simple("assistant", format!("✓ Switched to {} ({})", selected_model, prov_display_str)));
+                                                            }
+                                                            Err(e) => {
+                                                                app.messages.push(ChatMessage::simple("assistant", format!("⚠ Failed to resolve provider: {}", e)));
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        app.messages.push(ChatMessage::simple("assistant", format!("⚠ Failed to save config: {}", e)));
+                                                    }
                                                 }
+                                            }
+                                            Err(e) => {
+                                                app.messages.push(ChatMessage::simple("assistant", format!("⚠ Failed to load config: {}", e)));
                                             }
                                         }
                                         app.model_select = app::ModelSelectState::Closed;
@@ -344,29 +407,13 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                             if is_menu_selection && (trimmed == "/model" || trimmed == "/models") {
                                 use crate::config::loader::load_config;
                                 let config = load_config().unwrap_or_default();
-                                let provider_list = &[
-                                    ("mivi", "Mivi Local (custom)"),
-                                    ("openai", "OpenAI"),
-                                    ("anthropic", "Anthropic"),
-                                    ("deepseek", "DeepSeek"),
-                                    ("google_ai_studio", "Google AI Studio"),
-                                    ("opencode_zen", "OpenCode Zen"),
-                                    ("groq", "Groq"),
-                                    ("ollama", "Ollama Local"),
-                                ];
-                                let mut configured = Vec::new();
-                                for &(name, display) in provider_list {
-                                    if config.is_provider_configured(name) {
-                                        configured.push((name.to_string(), display.to_string()));
-                                    }
-                                }
-                                if configured.is_empty() {
-                                    for &(name, display) in provider_list {
-                                        configured.push((name.to_string(), display.to_string()));
-                                    }
-                                }
+                                let configured = app::build_configured_providers(&config);
                                 app.model_select = app::ModelSelectState::ChoosingProvider {
-                                    providers: configured,
+                                    providers: if configured.is_empty() {
+                                        app::PROVIDER_REGISTRY.iter().map(|p| (p.name.to_string(), p.display.to_string())).collect()
+                                    } else {
+                                        configured
+                                    },
                                     selected_idx: 0,
                                 };
                                 app.typed_input.clear();
@@ -380,42 +427,64 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                 let parts: Vec<&str> = trimmed.split_whitespace().collect();
                                 if parts.len() == 2 {
                                     let prov = parts[1];
-                                    let provider_list = &[
-                                        ("mivi", "Mivi Local (custom)"),
-                                        ("openai", "OpenAI"),
-                                        ("anthropic", "Anthropic"),
-                                        ("deepseek", "DeepSeek"),
-                                        ("google_ai_studio", "Google AI Studio"),
-                                        ("opencode_zen", "OpenCode Zen"),
-                                        ("groq", "Groq"),
-                                        ("ollama", "Ollama Local"),
-                                    ];
-                                    if let Some(&(name, display)) = provider_list.iter().find(|(name, _)| name == &prov) {
-                                        let curated_models = match name {
-                                            "mivi" => vec!["mivi"],
-                                            "openai" => vec!["gpt-4.5", "gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "o3-mini"],
-                                            "anthropic" => vec!["claude-3-5-sonnet", "claude-3-5-haiku", "claude-3-opus"],
-                                            "deepseek" => vec!["deepseek-chat", "deepseek-reasoner"],
-                                            "google_ai_studio" => vec!["gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
-                                            "opencode_zen" => vec!["deepseek-v4-flash-free", "mimo-v2.5-free", "north-mini-code-free"],
-                                            "groq" => vec!["deepseek-r1-distill-llama-70b", "llama-3.3-70b-versatile"],
-                                            "ollama" => vec!["llama3", "mistral", "qwen2.5", "deepseek-r1"],
-                                            _ => vec!["default"],
+                                    if let Some(reg) = app::PROVIDER_REGISTRY.iter().find(|r| r.name == prov) {
+                                        // Go to FetchingModels state and spawn async fetch
+                                        let prov_name = reg.name.to_string();
+                                        let prov_display = reg.display.to_string();
+                                        app.model_select = app::ModelSelectState::FetchingModels {
+                                            provider_name: prov_name.clone(),
+                                            provider_display: prov_display.clone(),
                                         };
-                                        let mut models_list: Vec<String> = curated_models.into_iter().map(|s| s.to_string()).collect();
-                                        models_list.push("Exit".to_string());
-
-                                        app.model_select = app::ModelSelectState::ChoosingModel {
-                                            provider_name: name.to_string(),
-                                            provider_display: display.to_string(),
-                                            models: models_list,
-                                            selected_idx: 0,
-                                        };
+                                        let fetch_tx = model_tx.clone();
+                                        tokio::spawn(async move {
+                                            let config = crate::config::loader::load_config().unwrap_or_default();
+                                            let mut models = Vec::new();
+                                            if let Some(api_models) = crate::channels::fetch_provider_models(&prov_name, &config).await {
+                                                models = api_models;
+                                            }
+                                            let curated = app::curated_models_for(&prov_name);
+                                            for m in curated {
+                                                if !models.iter().any(|e| e.eq_ignore_ascii_case(&m)) {
+                                                    models.push(m);
+                                                }
+                                            }
+                                            let _ = fetch_tx.send((prov_name, prov_display, models));
+                                        });
                                         app.typed_input.clear();
                                         app.cursor_idx = 0;
                                         app.selected_index = None;
                                         app.history_idx = None;
                                         continue;
+                                    } else {
+                                        // Check custom providers
+                                        let config = crate::config::loader::load_config().unwrap_or_default();
+                                        if config.is_provider_available(prov) {
+                                            let prov_name = prov.to_string();
+                                            let prov_display = format!("Custom: {}", prov);
+                                            app.model_select = app::ModelSelectState::FetchingModels {
+                                                provider_name: prov_name.clone(),
+                                                provider_display: prov_display.clone(),
+                                            };
+                                            let fetch_tx = model_tx.clone();
+                                            tokio::spawn(async move {
+                                                let config = crate::config::loader::load_config().unwrap_or_default();
+                                                let mut models = Vec::new();
+                                                if let Some(api_models) = crate::channels::fetch_provider_models(&prov_name, &config).await {
+                                                    models = api_models;
+                                                }
+                                                if models.is_empty() {
+                                                    if let Some(dm) = config.custom_provider_default_model(&prov_name) {
+                                                        models.push(dm);
+                                                    }
+                                                }
+                                                let _ = fetch_tx.send((prov_name, prov_display, models));
+                                            });
+                                            app.typed_input.clear();
+                                            app.cursor_idx = 0;
+                                            app.selected_index = None;
+                                            app.history_idx = None;
+                                            continue;
+                                        }
                                     }
                                 }
                             }
@@ -531,36 +600,22 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         }
                                     }
                                     app.messages.push(ChatMessage::simple("assistant", msg));
-                                } else if trimmed == "/model" {
+                                } else if trimmed == "/model" || trimmed == "/models" {
                                     use crate::config::loader::load_config;
                                     let config = load_config().unwrap_or_default();
-                                    let provider_list = &[
-                                        ("mivi", "Mivi Local (custom)"),
-                                        ("openai", "OpenAI"),
-                                        ("anthropic", "Anthropic"),
-                                        ("deepseek", "DeepSeek"),
-                                        ("google_ai_studio", "Google AI Studio"),
-                                        ("opencode_zen", "OpenCode Zen"),
-                                        ("groq", "Groq"),
-                                        ("ollama", "Ollama Local"),
-                                    ];
-                                    let mut configured = Vec::new();
-                                    for &(name, display) in provider_list {
-                                        if config.is_provider_configured(name) {
-                                            configured.push((name.to_string(), display.to_string()));
-                                        }
-                                    }
-                                    if configured.is_empty() {
-                                        for &(name, display) in provider_list {
-                                            configured.push((name.to_string(), display.to_string()));
-                                        }
-                                    }
+                                    let configured = app::build_configured_providers(&config);
                                     app.model_select = app::ModelSelectState::ChoosingProvider {
-                                        providers: configured,
+                                        providers: if configured.is_empty() {
+                                            app::PROVIDER_REGISTRY.iter().map(|p| (p.name.to_string(), p.display.to_string())).collect()
+                                        } else {
+                                            configured
+                                        },
                                         selected_idx: 0,
                                     };
-                                } else if trimmed.starts_with("/model") {
-                                    let model_arg = trimmed.strip_prefix("/model").unwrap_or("").trim();
+                                } else if trimmed.starts_with("/model ") || trimmed.starts_with("/models ") {
+                                    let model_arg = trimmed
+                                        .strip_prefix("/models").or_else(|| trimmed.strip_prefix("/model"))
+                                        .unwrap_or("").trim();
                                     app.messages.push(ChatMessage::simple("user", input_str.clone()));
                                     if model_arg.is_empty() {
                                         app.messages.push(ChatMessage::simple("assistant", format!("Active Model: {}\nUse '/model' to open the interactive selector.", app.model)));
@@ -584,11 +639,17 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                     } else {
                                                         match crate::providers::resolver::resolve_provider_full(&cfg, mdl) {
                                                             Ok(resolved) => {
-                                                                let mut loop_lock = agent_loop.lock().await;
-                                                                loop_lock.update_model_and_provider(cfg, resolved.instance);
+                                                                match agent_loop.try_lock() {
+                                                                    Ok(mut loop_lock) => {
+                                                                        loop_lock.update_model_and_provider(cfg, resolved.instance);
+                                                                    }
+                                                                    Err(_) => {
+                                                                        // Agent is busy — config is saved, will take effect on next turn
+                                                                    }
+                                                                }
                                                                 app.model = mdl.to_string();
                                                                 app.provider = prov.to_string();
-                                                                app.messages.push(ChatMessage::simple("assistant", format!("Switched active model to: {} ({})", mdl, prov)));
+                                                                app.messages.push(ChatMessage::simple("assistant", format!("✓ Switched to: {} ({})", mdl, prov)));
                                                             }
                                                             Err(e) => {
                                                                 app.messages.push(ChatMessage::simple("assistant", format!("Error resolving provider: {}", e)));

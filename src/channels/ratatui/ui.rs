@@ -683,14 +683,19 @@ fn render_model_menu(f: &mut Frame, app: &RatatuiApp, area: Rect) {
 
     // Title / Prompt line
     let prompt = match &app.model_select {
-        ModelSelectState::ChoosingProvider { .. } => "> Choose an LLM provider:",
-        ModelSelectState::ChoosingModel { provider_display, .. } => {
-            &format!("> Choose a model from {}:", provider_display)
+        ModelSelectState::ChoosingProvider { .. } => "> Choose an LLM provider:".to_string(),
+        ModelSelectState::FetchingModels { provider_display, .. } => {
+            let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let frame = spinner[app.spinner_idx as usize % spinner.len()];
+            format!("{} Fetching models from {}...", frame, provider_display)
         }
-        _ => "",
+        ModelSelectState::ChoosingModel { provider_display, .. } => {
+            format!("> Choose a model from {}:", provider_display)
+        }
+        _ => String::new(),
     };
     lines.push(Line::from(Span::styled(
-        prompt.to_string(),
+        prompt,
         Style::default().fg(theme::RED_ORANGE).add_modifier(Modifier::BOLD).bg(menu_bg),
     )));
 
@@ -699,6 +704,10 @@ fn render_model_menu(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         ModelSelectState::ChoosingProvider { providers, selected_idx } => {
             let list = providers.iter().map(|(_, display)| display.clone()).collect::<Vec<_>>();
             (list, *selected_idx)
+        }
+        ModelSelectState::FetchingModels { .. } => {
+            // Show loading placeholder
+            (vec!["  Loading available models...".to_string()], 0)
         }
         ModelSelectState::ChoosingModel { models, selected_idx, .. } => {
             (models.clone(), *selected_idx)

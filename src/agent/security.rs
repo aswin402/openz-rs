@@ -847,6 +847,29 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
             Ok(approved) => Ok(approved),
             Err(_) => Ok(false),
         }
+    } else if crate::agent::style::spinner::is_websocket() || actual_session.starts_with("ws:") {
+        // WebUI approval flow: publish a security_request event and wait for a
+        // `security_response` WS message with the matching req_id.
+        let chat_id = crate::channels::websocket::ws_chat_id(&actual_session)
+            .unwrap_or_else(|| actual_session.replace(':', "_"));
+        let req_id = uuid::Uuid::new_v4().to_string();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        crate::channels::websocket::register_ws_approval(req_id.clone(), tx);
+
+        crate::channels::websocket::publish_ws_event(serde_json::json!({
+            "event": "security_request",
+            "chat_id": chat_id,
+            "req_id": req_id,
+            "tool_name": tool_name,
+            "description": description,
+            "arguments": arguments,
+            "status": "pending",
+        }));
+
+        match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
+            Ok(Ok(approved)) => Ok(approved),
+            _ => Ok(false),
+        }
     } else if actual_session.starts_with("cli:") {
         let trust_key = format!("{}:{}", actual_session, tool_name);
         let map = TRUSTED_SESSION_TOOLS.get_or_init(|| Mutex::new(HashSet::new()));
@@ -900,27 +923,6 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
                 Ok(true)
             }
             _ => Ok(false), // Deny or Cancel
-        }
-    } else if let Some(chat_id) = actual_session.strip_prefix("ws:") {
-        // WebUI approval flow: publish a security_request event and wait for a
-        // `security_response` WS message with the matching req_id.
-        let req_id = uuid::Uuid::new_v4().to_string();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        crate::channels::websocket::register_ws_approval(req_id.clone(), tx);
-
-        crate::channels::websocket::publish_ws_event(serde_json::json!({
-            "event": "security_request",
-            "chat_id": chat_id,
-            "req_id": req_id,
-            "tool_name": tool_name,
-            "description": description,
-            "arguments": arguments,
-            "status": "pending",
-        }));
-
-        match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
-            Ok(Ok(approved)) => Ok(approved),
-            _ => Ok(false),
         }
     } else {
         tracing::warn!(

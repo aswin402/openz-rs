@@ -38,6 +38,10 @@ pub enum ModelSelectState {
         providers: Vec<(String, String)>, // (name, display_name)
         selected_idx: usize,
     },
+    FetchingModels {
+        provider_name: String,
+        provider_display: String,
+    },
     ChoosingModel {
         provider_name: String,
         provider_display: String,
@@ -45,6 +49,10 @@ pub enum ModelSelectState {
         selected_idx: usize,
     },
 }
+
+// Re-export shared provider data from channels/mod.rs — single source of truth
+pub use crate::channels::{PROVIDER_REGISTRY, build_configured_providers, curated_models_for};
+
 
 pub struct RatatuiApp {
     pub model: String,
@@ -137,59 +145,67 @@ impl RatatuiApp {
         if input_str.starts_with("/model") {
             let mut results = Vec::new();
             let arg = input_str.strip_prefix("/model").unwrap_or("").trim_start();
-            
-            // Standard provider lists with their display names and models
-            let provider_list = &[
-                ("mivi", "Mivi Local", vec!["mivi"]),
-                ("openai", "OpenAI", vec!["gpt-4.5", "gpt-4o", "gpt-4o-mini", "o1", "o1-mini"]),
-                ("anthropic", "Anthropic", vec!["claude-3-5-sonnet", "claude-3-5-haiku", "claude-3-opus"]),
-                ("deepseek", "DeepSeek", vec!["deepseek-chat", "deepseek-reasoner"]),
-                ("google_ai_studio", "Google AI Studio", vec!["gemini-3.5-flash", "gemini-2.5-pro", "gemini-2.5-flash"]),
-                ("opencode_zen", "OpenCode Zen", vec!["deepseek-v4-flash-free", "mimo-v2.5-free", "north-mini-code-free"]),
-                ("groq", "Groq", vec!["deepseek-r1-distill-llama-70b", "llama-3.3-70b-versatile"]),
-                ("ollama", "Ollama Local", vec!["llama3", "mistral", "qwen2.5", "deepseek-r1"]),
-            ];
+            // Remove leading 's' from "/models" prefix
+            let arg = if input_str.starts_with("/models") {
+                input_str.strip_prefix("/models").unwrap_or("").trim_start()
+            } else {
+                arg
+            };
 
-            // If input is exactly "/model" or starts with "/model " (no provider specified yet)
             if arg.is_empty() {
-                // List configured/available providers
+                // List configured/available providers from real config
                 if let Ok(config) = crate::config::loader::load_config() {
-                    for (name, display, _) in provider_list {
-                        if config.is_provider_configured(name) {
+                    for reg in PROVIDER_REGISTRY {
+                        if config.is_provider_configured(reg.name) {
+                            results.push((
+                                format!("/model {}", reg.name),
+                                format!("Select provider: {}", reg.display),
+                            ));
+                        }
+                    }
+                    // Also include custom providers
+                    for name in config.custom_provider_names() {
+                        if config.is_provider_available(&name) {
                             results.push((
                                 format!("/model {}", name),
-                                format!("Select provider: {}", display),
+                                format!("Select custom provider: {}", name),
                             ));
                         }
                     }
                 }
-                // If config load failed or list is empty, return static list of popular ones
                 if results.is_empty() {
-                    for (name, display, _) in provider_list {
+                    for reg in PROVIDER_REGISTRY {
                         results.push((
-                            format!("/model {}", name),
-                            format!("Select provider: {}", display),
+                            format!("/model {}", reg.name),
+                            format!("Select provider: {}", reg.display),
                         ));
                     }
                 }
             } else {
-                // Provider is specified. Check if there's a space after provider
-                // e.g. "/model openai" (no space at end) vs "/model openai " (space at end)
                 let parts: Vec<&str> = arg.split_whitespace().collect();
                 if parts.len() == 1 {
                     let prov_query = parts[0];
-                    // Filter matching providers
-                    for (name, display, _) in provider_list {
-                        if name.starts_with(prov_query) {
+                    // Filter matching providers from registry
+                    for reg in PROVIDER_REGISTRY {
+                        if reg.name.starts_with(prov_query) {
                             results.push((
-                                format!("/model {}", name),
-                                format!("Select provider: {}", display),
+                                format!("/model {}", reg.name),
+                                format!("Select provider: {}", reg.display),
                             ));
                         }
                     }
-                    
-                    // If the user typed a complete provider name but no trailing space,
-                    // also show option to press space to list models
+                    // Also match custom providers
+                    if let Ok(config) = crate::config::loader::load_config() {
+                        for name in config.custom_provider_names() {
+                            if name.starts_with(prov_query) && config.is_provider_available(&name) {
+                                results.push((
+                                    format!("/model {}", name),
+                                    format!("Select custom provider: {}", name),
+                                ));
+                            }
+                        }
+                    }
+
                     if results.len() == 1 && results[0].0 == input_str {
                         let name = results[0].0.strip_prefix("/model ").unwrap_or("");
                         results.push((
@@ -201,9 +217,9 @@ impl RatatuiApp {
                     let provider = parts[0];
                     let model_query = if arg.ends_with(' ') { "" } else { parts[1] };
                     
-                    // Find models for this provider
-                    if let Some((_, _, models)) = provider_list.iter().find(|(name, _, _)| name == &provider) {
-                        for model in models {
+                    // Find models for this provider from registry
+                    if let Some(reg) = PROVIDER_REGISTRY.iter().find(|r| r.name == provider) {
+                        for model in reg.models {
                             if model_query.is_empty() || model.starts_with(model_query) {
                                 results.push((
                                     format!("/model {}/{}", provider, model),

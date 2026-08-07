@@ -158,11 +158,14 @@ export class OpenZWebSocketService {
 
   // ---- Chat / session actions ----
 
-  public sendMessage(chatId: string, content: string) {
+  public sendMessage(chatId: string, content: string, model?: string, provider?: string) {
     if (!this.socketOpen) {
       throw new Error('WebSocket is not connected');
     }
-    this.ws!.send(JSON.stringify({ type: 'message', chat_id: chatId, content }));
+    const payload: Record<string, string> = { type: 'message', chat_id: chatId, content };
+    if (model) payload.model = model;
+    if (provider) payload.provider = provider;
+    this.ws!.send(JSON.stringify(payload));
   }
 
   public createNewChat() {

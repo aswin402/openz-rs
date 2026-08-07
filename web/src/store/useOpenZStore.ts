@@ -110,6 +110,28 @@ const EMPTY_MCP_STATS: McpStats = { loaded: 0, failed: 0, total: 0 };
 let msgCounter = 0;
 const newMsgId = (prefix: string) => `${prefix}-${Date.now()}-${msgCounter++}`;
 
+/**
+ * Infer the provider from a model name using prefix-based routing,
+ * mirroring the backend's resolution logic.
+ */
+function inferProviderFromModel(model: string): string {
+  const m = model.toLowerCase();
+  // Explicit provider/model format (e.g. "openai/gpt-4o")
+  if (m.includes('/')) {
+    const provider = m.split('/')[0];
+    // If it looks like an explicit provider prefix (not a model family), return it
+    if (['openai', 'anthropic', 'google', 'google_ai_studio', 'deepseek', 'groq', 'mistral', 'openrouter'].includes(provider)) {
+      return provider;
+    }
+  }
+  if (m.startsWith('claude')) return 'anthropic';
+  if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3') || m.startsWith('o4')) return 'openai';
+  if (m.startsWith('deepseek')) return 'deepseek';
+  if (m.startsWith('groq/') || m.startsWith('llama') || m.startsWith('mixtral')) return 'groq';
+  if (m.startsWith('gemini') || m.startsWith('gemma')) return 'google_ai_studio';
+  return 'auto';
+}
+
 // Guards against duplicate listener registration (React StrictMode double-invokes
 // effects in dev, which would otherwise register every WS handler twice).
 let hasInitialized = false;
@@ -192,7 +214,8 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
   setActiveModel: (model) => {
     set({ activeModel: model });
-    wsService.updateConfig({ model });
+    const provider = inferProviderFromModel(model);
+    wsService.updateConfig({ model, provider });
   },
 
   updateSettings: (patch) => {
@@ -838,7 +861,9 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     set({ messages: nextMessages, isStreaming: true });
 
     try {
-      wsService.sendMessage(chatId, content);
+      const model = get().activeModel || undefined;
+      const provider = model ? inferProviderFromModel(model) : undefined;
+      wsService.sendMessage(chatId, content, model, provider);
     } catch (err: any) {
       set({ isStreaming: false });
       const errMsgs = {
