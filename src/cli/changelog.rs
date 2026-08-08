@@ -181,11 +181,11 @@ pub async fn handle_changelog() -> Result<()> {
         green = AURA_GREEN,
         reset = COLOR_RESET
     );
+    println!("    • Adds attachment-aware WebUI chat with previews and persisted metadata.");
     println!(
-        "    • Refreshes exact-URL cache validators and expiry metadata on HTTP 304 Not Modified."
+        "    • Adds live Skills, Agents, Knowledge, Settings, and Dashboard workspace controls."
     );
-    println!("    • Uses Last-Modified heuristic freshness when Cache-Control is missing.");
-    println!("    • Keeps web_fetch cache behavior closer to standard HTTP caching semantics.");
+    println!("    • Improves agent activity and tool execution cards with timing, previews, and copy controls.");
 
     println!(
         "  {slate}[v0.0.48]{reset}",

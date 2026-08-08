@@ -1,4 +1,10 @@
-### v0.0.120 (Latest Release)
+### v0.0.121 (Latest Release)
+**WebUI Workspace Controls, Attachments, and Live Management:**
+- **Attachment-Aware Chat**: Added WebUI file selection, drag-and-drop validation, previews, and WebSocket transport so user turns can include persisted attachment metadata alongside text.
+- **Live Workspace Management**: Added richer Skills, Agents, Knowledge, Settings, and Dashboard workflows with searchable editors, page-level notices, JSON-safe config updates, protected default subagents, fallback models, and export controls.
+- **Agent Activity & Tool UX**: Added a desktop activity panel, improved tool execution cards with compact previews, timing metadata, copy controls, and clearer live execution state.
+
+### v0.0.120
 **Custom Providers UI, Identity Recall, and WebSocket Divergence Fixes:**
 - **Dynamic Custom LLM Providers**: Added a form and "+ Add Custom LLM Provider Endpoint" button to the "LLM Providers" tab in settings. Users can now input a unique provider key, custom API base, default model, and API key, which are serialized directly to the backend's `others` HashMap in `~/.openz/config.json`.
 - **Identity/Persona Memory Pinning**: Lowered the memory importance threshold in `retrieve_pinned_identity_memories` from `0.85` to `0.75` inside `src/agent/agent_loop/build.rs`. This ensures automatically extracted user/agent name, home directory, and persona observations (which carry `0.8` importance) are loaded unconditionally on session start.

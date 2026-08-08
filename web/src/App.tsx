@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useOpenZStore } from './store/useOpenZStore';
 import { Sidebar } from './components/Sidebar';
 import { ChatMessage } from './components/ChatMessage';
@@ -13,6 +13,7 @@ import { LogsDrawer } from './components/LogsDrawer';
 import { McpServersModal } from './components/McpServersModal';
 import { SettingsModal } from './components/SettingsModal';
 import { ServersModal } from './components/ServersModal';
+import { AgentActivityPanel } from './components/AgentActivityPanel';
 import { Menu } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -24,7 +25,7 @@ export const App: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  const activeMessages = messages[activeChatId] || [];
+  const activeMessages = useMemo(() => messages[activeChatId] || [], [messages, activeChatId]);
 
   useEffect(() => {
     init();
@@ -43,7 +44,7 @@ export const App: React.FC = () => {
       }, 50);
       prevMsgCountRef.current = activeMessages.length;
     }
-  }, [activeChatId, activeView]);
+  }, [activeChatId, activeMessages.length, activeView]);
 
   // 2. Smart auto-scroll during streams or new message additions
   useEffect(() => {
@@ -127,9 +128,10 @@ export const App: React.FC = () => {
 
 
         {activeView === 'chats' ? (
-          <div className="relative flex-1 overflow-hidden">
-            {/* Message Stream Scroll Area */}
-            <div ref={scrollContainerRef} className="h-full overflow-y-auto px-4 py-6 pb-36">
+          <div className="relative flex flex-1 overflow-hidden">
+            <div className="relative min-w-0 flex-1 overflow-hidden">
+              {/* Message Stream Scroll Area */}
+              <div ref={scrollContainerRef} className="h-full overflow-y-auto px-4 py-6 pb-36">
               <div className="mx-auto max-w-3xl space-y-4">
                 {activeMessages.length === 0 ? (
                   <HeroWelcome />
@@ -141,13 +143,15 @@ export const App: React.FC = () => {
             </div>
 
             {/* Floating Bottom Input Bar — floats over messages, transparent sides */}
-            <div className="absolute bottom-0 left-0 right-0">
-              <ChatInput />
-              {/* Shadow strip in the gap below the input card */}
-              <div className="mx-auto max-w-3xl px-6">
-                <div className="h-5 rounded-b-2xl bg-black/60 blur-2xl -mt-2 pointer-events-none" />
+              <div className="absolute bottom-0 left-0 right-0">
+                <ChatInput />
+                {/* Shadow strip in the gap below the input card */}
+                <div className="mx-auto max-w-3xl px-6">
+                  <div className="h-5 rounded-b-2xl bg-black/60 blur-2xl -mt-2 pointer-events-none" />
+                </div>
               </div>
             </div>
+            <AgentActivityPanel messages={activeMessages} isStreaming={activeMessages.some((msg) => !!msg.isStreaming)} />
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto">{renderWorkspace()}</div>

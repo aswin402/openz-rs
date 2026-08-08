@@ -1,3 +1,7 @@
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+export type JsonObject = { [key: string]: JsonValue };
+
 export interface OpenZMessage {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
@@ -13,6 +17,25 @@ export interface OpenZMessage {
   model?: string;
   /** True when this is a muted system/error notice. */
   isNotice?: boolean;
+  attachments?: ChatAttachment[];
+}
+
+export type WorkspaceNoticeScope = 'skills' | 'agents' | 'settings' | 'knowledge' | 'global';
+
+export interface WorkspaceNotice {
+  scope: WorkspaceNoticeScope;
+  type: 'success' | 'error' | 'info';
+  message: string;
+  timestamp: number;
+}
+
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  data?: string;
+  previewUrl?: string;
 }
 
 export interface ToolExecution {
@@ -24,6 +47,8 @@ export interface ToolExecution {
   output?: string;
   error?: string;
   durationMs?: number;
+  startedAt?: number;
+  endedAt?: number;
 }
 
 export interface SecurityPromptInfo {
@@ -130,6 +155,12 @@ export interface ConfigData {
   version: string;
 }
 
+export interface OpenZConfigPatch {
+  defaults?: Partial<AgentDefaultsConfig>;
+  providers?: JsonObject;
+  channels?: JsonObject;
+}
+
 /** A single slash command from the backend `SLASH_COMMANDS`. */
 export interface SlashCommand {
   cmd: string;
@@ -167,6 +198,7 @@ export interface SubagentInfo {
   systemPrompt: string;
   model: string;
   provider: string;
+  fallbacks?: string[];
 }
 
 export interface ChannelConfigInfo {

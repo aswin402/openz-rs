@@ -13,6 +13,9 @@ import {
   PanelLeftOpen,
   Sun,
   Moon,
+  Bot,
+  BookOpen,
+  BrainCircuit,
 } from 'lucide-react';
 
 interface NavItem {
@@ -60,6 +63,13 @@ export const Sidebar: React.FC = () => {
     fn();
     setIsSidebarOpen(false); // close the mobile drawer on pick
   };
+
+  const workspaceItems: NavItem[] = [
+    { key: 'chats', label: 'Chats', icon: MessageSquare, action: () => setActiveView('chats') },
+    { key: 'agents', label: 'Agents', icon: Bot, action: () => setActiveView('agents') },
+    { key: 'skills', label: 'Skills', icon: BookOpen, action: () => setActiveView('skills') },
+    { key: 'knowledge', label: 'Knowledge', icon: BrainCircuit, action: () => setActiveView('knowledge') },
+  ];
 
   const bottomItems: NavItem[] = [
     {
@@ -244,6 +254,10 @@ export const Sidebar: React.FC = () => {
             </div>
           )}
         </div>
+
+        <nav className={cn('shrink-0 space-y-1 border-t border-border/30 px-3 py-3', collapsed && 'md:px-2')}>
+          {renderNav(workspaceItems)}
+        </nav>
 
         {/* Footer & Bottom Navigation */}
         <div className={cn('shrink-0 border-t border-border/40 p-3 transition-all duration-300', collapsed && 'md:p-2')}>

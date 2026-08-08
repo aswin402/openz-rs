@@ -1,6 +1,50 @@
-import React, { useState, useEffect, useRef } from 'react';
+/* eslint-disable react-hooks/set-state-in-effect */
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
-import { X, Settings, Link, Key, Zap, Radio, Save, Cpu, ShieldAlert, ChevronUp, ChevronDown, Trash2 } from 'lucide-react';
+import type { JsonObject } from '../types';
+import { X, Settings, Link, Key, Zap, Radio, Save, Cpu, ShieldAlert, ChevronUp, ChevronDown, Trash2, RotateCcw, CheckCircle2, AlertCircle } from 'lucide-react';
+
+type SettingsForm = Record<string, string | number | boolean>;
+
+type ProviderForm = {
+  api_key?: string;
+  api_base?: string;
+  default_model?: string;
+};
+
+type ProvidersForm = Record<string, ProviderForm>;
+
+type TelegramChannelForm = { enabled?: boolean; bot_token?: string };
+type DiscordChannelForm = { enabled?: boolean; bot_token?: string };
+type WhatsAppChannelForm = {
+  enabled?: boolean;
+  api_key?: string;
+  phone_number_id?: string;
+  webhook_port?: number;
+  verify_token?: string;
+};
+
+type ChannelsForm = {
+  telegram?: TelegramChannelForm;
+  discord?: DiscordChannelForm;
+  whatsapp?: WhatsAppChannelForm;
+};
+
+function cloneObject<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value || {})) as T;
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value ?? {});
+}
+
+function jsonObjectToProviders(value: JsonObject): ProvidersForm {
+  return cloneObject(value) as ProvidersForm;
+}
+
+function jsonObjectToChannels(value: JsonObject): ChannelsForm {
+  return cloneObject(value) as ChannelsForm;
+}
 
 interface SelectOption {
   value: string;
@@ -188,14 +232,17 @@ export const SettingsModal: React.FC = () => {
   const providersConfig = useOpenZStore((s) => s.providersConfig);
   const channelsConfig = useOpenZStore((s) => s.channelsConfig);
   const updateConfig = useOpenZStore((s) => s.updateConfig);
+  const workspaceNotice = useOpenZStore((s) => s.workspaceNotice);
+  const clearWorkspaceNotice = useOpenZStore((s) => s.clearWorkspaceNotice);
 
   const [activeTab, setActiveTab] = useState<'agent' | 'providers' | 'channels'>('agent');
   const [urlInput, setUrlInput] = useState(wsUrl);
   const [tokenInput, setTokenInput] = useState(wsToken);
 
-  const [form, setForm] = useState<Record<string, string | number | boolean>>({});
-  const [providersForm, setProvidersForm] = useState<any>({});
-  const [channelsForm, setChannelsForm] = useState<any>({});
+  const [form, setForm] = useState<SettingsForm>({});
+  const [providersForm, setProvidersForm] = useState<ProvidersForm>({});
+  const [channelsForm, setChannelsForm] = useState<ChannelsForm>({});
+  const [saveNotice, setSaveNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const [newProvKey, setNewProvKey] = useState('');
   const [newProvKeyErr, setNewProvKeyErr] = useState('');
@@ -219,51 +266,110 @@ export const SettingsModal: React.FC = () => {
         });
       }
       if (providersConfig) {
-        setProvidersForm(JSON.parse(JSON.stringify(providersConfig)));
+        setProvidersForm(jsonObjectToProviders(providersConfig));
       }
       if (channelsConfig) {
-        setChannelsForm(JSON.parse(JSON.stringify(channelsConfig)));
+        setChannelsForm(jsonObjectToChannels(channelsConfig));
       }
       setShowAddCustom(false);
       setNewProvKey('');
       setNewProvKeyErr('');
+      setSaveNotice(null);
+      clearWorkspaceNotice('settings');
     }
-  }, [isSettingsOpen, wsUrl, wsToken, settings, providersConfig, channelsConfig]);
+  }, [isSettingsOpen, wsUrl, wsToken, settings, providersConfig, channelsConfig, clearWorkspaceNotice]);
 
-  if (!isSettingsOpen) return null;
 
   const setField = (key: string, value: string | number | boolean) => {
     setForm((f) => ({ ...f, [key]: value }));
+    setSaveNotice(null);
+    clearWorkspaceNotice('settings');
   };
 
-  const handleSave = () => {
-    setWsConfig(urlInput, tokenInput);
+  const resetForms = () => {
+    setUrlInput(wsUrl);
+    setTokenInput(wsToken);
+    if (settings) {
+      setForm({
+        model: settings.model,
+        provider: settings.provider,
+        temperature: settings.temperature,
+        max_tokens: settings.max_tokens,
+        bot_name: settings.bot_name,
+        max_messages: settings.max_messages,
+        max_tool_iterations: settings.max_tool_iterations,
+        tool_timeout_secs: settings.tool_timeout_secs,
+        security_mode: settings.security_mode,
+      });
+    }
+    setProvidersForm(jsonObjectToProviders(providersConfig));
+    setChannelsForm(jsonObjectToChannels(channelsConfig));
+    setSaveNotice(null);
+  };
 
-    // Construct patch payload for defaults
+  const validationError = useMemo(() => {
+    if (!urlInput.trim()) return 'Gateway websocket URL is required.';
+    if (!/^wss?:\/\//.test(urlInput.trim())) return 'Gateway URL must start with ws:// or wss://.';
+    if (Number(form.temperature ?? 0) < 0 || Number(form.temperature ?? 0) > 2) return 'Temperature must be between 0 and 2.';
+    if (Number(form.max_tokens ?? 1) < 1) return 'Max tokens must be at least 1.';
+    if (Number(form.max_messages ?? 1) < 1) return 'Max messages must be at least 1.';
+    if (Number(form.max_tool_iterations ?? 1) < 1) return 'Max tool iterations must be at least 1.';
+    if (Number(form.tool_timeout_secs ?? 1) < 1) return 'Tool timeout must be at least 1 second.';
+    const whatsappPort = channelsForm.whatsapp?.webhook_port;
+    if (whatsappPort !== undefined && (Number(whatsappPort) < 1 || Number(whatsappPort) > 65535)) return 'WhatsApp webhook port must be 1-65535.';
+    return null;
+  }, [channelsForm.whatsapp?.webhook_port, form.max_messages, form.max_tokens, form.max_tool_iterations, form.temperature, form.tool_timeout_secs, urlInput]);
+
+  const hasChanges = useMemo(() => {
+    const defaultsChanged = settings ? (
+      form.model !== settings.model ||
+      form.provider !== settings.provider ||
+      Number(form.temperature) !== settings.temperature ||
+      Number(form.max_tokens) !== settings.max_tokens ||
+      form.bot_name !== settings.bot_name ||
+      Number(form.max_messages) !== settings.max_messages ||
+      Number(form.max_tool_iterations) !== settings.max_tool_iterations ||
+      Number(form.tool_timeout_secs) !== settings.tool_timeout_secs ||
+      form.security_mode !== settings.security_mode
+    ) : false;
+    return urlInput !== wsUrl ||
+      tokenInput !== wsToken ||
+      defaultsChanged ||
+      stableStringify(providersForm) !== stableStringify(providersConfig) ||
+      stableStringify(channelsForm) !== stableStringify(channelsConfig);
+  }, [channelsConfig, channelsForm, form, providersConfig, providersForm, settings, tokenInput, urlInput, wsToken, wsUrl]);
+
+  const pageNotice = workspaceNotice?.scope === 'settings' ? workspaceNotice : saveNotice;
+  const visibleNotice = validationError ? { type: 'error' as const, message: validationError } : pageNotice;
+
+  const handleSave = () => {
+    if (validationError) {
+      setSaveNotice({ type: 'error', message: validationError });
+      return;
+    }
+
+    setWsConfig(urlInput.trim(), tokenInput);
+
     const defaultsPatch: Record<string, unknown> = {};
-    if (form.model !== undefined && form.model !== settings?.model) defaultsPatch.model = form.model;
-    if (form.provider !== undefined && form.provider !== settings?.provider) defaultsPatch.provider = form.provider;
-    if (form.temperature !== undefined && Number(form.temperature) !== settings?.temperature)
-      defaultsPatch.temperature = Number(form.temperature);
-    if (form.max_tokens !== undefined && Number(form.max_tokens) !== settings?.max_tokens)
-      defaultsPatch.max_tokens = Number(form.max_tokens);
-    if (form.bot_name !== undefined && form.bot_name !== settings?.bot_name) defaultsPatch.bot_name = form.bot_name;
-    if (form.max_messages !== undefined && Number(form.max_messages) !== settings?.max_messages)
-      defaultsPatch.max_messages = Number(form.max_messages);
-    if (form.max_tool_iterations !== undefined && Number(form.max_tool_iterations) !== settings?.max_tool_iterations)
-      defaultsPatch.max_tool_iterations = Number(form.max_tool_iterations);
-    if (form.tool_timeout_secs !== undefined && Number(form.tool_timeout_secs) !== settings?.tool_timeout_secs)
-      defaultsPatch.tool_timeout_secs = Number(form.tool_timeout_secs);
-    if (form.security_mode !== undefined && form.security_mode !== settings?.security_mode)
-      defaultsPatch.security_mode = form.security_mode;
+    if (settings) {
+      if (form.model !== undefined && form.model !== settings.model) defaultsPatch.model = form.model;
+      if (form.provider !== undefined && form.provider !== settings.provider) defaultsPatch.provider = form.provider;
+      if (form.temperature !== undefined && Number(form.temperature) !== settings.temperature) defaultsPatch.temperature = Number(form.temperature);
+      if (form.max_tokens !== undefined && Number(form.max_tokens) !== settings.max_tokens) defaultsPatch.max_tokens = Number(form.max_tokens);
+      if (form.bot_name !== undefined && form.bot_name !== settings.bot_name) defaultsPatch.bot_name = form.bot_name;
+      if (form.max_messages !== undefined && Number(form.max_messages) !== settings.max_messages) defaultsPatch.max_messages = Number(form.max_messages);
+      if (form.max_tool_iterations !== undefined && Number(form.max_tool_iterations) !== settings.max_tool_iterations) defaultsPatch.max_tool_iterations = Number(form.max_tool_iterations);
+      if (form.tool_timeout_secs !== undefined && Number(form.tool_timeout_secs) !== settings.tool_timeout_secs) defaultsPatch.tool_timeout_secs = Number(form.tool_timeout_secs);
+      if (form.security_mode !== undefined && form.security_mode !== settings.security_mode) defaultsPatch.security_mode = form.security_mode;
+    }
 
     updateConfig({
       defaults: defaultsPatch,
-      providers: providersForm,
-      channels: channelsForm,
+      providers: providersForm as unknown as JsonObject,
+      channels: channelsForm as unknown as JsonObject,
     });
 
-    setIsSettingsOpen(false);
+    setSaveNotice({ type: 'success', message: 'Settings save requested. Waiting for gateway refresh.' });
   };
 
   const groups = providers.filter((p) => p.models.length > 0);
@@ -285,6 +391,8 @@ export const SettingsModal: React.FC = () => {
   const builtins = ['openai', 'anthropic', 'deepseek', 'groq', 'openrouter', 'google_ai_studio', 'ollama'];
   const customKeys = Object.keys(providersForm).filter(k => !builtins.includes(k));
   const allProviderKeys = [...builtins, ...customKeys];
+
+  if (!isSettingsOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
@@ -335,6 +443,13 @@ export const SettingsModal: React.FC = () => {
             Bot Channels
           </button>
         </div>
+
+        {visibleNotice && (
+          <div className={`mx-6 mt-4 flex items-start gap-2 rounded-lg border px-3 py-2 text-[11px] ${visibleNotice.type === 'success' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : visibleNotice.type === 'error' ? 'border-red-500/30 bg-red-500/10 text-red-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300'}`}>
+            {visibleNotice.type === 'success' ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+            <span>{visibleNotice.message}</span>
+          </div>
+        )}
 
         {/* Scrollable Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-5 text-xs">
@@ -549,8 +664,9 @@ export const SettingsModal: React.FC = () => {
               </div>
               {allProviderKeys.map((provKey) => {
                 const provData = providersForm[provKey] || {};
-                const setProvField = (fld: string, val: string) => {
-                  setProvidersForm((pf: any) => ({
+                const setProvField = (fld: keyof ProviderForm, val: string) => {
+                  setSaveNotice(null);
+                  setProvidersForm((pf: ProvidersForm) => ({
                     ...pf,
                     [provKey]: {
                       ...provData,
@@ -570,7 +686,7 @@ export const SettingsModal: React.FC = () => {
                       {isCustom && (
                         <button
                           onClick={() => {
-                            setProvidersForm((pf: any) => {
+                            setProvidersForm((pf: ProvidersForm) => {
                               const copy = { ...pf };
                               delete copy[provKey];
                               return copy;
@@ -654,7 +770,7 @@ export const SettingsModal: React.FC = () => {
                           setNewProvKeyErr('This provider key already exists.');
                           return;
                         }
-                        setProvidersForm((pf: any) => ({
+                        setProvidersForm((pf: ProvidersForm) => ({
                           ...pf,
                           [newProvKey]: { api_key: '', api_base: '', default_model: '' }
                         }));
@@ -700,7 +816,7 @@ export const SettingsModal: React.FC = () => {
                   <button
                     onClick={() => {
                       const tg = channelsForm.telegram || { enabled: false, bot_token: '' };
-                      setChannelsForm((cf: any) => ({
+                      setChannelsForm((cf: ChannelsForm) => ({
                         ...cf,
                         telegram: { ...tg, enabled: !tg.enabled },
                       }));
@@ -724,7 +840,7 @@ export const SettingsModal: React.FC = () => {
                       value={channelsForm.telegram?.bot_token || ''}
                       onChange={(e) => {
                         const tg = channelsForm.telegram || { enabled: false, bot_token: '' };
-                        setChannelsForm((cf: any) => ({
+                        setChannelsForm((cf: ChannelsForm) => ({
                           ...cf,
                           telegram: { ...tg, bot_token: e.target.value },
                         }));
@@ -743,7 +859,7 @@ export const SettingsModal: React.FC = () => {
                   <button
                     onClick={() => {
                       const dc = channelsForm.discord || { enabled: false, bot_token: '' };
-                      setChannelsForm((cf: any) => ({
+                      setChannelsForm((cf: ChannelsForm) => ({
                         ...cf,
                         discord: { ...dc, enabled: !dc.enabled },
                       }));
@@ -767,7 +883,7 @@ export const SettingsModal: React.FC = () => {
                       value={channelsForm.discord?.bot_token || ''}
                       onChange={(e) => {
                         const dc = channelsForm.discord || { enabled: false, bot_token: '' };
-                        setChannelsForm((cf: any) => ({
+                        setChannelsForm((cf: ChannelsForm) => ({
                           ...cf,
                           discord: { ...dc, bot_token: e.target.value },
                         }));
@@ -786,7 +902,7 @@ export const SettingsModal: React.FC = () => {
                   <button
                     onClick={() => {
                       const wa = channelsForm.whatsapp || { enabled: false, api_key: '', phone_number_id: '', webhook_port: 8090, verify_token: 'openz' };
-                      setChannelsForm((cf: any) => ({
+                      setChannelsForm((cf: ChannelsForm) => ({
                         ...cf,
                         whatsapp: { ...wa, enabled: !wa.enabled },
                       }));
@@ -810,7 +926,7 @@ export const SettingsModal: React.FC = () => {
                       value={channelsForm.whatsapp?.api_key || ''}
                       onChange={(e) => {
                         const wa = channelsForm.whatsapp || { enabled: false, api_key: '', phone_number_id: '', webhook_port: 8090, verify_token: 'openz' };
-                        setChannelsForm((cf: any) => ({
+                        setChannelsForm((cf: ChannelsForm) => ({
                           ...cf,
                           whatsapp: { ...wa, api_key: e.target.value },
                         }));
@@ -826,7 +942,7 @@ export const SettingsModal: React.FC = () => {
                       value={channelsForm.whatsapp?.phone_number_id || ''}
                       onChange={(e) => {
                         const wa = channelsForm.whatsapp || { enabled: false, api_key: '', phone_number_id: '', webhook_port: 8090, verify_token: 'openz' };
-                        setChannelsForm((cf: any) => ({
+                        setChannelsForm((cf: ChannelsForm) => ({
                           ...cf,
                           whatsapp: { ...wa, phone_number_id: e.target.value },
                         }));
@@ -843,7 +959,7 @@ export const SettingsModal: React.FC = () => {
                         value={channelsForm.whatsapp?.webhook_port ?? 8090}
                         onChange={(e) => {
                           const wa = channelsForm.whatsapp || { enabled: false, api_key: '', phone_number_id: '', webhook_port: 8090, verify_token: 'openz' };
-                          setChannelsForm((cf: any) => ({
+                          setChannelsForm((cf: ChannelsForm) => ({
                             ...cf,
                             whatsapp: { ...wa, webhook_port: Number(e.target.value) },
                           }));
@@ -858,7 +974,7 @@ export const SettingsModal: React.FC = () => {
                         value={channelsForm.whatsapp?.verify_token || ''}
                         onChange={(e) => {
                           const wa = channelsForm.whatsapp || { enabled: false, api_key: '', phone_number_id: '', webhook_port: 8090, verify_token: 'openz' };
-                          setChannelsForm((cf: any) => ({
+                          setChannelsForm((cf: ChannelsForm) => ({
                             ...cf,
                             whatsapp: { ...wa, verify_token: e.target.value },
                           }));
@@ -875,16 +991,24 @@ export const SettingsModal: React.FC = () => {
         </div>
 
         {/* Footer Buttons */}
-        <div className="flex justify-end gap-2.5 p-6 pt-4 border-t border-border/50 bg-muted/20 shrink-0">
+        <div className="flex flex-wrap justify-end gap-2.5 p-6 pt-4 border-t border-border/50 bg-muted/20 shrink-0">
+          <button
+            onClick={resetForms}
+            disabled={!hasChanges}
+            className="flex items-center gap-1.5 rounded-lg border border-border px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted disabled:opacity-40"
+          >
+            <RotateCcw className="h-3.5 w-3.5" /> Reset
+          </button>
           <button
             onClick={() => setIsSettingsOpen(false)}
             className="rounded-lg border border-border px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted"
           >
-            Cancel
+            Close
           </button>
           <button
             onClick={handleSave}
-            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2 text-xs font-semibold text-white shadow-md hover:opacity-90 transition duration-150 active:scale-95"
+            disabled={!hasChanges || Boolean(validationError)}
+            className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2 text-xs font-semibold text-white shadow-md hover:opacity-90 transition duration-150 active:scale-95 disabled:opacity-40"
           >
             <Save className="h-3.5 w-3.5" /> Save & Apply
           </button>

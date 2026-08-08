@@ -216,6 +216,7 @@ impl Tool for CreateSubagentTool {
 
         // Do not allow overwriting default subagents
         let defaults = [
+            "orchestrator",
             "planner",
             "researcher",
             "architect",
@@ -252,6 +253,8 @@ impl Tool for CreateSubagentTool {
             "communication_manager",
             "automation_agent",
             "coding_agent",
+            "diagram_designer",
+            "video_animator",
         ];
         if defaults.contains(&name.as_str()) {
             return Err(anyhow!("Cannot overwrite default subagent '{}'", name));
@@ -323,6 +326,7 @@ impl Tool for DeleteSubagentTool {
             .to_string();
 
         let defaults = [
+            "orchestrator",
             "planner",
             "researcher",
             "architect",
@@ -359,6 +363,8 @@ impl Tool for DeleteSubagentTool {
             "communication_manager",
             "automation_agent",
             "coding_agent",
+            "diagram_designer",
+            "video_animator",
         ];
         if defaults.contains(&name.as_str()) {
             return Err(anyhow!("Cannot delete default subagent '{}'", name));

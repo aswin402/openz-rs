@@ -1,13 +1,30 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
-import { Send, Square, Zap, ChevronsUpDown, Loader2 } from 'lucide-react';
+import { Send, Square, Zap, ChevronsUpDown, Loader2, Paperclip, X, FileText, Image as ImageIcon, AlertTriangle } from 'lucide-react';
+import type { ChatAttachment } from '../types';
+
+const MAX_ATTACHMENTS = 8;
+const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0) + ' MB';
+}
+
+function isImageAttachment(attachment: ChatAttachment): boolean {
+  return attachment.mime.startsWith('image/') && Boolean(attachment.previewUrl);
+}
 
 export const ChatInput: React.FC = () => {
   const [input, setInput] = useState('');
   const [showCommands, setShowCommands] = useState(false);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [filteredCmds, setFilteredCmds] = useState<{ cmd: string; desc: string }[]>([]);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const modelButtonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -62,17 +79,96 @@ export const ChatInput: React.FC = () => {
     if (e.key === 'Escape') {
       setShowCommands(false);
       setShowModelPicker(false);
+      setAttachmentError(null);
     }
   };
 
   const handleSend = () => {
-    if (!input.trim() || isStreaming) return;
-    sendMessage(input);
+    if ((!input.trim() && attachments.length === 0) || isStreaming) return;
+    sendMessage(input, attachments);
     setInput('');
+    setAttachments([]);
+    setAttachmentError(null);
     setShowCommands(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
+  };
+
+  const addFiles = (files: FileList | File[] | null) => {
+    if (!files) return;
+    setAttachmentError(null);
+    const incoming = Array.from(files);
+    const slotsLeft = MAX_ATTACHMENTS - attachments.length;
+
+    if (slotsLeft <= 0) {
+      setAttachmentError('Attachment limit reached. Remove a file before adding another.');
+      return;
+    }
+
+    const accepted = incoming.slice(0, slotsLeft);
+    const rejected: string[] = [];
+    if (incoming.length > slotsLeft) {
+      const skipped = incoming.length - slotsLeft;
+      rejected.push(skipped + ' file' + (skipped === 1 ? '' : 's') + ' skipped because the limit is ' + MAX_ATTACHMENTS);
+    }
+
+    accepted.forEach((file) => {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        rejected.push(file.name + ' is larger than ' + formatFileSize(MAX_ATTACHMENT_BYTES));
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        const data = result.includes(',') ? result.slice(result.indexOf(',') + 1) : result;
+        const mime = file.type || 'application/octet-stream';
+        setAttachments((current) => [
+          ...current,
+          {
+            id: file.name + '-' + file.lastModified + '-' + Math.random().toString(36).slice(2),
+            name: file.name,
+            mime,
+            size: file.size,
+            data,
+            previewUrl: mime.startsWith('image/') ? result : undefined,
+          },
+        ]);
+      };
+      reader.onerror = () => {
+        setAttachmentError('Could not read ' + file.name + '.');
+      };
+      reader.readAsDataURL(file);
+    });
+
+    if (rejected.length > 0) {
+      setAttachmentError(rejected.join('. '));
+    }
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments((current) => current.filter((item) => item.id !== id));
+    setAttachmentError(null);
+  };
+
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (isStreaming) return;
+    event.preventDefault();
+    setIsDraggingFile(true);
+  };
+
+  const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setIsDraggingFile(false);
+    }
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (isStreaming) return;
+    event.preventDefault();
+    setIsDraggingFile(false);
+    addFiles(event.dataTransfer.files);
   };
 
   const selectCommand = (cmd: string) => {
@@ -97,6 +193,8 @@ export const ChatInput: React.FC = () => {
     }
     return activeModel.split('/').pop() || activeModel;
   }, [activeModel, modelGroups]);
+
+  const canSend = !isStreaming && (input.trim().length > 0 || attachments.length > 0);
 
   return (
     <div className="relative w-full max-w-3xl mx-auto px-4 pb-4">
@@ -163,7 +261,19 @@ export const ChatInput: React.FC = () => {
       )}
 
       {/* Main Input Card */}
-      <div className="relative flex flex-col rounded-2xl border border-border/80 bg-card/90 shadow-xl backdrop-blur-md transition-all focus-within:border-amber-500/50 focus-within:ring-2 focus-within:ring-amber-500/20">
+      <div
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={'relative flex flex-col rounded-2xl border border-border/80 bg-card/90 shadow-xl backdrop-blur-md transition-all focus-within:border-amber-500/50 focus-within:ring-2 focus-within:ring-amber-500/20 ' + (isDraggingFile ? 'border-amber-500/70 ring-2 ring-amber-500/25' : '')}
+      >
+        {isDraggingFile && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl border border-amber-500/60 bg-background/80 backdrop-blur-sm">
+            <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-card px-3 py-2 text-xs font-semibold text-amber-500 shadow-lg">
+              <Paperclip className="h-4 w-4" /> Drop files to attach
+            </div>
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           value={input}
@@ -175,9 +285,46 @@ export const ChatInput: React.FC = () => {
           className="w-full resize-none bg-transparent p-3.5 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
         />
 
+        {(attachments.length > 0 || attachmentError) && (
+          <div className="space-y-2 px-3 pb-2">
+            {attachmentError && (
+              <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-300">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>{attachmentError}</span>
+              </div>
+            )}
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2" aria-label="Attachments">
+                {attachments.map((attachment) => (
+                  <div key={attachment.id} className="group flex max-w-full items-center gap-2 rounded-lg border border-border/70 bg-muted/50 p-1.5 text-[10px]">
+                    {isImageAttachment(attachment) ? (
+                      <img src={attachment.previewUrl} alt="" className="h-9 w-9 shrink-0 rounded-md object-cover" />
+                    ) : (
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-background/70 text-amber-500">
+                        {attachment.mime.startsWith('image/') ? <ImageIcon className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="max-w-40 truncate font-medium text-foreground/90">{attachment.name}</div>
+                      <div className="text-[9px] text-muted-foreground">{formatFileSize(attachment.size)}</div>
+                    </div>
+                    <button type="button" onClick={() => removeAttachment(attachment.id)} className="rounded p-1 text-muted-foreground opacity-70 hover:bg-background hover:text-foreground group-hover:opacity-100" aria-label={'Remove ' + attachment.name}>
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Toolbar & Actions Footer */}
         <div className="flex items-center justify-between px-3 py-2 border-t border-border/30 text-xs">
           <div className="flex min-w-0 items-center gap-2">
+            <input ref={fileInputRef} type="file" multiple accept="image/*,.pdf,.txt,.md,.json,.csv,.rs,.ts,.tsx,.js,.jsx,.py,.toml,.yaml,.yml" className="hidden" onChange={(event) => { addFiles(event.target.files); event.target.value = ''; }} />
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isStreaming || attachments.length >= MAX_ATTACHMENTS} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40" title="Attach files" aria-label="Attach files">
+              <Paperclip className="h-3.5 w-3.5" />
+            </button>
             {/* Model selector (real data from models_list) */}
             <button
               ref={modelButtonRef}
@@ -234,7 +381,7 @@ export const ChatInput: React.FC = () => {
             ) : (
               <button
                 onClick={handleSend}
-                disabled={!input.trim()}
+                disabled={!canSend}
                 className="flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 px-3.5 py-1.5 font-medium text-white shadow-md hover:opacity-90 transition disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Send className="h-3.5 w-3.5" /> Send

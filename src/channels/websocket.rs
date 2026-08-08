@@ -74,6 +74,28 @@ pub fn resolve_ws_approval(req_id: &str, approved: bool) {
     }
 }
 
+fn subagent_profile_events() -> Vec<serde_json::Value> {
+    crate::subagents::load_profiles()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| {
+            let model = p.model.unwrap_or_else(|| "default".to_string());
+            let provider = model
+                .split_once('/')
+                .map(|(provider, _)| provider.to_string())
+                .unwrap_or_else(|| "auto".to_string());
+            serde_json::json!({
+                "name": p.name,
+                "description": p.description,
+                "systemPrompt": p.system_prompt,
+                "model": model,
+                "provider": provider,
+                "fallbacks": p.fallbacks.unwrap_or_default(),
+            })
+        })
+        .collect::<Vec<_>>()
+}
+
 impl WsGateway {
     pub fn new(config: WebSocketChannelConfig, agent_loop: AgentLoop) -> Self {
         WsGateway {
@@ -243,7 +265,6 @@ async fn hono_log_middleware(
 }
 
 const MAX_WS_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16 MB
-#[allow(dead_code)]
 const MAX_ATTACHMENT_BYTES: usize = 15 * 1024 * 1024; // 15 MB each
 
 /// Persist base64 attachment payloads (sent by the WebUI) to
@@ -253,7 +274,6 @@ const MAX_ATTACHMENT_BYTES: usize = 15 * 1024 * 1024; // 15 MB each
 /// layer (via `parse_multimodal_content`) turns them into vision image parts;
 /// everything else becomes a `📎 [name](file://…)` link the agent can read
 /// with its file/document tools.
-#[allow(dead_code)]
 async fn persist_attachments(attachments: &Value) -> Vec<String> {
     let mut refs = Vec::new();
     let Some(arr) = attachments.as_array() else {
@@ -444,9 +464,19 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         let content = envelope
                             .get("content")
                             .and_then(|v| v.as_str())
-                            .unwrap_or("");
+                            .unwrap_or("")
+                            .to_string();
+                        let attachment_refs = persist_attachments(
+                            envelope.get("attachments").unwrap_or(&Value::Null),
+                        )
+                        .await;
+                        let content = if attachment_refs.is_empty() {
+                            content
+                        } else {
+                            format!("{}\n\n{}", attachment_refs.join("\n"), content)
+                        };
 
-                        if crate::channels::is_stop_command(content) {
+                        if crate::channels::is_stop_command(&content) {
                             crate::shutdown::trigger_cli_cancel();
                             let stopped_evt = serde_json::json!({
                                 "event": "stopped",
@@ -757,26 +787,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         });
                         let mcp_resp = fetch_real_mcp_servers(&config).await;
                         let mcp_servers = mcp_resp["servers"].clone();
-                        let subagents = crate::subagents::load_profiles()
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|p| {
-                                let model_str = p.model.clone().unwrap_or_else(|| "auto".to_string());
-                                let parts: Vec<&str> = model_str.split('/').collect();
-                                let (provider, model) = if parts.len() > 1 {
-                                    (parts[0].to_string(), parts[1..].join("/"))
-                                } else {
-                                    ("auto".to_string(), model_str)
-                                };
-                                serde_json::json!({
-                                    "name": p.name,
-                                    "description": p.description,
-                                    "systemPrompt": p.system_prompt,
-                                    "model": model,
-                                    "provider": provider,
-                                })
-                            })
-                            .collect::<Vec<_>>();
+                        let subagents = subagent_profile_events();
                         // Expose providers with masked api_keys
                         let mut providers_config = serde_json::Map::new();
                         let p = &config.providers;
@@ -1052,6 +1063,182 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 "enable_sandbox": d.enable_sandbox,
                             }
                         });
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "save_skill" => {
+                        let name = envelope
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        let content = envelope
+                            .get("content")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let evt = if name.is_empty() {
+                            serde_json::json!({
+                                "event": "error",
+                                "detail": "Skill name is required."
+                            })
+                        } else {
+                            match crate::agent::skills::save_skill(name, content) {
+                                Ok(()) => {
+                                    let skills = crate::agent::skills::load_skills()
+                                        .unwrap_or_default()
+                                        .into_iter()
+                                        .map(|s| serde_json::json!({ "name": s.name, "content": s.content }))
+                                        .collect::<Vec<_>>();
+                                    serde_json::json!({
+                                        "event": "skills_updated",
+                                        "skills": skills,
+                                        "status": "saved",
+                                        "name": name,
+                                    })
+                                }
+                                Err(err) => serde_json::json!({
+                                    "event": "error",
+                                    "detail": format!("Failed to save skill: {}", err)
+                                }),
+                            }
+                        };
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "delete_skill" => {
+                        let name = envelope
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        let evt = if name.is_empty() {
+                            serde_json::json!({
+                                "event": "error",
+                                "detail": "Skill name is required."
+                            })
+                        } else {
+                            match crate::agent::skills::delete_skill(name) {
+                                Ok(()) => {
+                                    let skills = crate::agent::skills::load_skills()
+                                        .unwrap_or_default()
+                                        .into_iter()
+                                        .map(|s| serde_json::json!({ "name": s.name, "content": s.content }))
+                                        .collect::<Vec<_>>();
+                                    serde_json::json!({
+                                        "event": "skills_updated",
+                                        "skills": skills,
+                                        "status": "deleted",
+                                        "name": name,
+                                    })
+                                }
+                                Err(err) => serde_json::json!({
+                                    "event": "error",
+                                    "detail": format!("Failed to delete skill: {}", err)
+                                }),
+                            }
+                        };
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "save_subagent" => {
+                        let name = envelope
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        let description = envelope
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        let system_prompt = envelope
+                            .get("systemPrompt")
+                            .or_else(|| envelope.get("system_prompt"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        let model = envelope
+                            .get("model")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty() && *s != "default");
+                        let fallbacks = envelope
+                            .get("fallbacks")
+                            .and_then(|v| v.as_array())
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .filter_map(|item| item.as_str())
+                                    .map(str::trim)
+                                    .filter(|item| !item.is_empty())
+                                    .map(|item| serde_json::Value::String(item.to_string()))
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+
+                        let evt = if name.is_empty() || description.is_empty() || system_prompt.is_empty() {
+                            serde_json::json!({
+                                "event": "error",
+                                "detail": "Subagent name, description, and system prompt are required."
+                            })
+                        } else {
+                            let args = serde_json::json!({
+                                "name": name,
+                                "description": description,
+                                "system_prompt": system_prompt,
+                                "model": model,
+                                "fallbacks": fallbacks,
+                            });
+                            let tool = crate::tools::subagent::CreateSubagentTool {
+                                config: state.agent_loop.config.clone(),
+                            };
+                            match crate::tools::Tool::call(&tool, &args).await {
+                                Ok(_) => serde_json::json!({
+                                    "event": "subagents_updated",
+                                    "subagents": subagent_profile_events(),
+                                    "status": "saved",
+                                    "name": name,
+                                }),
+                                Err(err) => serde_json::json!({
+                                    "event": "error",
+                                    "detail": format!("Failed to save subagent: {}", err)
+                                }),
+                            }
+                        };
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "delete_subagent" => {
+                        let name = envelope
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        let evt = if name.is_empty() {
+                            serde_json::json!({
+                                "event": "error",
+                                "detail": "Subagent name is required."
+                            })
+                        } else {
+                            let args = serde_json::json!({ "name": name });
+                            let tool = crate::tools::subagent::DeleteSubagentTool;
+                            match crate::tools::Tool::call(&tool, &args).await {
+                                Ok(_) => serde_json::json!({
+                                    "event": "subagents_updated",
+                                    "subagents": subagent_profile_events(),
+                                    "status": "deleted",
+                                    "name": name,
+                                }),
+                                Err(err) => serde_json::json!({
+                                    "event": "error",
+                                    "detail": format!("Failed to delete subagent: {}", err)
+                                }),
+                            }
+                        };
                         if let Ok(evt_str) = serde_json::to_string(&evt) {
                             let _ = tx.send(Message::Text(evt_str)).await;
                         }

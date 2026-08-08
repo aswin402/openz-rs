@@ -13,17 +13,22 @@ import type {
   AgentDefaultsConfig,
   SlashCommand,
   AgentStatus,
+  ChatAttachment,
   BackgroundServerInfo,
   SkillInfo,
   SubagentInfo,
   ChannelConfigInfo,
+  JsonObject,
+  JsonValue,
+  OpenZConfigPatch,
+  WorkspaceNotice,
 } from '../types';
 import { wsService } from '../services/websocket';
 
 /** Workspace views available from the left navigation rail. */
 export type WorkspaceView = 'dashboard' | 'chats' | 'agents' | 'skills' | 'knowledge';
 
-interface OpenZState {
+export interface OpenZState {
   // Connection
   connectionStatus: ConnectionStatus;
   wsUrl: string;
@@ -61,6 +66,7 @@ interface OpenZState {
   isMcpsOpen: boolean;
   isSettingsOpen: boolean;
   isServersOpen: boolean;
+  workspaceNotice: WorkspaceNotice | null;
   setIsSidebarOpen: (open: boolean) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setActiveView: (view: WorkspaceView) => void;
@@ -69,6 +75,8 @@ interface OpenZState {
   setIsMcpsOpen: (open: boolean) => void;
   setIsSettingsOpen: (open: boolean) => void;
   setIsServersOpen: (open: boolean) => void;
+  setWorkspaceNotice: (notice: Omit<WorkspaceNotice, 'timestamp'>) => void;
+  clearWorkspaceNotice: (scope?: WorkspaceNotice['scope']) => void;
 
   // Memory & Logs State (real event payloads)
   cognitiveStats: CognitiveMemoryStats;
@@ -79,21 +87,25 @@ interface OpenZState {
   skills: SkillInfo[];
   subagents: SubagentInfo[];
   channels: ChannelConfigInfo[];
-  providersConfig: any;
-  channelsConfig: any;
+  providersConfig: JsonObject;
+  channelsConfig: JsonObject;
 
   // Actions
-  updateConfig: (data: { defaults?: any; providers?: any; channels?: any }) => void;
+  updateConfig: (data: OpenZConfigPatch) => void;
   init: () => void;
   selectSession: (chatId: string) => void;
   newSession: () => void;
   deleteSession: (chatId: string) => void;
   clearActiveSession: () => void;
-  sendMessage: (content: string) => void;
+  sendMessage: (content: string, attachments?: ChatAttachment[]) => void;
   stopTurn: () => void;
   handleSecurityChoice: (reqId: string, choice: 'approve' | 'deny') => void;
   requestServers: () => void;
   stopServer: (id: string) => void;
+  saveSkill: (name: string, content: string) => void;
+  deleteSkill: (name: string) => void;
+  saveSubagent: (data: { name: string; description: string; systemPrompt: string; model?: string; fallbacks?: string[] }) => void;
+  deleteSubagent: (name: string) => void;
 }
 
 const EMPTY_MEMORY: CognitiveMemoryStats = {
@@ -149,7 +161,51 @@ function normalizeChatId(chatId: string): string {
 // effects in dev, which would otherwise register every WS handler twice).
 let hasInitialized = false;
 
-console.log("OpenZ Store initialized - model selection fixes v2 active");
+type ToolCallPayload = {
+  id?: unknown;
+  name?: unknown;
+  arguments?: unknown;
+  function?: unknown;
+};
+
+type SessionExtra = {
+  tool_calls?: ToolCallPayload[];
+  reasoning_content?: unknown;
+  model?: unknown;
+  tool_call_id?: unknown;
+  name?: unknown;
+};
+
+type SessionHistoryMessage = {
+  id?: unknown;
+  role?: unknown;
+  content?: unknown;
+  timestamp?: unknown;
+  extra?: SessionExtra;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function parseToolArgs(value: unknown): ToolExecution['args'] {
+  if (typeof value === 'string') {
+    if (value.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(value) as JsonValue;
+        return isRecord(parsed) ? parsed : value;
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
+  return isRecord(value) ? value : '';
+}
 
 export const useOpenZStore = create<OpenZState>((set, get) => ({
   connectionStatus: 'disconnected',
@@ -179,6 +235,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   isMcpsOpen: false,
   isSettingsOpen: false,
   isServersOpen: false,
+  workspaceNotice: null,
 
   cognitiveStats: EMPTY_MEMORY,
   mcpServers: [],
@@ -196,12 +253,17 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     localStorage.setItem('openz_sidebar_collapsed', collapsed ? '1' : '0');
     set({ isSidebarCollapsed: collapsed });
   },
-  setActiveView: (view) => set({ activeView: view }),
+  setActiveView: (view) => set({ activeView: view, workspaceNotice: null }),
   setIsMemoryOpen: (open) => set({ isMemoryOpen: open }),
   setIsLogsOpen: (open) => set({ isLogsOpen: open }),
   setIsMcpsOpen: (open) => set({ isMcpsOpen: open }),
-  setIsSettingsOpen: (open) => set({ isSettingsOpen: open }),
+  setIsSettingsOpen: (open) => set({ isSettingsOpen: open, workspaceNotice: open ? null : get().workspaceNotice }),
   setIsServersOpen: (open) => set({ isServersOpen: open }),
+  setWorkspaceNotice: (notice) => set({ workspaceNotice: { ...notice, timestamp: Date.now() } }),
+  clearWorkspaceNotice: (scope) => {
+    const current = get().workspaceNotice;
+    if (!scope || current?.scope === scope) set({ workspaceNotice: null });
+  },
 
   setWsConfig: (url, token) => {
     set({ wsUrl: url, wsToken: token });
@@ -211,6 +273,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   // ---- Realtime config actions (persisted through the backend) ----
 
   updateConfig: (data) => {
+    set({ workspaceNotice: { scope: 'settings', type: 'info', message: 'Settings save requested. Waiting for gateway refresh.', timestamp: Date.now() } });
     if (data.defaults) {
       const settings = get().settings;
       if (settings) {
@@ -338,6 +401,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
         name: payload.name || 'tool',
         args: payload.args,
         status: 'running',
+        startedAt: Date.now(),
       };
       const chatMessages = get().messages[chatId] || [];
       const lastMsg = chatMessages[chatMessages.length - 1];
@@ -382,14 +446,20 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       if (!lastMsg || lastMsg.role !== 'assistant') return;
 
       const toolCalls = lastMsg.toolCalls || [];
+      const existingIdx = toolCalls.findIndex((t) => t.id === (payload.tool_call_id || ''));
+      const existingTool = existingIdx >= 0 ? toolCalls[existingIdx] : undefined;
+      const endedAt = Date.now();
+      const startedAt = existingTool?.startedAt;
       const tool: ToolExecution = {
         id: payload.tool_call_id || '',
         name: payload.name || 'tool',
         status: payload.status === 'error' ? 'error' : 'success',
-        output: payload.status === 'error' ? payload.output : payload.output,
+        output: payload.output,
         error: payload.status === 'error' ? payload.output : undefined,
+        startedAt,
+        endedAt,
+        durationMs: startedAt ? endedAt - startedAt : undefined,
       };
-      const existingIdx = toolCalls.findIndex((t) => t.id === tool.id);
       const updatedMsg: OpenZMessage = {
         ...lastMsg,
         toolCalls:
@@ -468,9 +538,10 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       wsService.requestSessions();
     });
 
-    wsService.on('stopped', (payload: any) => {
+    wsService.on('stopped', (payload) => {
       set({ isStreaming: false });
-      const chatId = normalizeChatId((payload && payload.chat_id) || get().activeChatId);
+      const payloadObj = isRecord(payload) ? payload : {};
+      const chatId = normalizeChatId(asString(payloadObj.chat_id) || get().activeChatId);
       const chatMessages = get().messages[chatId] || [];
       const lastMsg = chatMessages[chatMessages.length - 1];
       if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
@@ -518,35 +589,31 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       }
     });
 
-    wsService.on('session_history', (payload) => {
+    wsService.on('session_history', (payload: { chat_id?: string; messages?: SessionHistoryMessage[] }) => {
       if (payload.chat_id && Array.isArray(payload.messages)) {
         const normalized: OpenZMessage[] = [];
 
         for (let i = 0; i < payload.messages.length; i++) {
           const m = payload.messages[i];
-          const role = m.role;
+          const role = asString(m.role);
 
           if (role === 'user') {
             normalized.push({
-              id: m.id || `msg-${i}`,
+              id: asString(m.id) || `msg-${i}`,
               role: 'user',
-              content: m.content || '',
+              content: asString(m.content) || '',
               timestamp: typeof m.timestamp === 'number' ? m.timestamp : Date.now(),
             });
           } else if (role === 'assistant') {
             const toolCalls: ToolExecution[] = [];
             if (m.extra && Array.isArray(m.extra.tool_calls)) {
-              m.extra.tool_calls.forEach((tc: any) => {
-                const tcName = tc.function?.name || tc.name || 'tool';
-                let tcArgs = tc.function?.arguments || tc.arguments || '';
-                try {
-                  if (typeof tcArgs === 'string' && tcArgs.trim().startsWith('{')) {
-                    tcArgs = JSON.parse(tcArgs);
-                  }
-                } catch (e) {}
+              m.extra.tool_calls.forEach((tc) => {
+                const tcFunction = isRecord(tc.function) ? tc.function : undefined;
+                const tcName = asString(tcFunction?.name) || asString(tc.name) || 'tool';
+                const tcArgs = parseToolArgs(tcFunction?.arguments ?? tc.arguments);
 
                 toolCalls.push({
-                  id: tc.id || `tool-${i}-${tcName}`,
+                  id: asString(tc.id) || `tool-${i}-${tcName}`,
                   name: tcName,
                   args: tcArgs,
                   status: 'success',
@@ -555,20 +622,20 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
               });
             }
 
-            const reasoningContent = m.extra?.reasoning_content || undefined;
+            const reasoningContent = asString(m.extra?.reasoning_content);
 
             normalized.push({
-              id: m.id || `msg-${i}`,
+              id: asString(m.id) || `msg-${i}`,
               role: 'assistant',
-              content: m.content || '',
+              content: asString(m.content) || '',
               timestamp: typeof m.timestamp === 'number' ? m.timestamp : Date.now(),
-              model: m.extra?.model || undefined,
+              model: asString(m.extra?.model),
               reasoningContent,
               toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
             });
           } else if (role === 'tool') {
-            const toolCallId = m.extra?.tool_call_id;
-            const toolName = m.extra?.name || 'tool';
+            const toolCallId = asString(m.extra?.tool_call_id);
+            const toolName = asString(m.extra?.name) || 'tool';
 
             let lastAssistant: OpenZMessage | undefined;
             for (let j = normalized.length - 1; j >= 0; j--) {
@@ -578,44 +645,47 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
               }
             }
 
+            const toolContent = asString(m.content) || '';
+            const toolErrored = toolContent.includes('"error"') || toolContent.toLowerCase().startsWith('error:');
+
             if (lastAssistant) {
               if (!lastAssistant.toolCalls) {
                 lastAssistant.toolCalls = [];
               }
 
-              let matched = lastAssistant.toolCalls.find(
+              const matched = lastAssistant.toolCalls.find(
                 (tc) => (toolCallId && tc.id === toolCallId) || (!toolCallId && tc.name === toolName && !tc.output)
               );
 
               if (matched) {
-                matched.output = m.content || '';
-                if (m.content && (m.content.includes('"error"') || m.content.toLowerCase().startsWith('error:'))) {
+                matched.output = toolContent;
+                if (toolErrored) {
                   matched.status = 'error';
-                  matched.error = m.content;
+                  matched.error = toolContent;
                 }
               } else {
                 lastAssistant.toolCalls.push({
                   id: toolCallId || `tool-${i}`,
                   name: toolName,
-                  status: m.content && (m.content.includes('"error"') || m.content.toLowerCase().startsWith('error:')) ? 'error' : 'success',
-                  output: m.content || '',
-                  error: m.content && (m.content.includes('"error"') || m.content.toLowerCase().startsWith('error:')) ? m.content : undefined,
+                  status: toolErrored ? 'error' : 'success',
+                  output: toolContent,
+                  error: toolErrored ? toolContent : undefined,
                 });
               }
             } else {
               normalized.push({
-                id: m.id || `msg-${i}`,
+                id: asString(m.id) || `msg-${i}`,
                 role: 'system',
-                content: `Tool Execution [${toolName}]: ${m.content}`,
+                content: `Tool Execution [${toolName}]: ${toolContent}`,
                 timestamp: typeof m.timestamp === 'number' ? m.timestamp : Date.now(),
                 isNotice: true,
               });
             }
           } else if (role === 'system') {
             normalized.push({
-              id: m.id || `msg-${i}`,
+              id: asString(m.id) || `msg-${i}`,
               role: 'system',
-              content: m.content || '',
+              content: asString(m.content) || '',
               timestamp: typeof m.timestamp === 'number' ? m.timestamp : Date.now(),
             });
           }
@@ -726,6 +796,24 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       }
     });
 
+    wsService.on('skills_updated', (payload) => {
+      if (Array.isArray(payload.skills)) {
+        set({ skills: payload.skills });
+      }
+      const status = typeof payload.status === 'string' ? payload.status : 'updated';
+      const name = typeof payload.name === 'string' ? payload.name : 'skills';
+      set({ workspaceNotice: { scope: 'skills', type: 'success', message: `Skill ${name} ${status}.`, timestamp: Date.now() } });
+    });
+
+    wsService.on('subagents_updated', (payload) => {
+      if (Array.isArray(payload.subagents)) {
+        set({ subagents: payload.subagents });
+      }
+      const status = typeof payload.status === 'string' ? payload.status : 'updated';
+      const name = typeof payload.name === 'string' ? payload.name : 'subagent';
+      set({ workspaceNotice: { scope: 'agents', type: 'success', message: `Subagent ${name} ${status}.`, timestamp: Date.now() } });
+    });
+
     wsService.on('config_updated', (payload) => {
       if (payload.defaults) {
         set({
@@ -734,6 +822,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
           activeProvider: payload.defaults.provider || get().activeProvider,
           cavemanMode: !!payload.defaults.caveman_mode,
           streamingMode: payload.defaults.streaming !== false,
+          workspaceNotice: { scope: 'settings', type: 'success', message: 'Settings saved and refreshed from gateway.', timestamp: Date.now() },
         });
       }
     });
@@ -766,13 +855,24 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     wsService.on('error', (payload) => {
       set({ isStreaming: false });
+      const detail = payload.detail || 'Gateway error occurred.';
+      if (!payload.chat_id && (get().activeView !== 'chats' || get().isSettingsOpen)) {
+        const activeView = get().activeView;
+        const scope = get().isSettingsOpen
+          ? 'settings'
+          : activeView === 'agents' || activeView === 'skills' || activeView === 'knowledge'
+            ? activeView
+            : 'global';
+        set({ workspaceNotice: { scope, type: 'error', message: String(detail), timestamp: Date.now() } });
+        return;
+      }
       const chatId = payload.chat_id || get().activeChatId;
       const chatMessages = get().messages[chatId] || [];
       const lastMsg = chatMessages[chatMessages.length - 1];
       const errorMsg: OpenZMessage = {
         id: newMsgId('err'),
         role: 'assistant',
-        content: `⚠️ **Error**: ${payload.detail || 'Gateway error occurred.'}`,
+        content: `⚠️ **Error**: ${detail}`,
         timestamp: Date.now(),
         isStreaming: false,
         isNotice: true,
@@ -792,7 +892,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
           const updatedMsg = {
             ...lastMsg,
             isStreaming: false,
-            content: lastMsg.content + `\n\n⚠️ **Error**: ${payload.detail || 'Gateway error occurred.'}`,
+            content: lastMsg.content + `\n\n⚠️ **Error**: ${detail}`,
           };
           set({
             messages: {
@@ -817,6 +917,26 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
   stopServer: (id) => {
     wsService.stopServer(id);
+  },
+
+  saveSkill: (name, content) => {
+    set({ workspaceNotice: { scope: 'skills', type: 'info', message: 'Skill save requested. Waiting for gateway refresh.', timestamp: Date.now() } });
+    wsService.saveSkill(name, content);
+  },
+
+  deleteSkill: (name) => {
+    set({ workspaceNotice: { scope: 'skills', type: 'info', message: 'Skill delete requested. Waiting for gateway refresh.', timestamp: Date.now() } });
+    wsService.deleteSkill(name);
+  },
+
+  saveSubagent: (data) => {
+    set({ workspaceNotice: { scope: 'agents', type: 'info', message: 'Subagent save requested. Waiting for gateway refresh.', timestamp: Date.now() } });
+    wsService.saveSubagent(data);
+  },
+
+  deleteSubagent: (name) => {
+    set({ workspaceNotice: { scope: 'agents', type: 'info', message: 'Subagent delete requested. Waiting for gateway refresh.', timestamp: Date.now() } });
+    wsService.deleteSubagent(name);
   },
 
   selectSession: (chatId) => {
@@ -854,8 +974,8 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     wsService.sendMessage(chatId, '/clear');
   },
 
-  sendMessage: (content) => {
-    if (!content.trim()) return;
+  sendMessage: (content, attachments = []) => {
+    if (!content.trim() && attachments.length === 0) return;
     const chatId = get().activeChatId;
     const chatMessages = get().messages[chatId] || [];
 
@@ -864,6 +984,15 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       role: 'user',
       content,
       timestamp: Date.now(),
+      attachments: attachments.length
+        ? attachments.map((attachment) => ({
+            id: attachment.id,
+            name: attachment.name,
+            mime: attachment.mime,
+            size: attachment.size,
+            previewUrl: attachment.previewUrl,
+          }))
+        : undefined,
     };
 
     const assistantPlaceholder: OpenZMessage = {
@@ -884,9 +1013,15 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     try {
       const model = get().activeModel || undefined;
       const provider = get().activeProvider || undefined;
-      wsService.sendMessage(chatId, content, model, provider);
-    } catch (err: any) {
+      const attachmentPayload = attachments.flatMap((attachment) =>
+        attachment.data
+          ? [{ name: attachment.name, mime: attachment.mime, size: attachment.size, data: attachment.data }]
+          : [],
+      );
+      wsService.sendMessage(chatId, content, model, provider, attachmentPayload);
+    } catch (err) {
       set({ isStreaming: false });
+      const errorMessage = err instanceof Error ? err.message : 'Gateway offline';
       const errMsgs = {
         ...get().messages,
         [chatId]: [
@@ -895,7 +1030,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
           {
             id: newMsgId('err'),
             role: 'assistant' as const,
-            content: `⚠️ **Connection Error**: ${err.message || 'Gateway offline'}`,
+            content: `⚠️ **Connection Error**: ${errorMessage}`,
             timestamp: Date.now(),
             isNotice: true,
           },
@@ -935,5 +1070,5 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   },
 }));
 
-// Type-only marker so TS keeps the interface honest (no runtime effect).
-export interface OpenZStoreState extends OpenZState {}
+// Type-only marker so TS keeps the store shape exportable without runtime effect.
+export type OpenZStoreState = OpenZState;

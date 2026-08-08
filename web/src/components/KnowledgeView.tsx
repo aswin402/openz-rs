@@ -12,7 +12,10 @@ import {
   AlertCircle,
   Copy,
   Check,
-  RefreshCw
+  RefreshCw,
+  Download,
+  Filter,
+  Search
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -39,6 +42,27 @@ interface SimEdge {
 interface GraphVisualizerProps {
   nodes: CognitiveNode[];
   edges: CognitiveEdge[];
+}
+
+function observationText(value: string): string {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.join(' ') : String(parsed);
+  } catch {
+    return value || '';
+  }
+}
+
+function downloadTextFile(filename: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 export const GraphVisualizer: React.FC<GraphVisualizerProps> = ({ nodes, edges }) => {
@@ -422,6 +446,10 @@ export const KnowledgeView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'graph' | 'markdown' | 'facts'>('graph');
   const [copied, setCopied] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [nodeTypeFilter, setNodeTypeFilter] = useState('all');
+  const [factTagFilter, setFactTagFilter] = useState('all');
+  const [sortMode, setSortMode] = useState<'importance' | 'newest'>('importance');
 
   useEffect(() => {
     wsService.requestCognitiveMemory();
@@ -433,14 +461,47 @@ export const KnowledgeView: React.FC = () => {
     setTimeout(() => setIsRefreshing(false), 800);
   };
 
+  const nodeTypes = Array.from(new Set((cognitiveStats.nodes || []).map((node) => node.entity_type).filter(Boolean))).sort();
+  const factTags = Array.from(new Set((cognitiveStats.facts || []).flatMap((fact) =>
+    fact.tags.split(',').map((tag) => tag.trim()).filter(Boolean)
+  ))).sort();
+
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filteredNodes = (cognitiveStats.nodes || []).filter((node) => {
+    const matchesType = nodeTypeFilter === 'all' || node.entity_type === nodeTypeFilter;
+    const haystack = [node.name, node.entity_type, observationText(node.observations)].join(' ').toLowerCase();
+    return matchesType && (!normalizedSearch || haystack.includes(normalizedSearch));
+  });
+  const filteredNodeNames = new Set(filteredNodes.map((node) => node.name));
+  const filteredEdges = (cognitiveStats.edges || []).filter((edge) => {
+    const endpointMatch = filteredNodeNames.has(edge.from_name) || filteredNodeNames.has(edge.to_name);
+    const haystack = [edge.from_name, edge.to_name, edge.relation_type].join(' ').toLowerCase();
+    return endpointMatch && (!normalizedSearch || haystack.includes(normalizedSearch) || endpointMatch);
+  });
+  const filteredFacts = (cognitiveStats.facts || [])
+    .filter((fact) => {
+      const matchesTag = factTagFilter === 'all' || fact.tags.split(',').map((tag) => tag.trim()).includes(factTagFilter);
+      const haystack = [fact.text, fact.tags, fact.timestamp, String(fact.importance)].join(' ').toLowerCase();
+      return matchesTag && (!normalizedSearch || haystack.includes(normalizedSearch));
+    })
+    .sort((a, b) => sortMode === 'importance'
+      ? b.importance - a.importance
+      : new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  const snapshotStats = {
+    entitiesCount: filteredNodes.length,
+    relationsCount: filteredEdges.length,
+    factsCount: filteredFacts.length,
+  };
+
   const generateMarkdownString = () => {
     let md = `# Knowledge Graph Memory Snapshot\n\n`;
     md += `Generated at: \`${new Date().toLocaleString()}\`\n`;
     md += `Path: \`~/.openz/memory.db\` and \`~/.openz/graph_memory.db\`\n\n`;
     
-    md += `## 1. Node Entities (${cognitiveStats.entitiesCount})\n\n`;
-    if (cognitiveStats.nodes && cognitiveStats.nodes.length > 0) {
-      cognitiveStats.nodes.forEach((n) => {
+    md += `## 1. Node Entities (${snapshotStats.entitiesCount})\n\n`;
+    if (filteredNodes.length > 0) {
+      filteredNodes.forEach((n) => {
         md += `### [[${n.name}]] (${n.entity_type})\n`;
         try {
           const obs = JSON.parse(n.observations);
@@ -460,11 +521,11 @@ export const KnowledgeView: React.FC = () => {
       md += `*No nodes present in database.*\n\n`;
     }
 
-    md += `## 2. Relationships (${cognitiveStats.relationsCount})\n\n`;
-    if (cognitiveStats.edges && cognitiveStats.edges.length > 0) {
+    md += `## 2. Relationships (${snapshotStats.relationsCount})\n\n`;
+    if (filteredEdges.length > 0) {
       md += `| Source Entity | Target Entity | Relation Type |\n`;
       md += `| :--- | :--- | :--- |\n`;
-      cognitiveStats.edges.forEach((e) => {
+      filteredEdges.forEach((e) => {
         md += `| [[${e.from_name}]] | [[${e.to_name}]] | \`${e.relation_type}\` |\n`;
       });
       md += `\n`;
@@ -472,9 +533,9 @@ export const KnowledgeView: React.FC = () => {
       md += `*No edges present in database.*\n\n`;
     }
 
-    md += `## 3. Stored Cognitive Facts (${cognitiveStats.factsCount})\n\n`;
-    if (cognitiveStats.facts && cognitiveStats.facts.length > 0) {
-      cognitiveStats.facts.forEach((f) => {
+    md += `## 3. Stored Cognitive Facts (${snapshotStats.factsCount})\n\n`;
+    if (filteredFacts.length > 0) {
+      filteredFacts.forEach((f) => {
         md += `- **Fact**: ${f.text}\n`;
         md += `  - *Importance*: ${f.importance} | *Timestamp*: ${f.timestamp}\n`;
         if (f.tags) md += `  - *Tags*: \`${f.tags}\`\n`;
@@ -493,10 +554,27 @@ export const KnowledgeView: React.FC = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleDownloadMarkdown = () => {
+    downloadTextFile('openz-knowledge-snapshot.md', generateMarkdownString(), 'text/markdown;charset=utf-8');
+  };
+
+  const handleDownloadJson = () => {
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      filters: { searchQuery, nodeTypeFilter, factTagFilter, sortMode },
+      stats: snapshotStats,
+      nodes: filteredNodes,
+      edges: filteredEdges,
+      facts: filteredFacts,
+      workingMemoryKeys: cognitiveStats.workingMemoryKeys,
+    };
+    downloadTextFile('openz-knowledge-snapshot.json', JSON.stringify(payload, null, 2), 'application/json;charset=utf-8');
+  };
+
   const cards = [
-    { label: 'Entities', value: cognitiveStats.entitiesCount, icon: BrainCircuit, color: 'text-amber-500' },
-    { label: 'Relations', value: cognitiveStats.relationsCount, icon: Share2, color: 'text-purple-400' },
-    { label: 'Stored Facts', value: cognitiveStats.factsCount, icon: Database, color: 'text-emerald-400' },
+    { label: 'Entities', value: snapshotStats.entitiesCount, icon: BrainCircuit, color: 'text-amber-500' },
+    { label: 'Relations', value: snapshotStats.relationsCount, icon: Share2, color: 'text-purple-400' },
+    { label: 'Stored Facts', value: snapshotStats.factsCount, icon: Database, color: 'text-emerald-400' },
   ];
 
   return (
@@ -525,6 +603,65 @@ export const KnowledgeView: React.FC = () => {
           <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-amber-500' : ''}`} />
           Sync Graph
         </button>
+      </div>
+
+      <div className="rounded-xl border border-border/70 bg-card/40 p-3 shadow-sm">
+        <div className="grid gap-3 lg:grid-cols-[1fr_160px_160px_140px]">
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search nodes, relations, facts, tags..."
+              className="w-full rounded-lg border border-border/60 bg-background py-2 pl-9 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+            />
+          </div>
+          <label className="relative">
+            <Filter className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <select
+              value={nodeTypeFilter}
+              onChange={(e) => setNodeTypeFilter(e.target.value)}
+              className="w-full appearance-none rounded-lg border border-border/60 bg-background py-2 pl-9 pr-3 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+            >
+              <option value="all">All node types</option>
+              {nodeTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+            </select>
+          </label>
+          <label>
+            <select
+              value={factTagFilter}
+              onChange={(e) => setFactTagFilter(e.target.value)}
+              className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+            >
+              <option value="all">All fact tags</option>
+              {factTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+            </select>
+          </label>
+          <label>
+            <select
+              value={sortMode}
+              onChange={(e) => setSortMode(e.target.value as 'importance' | 'newest')}
+              className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+            >
+              <option value="importance">Importance</option>
+              <option value="newest">Newest</option>
+            </select>
+          </label>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+          <span className="rounded bg-muted/50 px-2 py-0.5 font-mono">visible: {filteredNodes.length} nodes</span>
+          <span className="rounded bg-muted/50 px-2 py-0.5 font-mono">{filteredEdges.length} relations</span>
+          <span className="rounded bg-muted/50 px-2 py-0.5 font-mono">{filteredFacts.length} facts</span>
+          {(searchQuery || nodeTypeFilter !== 'all' || factTagFilter !== 'all') && (
+            <button
+              type="button"
+              onClick={() => { setSearchQuery(''); setNodeTypeFilter('all'); setFactTagFilter('all'); }}
+              className="ml-auto rounded border border-border/60 px-2 py-0.5 font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Metrics Row */}
@@ -578,22 +715,36 @@ export const KnowledgeView: React.FC = () => {
           </button>
         </div>
 
-        {activeTab === 'markdown' && (
+        <div className="flex items-center gap-2">
+          {activeTab === 'markdown' && (
+            <button
+              onClick={handleCopyMarkdown}
+              className="flex items-center gap-1.5 rounded-lg border border-border/80 bg-muted/20 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {copied ? (
+                <>
+                  <Check className="h-3.5 w-3.5 text-emerald-500" /> Copied!
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3.5 w-3.5" /> Copy Markdown
+                </>
+              )}
+            </button>
+          )}
           <button
-            onClick={handleCopyMarkdown}
+            onClick={handleDownloadMarkdown}
             className="flex items-center gap-1.5 rounded-lg border border-border/80 bg-muted/20 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
-            {copied ? (
-              <>
-                <Check className="h-3.5 w-3.5 text-emerald-500" /> Copied!
-              </>
-            ) : (
-              <>
-                <Copy className="h-3.5 w-3.5" /> Copy Markdown
-              </>
-            )}
+            <Download className="h-3.5 w-3.5" /> MD
           </button>
-        )}
+          <button
+            onClick={handleDownloadJson}
+            className="flex items-center gap-1.5 rounded-lg border border-border/80 bg-muted/20 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Download className="h-3.5 w-3.5" /> JSON
+          </button>
+        </div>
       </div>
 
       {/* Main Tab Panels */}
@@ -601,8 +752,8 @@ export const KnowledgeView: React.FC = () => {
         {activeTab === 'graph' && (
           <div className="space-y-3">
             <GraphVisualizer
-              nodes={cognitiveStats.nodes || []}
-              edges={cognitiveStats.edges || []}
+              nodes={filteredNodes}
+              edges={filteredEdges}
             />
             <p className="text-[10px] text-muted-foreground text-center select-none">
               💡 Drag nodes to pin them and inspect entity properties by hovering/selecting.
@@ -632,7 +783,7 @@ export const KnowledgeView: React.FC = () => {
         {activeTab === 'facts' && (
           <div className="space-y-4">
             {/* Explanatory banner if facts are 0 */}
-            {cognitiveStats.factsCount === 0 && (
+            {filteredFacts.length === 0 && (
               <div className="rounded-xl border border-amber-500/10 bg-amber-500/5 p-4 flex gap-3 text-xs leading-relaxed">
                 <AlertCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
                 <div className="space-y-2">
@@ -649,12 +800,12 @@ export const KnowledgeView: React.FC = () => {
 
             {/* List of facts */}
             <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
-              {(!cognitiveStats.facts || cognitiveStats.facts.length === 0) ? (
+              {filteredFacts.length === 0 ? (
                 <div className="rounded-xl border border-border/50 bg-card/40 p-8 text-center text-xs text-muted-foreground select-none">
                   No facts in cognitive database. Start chatting or execute memory tools to store memories!
                 </div>
               ) : (
-                cognitiveStats.facts.map((fact, idx) => (
+                filteredFacts.map((fact, idx) => (
                   <div key={idx} className="rounded-xl border border-border bg-card p-4 shadow-sm hover:border-amber-500/30 transition-colors">
                     <div className="flex items-center gap-2 mb-1.5">
                       <span className="rounded bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 text-[9px] text-amber-400 font-semibold font-mono">

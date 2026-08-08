@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
@@ -7,7 +8,7 @@ import type { OpenZMessage } from '../types';
 import { ToolExecutionCard } from './ToolExecutionCard';
 import { SecurityGuardPrompt } from './SecurityGuardPrompt';
 import { useOpenZStore } from '../store/useOpenZStore';
-import { User, Copy, Check, Brain, ChevronDown, ChevronRight, Info } from 'lucide-react';
+import { User, Copy, Check, Brain, ChevronDown, ChevronRight, Info, FileText, Image as ImageIcon } from 'lucide-react';
 import 'katex/dist/katex.min.css';
 import 'highlight.js/styles/github-dark.css';
 
@@ -15,13 +16,18 @@ interface ChatMessageProps {
   message: OpenZMessage;
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0) + ' MB';
+}
+
 // Helper Component for Markdown Code Block to manage individual copy states and animations
-const MarkdownCodeBlock: React.FC<{
+type MarkdownCodeBlockProps = React.HTMLAttributes<HTMLElement> & {
   language?: string;
   children: string;
-  className?: string;
-  [key: string]: any;
-}> = ({ language, children, className, ...props }) => {
+};
+
+const MarkdownCodeBlock: React.FC<MarkdownCodeBlockProps> = ({ language, children, className, ...props }) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
@@ -58,6 +64,53 @@ const MarkdownCodeBlock: React.FC<{
       </pre>
     </div>
   );
+};
+
+const markdownComponents: Components = {
+  code({ node, className, children, ...props }) {
+    void node;
+    const match = /language-(\w+)/.exec(className || '');
+    const text = String(children);
+    const isBlock = Boolean(match) || text.includes('\n');
+
+    return isBlock ? (
+      <MarkdownCodeBlock
+        className={className}
+        language={match ? match[1] : undefined}
+        {...props}
+      >
+        {text}
+      </MarkdownCodeBlock>
+    ) : (
+      <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold text-amber-500 dark:text-amber-400" {...props}>
+        {children}
+      </code>
+    );
+  },
+  table({ children }) {
+    return (
+      <div className="my-4 overflow-x-auto rounded-xl border border-border/80 bg-card/40 shadow-sm w-full">
+        <table className="w-full border-collapse text-left text-xs text-foreground/90 min-w-[500px]">
+          {children}
+        </table>
+      </div>
+    );
+  },
+  thead({ children }) {
+    return <thead className="border-b border-border bg-muted/40 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{children}</thead>;
+  },
+  tbody({ children }) {
+    return <tbody className="divide-y divide-border/60">{children}</tbody>;
+  },
+  tr({ children }) {
+    return <tr className="hover:bg-muted/20 transition-colors">{children}</tr>;
+  },
+  th({ children }) {
+    return <th className="px-4 py-3 font-semibold select-none">{children}</th>;
+  },
+  td({ children }) {
+    return <td className="px-4 py-3 align-middle break-words">{children}</td>;
+  },
 };
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
@@ -165,54 +218,33 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             </div>
           )}
 
+          {message.attachments && message.attachments.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {message.attachments.map((attachment) => (
+                <div key={attachment.id} className="flex max-w-full items-center gap-2 rounded-lg border border-border/70 bg-muted/50 p-1.5 text-[10px] text-muted-foreground">
+                  {attachment.previewUrl && attachment.mime.startsWith('image/') ? (
+                    <img src={attachment.previewUrl} alt="" className="h-8 w-8 shrink-0 rounded-md object-cover" />
+                  ) : (
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-background/70 text-amber-500">
+                      {attachment.mime.startsWith('image/') ? <ImageIcon className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="max-w-48 truncate font-medium text-foreground/90">{attachment.name}</div>
+                    <div className="text-[9px] text-muted-foreground">{formatFileSize(attachment.size)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Main Markdown Output */}
           {message.content && (
             <div className="prose dark:prose-invert prose-xs max-w-none break-words">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeHighlight, rehypeKatex]}
-                components={{
-                  code({ node, inline, className, children, ...props }: any) {
-                    const match = /language-(\w+)/.exec(className || '');
-                    return !inline ? (
-                      <MarkdownCodeBlock
-                        className={className}
-                        language={match ? match[1] : undefined}
-                        {...props}
-                      >
-                        {String(children)}
-                      </MarkdownCodeBlock>
-                    ) : (
-                      <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold text-amber-500 dark:text-amber-400" {...props}>
-                        {children}
-                      </code>
-                    );
-                  },
-                  table({ children }: any) {
-                    return (
-                      <div className="my-4 overflow-x-auto rounded-xl border border-border/80 bg-card/40 shadow-sm w-full">
-                        <table className="w-full border-collapse text-left text-xs text-foreground/90 min-w-[500px]">
-                          {children}
-                        </table>
-                      </div>
-                    );
-                  },
-                  thead({ children }: any) {
-                    return <thead className="border-b border-border bg-muted/40 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{children}</thead>;
-                  },
-                  tbody({ children }: any) {
-                    return <tbody className="divide-y divide-border/60">{children}</tbody>;
-                  },
-                  tr({ children }: any) {
-                    return <tr className="hover:bg-muted/20 transition-colors">{children}</tr>;
-                  },
-                  th({ children }: any) {
-                    return <th className="px-4 py-3 font-semibold select-none">{children}</th>;
-                  },
-                  td({ children }: any) {
-                    return <td className="px-4 py-3 align-middle break-words">{children}</td>;
-                  },
-                }}
+                components={markdownComponents}
               >
                 {message.content}
               </ReactMarkdown>

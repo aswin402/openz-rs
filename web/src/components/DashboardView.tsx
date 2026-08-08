@@ -1,6 +1,7 @@
 import React from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
 import { wsService } from '../services/websocket';
+import type { JsonObject, JsonValue } from '../types';
 import {
   Activity,
   Cpu,
@@ -16,6 +17,22 @@ import {
   BrainCircuit,
   Server,
 } from 'lucide-react';
+
+function isJsonObject(value: JsonValue | undefined): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function jsonString(value: JsonValue | undefined): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+function jsonBool(value: JsonValue | undefined): boolean {
+  return typeof value === 'boolean' ? value : false;
+}
+
+function jsonNumber(value: JsonValue | undefined): number | undefined {
+  return typeof value === 'number' ? value : undefined;
+}
 
 interface StatCardProps {
   label: string;
@@ -271,15 +288,16 @@ export const DashboardView: React.FC = () => {
           </div>
           <div className="space-y-3.5 max-h-[260px] overflow-y-auto pr-1">
             {['openai', 'anthropic', 'deepseek', 'groq', 'openrouter', 'google_ai_studio', 'ollama'].map((provKey) => {
-              const cfg = providersConfig[provKey] || {};
-              const isConfigured = !!cfg.api_key;
+              const cfg = isJsonObject(providersConfig[provKey]) ? providersConfig[provKey] : {};
+              const apiBase = jsonString(cfg.api_base);
+              const isConfigured = Boolean(jsonString(cfg.api_key));
               const displayName = provKey === 'google_ai_studio' ? 'Google AI Studio' : provKey.toUpperCase();
               return (
                 <div key={provKey} className="flex items-center justify-between py-1 border-b border-border/10 last:border-0 text-xs">
                   <div className="flex flex-col">
                     <span className="font-semibold text-foreground capitalize">{displayName}</span>
                     <span className="text-[10px] text-muted-foreground font-mono truncate max-w-[200px]">
-                      {cfg.api_base ? cfg.api_base : 'Default endpoint'}
+                      {apiBase || 'Default endpoint'}
                     </span>
                   </div>
                   <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider select-none ${
@@ -301,14 +319,15 @@ export const DashboardView: React.FC = () => {
           </div>
           <div className="space-y-4">
             {['telegram', 'discord', 'whatsapp'].map((chanKey) => {
-              const cfg = channelsConfig[chanKey] || {};
-              const isEnabled = !!cfg.enabled;
+              const cfg = isJsonObject(channelsConfig[chanKey]) ? channelsConfig[chanKey] : {};
+              const webhookPort = jsonNumber(cfg.webhook_port) || 8090;
+              const isEnabled = jsonBool(cfg.enabled);
               return (
                 <div key={chanKey} className="flex items-center justify-between text-xs py-1 border-b border-border/10 last:border-0">
                   <div className="flex flex-col">
                     <span className="font-semibold text-foreground capitalize">{chanKey} Listener</span>
                     <span className="text-[10px] text-muted-foreground font-mono">
-                      {chanKey === 'whatsapp' ? `Webhook Port: ${cfg.webhook_port || 8090}` : isEnabled ? 'Background polling' : 'Offline'}
+                      {chanKey === 'whatsapp' ? `Webhook Port: ${webhookPort}` : isEnabled ? 'Background polling' : 'Offline'}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 select-none">
