@@ -1,4 +1,12 @@
-### v0.0.122 (Latest Release)
+### v0.0.123 (Latest Release)
+**Approved Credential Management and Secret References:**
+- **Permission-Gated Credential Updates**: Added `manage_config` support for approved provider, GitHub/GitLab, Telegram, Discord, and WhatsApp credential updates so users can authorize setup from chat instead of manually editing config JSON.
+- **Secret-Safe Approval Prompts**: SecurityGuard now treats credential config writes as sensitive and redacts tokens/API keys in approval details before display.
+- **Git Integration Credentials**: Added `integrations.github` and `integrations.gitlab` config sections, and wired `git_provider` to resolve tokens from explicit args, environment variables, approved config, env references, or file references.
+- **Safer Provider Key Sources**: Added provider `apiKeyEnv`/`apiKeyFile` support, with process environment variables taking precedence over stored config values.
+- **WebUI Settings Parity**: WebSocket settings payloads now preserve provider key reference fields alongside masked direct API keys.
+
+### v0.0.122
 **WebUI Session Drafts, Settings Parity, and Navigation Polish:**
 - **First-Load Draft Session**: WebUI now opens on the chat page with a visible `New Session` entry in the left sidebar, then promotes it to the saved backend session after the first message completes.
 - **Theme & Navigation Reliability**: Replaced full-page theme snapshots with color-only transitions and stabilized the right-side quick action rail so theme toggles no longer blank the app or hide the menu.

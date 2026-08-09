@@ -549,7 +549,6 @@ pub fn print_session_history(session: &crate::session::Session) {
                     print_colored_markdown(content);
                     println!();
                 }
-
             }
             "tool" => {
                 let tool_call_id = msg
@@ -560,8 +559,7 @@ pub fn print_session_history(session: &crate::session::Session) {
                 let leaf_prefix = "  L ";
 
                 if let Some((name, args_val)) = tool_calls_map.get(tool_call_id) {
-                    if crate::agent::style::is_profile_subagent(name)
-                        || name == "parallel_research"
+                    if crate::agent::style::is_profile_subagent(name) || name == "parallel_research"
                     {
                         continue;
                     }
@@ -572,23 +570,17 @@ pub fn print_session_history(session: &crate::session::Session) {
                     };
 
                     // Print tool call header
-                    let formatted_args =
-                        crate::agent::agent_loop::tool_execution::format_tool_args(name, &parsed_args);
-                    let title = crate::agent::style::get_tool_clean_name(name);
-                    let details = crate::agent::style::clean_tool_args_msg(
+                    let formatted_args = crate::agent::agent_loop::tool_execution::format_tool_args(
                         name,
-                        &formatted_args,
+                        &parsed_args,
                     );
+                    let title = crate::agent::style::get_tool_clean_name(name);
+                    let details = crate::agent::style::clean_tool_args_msg(name, &formatted_args);
 
                     if details.is_empty() {
                         println!(
                             "{}● {}{}{}{}{}",
-                            RED_ORANGE,
-                            COLOR_RESET,
-                            COLOR_BOLD,
-                            LIGHT_WHITE,
-                            title,
-                            COLOR_RESET
+                            RED_ORANGE, COLOR_RESET, COLOR_BOLD, LIGHT_WHITE, title, COLOR_RESET
                         );
                     } else {
                         println!(
@@ -609,15 +601,12 @@ pub fn print_session_history(session: &crate::session::Session) {
                     if crate::agent::security::SecurityGuard::is_sensitive(name, &parsed_args) {
                         println!(
                             "{}> Authorize execution?: {}{}Approve (Allow once){}",
-                            COLOR_BOLD,
-                            COLOR_RESET,
-                            RED_ORANGE,
-                            COLOR_RESET
+                            COLOR_BOLD, COLOR_RESET, RED_ORANGE, COLOR_RESET
                         );
                     }
 
-                    let outcome_val: serde_json::Value =
-                        serde_json::from_str(content).unwrap_or_else(|_| {
+                    let outcome_val: serde_json::Value = serde_json::from_str(content)
+                        .unwrap_or_else(|_| {
                             serde_json::json!({
                                 "status": "success",
                                 "output": content
@@ -633,18 +622,12 @@ pub fn print_session_history(session: &crate::session::Session) {
                     let has_symbol = summary.contains('\u{2713}') || summary.contains('\u{2715}');
 
                     if has_symbol {
-                        println!(
-                            "{}{}{}{}",
-                            AURA_SLATE, leaf_prefix, COLOR_RESET, summary
-                        );
+                        println!("{}{}{}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, summary);
                     } else if name == "write_file"
                         || name == "patch_file"
                         || name == "replace_lines"
                     {
-                        println!(
-                            "{}{}{}{}",
-                            AURA_SLATE, leaf_prefix, COLOR_RESET, summary
-                        );
+                        println!("{}{}{}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, summary);
                     } else {
                         println!(
                             "{}{}{}✓ {}{}",
@@ -1035,9 +1018,15 @@ pub fn render_box(
         let line_content: String = line.chars.iter().collect();
 
         if line_idx == 0 {
-            print!("{}{}{}{}", LIGHT_WHITE, prefix_str, COLOR_RESET, line_content);
+            print!(
+                "{}{}{}{}",
+                LIGHT_WHITE, prefix_str, COLOR_RESET, line_content
+            );
         } else {
-            print!("\r\n\x1b[2K{}{}{}{}", LIGHT_WHITE, prefix_str, COLOR_RESET, line_content);
+            print!(
+                "\r\n\x1b[2K{}{}{}{}",
+                LIGHT_WHITE, prefix_str, COLOR_RESET, line_content
+            );
         }
         new_lines_printed += 1;
     }

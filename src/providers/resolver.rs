@@ -525,6 +525,8 @@ mod tests {
             "acme".to_string(),
             ProviderConfig {
                 api_key: Some("acme-key".to_string()),
+                api_key_env: None,
+                api_key_file: None,
                 api_base: Some("https://acme.example/v1".to_string()),
                 default_model: Some("acme-model".to_string()),
                 extra: Default::default(),
@@ -575,6 +577,8 @@ mod tests {
         let mut cfg = config_with("openai");
         cfg.providers.openrouter = Some(ProviderConfig {
             api_key: Some(String::new()),
+            api_key_env: None,
+            api_key_file: None,
             api_base: None,
             default_model: None,
             extra: Default::default(),
@@ -602,6 +606,8 @@ mod tests {
         let mut cfg = config_with("auto");
         cfg.providers.openrouter = Some(ProviderConfig {
             api_key: Some(String::new()),
+            api_key_env: None,
+            api_key_file: None,
             api_base: None,
             default_model: None,
             extra: Default::default(),
@@ -628,12 +634,16 @@ mod tests {
         let mut cfg = config_with("openai");
         cfg.providers.openrouter = Some(ProviderConfig {
             api_key: Some("rk".to_string()),
+            api_key_env: None,
+            api_key_file: None,
             api_base: None,
             default_model: None,
             extra: Default::default(),
         });
         cfg.providers.nvidia = Some(ProviderConfig {
             api_key: Some(String::new()),
+            api_key_env: None,
+            api_key_file: None,
             api_base: None,
             default_model: None,
             extra: Default::default(),

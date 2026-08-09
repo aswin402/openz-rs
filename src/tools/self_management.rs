@@ -737,6 +737,159 @@ fn redact_secrets(val: &mut Value) {
     }
 }
 
+fn merge_provider_credential(
+    config: &mut crate::config::schema::Config,
+    provider_name: &str,
+    credential: &serde_json::Map<String, Value>,
+) -> Result<()> {
+    let provider_name = provider_name.trim();
+    if provider_name.is_empty() {
+        anyhow::bail!("provider_name is required for provider credentials");
+    }
+
+    let mut provider = config
+        .get_provider_config(provider_name)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(api_key) = credential.get("api_key").and_then(|v| v.as_str()) {
+        provider.api_key = if api_key.trim().is_empty() {
+            None
+        } else {
+            Some(api_key.to_string())
+        };
+    }
+    if let Some(api_key_env) = credential.get("api_key_env").and_then(|v| v.as_str()) {
+        provider.api_key_env = if api_key_env.trim().is_empty() {
+            None
+        } else {
+            Some(api_key_env.to_string())
+        };
+    }
+    if let Some(api_key_file) = credential.get("api_key_file").and_then(|v| v.as_str()) {
+        provider.api_key_file = if api_key_file.trim().is_empty() {
+            None
+        } else {
+            Some(api_key_file.to_string())
+        };
+    }
+    if let Some(api_base) = credential.get("api_base").and_then(|v| v.as_str()) {
+        provider.api_base = if api_base.trim().is_empty() {
+            None
+        } else {
+            Some(api_base.to_string())
+        };
+    }
+    if let Some(default_model) = credential.get("default_model").and_then(|v| v.as_str()) {
+        provider.default_model = if default_model.trim().is_empty() {
+            None
+        } else {
+            Some(default_model.to_string())
+        };
+    }
+    config.set_provider_config(provider_name, provider);
+    Ok(())
+}
+
+fn merge_git_credential(
+    config: &mut crate::config::schema::Config,
+    service: &str,
+    credential: &serde_json::Map<String, Value>,
+) -> Result<()> {
+    let mut git_config = match service {
+        "github" => config.integrations.github.clone().unwrap_or_default(),
+        "gitlab" => config.integrations.gitlab.clone().unwrap_or_default(),
+        other => anyhow::bail!("Unsupported git credential service '{}'", other),
+    };
+
+    if let Some(token) = credential.get("token").and_then(|v| v.as_str()) {
+        git_config.token = if token.trim().is_empty() {
+            None
+        } else {
+            Some(token.to_string())
+        };
+    }
+    if let Some(token_env) = credential.get("token_env").and_then(|v| v.as_str()) {
+        git_config.token_env = if token_env.trim().is_empty() {
+            None
+        } else {
+            Some(token_env.to_string())
+        };
+    }
+    if let Some(token_file) = credential.get("token_file").and_then(|v| v.as_str()) {
+        git_config.token_file = if token_file.trim().is_empty() {
+            None
+        } else {
+            Some(token_file.to_string())
+        };
+    }
+    if let Some(api_base) = credential.get("api_base").and_then(|v| v.as_str()) {
+        git_config.api_base = if api_base.trim().is_empty() {
+            None
+        } else {
+            Some(api_base.to_string())
+        };
+    }
+
+    match service {
+        "github" => config.integrations.github = Some(git_config),
+        "gitlab" => config.integrations.gitlab = Some(git_config),
+        _ => unreachable!(),
+    }
+    Ok(())
+}
+
+fn merge_channel_credential(
+    config: &mut crate::config::schema::Config,
+    channel: &str,
+    credential: &serde_json::Map<String, Value>,
+) -> Result<()> {
+    match channel {
+        "telegram" => {
+            let mut cfg = config.channels.telegram.clone().unwrap_or_default();
+            if let Some(enabled) = credential.get("enabled").and_then(|v| v.as_bool()) {
+                cfg.enabled = enabled;
+            }
+            if let Some(token) = credential.get("bot_token").and_then(|v| v.as_str()) {
+                cfg.bot_token = token.to_string();
+            }
+            config.channels.telegram = Some(cfg);
+        }
+        "discord" => {
+            let mut cfg = config.channels.discord.clone().unwrap_or_default();
+            if let Some(enabled) = credential.get("enabled").and_then(|v| v.as_bool()) {
+                cfg.enabled = enabled;
+            }
+            if let Some(token) = credential.get("bot_token").and_then(|v| v.as_str()) {
+                cfg.bot_token = token.to_string();
+            }
+            config.channels.discord = Some(cfg);
+        }
+        "whatsapp" => {
+            let mut cfg = config.channels.whatsapp.clone().unwrap_or_default();
+            if let Some(enabled) = credential.get("enabled").and_then(|v| v.as_bool()) {
+                cfg.enabled = enabled;
+            }
+            if let Some(api_key) = credential.get("api_key").and_then(|v| v.as_str()) {
+                cfg.api_key = api_key.to_string();
+            }
+            if let Some(phone_number_id) =
+                credential.get("phone_number_id").and_then(|v| v.as_str())
+            {
+                cfg.phone_number_id = phone_number_id.to_string();
+            }
+            if let Some(verify_token) = credential.get("verify_token").and_then(|v| v.as_str()) {
+                cfg.verify_token = verify_token.to_string();
+            }
+            if let Some(webhook_port) = credential.get("webhook_port").and_then(|v| v.as_u64()) {
+                cfg.webhook_port = webhook_port as u16;
+            }
+            config.channels.whatsapp = Some(cfg);
+        }
+        other => anyhow::bail!("Unsupported channel credential target '{}'", other),
+    }
+    Ok(())
+}
+
 pub struct ManageConfigTool;
 
 #[async_trait::async_trait]
@@ -746,7 +899,7 @@ impl Tool for ManageConfigTool {
     }
 
     fn description(&self) -> &str {
-        "View the active configuration (redacting secrets) or modify default hyperparameters (model, temperature, max tokens, caveman mode) to optimize agent behavior."
+        "View redacted configuration, update agent defaults, or store credentials after explicit user approval. Supports provider, GitHub/GitLab, and channel credential updates."
     }
 
     fn parameters(&self) -> Value {
@@ -755,8 +908,8 @@ impl Tool for ManageConfigTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["view", "update"],
-                    "description": "Whether to view the current configuration or update hyperparameters."
+                    "enum": ["view", "update", "set_credential"],
+                    "description": "Whether to view config, update defaults, or store a credential. Credential writes require approval."
                 },
                 "updates": {
                     "type": "object",
@@ -833,6 +986,34 @@ impl Tool for ManageConfigTool {
                         }
                     },
                     "description": "Key-value map of configuration defaults to update. Ignored for action 'view'."
+                },
+                "credential": {
+                    "type": "object",
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "enum": ["provider", "github", "gitlab", "telegram", "discord", "whatsapp"],
+                            "description": "Credential target to update. Use provider with provider_name for LLM providers."
+                        },
+                        "provider_name": {
+                            "type": "string",
+                            "description": "Provider id for target=provider, such as openai, anthropic, openrouter, opencode_zen, or a custom provider key."
+                        },
+                        "api_key": { "type": "string", "description": "API key for provider or WhatsApp." },
+                        "api_key_env": { "type": "string", "description": "Environment variable name that contains a provider API key." },
+                        "api_key_file": { "type": "string", "description": "Path to a local file containing a provider API key." },
+                        "token": { "type": "string", "description": "GitHub/GitLab token." },
+                        "token_env": { "type": "string", "description": "Environment variable name that contains a GitHub/GitLab token." },
+                        "token_file": { "type": "string", "description": "Path to a local file containing a GitHub/GitLab token." },
+                        "bot_token": { "type": "string", "description": "Telegram or Discord bot token." },
+                        "api_base": { "type": "string", "description": "Optional API base URL for provider/GitHub/GitLab." },
+                        "default_model": { "type": "string", "description": "Optional preferred model for an LLM provider." },
+                        "enabled": { "type": "boolean", "description": "Enable or disable channel after credential update." },
+                        "phone_number_id": { "type": "string", "description": "WhatsApp phone number id." },
+                        "verify_token": { "type": "string", "description": "WhatsApp webhook verify token." },
+                        "webhook_port": { "type": "integer", "description": "WhatsApp webhook port." }
+                    },
+                    "description": "Credential update payload. Values are saved to ~/.openz/config.json and redacted by view."
                 }
             },
             "required": ["action"]
@@ -977,6 +1158,51 @@ impl Tool for ManageConfigTool {
                 Ok(serde_json::json!({
                     "success": true,
                     "message": "Configuration successfully updated."
+                }))
+            }
+            "set_credential" => {
+                let credential = arguments
+                    .get("credential")
+                    .and_then(|v| v.as_object())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Missing credential for action 'set_credential'")
+                    })?;
+                let target = credential
+                    .get("target")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("Missing credential.target"))?
+                    .trim()
+                    .to_lowercase();
+
+                let mut config = crate::config::loader::load_config()?;
+                match target.as_str() {
+                    "provider" => {
+                        let provider_name = credential
+                            .get("provider_name")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "credential.provider_name is required for provider credentials"
+                                )
+                            })?;
+                        merge_provider_credential(&mut config, provider_name, credential)?;
+                    }
+                    "github" | "gitlab" => merge_git_credential(&mut config, &target, credential)?,
+                    "telegram" | "discord" | "whatsapp" => {
+                        merge_channel_credential(&mut config, &target, credential)?
+                    }
+                    other => {
+                        return Ok(serde_json::json!({
+                            "success": false,
+                            "error": format!("Unsupported credential target '{}'", other)
+                        }));
+                    }
+                }
+
+                crate::config::loader::save_config(&config)?;
+                Ok(serde_json::json!({
+                    "success": true,
+                    "message": format!("Credential target '{}' updated. Secrets are redacted in config views.", target)
                 }))
             }
             _ => Err(anyhow::anyhow!("Invalid action")),
@@ -1744,14 +1970,12 @@ mod tests {
             .unwrap()
             .iter()
             .any(|alias| alias.as_str() == Some("shell command")));
-        assert!(exec["examples"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|example| example
+        assert!(exec["examples"].as_array().unwrap().iter().any(|example| {
+            example
                 .as_str()
                 .unwrap_or("")
-                .contains("safe project-local command")));
+                .contains("safe project-local command")
+        }));
         assert!(exec["when_to_use"]
             .as_str()
             .unwrap()
@@ -2094,7 +2318,46 @@ mod tests {
         );
         assert_eq!(updated_config.skills.write_approval, true);
 
-        // 4. Try updating an invalid/restricted field (should be blocked)
+        // 4. Store credentials through manage_config and verify views redact them.
+        let credential_res = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "set_credential",
+                "credential": {
+                    "target": "github",
+                    "token": "github_pat_secret_for_test",
+                    "api_base": "https://api.github.com",
+                    "token_env": "OPENZ_TEST_GITHUB_TOKEN"
+                }
+            })))
+            .unwrap();
+        assert!(credential_res["success"].as_bool().unwrap());
+
+        let credential_config = crate::config::loader::load_config().unwrap();
+        let github_config = credential_config.integrations.github.unwrap();
+        assert_eq!(
+            github_config.token.as_deref(),
+            Some("github_pat_secret_for_test")
+        );
+        assert_eq!(
+            github_config.api_base.as_deref(),
+            Some("https://api.github.com")
+        );
+        assert_eq!(
+            github_config.token_env.as_deref(),
+            Some("OPENZ_TEST_GITHUB_TOKEN")
+        );
+
+        let redacted_view = rt
+            .block_on(tool.call(&serde_json::json!({
+                "action": "view"
+            })))
+            .unwrap();
+        assert_eq!(
+            redacted_view["config"]["integrations"]["github"]["token"],
+            "********"
+        );
+
+        // 5. Try updating an invalid/restricted field (should be blocked)
         let invalid_res = rt
             .block_on(tool.call(&serde_json::json!({
                 "action": "update",

@@ -4,6 +4,27 @@ use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT}
 use serde_json::Value;
 use std::env;
 
+fn read_secret_file(path: &str) -> Option<String> {
+    let path = crate::config::loader::resolve_path(path);
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn configured_git_token(
+    config: Option<&crate::config::schema::GitIntegrationConfig>,
+) -> Option<String> {
+    config.and_then(|cfg| {
+        cfg.token_env
+            .as_deref()
+            .and_then(|env| env::var(env).ok())
+            .filter(|token| !token.trim().is_empty())
+            .or_else(|| cfg.token_file.as_deref().and_then(read_secret_file))
+            .or_else(|| cfg.token.clone().filter(|token| !token.trim().is_empty()))
+    })
+}
+
 pub struct GitProviderTool;
 
 #[async_trait::async_trait]
@@ -113,12 +134,18 @@ impl Tool for GitProviderTool {
 
         match platform {
             "github" => {
+                let config = crate::config::loader::load_config().ok();
+                let configured_github =
+                    config.as_ref().and_then(|c| c.integrations.github.as_ref());
                 let token = token_arg
                     .or_else(|| env::var("GITHUB_TOKEN").ok())
                     .or_else(|| env::var("GITHUB_PAT").ok())
-                    .ok_or_else(|| anyhow!("GitHub token not found. Please provide it in the token argument or set GITHUB_TOKEN environment variable."))?;
+                    .or_else(|| configured_git_token(configured_github))
+                    .ok_or_else(|| anyhow!("GitHub token not found. Provide token, set GITHUB_TOKEN/GITHUB_PAT, or store it with manage_config set_credential after approval."))?;
 
-                let api_base = api_base_arg.unwrap_or_else(|| "https://api.github.com".to_string());
+                let api_base = api_base_arg
+                    .or_else(|| configured_github.and_then(|cfg| cfg.api_base.clone()))
+                    .unwrap_or_else(|| "https://api.github.com".to_string());
                 crate::tools::web::validate_url(&api_base).await?;
 
                 let mut headers = HeaderMap::new();
@@ -246,13 +273,18 @@ impl Tool for GitProviderTool {
                 }
             }
             "gitlab" => {
+                let config = crate::config::loader::load_config().ok();
+                let configured_gitlab =
+                    config.as_ref().and_then(|c| c.integrations.gitlab.as_ref());
                 let token = token_arg
                     .or_else(|| env::var("GITLAB_TOKEN").ok())
                     .or_else(|| env::var("GITLAB_PAT").ok())
-                    .ok_or_else(|| anyhow!("GitLab token not found. Please provide it in the token argument or set GITLAB_TOKEN environment variable."))?;
+                    .or_else(|| configured_git_token(configured_gitlab))
+                    .ok_or_else(|| anyhow!("GitLab token not found. Provide token, set GITLAB_TOKEN/GITLAB_PAT, or store it with manage_config set_credential after approval."))?;
 
-                let api_base =
-                    api_base_arg.unwrap_or_else(|| "https://gitlab.com/api/v4".to_string());
+                let api_base = api_base_arg
+                    .or_else(|| configured_gitlab.and_then(|cfg| cfg.api_base.clone()))
+                    .unwrap_or_else(|| "https://gitlab.com/api/v4".to_string());
                 crate::tools::web::validate_url(&api_base).await?;
                 let urlencoded_repo =
                     percent_encoding::utf8_percent_encode(repo, percent_encoding::NON_ALPHANUMERIC)

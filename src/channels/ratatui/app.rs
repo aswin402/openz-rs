@@ -51,8 +51,7 @@ pub enum ModelSelectState {
 }
 
 // Re-export shared provider data from channels/mod.rs — single source of truth
-pub use crate::channels::{PROVIDER_REGISTRY, build_configured_providers, curated_models_for};
-
+pub use crate::channels::{build_configured_providers, curated_models_for, PROVIDER_REGISTRY};
 
 pub struct RatatuiApp {
     pub model: String,
@@ -216,7 +215,7 @@ impl RatatuiApp {
                 } else if parts.len() >= 2 {
                     let provider = parts[0];
                     let model_query = if arg.ends_with(' ') { "" } else { parts[1] };
-                    
+
                     // Find models for this provider from registry
                     if let Some(reg) = PROVIDER_REGISTRY.iter().find(|r| r.name == provider) {
                         for model in reg.models {
@@ -243,4 +242,3 @@ impl RatatuiApp {
             .collect()
     }
 }
-

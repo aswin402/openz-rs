@@ -668,6 +668,14 @@ impl SecurityGuard {
                     }
                 }
             }
+        } else if tool_name == "manage_config" {
+            let action = arguments
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            if action == "set_credential" || Self::contains_secret_material(arguments) {
+                return true;
+            }
         } else if tool_name == "write_file"
             || tool_name == "patch_file"
             || tool_name == "replace_lines"
@@ -688,12 +696,79 @@ impl SecurityGuard {
         false
     }
 
+    fn contains_secret_material(value: &Value) -> bool {
+        match value {
+            Value::Object(map) => map.iter().any(|(key, value)| {
+                let normalized_key: String = key
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric())
+                    .flat_map(|c| c.to_lowercase())
+                    .collect();
+                let key_is_secret = matches!(
+                    normalized_key.as_str(),
+                    "apikey"
+                        | "apitoken"
+                        | "accesstoken"
+                        | "authtoken"
+                        | "bottoken"
+                        | "clientsecret"
+                        | "password"
+                        | "secret"
+                        | "token"
+                        | "privatekey"
+                );
+                key_is_secret || Self::contains_secret_material(value)
+            }),
+            Value::Array(values) => values.iter().any(Self::contains_secret_material),
+            _ => false,
+        }
+    }
+
+    fn redacted_value(value: &Value) -> Value {
+        match value {
+            Value::Object(map) => {
+                let mut redacted = serde_json::Map::new();
+                for (key, value) in map {
+                    let normalized_key: String = key
+                        .chars()
+                        .filter(|c| c.is_ascii_alphanumeric())
+                        .flat_map(|c| c.to_lowercase())
+                        .collect();
+                    let key_is_secret = matches!(
+                        normalized_key.as_str(),
+                        "apikey"
+                            | "apitoken"
+                            | "accesstoken"
+                            | "authtoken"
+                            | "bottoken"
+                            | "clientsecret"
+                            | "password"
+                            | "secret"
+                            | "token"
+                            | "privatekey"
+                    );
+                    if key_is_secret && !value.is_null() {
+                        redacted.insert(key.clone(), Value::String("********".to_string()));
+                    } else {
+                        redacted.insert(key.clone(), Self::redacted_value(value));
+                    }
+                }
+                Value::Object(redacted)
+            }
+            Value::Array(values) => Value::Array(values.iter().map(Self::redacted_value).collect()),
+            other => other.clone(),
+        }
+    }
+
     /// Formats a descriptive string showing the details of the sensitive action.
     pub fn format_description(tool_name: &str, arguments: &Value) -> String {
         if tool_name == "exec_command" {
             if let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) {
                 return format!("$ {}", cmd);
             }
+        } else if tool_name == "manage_config" {
+            let redacted = Self::redacted_value(arguments);
+            return format!("Manage Config -> {}", redacted);
         } else if tool_name == "write_file"
             || tool_name == "patch_file"
             || tool_name == "replace_lines"
@@ -893,9 +968,14 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
 
         let header = format!(
             "{}🔒 SECURITY SHIELD: Sensitive Action Requested{}\n  {}Tool:      {}{}\n  {}Details:   {}{}",
-            crate::agent::style::colors::AURA_GOLD, crate::agent::style::colors::COLOR_RESET,
-            crate::agent::style::colors::AURA_SLATE, crate::agent::style::colors::COLOR_BOLD, tool_name,
-            crate::agent::style::colors::AURA_SLATE, crate::agent::style::colors::AURA_BLUE, formatted_details
+            crate::agent::style::colors::AURA_GOLD,
+            crate::agent::style::colors::COLOR_RESET,
+            crate::agent::style::colors::AURA_SLATE,
+            crate::agent::style::colors::COLOR_BOLD,
+            tool_name,
+            crate::agent::style::colors::AURA_SLATE,
+            crate::agent::style::colors::AURA_BLUE,
+            formatted_details
         );
 
         // Render minimal themed select menu custom matching the /model command menu
@@ -937,6 +1017,23 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_manage_config_credentials_require_approval_and_redact_description() {
+        let args = json!({
+            "action": "set_credential",
+            "credential": {
+                "target": "github",
+                "token": "github_pat_secret_for_test"
+            }
+        });
+
+        assert!(SecurityGuard::is_sensitive("manage_config", &args));
+
+        let description = SecurityGuard::format_description("manage_config", &args);
+        assert!(description.contains("********"));
+        assert!(!description.contains("github_pat_secret_for_test"));
+    }
 
     #[test]
     fn test_is_sensitive_destructive_commands() {

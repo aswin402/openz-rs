@@ -313,7 +313,8 @@ pub fn read_line_raw(
                             ERROR_RED, e, COLOR_RESET
                         );
                         lines_printed = 1;
-                        super::render::LAST_CURSOR_LINE.store(0, std::sync::atomic::Ordering::Relaxed);
+                        super::render::LAST_CURSOR_LINE
+                            .store(0, std::sync::atomic::Ordering::Relaxed);
                         if let Ok((w, _)) = crossterm::terminal::size() {
                             width_usize = w as usize;
                         }

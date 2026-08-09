@@ -180,7 +180,9 @@ impl super::Channel for WsGateway {
                 .unwrap_or(true)
             {
                 println!("ℹ️  OPENZ_GATEWAY_TOKEN is not set. Gateway is open for local access.");
-                println!("   Set OPENZ_GATEWAY_TOKEN to require authentication for remote clients.");
+                println!(
+                    "   Set OPENZ_GATEWAY_TOKEN to require authentication for remote clients."
+                );
             }
         }
         let mut shutdown_rx = match crate::shutdown::receiver() {
@@ -221,16 +223,19 @@ async fn hono_log_middleware(
 
     let method_str = method.as_str();
     let method_colored = match method_str {
-        "GET" => "\x1b[1;36mGET\x1b[0m",    // Cyan
-        "POST" => "\x1b[1;35mPOST\x1b[0m",  // Magenta
-        "PUT" => "\x1b[1;33mPUT\x1b[0m",    // Yellow
+        "GET" => "\x1b[1;36mGET\x1b[0m",       // Cyan
+        "POST" => "\x1b[1;35mPOST\x1b[0m",     // Magenta
+        "PUT" => "\x1b[1;33mPUT\x1b[0m",       // Yellow
         "DELETE" => "\x1b[1;31mDELETE\x1b[0m", // Red
         _ => "\x1b[1;32mGET\x1b[0m",
     };
 
     let silent = std::env::var("OPENZ_SILENT").is_ok();
     if !silent {
-        println!("  \x1b[1;30m-->\x1b[0m {} \x1b[37m{}\x1b[0m", method_colored, full_path);
+        println!(
+            "  \x1b[1;30m-->\x1b[0m {} \x1b[37m{}\x1b[0m",
+            method_colored, full_path
+        );
     }
 
     let response = next.run(req).await;
@@ -302,7 +307,10 @@ async fn persist_attachments(attachments: &Value) -> Vec<String> {
             .and_then(|v| v.as_str())
             .unwrap_or("application/octet-stream")
             .to_string();
-        let raw_name = att.get("name").and_then(|v| v.as_str()).unwrap_or("attachment");
+        let raw_name = att
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("attachment");
         // Sanitize the filename: keep safe characters, strip path separators.
         let clean_name: String = raw_name
             .chars()
@@ -421,7 +429,9 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         if let Ok(evt_str) = serde_json::to_string(&attached_evt) {
                             let _ = tx.send(Message::Text(evt_str)).await;
                         }
-                        let history_evt = fetch_real_session_history(&state.agent_loop.session_manager, &chat_id).await;
+                        let history_evt =
+                            fetch_real_session_history(&state.agent_loop.session_manager, &chat_id)
+                                .await;
                         if let Ok(evt_str) = serde_json::to_string(&history_evt) {
                             let _ = tx.send(Message::Text(evt_str)).await;
                         }
@@ -433,7 +443,9 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         }
                     }
                     "load_history" => {
-                        let evt = fetch_real_session_history(&state.agent_loop.session_manager, &chat_id).await;
+                        let evt =
+                            fetch_real_session_history(&state.agent_loop.session_manager, &chat_id)
+                                .await;
                         if let Ok(evt_str) = serde_json::to_string(&evt) {
                             let _ = tx.send(Message::Text(evt_str)).await;
                         }
@@ -532,7 +544,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
                                 let _ = tx.send(Message::Text(evt_str)).await;
                             }
-                            }
+                        }
                         if content.trim() == "/servers" {
                             let servers = crate::shutdown::list_registered_children();
                             let response = if servers.is_empty() {
@@ -791,32 +803,94 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         // Expose providers with masked api_keys
                         let mut providers_config = serde_json::Map::new();
                         let p = &config.providers;
-                        
+
                         let mask_key = |key: &Option<String>| {
-                            key.as_ref().map(|k| if k.is_empty() { "" } else { "••••••••" })
-                        };
-                        
-                        let map_provider = |c: &Option<crate::config::schema::ProviderConfig>| {
-                            c.as_ref().map(|cfg| serde_json::json!({
-                                "api_key": mask_key(&cfg.api_key),
-                                "api_base": cfg.api_base,
-                                "default_model": cfg.default_model
-                            }))
+                            key.as_ref().map(|k| {
+                                if k.is_empty() {
+                                    ""
+                                } else {
+                                    "••••••••"
+                                }
+                            })
                         };
 
-                        providers_config.insert("openai".to_string(), serde_json::to_value(map_provider(&p.openai)).unwrap_or(serde_json::Value::Null));
-                        providers_config.insert("anthropic".to_string(), serde_json::to_value(map_provider(&p.anthropic)).unwrap_or(serde_json::Value::Null));
-                        providers_config.insert("openrouter".to_string(), serde_json::to_value(map_provider(&p.openrouter)).unwrap_or(serde_json::Value::Null));
-                        providers_config.insert("deepseek".to_string(), serde_json::to_value(map_provider(&p.deepseek)).unwrap_or(serde_json::Value::Null));
-                        providers_config.insert("groq".to_string(), serde_json::to_value(map_provider(&p.groq)).unwrap_or(serde_json::Value::Null));
-                        providers_config.insert("ollama".to_string(), serde_json::to_value(map_provider(&p.ollama)).unwrap_or(serde_json::Value::Null));
-                        providers_config.insert("minimax".to_string(), serde_json::to_value(map_provider(&p.minimax)).unwrap_or(serde_json::Value::Null));
-                        providers_config.insert("mistral".to_string(), serde_json::to_value(map_provider(&p.mistral)).unwrap_or(serde_json::Value::Null));
-                        providers_config.insert("z_ai".to_string(), serde_json::to_value(map_provider(&p.z_ai)).unwrap_or(serde_json::Value::Null));
-                        providers_config.insert("nvidia".to_string(), serde_json::to_value(map_provider(&p.nvidia)).unwrap_or(serde_json::Value::Null));
-                        providers_config.insert("opencode_zen".to_string(), serde_json::to_value(map_provider(&p.opencode_zen)).unwrap_or(serde_json::Value::Null));
-                        providers_config.insert("cerebras".to_string(), serde_json::to_value(map_provider(&p.cerebras)).unwrap_or(serde_json::Value::Null));
-                        providers_config.insert("google_ai_studio".to_string(), serde_json::to_value(map_provider(&p.google_ai_studio)).unwrap_or(serde_json::Value::Null));
+                        let map_provider = |c: &Option<crate::config::schema::ProviderConfig>| {
+                            c.as_ref().map(|cfg| {
+                                serde_json::json!({
+                                    "api_key": mask_key(&cfg.api_key),
+                                    "api_key_env": cfg.api_key_env,
+                                    "api_key_file": cfg.api_key_file,
+                                    "api_base": cfg.api_base,
+                                    "default_model": cfg.default_model
+                                })
+                            })
+                        };
+
+                        providers_config.insert(
+                            "openai".to_string(),
+                            serde_json::to_value(map_provider(&p.openai))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                        providers_config.insert(
+                            "anthropic".to_string(),
+                            serde_json::to_value(map_provider(&p.anthropic))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                        providers_config.insert(
+                            "openrouter".to_string(),
+                            serde_json::to_value(map_provider(&p.openrouter))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                        providers_config.insert(
+                            "deepseek".to_string(),
+                            serde_json::to_value(map_provider(&p.deepseek))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                        providers_config.insert(
+                            "groq".to_string(),
+                            serde_json::to_value(map_provider(&p.groq))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                        providers_config.insert(
+                            "ollama".to_string(),
+                            serde_json::to_value(map_provider(&p.ollama))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                        providers_config.insert(
+                            "minimax".to_string(),
+                            serde_json::to_value(map_provider(&p.minimax))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                        providers_config.insert(
+                            "mistral".to_string(),
+                            serde_json::to_value(map_provider(&p.mistral))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                        providers_config.insert(
+                            "z_ai".to_string(),
+                            serde_json::to_value(map_provider(&p.z_ai))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                        providers_config.insert(
+                            "nvidia".to_string(),
+                            serde_json::to_value(map_provider(&p.nvidia))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                        providers_config.insert(
+                            "opencode_zen".to_string(),
+                            serde_json::to_value(map_provider(&p.opencode_zen))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                        providers_config.insert(
+                            "cerebras".to_string(),
+                            serde_json::to_value(map_provider(&p.cerebras))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                        providers_config.insert(
+                            "google_ai_studio".to_string(),
+                            serde_json::to_value(map_provider(&p.google_ai_studio))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
 
                         for (key, cfg) in &p.others {
                             providers_config.insert(
@@ -825,14 +899,14 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                     "api_key": mask_key(&cfg.api_key),
                                     "api_base": cfg.api_base,
                                     "default_model": cfg.default_model
-                                })
+                                }),
                             );
                         }
 
                         // Expose channel configurations
                         let mut channels_config = serde_json::Map::new();
                         let ch = &config.channels;
-                        
+
                         let map_tg = |c: &Option<crate::config::schema::TelegramChannelConfig>| {
                             c.as_ref().map(|cfg| serde_json::json!({
                                 "enabled": cfg.enabled,
@@ -845,19 +919,32 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 "bot_token": if cfg.bot_token.is_empty() { "" } else { "••••••••" }
                             }))
                         };
-                        let map_wa = |c: &Option<crate::config::schema::WhatsAppChannelConfig>| {
-                            c.as_ref().map(|cfg| serde_json::json!({
+                        let map_wa =
+                            |c: &Option<crate::config::schema::WhatsAppChannelConfig>| {
+                                c.as_ref().map(|cfg| serde_json::json!({
                                 "enabled": cfg.enabled,
                                 "api_key": if cfg.api_key.is_empty() { "" } else { "••••••••" },
                                 "phone_number_id": cfg.phone_number_id,
                                 "webhook_port": cfg.webhook_port,
                                 "verify_token": cfg.verify_token
                             }))
-                        };
+                            };
 
-                        channels_config.insert("telegram".to_string(), serde_json::to_value(map_tg(&ch.telegram)).unwrap_or(serde_json::Value::Null));
-                        channels_config.insert("discord".to_string(), serde_json::to_value(map_dc(&ch.discord)).unwrap_or(serde_json::Value::Null));
-                        channels_config.insert("whatsapp".to_string(), serde_json::to_value(map_wa(&ch.whatsapp)).unwrap_or(serde_json::Value::Null));
+                        channels_config.insert(
+                            "telegram".to_string(),
+                            serde_json::to_value(map_tg(&ch.telegram))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                        channels_config.insert(
+                            "discord".to_string(),
+                            serde_json::to_value(map_dc(&ch.discord))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                        channels_config.insert(
+                            "whatsapp".to_string(),
+                            serde_json::to_value(map_wa(&ch.whatsapp))
+                                .unwrap_or(serde_json::Value::Null),
+                        );
 
                         let evt = serde_json::json!({
                             "event": "config_data",
@@ -895,10 +982,12 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             if let Some(v) = defaults.get("streaming").and_then(|v| v.as_bool()) {
                                 d.streaming = v;
                             }
-                            if let Some(v) = defaults.get("caveman_mode").and_then(|v| v.as_bool()) {
+                            if let Some(v) = defaults.get("caveman_mode").and_then(|v| v.as_bool())
+                            {
                                 d.caveman_mode = v;
                             }
-                            if let Some(v) = defaults.get("security_mode").and_then(|v| v.as_str()) {
+                            if let Some(v) = defaults.get("security_mode").and_then(|v| v.as_str())
+                            {
                                 d.security_mode = v.to_string();
                             }
                             if let Some(v) = defaults.get("bot_name").and_then(|v| v.as_str()) {
@@ -913,16 +1002,22 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             if let Some(v) = defaults.get("tool_output_limit") {
                                 d.tool_output_limit = v.as_u64().map(|n| n as usize);
                             }
-                            if let Some(v) = defaults.get("tui_thought_display").and_then(|v| v.as_str()) {
+                            if let Some(v) =
+                                defaults.get("tui_thought_display").and_then(|v| v.as_str())
+                            {
                                 d.tui_thought_display = v.to_string();
                             }
                             if let Some(v) = defaults.get("max_messages").and_then(|v| v.as_u64()) {
                                 d.max_messages = v as usize;
                             }
-                            if let Some(v) = defaults.get("max_tool_iterations").and_then(|v| v.as_u64()) {
+                            if let Some(v) =
+                                defaults.get("max_tool_iterations").and_then(|v| v.as_u64())
+                            {
                                 d.max_tool_iterations = v as usize;
                             }
-                            if let Some(v) = defaults.get("tool_timeout_secs").and_then(|v| v.as_u64()) {
+                            if let Some(v) =
+                                defaults.get("tool_timeout_secs").and_then(|v| v.as_u64())
+                            {
                                 d.tool_timeout_secs = v as u64;
                             }
                         }
@@ -931,58 +1026,130 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         if let Some(providers_val) = envelope.get("providers") {
                             if let Some(obj) = providers_val.as_object() {
                                 let p = &mut config.providers;
-                                let update_provider = |field: &mut Option<crate::config::schema::ProviderConfig>, data: &serde_json::Value| {
-                                    if let Some(data_obj) = data.as_object() {
-                                        let mut cfg = field.clone().unwrap_or_default();
-                                        if let Some(key) = data_obj.get("api_key").and_then(|v| v.as_str()) {
-                                            if key != "••••••••" {
-                                                cfg.api_key = if key.is_empty() { None } else { Some(key.to_string()) };
-                                            }
-                                        }
-                                        if let Some(base) = data_obj.get("api_base") {
-                                            cfg.api_base = base.as_str().map(|s| s.to_string());
-                                        }
-                                        if let Some(m) = data_obj.get("default_model") {
-                                            cfg.default_model = m.as_str().map(|s| s.to_string());
-                                        }
-                                        *field = Some(cfg);
-                                    }
-                                };
-
-                                if let Some(val) = obj.get("openai") { update_provider(&mut p.openai, val); }
-                                if let Some(val) = obj.get("anthropic") { update_provider(&mut p.anthropic, val); }
-                                if let Some(val) = obj.get("openrouter") { update_provider(&mut p.openrouter, val); }
-                                if let Some(val) = obj.get("deepseek") { update_provider(&mut p.deepseek, val); }
-                                if let Some(val) = obj.get("groq") { update_provider(&mut p.groq, val); }
-                                if let Some(val) = obj.get("ollama") { update_provider(&mut p.ollama, val); }
-                                if let Some(val) = obj.get("minimax") { update_provider(&mut p.minimax, val); }
-                                if let Some(val) = obj.get("mistral") { update_provider(&mut p.mistral, val); }
-                                if let Some(val) = obj.get("z_ai") { update_provider(&mut p.z_ai, val); }
-                                if let Some(val) = obj.get("nvidia") { update_provider(&mut p.nvidia, val); }
-                                if let Some(val) = obj.get("opencode_zen") { update_provider(&mut p.opencode_zen, val); }
-                                if let Some(val) = obj.get("cerebras") { update_provider(&mut p.cerebras, val); }
-                                if let Some(val) = obj.get("google_ai_studio") { update_provider(&mut p.google_ai_studio, val); }
-
-                                for (key, val) in obj {
-                                    let is_builtin = matches!(
-                                        key.as_str(),
-                                        "openai" | "anthropic" | "openrouter" | "deepseek" | "groq" | "ollama" |
-                                        "minimax" | "mistral" | "z_ai" | "nvidia" | "opencode_zen" | "cerebras" |
-                                        "google_ai_studio"
-                                    );
-                                    if !is_builtin {
-                                        if let Some(data_obj) = val.as_object() {
-                                            let mut cfg = p.others.get(key).cloned().unwrap_or_default();
-                                            if let Some(k) = data_obj.get("api_key").and_then(|v| v.as_str()) {
-                                                if k != "••••••••" {
-                                                    cfg.api_key = if k.is_empty() { None } else { Some(k.to_string()) };
+                                let update_provider =
+                                    |field: &mut Option<crate::config::schema::ProviderConfig>,
+                                     data: &serde_json::Value| {
+                                        if let Some(data_obj) = data.as_object() {
+                                            let mut cfg = field.clone().unwrap_or_default();
+                                            if let Some(key) =
+                                                data_obj.get("api_key").and_then(|v| v.as_str())
+                                            {
+                                                if key != "••••••••" {
+                                                    cfg.api_key = if key.is_empty() {
+                                                        None
+                                                    } else {
+                                                        Some(key.to_string())
+                                                    };
                                                 }
                                             }
                                             if let Some(base) = data_obj.get("api_base") {
                                                 cfg.api_base = base.as_str().map(|s| s.to_string());
                                             }
                                             if let Some(m) = data_obj.get("default_model") {
-                                                cfg.default_model = m.as_str().map(|s| s.to_string());
+                                                cfg.default_model =
+                                                    m.as_str().map(|s| s.to_string());
+                                            }
+                                            *field = Some(cfg);
+                                        }
+                                    };
+
+                                if let Some(val) = obj.get("openai") {
+                                    update_provider(&mut p.openai, val);
+                                }
+                                if let Some(val) = obj.get("anthropic") {
+                                    update_provider(&mut p.anthropic, val);
+                                }
+                                if let Some(val) = obj.get("openrouter") {
+                                    update_provider(&mut p.openrouter, val);
+                                }
+                                if let Some(val) = obj.get("deepseek") {
+                                    update_provider(&mut p.deepseek, val);
+                                }
+                                if let Some(val) = obj.get("groq") {
+                                    update_provider(&mut p.groq, val);
+                                }
+                                if let Some(val) = obj.get("ollama") {
+                                    update_provider(&mut p.ollama, val);
+                                }
+                                if let Some(val) = obj.get("minimax") {
+                                    update_provider(&mut p.minimax, val);
+                                }
+                                if let Some(val) = obj.get("mistral") {
+                                    update_provider(&mut p.mistral, val);
+                                }
+                                if let Some(val) = obj.get("z_ai") {
+                                    update_provider(&mut p.z_ai, val);
+                                }
+                                if let Some(val) = obj.get("nvidia") {
+                                    update_provider(&mut p.nvidia, val);
+                                }
+                                if let Some(val) = obj.get("opencode_zen") {
+                                    update_provider(&mut p.opencode_zen, val);
+                                }
+                                if let Some(val) = obj.get("cerebras") {
+                                    update_provider(&mut p.cerebras, val);
+                                }
+                                if let Some(val) = obj.get("google_ai_studio") {
+                                    update_provider(&mut p.google_ai_studio, val);
+                                }
+
+                                for (key, val) in obj {
+                                    let is_builtin = matches!(
+                                        key.as_str(),
+                                        "openai"
+                                            | "anthropic"
+                                            | "openrouter"
+                                            | "deepseek"
+                                            | "groq"
+                                            | "ollama"
+                                            | "minimax"
+                                            | "mistral"
+                                            | "z_ai"
+                                            | "nvidia"
+                                            | "opencode_zen"
+                                            | "cerebras"
+                                            | "google_ai_studio"
+                                    );
+                                    if !is_builtin {
+                                        if let Some(data_obj) = val.as_object() {
+                                            let mut cfg =
+                                                p.others.get(key).cloned().unwrap_or_default();
+                                            if let Some(k) =
+                                                data_obj.get("api_key").and_then(|v| v.as_str())
+                                            {
+                                                if k != "••••••••" {
+                                                    cfg.api_key = if k.is_empty() {
+                                                        None
+                                                    } else {
+                                                        Some(k.to_string())
+                                                    };
+                                                }
+                                            }
+                                            if let Some(env) =
+                                                data_obj.get("api_key_env").and_then(|v| v.as_str())
+                                            {
+                                                cfg.api_key_env = if env.trim().is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(env.to_string())
+                                                };
+                                            }
+                                            if let Some(path) = data_obj
+                                                .get("api_key_file")
+                                                .and_then(|v| v.as_str())
+                                            {
+                                                cfg.api_key_file = if path.trim().is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(path.to_string())
+                                                };
+                                            }
+                                            if let Some(base) = data_obj.get("api_base") {
+                                                cfg.api_base = base.as_str().map(|s| s.to_string());
+                                            }
+                                            if let Some(m) = data_obj.get("default_model") {
+                                                cfg.default_model =
+                                                    m.as_str().map(|s| s.to_string());
                                             }
                                             p.others.insert(key.clone(), cfg);
                                         }
@@ -995,14 +1162,18 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         if let Some(channels_val) = envelope.get("channels") {
                             if let Some(obj) = channels_val.as_object() {
                                 let ch = &mut config.channels;
-                                
+
                                 if let Some(val) = obj.get("telegram") {
                                     if let Some(data_obj) = val.as_object() {
                                         let mut cfg = ch.telegram.clone().unwrap_or_default();
-                                        if let Some(enabled) = data_obj.get("enabled").and_then(|v| v.as_bool()) {
+                                        if let Some(enabled) =
+                                            data_obj.get("enabled").and_then(|v| v.as_bool())
+                                        {
                                             cfg.enabled = enabled;
                                         }
-                                        if let Some(token) = data_obj.get("bot_token").and_then(|v| v.as_str()) {
+                                        if let Some(token) =
+                                            data_obj.get("bot_token").and_then(|v| v.as_str())
+                                        {
                                             if token != "••••••••" {
                                                 cfg.bot_token = token.to_string();
                                             }
@@ -1014,10 +1185,14 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 if let Some(val) = obj.get("discord") {
                                     if let Some(data_obj) = val.as_object() {
                                         let mut cfg = ch.discord.clone().unwrap_or_default();
-                                        if let Some(enabled) = data_obj.get("enabled").and_then(|v| v.as_bool()) {
+                                        if let Some(enabled) =
+                                            data_obj.get("enabled").and_then(|v| v.as_bool())
+                                        {
                                             cfg.enabled = enabled;
                                         }
-                                        if let Some(token) = data_obj.get("bot_token").and_then(|v| v.as_str()) {
+                                        if let Some(token) =
+                                            data_obj.get("bot_token").and_then(|v| v.as_str())
+                                        {
                                             if token != "••••••••" {
                                                 cfg.bot_token = token.to_string();
                                             }
@@ -1029,21 +1204,31 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 if let Some(val) = obj.get("whatsapp") {
                                     if let Some(data_obj) = val.as_object() {
                                         let mut cfg = ch.whatsapp.clone().unwrap_or_default();
-                                        if let Some(enabled) = data_obj.get("enabled").and_then(|v| v.as_bool()) {
+                                        if let Some(enabled) =
+                                            data_obj.get("enabled").and_then(|v| v.as_bool())
+                                        {
                                             cfg.enabled = enabled;
                                         }
-                                        if let Some(key) = data_obj.get("api_key").and_then(|v| v.as_str()) {
+                                        if let Some(key) =
+                                            data_obj.get("api_key").and_then(|v| v.as_str())
+                                        {
                                             if key != "••••••••" {
                                                 cfg.api_key = key.to_string();
                                             }
                                         }
-                                        if let Some(num_id) = data_obj.get("phone_number_id").and_then(|v| v.as_str()) {
+                                        if let Some(num_id) =
+                                            data_obj.get("phone_number_id").and_then(|v| v.as_str())
+                                        {
                                             cfg.phone_number_id = num_id.to_string();
                                         }
-                                        if let Some(port) = data_obj.get("webhook_port").and_then(|v| v.as_u64()) {
+                                        if let Some(port) =
+                                            data_obj.get("webhook_port").and_then(|v| v.as_u64())
+                                        {
                                             cfg.webhook_port = port as u16;
                                         }
-                                        if let Some(verify) = data_obj.get("verify_token").and_then(|v| v.as_str()) {
+                                        if let Some(verify) =
+                                            data_obj.get("verify_token").and_then(|v| v.as_str())
+                                        {
                                             cfg.verify_token = verify.to_string();
                                         }
                                         ch.whatsapp = Some(cfg);
@@ -1194,7 +1379,10 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             })
                             .unwrap_or_default();
 
-                        let evt = if name.is_empty() || description.is_empty() || system_prompt.is_empty() {
+                        let evt = if name.is_empty()
+                            || description.is_empty()
+                            || system_prompt.is_empty()
+                        {
                             serde_json::json!({
                                 "event": "error",
                                 "detail": "Subagent name, description, and system prompt are required."
@@ -1674,6 +1862,8 @@ mod tests {
         // Simple prompt, deepseek key set -> should route to deepseek-chat
         config.providers.deepseek = Some(crate::config::schema::ProviderConfig {
             api_key: Some("test-key".to_string()),
+            api_key_env: None,
+            api_key_file: None,
             api_base: None,
             default_model: None,
             extra: std::collections::HashMap::new(),
@@ -1786,7 +1976,9 @@ fn find_web_dist() -> Option<std::path::PathBuf> {
     None
 }
 
-async fn fetch_real_sessions_list(session_mgr: &crate::session::SessionManager) -> serde_json::Value {
+async fn fetch_real_sessions_list(
+    session_mgr: &crate::session::SessionManager,
+) -> serde_json::Value {
     let mut sessions = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&session_mgr.dir) {
         for entry in entries.flatten() {
@@ -1845,7 +2037,10 @@ fn resolve_session_key(session_mgr: &crate::session::SessionManager, chat_id: &s
     if chat_id.contains(':') {
         return chat_id.to_string();
     }
-    let safe_key = chat_id.replace(":", "_").replace("/", "_").replace("\\", "_");
+    let safe_key = chat_id
+        .replace(":", "_")
+        .replace("/", "_")
+        .replace("\\", "_");
     let path = session_mgr.dir.join(format!("{}.json", safe_key));
     if path.exists() {
         if let Ok(content) = std::fs::read_to_string(&path) {
@@ -1916,11 +2111,17 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
     let graph_db = crate::config::loader::runtime_db_path("graph_memory.db");
     if graph_db.exists() {
         if let Ok(conn) = rusqlite::Connection::open(&graph_db) {
-            let _ = conn.query_row("SELECT COUNT(*) FROM graph_nodes", [], |r| r.get(0)).map(|c: i64| entities_count = c);
-            let _ = conn.query_row("SELECT COUNT(*) FROM graph_edges", [], |r| r.get(0)).map(|c: i64| relations_count = c);
+            let _ = conn
+                .query_row("SELECT COUNT(*) FROM graph_nodes", [], |r| r.get(0))
+                .map(|c: i64| entities_count = c);
+            let _ = conn
+                .query_row("SELECT COUNT(*) FROM graph_edges", [], |r| r.get(0))
+                .map(|c: i64| relations_count = c);
 
             // Fetch nodes
-            if let Ok(mut stmt) = conn.prepare("SELECT name, entity_type, observations FROM graph_nodes LIMIT 100") {
+            if let Ok(mut stmt) =
+                conn.prepare("SELECT name, entity_type, observations FROM graph_nodes LIMIT 100")
+            {
                 if let Ok(rows) = stmt.query_map([], |r| {
                     Ok(serde_json::json!({
                         "name": r.get::<_, String>(0)?,
@@ -1933,7 +2134,9 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
             }
 
             // Fetch edges
-            if let Ok(mut stmt) = conn.prepare("SELECT from_name, to_name, relation_type FROM graph_edges LIMIT 200") {
+            if let Ok(mut stmt) =
+                conn.prepare("SELECT from_name, to_name, relation_type FROM graph_edges LIMIT 200")
+            {
                 if let Ok(rows) = stmt.query_map([], |r| {
                     Ok(serde_json::json!({
                         "from_name": r.get::<_, String>(0)?,
@@ -1951,7 +2154,9 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
     let memory_db = crate::config::loader::runtime_db_path("memory.db");
     if memory_db.exists() {
         if let Ok(conn) = rusqlite::Connection::open(&memory_db) {
-            let _ = conn.query_row("SELECT COUNT(*) FROM cognitive_memory", [], |r| r.get(0)).map(|c: i64| facts_count = c);
+            let _ = conn
+                .query_row("SELECT COUNT(*) FROM cognitive_memory", [], |r| r.get(0))
+                .map(|c: i64| facts_count = c);
             // Fetch working memory keys from interaction_history or skills if available
             if let Ok(mut stmt) = conn.prepare("SELECT name FROM skills LIMIT 10") {
                 if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
@@ -1960,7 +2165,9 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
             }
 
             // Fetch facts
-            if let Ok(mut stmt) = conn.prepare("SELECT text, timestamp, tags, importance FROM cognitive_memory LIMIT 100") {
+            if let Ok(mut stmt) = conn
+                .prepare("SELECT text, timestamp, tags, importance FROM cognitive_memory LIMIT 100")
+            {
                 if let Ok(rows) = stmt.query_map([], |r| {
                     Ok(serde_json::json!({
                         "text": r.get::<_, String>(0)?,
@@ -2041,8 +2248,16 @@ async fn fetch_real_logs() -> serde_json::Value {
     if let Ok(content) = std::fs::read_to_string(&log_path) {
         let lines: Vec<&str> = content.lines().rev().take(100).collect();
         for (idx, line) in lines.iter().enumerate() {
-            if line.trim().is_empty() { continue; }
-            let level = if line.contains("ERROR") { "ERROR" } else if line.contains("WARN") { "WARN" } else { "INFO" };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let level = if line.contains("ERROR") {
+                "ERROR"
+            } else if line.contains("WARN") {
+                "WARN"
+            } else {
+                "INFO"
+            };
             let ts = if line.len() >= 19 && line.as_bytes()[10] == b'T' {
                 line[11..19].to_string()
             } else {

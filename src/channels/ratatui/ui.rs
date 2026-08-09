@@ -30,24 +30,15 @@ fn markdown_line_to_spans(line: &str) -> Vec<Span<'static>> {
 
     // Heading detection
     if trimmed.starts_with("# ") {
-        return vec![Span::styled(
-            line.to_string(),
-            theme::heading_style(),
-        )];
+        return vec![Span::styled(line.to_string(), theme::heading_style())];
     }
     if trimmed.starts_with("## ") || trimmed.starts_with("### ") {
-        return vec![Span::styled(
-            line.to_string(),
-            theme::heading_style(),
-        )];
+        return vec![Span::styled(line.to_string(), theme::heading_style())];
     }
 
     // Horizontal rule
     if trimmed.chars().all(|c| c == '-') && trimmed.len() >= 3 {
-        return vec![Span::styled(
-            "──────".to_string(),
-            theme::divider_style(),
-        )];
+        return vec![Span::styled("──────".to_string(), theme::divider_style())];
     }
 
     // List items
@@ -70,10 +61,7 @@ fn markdown_line_to_spans(line: &str) -> Vec<Span<'static>> {
             let rest = &trimmed[pos + 2..];
             let mut spans = vec![
                 Span::raw(indent),
-                Span::styled(
-                    format!("{}. ", number),
-                    theme::list_marker_style(),
-                ),
+                Span::styled(format!("{}. ", number), theme::list_marker_style()),
             ];
             spans.extend(parse_inline_markdown(rest));
             return spans;
@@ -95,16 +83,18 @@ fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
             break;
         }
 
-        let bold_match = re_bold().and_then(|re| {
-            re.find(&remaining).map(|m| (m.start(), m.end(), "bold"))
-        });
-        let code_match = re_code().and_then(|re| {
-            re.find(&remaining).map(|m| (m.start(), m.end(), "code"))
-        });
+        let bold_match =
+            re_bold().and_then(|re| re.find(&remaining).map(|m| (m.start(), m.end(), "bold")));
+        let code_match =
+            re_code().and_then(|re| re.find(&remaining).map(|m| (m.start(), m.end(), "code")));
 
         let earliest = match (bold_match, code_match) {
             (Some(b), Some(c)) => {
-                if b.0 <= c.0 { Some(b) } else { Some(c) }
+                if b.0 <= c.0 {
+                    Some(b)
+                } else {
+                    Some(c)
+                }
             }
             (Some(b), None) => Some(b),
             (None, Some(c)) => Some(c),
@@ -126,18 +116,12 @@ fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
                     "bold" => {
                         // Strip ** from both ends
                         let inner = &matched[2..matched.len() - 2];
-                        spans.push(Span::styled(
-                            inner.to_string(),
-                            theme::bold_style(),
-                        ));
+                        spans.push(Span::styled(inner.to_string(), theme::bold_style()));
                     }
                     "code" => {
                         // Strip ` from both ends
                         let inner = &matched[1..matched.len() - 1];
-                        spans.push(Span::styled(
-                            inner.to_string(),
-                            theme::code_style(),
-                        ));
+                        spans.push(Span::styled(inner.to_string(), theme::code_style()));
                     }
                     _ => {}
                 }
@@ -192,10 +176,10 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),                     // Chat scrollback
-            Constraint::Length(input_height),        // Input Box or Selection Menu
-            Constraint::Length(1),                   // Status bar
-            Constraint::Length(menu_height),         // Autocomplete popup
+            Constraint::Min(1),               // Chat scrollback
+            Constraint::Length(input_height), // Input Box or Selection Menu
+            Constraint::Length(1),            // Status bar
+            Constraint::Length(menu_height),  // Autocomplete popup
         ])
         .split(f.area());
 
@@ -243,30 +227,40 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
     for l in &logo_lines {
         lines.push(Line::from(vec![Span::styled(
             l.to_string(),
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         )]));
     }
     for (white_part, orange_part) in &logo_mixed {
         lines.push(Line::from(vec![
             Span::styled(
                 white_part.to_string(),
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 orange_part.to_string(),
-                Style::default().fg(theme::RED_ORANGE).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme::RED_ORANGE)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
     }
     lines.push(Line::from(vec![Span::styled(
         logo_bottom.to_string(),
-        Style::default().fg(theme::RED_ORANGE).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(theme::RED_ORANGE)
+            .add_modifier(Modifier::BOLD),
     )]));
 
     // Version line only (provider/model/cwd are in the status bar)
     lines.push(Line::from(vec![Span::styled(
         format!(" openz v{}", env!("CARGO_PKG_VERSION")),
-        Style::default().fg(theme::RED_ORANGE).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(theme::RED_ORANGE)
+            .add_modifier(Modifier::BOLD),
     )]));
     lines.push(Line::from(vec![Span::styled(
         format!(" {} | {}", app.provider, app.model),
@@ -298,18 +292,12 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
                     if i == 0 {
                         lines.push(Line::from(vec![
                             Span::styled("> ", theme::user_prefix_style()),
-                            Span::styled(
-                                line.to_string(),
-                                theme::user_text_style(),
-                            ),
+                            Span::styled(line.to_string(), theme::user_text_style()),
                         ]));
                     } else {
                         lines.push(Line::from(vec![
                             Span::styled("  ", Style::default()),
-                            Span::styled(
-                                line.to_string(),
-                                theme::user_text_style(),
-                            ),
+                            Span::styled(line.to_string(), theme::user_text_style()),
                         ]));
                     }
                 }
@@ -333,10 +321,7 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
                         for r_line in reasoning_trimmed.lines() {
                             lines.push(Line::from(vec![
                                 Span::styled("  L ", theme::reasoning_style()),
-                                Span::styled(
-                                    r_line.to_string(),
-                                    theme::reasoning_style(),
-                                ),
+                                Span::styled(r_line.to_string(), theme::reasoning_style()),
                             ]));
                         }
                     }
@@ -358,21 +343,21 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
                                 // Start of code block — show language label
                                 let lang = trimmed.strip_prefix("```").unwrap_or("").trim();
                                 if !lang.is_empty() {
-                                    lines.push(Line::from(vec![
-                                        Span::styled(
-                                            format!("  ┌─ {} ", lang),
-                                            theme::code_style(),
-                                        ),
-                                    ]));
+                                    lines.push(Line::from(vec![Span::styled(
+                                        format!("  ┌─ {} ", lang),
+                                        theme::code_style(),
+                                    )]));
                                 } else {
-                                    lines.push(Line::from(vec![
-                                        Span::styled("  ┌──", theme::code_style()),
-                                    ]));
+                                    lines.push(Line::from(vec![Span::styled(
+                                        "  ┌──",
+                                        theme::code_style(),
+                                    )]));
                                 }
                             } else {
-                                lines.push(Line::from(vec![
-                                    Span::styled("  └──", theme::code_style()),
-                                ]));
+                                lines.push(Line::from(vec![Span::styled(
+                                    "  └──",
+                                    theme::code_style(),
+                                )]));
                             }
                             continue;
                         }
@@ -381,10 +366,7 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
                             // Code block content — indented, emerald color
                             lines.push(Line::from(vec![
                                 Span::styled("  │ ", theme::code_style()),
-                                Span::styled(
-                                    line.to_string(),
-                                    theme::code_style(),
-                                ),
+                                Span::styled(line.to_string(), theme::code_style()),
                             ]));
                         } else {
                             // Regular markdown line
@@ -405,22 +387,13 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
                     if details.is_empty() {
                         lines.push(Line::from(vec![
                             Span::styled("● ", theme::tool_bullet_style()),
-                            Span::styled(
-                                tool_name.to_string(),
-                                theme::tool_name_style(),
-                            ),
+                            Span::styled(tool_name.to_string(), theme::tool_name_style()),
                         ]));
                     } else {
                         lines.push(Line::from(vec![
                             Span::styled("● ", theme::tool_bullet_style()),
-                            Span::styled(
-                                format!("{} ", tool_name),
-                                theme::tool_name_style(),
-                            ),
-                            Span::styled(
-                                details.to_string(),
-                                theme::tool_details_style(),
-                            ),
+                            Span::styled(format!("{} ", tool_name), theme::tool_name_style()),
+                            Span::styled(details.to_string(), theme::tool_details_style()),
                         ]));
                     }
                 }
@@ -429,7 +402,8 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
                 if !msg.content.is_empty() {
                     let content = msg.content.trim();
                     // Check for error/success markers
-                    let has_error = content.contains('✗') || content.contains('✖') || content.contains("error");
+                    let has_error =
+                        content.contains('✗') || content.contains('✖') || content.contains("error");
                     let summary = if content.len() > 120 {
                         format!("{}...", &content[..120])
                     } else {
@@ -440,19 +414,13 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
                         lines.push(Line::from(vec![
                             Span::styled("  └ ", theme::reasoning_style()),
                             Span::styled("✗ ", theme::error_style()),
-                            Span::styled(
-                                summary,
-                                theme::reasoning_style(),
-                            ),
+                            Span::styled(summary, theme::reasoning_style()),
                         ]));
                     } else {
                         lines.push(Line::from(vec![
                             Span::styled("  └ ", theme::reasoning_style()),
                             Span::styled("✓ ", theme::success_style()),
-                            Span::styled(
-                                summary,
-                                theme::reasoning_style(),
-                            ),
+                            Span::styled(summary, theme::reasoning_style()),
                         ]));
                     }
                 }
@@ -465,10 +433,7 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
                     for line in msg.content.lines() {
                         lines.push(Line::from(vec![
                             Span::styled("  ", Style::default()),
-                            Span::styled(
-                                line.to_string(),
-                                theme::reasoning_style(),
-                            ),
+                            Span::styled(line.to_string(), theme::reasoning_style()),
                         ]));
                     }
                 }
@@ -483,14 +448,8 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
         let spinner = theme::SPINNER_FRAMES[frame_idx];
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled(
-                format!("{} ", spinner),
-                theme::thinking_bullet_style(),
-            ),
-            Span::styled(
-                "Working...".to_string(),
-                theme::thinking_time_style(),
-            ),
+            Span::styled(format!("{} ", spinner), theme::thinking_bullet_style()),
+            Span::styled("Working...".to_string(), theme::thinking_time_style()),
         ]));
     }
 
@@ -577,7 +536,10 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
     spans.push(Span::styled(" · ", theme::status_bar_style()));
 
     // 2. Provider
-    spans.push(Span::styled(app.provider.clone(), theme::status_accent_style()));
+    spans.push(Span::styled(
+        app.provider.clone(),
+        theme::status_accent_style(),
+    ));
     spans.push(Span::styled(" · ", theme::status_bar_style()));
 
     // 3. MCP status (Styled RED_ORANGE without ◇ diamond symbol)
@@ -590,15 +552,9 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
             mcp_style,
         ));
     } else if mcp_failed == 0 {
-        spans.push(Span::styled(
-            format!("MCP {}✓", mcp_loaded),
-            mcp_style,
-        ));
+        spans.push(Span::styled(format!("MCP {}✓", mcp_loaded), mcp_style));
     } else {
-        spans.push(Span::styled(
-            format!("MCP {}✓ ", mcp_loaded),
-            mcp_style,
-        ));
+        spans.push(Span::styled(format!("MCP {}✓ ", mcp_loaded), mcp_style));
         spans.push(Span::styled(
             format!("{}✗", mcp_failed),
             theme::error_style(),
@@ -620,16 +576,15 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
 
 // ── Autocomplete Popup ──────────────────────────────────────────────────────
 
-fn render_autocomplete(
-    f: &mut Frame,
-    app: &RatatuiApp,
-    matches: &[(String, String)],
-    area: Rect,
-) {
+fn render_autocomplete(f: &mut Frame, app: &RatatuiApp, matches: &[(String, String)], area: Rect) {
     let mut popup_lines = Vec::new();
     let display_limit = 5;
     let start_idx = if let Some(idx) = app.selected_index {
-        if idx >= display_limit { idx - display_limit + 1 } else { 0 }
+        if idx >= display_limit {
+            idx - display_limit + 1
+        } else {
+            0
+        }
     } else {
         0
     };
@@ -642,17 +597,16 @@ fn render_autocomplete(
                 Span::styled("> ", theme::user_prefix_style()),
                 Span::styled(
                     format!("{:<30}", cmd),
-                    Style::default().fg(theme::RED_ORANGE).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme::RED_ORANGE)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(desc.as_str(), theme::status_accent_style()),
             ]));
         } else {
             popup_lines.push(Line::from(vec![
                 Span::styled("  ", Style::default()),
-                Span::styled(
-                    format!("{:<30}", cmd),
-                    theme::assistant_text_style(),
-                ),
+                Span::styled(format!("{:<30}", cmd), theme::assistant_text_style()),
                 Span::styled(desc.as_str(), theme::status_accent_style()),
             ]));
         }
@@ -675,43 +629,70 @@ fn render_model_menu(f: &mut Frame, app: &RatatuiApp, area: Rect) {
 
     // Header info line
     lines.push(Line::from(vec![
-        Span::styled("Current active model: ", Style::default().fg(theme::AURA_SLATE).bg(menu_bg)),
-        Span::styled(app.model.clone(), Style::default().fg(Color::White).bg(menu_bg)),
-        Span::styled(" | Provider: ", Style::default().fg(theme::AURA_SLATE).bg(menu_bg)),
-        Span::styled(app.provider.clone(), Style::default().fg(Color::White).bg(menu_bg)),
+        Span::styled(
+            "Current active model: ",
+            Style::default().fg(theme::AURA_SLATE).bg(menu_bg),
+        ),
+        Span::styled(
+            app.model.clone(),
+            Style::default().fg(Color::White).bg(menu_bg),
+        ),
+        Span::styled(
+            " | Provider: ",
+            Style::default().fg(theme::AURA_SLATE).bg(menu_bg),
+        ),
+        Span::styled(
+            app.provider.clone(),
+            Style::default().fg(Color::White).bg(menu_bg),
+        ),
     ]));
 
     // Title / Prompt line
     let prompt = match &app.model_select {
         ModelSelectState::ChoosingProvider { .. } => "> Choose an LLM provider:".to_string(),
-        ModelSelectState::FetchingModels { provider_display, .. } => {
+        ModelSelectState::FetchingModels {
+            provider_display, ..
+        } => {
             let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let frame = spinner[app.spinner_idx as usize % spinner.len()];
             format!("{} Fetching models from {}...", frame, provider_display)
         }
-        ModelSelectState::ChoosingModel { provider_display, .. } => {
+        ModelSelectState::ChoosingModel {
+            provider_display, ..
+        } => {
             format!("> Choose a model from {}:", provider_display)
         }
         _ => String::new(),
     };
     lines.push(Line::from(Span::styled(
         prompt,
-        Style::default().fg(theme::RED_ORANGE).add_modifier(Modifier::BOLD).bg(menu_bg),
+        Style::default()
+            .fg(theme::RED_ORANGE)
+            .add_modifier(Modifier::BOLD)
+            .bg(menu_bg),
     )));
 
     // Render list items
     let (items, selected_idx): (Vec<String>, usize) = match &app.model_select {
-        ModelSelectState::ChoosingProvider { providers, selected_idx } => {
-            let list = providers.iter().map(|(_, display)| display.clone()).collect::<Vec<_>>();
+        ModelSelectState::ChoosingProvider {
+            providers,
+            selected_idx,
+        } => {
+            let list = providers
+                .iter()
+                .map(|(_, display)| display.clone())
+                .collect::<Vec<_>>();
             (list, *selected_idx)
         }
         ModelSelectState::FetchingModels { .. } => {
             // Show loading placeholder
             (vec!["  Loading available models...".to_string()], 0)
         }
-        ModelSelectState::ChoosingModel { models, selected_idx, .. } => {
-            (models.clone(), *selected_idx)
-        }
+        ModelSelectState::ChoosingModel {
+            models,
+            selected_idx,
+            ..
+        } => (models.clone(), *selected_idx),
         _ => (Vec::new(), 0),
     };
 
@@ -728,16 +709,28 @@ fn render_model_menu(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         let is_selected = selected_idx == i;
         if is_selected {
             lines.push(Line::from(vec![
-                Span::styled("> ", Style::default().fg(theme::RED_ORANGE).add_modifier(Modifier::BOLD).bg(menu_bg)),
+                Span::styled(
+                    "> ",
+                    Style::default()
+                        .fg(theme::RED_ORANGE)
+                        .add_modifier(Modifier::BOLD)
+                        .bg(menu_bg),
+                ),
                 Span::styled(
                     items[i].clone(),
-                    Style::default().fg(theme::RED_ORANGE).add_modifier(Modifier::BOLD).bg(menu_bg),
+                    Style::default()
+                        .fg(theme::RED_ORANGE)
+                        .add_modifier(Modifier::BOLD)
+                        .bg(menu_bg),
                 ),
             ]));
         } else {
             lines.push(Line::from(vec![
                 Span::styled("  ", Style::default().bg(menu_bg)),
-                Span::styled(items[i].clone(), Style::default().fg(Color::White).bg(menu_bg)),
+                Span::styled(
+                    items[i].clone(),
+                    Style::default().fg(Color::White).bg(menu_bg),
+                ),
             ]));
         }
     }

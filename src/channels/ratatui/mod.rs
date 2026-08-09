@@ -1,6 +1,6 @@
 pub mod app;
-pub mod ui;
 pub mod theme;
+pub mod ui;
 
 use anyhow::Result;
 use app::{ChatMessage, IS_RATATUI_ACTIVE};
@@ -84,18 +84,21 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     // Load selected session history into Ratatui conversation stream
     if let Ok(session) = session_manager.load(&session_key) {
         for msg in session.messages {
-            app.messages.push(ChatMessage::simple(&msg.role, msg.content));
+            app.messages
+                .push(ChatMessage::simple(&msg.role, msg.content));
         }
     }
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChatMessage>();
     // Channel for async model list fetching
-    let (model_tx, mut model_rx) = tokio::sync::mpsc::unbounded_channel::<(String, String, Vec<String>)>();
+    let (model_tx, mut model_rx) =
+        tokio::sync::mpsc::unbounded_channel::<(String, String, Vec<String>)>();
 
     loop {
         // Drain any async model fetch results
         while let Ok((prov_name, prov_display, fetched_models)) = model_rx.try_recv() {
-            if matches!(&app.model_select, app::ModelSelectState::FetchingModels { provider_name, .. } if provider_name == &prov_name) {
+            if matches!(&app.model_select, app::ModelSelectState::FetchingModels { provider_name, .. } if provider_name == &prov_name)
+            {
                 let mut models_list = fetched_models;
                 models_list.push("Type manually (Custom Model)".to_string());
                 models_list.push("Exit".to_string());
@@ -131,13 +134,18 @@ pub async fn handle_ratatui_tui() -> Result<()> {
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && key.code == KeyCode::Char('c')
+                    {
                         break;
                     }
 
                     // Intercept key events for active interactive model selection menu
                     match &mut app.model_select {
-                        app::ModelSelectState::ChoosingProvider { providers, selected_idx } => {
+                        app::ModelSelectState::ChoosingProvider {
+                            providers,
+                            selected_idx,
+                        } => {
                             match key.code {
                                 KeyCode::Up => {
                                     if *selected_idx > 0 {
@@ -157,8 +165,9 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     app.model_select = app::ModelSelectState::Closed;
                                 }
                                 KeyCode::Enter => {
-                                    let (prov_name, prov_display) = providers[*selected_idx].clone();
-                                    
+                                    let (prov_name, prov_display) =
+                                        providers[*selected_idx].clone();
+
                                     // Set FetchingModels state and spawn async model fetch
                                     app.model_select = app::ModelSelectState::FetchingModels {
                                         provider_name: prov_name.clone(),
@@ -168,24 +177,39 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     let fetch_prov = prov_name.clone();
                                     let fetch_display = prov_display.clone();
                                     tokio::spawn(async move {
-                                        let config = crate::config::loader::load_config().unwrap_or_default();
+                                        let config = crate::config::loader::load_config()
+                                            .unwrap_or_default();
                                         let mut models = Vec::new();
                                         // Try live API fetch first
-                                        if let Some(api_models) = crate::channels::fetch_provider_models(&fetch_prov, &config).await {
+                                        if let Some(api_models) =
+                                            crate::channels::fetch_provider_models(
+                                                &fetch_prov,
+                                                &config,
+                                            )
+                                            .await
+                                        {
                                             models = api_models;
                                         }
                                         // Merge curated fallbacks (deduped)
                                         let curated = app::curated_models_for(&fetch_prov);
                                         for m in curated {
-                                            if !models.iter().any(|existing| existing.eq_ignore_ascii_case(&m)) {
+                                            if !models
+                                                .iter()
+                                                .any(|existing| existing.eq_ignore_ascii_case(&m))
+                                            {
                                                 models.push(m);
                                             }
                                         }
                                         // Also include custom default_model from config
-                                        if let Some(dm) = config.get_provider_config(&fetch_prov)
+                                        if let Some(dm) = config
+                                            .get_provider_config(&fetch_prov)
                                             .and_then(|p| p.default_model.clone())
-                                            .filter(|m| !m.trim().is_empty()) {
-                                            if !models.iter().any(|existing| existing.eq_ignore_ascii_case(&dm)) {
+                                            .filter(|m| !m.trim().is_empty())
+                                        {
+                                            if !models
+                                                .iter()
+                                                .any(|existing| existing.eq_ignore_ascii_case(&dm))
+                                            {
                                                 models.push(dm);
                                             }
                                         }
@@ -203,7 +227,12 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                             }
                             continue;
                         }
-                        app::ModelSelectState::ChoosingModel { provider_name, provider_display, models, selected_idx } => {
+                        app::ModelSelectState::ChoosingModel {
+                            provider_name,
+                            provider_display,
+                            models,
+                            selected_idx,
+                        } => {
                             match key.code {
                                 KeyCode::Up => {
                                     if *selected_idx > 0 {
@@ -226,7 +255,9 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     if *selected_idx == models.len() - 1 {
                                         // Exit selected
                                         app.model_select = app::ModelSelectState::Closed;
-                                    } else if models[*selected_idx] == "Type manually (Custom Model)" {
+                                    } else if models[*selected_idx]
+                                        == "Type manually (Custom Model)"
+                                    {
                                         // Switch to custom model input mode — put prefix in input box
                                         let prov = provider_name.clone();
                                         app.model_select = app::ModelSelectState::Closed;
@@ -237,7 +268,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         let selected_model = models[*selected_idx].clone();
                                         let prov = provider_name.clone();
                                         let prov_display_str = provider_display.clone();
-                                        
+
                                         // Apply the choice to config and agent loop
                                         use crate::config::loader::{load_config, save_config};
                                         match load_config() {
@@ -267,12 +298,21 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                         }
                                                     }
                                                     Err(e) => {
-                                                        app.messages.push(ChatMessage::simple("assistant", format!("⚠ Failed to save config: {}", e)));
+                                                        app.messages.push(ChatMessage::simple(
+                                                            "assistant",
+                                                            format!(
+                                                                "⚠ Failed to save config: {}",
+                                                                e
+                                                            ),
+                                                        ));
                                                     }
                                                 }
                                             }
                                             Err(e) => {
-                                                app.messages.push(ChatMessage::simple("assistant", format!("⚠ Failed to load config: {}", e)));
+                                                app.messages.push(ChatMessage::simple(
+                                                    "assistant",
+                                                    format!("⚠ Failed to load config: {}", e),
+                                                ));
                                             }
                                         }
                                         app.model_select = app::ModelSelectState::Closed;
@@ -410,7 +450,10 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                 let configured = app::build_configured_providers(&config);
                                 app.model_select = app::ModelSelectState::ChoosingProvider {
                                     providers: if configured.is_empty() {
-                                        app::PROVIDER_REGISTRY.iter().map(|p| (p.name.to_string(), p.display.to_string())).collect()
+                                        app::PROVIDER_REGISTRY
+                                            .iter()
+                                            .map(|p| (p.name.to_string(), p.display.to_string()))
+                                            .collect()
                                     } else {
                                         configured
                                     },
@@ -423,11 +466,16 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                 continue;
                             }
 
-                            if is_menu_selection && (trimmed.starts_with("/model ") || trimmed.starts_with("/models ")) {
+                            if is_menu_selection
+                                && (trimmed.starts_with("/model ")
+                                    || trimmed.starts_with("/models "))
+                            {
                                 let parts: Vec<&str> = trimmed.split_whitespace().collect();
                                 if parts.len() == 2 {
                                     let prov = parts[1];
-                                    if let Some(reg) = app::PROVIDER_REGISTRY.iter().find(|r| r.name == prov) {
+                                    if let Some(reg) =
+                                        app::PROVIDER_REGISTRY.iter().find(|r| r.name == prov)
+                                    {
                                         // Go to FetchingModels state and spawn async fetch
                                         let prov_name = reg.name.to_string();
                                         let prov_display = reg.display.to_string();
@@ -437,18 +485,28 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         };
                                         let fetch_tx = model_tx.clone();
                                         tokio::spawn(async move {
-                                            let config = crate::config::loader::load_config().unwrap_or_default();
+                                            let config = crate::config::loader::load_config()
+                                                .unwrap_or_default();
                                             let mut models = Vec::new();
-                                            if let Some(api_models) = crate::channels::fetch_provider_models(&prov_name, &config).await {
+                                            if let Some(api_models) =
+                                                crate::channels::fetch_provider_models(
+                                                    &prov_name, &config,
+                                                )
+                                                .await
+                                            {
                                                 models = api_models;
                                             }
                                             let curated = app::curated_models_for(&prov_name);
                                             for m in curated {
-                                                if !models.iter().any(|e| e.eq_ignore_ascii_case(&m)) {
+                                                if !models
+                                                    .iter()
+                                                    .any(|e| e.eq_ignore_ascii_case(&m))
+                                                {
                                                     models.push(m);
                                                 }
                                             }
-                                            let _ = fetch_tx.send((prov_name, prov_display, models));
+                                            let _ =
+                                                fetch_tx.send((prov_name, prov_display, models));
                                         });
                                         app.typed_input.clear();
                                         app.cursor_idx = 0;
@@ -457,27 +515,41 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         continue;
                                     } else {
                                         // Check custom providers
-                                        let config = crate::config::loader::load_config().unwrap_or_default();
+                                        let config = crate::config::loader::load_config()
+                                            .unwrap_or_default();
                                         if config.is_provider_available(prov) {
                                             let prov_name = prov.to_string();
                                             let prov_display = format!("Custom: {}", prov);
-                                            app.model_select = app::ModelSelectState::FetchingModels {
-                                                provider_name: prov_name.clone(),
-                                                provider_display: prov_display.clone(),
-                                            };
+                                            app.model_select =
+                                                app::ModelSelectState::FetchingModels {
+                                                    provider_name: prov_name.clone(),
+                                                    provider_display: prov_display.clone(),
+                                                };
                                             let fetch_tx = model_tx.clone();
                                             tokio::spawn(async move {
-                                                let config = crate::config::loader::load_config().unwrap_or_default();
+                                                let config = crate::config::loader::load_config()
+                                                    .unwrap_or_default();
                                                 let mut models = Vec::new();
-                                                if let Some(api_models) = crate::channels::fetch_provider_models(&prov_name, &config).await {
+                                                if let Some(api_models) =
+                                                    crate::channels::fetch_provider_models(
+                                                        &prov_name, &config,
+                                                    )
+                                                    .await
+                                                {
                                                     models = api_models;
                                                 }
                                                 if models.is_empty() {
-                                                    if let Some(dm) = config.custom_provider_default_model(&prov_name) {
+                                                    if let Some(dm) = config
+                                                        .custom_provider_default_model(&prov_name)
+                                                    {
                                                         models.push(dm);
                                                     }
                                                 }
-                                                let _ = fetch_tx.send((prov_name, prov_display, models));
+                                                let _ = fetch_tx.send((
+                                                    prov_name,
+                                                    prov_display,
+                                                    models,
+                                                ));
                                             });
                                             app.typed_input.clear();
                                             app.cursor_idx = 0;
@@ -511,61 +583,100 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     app.messages.clear();
                                     app.scroll_offset = 0;
                                 } else if trimmed == "/help" {
-                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    app.messages
+                                        .push(ChatMessage::simple("user", input_str.clone()));
                                     let mut help_msg = String::from("Available Slash Commands:\n");
                                     for (cmd, desc) in app::SLASH_COMMANDS {
                                         help_msg.push_str(&format!("  {:<18} {}\n", cmd, desc));
                                     }
-                                    help_msg.push_str("  /load <key>        Load a session from history\n");
-                                    app.messages.push(ChatMessage::simple("assistant", help_msg));
+                                    help_msg.push_str(
+                                        "  /load <key>        Load a session from history\n",
+                                    );
+                                    app.messages
+                                        .push(ChatMessage::simple("assistant", help_msg));
                                 } else if trimmed == "/mcps" {
-                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    app.messages
+                                        .push(ChatMessage::simple("user", input_str.clone()));
                                     let mut mcp_msg = String::from("Configured MCP Servers:\n");
                                     let loop_guard = agent_loop.lock().await;
                                     if loop_guard.config.mcp_servers.is_empty() {
                                         mcp_msg.push_str("  No MCP servers configured.\n");
                                     } else {
                                         for (name, mcp_cfg) in &loop_guard.config.mcp_servers {
-                                            let status = if mcp_cfg.enabled { "enabled" } else { "disabled" };
-                                            mcp_msg.push_str(&format!("  • {} ({}) - {}\n", name, status, mcp_cfg.command));
+                                            let status = if mcp_cfg.enabled {
+                                                "enabled"
+                                            } else {
+                                                "disabled"
+                                            };
+                                            mcp_msg.push_str(&format!(
+                                                "  • {} ({}) - {}\n",
+                                                name, status, mcp_cfg.command
+                                            ));
                                         }
                                     }
                                     app.messages.push(ChatMessage::simple("assistant", mcp_msg));
                                 } else if trimmed == "/settings" {
-                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    app.messages
+                                        .push(ChatMessage::simple("user", input_str.clone()));
                                     let mut settings_msg = String::from("Active Settings:\n");
-                                    settings_msg.push_str(&format!("  Model:          {}\n", app.model));
-                                    settings_msg.push_str(&format!("  Provider:       {}\n", app.provider));
-                                    settings_msg.push_str(&format!("  CWD:            {}\n", app.cwd_display));
-                                    settings_msg.push_str(&format!("  Session Key:    {}\n", app.session_key));
-                                    app.messages.push(ChatMessage::simple("assistant", settings_msg));
+                                    settings_msg
+                                        .push_str(&format!("  Model:          {}\n", app.model));
+                                    settings_msg
+                                        .push_str(&format!("  Provider:       {}\n", app.provider));
+                                    settings_msg.push_str(&format!(
+                                        "  CWD:            {}\n",
+                                        app.cwd_display
+                                    ));
+                                    settings_msg.push_str(&format!(
+                                        "  Session Key:    {}\n",
+                                        app.session_key
+                                    ));
+                                    app.messages
+                                        .push(ChatMessage::simple("assistant", settings_msg));
                                 } else if trimmed == "/skill" {
-                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    app.messages
+                                        .push(ChatMessage::simple("user", input_str.clone()));
                                     let mut skill_msg = String::new();
                                     match crate::agent::skills::load_skills() {
                                         Ok(skills) => {
                                             if skills.is_empty() {
-                                                skill_msg.push_str("No active skills found in ~/.openz/skills\n");
+                                                skill_msg.push_str(
+                                                    "No active skills found in ~/.openz/skills\n",
+                                                );
                                             } else {
                                                 skill_msg.push_str("Active skills:\n");
                                                 for skill in skills {
-                                                    skill_msg.push_str(&format!("  • {}\n", skill.name));
+                                                    skill_msg
+                                                        .push_str(&format!("  • {}\n", skill.name));
                                                 }
                                             }
                                         }
                                         Err(e) => {
-                                            skill_msg.push_str(&format!("Error loading skills: {}\n", e));
+                                            skill_msg.push_str(&format!(
+                                                "Error loading skills: {}\n",
+                                                e
+                                            ));
                                         }
                                     }
-                                    app.messages.push(ChatMessage::simple("assistant", skill_msg));
+                                    app.messages
+                                        .push(ChatMessage::simple("assistant", skill_msg));
                                 } else if trimmed == "/new-session" {
-                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
-                                    let _ = crate::cli::archive_current_session(&session_manager, &session_key).await;
+                                    app.messages
+                                        .push(ChatMessage::simple("user", input_str.clone()));
+                                    let _ = crate::cli::archive_current_session(
+                                        &session_manager,
+                                        &session_key,
+                                    )
+                                    .await;
                                     app.messages.clear();
                                     app.scroll_offset = 0;
-                                    app.messages.push(ChatMessage::simple("assistant", "Session reset. Started a new session.".to_string()));
+                                    app.messages.push(ChatMessage::simple(
+                                        "assistant",
+                                        "Session reset. Started a new session.".to_string(),
+                                    ));
                                 } else if trimmed == "/memory" {
-                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    app.messages
+                                        .push(ChatMessage::simple("user", input_str.clone()));
                                     let mut memory_msg = String::new();
                                     if let Ok(session) = session_manager.load(&session_key) {
                                         memory_msg.push_str("Session Metadata & Memory:\n");
@@ -579,19 +690,32 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     } else {
                                         memory_msg.push_str("No active session found.\n");
                                     }
-                                    app.messages.push(ChatMessage::simple("assistant", memory_msg));
+                                    app.messages
+                                        .push(ChatMessage::simple("assistant", memory_msg));
                                 } else if trimmed == "/streaming" {
-                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    app.messages
+                                        .push(ChatMessage::simple("user", input_str.clone()));
                                     let mut msg = String::new();
                                     match crate::config::loader::load_config() {
                                         Ok(mut cfg) => {
-                                            cfg.agents.defaults.streaming = !cfg.agents.defaults.streaming;
+                                            cfg.agents.defaults.streaming =
+                                                !cfg.agents.defaults.streaming;
                                             match crate::config::loader::save_config(&cfg) {
                                                 Ok(()) => {
-                                                    msg.push_str(&format!("Response streaming is now {}.", if cfg.agents.defaults.streaming { "enabled" } else { "disabled" }));
+                                                    msg.push_str(&format!(
+                                                        "Response streaming is now {}.",
+                                                        if cfg.agents.defaults.streaming {
+                                                            "enabled"
+                                                        } else {
+                                                            "disabled"
+                                                        }
+                                                    ));
                                                 }
                                                 Err(e) => {
-                                                    msg.push_str(&format!("Failed to save config: {}", e));
+                                                    msg.push_str(&format!(
+                                                        "Failed to save config: {}",
+                                                        e
+                                                    ));
                                                 }
                                             }
                                         }
@@ -606,17 +730,27 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     let configured = app::build_configured_providers(&config);
                                     app.model_select = app::ModelSelectState::ChoosingProvider {
                                         providers: if configured.is_empty() {
-                                            app::PROVIDER_REGISTRY.iter().map(|p| (p.name.to_string(), p.display.to_string())).collect()
+                                            app::PROVIDER_REGISTRY
+                                                .iter()
+                                                .map(|p| {
+                                                    (p.name.to_string(), p.display.to_string())
+                                                })
+                                                .collect()
                                         } else {
                                             configured
                                         },
                                         selected_idx: 0,
                                     };
-                                } else if trimmed.starts_with("/model ") || trimmed.starts_with("/models ") {
+                                } else if trimmed.starts_with("/model ")
+                                    || trimmed.starts_with("/models ")
+                                {
                                     let model_arg = trimmed
-                                        .strip_prefix("/models").or_else(|| trimmed.strip_prefix("/model"))
-                                        .unwrap_or("").trim();
-                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                        .strip_prefix("/models")
+                                        .or_else(|| trimmed.strip_prefix("/model"))
+                                        .unwrap_or("")
+                                        .trim();
+                                    app.messages
+                                        .push(ChatMessage::simple("user", input_str.clone()));
                                     if model_arg.is_empty() {
                                         app.messages.push(ChatMessage::simple("assistant", format!("Active Model: {}\nUse '/model' to open the interactive selector.", app.model)));
                                     } else {
@@ -635,7 +769,10 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                     cfg.agents.defaults.provider = prov.to_string();
                                                     cfg.agents.defaults.model = mdl.to_string();
                                                     if let Err(e) = save_config(&cfg) {
-                                                        app.messages.push(ChatMessage::simple("assistant", format!("Error saving config: {}", e)));
+                                                        app.messages.push(ChatMessage::simple(
+                                                            "assistant",
+                                                            format!("Error saving config: {}", e),
+                                                        ));
                                                     } else {
                                                         match crate::providers::resolver::resolve_provider_full(&cfg, mdl) {
                                                             Ok(resolved) => {
@@ -658,13 +795,17 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    app.messages.push(ChatMessage::simple("assistant", format!("Error loading config: {}", e)));
+                                                    app.messages.push(ChatMessage::simple(
+                                                        "assistant",
+                                                        format!("Error loading config: {}", e),
+                                                    ));
                                                 }
                                             }
                                         }
                                     }
                                 } else if trimmed == "/history" {
-                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    app.messages
+                                        .push(ChatMessage::simple("user", input_str.clone()));
                                     let mut hist_msg = String::from("Available Sessions:\n");
                                     match crate::cli::load_session_history() {
                                         Ok(history) => {
@@ -672,88 +813,154 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                 hist_msg.push_str("  No session history found.\n");
                                             } else {
                                                 for item in history {
-                                                    hist_msg.push_str(&format!("  • Key: {} | Title: {}\n", item.key, item.display_title));
+                                                    hist_msg.push_str(&format!(
+                                                        "  • Key: {} | Title: {}\n",
+                                                        item.key, item.display_title
+                                                    ));
                                                 }
                                                 hist_msg.push_str("\nTo load a session, use: /load <session_key>\n");
                                             }
                                         }
                                         Err(e) => {
-                                            hist_msg.push_str(&format!("  Error loading history: {}\n", e));
+                                            hist_msg.push_str(&format!(
+                                                "  Error loading history: {}\n",
+                                                e
+                                            ));
                                         }
                                     }
-                                    app.messages.push(ChatMessage::simple("assistant", hist_msg));
+                                    app.messages
+                                        .push(ChatMessage::simple("assistant", hist_msg));
                                 } else if trimmed.starts_with("/load") {
                                     let key = trimmed.strip_prefix("/load").unwrap_or("").trim();
-                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    app.messages
+                                        .push(ChatMessage::simple("user", input_str.clone()));
                                     if key.is_empty() {
-                                        app.messages.push(ChatMessage::simple("assistant", "Usage: /load <session_key>".to_string()));
+                                        app.messages.push(ChatMessage::simple(
+                                            "assistant",
+                                            "Usage: /load <session_key>".to_string(),
+                                        ));
                                     } else {
-                                        let _ = crate::cli::archive_current_session(&session_manager, &session_key).await;
+                                        let _ = crate::cli::archive_current_session(
+                                            &session_manager,
+                                            &session_key,
+                                        )
+                                        .await;
                                         match session_manager.load(key) {
                                             Ok(session) => {
                                                 app.messages.clear();
                                                 app.scroll_offset = 0;
                                                 for msg in session.messages {
-                                                    app.messages.push(ChatMessage::simple(&msg.role, msg.content));
+                                                    app.messages.push(ChatMessage::simple(
+                                                        &msg.role,
+                                                        msg.content,
+                                                    ));
                                                 }
-                                                app.messages.push(ChatMessage::simple("assistant", format!("Loaded session: {}", key)));
+                                                app.messages.push(ChatMessage::simple(
+                                                    "assistant",
+                                                    format!("Loaded session: {}", key),
+                                                ));
                                             }
                                             Err(e) => {
-                                                app.messages.push(ChatMessage::simple("assistant", format!("Error loading session {}: {}", key, e)));
+                                                app.messages.push(ChatMessage::simple(
+                                                    "assistant",
+                                                    format!("Error loading session {}: {}", key, e),
+                                                ));
                                             }
                                         }
                                     }
                                 } else if trimmed.starts_with("/sources") {
-                                    let query = trimmed.strip_prefix("/sources").unwrap_or("").trim();
-                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    let query =
+                                        trimmed.strip_prefix("/sources").unwrap_or("").trim();
+                                    app.messages
+                                        .push(ChatMessage::simple("user", input_str.clone()));
                                     let mut sources_msg = String::new();
-                                    match crate::tools::shared_memory::search_source_bookmarks(query, 10).await {
+                                    match crate::tools::shared_memory::search_source_bookmarks(
+                                        query, 10,
+                                    )
+                                    .await
+                                    {
                                         Ok(items) if items.is_empty() => {
                                             sources_msg.push_str("No saved sources matched.\n");
                                         }
                                         Ok(items) => {
                                             sources_msg.push_str("Saved sources:\n");
                                             for item in items {
-                                                sources_msg.push_str(&format!("  • {} [{}] {}\n", item.label, item.kind, item.uri));
+                                                sources_msg.push_str(&format!(
+                                                    "  • {} [{}] {}\n",
+                                                    item.label, item.kind, item.uri
+                                                ));
                                                 if !item.summary.trim().is_empty() {
-                                                    sources_msg.push_str(&format!("    {}\n", item.summary.trim()));
+                                                    sources_msg.push_str(&format!(
+                                                        "    {}\n",
+                                                        item.summary.trim()
+                                                    ));
                                                 }
                                             }
                                         }
                                         Err(e) => {
-                                            sources_msg.push_str(&format!("Error searching sources: {}\n", e));
+                                            sources_msg.push_str(&format!(
+                                                "Error searching sources: {}\n",
+                                                e
+                                            ));
                                         }
                                     }
-                                    app.messages.push(ChatMessage::simple("assistant", sources_msg));
+                                    app.messages
+                                        .push(ChatMessage::simple("assistant", sources_msg));
                                 } else if trimmed.starts_with("/workflows") {
-                                    let query = trimmed.strip_prefix("/workflows").unwrap_or("").trim();
-                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                    let query =
+                                        trimmed.strip_prefix("/workflows").unwrap_or("").trim();
+                                    app.messages
+                                        .push(ChatMessage::simple("user", input_str.clone()));
                                     let mut workflows_msg = String::new();
-                                    match crate::tools::shared_memory::search_workflow_cards(query, 10, false).await {
+                                    match crate::tools::shared_memory::search_workflow_cards(
+                                        query, 10, false,
+                                    )
+                                    .await
+                                    {
                                         Ok(items) if items.is_empty() => {
-                                            workflows_msg.push_str("No reusable workflows matched.\n");
+                                            workflows_msg
+                                                .push_str("No reusable workflows matched.\n");
                                         }
                                         Ok(items) => {
                                             workflows_msg.push_str("Reusable workflows:\n");
                                             for item in items {
                                                 workflows_msg.push_str(&format!(
                                                     "  • {} [{}] success={} failure={}\n    {}\n",
-                                                    item.name, item.status, item.success_count, item.failure_count, item.summary.trim()
+                                                    item.name,
+                                                    item.status,
+                                                    item.success_count,
+                                                    item.failure_count,
+                                                    item.summary.trim()
                                                 ));
                                             }
                                         }
                                         Err(e) => {
-                                            workflows_msg.push_str(&format!("Error searching workflows: {}\n", e));
+                                            workflows_msg.push_str(&format!(
+                                                "Error searching workflows: {}\n",
+                                                e
+                                            ));
                                         }
                                     }
-                                    app.messages.push(ChatMessage::simple("assistant", workflows_msg));
+                                    app.messages
+                                        .push(ChatMessage::simple("assistant", workflows_msg));
                                 } else if trimmed.starts_with('/') {
-                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
-                                    app.messages.push(ChatMessage::simple("assistant", format!("Executed slash command: {}. Type /help for options.", trimmed)));
+                                    app.messages
+                                        .push(ChatMessage::simple("user", input_str.clone()));
+                                    app.messages.push(ChatMessage::simple(
+                                        "assistant",
+                                        format!(
+                                            "Executed slash command: {}. Type /help for options.",
+                                            trimmed
+                                        ),
+                                    ));
                                 } else {
                                     // Standard User Prompt -> Dispatch to AgentLoop
-                                    app.messages.push(ChatMessage::simple("user", input_str.clone()));
-                                    app.messages.push(ChatMessage::simple("assistant", "⏳ OpenZ is thinking...".to_string()));
+                                    app.messages
+                                        .push(ChatMessage::simple("user", input_str.clone()));
+                                    app.messages.push(ChatMessage::simple(
+                                        "assistant",
+                                        "⏳ OpenZ is thinking...".to_string(),
+                                    ));
                                     app.is_thinking = true;
 
                                     let agent_loop_clone = agent_loop.clone();
@@ -763,12 +970,19 @@ pub async fn handle_ratatui_tui() -> Result<()> {
 
                                     tokio::spawn(async move {
                                         let loop_guard = agent_loop_clone.lock().await;
-                                        match loop_guard.run(&prompt_text, &session_key_clone).await {
+                                        match loop_guard.run(&prompt_text, &session_key_clone).await
+                                        {
                                             Ok(res) => {
-                                                let _ = tx_clone.send(ChatMessage::simple("assistant", res.content));
+                                                let _ = tx_clone.send(ChatMessage::simple(
+                                                    "assistant",
+                                                    res.content,
+                                                ));
                                             }
                                             Err(err) => {
-                                                let _ = tx_clone.send(ChatMessage::simple("assistant", format!("⚠ Error: {}", err)));
+                                                let _ = tx_clone.send(ChatMessage::simple(
+                                                    "assistant",
+                                                    format!("⚠ Error: {}", err),
+                                                ));
                                             }
                                         }
                                     });

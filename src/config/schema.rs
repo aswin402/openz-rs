@@ -6,6 +6,10 @@ use std::collections::HashMap;
 pub struct ProviderConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "api_key_env")]
+    pub api_key_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "api_key_file")]
+    pub api_key_file: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_base: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -488,6 +492,29 @@ impl Default for ResearchConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GitIntegrationConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "token_env")]
+    pub token_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "token_file")]
+    pub token_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_base: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct IntegrationsConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github: Option<GitIntegrationConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gitlab: Option<GitIntegrationConfig>,
+    #[serde(flatten)]
+    pub others: HashMap<String, GitIntegrationConfig>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -504,6 +531,8 @@ pub struct Config {
     pub skills: SkillsConfig,
     #[serde(default)]
     pub research: ResearchConfig,
+    #[serde(default)]
+    pub integrations: IntegrationsConfig,
 }
 
 impl Default for ChannelsConfig {
@@ -556,6 +585,7 @@ impl Default for Config {
             embeddings: Some(EmbeddingsConfig::default()),
             skills: SkillsConfig::default(),
             research: ResearchConfig::default(),
+            integrations: IntegrationsConfig::default(),
         }
     }
 }
@@ -768,10 +798,23 @@ fn provider_def(provider_name: &str) -> Option<&'static ProviderDef> {
         .find(|def| def.names.iter().any(|name| *name == provider_name))
 }
 
+fn read_secret_file(path: &str) -> Option<String> {
+    let path = crate::config::loader::resolve_path(path);
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn configured_key(provider: Option<&ProviderConfig>) -> Option<String> {
-    provider
-        .and_then(|p| p.api_key.clone())
-        .filter(|key| !key.trim().is_empty())
+    provider.and_then(|p| {
+        p.api_key_env
+            .as_deref()
+            .and_then(|env| std::env::var(env).ok())
+            .filter(|key| !key.trim().is_empty())
+            .or_else(|| p.api_key_file.as_deref().and_then(read_secret_file))
+            .or_else(|| p.api_key.clone().filter(|key| !key.trim().is_empty()))
+    })
 }
 
 fn env_key(env_keys: &[&str]) -> Option<String> {
@@ -813,8 +856,8 @@ impl Config {
             let key = if def.local {
                 String::new()
             } else {
-                configured_key(provider)
-                    .or_else(|| env_key(def.env_keys))
+                env_key(def.env_keys)
+                    .or_else(|| configured_key(provider))
                     .unwrap_or_default()
             };
             let base = provider
@@ -828,12 +871,10 @@ impl Config {
         };
         let base = provider.api_base.clone().unwrap_or_default();
         let env_var = custom_provider_env_key(provider_name);
-        let key = configured_key(Some(provider))
-            .or_else(|| {
-                std::env::var(env_var)
-                    .ok()
-                    .filter(|key| !key.trim().is_empty())
-            })
+        let key = std::env::var(env_var)
+            .ok()
+            .filter(|key| !key.trim().is_empty())
+            .or_else(|| configured_key(Some(provider)))
             .unwrap_or_default();
         (key, base)
     }
@@ -1067,12 +1108,48 @@ mod provider_resolution_tests {
     }
 
     #[test]
+    fn resolve_provider_config_prefers_env_and_supports_configured_env_reference() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::set_var("OPENAI_API_KEY", "env-openai-key");
+        std::env::set_var("OPENZ_TEST_PROVIDER_KEY", "referenced-provider-key");
+
+        let mut config = blank_config();
+        config.providers.openai = Some(ProviderConfig {
+            api_key: Some("stored-openai-key".to_string()),
+            api_key_env: None,
+            api_key_file: None,
+            api_base: None,
+            default_model: None,
+            extra: HashMap::new(),
+        });
+        config.providers.openrouter = Some(ProviderConfig {
+            api_key: None,
+            api_key_env: Some("OPENZ_TEST_PROVIDER_KEY".to_string()),
+            api_key_file: None,
+            api_base: None,
+            default_model: None,
+            extra: HashMap::new(),
+        });
+
+        assert_eq!(config.resolve_provider_config("openai").0, "env-openai-key");
+        assert_eq!(
+            config.resolve_provider_config("openrouter").0,
+            "referenced-provider-key"
+        );
+
+        std::env::remove_var("OPENAI_API_KEY");
+        std::env::remove_var("OPENZ_TEST_PROVIDER_KEY");
+    }
+
+    #[test]
     fn resolve_provider_config_uses_table_aliases_and_defaults() {
         let _guard = env_lock().lock().unwrap();
         std::env::remove_var("Z_AI_API_KEY");
         let mut config = blank_config();
         config.providers.z_ai = Some(ProviderConfig {
             api_key: Some("z-key".to_string()),
+            api_key_env: None,
+            api_key_file: None,
             api_base: None,
             default_model: None,
             extra: HashMap::new(),
@@ -1125,6 +1202,8 @@ mod provider_resolution_tests {
             "mivi",
             ProviderConfig {
                 api_key: Some("local".to_string()),
+                api_key_env: None,
+                api_key_file: None,
                 api_base: Some("http://127.0.0.1:8000/v1".to_string()),
                 default_model: Some("mivi llm".to_string()),
                 extra: HashMap::new(),
@@ -1149,6 +1228,8 @@ mod provider_resolution_tests {
             "local_ai".to_string(),
             ProviderConfig {
                 api_key: None,
+                api_key_env: None,
+                api_key_file: None,
                 api_base: Some("http://127.0.0.1:9999/v1".to_string()),
                 default_model: Some("local-model".to_string()),
                 extra: HashMap::new(),

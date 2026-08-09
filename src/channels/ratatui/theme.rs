@@ -30,7 +30,9 @@ pub fn user_prefix_style() -> Style {
 
 /// Style for user message text
 pub fn user_text_style() -> Style {
-    Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD)
 }
 
 /// Style for assistant/default text
@@ -60,7 +62,9 @@ pub fn tool_bullet_style() -> Style {
 
 /// Style for tool name
 pub fn tool_name_style() -> Style {
-    Style::default().fg(LIGHT_WHITE).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(LIGHT_WHITE)
+        .add_modifier(Modifier::BOLD)
 }
 
 /// Style for tool args/details
@@ -120,7 +124,9 @@ pub fn warning_style() -> Style {
 
 /// Style for markdown headings
 pub fn heading_style() -> Style {
-    Style::default().fg(HEADING_BLUE).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(HEADING_BLUE)
+        .add_modifier(Modifier::BOLD)
 }
 
 /// Style for inline code

@@ -35,6 +35,8 @@ pub fn update_provider_key(config: &mut Config, provider_name: &str, api_key: St
         .cloned()
         .unwrap_or_else(|| ProviderConfig {
             api_key: None,
+            api_key_env: None,
+            api_key_file: None,
             api_base: None,
             default_model: None,
             extra: std::collections::HashMap::new(),
@@ -146,6 +148,8 @@ async fn handle_custom_provider_form(
         &provider_name,
         ProviderConfig {
             api_key,
+            api_key_env: None,
+            api_key_file: None,
             api_base: Some(api_base),
             default_model: Some(default_model.clone()),
             extra: existing.map(|provider| provider.extra).unwrap_or_default(),
