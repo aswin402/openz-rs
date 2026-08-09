@@ -1,8 +1,17 @@
-### v0.0.121 (Latest Release)
+### v0.0.122 (Latest Release)
+**WebUI Session Drafts, Settings Parity, and Navigation Polish:**
+- **First-Load Draft Session**: WebUI now opens on the chat page with a visible `New Session` entry in the left sidebar, then promotes it to the saved backend session after the first message completes.
+- **Theme & Navigation Reliability**: Replaced full-page theme snapshots with color-only transitions and stabilized the right-side quick action rail so theme toggles no longer blank the app or hide the menu.
+- **Workspace Menus & Activity Panel**: Simplified the left sidebar around sessions/settings, moved workspace actions to the vertical right rail, and hide the rail while Agent Activity is open to prevent overlap.
+- **Settings Coverage**: Added WebUI editing and WebSocket persistence for workspace, context limit, tool output limit, TUI thought display, and the full built-in provider list.
+- **Gateway WebUI Delivery**: Rebuilt and synced the latest WebUI bundle to `~/.openz/web/dist` and kept local install/update scripts wired to refresh gateway assets automatically.
+
+### v0.0.121
 **WebUI Workspace Controls, Attachments, and Live Management:**
 - **Attachment-Aware Chat**: Added WebUI file selection, drag-and-drop validation, previews, and WebSocket transport so user turns can include persisted attachment metadata alongside text.
 - **Live Workspace Management**: Added richer Skills, Agents, Knowledge, Settings, and Dashboard workflows with searchable editors, page-level notices, JSON-safe config updates, protected default subagents, fallback models, and export controls.
 - **Agent Activity & Tool UX**: Added a desktop activity panel, improved tool execution cards with compact previews, timing metadata, copy controls, and clearer live execution state.
+- **Automatic Gateway WebUI Sync**: Updated `localinstall.sh` and `localupdate.sh` to build the WebUI and refresh `~/.openz/web/dist` automatically, with `--skip-webui-build` available for Rust-only installs.
 
 ### v0.0.120
 **Custom Providers UI, Identity Recall, and WebSocket Divergence Fixes:**

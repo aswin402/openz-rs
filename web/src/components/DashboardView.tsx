@@ -287,11 +287,11 @@ export const DashboardView: React.FC = () => {
             <h2 className="text-sm font-bold text-foreground">LLM Provider Integrations</h2>
           </div>
           <div className="space-y-3.5 max-h-[260px] overflow-y-auto pr-1">
-            {['openai', 'anthropic', 'deepseek', 'groq', 'openrouter', 'google_ai_studio', 'ollama'].map((provKey) => {
+            {['openai', 'anthropic', 'openrouter', 'deepseek', 'groq', 'ollama', 'minimax', 'mistral', 'z_ai', 'nvidia', 'opencode_zen', 'cerebras', 'google_ai_studio'].map((provKey) => {
               const cfg = isJsonObject(providersConfig[provKey]) ? providersConfig[provKey] : {};
               const apiBase = jsonString(cfg.api_base);
               const isConfigured = Boolean(jsonString(cfg.api_key));
-              const displayName = provKey === 'google_ai_studio' ? 'Google AI Studio' : provKey.toUpperCase();
+              const displayName = provKey === 'google_ai_studio' ? 'Google AI Studio' : provKey === 'z_ai' ? 'z.ai' : provKey === 'opencode_zen' ? 'OpenCode Zen' : provKey.toUpperCase();
               return (
                 <div key={provKey} className="flex items-center justify-between py-1 border-b border-border/10 last:border-0 text-xs">
                   <div className="flex flex-col">

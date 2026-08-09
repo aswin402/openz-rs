@@ -12,9 +12,11 @@ export function ThemeProvider({
 }: ThemeProviderProps) {
   const { theme } = useThemeStore();
   const isFirstMount = useRef(true);
+  const transitionTimerRef = useRef<number | null>(null);
 
   useLayoutEffect(() => {
     const root = window.document.documentElement;
+    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
 
     const updateTheme = () => {
       root.classList.remove('light', 'dark');
@@ -25,10 +27,12 @@ export function ThemeProvider({
           : 'light';
 
         root.classList.add(systemTheme);
+        root.style.colorScheme = systemTheme;
         return;
       }
 
       root.classList.add(theme);
+      root.style.colorScheme = theme;
     };
 
     if (isFirstMount.current) {
@@ -37,17 +41,30 @@ export function ThemeProvider({
       return;
     }
 
-    const supportsViewTransition = (document as any).startViewTransition !== undefined;
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    if (!supportsViewTransition || prefersReducedMotion) {
+    if (motionQuery.matches) {
       updateTheme();
       return;
     }
 
-    (document as any).startViewTransition(() => {
-      updateTheme();
-    });
+    if (transitionTimerRef.current !== null) {
+      window.clearTimeout(transitionTimerRef.current);
+    }
+
+    root.classList.add('theme-transitioning');
+    updateTheme();
+
+    transitionTimerRef.current = window.setTimeout(() => {
+      root.classList.remove('theme-transitioning');
+      transitionTimerRef.current = null;
+    }, 220);
+
+    return () => {
+      if (transitionTimerRef.current !== null) {
+        window.clearTimeout(transitionTimerRef.current);
+        transitionTimerRef.current = null;
+      }
+      root.classList.remove('theme-transitioning');
+    };
   }, [theme]);
 
   return (

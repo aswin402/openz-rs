@@ -66,6 +66,7 @@ export interface OpenZSession {
   createdAt: number;
   lastMessageAt: number;
   messageCount: number;
+  isDraft?: boolean;
 }
 
 export interface CognitiveNode {

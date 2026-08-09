@@ -18,6 +18,7 @@ echo "────────────────────────�
 LOW_RESOURCE=false
 BALANCED_RESOURCE=false
 CLEAN_TARGET=false
+SKIP_WEBUI_BUILD=false
 RUN_CHECK=true
 for arg in "$@"; do
     case "$arg" in
@@ -36,12 +37,16 @@ for arg in "$@"; do
         --clean-target)
             CLEAN_TARGET=true
             ;;
+        --skip-webui-build)
+            SKIP_WEBUI_BUILD=true
+            ;;
         --help|-h)
-            echo "Usage: ./localupdate.sh [--balanced] [--low-resource] [--clean-target] [--skip-check]"
+            echo "Usage: ./localupdate.sh [--balanced] [--low-resource] [--clean-target] [--skip-check] [--skip-webui-build]"
             echo "  --balanced, --moderate, -b     Moderate CPU/RAM mode: faster than low-resource, lighter than full release."
             echo "  --low-resource, --low-mem, -l  Minimum CPU/RAM mode for weak machines."
             echo "  --clean-target                 Run cargo clean before building to reclaim target/ disk space."
             echo "  --skip-check                   Skip pre-install cargo check (install still compiles)."
+            echo "  --skip-webui-build             Skip npm WebUI build and static bundle sync."
             echo "  --check                        Force pre-install cargo check."
             exit 0
             ;;
@@ -191,6 +196,32 @@ openz_version_line() {
     printf '%s' "${line:-unknown}"
 }
 
+
+build_and_install_webui() {
+    if [ "$SKIP_WEBUI_BUILD" = true ]; then
+        echo "⏭️ Skipping WebUI build (--skip-webui-build)."
+        return 0
+    fi
+
+    if [ ! -d "web" ] || [ ! -f "web/package.json" ]; then
+        echo "⚠️ WebUI source directory not found; skipping static bundle install."
+        return 0
+    fi
+
+    if ! command -v npm >/dev/null 2>&1; then
+        echo "⚠️ npm is not installed; skipping WebUI build and static bundle install."
+        return 0
+    fi
+
+    echo "🌐 Building WebUI production bundle..."
+    (cd web && npm run build)
+
+    echo "🌐 Installing WebUI static bundle into ~/.openz/web/dist..."
+    rm -rf "$HOME/.openz/web/dist"
+    mkdir -p "$HOME/.openz/web/dist"
+    cp -a web/dist/. "$HOME/.openz/web/dist/"
+}
+
 report_installed_binary() {
     local bin="$HOME/.cargo/bin/openz"
     if [ ! -x "$bin" ]; then
@@ -259,6 +290,9 @@ if ! cargo install $CARGO_FLAGS $CARGO_PROFILE_FLAG --locked --path .; then
     echo "⚠️ Online install failed (possibly crates.io registry timeout). Retrying in offline mode..."
     cargo install $CARGO_FLAGS $CARGO_PROFILE_FLAG --locked --path . --offline
 fi
+
+# 6. Build and sync the WebUI static bundle used by openz gateway.
+build_and_install_webui
 
 echo "────────────────────────────────"
 echo "✅ OpenZ updated successfully!"

@@ -228,26 +228,22 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
-/* Custom View Transition timing for GPU-accelerated theme switches */
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation-duration: 350ms;
-  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+/* Theme switches should only blend color tokens; root snapshots can hide live panels. */
+:root.theme-transitioning,
+:root.theme-transitioning *,
+:root.theme-transitioning *::before,
+:root.theme-transitioning *::after {
+  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Fallback color transitions for browsers that do not support View Transitions */
-@supports not (view-transition-name: root) {
-  .bg-background,
-  .bg-card,
-  .bg-muted,
-  .bg-secondary,
-  .text-foreground,
-  .text-muted-foreground,
-  .border-border {
-    transition: background-color 300ms cubic-bezier(0.4, 0, 0.2, 1),
-                border-color 300ms cubic-bezier(0.4, 0, 0.2, 1),
-                color 300ms cubic-bezier(0.4, 0, 0.2, 1),
-                box-shadow 300ms cubic-bezier(0.4, 0, 0.2, 1);
+@media (prefers-reduced-motion: reduce) {
+  :root.theme-transitioning,
+  :root.theme-transitioning *,
+  :root.theme-transitioning *::before,
+  :root.theme-transitioning *::after {
+    transition-duration: 0ms;
   }
 }
 

@@ -492,7 +492,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         if let Some(response_text) = crate::channels::session_command_text_response(
                             &state.agent_loop.session_manager,
                             &chat_id,
-                            content,
+                            &content,
                         )
                         .await
                         {
@@ -515,7 +515,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         }
 
                         if let Some(response_text) =
-                            crate::channels::model_switch_text_response(content)
+                            crate::channels::model_switch_text_response(&content)
                         {
                             let delta_evt = serde_json::json!({
                                 "event": "delta",
@@ -904,6 +904,18 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             if let Some(v) = defaults.get("bot_name").and_then(|v| v.as_str()) {
                                 d.bot_name = v.to_string();
                             }
+                            if let Some(v) = defaults.get("workspace").and_then(|v| v.as_str()) {
+                                d.workspace = v.to_string();
+                            }
+                            if let Some(v) = defaults.get("context_limit") {
+                                d.context_limit = v.as_u64().map(|n| n as usize);
+                            }
+                            if let Some(v) = defaults.get("tool_output_limit") {
+                                d.tool_output_limit = v.as_u64().map(|n| n as usize);
+                            }
+                            if let Some(v) = defaults.get("tui_thought_display").and_then(|v| v.as_str()) {
+                                d.tui_thought_display = v.to_string();
+                            }
                             if let Some(v) = defaults.get("max_messages").and_then(|v| v.as_u64()) {
                                 d.max_messages = v as usize;
                             }
@@ -1061,6 +1073,9 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 "max_tool_iterations": d.max_tool_iterations,
                                 "tool_timeout_secs": d.tool_timeout_secs,
                                 "enable_sandbox": d.enable_sandbox,
+                                "context_limit": d.context_limit,
+                                "tool_output_limit": d.tool_output_limit,
+                                "tui_thought_display": d.tui_thought_display,
                             }
                         });
                         if let Ok(evt_str) = serde_json::to_string(&evt) {

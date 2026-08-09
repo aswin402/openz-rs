@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clock3,
   Loader2,
+  PanelRightClose,
   ShieldAlert,
   Terminal,
 } from 'lucide-react';
@@ -15,6 +16,7 @@ import {
 interface AgentActivityPanelProps {
   messages: OpenZMessage[];
   isStreaming: boolean;
+  onClose?: () => void;
 }
 
 type ActivityFilter = 'all' | 'tools' | 'approvals' | 'errors';
@@ -103,7 +105,7 @@ function formatDuration(ms?: number): string | null {
   return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + 's';
 }
 
-export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({ messages, isStreaming }) => {
+export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({ messages, isStreaming, onClose }) => {
   const [filter, setFilter] = useState<ActivityFilter>('all');
   const activity = useMemo(() => buildActivity(messages), [messages]);
   const filteredActivity = useMemo(() => activity.filter((item) => matchesFilter(item, filter)), [activity, filter]);
@@ -134,17 +136,30 @@ export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({ messages
               </div>
             </div>
           </div>
-          <span
-            className={cn(
-              'flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-medium',
-              isStreaming
-                ? 'border-amber-500/30 bg-amber-500/10 text-amber-500'
-                : 'border-border/60 bg-muted/40 text-muted-foreground',
+          <div className="flex items-center gap-1.5">
+            <span
+              className={cn(
+                'flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-medium',
+                isStreaming
+                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-500'
+                  : 'border-border/60 bg-muted/40 text-muted-foreground',
+              )}
+            >
+              <span className={cn('h-1.5 w-1.5 rounded-full', isStreaming ? 'animate-pulse bg-amber-500' : 'bg-muted-foreground')} />
+              {isStreaming ? 'Active' : 'Idle'}
+            </span>
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-border/60 bg-muted/30 text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+                title="Hide activity panel"
+                aria-label="Hide activity panel"
+              >
+                <PanelRightClose className="h-3.5 w-3.5" />
+              </button>
             )}
-          >
-            <span className={cn('h-1.5 w-1.5 rounded-full', isStreaming ? 'animate-pulse bg-amber-500' : 'bg-muted-foreground')} />
-            {isStreaming ? 'Active' : 'Idle'}
-          </span>
+          </div>
         </div>
       </div>
 

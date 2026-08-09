@@ -263,6 +263,10 @@ export const SettingsModal: React.FC = () => {
           max_tool_iterations: settings.max_tool_iterations,
           tool_timeout_secs: settings.tool_timeout_secs,
           security_mode: settings.security_mode,
+          workspace: settings.workspace,
+          context_limit: settings.context_limit ?? '',
+          tool_output_limit: settings.tool_output_limit ?? '',
+          tui_thought_display: settings.tui_thought_display ?? 'auto',
         });
       }
       if (providersConfig) {
@@ -315,10 +319,12 @@ export const SettingsModal: React.FC = () => {
     if (Number(form.max_messages ?? 1) < 1) return 'Max messages must be at least 1.';
     if (Number(form.max_tool_iterations ?? 1) < 1) return 'Max tool iterations must be at least 1.';
     if (Number(form.tool_timeout_secs ?? 1) < 1) return 'Tool timeout must be at least 1 second.';
+    if (form.context_limit !== '' && form.context_limit !== undefined && Number(form.context_limit) < 1) return 'Context limit must be blank or at least 1.';
+    if (form.tool_output_limit !== '' && form.tool_output_limit !== undefined && Number(form.tool_output_limit) < 1) return 'Tool output limit must be blank or at least 1.';
     const whatsappPort = channelsForm.whatsapp?.webhook_port;
     if (whatsappPort !== undefined && (Number(whatsappPort) < 1 || Number(whatsappPort) > 65535)) return 'WhatsApp webhook port must be 1-65535.';
     return null;
-  }, [channelsForm.whatsapp?.webhook_port, form.max_messages, form.max_tokens, form.max_tool_iterations, form.temperature, form.tool_timeout_secs, urlInput]);
+  }, [channelsForm.whatsapp?.webhook_port, form.context_limit, form.max_messages, form.max_tokens, form.max_tool_iterations, form.temperature, form.tool_output_limit, form.tool_timeout_secs, urlInput]);
 
   const hasChanges = useMemo(() => {
     const defaultsChanged = settings ? (
@@ -330,7 +336,11 @@ export const SettingsModal: React.FC = () => {
       Number(form.max_messages) !== settings.max_messages ||
       Number(form.max_tool_iterations) !== settings.max_tool_iterations ||
       Number(form.tool_timeout_secs) !== settings.tool_timeout_secs ||
-      form.security_mode !== settings.security_mode
+      form.security_mode !== settings.security_mode ||
+      form.workspace !== settings.workspace ||
+      String(form.context_limit ?? '') !== String(settings.context_limit ?? '') ||
+      String(form.tool_output_limit ?? '') !== String(settings.tool_output_limit ?? '') ||
+      form.tui_thought_display !== (settings.tui_thought_display ?? 'auto')
     ) : false;
     return urlInput !== wsUrl ||
       tokenInput !== wsToken ||
@@ -361,6 +371,10 @@ export const SettingsModal: React.FC = () => {
       if (form.max_tool_iterations !== undefined && Number(form.max_tool_iterations) !== settings.max_tool_iterations) defaultsPatch.max_tool_iterations = Number(form.max_tool_iterations);
       if (form.tool_timeout_secs !== undefined && Number(form.tool_timeout_secs) !== settings.tool_timeout_secs) defaultsPatch.tool_timeout_secs = Number(form.tool_timeout_secs);
       if (form.security_mode !== undefined && form.security_mode !== settings.security_mode) defaultsPatch.security_mode = form.security_mode;
+      if (form.workspace !== undefined && form.workspace !== settings.workspace) defaultsPatch.workspace = form.workspace;
+      if (form.context_limit !== undefined && String(form.context_limit) !== String(settings.context_limit ?? '')) defaultsPatch.context_limit = form.context_limit === '' ? null : Number(form.context_limit);
+      if (form.tool_output_limit !== undefined && String(form.tool_output_limit) !== String(settings.tool_output_limit ?? '')) defaultsPatch.tool_output_limit = form.tool_output_limit === '' ? null : Number(form.tool_output_limit);
+      if (form.tui_thought_display !== undefined && form.tui_thought_display !== (settings.tui_thought_display ?? 'auto')) defaultsPatch.tui_thought_display = form.tui_thought_display;
     }
 
     updateConfig({
@@ -388,7 +402,7 @@ export const SettingsModal: React.FC = () => {
   ] : [];
   const uniqueProviders = Array.from(new Map(providerOptions.map(item => [item.value, item])).values());
 
-  const builtins = ['openai', 'anthropic', 'deepseek', 'groq', 'openrouter', 'google_ai_studio', 'ollama'];
+  const builtins = ['openai', 'anthropic', 'openrouter', 'deepseek', 'groq', 'ollama', 'minimax', 'mistral', 'z_ai', 'nvidia', 'opencode_zen', 'cerebras', 'google_ai_studio'];
   const customKeys = Object.keys(providersForm).filter(k => !builtins.includes(k));
   const allProviderKeys = [...builtins, ...customKeys];
 
@@ -560,13 +574,53 @@ export const SettingsModal: React.FC = () => {
                         />
                       </div>
 
-                      <div>
-                        <label className="mb-1 block font-medium text-foreground">Bot Name</label>
-                        <input
-                          type="text"
-                          value={String(form.bot_name ?? settings.bot_name)}
-                          onChange={(e) => setField('bot_name', e.target.value)}
-                          className="w-full rounded-lg border border-border bg-muted/40 p-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block font-medium text-foreground">Bot Name</label>
+                          <input
+                            type="text"
+                            value={String(form.bot_name ?? settings.bot_name)}
+                            onChange={(e) => setField('bot_name', e.target.value)}
+                            className="w-full rounded-lg border border-border bg-muted/40 p-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block font-medium text-foreground">Workspace Path</label>
+                          <input
+                            type="text"
+                            value={String(form.workspace ?? settings.workspace ?? '')}
+                            onChange={(e) => setField('workspace', e.target.value)}
+                            placeholder="~/projects/current"
+                            className="w-full rounded-lg border border-border bg-muted/40 p-2.5 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <NumberInput
+                          label="Context Limit"
+                          min={1}
+                          step={1000}
+                          value={Number(form.context_limit || settings.context_limit || 1)}
+                          onChange={(val) => setField('context_limit', val)}
+                        />
+                        <NumberInput
+                          label="Tool Output Limit"
+                          min={1}
+                          step={1000}
+                          value={Number(form.tool_output_limit || settings.tool_output_limit || 1)}
+                          onChange={(val) => setField('tool_output_limit', val)}
+                        />
+                        <CustomSelect
+                          label="Thought Display"
+                          value={String(form.tui_thought_display ?? settings.tui_thought_display ?? 'auto')}
+                          onChange={(val) => setField('tui_thought_display', val)}
+                          options={[
+                            { value: 'auto', label: 'auto' },
+                            { value: 'hidden', label: 'hidden' },
+                            { value: 'summary', label: 'summary' },
+                            { value: 'full', label: 'full' },
+                          ]}
                         />
                       </div>
                     </div>
@@ -674,7 +728,7 @@ export const SettingsModal: React.FC = () => {
                     },
                   }));
                 };
-                const label = provKey === 'google_ai_studio' ? 'Google AI Studio' : provKey.toUpperCase();
+                const label = provKey === 'google_ai_studio' ? 'Google AI Studio' : provKey === 'z_ai' ? 'z.ai' : provKey === 'opencode_zen' ? 'OpenCode Zen' : provKey.toUpperCase();
                 const isCustom = !builtins.includes(provKey);
 
                 return (

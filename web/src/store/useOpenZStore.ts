@@ -60,6 +60,7 @@ export interface OpenZState {
   // Modals & Panels
   isSidebarOpen: boolean; // mobile drawer (screen < md)
   isSidebarCollapsed: boolean; // desktop icon-rail collapse
+  isActivityPanelOpen: boolean;
   activeView: WorkspaceView;
   isMemoryOpen: boolean;
   isLogsOpen: boolean;
@@ -69,6 +70,8 @@ export interface OpenZState {
   workspaceNotice: WorkspaceNotice | null;
   setIsSidebarOpen: (open: boolean) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
+  setIsActivityPanelOpen: (open: boolean) => void;
+  toggleActivityPanel: () => void;
   setActiveView: (view: WorkspaceView) => void;
   setIsMemoryOpen: (open: boolean) => void;
   setIsLogsOpen: (open: boolean) => void;
@@ -119,9 +122,35 @@ const EMPTY_MEMORY: CognitiveMemoryStats = {
 };
 
 const EMPTY_MCP_STATS: McpStats = { loaded: 0, failed: 0, total: 0 };
+const DRAFT_SESSION_TITLE = 'New Session';
 
 let msgCounter = 0;
 const newMsgId = (prefix: string) => `${prefix}-${Date.now()}-${msgCounter++}`;
+
+function createDraftSession(chatId: string): OpenZSession {
+  const now = Date.now();
+  return {
+    id: normalizeChatId(chatId),
+    title: DRAFT_SESSION_TITLE,
+    createdAt: now,
+    lastMessageAt: now,
+    messageCount: 0,
+    isDraft: true,
+  };
+}
+
+function upsertDraftSession(sessions: OpenZSession[], chatId: string): OpenZSession[] {
+  const normalizedChatId = normalizeChatId(chatId);
+  if (!normalizedChatId) return sessions;
+  if (sessions.some((session) => session.id === normalizedChatId)) return sessions;
+  return [createDraftSession(normalizedChatId), ...sessions.filter((session) => !session.isDraft)];
+}
+
+function titleFromFirstMessage(content: string): string {
+  const compact = content.trim().replace(/\s+/g, ' ');
+  if (!compact) return DRAFT_SESSION_TITLE;
+  return compact.length > 42 ? compact.slice(0, 39) + '...' : compact;
+}
 
 /**
  * Infer the provider from a model name using prefix-based routing,
@@ -151,9 +180,14 @@ function inferProviderFromModel(model: string): string {
  */
 function normalizeChatId(chatId: string): string {
   if (!chatId) return chatId;
-  if (chatId.includes(':')) {
-    return chatId;
+  if (chatId.includes(':')) return chatId;
+
+  const channelPrefixes = ['ws_', 'cli_', 'telegram_', 'subagent_'];
+  const matchedPrefix = channelPrefixes.find((prefix) => chatId.startsWith(prefix));
+  if (matchedPrefix) {
+    return `${matchedPrefix.slice(0, -1)}:${chatId.slice(matchedPrefix.length)}`;
   }
+
   return `ws:${chatId}`;
 }
 
@@ -229,6 +263,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
   isSidebarOpen: false,
   isSidebarCollapsed: localStorage.getItem('openz_sidebar_collapsed') === '1',
+  isActivityPanelOpen: localStorage.getItem('openz_activity_panel_open') !== '0',
   activeView: 'chats',
   isMemoryOpen: false,
   isLogsOpen: false,
@@ -252,6 +287,15 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   setSidebarCollapsed: (collapsed) => {
     localStorage.setItem('openz_sidebar_collapsed', collapsed ? '1' : '0');
     set({ isSidebarCollapsed: collapsed });
+  },
+  setIsActivityPanelOpen: (open) => {
+    localStorage.setItem('openz_activity_panel_open', open ? '1' : '0');
+    set({ isActivityPanelOpen: open });
+  },
+  toggleActivityPanel: () => {
+    const open = !get().isActivityPanelOpen;
+    localStorage.setItem('openz_activity_panel_open', open ? '1' : '0');
+    set({ isActivityPanelOpen: open });
   },
   setActiveView: (view) => set({ activeView: view, workspaceNotice: null }),
   setIsMemoryOpen: (open) => set({ isMemoryOpen: open }),
@@ -558,9 +602,9 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     // ----- Data events (replace every hardcoded value) -----
 
     wsService.on('ready', (payload) => {
-      const chatId = payload.chat_id || get().activeChatId;
+      const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
       if (!get().activeChatId) {
-        set({ activeChatId: chatId });
+        set({ activeChatId: chatId, sessions: upsertDraftSession(get().sessions, chatId) });
       }
       // Request everything real from the gateway on connect.
       wsService.requestSessions();
@@ -576,16 +620,22 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     wsService.on('sessions_list', (payload) => {
       if (Array.isArray(payload.sessions)) {
-        set({ sessions: payload.sessions });
-        // Ensure the active chat exists in the real list; if not, prefer the
-        // first real session instead of a fabricated id.
+        const realSessions = payload.sessions.map((session: OpenZSession) => ({
+          ...session,
+          id: normalizeChatId(session.id),
+          isDraft: false,
+        }));
         const activeChatId = get().activeChatId;
-        const exists = payload.sessions.some((s: OpenZSession) => s.id === activeChatId);
-        if (!exists && payload.sessions.length > 0) {
-          const first = payload.sessions[0];
-          set({ activeChatId: first.id });
+        const exists = realSessions.some((s: OpenZSession) => s.id === activeChatId);
+
+        if (!exists && realSessions.length > 0 && get().messages[activeChatId]?.length === 0) {
+          const first = realSessions[0];
+          set({ sessions: realSessions, activeChatId: first.id });
           wsService.requestHistory(first.id);
+          return;
         }
+
+        set({ sessions: exists ? realSessions : upsertDraftSession(realSessions, activeChatId) });
       }
     });
 
@@ -691,8 +741,9 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
           }
         }
 
+        const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
         set({
-          messages: { ...get().messages, [payload.chat_id]: normalized },
+          messages: { ...get().messages, [chatId]: normalized },
         });
       }
     });
@@ -848,8 +899,9 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     wsService.on('attached', (payload) => {
       if (payload.chat_id) {
-        set({ activeChatId: payload.chat_id });
-        wsService.requestHistory(payload.chat_id);
+        const chatId = normalizeChatId(payload.chat_id);
+        set({ activeChatId: chatId, activeView: 'chats', sessions: upsertDraftSession(get().sessions, chatId) });
+        wsService.requestHistory(chatId);
       }
     });
 
@@ -866,7 +918,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
         set({ workspaceNotice: { scope, type: 'error', message: String(detail), timestamp: Date.now() } });
         return;
       }
-      const chatId = payload.chat_id || get().activeChatId;
+      const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
       const chatMessages = get().messages[chatId] || [];
       const lastMsg = chatMessages[chatMessages.length - 1];
       const errorMsg: OpenZMessage = {
@@ -940,10 +992,11 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   },
 
   selectSession: (chatId) => {
+    const normalizedChatId = normalizeChatId(chatId);
     set({ activeView: 'chats' });
-    if (get().activeChatId !== chatId) {
-      set({ activeChatId: chatId });
-      wsService.attachChat(chatId);
+    if (get().activeChatId !== normalizedChatId) {
+      set({ activeChatId: normalizedChatId });
+      wsService.attachChat(normalizedChatId);
     }
   },
 
@@ -979,6 +1032,11 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     const chatId = get().activeChatId;
     const chatMessages = get().messages[chatId] || [];
 
+    if (!chatId) {
+      set({ workspaceNotice: { scope: 'global', type: 'error', message: 'No active chat session. Reconnect the gateway and try again.', timestamp: Date.now() } });
+      return;
+    }
+
     const userMsg: OpenZMessage = {
       id: newMsgId('msg-user'),
       role: 'user',
@@ -1008,7 +1066,17 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       ...get().messages,
       [chatId]: [...chatMessages, userMsg, assistantPlaceholder],
     };
-    set({ messages: nextMessages, isStreaming: true });
+    const nextSessions = get().sessions.map((session) =>
+      session.id === chatId && session.isDraft
+        ? {
+            ...session,
+            title: titleFromFirstMessage(content),
+            lastMessageAt: Date.now(),
+            messageCount: 1,
+          }
+        : session,
+    );
+    set({ messages: nextMessages, sessions: nextSessions, isStreaming: true });
 
     try {
       const model = get().activeModel || undefined;

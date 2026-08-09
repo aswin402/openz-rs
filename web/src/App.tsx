@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useOpenZStore } from './store/useOpenZStore';
+import type { WorkspaceView } from './store/useOpenZStore';
+import { useThemeStore } from './store/useThemeStore';
 import { Sidebar } from './components/Sidebar';
 import { ChatMessage } from './components/ChatMessage';
 import { ChatInput } from './components/ChatInput';
@@ -14,18 +16,42 @@ import { McpServersModal } from './components/McpServersModal';
 import { SettingsModal } from './components/SettingsModal';
 import { ServersModal } from './components/ServersModal';
 import { AgentActivityPanel } from './components/AgentActivityPanel';
-import { Menu } from 'lucide-react';
+import {
+  Bot,
+  BookOpen,
+  BrainCircuit,
+  LayoutDashboard,
+  Menu,
+  MessageSquare,
+  PanelRightClose,
+  PanelRightOpen,
+  Sun,
+  Moon,
+} from 'lucide-react';
+import { cn } from './lib/utils';
 
 export const App: React.FC = () => {
   const init = useOpenZStore((s) => s.init);
   const activeChatId = useOpenZStore((s) => s.activeChatId);
   const activeView = useOpenZStore((s) => s.activeView);
+  const setActiveView = useOpenZStore((s) => s.setActiveView);
   const setIsSidebarOpen = useOpenZStore((s) => s.setIsSidebarOpen);
+  const isActivityPanelOpen = useOpenZStore((s) => s.isActivityPanelOpen);
+  const setIsActivityPanelOpen = useOpenZStore((s) => s.setIsActivityPanelOpen);
+  const toggleActivityPanel = useOpenZStore((s) => s.toggleActivityPanel);
   const messages = useOpenZStore((s) => s.messages);
+  const theme = useThemeStore((s) => s.theme);
+  const setTheme = useThemeStore((s) => s.setTheme);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const activeMessages = useMemo(() => messages[activeChatId] || [], [messages, activeChatId]);
+  const resolvedTheme =
+    theme === 'system'
+      ? window.matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'dark'
+        : 'light'
+      : theme;
 
   useEffect(() => {
     init();
@@ -115,6 +141,25 @@ export const App: React.FC = () => {
 
       {/* Main Container */}
       <div className="flex flex-1 flex-col h-full overflow-hidden relative">
+        {!(activeView === 'chats' && isActivityPanelOpen) && (
+          <WorkspaceQuickActions
+            activeView={activeView}
+            activityOpen={false}
+            onViewChange={setActiveView}
+            onThemeToggle={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+            themeLabel={resolvedTheme === 'dark' ? 'Light theme' : 'Dark theme'}
+            themeIcon={resolvedTheme === 'dark' ? Sun : Moon}
+            onActivityToggle={() => {
+              if (activeView !== 'chats') {
+                setActiveView('chats');
+                setIsActivityPanelOpen(true);
+                return;
+              }
+              toggleActivityPanel();
+            }}
+          />
+        )}
+
         {/* Mobile Sidebar Toggle */}
         <div className="md:hidden absolute top-4 left-4 z-10">
           <button
@@ -151,7 +196,13 @@ export const App: React.FC = () => {
                 </div>
               </div>
             </div>
-            <AgentActivityPanel messages={activeMessages} isStreaming={activeMessages.some((msg) => !!msg.isStreaming)} />
+            {isActivityPanelOpen && (
+              <AgentActivityPanel
+                messages={activeMessages}
+                isStreaming={activeMessages.some((msg) => !!msg.isStreaming)}
+                onClose={() => setIsActivityPanelOpen(false)}
+              />
+            )}
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto">{renderWorkspace()}</div>
@@ -164,6 +215,61 @@ export const App: React.FC = () => {
       <McpServersModal />
       <SettingsModal />
       <ServersModal />
+    </div>
+  );
+};
+
+type QuickAction = {
+  id: string;
+  view?: WorkspaceView;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  action: () => void;
+  active: boolean;
+};
+
+const WorkspaceQuickActions: React.FC<{
+  activeView: WorkspaceView;
+  activityOpen: boolean;
+  onViewChange: (view: WorkspaceView) => void;
+  onThemeToggle: () => void;
+  themeLabel: string;
+  themeIcon: React.ComponentType<{ className?: string }>;
+  onActivityToggle: () => void;
+}> = ({ activeView, activityOpen, onViewChange, onThemeToggle, themeLabel, themeIcon, onActivityToggle }) => {
+  const actions: QuickAction[] = [
+    { id: 'dashboard', view: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, action: () => onViewChange('dashboard'), active: activeView === 'dashboard' },
+    { id: 'chats', view: 'chats', label: 'Chat', icon: MessageSquare, action: () => onViewChange('chats'), active: activeView === 'chats' },
+    { id: 'agents', view: 'agents', label: 'Agents', icon: Bot, action: () => onViewChange('agents'), active: activeView === 'agents' },
+    { id: 'skills', view: 'skills', label: 'Skills', icon: BookOpen, action: () => onViewChange('skills'), active: activeView === 'skills' },
+    { id: 'knowledge', view: 'knowledge', label: 'Knowledge', icon: BrainCircuit, action: () => onViewChange('knowledge'), active: activeView === 'knowledge' },
+    { id: 'theme', label: themeLabel, icon: themeIcon, action: onThemeToggle, active: false },
+    { id: 'activity', label: activityOpen ? 'Hide activity' : 'Show activity', icon: activityOpen ? PanelRightClose : PanelRightOpen, action: onActivityToggle, active: activeView === 'chats' && activityOpen },
+  ];
+
+  return (
+    <div className="absolute right-3 top-3 z-20 flex flex-col items-center gap-1 rounded-xl border border-border/60 bg-background/70 p-1 shadow-lg shadow-black/10 backdrop-blur-md md:right-4 md:top-4">
+      {actions.map((item) => {
+        const Icon = item.icon;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={item.action}
+            className={cn(
+              'group relative flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50',
+              item.active && 'bg-amber-500/15 text-amber-400',
+            )}
+            title={item.label}
+            aria-label={item.label}
+          >
+            <Icon className="h-4 w-4" />
+            <span className="pointer-events-none absolute right-full top-1/2 mr-2 hidden -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] font-medium text-foreground shadow-lg group-hover:block">
+              {item.label}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 };

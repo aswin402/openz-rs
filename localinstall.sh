@@ -18,6 +18,7 @@ echo "────────────────────────�
 LOW_RESOURCE=false
 BALANCED_RESOURCE=false
 CLEAN_TARGET=false
+SKIP_WEBUI_BUILD=false
 for arg in "$@"; do
     case "$arg" in
         --low-resource|--low-mem|-l)
@@ -30,11 +31,15 @@ for arg in "$@"; do
         --clean-target)
             CLEAN_TARGET=true
             ;;
+        --skip-webui-build)
+            SKIP_WEBUI_BUILD=true
+            ;;
         --help|-h)
-            echo "Usage: ./localinstall.sh [--balanced] [--low-resource] [--clean-target]"
+            echo "Usage: ./localinstall.sh [--balanced] [--low-resource] [--clean-target] [--skip-webui-build]"
             echo "  --balanced, --moderate, -b     Moderate CPU/RAM mode: faster than low-resource, lighter than full release."
             echo "  --low-resource, --low-mem, -l  Minimum CPU/RAM mode for weak machines."
             echo "  --clean-target                 Run cargo clean before building to reclaim target/ disk space."
+            echo "  --skip-webui-build             Skip npm WebUI build and static bundle sync."
             exit 0
             ;;
     esac
@@ -161,6 +166,32 @@ openz_version_line() {
     printf '%s' "${line:-unknown}"
 }
 
+
+build_and_install_webui() {
+    if [ "$SKIP_WEBUI_BUILD" = true ]; then
+        echo "⏭️ Skipping WebUI build (--skip-webui-build)."
+        return 0
+    fi
+
+    if [ ! -d "web" ] || [ ! -f "web/package.json" ]; then
+        echo "⚠️ WebUI source directory not found; skipping static bundle install."
+        return 0
+    fi
+
+    if ! command -v npm >/dev/null 2>&1; then
+        echo "⚠️ npm is not installed; skipping WebUI build and static bundle install."
+        return 0
+    fi
+
+    echo "🌐 Building WebUI production bundle..."
+    (cd web && npm run build)
+
+    echo "🌐 Installing WebUI static bundle into ~/.openz/web/dist..."
+    rm -rf "$HOME/.openz/web/dist"
+    mkdir -p "$HOME/.openz/web/dist"
+    cp -a web/dist/. "$HOME/.openz/web/dist/"
+}
+
 report_installed_binary() {
     local bin="$HOME/.cargo/bin/openz"
     if [ ! -x "$bin" ]; then
@@ -220,12 +251,8 @@ mkdir -p ~/.openz/workspace
 mkdir -p ~/.openz/sessions
 mkdir -p ~/.openz/skills
 mkdir -p ~/.openz/traces
-mkdir -p ~/.openz/web/dist
-
-if [ -d "./web/dist" ]; then
-    echo "🌐 Installing WebUI static bundle into ~/.openz/web/dist..."
-    cp -r ./web/dist/* ~/.openz/web/dist/ 2>/dev/null || true
-fi
+mkdir -p ~/.openz/web
+build_and_install_webui
 
 # 4. Initialize config if missing by running the version command once
 echo "⚙️  Verifying configuration..."

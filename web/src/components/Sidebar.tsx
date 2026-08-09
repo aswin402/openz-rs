@@ -1,25 +1,17 @@
 import React from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
-import type { WorkspaceView } from '../store/useOpenZStore';
 import { cn } from '../lib/utils';
-import { useThemeStore } from '../store/useThemeStore';
 import {
   Plus,
   MessageSquare,
   Trash2,
-  LayoutDashboard,
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
-  Sun,
-  Moon,
-  Bot,
-  BookOpen,
-  BrainCircuit,
 } from 'lucide-react';
 
 interface NavItem {
-  key: WorkspaceView;
+  key: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   action: () => void;
@@ -38,25 +30,10 @@ export const Sidebar: React.FC = () => {
   const connectionStatus = useOpenZStore((s) => s.connectionStatus);
   const mcpStats = useOpenZStore((s) => s.mcpStats);
 
-  const theme = useThemeStore((s) => s.theme);
-  const setTheme = useThemeStore((s) => s.setTheme);
-  const resolvedTheme =
-    theme === 'system'
-      ? window.matchMedia('(prefers-color-scheme: dark)').matches
-        ? 'dark'
-        : 'light'
-      : theme;
-
-  const handleThemeClick = () => {
-    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
-  };
-
   const isSidebarOpen = useOpenZStore((s) => s.isSidebarOpen);
   const setIsSidebarOpen = useOpenZStore((s) => s.setIsSidebarOpen);
   const collapsed = useOpenZStore((s) => s.isSidebarCollapsed);
   const setSidebarCollapsed = useOpenZStore((s) => s.setSidebarCollapsed);
-  const setActiveView = useOpenZStore((s) => s.setActiveView);
-
   const setIsSettingsOpen = useOpenZStore((s) => s.setIsSettingsOpen);
 
   const go = (fn: () => void) => {
@@ -64,32 +41,12 @@ export const Sidebar: React.FC = () => {
     setIsSidebarOpen(false); // close the mobile drawer on pick
   };
 
-  const workspaceItems: NavItem[] = [
-    { key: 'chats', label: 'Chats', icon: MessageSquare, action: () => setActiveView('chats') },
-    { key: 'agents', label: 'Agents', icon: Bot, action: () => setActiveView('agents') },
-    { key: 'skills', label: 'Skills', icon: BookOpen, action: () => setActiveView('skills') },
-    { key: 'knowledge', label: 'Knowledge', icon: BrainCircuit, action: () => setActiveView('knowledge') },
-  ];
-
   const bottomItems: NavItem[] = [
     {
-      key: 'dashboard',
-      label: 'Dashboard',
-      icon: LayoutDashboard,
-      action: () => setActiveView('dashboard'),
-    },
-    {
-      key: 'chats',
+      key: 'settings',
       label: 'Settings',
       icon: Settings,
       action: () => setIsSettingsOpen(true),
-      openPanel: true,
-    },
-    {
-      key: 'chats',
-      label: resolvedTheme === 'dark' ? 'Light Theme' : 'Dark Theme',
-      icon: resolvedTheme === 'dark' ? Sun : Moon,
-      action: handleThemeClick,
       openPanel: true,
     },
   ];
@@ -255,9 +212,6 @@ export const Sidebar: React.FC = () => {
           )}
         </div>
 
-        <nav className={cn('shrink-0 space-y-1 border-t border-border/30 px-3 py-3', collapsed && 'md:px-2')}>
-          {renderNav(workspaceItems)}
-        </nav>
 
         {/* Footer & Bottom Navigation */}
         <div className={cn('shrink-0 border-t border-border/40 p-3 transition-all duration-300', collapsed && 'md:p-2')}>
