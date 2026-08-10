@@ -456,7 +456,8 @@ impl AgentLoop {
 
         let is_cli = target_key.starts_with("cli:")
             && (!session_key.starts_with("subagent:") || crate::shutdown::is_cli_active());
-        let is_ratatui = crate::channels::ratatui::app::IS_RATATUI_ACTIVE.load(std::sync::atomic::Ordering::Relaxed);
+        let is_ratatui = crate::channels::ratatui::app::IS_RATATUI_ACTIVE
+            .load(std::sync::atomic::Ordering::Relaxed);
         let silent = !is_cli || is_ratatui;
 
         crate::agent::style::spinner::IS_SILENT
@@ -545,6 +546,11 @@ impl AgentLoop {
                 TurnState::Save => save::handle(self, &mut ctx).await?,
                 TurnState::Done => TurnState::Done,
             };
+        }
+
+        let cleaned_tasks = crate::tools::task_manager::cleanup_turn_end_tasks();
+        if cleaned_tasks > 0 {
+            tracing::debug!(cleaned_tasks, "Cleaned OpenZ turn-scoped tasks");
         }
 
         Ok(RunResult {

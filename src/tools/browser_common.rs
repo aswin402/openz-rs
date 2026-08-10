@@ -78,7 +78,11 @@ pub async fn ensure_browser_running() -> Result<()> {
             .stderr(std::process::Stdio::null())
             .spawn()
         {
-            crate::shutdown::register_child(child_handle);
+            crate::shutdown::register_child_with_metadata(
+                child_handle,
+                format!("{} {}", path, args.join(" ")),
+                "browser_daemon",
+            );
             for _ in 0..25 {
                 sleep(Duration::from_millis(200)).await;
                 if client

@@ -394,6 +394,149 @@ fn is_likely_search_engine_internal_url(url: &str) -> bool {
     .any(|needle| lowered.contains(needle))
 }
 
+fn browser_result_selectors(engine: &str) -> Vec<&'static str> {
+    match engine {
+        "bing" => vec![
+            "li.b_algo h2 a[href]",
+            "#b_results h2 a[href]",
+            "#b_results a[href]",
+            "main a[href]",
+        ],
+        _ => vec![
+            "a.result__a[href]",
+            "a.result-link[href]",
+            "a[data-testid='result-title-a'][href]",
+            "article a[href]",
+            "main a[href]",
+        ],
+    }
+}
+
+fn browser_result_extraction_script(engine: &str, max_results: usize) -> String {
+    let selectors =
+        serde_json::to_string(&browser_result_selectors(engine)).unwrap_or_else(|_| "[]".into());
+    format!(
+        r#"(() => {{
+  const selectors = {selectors};
+  const maxResults = {max_results};
+  const cleanText = (value) => (value || "").replace(/\s+/g, " ").trim();
+  const collectAnchors = () => {{
+    const anchors = [];
+    for (const selector of selectors) {{
+      anchors.push(...Array.from(document.querySelectorAll(selector)));
+    }}
+    return anchors.filter((anchor) => anchor && anchor.href && cleanText(anchor.innerText || anchor.textContent));
+  }};
+
+  const anchors = collectAnchors();
+  const seen = new Set();
+  const results = [];
+  for (const anchor of anchors) {{
+    const url = anchor.href;
+    if (seen.has(url)) continue;
+    seen.add(url);
+    results.push({{
+      title: cleanText(anchor.innerText || anchor.textContent),
+      url
+    }});
+    if (results.length >= maxResults) break;
+  }}
+
+  return JSON.stringify({{
+    results,
+    rendered_link_count: anchors.length,
+    page_url: location.href,
+    page_title: document.title
+  }});
+}})()"#
+    )
+}
+
+fn rendered_payload_value(payload: &str) -> Option<Value> {
+    let trimmed = payload.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let parsed: Value = serde_json::from_str(trimmed).ok()?;
+    match parsed {
+        Value::String(inner) => serde_json::from_str(&inner).ok(),
+        other => Some(other),
+    }
+}
+
+fn extract_rendered_browser_search_results(
+    engine: &str,
+    payload: &str,
+    max_results: usize,
+) -> Vec<Value> {
+    let Some(value) = rendered_payload_value(payload) else {
+        return Vec::new();
+    };
+    let Some(raw_results) = value.get("results").and_then(|value| value.as_array()) else {
+        return Vec::new();
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut results = Vec::new();
+
+    for result in raw_results {
+        let Some(raw_url) = result.get("url").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        let Some(url) = normalize_browser_result_url(raw_url) else {
+            continue;
+        };
+        if is_likely_search_engine_internal_url(&url) || !seen.insert(url.clone()) {
+            continue;
+        }
+        let title = result
+            .get("title")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if title.is_empty() {
+            continue;
+        }
+        results.push(json!({
+            "title": title,
+            "url": url,
+            "engine": engine,
+            "source": "browser_search_rendered",
+        }));
+        if results.len() >= max_results {
+            break;
+        }
+    }
+
+    results
+}
+
+fn append_unique_browser_results(
+    target: &mut Vec<Value>,
+    candidates: Vec<Value>,
+    max_results: usize,
+) {
+    let mut seen = target
+        .iter()
+        .filter_map(|result| result.get("url").and_then(|value| value.as_str()))
+        .map(str::to_string)
+        .collect::<std::collections::HashSet<_>>();
+
+    for candidate in candidates {
+        let Some(url) = candidate.get("url").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        if !seen.insert(url.to_string()) {
+            continue;
+        }
+        target.push(candidate);
+        if target.len() >= max_results {
+            break;
+        }
+    }
+}
+
 fn text_for_anchor(anchor: scraper::element_ref::ElementRef<'_>) -> String {
     anchor
         .text()
@@ -548,7 +691,7 @@ impl Tool for SearchXyzBrowserSearchTool {
                 },
                 "timeout_secs": {
                     "type": "integer",
-                    "description": "Per browser action timeout hint in seconds (default: 20, max: 60). Reserved for future browser backends."
+                    "description": "Maximum time to wait for rendered result anchors before falling back to page source (default: 8, max: 60)."
                 },
                 "read_top_results": {
                     "type": "boolean",
@@ -582,48 +725,71 @@ impl Tool for SearchXyzBrowserSearchTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(5)
             .clamp(1, 20) as usize;
+        let timeout_secs = arguments
+            .get("timeout_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(8)
+            .clamp(1, 60);
         let search_url = browser_search_url(engine, query)?;
-        let browser = crate::tools::gsd_browser::GsdBrowserTool;
+        let render_script = browser_result_extraction_script(engine, max_results);
+        let broker_eval = crate::tools::browser_broker::eval_with_browser_broker(
+            &search_url,
+            &render_script,
+            timeout_secs,
+        )
+        .await;
 
-        let nav = browser
-            .call(&json!({
-                "action": "navigate",
-                "url": search_url,
-            }))
-            .await;
-        if let Err(err) = nav {
-            return Ok(json!({
-                "status": "browser_error",
-                "error_kind": "browser_navigation_failed",
-                "retryable": true,
-                "engine": engine,
-                "query": query,
-                "error": err.to_string(),
-                "next_step": "Run inspect_browsers, retry with engine=bing, or use searchxyz_recall/direct URL readers."
-            }));
-        }
-
-        let page_source = browser.call(&json!({ "action": "page_source" })).await;
-        let html = match page_source {
-            Ok(value) => value
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
+        let (mut results, backend, cleanup, fallbacks_tried, broker_errors) = match broker_eval {
+            Ok(value) => {
+                let rendered =
+                    extract_rendered_browser_search_results(engine, &value.output, max_results);
+                (
+                    rendered,
+                    Some(value.backend.as_str().to_string()),
+                    Some(value.cleanup),
+                    value
+                        .fallbacks_tried
+                        .iter()
+                        .map(|backend| backend.as_str().to_string())
+                        .collect::<Vec<_>>(),
+                    value.errors,
+                )
+            }
             Err(err) => {
                 return Ok(json!({
                     "status": "browser_error",
-                    "error_kind": "browser_page_source_failed",
+                    "error_kind": "browser_broker_failed",
                     "retryable": true,
                     "engine": engine,
                     "query": query,
                     "error": err.to_string(),
-                    "next_step": "Run inspect_browsers, retry with engine=bing, or use searchxyz_recall/direct URL readers."
+                    "fallbacks_tried": ["obscura_headless", "firefox_headless", "gsd_chrome_gui"],
+                    "next_step": "Run inspect_browsers, use manage_tasks action=cleanup, retry with engine=bing, or use searchxyz_recall/direct URL readers."
                 }));
             }
         };
+        let rendered_result_count = results.len();
 
-        let results = extract_browser_search_results(engine, &html, max_results);
+        let html = if results.is_empty() {
+            match crate::tools::browser_broker::render_with_browser_broker(
+                &search_url,
+                timeout_secs,
+            )
+            .await
+            {
+                Ok(value) => value.output,
+                Err(err) => {
+                    tracing::warn!(query = %query, engine = %engine, error = ?err, "browser broker page-source fallback failed");
+                    String::new()
+                }
+            }
+        } else {
+            String::new()
+        };
+
+        let static_results = extract_browser_search_results(engine, &html, max_results);
+        let static_result_count = static_results.len();
+        append_unique_browser_results(&mut results, static_results, max_results);
         if results.is_empty() && html_has_bot_block(&html) {
             return Ok(json!({
                 "status": "blocked",
@@ -633,6 +799,10 @@ impl Tool for SearchXyzBrowserSearchTool {
                 "query": query,
                 "result_count": 0,
                 "results": [],
+                "backend": backend,
+                "cleanup": cleanup,
+                "fallbacks_tried": fallbacks_tried,
+                "broker_errors": broker_errors,
                 "next_step": "Retry later, try engine=bing, use a known URL, or build the local SearchXyz index from trusted seed sources."
             }));
         }
@@ -659,6 +829,13 @@ impl Tool for SearchXyzBrowserSearchTool {
             "engine": engine,
             "query": query,
             "result_count": results.len(),
+            "rendered_result_count": rendered_result_count,
+            "static_result_count": static_result_count,
+            "extraction_strategy": if rendered_result_count > 0 { "rendered_dom" } else if static_result_count > 0 { "page_source" } else { "empty" },
+            "backend": backend,
+            "cleanup": cleanup,
+            "fallbacks_tried": fallbacks_tried,
+            "broker_errors": broker_errors,
             "results": results,
             "read_count": read_results.len(),
             "read_results": read_results,
@@ -1104,6 +1281,40 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0]["url"], "https://example.com/a");
         assert_eq!(results[1]["url"], "https://example.com/b");
+    }
+
+    #[test]
+    fn browser_search_extracts_rendered_dom_results() {
+        let payload = json!({
+            "results": [
+                { "title": " OpenZ  repository ", "url": "https://github.com/aswin402/openz-rs" },
+                { "title": "Bing internal", "url": "https://www.bing.com/search?q=openz" },
+                { "title": "Duplicate", "url": "https://github.com/aswin402/openz-rs" },
+                { "title": "DuckDuckGo redirect", "url": "https://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fdocs" }
+            ]
+        })
+        .to_string();
+
+        let results = extract_rendered_browser_search_results("bing", &payload, 10);
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["title"], "OpenZ repository");
+        assert_eq!(results[0]["source"], "browser_search_rendered");
+        assert_eq!(results[1]["url"], "https://example.com/docs");
+    }
+
+    #[test]
+    fn browser_search_extracts_string_wrapped_rendered_payload() {
+        let inner = json!({
+            "results": [{ "title": "Rust docs", "url": "https://docs.rs/tokio" }]
+        })
+        .to_string();
+        let wrapped = json!(inner).to_string();
+
+        let results = extract_rendered_browser_search_results("duckduckgo", &wrapped, 10);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["url"], "https://docs.rs/tokio");
     }
 
     #[test]

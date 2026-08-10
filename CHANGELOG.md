@@ -1,4 +1,12 @@
-### v0.0.123 (Latest Release)
+### v0.0.124 (Latest Release)
+**Automatic Task Lifecycle Manager and Headless Browser Search:**
+- **Task Lifecycle Registry**: Added the native `manage_tasks` tool and internal registry for OpenZ-owned browsers, servers, agents, subagents, MCP bridges, watchers, and background jobs, with ownership metadata and cleanup policies.
+- **Automatic Resource Cleanup**: Agent turns now clean turn-scoped OpenZ-owned tasks automatically, and the system prompt instructs agents to manage lifecycle internally instead of asking users to run manual task commands.
+- **Headless-First Browser Broker**: Added a browser broker that routes browser-backed rendering/eval through Obscura headless first, Firefox headless second, and GSD/Chrome GUI only as the final fallback.
+- **SearchXyz Browser Reliability**: `searchxyz_browser_search` now uses rendered DOM extraction through the broker, keeps static page-source parsing as fallback, and reports backend, cleanup, fallback, and extraction diagnostics.
+- **Managed Process Metadata**: OpenZ-spawned geckodriver and Obscura/Chrome browser daemons now register with lifecycle metadata and appear in browser inspection output.
+
+### v0.0.123
 **Approved Credential Management and Secret References:**
 - **Permission-Gated Credential Updates**: Added `manage_config` support for approved provider, GitHub/GitLab, Telegram, Discord, and WhatsApp credential updates so users can authorize setup from chat instead of manually editing config JSON.
 - **Secret-Safe Approval Prompts**: SecurityGuard now treats credential config writes as sensitive and redacts tokens/API keys in approval details before display.

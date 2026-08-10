@@ -53,6 +53,10 @@ impl WebSearchPolicy {
     }
 }
 
+fn browser_fallback_engines() -> [&'static str; 2] {
+    ["duckduckgo", "bing"]
+}
+
 fn native_rescue_results(query: &str) -> Vec<Value> {
     let terms = normalized_terms(query);
     let mut results = Vec::new();
@@ -430,27 +434,29 @@ impl WebSearchTool {
             let should_read_top_results = web_search_should_auto_read_top_results(query, arguments);
             let max_pages = web_search_auto_read_max_pages(arguments, should_read_top_results);
             let browser_tool = crate::tools::searchxyz::SearchXyzBrowserSearchTool;
-            match browser_tool
-                .call(&json!({
-                    "query": query,
-                    "engine": "duckduckgo",
-                    "max_results": 5,
-                    "read_top_results": should_read_top_results,
-                    "max_pages": max_pages,
-                    "save_mode": "none",
-                }))
-                .await
-            {
-                Ok(value) => {
-                    if let Some(results) = value.get("results").and_then(|v| v.as_array()) {
-                        if !results.is_empty() {
-                            return Ok(browser_search_value_to_web_search_result(value));
+            for engine in browser_fallback_engines() {
+                match browser_tool
+                    .call(&json!({
+                        "query": query,
+                        "engine": engine,
+                        "max_results": 5,
+                        "read_top_results": should_read_top_results,
+                        "max_pages": max_pages,
+                        "save_mode": "none",
+                    }))
+                    .await
+                {
+                    Ok(value) => {
+                        if let Some(results) = value.get("results").and_then(|v| v.as_array()) {
+                            if !results.is_empty() {
+                                return Ok(browser_search_value_to_web_search_result(value));
+                            }
                         }
+                        tracing::warn!(query = %query, engine = %engine, result = %value, "browser search fallback returned no usable links");
                     }
-                    tracing::warn!(query = %query, result = %value, "browser search fallback returned no usable links");
-                }
-                Err(err) => {
-                    tracing::warn!(query = %query, error = ?err, "browser search fallback failed");
+                    Err(err) => {
+                        tracing::warn!(query = %query, engine = %engine, error = ?err, "browser search fallback failed");
+                    }
                 }
             }
         }
@@ -877,6 +883,11 @@ mod tests {
 
         assert!(archive.contains("result snippet"));
         assert!(archive.contains("full page text from browser-discovered result"));
+    }
+
+    #[test]
+    fn web_search_browser_fallback_engines_include_bing_retry() {
+        assert_eq!(browser_fallback_engines(), ["duckduckgo", "bing"]);
     }
 
     #[test]

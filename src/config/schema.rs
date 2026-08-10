@@ -1104,6 +1104,7 @@ mod provider_resolution_tests {
             embeddings: Some(EmbeddingsConfig::default()),
             skills: SkillsConfig::default(),
             research: ResearchConfig::default(),
+            integrations: IntegrationsConfig::default(),
         }
     }
 

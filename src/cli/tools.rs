@@ -88,6 +88,9 @@ fn register_core_tools(
     registry.register(std::sync::Arc::new(ListDirTool));
     registry.register(std::sync::Arc::new(ExecCommandTool));
     registry.register(std::sync::Arc::new(ManageServersTool));
+    registry.register(std::sync::Arc::new(
+        crate::tools::task_manager::ManageTasksTool,
+    ));
     registry.register(std::sync::Arc::new(WebFetchTool::new()));
     registry.register(std::sync::Arc::new(crate::tools::get_logs::GetLogsTool));
     registry.register(std::sync::Arc::new(

@@ -1508,6 +1508,7 @@ mod route_cache_tests {
 }
 
 pub mod ast_grep;
+pub mod browser_broker;
 pub mod browser_common;
 pub mod browser_status;
 pub mod cargo_manager;
@@ -1560,6 +1561,7 @@ pub mod sop;
 pub mod subagent;
 pub mod svg_animator;
 pub mod system_info;
+pub mod task_manager;
 pub mod telegram_send;
 pub mod template_compiler;
 pub mod video;

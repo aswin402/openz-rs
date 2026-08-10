@@ -302,6 +302,7 @@ impl Tool for InspectBrowsersTool {
             "chrome_obscura": obscura_status,
             "gsd_browser": gsd_status,
             "browser_preflight": browser_preflight_value(&health),
+            "managed_tasks": crate::tools::task_manager::list_tasks(),
             "recent_browser_errors": recent_errors
         }))
     }

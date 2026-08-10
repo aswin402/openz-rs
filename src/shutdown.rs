@@ -71,20 +71,7 @@ pub fn register_child_with_metadata(
     command: impl Into<String>,
     kind: impl Into<String>,
 ) -> u64 {
-    let id = NEXT_CHILD_ID.fetch_add(1, Ordering::SeqCst);
-    let managed = ManagedChild {
-        id,
-        kind: kind.into(),
-        command: command.into(),
-        started_at: chrono::Utc::now().to_rfc3339(),
-        child,
-        kill_process_group: false,
-    };
-    let list = SPAWNED_CHILDREN.get_or_init(|| Mutex::new(Vec::new()));
-    if let Ok(mut guard) = list.lock() {
-        guard.push(managed);
-    }
-    id
+    register_child_inner(child, command.into(), kind.into(), false)
 }
 
 pub fn register_child_group_with_metadata(
@@ -92,19 +79,49 @@ pub fn register_child_group_with_metadata(
     command: impl Into<String>,
     kind: impl Into<String>,
 ) -> u64 {
+    register_child_inner(child, command.into(), kind.into(), true)
+}
+
+fn register_child_inner(
+    child: std::process::Child,
+    command: String,
+    kind: String,
+    kill_process_group: bool,
+) -> u64 {
     let id = NEXT_CHILD_ID.fetch_add(1, Ordering::SeqCst);
+    let pid = child.id();
+    let started_at = chrono::Utc::now().to_rfc3339();
     let managed = ManagedChild {
         id,
-        kind: kind.into(),
-        command: command.into(),
-        started_at: chrono::Utc::now().to_rfc3339(),
+        kind: kind.clone(),
+        command: command.clone(),
+        started_at: started_at.clone(),
         child,
-        kill_process_group: true,
+        kill_process_group,
     };
     let list = SPAWNED_CHILDREN.get_or_init(|| Mutex::new(Vec::new()));
     if let Ok(mut guard) = list.lock() {
         guard.push(managed);
     }
+
+    let task_kind = match kind.as_str() {
+        "dev_server" | "server" => crate::tools::task_manager::TaskKind::Server,
+        "browser" | "browser_daemon" | "geckodriver" => {
+            crate::tools::task_manager::TaskKind::Browser
+        }
+        "mcp" | "mcp_bridge" => crate::tools::task_manager::TaskKind::Mcp,
+        "watcher" => crate::tools::task_manager::TaskKind::Watcher,
+        _ => crate::tools::task_manager::TaskKind::BackgroundJob,
+    };
+    let task = crate::tools::task_manager::ManagedTask::new(
+        task_kind,
+        crate::tools::task_manager::TaskOwner::OpenZ,
+        kind,
+        crate::tools::task_manager::CleanupPolicy::Manual,
+    )
+    .with_process(command, pid)
+    .with_process_registry_id(id);
+    crate::tools::task_manager::register_or_replace_process_task(id, task);
     id
 }
 
@@ -154,6 +171,14 @@ pub fn list_registered_children() -> Vec<RegisteredChildInfo> {
 }
 
 pub fn stop_registered_child(target: &str) -> Result<usize, String> {
+    let stopped = stop_registered_child_without_task_cleanup(target)?;
+    if stopped > 0 {
+        crate::tools::task_manager::stop_tasks(target);
+    }
+    Ok(stopped)
+}
+
+pub fn stop_registered_child_without_task_cleanup(target: &str) -> Result<usize, String> {
     let Some(list) = SPAWNED_CHILDREN.get() else {
         return Ok(0);
     };
