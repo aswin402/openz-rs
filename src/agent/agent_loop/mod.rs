@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 const DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECS: u64 = 45;
 const MAX_PROVIDER_ATTEMPT_TIMEOUT_SECS: u64 = 120;
+const DEFAULT_MAX_FALLBACK_ATTEMPTS: usize = 2;
+const HARD_MAX_FALLBACK_ATTEMPTS: usize = 8;
 
 pub mod build;
 pub mod command;
@@ -148,6 +150,45 @@ fn get_session_lock(session_key: &str) -> std::sync::Arc<tokio::sync::Mutex<()>>
         .entry(session_key.to_string())
         .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
         .clone()
+}
+
+fn max_fallback_attempts() -> usize {
+    std::env::var("OPENZ_MAX_FALLBACK_ATTEMPTS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_MAX_FALLBACK_ATTEMPTS)
+        .min(HARD_MAX_FALLBACK_ATTEMPTS)
+}
+
+fn fallback_models_for_turn(config: &Config) -> Vec<String> {
+    let max_attempts = max_fallback_attempts();
+    if max_attempts == 0 {
+        return Vec::new();
+    }
+
+    let active_model = config.agents.defaults.model.trim();
+    let mut fallbacks = Vec::new();
+    for fallback in &config.agents.defaults.fallback_models {
+        let Some(model) = fallback
+            .as_str()
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        else {
+            continue;
+        };
+        if model.eq_ignore_ascii_case(active_model)
+            || fallbacks
+                .iter()
+                .any(|existing: &String| existing.eq_ignore_ascii_case(model))
+        {
+            continue;
+        }
+        fallbacks.push(model.to_string());
+        if fallbacks.len() >= max_attempts {
+            break;
+        }
+    }
+    fallbacks
 }
 
 async fn wait_for_cli_cancel_since(initial: u64) {
@@ -305,14 +346,7 @@ impl AgentLoop {
                 return Err(anyhow::anyhow!("Cancelled by user"));
             }
 
-            let mut fallbacks = Vec::new();
-            for fallback in &self.config.agents.defaults.fallback_models {
-                if let Some(s) = fallback.as_str() {
-                    if !s.trim().is_empty() {
-                        fallbacks.push(s.trim().to_string());
-                    }
-                }
-            }
+            let fallbacks = fallback_models_for_turn(&self.config);
 
             let mut resolved_fallback = false;
             for fallback_model in fallbacks {
@@ -421,14 +455,7 @@ impl AgentLoop {
                     &err.to_string(),
                 );
             }
-            let mut fallbacks = Vec::new();
-            for fallback in &self.config.agents.defaults.fallback_models {
-                if let Some(s) = fallback.as_str() {
-                    if !s.trim().is_empty() {
-                        fallbacks.push(s.trim().to_string());
-                    }
-                }
-            }
+            let fallbacks = fallback_models_for_turn(&self.config);
 
             let mut resolved_fallback = false;
             for fallback_model in fallbacks {
@@ -664,6 +691,23 @@ mod tests {
 
         assert_eq!(merged.agents.defaults.model, "google/gemma-4-31b-it:free");
     }
+    #[test]
+    fn fallback_models_for_turn_limits_configured_fallbacks_by_default() {
+        let mut config = Config::default();
+        config.agents.defaults.fallback_models = vec![
+            serde_json::json!("groq/llama-3.3-70b-versatile"),
+            serde_json::json!("mistral/mistral-small-latest"),
+            serde_json::json!("openrouter/free"),
+        ];
+        std::env::remove_var("OPENZ_MAX_FALLBACK_ATTEMPTS");
+
+        let fallbacks = fallback_models_for_turn(&config);
+
+        assert_eq!(fallbacks.len(), 2);
+        assert_eq!(fallbacks[0], "groq/llama-3.3-70b-versatile");
+        assert_eq!(fallbacks[1], "mistral/mistral-small-latest");
+    }
+
     #[tokio::test]
     async fn chat_with_fallback_returns_when_cli_cancel_fires() {
         let agent = AgentLoop::new(

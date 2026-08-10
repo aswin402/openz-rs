@@ -126,6 +126,7 @@ impl Tool for DelegateProfileTool {
                 models_to_try.push(default_model);
             }
         }
+        super::limit_subagent_models_to_try(&mut models_to_try);
 
         let child_session_id = format!("subagent:{}:{}", self.profile.name, &uuid::Uuid::new_v4().to_string()[..8]);
         let mut subagent_prompt = format!(

@@ -1,4 +1,12 @@
-### v0.0.125 (Latest Release)
+### v0.0.126 (Latest Release)
+**Fallback Safety, Model Picker Scale, and WebUI Resume Fidelity:**
+- **Bounded Provider Fallbacks**: Limited primary-provider fallback attempts by default so failed provider chains stop quickly instead of leaving TUI, WebUI, or subagent turns stuck across multiple retries.
+- **WebUI Turn-End Reliability**: WebSocket agent errors now emit an explicit `turn_end` event after sending the error, preventing the WebUI composer from staying in a loading state after provider failures.
+- **Configured Model Picker Scale**: WebUI model loading now starts with configured providers and compact previews, then loads a provider's full model list only when selected; recent and favorite models are available for faster switching.
+- **TUI Model Picker Parity**: The Ratatui `/model` command now understands recent/favorite model entries and records model selections per session without overwriting other active sessions.
+- **Session Resume Tool Rendering**: WebUI session-history replay now merges persisted assistant tool calls, tool outputs, and the final assistant answer back into one visual turn, matching the live active-session layout.
+
+### v0.0.125
 **Parallel TUI Sessions, Provider Resilience, and Activity Visibility:**
 - **Parallel Session Isolation**: Fixed Ratatui model and streaming preferences so `/model` and `/streaming` apply to the active session without changing other open TUI/WebUI sessions; the last closing TUI persists its model as the new default for future sessions.
 - **Provider Concurrency and Cancellation**: Added bounded provider-attempt and stream-idle timeouts, stopped retrying a failed primary provider after exhausted fallbacks, and made Ctrl+C cancel active Ratatui turns instead of only tearing down the UI.

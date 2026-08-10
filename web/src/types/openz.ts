@@ -132,10 +132,17 @@ export interface LogEntry {
 }
 
 /** A provider + its list of models, from the backend `models_list` event. */
+export interface ModelRef {
+  provider: string;
+  model: string;
+}
+
 export interface ProviderModelOption {
   name: string;
   display: string;
   models: string[];
+  available?: boolean;
+  full?: boolean;
 }
 
 /** Runtime agent defaults editable over the `set_config` WS command. */

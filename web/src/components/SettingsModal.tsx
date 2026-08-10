@@ -389,8 +389,8 @@ export const SettingsModal: React.FC = () => {
   const groups = providers.filter((p) => p.models.length > 0);
 
   const customModelGroups = groups.map((g) => ({
-    label: g.display || g.name,
-    options: g.models.map((m) => ({ value: m, label: m })),
+    label: g.available === false ? `${g.display || g.name} (not configured)` : g.display || g.name,
+    options: g.models.map((m) => ({ value: `${g.name}::${m}`, label: m })),
   }));
   const finalModelGroups = customModelGroups.length > 0
     ? customModelGroups
@@ -507,12 +507,13 @@ export const SettingsModal: React.FC = () => {
                     <div className="space-y-3">
                       <CustomSelect
                         label="Default Model"
-                        value={String(form.model ?? settings.model)}
+                        value={`${String(form.provider ?? settings.provider)}::${String(form.model ?? settings.model)}`}
                         onChange={(val) => {
-                          setField('model', val);
-                          const group = groups.find((g) => g.models.includes(val));
-                          if (group) {
-                            setField('provider', group.name);
+                          const [provider, ...modelParts] = val.split('::');
+                          const model = modelParts.join('::');
+                          setField('model', model || val);
+                          if (provider && model) {
+                            setField('provider', provider);
                           }
                         }}
                         groups={finalModelGroups}

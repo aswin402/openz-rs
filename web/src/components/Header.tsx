@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
 import { wsService } from '../services/websocket';
 import { Brain, ScrollText, Cpu, Settings, Menu, Sun, Moon } from 'lucide-react';
@@ -16,6 +16,7 @@ export const Header: React.FC = () => {
   const activeChatId = useOpenZStore((s) => s.activeChatId);
   const sessions = useOpenZStore((s) => s.sessions);
   const activeModel = useOpenZStore((s) => s.activeModel);
+  const activeProvider = useOpenZStore((s) => s.activeProvider);
   const providers = useOpenZStore((s) => s.providers);
   const setActiveModel = useOpenZStore((s) => s.setActiveModel);
   const connectionStatus = useOpenZStore((s) => s.connectionStatus);
@@ -31,14 +32,19 @@ export const Header: React.FC = () => {
 
   const currentSession = sessions.find((s) => s.id === activeChatId);
 
+  const groups = providers.filter((p) => p.models.length > 0);
+  const activeModelValue = useMemo(() => {
+    const activeGroup = groups.find((g) => g.name === activeProvider && g.models.includes(activeModel))
+      || groups.find((g) => g.models.includes(activeModel));
+    return activeGroup ? `${activeGroup.name}::${activeModel}` : activeModel || '';
+  }, [activeModel, activeProvider, groups]);
+
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const model = e.target.value;
-    const group = groups.find((g) => g.models.includes(model));
-    const provider = group ? group.name : undefined;
+    const [provider, ...modelParts] = e.target.value.split('::');
+    const model = modelParts.join('::');
+    if (!provider || !model) return;
     setActiveModel(model, provider);
   };
-
-  const groups = providers.filter((p) => p.models.length > 0);
 
   const handleMenuClick = () => {
     if (window.innerWidth >= 768) {
@@ -88,7 +94,7 @@ export const Header: React.FC = () => {
         {/* Model Dropdown — populated from real models_list event */}
         <div className="relative hidden sm:block">
           <select
-            value={activeModel || ''}
+            value={activeModelValue}
             onChange={handleModelChange}
             className="h-8 max-w-[200px] rounded-lg border border-border/60 bg-muted/40 px-2.5 py-1 text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/40"
             aria-label="Active model"
@@ -97,8 +103,8 @@ export const Header: React.FC = () => {
             {groups.map((group) => (
               <optgroup key={group.name} label={group.display || group.name}>
                 {group.models.map((model) => (
-                  <option key={model} value={model}>
-                    {model}
+                  <option key={`${group.name}::${model}`} value={`${group.name}::${model}`}>
+                    {model}{group.available === false ? ' (not configured)' : ''}
                   </option>
                 ))}
               </optgroup>

@@ -10,6 +10,7 @@ import type {
   ToolExecution,
   SecurityPromptInfo,
   ProviderModelOption,
+  ModelRef,
   AgentDefaultsConfig,
   SlashCommand,
   AgentStatus,
@@ -46,6 +47,9 @@ export interface OpenZState {
   activeProvider: string;
   settings: AgentDefaultsConfig | null;
   providers: ProviderModelOption[];
+  recentModels: ModelRef[];
+  favoriteModels: ModelRef[];
+  loadingModelProvider: string | null;
   slashCommands: SlashCommand[];
   status: AgentStatus | null;
 
@@ -55,6 +59,8 @@ export interface OpenZState {
   toggleCavemanMode: () => void;
   toggleStreamingMode: () => void;
   setActiveModel: (model: string, provider?: string) => void;
+  requestProviderModels: (provider: string) => void;
+  toggleFavoriteModel: (provider: string, model: string) => void;
   updateSettings: (patch: Partial<AgentDefaultsConfig>) => void;
 
   // Modals & Panels
@@ -126,6 +132,26 @@ const DRAFT_SESSION_TITLE = 'New Session';
 
 let msgCounter = 0;
 const newMsgId = (prefix: string) => `${prefix}-${Date.now()}-${msgCounter++}`;
+
+
+function mergeProviders(current: ProviderModelOption[], incoming: ProviderModelOption[], partial: boolean): ProviderModelOption[] {
+  if (!partial) return incoming;
+  const byName = new Map(current.map((provider) => [provider.name, provider]));
+  for (const provider of incoming) {
+    byName.set(provider.name, { ...(byName.get(provider.name) || {}), ...provider });
+  }
+  return Array.from(byName.values());
+}
+
+function withRecentModel(recent: ModelRef[], provider: string, model: string): ModelRef[] {
+  const cleanProvider = provider.trim();
+  const cleanModel = model.trim();
+  if (!cleanProvider || !cleanModel) return recent;
+  return [
+    { provider: cleanProvider, model: cleanModel },
+    ...recent.filter((entry) => entry.provider !== cleanProvider || entry.model !== cleanModel),
+  ].slice(0, 12);
+}
 
 function createDraftSession(chatId: string): OpenZSession {
   const now = Date.now();
@@ -284,6 +310,32 @@ function parseToolArgs(value: unknown): ToolExecution['args'] {
   return isRecord(value) ? value : '';
 }
 
+
+function mergeAssistantFinalIntoToolTurn(messages: OpenZMessage[], nextMessage: OpenZMessage): boolean {
+  if (nextMessage.role !== 'assistant') return false;
+  if (nextMessage.toolCalls && nextMessage.toolCalls.length > 0) return false;
+  if (nextMessage.activityNotices && nextMessage.activityNotices.length > 0) return false;
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const candidate = messages[i];
+    if (candidate.role === 'user') return false;
+    if (candidate.role !== 'assistant') continue;
+    if (!candidate.toolCalls || candidate.toolCalls.length === 0) return false;
+    if (candidate.content.trim().length > 0) return false;
+
+    messages[i] = {
+      ...candidate,
+      content: nextMessage.content,
+      timestamp: nextMessage.timestamp || candidate.timestamp,
+      model: nextMessage.model || candidate.model,
+      reasoningContent: nextMessage.reasoningContent || candidate.reasoningContent,
+    };
+    return true;
+  }
+
+  return false;
+}
+
 export const useOpenZStore = create<OpenZState>((set, get) => ({
   connectionStatus: 'disconnected',
   wsUrl: localStorage.getItem('openz_ws_url') || 'ws://127.0.0.1:8765/ws',
@@ -298,6 +350,9 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   activeProvider: '',
   settings: null,
   providers: [],
+  recentModels: [],
+  favoriteModels: [],
+  loadingModelProvider: null,
   slashCommands: [],
   status: null,
 
@@ -380,8 +435,21 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
   setActiveModel: (model, provider) => {
     const finalProvider = provider || inferProviderFromModel(model);
-    set({ activeModel: model, activeProvider: finalProvider });
+    set({
+      activeModel: model,
+      activeProvider: finalProvider,
+      recentModels: withRecentModel(get().recentModels, finalProvider, model),
+    });
     wsService.updateConfig({ model, provider: finalProvider });
+  },
+
+  requestProviderModels: (provider) => {
+    set({ loadingModelProvider: provider });
+    wsService.requestProviderModels(provider);
+  },
+
+  toggleFavoriteModel: (provider, model) => {
+    wsService.toggleFavoriteModel(provider, model);
   },
 
   updateSettings: (patch) => {
@@ -723,7 +791,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
             const reasoningContent = asString(m.extra?.reasoning_content);
 
-            normalized.push({
+            const assistantMsg: OpenZMessage = {
               id: asString(m.id) || `msg-${i}`,
               role: 'assistant',
               content: asString(m.content) || '',
@@ -731,7 +799,11 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
               model: asString(m.extra?.model),
               reasoningContent,
               toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-            });
+            };
+
+            if (!mergeAssistantFinalIntoToolTurn(normalized, assistantMsg)) {
+              normalized.push(assistantMsg);
+            }
           } else if (role === 'tool') {
             const toolCallId = asString(m.extra?.tool_call_id);
             const toolName = asString(m.extra?.name) || 'tool';
@@ -851,7 +923,16 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     wsService.on('models_list', (payload) => {
       if (Array.isArray(payload.providers)) {
-        set({ providers: payload.providers });
+        set({
+          providers: mergeProviders(get().providers, payload.providers, !!payload.partial),
+          loadingModelProvider: null,
+        });
+      }
+      if (Array.isArray(payload.recent_models)) {
+        set({ recentModels: payload.recent_models });
+      }
+      if (Array.isArray(payload.favorite_models)) {
+        set({ favoriteModels: payload.favorite_models });
       }
       if (payload.active_model) {
         set({ activeModel: payload.active_model });
@@ -862,6 +943,15 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
           const settings = get().settings!;
           set({ settings: { ...settings, provider: payload.active_provider } });
         }
+      }
+    });
+
+    wsService.on('model_prefs', (payload) => {
+      if (Array.isArray(payload.recent_models)) {
+        set({ recentModels: payload.recent_models });
+      }
+      if (Array.isArray(payload.favorite_models)) {
+        set({ favoriteModels: payload.favorite_models });
       }
     });
 

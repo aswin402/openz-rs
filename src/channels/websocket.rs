@@ -745,6 +745,13 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                         if let Ok(evt_str) = serde_json::to_string(&err_evt) {
                                             let _ = tx_clone.send(Message::Text(evt_str)).await;
                                         }
+                                        let turn_end_evt = serde_json::json!({
+                                            "event": "turn_end",
+                                            "chat_id": chat_id_clone
+                                        });
+                                        if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
+                                            let _ = tx_clone.send(Message::Text(evt_str)).await;
+                                        }
                                     }
                                 }
                             }).await
@@ -767,21 +774,57 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             Ok(g) => g.clone(),
                             Err(_) => state.agent_loop.config.clone(),
                         };
+                        let requested_provider = envelope
+                            .get("provider")
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .filter(|v| !v.is_empty());
                         let mut providers = Vec::new();
                         for opt in crate::channels::configured_provider_model_options(&config) {
+                            if requested_provider.is_some_and(|provider| provider != opt.name) {
+                                continue;
+                            }
+                            let models = if requested_provider.is_some() {
+                                crate::channels::resolved_provider_models_for_webui(&opt, &config)
+                                    .await
+                            } else {
+                                crate::channels::preview_models_for_provider(&opt, &config, 4)
+                            };
                             providers.push(serde_json::json!({
                                 "name": opt.name,
                                 "display": opt.display,
-                                "models": opt.models,
+                                "models": models,
+                                "available": opt.available,
+                                "full": requested_provider.is_some(),
                             }));
                         }
+                        let prefs = crate::channels::load_model_prefs();
                         let active_provider = config.agents.defaults.provider.clone();
                         let active_model = config.agents.defaults.model.clone();
                         let evt = serde_json::json!({
                             "event": "models_list",
                             "providers": providers,
+                            "partial": requested_provider.is_some(),
+                            "recent_models": prefs.recent,
+                            "favorite_models": prefs.favorites,
                             "active_provider": active_provider,
                             "active_model": active_model,
+                        });
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "toggle_favorite_model" => {
+                        let provider = envelope
+                            .get("provider")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let model = envelope.get("model").and_then(|v| v.as_str()).unwrap_or("");
+                        let prefs = crate::channels::toggle_favorite_model(provider, model);
+                        let evt = serde_json::json!({
+                            "event": "model_prefs",
+                            "recent_models": prefs.recent,
+                            "favorite_models": prefs.favorites,
                         });
                         if let Ok(evt_str) = serde_json::to_string(&evt) {
                             let _ = tx.send(Message::Text(evt_str)).await;
@@ -991,6 +1034,12 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             }
                             if let Some(v) = defaults.get("provider").and_then(|v| v.as_str()) {
                                 d.provider = v.to_string();
+                            }
+                            if let (Some(provider), Some(model)) = (
+                                defaults.get("provider").and_then(|v| v.as_str()),
+                                defaults.get("model").and_then(|v| v.as_str()),
+                            ) {
+                                crate::channels::record_recent_model(provider, model);
                             }
                             if let Some(v) = defaults.get("temperature").and_then(|v| v.as_f64()) {
                                 d.temperature = v as f32;

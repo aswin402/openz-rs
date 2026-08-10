@@ -218,9 +218,18 @@ export class OpenZWebSocketService {
 
   // ---- Realtime data commands (replaces hardcoded frontend values) ----
 
-  /** Fetch providers + model list, active provider and active model. */
+  /** Fetch configured providers with a small model preview. */
   public requestModels() {
     this.send({ type: 'get_models' });
+  }
+
+  /** Fetch the full model list for one configured provider. */
+  public requestProviderModels(provider: string) {
+    this.send({ type: 'get_models', provider });
+  }
+
+  public toggleFavoriteModel(provider: string, model: string) {
+    this.send({ type: 'toggle_favorite_model', provider, model });
   }
 
   /** Fetch editable agent defaults, skills, mcp servers and version. */

@@ -45,6 +45,21 @@ impl Tool for MockTool {
 }
 
 #[test]
+fn test_limit_subagent_models_to_try_keeps_primary_plus_two_fallbacks() {
+    std::env::remove_var("OPENZ_MAX_FALLBACK_ATTEMPTS");
+    let mut models = vec![
+        "primary".to_string(),
+        "fallback-1".to_string(),
+        "fallback-2".to_string(),
+        "fallback-3".to_string(),
+    ];
+
+    limit_subagent_models_to_try(&mut models);
+
+    assert_eq!(models, vec!["primary", "fallback-1", "fallback-2"]);
+}
+
+#[test]
 fn test_resolve_subagent_timeout_uses_default_and_clamps() {
     assert_eq!(resolve_subagent_timeout_secs(None, 300), 300);
     assert_eq!(

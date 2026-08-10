@@ -41,6 +41,19 @@ pub fn subagent_tool_metadata(name: &str) -> crate::tools::ToolMetadata {
     metadata
 }
 
+pub fn max_subagent_model_attempts() -> usize {
+    let fallback_attempts = std::env::var("OPENZ_MAX_FALLBACK_ATTEMPTS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok())
+        .unwrap_or(2)
+        .min(8);
+    1 + fallback_attempts
+}
+
+pub fn limit_subagent_models_to_try(models: &mut Vec<String>) {
+    models.truncate(max_subagent_model_attempts());
+}
+
 pub fn resolve_subagent_timeout_secs(
     requested_timeout_secs: Option<u64>,
     default_timeout_secs: u64,

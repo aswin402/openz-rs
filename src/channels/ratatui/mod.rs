@@ -109,6 +109,7 @@ async fn save_session_model_override(
         "model".to_string(),
         serde_json::Value::String(model.to_string()),
     );
+    crate::channels::record_recent_model(provider, model);
     session_manager.save(&session).await
 }
 
@@ -128,6 +129,7 @@ fn save_default_model_selection(provider: &str, model: &str) -> Result<()> {
     let mut cfg = crate::config::loader::load_config()?;
     cfg.agents.defaults.provider = provider.to_string();
     cfg.agents.defaults.model = model.to_string();
+    crate::channels::record_recent_model(provider, model);
     crate::config::loader::save_config(&cfg)
 }
 
@@ -444,6 +446,10 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                 models.push(dm);
                                             }
                                         }
+                                        models = crate::channels::model_menu_options_with_prefs(
+                                            &fetch_prov,
+                                            models,
+                                        );
                                         let _ = fetch_tx.send((fetch_prov, fetch_display, models));
                                     });
                                 }
@@ -487,6 +493,18 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         // Exit selected
                                         app.model_select = app::ModelSelectState::Closed;
                                     } else if models[*selected_idx]
+                                        == "★ Favorite/Unfavorite current model"
+                                    {
+                                        let _ = crate::channels::toggle_favorite_model(
+                                            provider_name,
+                                            &app.model,
+                                        );
+                                        app.messages.push(ChatMessage::simple(
+                                            "assistant",
+                                            format!("★ Favorite toggled for {}", app.model),
+                                        ));
+                                        app.model_select = app::ModelSelectState::Closed;
+                                    } else if models[*selected_idx]
                                         == "Type manually (Custom Model)"
                                     {
                                         // Switch to custom model input mode — put prefix in input box
@@ -496,7 +514,11 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         app.typed_input = prefix.chars().collect();
                                         app.cursor_idx = app.typed_input.len();
                                     } else {
-                                        let selected_model = models[*selected_idx].clone();
+                                        let selected_model =
+                                            crate::channels::model_menu_model_name(
+                                                &models[*selected_idx],
+                                            )
+                                            .to_string();
                                         let prov = provider_name.clone();
                                         let prov_display_str = provider_display.clone();
 
@@ -718,6 +740,9 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                     models.push(m);
                                                 }
                                             }
+                                            models = crate::channels::model_menu_options_with_prefs(
+                                                &prov_name, models,
+                                            );
                                             let _ =
                                                 fetch_tx.send((prov_name, prov_display, models));
                                         });

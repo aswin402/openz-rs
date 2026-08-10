@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 #[async_trait]
@@ -45,6 +46,89 @@ pub struct ProviderModelsOption {
     pub name: String,
     pub display: String,
     pub models: Vec<String>,
+    pub available: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelRef {
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelPrefs {
+    #[serde(default)]
+    pub recent: Vec<ModelRef>,
+    #[serde(default)]
+    pub favorites: Vec<ModelRef>,
+}
+
+fn model_prefs_path() -> std::path::PathBuf {
+    crate::config::loader::config_dir().join("model_prefs.json")
+}
+
+pub fn load_model_prefs() -> ModelPrefs {
+    std::fs::read_to_string(model_prefs_path())
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_model_prefs(prefs: &ModelPrefs) -> anyhow::Result<()> {
+    let path = model_prefs_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, serde_json::to_string_pretty(prefs)?)?;
+    Ok(())
+}
+
+pub fn record_recent_model(provider: &str, model: &str) {
+    let provider = provider.trim();
+    let model = model.trim();
+    if provider.is_empty() || model.is_empty() {
+        return;
+    }
+    let mut prefs = load_model_prefs();
+    prefs
+        .recent
+        .retain(|entry| !(entry.provider == provider && entry.model == model));
+    prefs.recent.insert(
+        0,
+        ModelRef {
+            provider: provider.to_string(),
+            model: model.to_string(),
+        },
+    );
+    prefs.recent.truncate(12);
+    let _ = save_model_prefs(&prefs);
+}
+
+pub fn toggle_favorite_model(provider: &str, model: &str) -> ModelPrefs {
+    let provider = provider.trim();
+    let model = model.trim();
+    let mut prefs = load_model_prefs();
+    if provider.is_empty() || model.is_empty() {
+        return prefs;
+    }
+    if let Some(idx) = prefs
+        .favorites
+        .iter()
+        .position(|entry| entry.provider == provider && entry.model == model)
+    {
+        prefs.favorites.remove(idx);
+    } else {
+        prefs.favorites.insert(
+            0,
+            ModelRef {
+                provider: provider.to_string(),
+                model: model.to_string(),
+            },
+        );
+        prefs.favorites.truncate(24);
+    }
+    let _ = save_model_prefs(&prefs);
+    prefs
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +228,48 @@ pub fn render_model_risk_warning(provider: &str, model: &str) -> String {
         }
     }
     out
+}
+
+pub fn model_menu_options_with_prefs(provider: &str, models: Vec<String>) -> Vec<String> {
+    let prefs = load_model_prefs();
+    let mut out = Vec::new();
+    out.push("★ Favorite/Unfavorite current model".to_string());
+
+    for fav in prefs
+        .favorites
+        .iter()
+        .filter(|entry| entry.provider == provider)
+    {
+        let label = format!("★ {}", fav.model);
+        if !out.iter().any(|existing| existing == &label) {
+            out.push(label);
+        }
+    }
+    for recent in prefs
+        .recent
+        .iter()
+        .filter(|entry| entry.provider == provider)
+    {
+        let label = format!("◷ {}", recent.model);
+        if !out.iter().any(|existing| existing == &label) {
+            out.push(label);
+        }
+    }
+    for model in models {
+        if !out
+            .iter()
+            .any(|existing| model_menu_model_name(existing).eq_ignore_ascii_case(&model))
+        {
+            out.push(model);
+        }
+    }
+    out
+}
+
+pub fn model_menu_model_name(item: &str) -> &str {
+    item.strip_prefix("★ ")
+        .or_else(|| item.strip_prefix("◷ "))
+        .unwrap_or(item)
 }
 
 pub fn parse_model_switch_command(text: &str) -> ModelSwitchCommand {
@@ -363,21 +489,36 @@ pub fn configured_provider_models(
 pub fn configured_provider_model_options(
     config: &crate::config::schema::Config,
 ) -> Vec<ProviderModelsOption> {
-    let mut providers = configured_provider_models(config)
-        .into_iter()
-        .map(|provider| ProviderModelsOption {
-            name: provider.name.to_string(),
-            display: provider.display.to_string(),
-            models: provider
-                .models
-                .iter()
-                .map(|model| model.to_string())
-                .collect(),
+    provider_model_catalog_options(config, true)
+}
+
+pub fn provider_model_catalog_options(
+    config: &crate::config::schema::Config,
+    configured_only: bool,
+) -> Vec<ProviderModelsOption> {
+    let mut providers = provider_model_catalog()
+        .iter()
+        .filter_map(|provider| {
+            let available = config.is_provider_available(provider.name);
+            if configured_only && !available {
+                return None;
+            }
+            Some(ProviderModelsOption {
+                name: provider.name.to_string(),
+                display: provider.display.to_string(),
+                models: provider
+                    .models
+                    .iter()
+                    .map(|model| model.to_string())
+                    .collect(),
+                available,
+            })
         })
         .collect::<Vec<_>>();
 
     for name in config.custom_provider_names() {
-        if !config.is_provider_available(&name) {
+        let available = config.is_provider_available(&name);
+        if configured_only && !available {
             continue;
         }
         let default_model = config.custom_provider_default_model(&name);
@@ -387,6 +528,7 @@ pub fn configured_provider_model_options(
             name: name.clone(),
             display: format!("Custom: {} ({})", name, display_model),
             models,
+            available,
         });
     }
 
@@ -406,6 +548,7 @@ pub fn provider_model_option_by_name(
                 .iter()
                 .map(|model| model.to_string())
                 .collect(),
+            available: config.is_provider_available(provider.name),
         })
         .or_else(|| {
             if !config.is_custom_provider(name) {
@@ -420,6 +563,7 @@ pub fn provider_model_option_by_name(
                     default_model.as_deref().unwrap_or("custom model")
                 ),
                 models: default_model.into_iter().collect(),
+                available: config.is_provider_available(name),
             })
         })
 }
@@ -1428,6 +1572,64 @@ pub fn curated_models_for(provider_name: &str) -> Vec<String> {
     }
 }
 
+pub fn preview_models_for_provider(
+    provider: &ProviderModelsOption,
+    config: &crate::config::schema::Config,
+    limit: usize,
+) -> Vec<String> {
+    let mut models = provider.models.clone();
+    if let Some(default_model) = config
+        .get_provider_config(&provider.name)
+        .and_then(|provider| provider.default_model.clone())
+        .or_else(|| config.custom_provider_default_model(&provider.name))
+        .filter(|model| !model.trim().is_empty())
+    {
+        if !models
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(&default_model))
+        {
+            models.insert(0, default_model);
+        }
+    }
+    models.truncate(limit);
+    models
+}
+
+pub async fn resolved_provider_models_for_webui(
+    provider: &ProviderModelsOption,
+    config: &crate::config::schema::Config,
+) -> Vec<String> {
+    let mut models = fetch_provider_models(&provider.name, config)
+        .await
+        .unwrap_or_default();
+
+    for model in &provider.models {
+        if !models
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(model))
+        {
+            models.push(model.clone());
+        }
+    }
+
+    if let Some(default_model) = config
+        .get_provider_config(&provider.name)
+        .and_then(|provider| provider.default_model.clone())
+        .or_else(|| config.custom_provider_default_model(&provider.name))
+        .filter(|model| !model.trim().is_empty())
+    {
+        if !models
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(&default_model))
+        {
+            models.push(default_model);
+        }
+    }
+
+    models.sort();
+    models
+}
+
 pub async fn fetch_provider_models(
     provider_name: &str,
     config: &crate::config::schema::Config,
@@ -1822,6 +2024,42 @@ mod model_switch_tests {
                 model: "deepseek-v4-flash-free".to_string()
             }
         );
+    }
+
+    #[test]
+    fn webui_provider_preview_limits_models_and_keeps_default() {
+        let mut config = crate::config::schema::Config::default();
+        config.providers.openrouter = Some(crate::config::schema::ProviderConfig {
+            api_key: Some("key".to_string()),
+            api_key_env: None,
+            api_key_file: None,
+            api_base: Some("https://openrouter.ai/api/v1".to_string()),
+            default_model: Some("custom-default-model".to_string()),
+            extra: std::collections::HashMap::new(),
+        });
+        let provider = configured_provider_model_options(&config)
+            .into_iter()
+            .find(|provider| provider.name == "openrouter")
+            .expect("openrouter should be configured");
+        let preview = preview_models_for_provider(&provider, &config, 4);
+
+        assert_eq!(
+            preview.first().map(String::as_str),
+            Some("custom-default-model")
+        );
+        assert_eq!(preview.len(), 4);
+    }
+
+    #[test]
+    fn webui_model_options_stay_configured_only() {
+        let config = crate::config::schema::Config::default();
+        let configured = configured_provider_model_options(&config);
+
+        assert!(configured.iter().all(|provider| provider.available));
+        assert!(!configured.iter().any(|provider| provider.name == "openai"));
+        assert!(configured
+            .iter()
+            .any(|provider| provider.name == "ollama_local"));
     }
 
     #[test]

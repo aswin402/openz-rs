@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
-import { Send, Square, Zap, ChevronsUpDown, Loader2, Paperclip, X, FileText, Image as ImageIcon, AlertTriangle } from 'lucide-react';
+import { Send, Square, Zap, ChevronsUpDown, Loader2, Paperclip, X, FileText, Image as ImageIcon, AlertTriangle, Star } from 'lucide-react';
 import type { ChatAttachment } from '../types';
 
 const MAX_ATTACHMENTS = 8;
@@ -32,8 +32,14 @@ export const ChatInput: React.FC = () => {
   const stopTurn = useOpenZStore((s) => s.stopTurn);
   const isStreaming = useOpenZStore((s) => s.isStreaming);
   const activeModel = useOpenZStore((s) => s.activeModel);
+  const activeProvider = useOpenZStore((s) => s.activeProvider);
   const providers = useOpenZStore((s) => s.providers);
+  const recentModels = useOpenZStore((s) => s.recentModels);
+  const favoriteModels = useOpenZStore((s) => s.favoriteModels);
+  const loadingModelProvider = useOpenZStore((s) => s.loadingModelProvider);
   const setActiveModel = useOpenZStore((s) => s.setActiveModel);
+  const requestProviderModels = useOpenZStore((s) => s.requestProviderModels);
+  const toggleFavoriteModel = useOpenZStore((s) => s.toggleFavoriteModel);
   const slashCommands = useOpenZStore((s) => s.slashCommands);
   const cavemanMode = useOpenZStore((s) => s.cavemanMode);
   const toggleCavemanMode = useOpenZStore((s) => s.toggleCavemanMode);
@@ -181,7 +187,7 @@ export const ChatInput: React.FC = () => {
   const modelGroups = useMemo(
     () =>
       providers
-        .map((p) => ({ name: p.name, display: p.display, models: p.models }))
+        .map((p) => ({ name: p.name, display: p.display, models: p.models, available: p.available !== false, full: p.full === true }))
         .filter((g) => g.models.length > 0),
     [providers],
   );
@@ -189,10 +195,20 @@ export const ChatInput: React.FC = () => {
   const currentModelLabel = useMemo(() => {
     if (!activeModel) return 'Select model';
     for (const g of modelGroups) {
-      if (g.models.includes(activeModel)) return activeModel.split('/').pop() || activeModel;
+      if (g.name === activeProvider && g.models.includes(activeModel)) {
+        return `${g.display || g.name}: ${activeModel.split('/').pop() || activeModel}`;
+      }
     }
     return activeModel.split('/').pop() || activeModel;
-  }, [activeModel, modelGroups]);
+  }, [activeModel, activeProvider, modelGroups]);
+
+  const isFavoriteModel = (provider: string, model: string) =>
+    favoriteModels.some((entry) => entry.provider === provider && entry.model === model);
+
+  const chooseModel = (provider: string, model: string) => {
+    setActiveModel(model, provider);
+    setShowModelPicker(false);
+  };
 
   const canSend = !isStreaming && (input.trim().length > 0 || attachments.length > 0);
 
@@ -225,33 +241,86 @@ export const ChatInput: React.FC = () => {
           className="absolute bottom-full left-4 mb-2 w-72 overflow-hidden rounded-xl border border-border bg-card/95 shadow-xl backdrop-blur-md z-30"
         >
           <div className="border-b border-border/40 px-3 py-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
-            Available Models
+            Configured Models
           </div>
-          <div className="max-h-64 overflow-y-auto p-1.5">
+          <div className="max-h-80 overflow-y-auto p-1.5">
+            {favoriteModels.length > 0 && (
+              <div className="mb-1">
+                <div className="px-2.5 py-1 text-[10px] font-semibold text-muted-foreground/80">Favorites</div>
+                {favoriteModels.slice(0, 8).map((entry) => (
+                  <button
+                    key={`fav::${entry.provider}::${entry.model}`}
+                    onClick={() => chooseModel(entry.provider, entry.model)}
+                    className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition hover:bg-muted/70 ${
+                      entry.model === activeModel && entry.provider === activeProvider ? 'bg-amber-500/10 text-amber-400' : 'text-foreground/90'
+                    }`}
+                  >
+                    <span className="truncate font-mono">{entry.model}</span>
+                    <span className="ml-2 shrink-0 text-[10px] text-muted-foreground">{entry.provider}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {recentModels.length > 0 && (
+              <div className="mb-1">
+                <div className="px-2.5 py-1 text-[10px] font-semibold text-muted-foreground/80">Recent</div>
+                {recentModels.slice(0, 6).map((entry) => (
+                  <button
+                    key={`recent::${entry.provider}::${entry.model}`}
+                    onClick={() => chooseModel(entry.provider, entry.model)}
+                    className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition hover:bg-muted/70 ${
+                      entry.model === activeModel && entry.provider === activeProvider ? 'bg-amber-500/10 text-amber-400' : 'text-foreground/90'
+                    }`}
+                  >
+                    <span className="truncate font-mono">{entry.model}</span>
+                    <span className="ml-2 shrink-0 text-[10px] text-muted-foreground">{entry.provider}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             {modelGroups.length === 0 ? (
               <div className="px-2.5 py-2 text-[11px] text-muted-foreground">
-                No models loaded — start the gateway to fetch the model list.
+                No configured providers loaded.
               </div>
             ) : (
               modelGroups.map((g) => (
-                <div key={g.name}>
-                  <div className="px-2.5 py-1 text-[10px] font-semibold text-muted-foreground/80">
-                    {g.display || g.name}
+                <div key={g.name} className="mb-1">
+                  <div className="flex items-center justify-between px-2.5 py-1 text-[10px] font-semibold text-muted-foreground/80">
+                    <span>{g.display || g.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => requestProviderModels(g.name)}
+                      className="rounded px-1.5 py-0.5 text-[9px] font-medium text-amber-500 hover:bg-amber-500/10 disabled:text-muted-foreground"
+                      disabled={loadingModelProvider === g.name || g.full === true}
+                    >
+                      {loadingModelProvider === g.name ? 'loading' : g.full ? 'all loaded' : 'load all'}
+                    </button>
                   </div>
                   {g.models.map((model) => (
-                    <button
-                      key={model}
-                      onClick={() => {
-                        setActiveModel(model, g.name);
-                        setShowModelPicker(false);
-                      }}
-                      className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition hover:bg-muted/70 ${
-                        model === activeModel ? 'bg-amber-500/10 text-amber-400' : 'text-foreground/90'
+                    <div
+                      key={`${g.name}::${model}`}
+                      className={`group flex w-full items-center rounded-lg text-xs transition hover:bg-muted/70 ${
+                        model === activeModel && g.name === activeProvider ? 'bg-amber-500/10 text-amber-400' : 'text-foreground/90'
                       }`}
                     >
-                      <span className="truncate font-mono">{model}</span>
-                      {model === activeModel && <span className="text-[10px] text-amber-400">active</span>}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => chooseModel(g.name, model)}
+                        className="min-w-0 flex-1 px-2.5 py-1.5 text-left"
+                      >
+                        <span className="block truncate font-mono">{model}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleFavoriteModel(g.name, model)}
+                        className={`mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted ${isFavoriteModel(g.name, model) ? 'text-amber-400' : ''}`}
+                        title={isFavoriteModel(g.name, model) ? 'Remove favorite' : 'Add favorite'}
+                        aria-label={isFavoriteModel(g.name, model) ? 'Remove favorite' : 'Add favorite'}
+                      >
+                        <Star className="h-3.5 w-3.5" fill={isFavoriteModel(g.name, model) ? 'currentColor' : 'none'} />
+                      </button>
+                      {model === activeModel && g.name === activeProvider && <span className="mr-2 text-[10px] text-amber-400">active</span>}
+                    </div>
                   ))}
                 </div>
               ))
