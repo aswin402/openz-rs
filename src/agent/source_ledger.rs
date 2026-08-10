@@ -84,6 +84,7 @@ impl SourceLedger {
         }
 
         collect_sources(result, self, None);
+        collect_sources(arguments, self, None);
     }
 
     pub fn append_live_research_caveat_if_needed(
@@ -287,5 +288,17 @@ mod tests {
             enough.append_live_research_caveat_if_needed("answer".to_string(), true),
             "answer"
         );
+    }
+
+    #[test]
+    fn records_successful_source_url_from_tool_arguments() {
+        let mut ledger = SourceLedger::default();
+        ledger.record_tool_result(
+            "obscura_browser",
+            &serde_json::json!({ "url": "https://example.com/live" }),
+            &serde_json::json!({ "status": "success", "output": "rendered page" }),
+        );
+
+        assert_eq!(ledger.successful_sources().count(), 1);
     }
 }

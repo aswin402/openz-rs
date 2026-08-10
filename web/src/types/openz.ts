@@ -2,6 +2,14 @@ export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 export type JsonObject = { [key: string]: JsonValue };
 
+export interface ActivityNotice {
+  id: string;
+  kind: 'workflow' | 'memory' | 'research' | 'self_improvement' | 'source' | 'system';
+  title: string;
+  detail?: string;
+  timestamp: number;
+}
+
 export interface OpenZMessage {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
@@ -11,6 +19,8 @@ export interface OpenZMessage {
   toolCalls?: ToolExecution[];
   /** Security-approval prompts attached to this message. */
   securityPrompts?: SecurityPromptInfo[];
+  /** Structured activity notices such as workflow matches, memory saves, and research context hits. */
+  activityNotices?: ActivityNotice[];
   /** Streaming chain-of-thought text (collapsible "Thinking" block). */
   reasoningContent?: string;
   isStreaming?: boolean;

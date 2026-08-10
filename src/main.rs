@@ -145,7 +145,10 @@ async fn async_main() -> anyhow::Result<()> {
             } else {
                 let stderr_layer = tracing_subscriber::fmt::layer()
                     .with_writer(move || {
-                        openz::logs::SecretScrubWriter::new(std::io::stderr(), stderr_secrets.clone())
+                        openz::logs::SecretScrubWriter::new(
+                            std::io::stderr(),
+                            stderr_secrets.clone(),
+                        )
                     })
                     .with_ansi(true)
                     .with_target(true)
@@ -305,7 +308,7 @@ impl tracing::field::Visit for GatewayVisitor {
             _ => {}
         }
     }
-    
+
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         let val_str = format!("{:?}", value);
         match field.name() {
@@ -326,11 +329,19 @@ impl tracing::field::Visit for GatewayVisitor {
             _ => {}
         }
     }
-    
+
     fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
         match field.name() {
-            "duration_ms" => if value >= 0 { self.duration_ms = Some(value as u64) },
-            "tool_calls" => if value >= 0 { self.tool_calls = Some(value as usize) },
+            "duration_ms" => {
+                if value >= 0 {
+                    self.duration_ms = Some(value as u64)
+                }
+            }
+            "tool_calls" => {
+                if value >= 0 {
+                    self.tool_calls = Some(value as usize)
+                }
+            }
             _ => {}
         }
     }
@@ -375,9 +386,15 @@ where
                 let chat_id = if !visitor.chat_id.is_empty() {
                     visitor.chat_id.clone()
                 } else {
-                    extract_value(&msg, "chat_id='", "'").unwrap_or("unknown").to_string()
+                    extract_value(&msg, "chat_id='", "'")
+                        .unwrap_or("unknown")
+                        .to_string()
                 };
-                let short_id = if chat_id.len() > 11 { &chat_id[..11] } else { &chat_id };
+                let short_id = if chat_id.len() > 11 {
+                    &chat_id[..11]
+                } else {
+                    &chat_id
+                };
                 let model = extract_value(&msg, "msg_model=Some(\"", "\")")
                     .or_else(|| extract_value(&msg, "msg_model=", ","))
                     .unwrap_or("default");
@@ -396,7 +413,11 @@ where
                     short_id, model, provider
                 )?;
             } else {
-                write!(writer, "  \x1b[1;30m...\x1b[0m \x1b[1;36mWS\x1b[0m  {}\n", msg)?;
+                write!(
+                    writer,
+                    "  \x1b[1;30m...\x1b[0m \x1b[1;36mWS\x1b[0m  {}\n",
+                    msg
+                )?;
             }
         } else if target.starts_with("openz::agent::agent_loop::run") {
             if msg.starts_with("Sending completion request to LLM") {
@@ -419,7 +440,9 @@ where
                 let tool = if !visitor.tool.is_empty() {
                     visitor.tool.clone()
                 } else {
-                    extract_value(&msg, "tool=", " ").unwrap_or("unknown").to_string()
+                    extract_value(&msg, "tool=", " ")
+                        .unwrap_or("unknown")
+                        .to_string()
                 };
                 write!(
                     writer,
@@ -427,19 +450,27 @@ where
                     tool
                 )?;
             } else {
-                write!(writer, "  \x1b[1;30m...\x1b[0m \x1b[1;33mLOOP\x1b[0m {}\n", msg)?;
+                write!(
+                    writer,
+                    "  \x1b[1;30m...\x1b[0m \x1b[1;33mLOOP\x1b[0m {}\n",
+                    msg
+                )?;
             }
         } else if target.starts_with("openz::agent::agent_loop::tool_execution") {
             if msg.starts_with("Tool call completed") {
                 let tool = if !visitor.tool.is_empty() {
                     visitor.tool.clone()
                 } else {
-                    extract_value(&msg, "tool=", " ").unwrap_or("unknown").to_string()
+                    extract_value(&msg, "tool=", " ")
+                        .unwrap_or("unknown")
+                        .to_string()
                 };
                 let status = if !visitor.status.is_empty() {
                     visitor.status.clone()
                 } else {
-                    extract_value(&msg, "status=\"", "\"").unwrap_or("success").to_string()
+                    extract_value(&msg, "status=\"", "\"")
+                        .unwrap_or("success")
+                        .to_string()
                 };
                 let status_colored = if status == "success" {
                     "\x1b[1;32mSUCCESS\x1b[0m"
@@ -452,11 +483,16 @@ where
                     tool, status_colored
                 )?;
             } else {
-                write!(writer, "  \x1b[1;30m...\x1b[0m \x1b[1;33mTOOL\x1b[0m {}\n", msg)?;
+                write!(
+                    writer,
+                    "  \x1b[1;30m...\x1b[0m \x1b[1;33mTOOL\x1b[0m {}\n",
+                    msg
+                )?;
             }
         } else if target.starts_with("openz::agent::agent_loop::restore") {
             if msg.starts_with("Restored session history") {
-                let count = extract_value(&msg, "Restored session history (", " messages)").unwrap_or("0");
+                let count =
+                    extract_value(&msg, "Restored session history (", " messages)").unwrap_or("0");
                 let prompt = extract_value(&msg, "User prompt: \"", "\"").unwrap_or("");
                 write!(
                     writer,
@@ -464,7 +500,11 @@ where
                     count, prompt
                 )?;
             } else {
-                write!(writer, "  \x1b[1;30m...\x1b[0m \x1b[1;32mREST\x1b[0m {}\n", msg)?;
+                write!(
+                    writer,
+                    "  \x1b[1;30m...\x1b[0m \x1b[1;32mREST\x1b[0m {}\n",
+                    msg
+                )?;
             }
         } else if target.starts_with("openz::agent::agent_loop::save") {
             if msg.starts_with("Session saved successfully") {
@@ -473,9 +513,15 @@ where
                     "  \x1b[1;32m✓\x1b[0m \x1b[1;32mTURN_COMPLETE\x1b[0m\n"
                 )?;
             } else {
-                write!(writer, "  \x1b[1;30m...\x1b[0m \x1b[1;35mSAVE\x1b[0m {}\n", msg)?;
+                write!(
+                    writer,
+                    "  \x1b[1;30m...\x1b[0m \x1b[1;35mSAVE\x1b[0m {}\n",
+                    msg
+                )?;
             }
-        } else if target.starts_with("openz::providers::resolver") && msg.contains("No API key configured") {
+        } else if target.starts_with("openz::providers::resolver")
+            && msg.contains("No API key configured")
+        {
             let provider = extract_value(&msg, "provider '", "'").unwrap_or("unknown");
             write!(
                 writer,

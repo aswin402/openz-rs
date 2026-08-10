@@ -226,6 +226,49 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+
+function normalizeActivityKind(value: unknown): 'workflow' | 'memory' | 'research' | 'self_improvement' | 'source' | 'system' {
+  const raw = typeof value === 'string' ? value : 'system';
+  if (raw === 'workflow' || raw === 'memory' || raw === 'research' || raw === 'self_improvement' || raw === 'source') return raw;
+  return 'system';
+}
+
+function attachActivityNotice(chatId: string, payload: Record<string, unknown>) {
+  const state = useOpenZStore.getState();
+  const messages = state.messages[chatId] || [];
+  const notice = {
+    id: newMsgId('activity'),
+    kind: normalizeActivityKind(payload.kind),
+    title: asString(payload.title) || 'Agent activity',
+    detail: asString(payload.detail),
+    timestamp: typeof payload.timestamp === 'number' ? payload.timestamp : Date.now(),
+  };
+  const lastMsg = messages[messages.length - 1];
+
+  if (lastMsg && lastMsg.role === 'assistant') {
+    const updated: OpenZMessage = {
+      ...lastMsg,
+      activityNotices: [...(lastMsg.activityNotices || []), notice],
+    };
+    useOpenZStore.setState({
+      messages: { ...state.messages, [chatId]: [...messages.slice(0, -1), updated] },
+    });
+    return;
+  }
+
+  const message: OpenZMessage = {
+    id: newMsgId('activity-msg'),
+    role: 'assistant',
+    content: '',
+    timestamp: notice.timestamp,
+    isNotice: true,
+    activityNotices: [notice],
+  };
+  useOpenZStore.setState({
+    messages: { ...state.messages, [chatId]: [...messages, message] },
+  });
+}
+
 function parseToolArgs(value: unknown): ToolExecution['args'] {
   if (typeof value === 'string') {
     if (value.trim().startsWith('{')) {
@@ -436,6 +479,12 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
           isStreaming: true,
         });
       }
+    });
+
+
+    wsService.on('activity_notice', (payload) => {
+      const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
+      attachActivityNotice(chatId, payload as Record<string, unknown>);
     });
 
     wsService.on('tool_start', (payload) => {

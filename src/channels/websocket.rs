@@ -52,6 +52,25 @@ pub fn ws_chat_id(session_key: &str) -> Option<String> {
     Some(session_key.replace(':', "_"))
 }
 
+/// Publish a structured activity notice to WebUI clients for a chat/session.
+pub fn publish_activity_notice(
+    session_key: &str,
+    kind: &str,
+    title: impl Into<String>,
+    detail: impl Into<String>,
+) {
+    if let Some(chat_id) = ws_chat_id(session_key) {
+        publish_ws_event(serde_json::json!({
+            "event": "activity_notice",
+            "chat_id": chat_id,
+            "kind": kind,
+            "title": title.into(),
+            "detail": detail.into(),
+            "timestamp": chrono::Utc::now().timestamp_millis(),
+        }));
+    }
+}
+
 static WS_APPROVALS: std::sync::OnceLock<
     std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
 > = std::sync::OnceLock::new();

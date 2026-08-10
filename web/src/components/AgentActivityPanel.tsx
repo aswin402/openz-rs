@@ -7,9 +7,12 @@ import {
   Brain,
   CheckCircle2,
   Clock3,
+  GitBranch,
   Loader2,
   PanelRightClose,
+  Search,
   ShieldAlert,
+  Sparkles,
   Terminal,
 } from 'lucide-react';
 
@@ -19,11 +22,12 @@ interface AgentActivityPanelProps {
   onClose?: () => void;
 }
 
-type ActivityFilter = 'all' | 'tools' | 'approvals' | 'errors';
+type ActivityFilter = 'all' | 'tools' | 'notices' | 'approvals' | 'errors';
 
 type ActivityItem = {
   id: string;
-  kind: 'tool' | 'security' | 'reasoning' | 'message';
+  kind: 'tool' | 'security' | 'reasoning' | 'notice' | 'message';
+  noticeKind?: 'workflow' | 'memory' | 'research' | 'self_improvement' | 'source' | 'system';
   title: string;
   detail?: string;
   status: 'running' | 'success' | 'error' | 'pending' | 'info';
@@ -76,6 +80,18 @@ function buildActivity(messages: OpenZMessage[]): ActivityItem[] {
       });
     });
 
+    message.activityNotices?.forEach((notice) => {
+      items.push({
+        id: notice.id,
+        kind: 'notice',
+        noticeKind: notice.kind,
+        title: notice.title,
+        detail: notice.detail,
+        status: 'info',
+        timestamp: notice.timestamp,
+      });
+    });
+
     message.toolCalls?.forEach((tool) => {
       items.push({
         id: message.id + '-tool-' + tool.id,
@@ -95,6 +111,7 @@ function buildActivity(messages: OpenZMessage[]): ActivityItem[] {
 function matchesFilter(item: ActivityItem, filter: ActivityFilter): boolean {
   if (filter === 'all') return true;
   if (filter === 'tools') return item.kind === 'tool';
+  if (filter === 'notices') return item.kind === 'notice';
   if (filter === 'approvals') return item.kind === 'security';
   return item.status === 'error';
 }
@@ -110,13 +127,14 @@ export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({ messages
   const activity = useMemo(() => buildActivity(messages), [messages]);
   const filteredActivity = useMemo(() => activity.filter((item) => matchesFilter(item, filter)), [activity, filter]);
   const runningTools = activity.filter((item) => item.kind === 'tool' && item.status === 'running').length;
-  const pendingApprovals = activity.filter((item) => item.kind === 'security' && item.status === 'pending').length;
+  const noticeCount = activity.filter((item) => item.kind === 'notice').length;
   const failedTools = activity.filter((item) => item.kind === 'tool' && item.status === 'error').length;
   const lastAssistant = [...messages].reverse().find((message) => message.role === 'assistant');
   const hasReasoning = Boolean(lastAssistant?.reasoningContent);
   const filters: Array<{ id: ActivityFilter; label: string; count: number }> = [
     { id: 'all', label: 'All', count: activity.length },
     { id: 'tools', label: 'Tools', count: activity.filter((item) => item.kind === 'tool').length },
+    { id: 'notices', label: 'Notes', count: noticeCount },
     { id: 'approvals', label: 'Approvals', count: activity.filter((item) => item.kind === 'security').length },
     { id: 'errors', label: 'Errors', count: activity.filter((item) => item.status === 'error').length },
   ];
@@ -165,7 +183,7 @@ export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({ messages
 
       <div className="grid grid-cols-3 gap-2 border-b border-border/50 p-3">
         <Metric label="Tools" value={runningTools} tone={runningTools ? 'amber' : 'muted'} />
-        <Metric label="Approvals" value={pendingApprovals} tone={pendingApprovals ? 'amber' : 'muted'} />
+        <Metric label="Notes" value={noticeCount} tone={noticeCount ? 'amber' : 'muted'} />
         <Metric label="Errors" value={failedTools} tone={failedTools ? 'red' : 'muted'} />
       </div>
 
@@ -190,7 +208,7 @@ export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({ messages
       </div>
 
       <div className="border-b border-border/50 p-3">
-        <div className="grid grid-cols-4 gap-1 rounded-lg bg-muted/40 p-1">
+        <div className="grid grid-cols-5 gap-1 rounded-lg bg-muted/40 p-1">
           {filters.map((item) => (
             <button
               key={item.id}
@@ -211,7 +229,7 @@ export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({ messages
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {filteredActivity.length === 0 ? (
           <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border/60 px-4 text-center text-xs text-muted-foreground">
-            {activity.length === 0 ? 'Tool calls, approvals, and reasoning markers will appear here during a turn.' : 'No activity matches this filter.'}
+            {activity.length === 0 ? 'Tool calls, workflow matches, memory saves, research context, approvals, and reasoning markers will appear here during a turn.' : 'No activity matches this filter.'}
           </div>
         ) : (
           <div className="space-y-2">
@@ -243,7 +261,23 @@ const Metric: React.FC<{ label: string; value: number; tone: 'amber' | 'red' | '
 
 const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
   const styles = statusStyles[item.status];
-  const Icon = item.kind === 'tool' ? Terminal : item.kind === 'security' ? ShieldAlert : item.kind === 'reasoning' ? Brain : styles.icon;
+  const Icon = item.kind === 'tool'
+    ? Terminal
+    : item.kind === 'security'
+      ? ShieldAlert
+      : item.kind === 'reasoning'
+        ? Brain
+        : item.kind === 'notice'
+          ? item.noticeKind === 'workflow'
+            ? GitBranch
+            : item.noticeKind === 'memory'
+              ? Brain
+              : item.noticeKind === 'research' || item.noticeKind === 'source'
+                ? Search
+                : item.noticeKind === 'self_improvement'
+                  ? Sparkles
+                  : Activity
+          : styles.icon;
   const duration = formatDuration(item.tool?.durationMs);
 
   return (

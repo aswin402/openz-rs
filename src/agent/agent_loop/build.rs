@@ -128,11 +128,17 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     };
 
     let pinned_memory = retrieve_pinned_identity_memories().await;
+    let persona_priority_part = identity_answer_priority_context(ctx.user_content, &pinned_memory);
     let recent_session_part = recent_session_context(&ctx.session.messages, 2000);
-    let brief_context = retrieve_research_brief_context(ctx.user_content).await;
-    let source_context = retrieve_source_context(ctx.user_content, !brief_context.is_empty()).await;
-    let workflow_context =
-        retrieve_workflow_context(ctx.user_content, &mut ctx.workflow_notice_names).await;
+    let brief_context = retrieve_research_brief_context(ctx.session_key, ctx.user_content).await;
+    let source_context =
+        retrieve_source_context(ctx.session_key, ctx.user_content, !brief_context.is_empty()).await;
+    let workflow_context = retrieve_workflow_context(
+        ctx.session_key,
+        ctx.user_content,
+        &mut ctx.workflow_notice_names,
+    )
+    .await;
     let weak_model_rules = weak_model_operating_rules(&config.agents.defaults.model);
     let mut cross_session_memory = retrieve_cross_session_memories(ctx.user_content).await;
 
@@ -151,6 +157,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         + summary_part.chars().count()
         + memory_part.chars().count()
         + pinned_memory.chars().count()
+        + persona_priority_part.chars().count()
         + recent_session_part.chars().count()
         + brief_context.chars().count()
         + source_context.chars().count()
@@ -197,8 +204,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     }
 
     ctx.system_prompt = format!(
-        "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
         header,
+        persona_priority_part,
         system_guidelines,
         activity_part,
         summary_part,
@@ -259,12 +267,22 @@ fn is_identity_or_persona_query(text: &str) -> bool {
         "remember about me",
         "your name",
         "who are you",
+        "who are u",
+        "who r u",
         "what are you called",
         "persona",
         "personality",
     ]
     .iter()
     .any(|needle| normalized.contains(needle))
+}
+
+fn identity_answer_priority_context(user_content: &str, pinned_memory: &str) -> &'static str {
+    if is_identity_or_persona_query(user_content) && !pinned_memory.trim().is_empty() {
+        "\n\n[Identity Answer Priority]\nThe active persona and user preference facts in [Pinned Memory] outrank the generic OpenZ product identity for identity/persona questions. If asked who you are, answer as the active persona first, then mention OpenZ only as underlying system/context if useful. Do not ignore Mivi/persona memory because the generic header says OpenZ.\n"
+    } else {
+        ""
+    }
 }
 
 fn identity_memory_candidate(text: &str) -> bool {
@@ -487,7 +505,7 @@ fn format_research_brief_context_items(
     out
 }
 
-async fn retrieve_research_brief_context(user_content: &str) -> String {
+async fn retrieve_research_brief_context(session_key: &str, user_content: &str) -> String {
     if should_skip_research_memory_for_generic_query(user_content) {
         return String::new();
     }
@@ -495,10 +513,17 @@ async fn retrieve_research_brief_context(user_content: &str) -> String {
         Ok(items) => {
             if should_show_saved_context_notification(user_content) {
                 if let Some(best) = items.first().filter(|item| item.score >= MIN_MATCH_SCORE) {
-                    crate::channels::cli::send_notification(&format!(
+                    let notice = format!(
                         "◇ Research brief matched: {} ({})",
                         best.topic, best.freshness
-                    ));
+                    );
+                    crate::channels::cli::send_notification(&notice);
+                    crate::channels::websocket::publish_activity_notice(
+                        session_key,
+                        "research",
+                        "Research brief matched",
+                        format!("{} ({})", best.topic, best.freshness),
+                    );
                 }
             }
             format_research_brief_context_items(&items, user_content)
@@ -545,7 +570,11 @@ fn should_notify_source_context(user_content: &str, brief_context_available: boo
     should_show_saved_context_notification(user_content) && !brief_context_available
 }
 
-async fn retrieve_source_context(user_content: &str, brief_context_available: bool) -> String {
+async fn retrieve_source_context(
+    session_key: &str,
+    user_content: &str,
+    brief_context_available: bool,
+) -> String {
     if should_skip_research_memory_for_generic_query(user_content) {
         return String::new();
     }
@@ -553,11 +582,16 @@ async fn retrieve_source_context(user_content: &str, brief_context_available: bo
         Ok(items) => {
             if should_notify_source_context(user_content, brief_context_available) {
                 if let Some(best) = items.first().filter(|item| item.score >= MIN_MATCH_SCORE) {
-                    crate::channels::cli::send_notification(&format!(
-                        "◇ Sources matched: {} ({})",
-                        crate::tools::shared_memory::display_source_label(&best.label, &best.uri),
-                        best.freshness
-                    ));
+                    let label =
+                        crate::tools::shared_memory::display_source_label(&best.label, &best.uri);
+                    let notice = format!("◇ Sources matched: {} ({})", label, best.freshness);
+                    crate::channels::cli::send_notification(&notice);
+                    crate::channels::websocket::publish_activity_notice(
+                        session_key,
+                        "research",
+                        "Sources matched",
+                        format!("{} ({})", label, best.freshness),
+                    );
                 }
             }
             format_source_context_items(&items)
@@ -603,11 +637,20 @@ fn summarize_workflow_steps(steps: &serde_json::Value) -> String {
 }
 
 fn format_workflow_context_items(items: &[crate::tools::shared_memory::WorkflowCard]) -> String {
-    if items.is_empty() {
+    let relevant: Vec<_> = items
+        .iter()
+        .filter(|item| item.score >= 4.0)
+        .take(3)
+        .collect();
+    if relevant.is_empty() {
         return String::new();
     }
-    let mut out = String::from("\n\n[Relevant Reusable Workflows]\nUse these matched procedures automatically for similar tasks instead of rediscovering steps. Follow preconditions, execute the steps, verify the result, then record success/failure with workflow_memory.record_run. For high-risk workflows, request approval before execution:\n");
-    for item in items.iter().take(3) {
+    let mut out = String::from("
+
+[Relevant Reusable Workflows]
+Use these matched procedures automatically for similar tasks instead of rediscovering steps. Follow preconditions, execute the steps, verify the result, then record success/failure with workflow_memory.record_run. For high-risk workflows, request approval before execution:
+");
+    for item in relevant {
         let steps = summarize_workflow_steps(&item.steps);
         let line = format!(
             "- {} [{}] risk={} score={:.2} success={} failure={} | triggers: {} | preconditions: {} | summary: {} | steps: {} | verify: {}\n",
@@ -636,6 +679,7 @@ fn should_emit_workflow_notice(seen: &mut HashSet<String>, workflow_name: &str) 
 }
 
 async fn retrieve_workflow_context(
+    session_key: &str,
     user_content: &str,
     seen_workflow_notices: &mut HashSet<String>,
 ) -> String {
@@ -643,10 +687,14 @@ async fn retrieve_workflow_context(
         Ok(items) => {
             if let Some(best) = items.first().filter(|item| item.score >= 4.0) {
                 if should_emit_workflow_notice(seen_workflow_notices, &best.name) {
-                    crate::channels::cli::send_notification(&format!(
-                        "◇ Workflow matched: {}",
-                        best.name
-                    ));
+                    let notice = format!("◇ Workflow matched: {}", best.name);
+                    crate::channels::cli::send_notification(&notice);
+                    crate::channels::websocket::publish_activity_notice(
+                        session_key,
+                        "workflow",
+                        "Workflow matched",
+                        best.name.clone(),
+                    );
                 }
             }
             format_workflow_context_items(&items)
@@ -1062,8 +1110,22 @@ mod tests {
     fn identity_query_detection_catches_name_and_persona_questions() {
         assert!(is_identity_or_persona_query("what is my name"));
         assert!(is_identity_or_persona_query("who are you"));
+        assert!(is_identity_or_persona_query("who are u"));
         assert!(is_identity_or_persona_query("what is your persona"));
         assert!(!is_identity_or_persona_query("fix the cargo build"));
+    }
+
+    #[test]
+    fn identity_answer_priority_is_injected_for_persona_questions_with_pinned_memory() {
+        let prompt = identity_answer_priority_context(
+            "who are u",
+            "[Pinned Memory] Mivi persona active. Casual friend mode.",
+        );
+
+        assert!(prompt.contains("active persona"));
+        assert!(prompt.contains("answer as the active persona first"));
+        assert!(identity_answer_priority_context("fix cargo", "Mivi persona active").is_empty());
+        assert!(identity_answer_priority_context("who are you", "").is_empty());
     }
 
     #[test]
@@ -1223,6 +1285,29 @@ mod tests {
         assert!(block.contains("steps:"));
         assert!(block.contains("exec_command"));
         assert!(block.contains("workflow_memory.record_run"));
+    }
+
+    #[test]
+    fn workflow_context_filters_weak_matches() {
+        let weak = crate::tools::shared_memory::WorkflowCard {
+            id: "id".to_string(),
+            name: "test_web_tools_health".to_string(),
+            triggers: vec!["test web tools health".to_string()],
+            summary: "Verify browser search tooling".to_string(),
+            steps: serde_json::json!([]),
+            preconditions: vec![],
+            verification: vec![],
+            risk: "normal".to_string(),
+            status: "active".to_string(),
+            success_count: 0,
+            failure_count: 0,
+            last_used: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+            score: 2.5,
+        };
+        let block = format_workflow_context_items(&[weak]);
+        assert!(block.is_empty());
     }
 
     #[test]

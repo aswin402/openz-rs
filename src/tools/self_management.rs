@@ -376,11 +376,11 @@ impl Tool for OpenZInventoryTool {
             "properties": {
                 "include_tools": {
                     "type": "boolean",
-                    "description": "Include the full registered tool name list. Default true."
+                    "description": "Include the full registered tool name list. Default false for faster answers; set true only when the user asks for exact tool names."
                 },
                 "include_subagents": {
                     "type": "boolean",
-                    "description": "Include loaded subagent profile names. Default true."
+                    "description": "Include loaded subagent profile names. Default false for faster answers; set true only when the user asks for exact subagent names."
                 },
                 "prompt": {
                     "type": "string",
@@ -394,11 +394,11 @@ impl Tool for OpenZInventoryTool {
         let include_tools = arguments
             .get("include_tools")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            .unwrap_or(false);
         let include_subagents = arguments
             .get("include_subagents")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            .unwrap_or(false);
         let prompt = arguments
             .get("prompt")
             .and_then(|v| v.as_str())
@@ -538,7 +538,7 @@ impl Tool for OpenZInventoryTool {
                 "started_at": s.started_at,
             })).collect::<Vec<_>>(),
             "tools_by_domain": if include_tools { serde_json::json!(tools_by_domain) } else { serde_json::Value::Null },
-            "guidance": "Use this live inventory instead of guessing feature/tool counts or model/provider identity from memory."
+            "guidance": "Use this compact live inventory instead of guessing feature/tool counts or model/provider identity from memory. Call again with include_tools=true or include_subagents=true only if exact names are needed."
         }))
     }
 }

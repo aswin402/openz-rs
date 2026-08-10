@@ -660,7 +660,7 @@ impl Tool for SearchXyzBrowserSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search the web through a local browser page when keyless/API search backends are blocked. No Brave or SearXNG dependency required."
+        "Search the web through the headless-first browser broker when keyless/API search backends are blocked. Tries Obscura/Chrome CDP and Firefox headless before any GUI fallback; no Brave or SearXNG dependency required."
     }
 
     fn metadata(&self) -> crate::tools::ToolMetadata {
@@ -1322,6 +1322,7 @@ mod tests {
         let tool = SearchXyzBrowserSearchTool;
         assert_eq!(tool.name(), "searchxyz_browser_search");
         assert_eq!(tool.metadata().domain, "web");
+        assert!(tool.description().contains("headless-first"));
         assert!(tool.parameters()["properties"].get("query").is_some());
         assert!(tool.parameters()["properties"].get("engine").is_some());
     }

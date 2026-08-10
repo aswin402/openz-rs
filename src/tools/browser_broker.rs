@@ -172,14 +172,20 @@ fn cleanup_label(backend: BrowserBackendChoice) -> &'static str {
     match backend {
         BrowserBackendChoice::ObscuraHeadless => "closed_tab",
         BrowserBackendChoice::FirefoxHeadless => "closed_session",
-        BrowserBackendChoice::GsdChromeGui => "preserved_gui_session",
+        BrowserBackendChoice::GsdChromeGui => "stopped_daemon",
     }
 }
 
 async fn cleanup_backend_after_use(backend: BrowserBackendChoice) {
-    if backend == BrowserBackendChoice::FirefoxHeadless {
-        let tool = crate::tools::firefox::FirefoxBrowserTool::new();
-        let _ = tool.call(&json!({ "action": "close" })).await;
+    match backend {
+        BrowserBackendChoice::FirefoxHeadless => {
+            let tool = crate::tools::firefox::FirefoxBrowserTool::new();
+            let _ = tool.call(&json!({ "action": "close" })).await;
+        }
+        BrowserBackendChoice::GsdChromeGui => {
+            crate::tools::gsd_browser::stop_gsd_browser_daemon().await;
+        }
+        BrowserBackendChoice::ObscuraHeadless => {}
     }
 }
 
@@ -208,6 +214,14 @@ mod tests {
                 BrowserBackendChoice::FirefoxHeadless,
                 BrowserBackendChoice::GsdChromeGui,
             ]
+        );
+    }
+
+    #[test]
+    fn gsd_fallback_cleanup_stops_daemon() {
+        assert_eq!(
+            cleanup_label(BrowserBackendChoice::GsdChromeGui),
+            "stopped_daemon"
         );
     }
 

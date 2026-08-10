@@ -29,7 +29,8 @@ mod version_sync_tests {
         let onpkg_json: serde_json::Value = serde_json::from_str(&onpkg).expect("valid onpkg.json");
 
         assert!(
-            readme.contains(&format!("badge/version-{version}-orange.svg")) || readme.contains(&format!("alt=\"Version {version}\"")),
+            readme.contains(&format!("badge/version-{version}-orange.svg"))
+                || readme.contains(&format!("alt=\"Version {version}\"")),
             "README.md badge must match Cargo package version {version}"
         );
         assert_eq!(

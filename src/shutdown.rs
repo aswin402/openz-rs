@@ -113,11 +113,17 @@ fn register_child_inner(
         "watcher" => crate::tools::task_manager::TaskKind::Watcher,
         _ => crate::tools::task_manager::TaskKind::BackgroundJob,
     };
+    let cleanup_policy = match task_kind {
+        crate::tools::task_manager::TaskKind::Browser => {
+            crate::tools::task_manager::CleanupPolicy::OnTurnEnd
+        }
+        _ => crate::tools::task_manager::CleanupPolicy::Manual,
+    };
     let task = crate::tools::task_manager::ManagedTask::new(
         task_kind,
         crate::tools::task_manager::TaskOwner::OpenZ,
         kind,
-        crate::tools::task_manager::CleanupPolicy::Manual,
+        cleanup_policy,
     )
     .with_process(command, pid)
     .with_process_registry_id(id);

@@ -52,10 +52,11 @@ fn score_text(query: &str, fields: &[&str]) -> f64 {
     }
     let joined = fields.join(" ").to_lowercase();
     let mut score = if joined.contains(&query) { 4.0 } else { 0.0 };
-    for term in query.split_whitespace().filter(|s| s.len() > 1) {
-        if joined.contains(term) {
-            score += 1.0;
-        }
+    let query_terms = normalized_terms(&query);
+    let field_terms = normalized_terms(&joined);
+    let overlap = query_terms.intersection(&field_terms).count();
+    if overlap >= 2 {
+        score += overlap as f64;
     }
     score
 }
@@ -397,6 +398,29 @@ mod tests {
             .unwrap();
         assert!(matches.iter().all(|m| m.name != name));
         assert_eq!(delete_workflow(&name).await.unwrap(), 1);
+    }
+
+    #[test]
+    fn workflow_rank_score_ignores_single_generic_overlap() {
+        let item = WorkflowCard {
+            id: "id".to_string(),
+            name: "test_web_tools_health".to_string(),
+            triggers: vec!["test web tools health".to_string()],
+            summary: "Verify browser search tooling".to_string(),
+            steps: json!([]),
+            preconditions: vec![],
+            verification: vec![],
+            risk: "normal".to_string(),
+            status: "active".to_string(),
+            success_count: 0,
+            failure_count: 0,
+            last_used: None,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+            score: 0.0,
+        };
+
+        assert_eq!(workflow_rank_score("why did workflow match", &item), 0.0);
     }
 
     #[tokio::test]

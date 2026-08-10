@@ -467,7 +467,11 @@ impl SessionManager {
         let mut session: Session = serde_json::from_str(&content)
             .with_context(|| format!("Failed to parse session file at {:?}", path))?;
         if let Err(e) = session.verify_hash_chain() {
-            tracing::warn!("Session hash chain verification failed for key '{}': {}. Reconstructing.", key, e);
+            tracing::warn!(
+                "Session hash chain verification failed for key '{}': {}. Reconstructing.",
+                key,
+                e
+            );
             session.populate_hashes();
             if let Ok(pretty) = serde_json::to_string_pretty(&session) {
                 let _ = std::fs::write(&path, pretty);
@@ -485,7 +489,11 @@ impl SessionManager {
             let mut session: Session = serde_json::from_str(&content)
                 .with_context(|| format!("Failed to parse session file at {:?}", path))?;
             if let Err(e) = session.verify_hash_chain() {
-                tracing::warn!("Session hash chain verification failed for key '{}': {}. Reconstructing.", key_owned, e);
+                tracing::warn!(
+                    "Session hash chain verification failed for key '{}': {}. Reconstructing.",
+                    key_owned,
+                    e
+                );
                 session.populate_hashes();
                 if let Ok(pretty) = serde_json::to_string_pretty(&session) {
                     let _ = std::fs::write(&path, pretty);

@@ -11,7 +11,6 @@ use tokio::sync::Mutex;
 
 pub use crate::channels::cli::mcp::get_mcp_stats;
 
-
 static MEMORY_MCP_CLIENT: OnceLock<StdMutex<Option<McpClient>>> = OnceLock::new();
 
 /// Cache of spawned MCP clients, keyed by "command:arg1 arg2 ...".

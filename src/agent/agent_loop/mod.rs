@@ -6,6 +6,9 @@ use crate::tools::ToolRegistry;
 use anyhow::Result;
 use std::sync::Arc;
 
+const DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECS: u64 = 45;
+const MAX_PROVIDER_ATTEMPT_TIMEOUT_SECS: u64 = 120;
+
 pub mod build;
 pub mod command;
 pub mod compact;
@@ -171,6 +174,27 @@ where
     }
 }
 
+async fn cancel_aware_provider_call<F, T>(
+    activity_msg: &str,
+    initial_cancel: u64,
+    timeout_secs: u64,
+    future: F,
+) -> Result<T>
+where
+    F: std::future::Future<Output = Result<T>>,
+{
+    cancel_aware_with_spinner(activity_msg, initial_cancel, async move {
+        match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), future).await {
+            Ok(result) => result,
+            Err(_) => Err(anyhow::anyhow!(
+                "Provider response timed out after {}s",
+                timeout_secs
+            )),
+        }
+    })
+    .await
+}
+
 impl AgentLoop {
     pub fn new(
         config: Config,
@@ -193,6 +217,20 @@ impl AgentLoop {
             ctx.0 = config;
             ctx.1 = provider;
         }
+    }
+
+    pub(crate) fn provider_attempt_timeout_secs(&self) -> u64 {
+        let configured = std::env::var("OPENZ_PROVIDER_ATTEMPT_TIMEOUT_SECS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECS);
+        configured
+            .min(self.config.agents.defaults.tool_timeout_secs.max(1))
+            .clamp(1, MAX_PROVIDER_ATTEMPT_TIMEOUT_SECS)
+    }
+
+    pub(crate) fn provider_attempt_timeout_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.provider_attempt_timeout_secs())
     }
 
     fn cleanup_old_files() {
@@ -235,10 +273,16 @@ impl AgentLoop {
         let cwf_cancel_tx = crate::shutdown::cli_cancel_tx();
         let cwf_cancel_initial = *cwf_cancel_tx.subscribe().borrow();
         let is_cancelled = || -> bool { *cwf_cancel_tx.subscribe().borrow() != cwf_cancel_initial };
+        let provider_timeout_secs = self.provider_attempt_timeout_secs();
 
         let chat_fut = active_provider.chat(system_prompt, messages, tools, settings);
-        let mut chat_result =
-            cancel_aware_with_spinner(activity_msg, cwf_cancel_initial, chat_fut).await;
+        let mut chat_result = cancel_aware_provider_call(
+            activity_msg,
+            cwf_cancel_initial,
+            provider_timeout_secs,
+            chat_fut,
+        )
+        .await;
 
         if chat_result.is_err() {
             if let Err(ref err) = chat_result {
@@ -289,8 +333,13 @@ impl AgentLoop {
                     crate::tools::subagent::build_provider_for_model(&self.config, &fallback_model)
                 {
                     let chat_fut = fallback_provider.chat(system_prompt, messages, tools, settings);
-                    chat_result =
-                        cancel_aware_with_spinner(activity_msg, cwf_cancel_initial, chat_fut).await;
+                    chat_result = cancel_aware_provider_call(
+                        activity_msg,
+                        cwf_cancel_initial,
+                        provider_timeout_secs,
+                        chat_fut,
+                    )
+                    .await;
                     if chat_result.is_ok() {
                         resolved_fallback = true;
                         let fallback_provider_name = fallback_model
@@ -320,13 +369,8 @@ impl AgentLoop {
                 }
             }
 
-            if !resolved_fallback {
-                if is_cancelled() {
-                    return Err(anyhow::anyhow!("Cancelled by user"));
-                }
-                let chat_fut = active_provider.chat(system_prompt, messages, tools, settings);
-                chat_result =
-                    cancel_aware_with_spinner(activity_msg, cwf_cancel_initial, chat_fut).await;
+            if !resolved_fallback && is_cancelled() {
+                return Err(anyhow::anyhow!("Cancelled by user"));
             }
         }
 
@@ -349,10 +393,16 @@ impl AgentLoop {
         let csf_cancel_tx = crate::shutdown::cli_cancel_tx();
         let csf_cancel_initial = *csf_cancel_tx.subscribe().borrow();
         let is_cancelled = || -> bool { *csf_cancel_tx.subscribe().borrow() != csf_cancel_initial };
+        let provider_timeout_secs = self.provider_attempt_timeout_secs();
 
         let chat_fut = active_provider.chat_stream(system_prompt, messages, tools, settings);
-        let mut chat_result =
-            cancel_aware_with_spinner(activity_msg, csf_cancel_initial, chat_fut).await;
+        let mut chat_result = cancel_aware_provider_call(
+            activity_msg,
+            csf_cancel_initial,
+            provider_timeout_secs,
+            chat_fut,
+        )
+        .await;
 
         if chat_result.is_err() {
             if let Err(ref err) = chat_result {
@@ -399,8 +449,13 @@ impl AgentLoop {
                 {
                     let chat_fut =
                         fallback_provider.chat_stream(system_prompt, messages, tools, settings);
-                    chat_result =
-                        cancel_aware_with_spinner(activity_msg, csf_cancel_initial, chat_fut).await;
+                    chat_result = cancel_aware_provider_call(
+                        activity_msg,
+                        csf_cancel_initial,
+                        provider_timeout_secs,
+                        chat_fut,
+                    )
+                    .await;
                     if chat_result.is_ok() {
                         resolved_fallback = true;
                         let fallback_provider_name = fallback_model
@@ -430,14 +485,8 @@ impl AgentLoop {
                 }
             }
 
-            if !resolved_fallback {
-                if is_cancelled() {
-                    return Err(anyhow::anyhow!("Cancelled by user"));
-                }
-                let chat_fut =
-                    active_provider.chat_stream(system_prompt, messages, tools, settings);
-                chat_result =
-                    cancel_aware_with_spinner(activity_msg, csf_cancel_initial, chat_fut).await;
+            if !resolved_fallback && is_cancelled() {
+                return Err(anyhow::anyhow!("Cancelled by user"));
             }
         }
 
@@ -568,6 +617,24 @@ mod tests {
 
     struct PendingProvider;
 
+    struct CountingErrorProvider {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl LLMProvider for CountingErrorProvider {
+        async fn chat(
+            &self,
+            _system_prompt: &str,
+            _messages: &[Message],
+            _tools: &[serde_json::Value],
+            _settings: &GenerationSettings,
+        ) -> Result<crate::providers::LLMResponse> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            anyhow::bail!("counting provider failed")
+        }
+    }
+
     #[async_trait::async_trait]
     impl LLMProvider for PendingProvider {
         async fn chat(
@@ -628,6 +695,72 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Cancelled by user"));
+    }
+
+    #[tokio::test]
+    async fn chat_with_fallback_does_not_retry_failed_primary_when_no_fallback_resolves() {
+        let mut config = Config::default();
+        config.agents.defaults.fallback_models.clear();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider_impl = CountingErrorProvider {
+            calls: calls.clone(),
+        };
+        let agent = AgentLoop::new(
+            config,
+            Arc::new(CountingErrorProvider {
+                calls: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            }),
+            ToolRegistry::new(),
+            SessionManager::new(std::env::temp_dir()),
+        );
+        let mut provider: Arc<dyn LLMProvider> = Arc::new(provider_impl);
+        let settings = GenerationSettings {
+            temperature: 0.0,
+            max_tokens: 1,
+            reasoning_effort: None,
+        };
+
+        let result = agent
+            .chat_with_fallback(&mut provider, "", &[], &[], &settings, "test")
+            .await;
+
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("counting provider failed"));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn chat_with_fallback_times_out_unresponsive_provider_attempt() {
+        let mut config = Config::default();
+        config.agents.defaults.fallback_models.clear();
+        config.agents.defaults.tool_timeout_secs = 1;
+        let agent = AgentLoop::new(
+            config,
+            Arc::new(PendingProvider),
+            ToolRegistry::new(),
+            SessionManager::new(std::env::temp_dir()),
+        );
+        let mut provider: Arc<dyn LLMProvider> = Arc::new(PendingProvider);
+        let settings = GenerationSettings {
+            temperature: 0.0,
+            max_tokens: 1,
+            reasoning_effort: None,
+        };
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            agent
+                .chat_with_fallback(&mut provider, "", &[], &[], &settings, "test")
+                .await
+        })
+        .await
+        .expect("provider attempt timeout should finish before outer timeout");
+
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Provider response timed out after 1s"));
     }
 
     #[test]

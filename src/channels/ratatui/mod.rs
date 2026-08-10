@@ -16,6 +16,144 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
+fn tui_marker_dir() -> std::path::PathBuf {
+    crate::config::loader::runtime_data_dir().join("tui_instances")
+}
+
+fn tui_marker_path_in_dir(dir: &std::path::Path, pid: u32) -> std::path::PathBuf {
+    dir.join(format!("{pid}.json"))
+}
+
+fn write_tui_marker_in_dir(
+    dir: &std::path::Path,
+    pid: u32,
+    session_key: &str,
+    model: &str,
+    provider: &str,
+) -> Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let payload = serde_json::json!({
+        "pid": pid,
+        "session_key": session_key,
+        "model": model,
+        "provider": provider,
+        "updated_at": chrono::Utc::now().to_rfc3339(),
+    });
+    std::fs::write(
+        tui_marker_path_in_dir(dir, pid),
+        serde_json::to_string_pretty(&payload)?,
+    )?;
+    Ok(())
+}
+
+fn remove_tui_marker_in_dir(dir: &std::path::Path, pid: u32) {
+    let _ = std::fs::remove_file(tui_marker_path_in_dir(dir, pid));
+}
+
+fn process_is_alive(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        if pid > i32::MAX as u32 {
+            return false;
+        }
+        let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        return result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+fn is_last_live_tui_in_dir(dir: &std::path::Path, current_pid: u32) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return true;
+    };
+
+    let mut found_other_live = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(stem) = path.file_stem().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Ok(pid) = stem.parse::<u32>() else {
+            continue;
+        };
+        if pid == current_pid {
+            continue;
+        }
+        if process_is_alive(pid) {
+            found_other_live = true;
+        } else {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+    !found_other_live
+}
+
+async fn save_session_model_override(
+    session_manager: &crate::session::SessionManager,
+    session_key: &str,
+    provider: &str,
+    model: &str,
+) -> Result<()> {
+    let mut session = session_manager.get_or_create_async(session_key).await;
+    session.metadata.insert(
+        "provider".to_string(),
+        serde_json::Value::String(provider.to_string()),
+    );
+    session.metadata.insert(
+        "model".to_string(),
+        serde_json::Value::String(model.to_string()),
+    );
+    session_manager.save(&session).await
+}
+
+async fn save_session_streaming_override(
+    session_manager: &crate::session::SessionManager,
+    session_key: &str,
+    streaming: bool,
+) -> Result<()> {
+    let mut session = session_manager.get_or_create_async(session_key).await;
+    session
+        .metadata
+        .insert("streaming".to_string(), serde_json::Value::Bool(streaming));
+    session_manager.save(&session).await
+}
+
+fn save_default_model_selection(provider: &str, model: &str) -> Result<()> {
+    let mut cfg = crate::config::loader::load_config()?;
+    cfg.agents.defaults.provider = provider.to_string();
+    cfg.agents.defaults.model = model.to_string();
+    crate::config::loader::save_config(&cfg)
+}
+
+async fn apply_session_model_selection(
+    agent_loop: &Arc<tokio::sync::Mutex<crate::agent::agent_loop::AgentLoop>>,
+    session_manager: &crate::session::SessionManager,
+    session_key: &str,
+    marker_dir: &std::path::Path,
+    provider: &str,
+    model: &str,
+) -> Result<()> {
+    let mut cfg = crate::config::loader::load_config()?;
+    cfg.agents.defaults.provider = provider.to_string();
+    cfg.agents.defaults.model = model.to_string();
+    let resolved = crate::providers::resolver::resolve_provider_full(&cfg, model)?;
+    save_session_model_override(session_manager, session_key, provider, model).await?;
+    write_tui_marker_in_dir(marker_dir, std::process::id(), session_key, model, provider)?;
+    match agent_loop.try_lock() {
+        Ok(mut loop_lock) => loop_lock.update_model_and_provider(cfg, resolved.instance),
+        Err(_) => {
+            // Busy loop keeps its current turn model; the saved session override applies next turn.
+        }
+    }
+    Ok(())
+}
+
 struct RatatuiGuard;
 
 impl Drop for RatatuiGuard {
@@ -27,10 +165,68 @@ impl Drop for RatatuiGuard {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_marker_dir() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("openz-ratatui-test-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn tui_marker_prunes_dead_peers_before_last_check() {
+        let dir = temp_marker_dir();
+        let dead_pid = u32::MAX - 1;
+        write_tui_marker_in_dir(&dir, dead_pid, "dead-session", "old-model", "openai").unwrap();
+
+        assert!(is_last_live_tui_in_dir(&dir, std::process::id()));
+        assert!(!tui_marker_path_in_dir(&dir, dead_pid).exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn session_model_override_updates_session_metadata() {
+        let dir = temp_marker_dir();
+        let manager = crate::session::SessionManager::new(dir.clone());
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            save_session_model_override(&manager, "test-session", "deepseek", "deepseek-chat")
+                .await
+                .unwrap();
+        });
+
+        let session = manager.load("test-session").unwrap();
+        assert_eq!(session.metadata["provider"], "deepseek");
+        assert_eq!(session.metadata["model"], "deepseek-chat");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn session_streaming_override_updates_session_metadata() {
+        let dir = temp_marker_dir();
+        let manager = crate::session::SessionManager::new(dir.clone());
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            save_session_streaming_override(&manager, "test-session", false)
+                .await
+                .unwrap();
+        });
+
+        let session = manager.load("test-session").unwrap();
+        assert_eq!(session.metadata["streaming"], false);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 pub async fn handle_ratatui_tui() -> Result<()> {
     let config = crate::config::loader::load_config().unwrap_or_default();
-    let model = config.agents.defaults.model.clone();
-    let provider = config.agents.defaults.provider.clone();
+    let mut model = config.agents.defaults.model.clone();
+    let mut provider = config.agents.defaults.provider.clone();
     let session_key = crate::config::loader::get_cli_session_key();
 
     let sessions_dir = crate::config::loader::resolve_path("~/.openz/sessions");
@@ -79,7 +275,34 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend)?;
 
+    let mut session_config = config.clone();
+    if let Ok(session) = session_manager.load(&session_key) {
+        crate::agent::agent_loop::apply_session_overrides(&mut session_config, &session.metadata);
+        model = session_config.agents.defaults.model.clone();
+        provider = session_config.agents.defaults.provider.clone();
+        if session_config.agents.defaults.model != config.agents.defaults.model
+            || session_config.agents.defaults.provider != config.agents.defaults.provider
+        {
+            if let Ok(resolved) = crate::providers::resolver::resolve_provider_full(
+                &session_config,
+                &session_config.agents.defaults.model,
+            ) {
+                if let Ok(mut loop_lock) = agent_loop.try_lock() {
+                    loop_lock.update_model_and_provider(session_config.clone(), resolved.instance);
+                }
+            }
+        }
+    }
+
     let mut app = app::RatatuiApp::new(model, provider, session_key.clone());
+    let marker_dir = tui_marker_dir();
+    let _ = write_tui_marker_in_dir(
+        &marker_dir,
+        std::process::id(),
+        &session_key,
+        &app.model,
+        &app.provider,
+    );
 
     // Load selected session history into Ratatui conversation stream
     if let Ok(session) = session_manager.load(&session_key) {
@@ -137,6 +360,14 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                     if key.modifiers.contains(KeyModifiers::CONTROL)
                         && key.code == KeyCode::Char('c')
                     {
+                        if app.is_thinking {
+                            crate::shutdown::trigger_cli_cancel();
+                            app.messages.push(ChatMessage::simple(
+                                "assistant",
+                                "Cancelling current turn...".to_string(),
+                            ));
+                            continue;
+                        }
                         break;
                     }
 
@@ -269,49 +500,31 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         let prov = provider_name.clone();
                                         let prov_display_str = provider_display.clone();
 
-                                        // Apply the choice to config and agent loop
-                                        use crate::config::loader::{load_config, save_config};
-                                        match load_config() {
-                                            Ok(mut cfg) => {
-                                                cfg.agents.defaults.provider = prov.clone();
-                                                cfg.agents.defaults.model = selected_model.clone();
-                                                match save_config(&cfg) {
-                                                    Ok(()) => {
-                                                        match crate::providers::resolver::resolve_provider_full(&cfg, &selected_model) {
-                                                            Ok(resolved) => {
-                                                                // Use try_lock to avoid deadlocking the TUI if the agent is processing
-                                                                match agent_loop.try_lock() {
-                                                                    Ok(mut loop_lock) => {
-                                                                        loop_lock.update_model_and_provider(cfg, resolved.instance);
-                                                                    }
-                                                                    Err(_) => {
-                                                                        // Agent is busy — config is saved, will take effect on next turn
-                                                                    }
-                                                                }
-                                                                app.model = selected_model.clone();
-                                                                app.provider = prov.clone();
-                                                                app.messages.push(ChatMessage::simple("assistant", format!("✓ Switched to {} ({})", selected_model, prov_display_str)));
-                                                            }
-                                                            Err(e) => {
-                                                                app.messages.push(ChatMessage::simple("assistant", format!("⚠ Failed to resolve provider: {}", e)));
-                                                            }
-                                                        }
-                                                    }
-                                                    Err(e) => {
-                                                        app.messages.push(ChatMessage::simple(
-                                                            "assistant",
-                                                            format!(
-                                                                "⚠ Failed to save config: {}",
-                                                                e
-                                                            ),
-                                                        ));
-                                                    }
-                                                }
+                                        match apply_session_model_selection(
+                                            &agent_loop,
+                                            &session_manager,
+                                            &session_key,
+                                            &marker_dir,
+                                            &prov,
+                                            &selected_model,
+                                        )
+                                        .await
+                                        {
+                                            Ok(()) => {
+                                                app.model = selected_model.clone();
+                                                app.provider = prov.clone();
+                                                app.messages.push(ChatMessage::simple(
+                                                    "assistant",
+                                                    format!(
+                                                        "✓ Switched this session to {} ({})",
+                                                        selected_model, prov_display_str
+                                                    ),
+                                                ));
                                             }
                                             Err(e) => {
                                                 app.messages.push(ChatMessage::simple(
                                                     "assistant",
-                                                    format!("⚠ Failed to load config: {}", e),
+                                                    format!("⚠ Failed to switch model: {}", e),
                                                 ));
                                             }
                                         }
@@ -695,34 +908,56 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                 } else if trimmed == "/streaming" {
                                     app.messages
                                         .push(ChatMessage::simple("user", input_str.clone()));
-                                    let mut msg = String::new();
-                                    match crate::config::loader::load_config() {
-                                        Ok(mut cfg) => {
-                                            cfg.agents.defaults.streaming =
-                                                !cfg.agents.defaults.streaming;
-                                            match crate::config::loader::save_config(&cfg) {
-                                                Ok(()) => {
-                                                    msg.push_str(&format!(
-                                                        "Response streaming is now {}.",
-                                                        if cfg.agents.defaults.streaming {
-                                                            "enabled"
-                                                        } else {
-                                                            "disabled"
-                                                        }
-                                                    ));
-                                                }
-                                                Err(e) => {
-                                                    msg.push_str(&format!(
-                                                        "Failed to save config: {}",
-                                                        e
-                                                    ));
+                                    let current_streaming = session_manager
+                                        .load(&session_key)
+                                        .ok()
+                                        .and_then(|session| {
+                                            session
+                                                .metadata
+                                                .get("streaming")
+                                                .and_then(|v| v.as_bool())
+                                        })
+                                        .unwrap_or_else(|| {
+                                            agent_loop
+                                                .try_lock()
+                                                .map(|loop_lock| {
+                                                    loop_lock.config.agents.defaults.streaming
+                                                })
+                                                .unwrap_or(config.agents.defaults.streaming)
+                                        });
+                                    let next_streaming = !current_streaming;
+                                    let msg = match save_session_streaming_override(
+                                        &session_manager,
+                                        &session_key,
+                                        next_streaming,
+                                    )
+                                    .await
+                                    {
+                                        Ok(()) => {
+                                            if let Ok(mut loop_lock) = agent_loop.try_lock() {
+                                                loop_lock.config.agents.defaults.streaming =
+                                                    next_streaming;
+                                                if let Some(ref mut tool_context) =
+                                                    loop_lock.tools.context
+                                                {
+                                                    tool_context.0.agents.defaults.streaming =
+                                                        next_streaming;
                                                 }
                                             }
+                                            format!(
+                                                "Response streaming is now {} for this session.",
+                                                if next_streaming {
+                                                    "enabled"
+                                                } else {
+                                                    "disabled"
+                                                }
+                                            )
                                         }
-                                        Err(e) => {
-                                            msg.push_str(&format!("Failed to load config: {}", e));
-                                        }
-                                    }
+                                        Err(e) => format!(
+                                            "Failed to save session streaming preference: {}",
+                                            e
+                                        ),
+                                    };
                                     app.messages.push(ChatMessage::simple("assistant", msg));
                                 } else if trimmed == "/model" || trimmed == "/models" {
                                     use crate::config::loader::load_config;
@@ -763,41 +998,31 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         if prov.is_empty() {
                                             app.messages.push(ChatMessage::simple("assistant", "Error: Please specify provider, e.g. '/model openai/gpt-4o'.".to_string()));
                                         } else {
-                                            use crate::config::loader::{load_config, save_config};
-                                            match load_config() {
-                                                Ok(mut cfg) => {
-                                                    cfg.agents.defaults.provider = prov.to_string();
-                                                    cfg.agents.defaults.model = mdl.to_string();
-                                                    if let Err(e) = save_config(&cfg) {
-                                                        app.messages.push(ChatMessage::simple(
-                                                            "assistant",
-                                                            format!("Error saving config: {}", e),
-                                                        ));
-                                                    } else {
-                                                        match crate::providers::resolver::resolve_provider_full(&cfg, mdl) {
-                                                            Ok(resolved) => {
-                                                                match agent_loop.try_lock() {
-                                                                    Ok(mut loop_lock) => {
-                                                                        loop_lock.update_model_and_provider(cfg, resolved.instance);
-                                                                    }
-                                                                    Err(_) => {
-                                                                        // Agent is busy — config is saved, will take effect on next turn
-                                                                    }
-                                                                }
-                                                                app.model = mdl.to_string();
-                                                                app.provider = prov.to_string();
-                                                                app.messages.push(ChatMessage::simple("assistant", format!("✓ Switched to: {} ({})", mdl, prov)));
-                                                            }
-                                                            Err(e) => {
-                                                                app.messages.push(ChatMessage::simple("assistant", format!("Error resolving provider: {}", e)));
-                                                            }
-                                                        }
-                                                    }
+                                            match apply_session_model_selection(
+                                                &agent_loop,
+                                                &session_manager,
+                                                &session_key,
+                                                &marker_dir,
+                                                prov,
+                                                mdl,
+                                            )
+                                            .await
+                                            {
+                                                Ok(()) => {
+                                                    app.model = mdl.to_string();
+                                                    app.provider = prov.to_string();
+                                                    app.messages.push(ChatMessage::simple(
+                                                        "assistant",
+                                                        format!(
+                                                            "✓ Switched this session to: {} ({})",
+                                                            mdl, prov
+                                                        ),
+                                                    ));
                                                 }
                                                 Err(e) => {
                                                     app.messages.push(ChatMessage::simple(
                                                         "assistant",
-                                                        format!("Error loading config: {}", e),
+                                                        format!("Error switching model: {}", e),
                                                     ));
                                                 }
                                             }
@@ -1001,6 +1226,13 @@ pub async fn handle_ratatui_tui() -> Result<()> {
 
         if app.should_exit {
             break;
+        }
+    }
+
+    remove_tui_marker_in_dir(&marker_dir, std::process::id());
+    if is_last_live_tui_in_dir(&marker_dir, std::process::id()) {
+        if let Err(err) = save_default_model_selection(&app.provider, &app.model) {
+            tracing::warn!(error = ?err, "failed to persist last TUI model as default");
         }
     }
 

@@ -511,6 +511,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                     "{}◇ [Self-Improvement] Memory updated based on recent conversation.{}",
                                                     AURA_BLUE, COLOR_RESET
                                                 ));
+                                                crate::channels::websocket::publish_activity_notice(
+                                                    &session_key,
+                                                    "self_improvement",
+                                                    "Self-improvement memory updated",
+                                                    "Recent conversation learnings were saved",
+                                                );
 
                                                 let facts: Vec<String> = review
                                                     .memory_content
@@ -599,6 +605,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                 "{}◇ [Self-Improvement] Skill '{}' updated/created based on recent conversation.{}",
                                                 AURA_BLUE, skill.name, COLOR_RESET
                                             ));
+                                            crate::channels::websocket::publish_activity_notice(
+                                                &session_key,
+                                                "self_improvement",
+                                                "Skill updated",
+                                                skill.name.clone(),
+                                            );
                                         }
                                     }
                                 }
@@ -623,6 +635,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                     "{}◇ [Knowledge] Source saved: {}{}",
                                                     AURA_BLUE, saved.label, COLOR_RESET
                                                 ));
+                                                crate::channels::websocket::publish_activity_notice(
+                                                    &session_key,
+                                                    "source",
+                                                    "Source saved",
+                                                    saved.label.clone(),
+                                                );
                                             }
                                             Err(e) => {
                                                 tracing::warn!(session = %session_key, source = %source.label, error = %e, "Self-improvement curator failed to save source bookmark");
@@ -652,6 +670,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                     "{}◇ [Workflow] Workflow saved: {}{}",
                                                     AURA_BLUE, saved.name, COLOR_RESET
                                                 ));
+                                                crate::channels::websocket::publish_activity_notice(
+                                                    &session_key,
+                                                    "workflow",
+                                                    "Workflow saved",
+                                                    saved.name.clone(),
+                                                );
                                             }
                                             Err(e) => {
                                                 tracing::warn!(session = %session_key, workflow = %workflow.name, error = %e, "Self-improvement curator failed to save workflow card");

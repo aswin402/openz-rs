@@ -44,6 +44,15 @@ fn gsd_browser_disconnected_error_value(error: &str, recovered: bool) -> Value {
     })
 }
 
+pub async fn stop_gsd_browser_daemon() {
+    let bin_path = gsd_browser_bin_path();
+    let _ = Command::new(bin_path)
+        .arg("daemon")
+        .arg("stop")
+        .output()
+        .await;
+}
+
 async fn restart_gsd_browser_daemon(bin_path: &PathBuf) {
     let _ = Command::new(bin_path)
         .arg("daemon")
@@ -150,7 +159,7 @@ impl Tool for GsdBrowserTool {
     }
 
     fn description(&self) -> &str {
-        "Control a real Chrome browser instance to navigate pages, interact with elements using reference IDs, evaluate JS, take screenshots, or save PDFs."
+        "Last-resort GUI Chrome browser control for interactive pages. Prefer searchxyz_browser_search, obscura_browser, or firefox_browser for search/research because those use headless-first cleanup."
     }
 
     fn parameters(&self) -> Value {
@@ -317,6 +326,14 @@ mod tests {
         assert!(props.contains_key("text"));
         assert!(props.contains_key("value"));
         assert!(props.contains_key("query"));
+    }
+
+    #[test]
+    fn gsd_browser_description_marks_gui_as_last_resort() {
+        let tool = GsdBrowserTool;
+        let description = tool.description().to_lowercase();
+        assert!(description.contains("last-resort"));
+        assert!(description.contains("headless"));
     }
 
     #[test]

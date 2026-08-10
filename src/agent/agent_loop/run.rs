@@ -3,6 +3,7 @@ use crate::agent::style::*;
 use crate::providers::GenerationSettings;
 use crate::session::Message;
 use anyhow::Result;
+use fs2::FileExt;
 use futures_util::StreamExt;
 use std::io::Write;
 
@@ -71,10 +72,14 @@ fn is_research_lookup_tool(tool_name: &str) -> bool {
             | "searchxyz_search_web"
             | "searchxyz_read_url"
             | "searchxyz_search_and_read"
+            | "searchxyz_browser_search"
             | "searchxyz_deep_research"
             | "searchxyz_site_map"
             | "searchxyz_read_github_repo"
             | "social_search"
+            | "obscura_browser"
+            | "firefox_browser"
+            | "gsd_browser"
     )
 }
 
@@ -603,6 +608,14 @@ mod auto_tool_arg_tests {
         )
         .is_none());
     }
+
+    #[test]
+    fn browser_backed_readers_count_as_research_lookup_tools() {
+        assert!(is_research_lookup_tool("obscura_browser"));
+        assert!(is_research_lookup_tool("firefox_browser"));
+        assert!(is_research_lookup_tool("gsd_browser"));
+        assert!(is_research_lookup_tool("searchxyz_browser_search"));
+    }
 }
 
 async fn fresh_research_brief_blocks_lookup(
@@ -840,6 +853,106 @@ async fn execute_approved_tool(params: ApprovedToolExec<'_>) -> serde_json::Valu
     ToolExecutionPipeline::new(params).execute().await
 }
 
+fn provider_turn_lock_key(provider: &str, model: &str) -> Option<String> {
+    let mode = std::env::var("OPENZ_PROVIDER_TURN_LOCK").ok();
+    provider_turn_lock_key_for_mode(provider, model, mode.as_deref())
+}
+
+fn provider_turn_lock_key_for_mode(
+    provider: &str,
+    model: &str,
+    mode: Option<&str>,
+) -> Option<String> {
+    let Some(mode) = mode.map(str::trim).filter(|value| !value.is_empty()) else {
+        return None;
+    };
+    let mode = mode.to_lowercase();
+    if mode == "off" || mode == "false" || mode == "0" {
+        return None;
+    }
+
+    let provider_lower = provider.to_lowercase();
+    let model_lower = model.to_lowercase();
+    let fragile = provider_lower == "opencode_zen"
+        || provider_lower == "opencode-zen"
+        || model_lower.contains(":free")
+        || model_lower.ends_with("-free")
+        || model_lower.contains("flash-free");
+    let should_lock = mode == "all"
+        || ((mode == "fragile" || mode == "free" || mode == "on" || mode == "true") && fragile);
+    if !should_lock {
+        return None;
+    }
+
+    let raw = format!("{}__{}", provider_lower, model_lower);
+    let slug = raw
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string();
+    Some(if slug.is_empty() {
+        "provider".to_string()
+    } else {
+        slug
+    })
+}
+
+async fn acquire_provider_turn_lock(
+    session_key: &str,
+    provider: &str,
+    model: &str,
+) -> Result<Option<std::fs::File>> {
+    let Some(key) = provider_turn_lock_key(provider, model) else {
+        return Ok(None);
+    };
+    let dir = crate::config::loader::runtime_data_dir().join("provider_turn_locks");
+    let path = dir.join(format!("{key}.lock"));
+    let session_key = session_key.to_string();
+    let provider = provider.to_string();
+    let model = model.to_string();
+    tokio::task::spawn_blocking(move || -> Result<Option<std::fs::File>> {
+        std::fs::create_dir_all(&dir)?;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&path)?;
+        let mut delay = std::time::Duration::from_millis(100);
+        let started = std::time::Instant::now();
+        let mut announced_wait = false;
+        loop {
+            match file.try_lock_exclusive() {
+                Ok(()) => return Ok(Some(file)),
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    if !announced_wait {
+                        crate::agent::activity::update_activity(
+                            &session_key,
+                            "Waiting for provider slot",
+                            Some(&format!("{} / {}", provider, model)),
+                        );
+                        announced_wait = true;
+                    }
+                    if started.elapsed() > std::time::Duration::from_secs(120) {
+                        anyhow::bail!(
+                            "Provider '{}' model '{}' is still busy in another OpenZ session after 120s",
+                            provider,
+                            model
+                        );
+                    }
+                    std::thread::sleep(delay);
+                    delay = std::cmp::min(
+                        delay.saturating_mul(2),
+                        std::time::Duration::from_secs(1),
+                    );
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
+    })
+    .await?
+}
+
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
     if let Some(question) =
         crate::agent::marketplace_intent::clarification_question_for_marketplace_intent(
@@ -868,6 +981,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     let mut auto_suggested_open_targets = std::collections::HashSet::new();
     let direct_page_only = direct_page_research_only(ctx.user_content);
     let mut direct_page_fetched = false;
+    let _provider_turn_lock = acquire_provider_turn_lock(
+        ctx.session_key,
+        &ctx.config.agents.defaults.provider,
+        &ctx.config.agents.defaults.model,
+    )
+    .await?;
 
     // Build a turn-level cancellation token from the current CLI context.
     // This provides early cancellation detection even before the CLI select! drops run_fut.
@@ -1010,9 +1129,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             let stream_cancel_tx = crate::shutdown::cli_cancel_tx();
             let mut stream_cancel_rx = stream_cancel_tx.subscribe();
             let stream_cancel_initial = *stream_cancel_rx.borrow();
+            let stream_idle_timeout = loop_ref.provider_attempt_timeout_duration();
 
             loop {
-                // Race: next stream chunk vs cancellation signal
+                // Race: next stream chunk vs cancellation signal vs an idle provider stream.
                 let chunk = tokio::select! {
                     biased;
                     _ = async {
@@ -1020,12 +1140,18 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             if stream_cancel_rx.changed().await.is_err() { break; }
                         }
                     } => {
-                        break; // cancelled
+                        return Err(anyhow::anyhow!("Cancelled by user"));
                     }
-                    next = stream.next() => {
+                    next = tokio::time::timeout(stream_idle_timeout, stream.next()) => {
                         match next {
-                            Some(c) => c,
-                            None => break, // stream ended
+                            Ok(Some(c)) => c,
+                            Ok(None) => break,
+                            Err(_) => {
+                                return Err(anyhow::anyhow!(
+                                    "Provider stream timed out after {}s without output",
+                                    stream_idle_timeout.as_secs()
+                                ));
+                            }
                         }
                     }
                 };
@@ -1357,7 +1483,23 @@ Now provide only the final user-facing answer to my last message. Do not include
                         let mut recovery_reasoning = String::new();
                         let mut recovery_finish_reason = "stop".to_string();
 
-                        while let Some(chunk) = recovery_stream.next().await {
+                        let recovery_stream_idle_timeout =
+                            loop_ref.provider_attempt_timeout_duration();
+                        loop {
+                            let Some(chunk) = tokio::time::timeout(
+                                recovery_stream_idle_timeout,
+                                recovery_stream.next(),
+                            )
+                            .await
+                            .map_err(|_| {
+                                anyhow::anyhow!(
+                                    "Provider recovery stream timed out after {}s without output",
+                                    recovery_stream_idle_timeout.as_secs()
+                                )
+                            })?
+                            else {
+                                break;
+                            };
                             match chunk? {
                                 crate::providers::ChatStreamChunk::Content(text) => {
                                     if !reasoning_printed
@@ -2274,11 +2416,20 @@ Now provide only the final user-facing answer to my last message. Do not include
         if let Some(notice) = (crate::agent::events::AgentEvent::MemoryCaptureSummary {
             sources_saved,
             briefs_saved,
-            topics,
+            topics: topics.clone(),
         })
         .public_text(&output_visibility)
         {
             crate::channels::cli::send_notification(&notice);
+            crate::channels::websocket::publish_activity_notice(
+                ctx.session_key,
+                "memory",
+                "Memory stored",
+                format!(
+                    "{} source(s), {} brief(s) | {}",
+                    sources_saved, briefs_saved, topics
+                ),
+            );
         }
     }
 
@@ -2621,6 +2772,26 @@ mod tests {
         assert!(should_cancel_turn_after_tool_error(
             "Subagent task cancelled"
         ));
+    }
+
+    #[test]
+    fn provider_turn_lock_key_is_opt_in_for_fragile_models() {
+        assert!(
+            provider_turn_lock_key_for_mode("opencode_zen", "deepseek-v4-flash-free", None)
+                .is_none()
+        );
+        assert!(provider_turn_lock_key_for_mode(
+            "opencode_zen",
+            "deepseek-v4-flash-free",
+            Some("fragile")
+        )
+        .is_some());
+        assert!(
+            provider_turn_lock_key_for_mode("openrouter", "qwen/qwen3:free", Some("free"))
+                .is_some()
+        );
+        assert!(provider_turn_lock_key_for_mode("openai", "gpt-4o", Some("fragile")).is_none());
+        assert!(provider_turn_lock_key_for_mode("openai", "gpt-4o", Some("all")).is_some());
     }
 
     #[test]

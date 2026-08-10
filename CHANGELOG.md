@@ -1,4 +1,12 @@
-### v0.0.124 (Latest Release)
+### v0.0.125 (Latest Release)
+**Parallel TUI Sessions, Provider Resilience, and Activity Visibility:**
+- **Parallel Session Isolation**: Fixed Ratatui model and streaming preferences so `/model` and `/streaming` apply to the active session without changing other open TUI/WebUI sessions; the last closing TUI persists its model as the new default for future sessions.
+- **Provider Concurrency and Cancellation**: Added bounded provider-attempt and stream-idle timeouts, stopped retrying a failed primary provider after exhausted fallbacks, and made Ctrl+C cancel active Ratatui turns instead of only tearing down the UI.
+- **Optional Provider Turn Locking**: Changed provider turn locking to opt-in via `OPENZ_PROVIDER_TURN_LOCK` (`fragile`, `free`, or `all`) so different OpenZ sessions run concurrently by default while still allowing serialized safety mode for constrained backends.
+- **Workflow/Memory Activity Notices**: Added WebUI activity notices for workflow matches, research/source matches, memory captures, and self-improvement saves while preserving CLI `◇ Workflow matched` notifications.
+- **Search and Inventory Responsiveness**: Made browser-backed research count toward live-source verification, kept browser search headless-first with cleanup, and made `openz_inventory` compact by default to reduce follow-up LLM latency.
+
+### v0.0.124
 **Automatic Task Lifecycle Manager and Headless Browser Search:**
 - **Task Lifecycle Registry**: Added the native `manage_tasks` tool and internal registry for OpenZ-owned browsers, servers, agents, subagents, MCP bridges, watchers, and background jobs, with ownership metadata and cleanup policies.
 - **Automatic Resource Cleanup**: Agent turns now clean turn-scoped OpenZ-owned tasks automatically, and the system prompt instructs agents to manage lifecycle internally instead of asking users to run manual task commands.
