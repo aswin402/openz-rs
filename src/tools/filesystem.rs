@@ -74,9 +74,9 @@ impl Tool for ReadFileTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "Absolute or relative path to the file" },
-                "start_line": { "type": "integer", "description": "Start line (1-indexed, inclusive)" },
-                "end_line": { "type": "integer", "description": "End line (1-indexed, inclusive)" }
+                "path": { "type": "string", "description": "Absolute or relative path to the file. Aliases accepted: file_path, filePath." },
+                "start_line": { "type": "integer", "description": "Start line (1-indexed, inclusive). Alias accepted: startLine." },
+                "end_line": { "type": "integer", "description": "End line (1-indexed, inclusive). Alias accepted: endLine." }
             },
             "required": ["path"]
         })
@@ -139,7 +139,7 @@ impl Tool for WriteFileTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "Absolute or relative path to the file" },
+                "path": { "type": "string", "description": "Absolute or relative path to the file. Aliases accepted: file_path, filePath." },
                 "content": { "type": "string", "description": "File content to write. Keep under roughly 8KB per tool call; for larger files, write in chunks or use a command-line heredoc approach." }
             },
             "required": ["path", "content"]
@@ -179,7 +179,7 @@ impl Tool for ListDirTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "Absolute or relative path to the directory" }
+                "path": { "type": "string", "description": "Absolute or relative path to the directory. Aliases accepted: file_path, filePath." }
             },
             "required": ["path"]
         })
@@ -228,7 +228,7 @@ impl Tool for PatchFileTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "Absolute or relative path to the file to modify" },
+                "path": { "type": "string", "description": "Absolute or relative path to the file to modify. Aliases accepted: file_path, filePath." },
                 "patch": { "type": "string", "description": "Unified diff patch content to apply (standard diff format)" }
             },
             "required": ["path", "patch"]
@@ -274,10 +274,10 @@ impl Tool for ReplaceLinesTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "Absolute or relative path to the file to edit" },
-                "start_line": { "type": "integer", "description": "Start line number (1-indexed, inclusive)" },
-                "end_line": { "type": "integer", "description": "End line number (1-indexed, inclusive)" },
-                "replacement": { "type": "string", "description": "The new replacement text content" }
+                "path": { "type": "string", "description": "Absolute or relative path to the file to edit. Aliases accepted: file_path, filePath." },
+                "start_line": { "type": "integer", "description": "Start line number (1-indexed, inclusive). Alias accepted: startLine." },
+                "end_line": { "type": "integer", "description": "End line number (1-indexed, inclusive). Alias accepted: endLine." },
+                "replacement": { "type": "string", "description": "The new replacement text content. Alias accepted: content." }
             },
             "required": ["path", "start_line", "end_line", "replacement"]
         })
@@ -443,8 +443,8 @@ impl Tool for FindFilesTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "pattern": { "type": "string", "description": "The search pattern (e.g. '*.rs', 'Cargo.toml', 'index.*')" },
-                "dir": { "type": "string", "description": "The root directory to search in (defaults to '.')" }
+                "pattern": { "type": "string", "description": "The search pattern (e.g. '*.rs', 'Cargo.toml', 'index.*'). Alias accepted: glob." },
+                "dir": { "type": "string", "description": "The root directory to search in (defaults to '.'). Aliases accepted: directory, root." }
             },
             "required": ["pattern"]
         })
@@ -732,6 +732,28 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&repo);
         Ok(())
+    }
+
+    #[test]
+    fn filesystem_tool_schemas_document_supported_aliases() {
+        let read_schema = ReadFileTool.parameters().to_string();
+        assert!(read_schema.contains("filePath"));
+        assert!(read_schema.contains("file_path"));
+        assert!(read_schema.contains("startLine"));
+        assert!(read_schema.contains("endLine"));
+
+        let write_schema = WriteFileTool.parameters().to_string();
+        assert!(write_schema.contains("filePath"));
+        assert!(write_schema.contains("file_path"));
+
+        let replace_schema = ReplaceLinesTool.parameters().to_string();
+        assert!(replace_schema.contains("filePath"));
+        assert!(replace_schema.contains("startLine"));
+        assert!(replace_schema.contains("content"));
+
+        let find_schema = FindFilesTool.parameters().to_string();
+        assert!(find_schema.contains("glob"));
+        assert!(find_schema.contains("directory"));
     }
 
     #[tokio::test]
