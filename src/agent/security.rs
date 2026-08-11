@@ -464,6 +464,22 @@ impl SecurityGuard {
         results
     }
 
+    fn tool_path_arg(arguments: &Value) -> Option<&str> {
+        [
+            "path",
+            "file_path",
+            "filePath",
+            "TargetFile",
+            "filepath",
+            "file",
+            "Path",
+            "AbsolutePath",
+            "DirectoryPath",
+        ]
+        .iter()
+        .find_map(|key| arguments.get(*key).and_then(|value| value.as_str()))
+    }
+
     /// Check if a tool call is sensitive and needs user approval.
     pub fn is_sensitive(tool_name: &str, arguments: &Value) -> bool {
         Self::is_sensitive_with_mode(tool_name, arguments, "strict")
@@ -680,14 +696,7 @@ impl SecurityGuard {
             || tool_name == "patch_file"
             || tool_name == "replace_lines"
         {
-            let path_opt = arguments
-                .get("path")
-                .or(arguments.get("TargetFile"))
-                .or(arguments.get("filepath"))
-                .or(arguments.get("file"))
-                .or(arguments.get("Path"))
-                .and_then(|v| v.as_str());
-            if let Some(path_str) = path_opt {
+            if let Some(path_str) = Self::tool_path_arg(arguments) {
                 if !Self::is_safe_path(path_str) {
                     return true;
                 }
@@ -777,14 +786,7 @@ impl SecurityGuard {
             || tool_name == "patch_file"
             || tool_name == "replace_lines"
         {
-            let path_opt = arguments
-                .get("path")
-                .or(arguments.get("TargetFile"))
-                .or(arguments.get("filepath"))
-                .or(arguments.get("file"))
-                .or(arguments.get("Path"))
-                .and_then(|v| v.as_str());
-            let path = path_opt.unwrap_or("unknown");
+            let path = Self::tool_path_arg(arguments).unwrap_or("unknown");
             let action_label = match tool_name {
                 "write_file" => "Write File",
                 "patch_file" => "Patch File",
@@ -1238,6 +1240,39 @@ mod tests {
                 "write_file",
                 &json!({"path": "C:\\Windows\\System32\\drivers\\etc\\hosts"})
             ));
+        }
+    }
+
+    #[test]
+    fn write_tools_detect_path_aliases_for_sensitivity_and_description() {
+        #[cfg(not(target_os = "windows"))]
+        {
+            for (tool, args) in [
+                ("write_file", json!({"filePath": "/etc/hosts"})),
+                ("patch_file", json!({"file_path": "/etc/hosts"})),
+                ("replace_lines", json!({"AbsolutePath": "/etc/hosts"})),
+                ("write_file", json!({"DirectoryPath": "/etc"})),
+            ] {
+                assert!(
+                    SecurityGuard::is_sensitive(tool, &args),
+                    "{tool} should treat path aliases as sensitive path inputs: {args}"
+                );
+            }
+
+            assert_eq!(
+                SecurityGuard::format_description(
+                    "write_file",
+                    &json!({"filePath": "/tmp/example.txt"})
+                ),
+                "Write File -> /tmp/example.txt"
+            );
+            assert_eq!(
+                SecurityGuard::format_description(
+                    "patch_file",
+                    &json!({"file_path": "/tmp/example.txt"})
+                ),
+                "Patch File -> /tmp/example.txt"
+            );
         }
     }
 
