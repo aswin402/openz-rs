@@ -39,10 +39,12 @@ fn provider_api_key_env_var(provider_name: &str) -> String {
         "groq" => "GROQ_API_KEY".to_string(),
         "minimax" => "MINIMAX_API_KEY".to_string(),
         "mistral" => "MISTRAL_API_KEY".to_string(),
-        "z.ai" => "Z_AI_API_KEY".to_string(),
+        "z.ai" | "z_ai" => "Z_AI_API_KEY".to_string(),
         "nvidia" => "NVIDIA_API_KEY".to_string(),
-        "opencode_zen" => "OPENCODE_ZEN_API_KEY".to_string(),
-        "google_ai_studio" | "google ai studio" => "GOOGLE_AI_STUDIO_API_KEY".to_string(),
+        "opencode_zen" | "opencode zen" | "opencode-zen" => "OPENCODE_ZEN_API_KEY".to_string(),
+        "google_ai_studio" | "google ai studio" | "google-ai-studio" => {
+            "GOOGLE_AI_STUDIO_API_KEY".to_string()
+        }
         "cerebras" => "CEREBRAS_API_KEY".to_string(),
         "cohere" => "COHERE_API_KEY".to_string(),
         "llm7" => "LLM7_API_KEY".to_string(),
@@ -805,6 +807,58 @@ mod tests {
         let cfg = config_with("openai");
         let r = resolve_provider_full(&cfg, "some-model");
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn test_builtin_provider_alias_missing_key_errors_use_canonical_env_vars() {
+        let _guard = env_lock().lock().unwrap();
+        for var in &[
+            "Z_AI_API_KEY",
+            "OPENCODE_ZEN_API_KEY",
+            "GOOGLE_AI_STUDIO_API_KEY",
+            "OPENROUTER_API_KEY",
+        ] {
+            std::env::remove_var(var);
+        }
+
+        let z_err = match resolve_provider_full(&config_with("z_ai"), "glm-4.7-flash") {
+            Ok(_) => panic!("expected missing z.ai key error"),
+            Err(err) => err.to_string(),
+        };
+        assert!(z_err.contains("Z_AI_API_KEY"), "unexpected error: {z_err}");
+        assert!(
+            !z_err.contains("OPENZ_PROVIDER_Z_AI_API_KEY"),
+            "unexpected error: {z_err}"
+        );
+
+        let zen_err = match resolve_provider_full(&config_with("opencode-zen"), "mimo-v2.5-free") {
+            Ok(_) => panic!("expected missing OpenCode Zen key error"),
+            Err(err) => err.to_string(),
+        };
+        assert!(
+            zen_err.contains("OPENCODE_ZEN_API_KEY"),
+            "unexpected error: {zen_err}"
+        );
+        assert!(
+            !zen_err.contains("OPENZ_PROVIDER_OPENCODE_ZEN_API_KEY"),
+            "unexpected error: {zen_err}"
+        );
+
+        let google_err = match resolve_provider_full(
+            &config_with("google-ai-studio"),
+            "models/gemini-2.0-flash",
+        ) {
+            Ok(_) => panic!("expected missing Google AI Studio key error"),
+            Err(err) => err.to_string(),
+        };
+        assert!(
+            google_err.contains("GOOGLE_AI_STUDIO_API_KEY"),
+            "unexpected error: {google_err}"
+        );
+        assert!(
+            !google_err.contains("OPENZ_PROVIDER_GOOGLE_AI_STUDIO_API_KEY"),
+            "unexpected error: {google_err}"
+        );
     }
 
     #[test]
