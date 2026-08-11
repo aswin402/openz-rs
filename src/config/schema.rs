@@ -742,7 +742,7 @@ const PROVIDER_DEFS: &[ProviderDef] = &[
         local: false,
     },
     ProviderDef {
-        names: &["opencode_zen", "opencode zen"],
+        names: &["opencode_zen", "opencode zen", "opencode-zen"],
         env_keys: &["OPENCODE_ZEN_API_KEY"],
         default_base: "https://opencode.ai/zen/v1",
         config: provider_opencode_zen,
@@ -756,7 +756,7 @@ const PROVIDER_DEFS: &[ProviderDef] = &[
         local: false,
     },
     ProviderDef {
-        names: &["google_ai_studio", "google ai studio"],
+        names: &["google_ai_studio", "google ai studio", "google-ai-studio"],
         env_keys: &["GOOGLE_AI_STUDIO_API_KEY"],
         default_base: "https://generativelanguage.googleapis.com/v1beta/openai/",
         config: provider_google_ai_studio,
@@ -931,9 +931,11 @@ impl Config {
             "mistral" => self.providers.mistral = Some(provider_config),
             "z.ai" | "z_ai" => self.providers.z_ai = Some(provider_config),
             "nvidia" => self.providers.nvidia = Some(provider_config),
-            "opencode_zen" | "opencode zen" => self.providers.opencode_zen = Some(provider_config),
+            "opencode_zen" | "opencode zen" | "opencode-zen" => {
+                self.providers.opencode_zen = Some(provider_config)
+            }
             "cerebras" => self.providers.cerebras = Some(provider_config),
-            "google_ai_studio" | "google ai studio" => {
+            "google_ai_studio" | "google ai studio" | "google-ai-studio" => {
                 self.providers.google_ai_studio = Some(provider_config)
             }
             "cohere" => self.providers.cohere = Some(provider_config),
@@ -1165,6 +1167,51 @@ mod provider_resolution_tests {
                 "https://api.z.ai/api/paas/v4/".to_string()
             )
         );
+    }
+
+    #[test]
+    fn hyphenated_builtin_provider_aliases_are_not_custom() {
+        assert!(!Config::is_custom_provider_name_valid("opencode-zen"));
+        assert!(!Config::is_custom_provider_name_valid("google-ai-studio"));
+
+        let mut config = blank_config();
+        config.set_provider_config(
+            "opencode-zen",
+            ProviderConfig {
+                api_key: Some("zen-hyphen-key".to_string()),
+                api_key_env: None,
+                api_key_file: None,
+                api_base: None,
+                default_model: None,
+                extra: HashMap::new(),
+            },
+        );
+        assert_eq!(
+            config
+                .get_provider_config("opencode-zen")
+                .and_then(|provider| provider.api_key.as_deref()),
+            Some("zen-hyphen-key")
+        );
+        assert!(!config.providers.others.contains_key("opencode-zen"));
+
+        config.set_provider_config(
+            "google-ai-studio",
+            ProviderConfig {
+                api_key: Some("google-hyphen-key".to_string()),
+                api_key_env: None,
+                api_key_file: None,
+                api_base: None,
+                default_model: None,
+                extra: HashMap::new(),
+            },
+        );
+        assert_eq!(
+            config
+                .get_provider_config("google-ai-studio")
+                .and_then(|provider| provider.api_key.as_deref()),
+            Some("google-hyphen-key")
+        );
+        assert!(!config.providers.others.contains_key("google-ai-studio"));
     }
 
     #[test]
