@@ -750,7 +750,7 @@ const PROVIDER_DEFS: &[ProviderDef] = &[
     },
     ProviderDef {
         names: &["cerebras"],
-        env_keys: &["CEREBRAS_API_KEY", "CEBRAS_API_KEY"],
+        env_keys: &["CEREBRAS_API_KEY", "CEREBRES_API_KEY", "CEBRAS_API_KEY"],
         default_base: "https://api.cerebras.ai/v1",
         config: provider_cerebras,
         local: false,
@@ -1170,6 +1170,7 @@ mod provider_resolution_tests {
         let _guard = env_lock().lock().unwrap();
         std::env::remove_var("OPENAI_API_KEY");
         std::env::remove_var("CEREBRAS_API_KEY");
+        std::env::remove_var("CEREBRES_API_KEY");
         std::env::remove_var("CEBRAS_API_KEY");
         let config = blank_config();
 
@@ -1253,6 +1254,7 @@ mod provider_resolution_tests {
     fn cerebras_legacy_env_key_still_works() {
         let _guard = env_lock().lock().unwrap();
         std::env::remove_var("CEREBRAS_API_KEY");
+        std::env::remove_var("CEREBRES_API_KEY");
         std::env::set_var("CEBRAS_API_KEY", "legacy-key");
         let config = blank_config();
 
@@ -1262,6 +1264,22 @@ mod provider_resolution_tests {
         );
         assert!(config.is_provider_available("cerebras"));
         std::env::remove_var("CEBRAS_API_KEY");
+    }
+
+    #[test]
+    fn cerebras_documented_legacy_env_key_still_works() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::remove_var("CEREBRAS_API_KEY");
+        std::env::remove_var("CEBRAS_API_KEY");
+        std::env::set_var("CEREBRES_API_KEY", "documented-legacy-key");
+        let config = blank_config();
+
+        assert_eq!(
+            config.resolve_provider_config("cerebras").0,
+            "documented-legacy-key".to_string()
+        );
+        assert!(config.is_provider_available("cerebras"));
+        std::env::remove_var("CEREBRES_API_KEY");
     }
 }
 
