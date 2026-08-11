@@ -1,4 +1,12 @@
-### v0.0.126 (Latest Release)
+### v0.0.127 (Latest Release)
+**Provider Alias Consistency, Filesystem Tool Compatibility, and Subagent Vision Fallback Routing:**
+- **Subagent Provider-Prefix Routing**: Subagent model overrides and fallback models now resolve provider-prefixed entries such as `groq/...`, `openrouter/...`, and `nvidia/...` independently from the parent agent provider, fixing vision fallback attempts that were being sent to the default `opencode_zen` endpoint.
+- **Provider Alias Persistence**: Built-in provider aliases (`z_ai`, `opencode zen`, `opencode-zen`, `google ai studio`, and `google-ai-studio`) now save to the correct built-in config fields, use canonical API-key environment variable guidance, and keep their intended default API bases in `openz configure`.
+- **Cerebras Env Compatibility**: Corrected the documented Cerebras API key spelling to `CEREBRAS_API_KEY` while preserving compatibility for previous typo variants.
+- **Filesystem Tool Alias Clarity**: Filesystem tool schemas now document the accepted argument aliases that the tools already support, reducing model confusion around `filePath`, `file_path`, `startLine`, `endLine`, `content`, `glob`, and `directory`.
+- **Chore:** Bumped version to `v0.0.127`.
+
+### v0.0.126
 **Fallback Safety, Model Picker Scale, and WebUI Resume Fidelity:**
 - **Bounded Provider Fallbacks**: Limited primary-provider fallback attempts by default so failed provider chains stop quickly instead of leaving TUI, WebUI, or subagent turns stuck across multiple retries.
 - **WebUI Turn-End Reliability**: WebSocket agent errors now emit an explicit `turn_end` event after sending the error, preventing the WebUI composer from staying in a loading state after provider failures.
