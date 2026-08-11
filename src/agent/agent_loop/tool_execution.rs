@@ -11,8 +11,25 @@ pub(crate) struct ToolExecutionOutcome {
     pub should_halt: bool,
 }
 
+fn string_arg<'a>(
+    map: &'a serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| map.get(*key).and_then(|value| value.as_str()))
+}
+
+fn filename_arg(map: &serde_json::Map<String, serde_json::Value>, keys: &[&str]) -> Option<String> {
+    string_arg(map, keys).map(|path| {
+        std::path::Path::new(path)
+            .file_name()
+            .map(|filename| filename.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string())
+    })
+}
+
 pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> String {
-    let args = crate::tools::normalize_tool_args(raw_args);
+    let args = raw_args.clone();
     let friendly_name = match name {
         "grep_search" => "Search",
         "read_file" | "view_file" => "Read",
@@ -48,7 +65,7 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
 
     let details = if let serde_json::Value::Object(map) = &args {
         if name == "grep_search" {
-            if let Some(q) = map.get("query").and_then(|v| v.as_str()) {
+            if let Some(q) = string_arg(map, &["query", "Query"]) {
                 if q.len() > 35 {
                     format!("query: \"{}...\"", q.chars().take(32).collect::<String>())
                 } else {
@@ -58,15 +75,18 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 String::new()
             }
         } else if name == "read_file" || name == "view_file" {
-            if let Some(path) = map.get("path").and_then(|v| v.as_str()) {
-                if let Some(filename) = std::path::Path::new(path).file_name() {
-                    filename.to_string_lossy().to_string()
-                } else {
-                    path.to_string()
-                }
-            } else {
-                String::new()
-            }
+            filename_arg(
+                map,
+                &[
+                    "path",
+                    "file_path",
+                    "filePath",
+                    "TargetFile",
+                    "filepath",
+                    "file",
+                ],
+            )
+            .unwrap_or_default()
         } else if name == "write_file"
             || name == "write_to_file"
             || name == "replace_file_content"
@@ -74,17 +94,22 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
             || name == "patch_file"
             || name == "replace_lines"
         {
-            if let Some(path) = map.get("path").and_then(|v| v.as_str()) {
-                if let Some(filename) = std::path::Path::new(path).file_name() {
-                    filename.to_string_lossy().to_string()
-                } else {
-                    path.to_string()
-                }
-            } else {
-                String::new()
-            }
+            filename_arg(
+                map,
+                &[
+                    "path",
+                    "file_path",
+                    "filePath",
+                    "TargetFile",
+                    "filepath",
+                    "file",
+                ],
+            )
+            .unwrap_or_default()
         } else if name == "run_command" || name == "exec_command" {
-            if let Some(cmd) = map.get("command").and_then(|v| v.as_str()) {
+            if let Some(cmd) =
+                string_arg(map, &["command", "Command", "CommandLine", "command_line"])
+            {
                 let first_line = cmd.lines().next().unwrap_or("").trim();
                 if first_line.len() > 40 {
                     format!("{}...", first_line.chars().take(37).collect::<String>())
@@ -95,15 +120,18 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 String::new()
             }
         } else if name == "list_dir" {
-            if let Some(path) = map.get("path").and_then(|v| v.as_str()) {
-                if let Some(filename) = std::path::Path::new(path).file_name() {
-                    filename.to_string_lossy().to_string()
-                } else {
-                    path.to_string()
-                }
-            } else {
-                String::new()
-            }
+            filename_arg(
+                map,
+                &[
+                    "path",
+                    "file_path",
+                    "filePath",
+                    "TargetFile",
+                    "filepath",
+                    "file",
+                ],
+            )
+            .unwrap_or_default()
         } else if name == "git_manager" {
             if let Some(action) = map.get("action").and_then(|v| v.as_str()) {
                 action.to_string()
@@ -117,7 +145,7 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 String::new()
             }
         } else if name == "web_search" {
-            if let Some(q) = map.get("query").and_then(|v| v.as_str()) {
+            if let Some(q) = string_arg(map, &["query", "Query"]) {
                 if q.len() > 35 {
                     format!("query: \"{}...\"", q.chars().take(32).collect::<String>())
                 } else {
@@ -127,7 +155,7 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 String::new()
             }
         } else if name == "web_fetch" || name == "read_url_content" || name == "read_url" {
-            if let Some(url) = map.get("url").and_then(|v| v.as_str()) {
+            if let Some(url) = string_arg(map, &["url", "Url", "UrlContent"]) {
                 if url.len() > 35 {
                     format!("\"{}...\"", url.chars().take(32).collect::<String>())
                 } else {
@@ -137,9 +165,7 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 String::new()
             }
         } else if name == "generate_image" {
-            let path = map
-                .get("output_path")
-                .and_then(|v| v.as_str())
+            let path = string_arg(map, &["output_path", "outputPath", "OutputPath"])
                 .unwrap_or("output.png");
             let filename = std::path::Path::new(path)
                 .file_name()
@@ -156,9 +182,7 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 format!("output: \"{}\"", filename)
             }
         } else if name == "generate_video" {
-            let path = map
-                .get("output_path")
-                .and_then(|v| v.as_str())
+            let path = string_arg(map, &["output_path", "outputPath", "OutputPath"])
                 .unwrap_or("output.mp4");
             let filename = std::path::Path::new(path)
                 .file_name()
@@ -166,7 +190,7 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 .unwrap_or_else(|| path.to_string());
             format!("output: \"{}\"", filename)
         } else if name == "html_to_video" {
-            let html_path = map.get("html_path").and_then(|v| v.as_str()).unwrap_or("");
+            let html_path = string_arg(map, &["html_path", "htmlPath"]).unwrap_or("");
             let html_filename =
                 if html_path.starts_with("http://") || html_path.starts_with("https://") {
                     if html_path.len() > 30 {
@@ -180,9 +204,7 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                         .map(|f| f.to_string_lossy().to_string())
                         .unwrap_or_else(|| html_path.to_string())
                 };
-            let out_path = map
-                .get("output_path")
-                .and_then(|v| v.as_str())
+            let out_path = string_arg(map, &["output_path", "outputPath", "OutputPath"])
                 .unwrap_or("output.mp4");
             let out_filename = std::path::Path::new(out_path)
                 .file_name()
@@ -204,9 +226,7 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 html_filename, out_filename, duration_display, fps, frames
             )
         } else if name == "create_animated_svg" {
-            let path = map
-                .get("output_path")
-                .and_then(|v| v.as_str())
+            let path = string_arg(map, &["output_path", "outputPath", "OutputPath"])
                 .unwrap_or("output.svg");
             let filename = std::path::Path::new(path)
                 .file_name()
@@ -296,14 +316,14 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 format!("query: \"{}\"", query)
             }
         } else if name == "doc_reader" {
-            let path = map.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let path = string_arg(map, &["path", "file_path", "filePath"]).unwrap_or("");
             let filename = std::path::Path::new(path)
                 .file_name()
                 .map(|f| f.to_string_lossy().to_string())
                 .unwrap_or_else(|| path.to_string());
             format!("file: \"{}\"", filename)
         } else if name == "wasm_sandbox" {
-            let path = map.get("wasm_path").and_then(|v| v.as_str()).unwrap_or("");
+            let path = string_arg(map, &["wasm_path", "wasmPath"]).unwrap_or("");
             let filename = std::path::Path::new(path)
                 .file_name()
                 .map(|f| f.to_string_lossy().to_string())
@@ -316,7 +336,7 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
             let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("");
             format!("action: \"{}\"", action)
         } else if name == "db_inspector" || name == "db_write" {
-            let db_path = map.get("db_path").and_then(|v| v.as_str()).unwrap_or("");
+            let db_path = string_arg(map, &["db_path", "dbPath"]).unwrap_or("");
             let db_filename = std::path::Path::new(db_path)
                 .file_name()
                 .map(|f| f.to_string_lossy().to_string())
@@ -582,6 +602,30 @@ fn error_value_with_hint(tool_name: &str, error_str: &str) -> serde_json::Value 
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn format_tool_args_does_not_use_global_arg_normalizer() {
+        let source = std::fs::read_to_string("src/agent/agent_loop/tool_execution.rs").unwrap();
+        let production_source = source.split("#[cfg(test)]").next().unwrap_or(&source);
+        assert!(
+            !production_source.contains("normalize_tool_args(raw_args)"),
+            "format_tool_args should not rely on global argument rewriting for display-only formatting"
+        );
+    }
+
+    #[test]
+    fn filesystem_formatter_reads_native_aliases_directly() {
+        let formatted = format_tool_args(
+            "replace_lines",
+            &json!({
+                "filePath": "/tmp/example.rs",
+                "startLine": 1,
+                "endLine": 1,
+                "content": "updated"
+            }),
+        );
+        assert!(formatted.contains("example.rs"));
+    }
 
     #[test]
     fn html_to_video_formatter_shows_timeline_cost() {
