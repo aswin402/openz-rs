@@ -288,7 +288,7 @@ fn default_wa_webhook_port() -> u16 {
     8090
 }
 fn default_wa_verify_token() -> String {
-    "openz".to_string()
+    String::new()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1268,6 +1268,13 @@ mod provider_resolution_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whatsapp_verify_token_has_no_guessable_default() {
+        let config = Config::default();
+        let whatsapp = config.channels.whatsapp.expect("default whatsapp config");
+        assert!(whatsapp.verify_token.is_empty());
+    }
 
     #[test]
     fn default_tui_thought_display_is_hidden_for_public_safety() {

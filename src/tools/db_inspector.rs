@@ -62,6 +62,7 @@ impl Tool for DbInspectorTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'db_path' parameter"))?;
         let db_path = crate::config::loader::resolve_path(db_path_raw);
+        crate::config::loader::verify_safe_path(&db_path)?;
         let action = arguments
             .get("action")
             .and_then(|v| v.as_str())
@@ -211,6 +212,7 @@ impl Tool for DbWriteTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'db_path' parameter"))?;
         let db_path = crate::config::loader::resolve_path(db_path_raw);
+        crate::config::loader::verify_safe_path(&db_path)?;
         let sql = arguments
             .get("sql")
             .and_then(|v| v.as_str())
@@ -299,6 +301,40 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn db_write_blocks_outside_safe_paths() {
+        let tool = DbWriteTool;
+        let res = tool
+            .call(&json!({
+                "db_path": "/etc/passwd",
+                "sql": "CREATE TABLE blocked (id INTEGER);"
+            }))
+            .await;
+
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Path traversal prevention")
+        );
+    }
+
+    #[tokio::test]
+    async fn db_inspector_blocks_outside_safe_paths() {
+        let tool = DbInspectorTool;
+        let res = tool
+            .call(&json!({
+                "db_path": "/etc/passwd",
+                "action": "schema"
+            }))
+            .await;
+
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Path traversal prevention")
+        );
     }
 
     #[tokio::test]

@@ -2,60 +2,6 @@ use crate::config::resolve_path;
 use crate::tools::Tool;
 use anyhow::{anyhow, Context, Result};
 use std::fs;
-use std::path::Path;
-
-fn verify_safe_path(path: &Path) -> Result<()> {
-    let mut check_path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        let workspace = crate::config::loader::ACTIVE_WORKSPACE
-            .try_with(|w| w.clone())
-            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
-        workspace.join(path)
-    };
-
-    loop {
-        if let Ok(canon) = check_path.canonicalize() {
-            check_path = canon;
-            break;
-        }
-        if let Some(parent) = check_path.parent() {
-            check_path = parent.to_path_buf();
-        } else {
-            break;
-        }
-    }
-
-    let workspace = crate::config::loader::ACTIVE_WORKSPACE
-        .try_with(|w| w.clone())
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
-    if let Ok(w_canon) = workspace.canonicalize() {
-        if check_path.starts_with(&w_canon) {
-            return Ok(());
-        }
-    }
-
-    if let Some(home) = dirs::home_dir() {
-        let openz_dir = home.join(".openz");
-        if let Ok(o_canon) = openz_dir.canonicalize() {
-            if check_path.starts_with(&o_canon) {
-                return Ok(());
-            }
-        }
-    }
-
-    let temp = std::env::temp_dir();
-    if let Ok(t_canon) = temp.canonicalize() {
-        if check_path.starts_with(&t_canon) {
-            return Ok(());
-        }
-    }
-
-    Err(anyhow!(
-        "Path traversal prevention: Path {:?} is not allowed (must be inside workspace, ~/.openz, or temp)",
-        path
-    ))
-}
 
 pub struct ReadFileTool;
 
@@ -87,7 +33,7 @@ impl Tool for ReadFileTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
         let path = resolve_path(path_str);
-        verify_safe_path(&path)?;
+        crate::config::loader::verify_safe_path(&path)?;
 
         // Guard against reading excessively large files (>50MB) to prevent OOM
         let metadata = fs::metadata(&path)
@@ -163,7 +109,7 @@ impl Tool for WriteFileTool {
             .ok_or_else(|| anyhow!("Missing 'content' argument"))?;
 
         let path = resolve_path(path_str);
-        verify_safe_path(&path)?;
+        crate::config::loader::verify_safe_path(&path)?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -203,7 +149,7 @@ impl Tool for ListDirTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'path' argument"))?;
         let path = resolve_path(path_str);
-        verify_safe_path(&path)?;
+        crate::config::loader::verify_safe_path(&path)?;
 
         let mut entries = Vec::new();
         for entry in fs::read_dir(&path)
@@ -261,7 +207,7 @@ impl Tool for PatchFileTool {
             .ok_or_else(|| anyhow!("Missing 'patch' argument"))?;
 
         let path = resolve_path(path_str);
-        verify_safe_path(&path)?;
+        crate::config::loader::verify_safe_path(&path)?;
 
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read file at {:?}", path))?;
@@ -334,7 +280,7 @@ impl Tool for ReplaceLinesTool {
         }
 
         let path = resolve_path(path_str);
-        verify_safe_path(&path)?;
+        crate::config::loader::verify_safe_path(&path)?;
 
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read file at {:?}", path))?;
@@ -384,7 +330,6 @@ impl FindFilesTool {
     async fn run_fd(&self, dir: &std::path::Path, pattern: &str) -> Result<Vec<String>> {
         let mut cmd = tokio::process::Command::new("fd");
         cmd.arg("-g"); // Treat pattern as a glob
-        cmd.arg("-L"); // Follow symlinks
         cmd.arg("--hidden"); // Include hidden files
         cmd.arg("--exclude").arg("target");
         cmd.arg("--exclude").arg("node_modules");
@@ -494,7 +439,7 @@ impl Tool for FindFilesTool {
 
         let search_dir_str = arguments.get("dir").and_then(|v| v.as_str()).unwrap_or(".");
         let search_dir = resolve_path(search_dir_str);
-        verify_safe_path(&search_dir)?;
+        crate::config::loader::verify_safe_path(&search_dir)?;
 
         if !search_dir.exists() {
             return Err(anyhow!("Directory '{}' does not exist", search_dir_str));
@@ -555,7 +500,7 @@ impl Tool for ZenflowEditTool {
             .ok_or_else(|| anyhow!("Missing 'compile_command' parameter"))?;
 
         let path = resolve_path(path_str);
-        verify_safe_path(&path)?;
+        crate::config::loader::verify_safe_path(&path)?;
 
         let run_cmd = |cmd: String| async move {
             let mut command = tokio::process::Command::new("sh");
@@ -574,7 +519,7 @@ impl Tool for ZenflowEditTool {
             .unwrap_or(false);
 
         let mut committed = false;
-        let mut original_content = None;
+        let original_content = fs::read_to_string(&path).ok();
 
         if in_git {
             let escaped_path = {
@@ -599,10 +544,6 @@ impl Tool for ZenflowEditTool {
                     committed = true;
                 }
             }
-        }
-
-        if !committed {
-            original_content = fs::read_to_string(&path).ok();
         }
 
         if let Some(parent) = path.parent() {
@@ -679,12 +620,13 @@ impl Tool for ZenflowEditTool {
                 "message": "File written and verified successfully."
             }))
         } else {
-            if committed {
-                let _ = run_cmd("git reset --hard HEAD~1".to_string()).await;
-            } else if let Some(orig) = original_content {
+            if let Some(orig) = original_content {
                 fs::write(&path, orig)?;
             } else {
                 let _ = fs::remove_file(&path);
+            }
+            if committed {
+                let _ = run_cmd("git reset --mixed HEAD~1".to_string()).await;
             }
             Ok(serde_json::json!({
                 "status": "error",
@@ -697,6 +639,83 @@ impl Tool for ZenflowEditTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_files_source_does_not_follow_symlinks_with_fd() {
+        let source = std::fs::read_to_string("src/tools/filesystem.rs").unwrap();
+        let follow_symlinks_arg = ["cmd.arg(\"", "-L", "\")"].join("");
+        assert!(
+            !source.contains(&follow_symlinks_arg),
+            "find_files must not pass fd -L because it crosses symlink boundaries"
+        );
+    }
+
+    fn run_git(dir: &std::path::Path, args: &[&str]) -> Result<()> {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "git {:?} failed: {}{}",
+                args,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn zenflow_edit_failure_preserves_unrelated_dirty_file() -> Result<()> {
+        let repo = std::env::temp_dir().join(format!(
+            "openz_zenflow_rollback_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&repo)?;
+        run_git(&repo, &["init"])?;
+        run_git(&repo, &["config", "user.email", "openz-test@example.invalid"])?;
+        run_git(&repo, &["config", "user.name", "OpenZ Test"])?;
+
+        let target = repo.join("target.txt");
+        let unrelated = repo.join("unrelated.txt");
+        std::fs::write(&target, "target initial\n")?;
+        std::fs::write(&unrelated, "unrelated initial\n")?;
+        run_git(&repo, &["add", "."])?;
+        run_git(&repo, &["commit", "-m", "initial"])?;
+
+        std::fs::write(&target, "target dirty before edit\n")?;
+        std::fs::write(&unrelated, "unrelated dirty must survive\n")?;
+
+        let provider = std::sync::Arc::new(
+            crate::providers::mock::MockProvider::new()
+                .with_default(crate::providers::mock::MockResponse::text("")),
+        );
+        let tool = ZenflowEditTool { provider };
+        let result = crate::config::loader::ACTIVE_WORKSPACE
+            .scope(repo.clone(), async {
+                tool.call(&serde_json::json!({
+                    "path": "target.txt",
+                    "content": "target attempted edit\n",
+                    "compile_command": "false"
+                }))
+                .await
+            })
+            .await?;
+
+        assert_eq!(result["status"], "error");
+        assert_eq!(
+            std::fs::read_to_string(&target)?,
+            "target dirty before edit\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&unrelated)?,
+            "unrelated dirty must survive\n"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_find_files() -> Result<()> {
@@ -747,5 +766,15 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         Ok(())
+    }
+
+    #[test]
+    fn zenflow_edit_source_does_not_use_hard_reset() {
+        let source = std::fs::read_to_string("src/tools/filesystem.rs").unwrap();
+        let hard_reset = ["git reset", "--hard", "HEAD~1"].join(" ");
+        assert!(
+            !source.contains(&format!("run_cmd(\"{}", hard_reset)),
+            "zenflow_edit must not use destructive worktree-wide rollback"
+        );
     }
 }

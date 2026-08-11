@@ -1,14 +1,14 @@
 use crate::agent::AgentLoop;
 use crate::config::schema::WebSocketChannelConfig;
 use axum::{
+    Json, Router,
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         Path as AxumPath, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::StatusCode,
     response::IntoResponse,
     routing::get,
-    Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -115,6 +115,106 @@ fn subagent_profile_events() -> Vec<serde_json::Value> {
         .collect::<Vec<_>>()
 }
 
+fn gateway_token_required_for_host(host: &str) -> bool {
+    let normalized = host.trim().trim_start_matches('[').trim_end_matches(']');
+    if normalized.eq_ignore_ascii_case("localhost") {
+        return false;
+    }
+    match normalized.parse::<std::net::IpAddr>() {
+        Ok(ip) => !ip.is_loopback(),
+        Err(_) => true,
+    }
+}
+
+fn gateway_token_configured() -> bool {
+    std::env::var("OPENZ_GATEWAY_TOKEN")
+        .map(|token| !token.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn normalized_config_key(key: &str) -> String {
+    key.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn is_masked_config_secret(value: &str) -> bool {
+    matches!(value.trim(), "••••••••" | "********")
+}
+
+fn mask_config_secret(value: &str) -> &'static str {
+    if value.is_empty() {
+        ""
+    } else {
+        "••••••••"
+    }
+}
+
+fn sensitive_config_value_changed(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(value) => !is_masked_config_secret(value),
+        _ => true,
+    }
+}
+
+fn sensitive_default_config_key(key: &str) -> bool {
+    matches!(
+        normalized_config_key(key).as_str(),
+        "securitymode" | "workspace" | "whitelistedcommandprefixes" | "whitelistedpaths"
+    )
+}
+
+fn credential_config_key(key: &str) -> bool {
+    matches!(
+        normalized_config_key(key).as_str(),
+        "apikey"
+            | "apikeyenv"
+            | "apikeyfile"
+            | "bottoken"
+            | "verifytoken"
+            | "token"
+            | "password"
+            | "secret"
+            | "clientsecret"
+            | "privatekey"
+    )
+}
+
+fn object_changes_sensitive_key<F>(value: Option<&Value>, is_sensitive_key: F) -> bool
+where
+    F: Fn(&str) -> bool,
+{
+    value
+        .and_then(Value::as_object)
+        .map(|obj| {
+            obj.iter()
+                .any(|(key, value)| is_sensitive_key(key) && sensitive_config_value_changed(value))
+        })
+        .unwrap_or(false)
+}
+
+fn nested_objects_change_sensitive_key<F>(value: Option<&Value>, is_sensitive_key: F) -> bool
+where
+    F: Fn(&str) -> bool + Copy,
+{
+    value
+        .and_then(Value::as_object)
+        .map(|outer| {
+            outer
+                .values()
+                .any(|inner| object_changes_sensitive_key(Some(inner), is_sensitive_key))
+        })
+        .unwrap_or(false)
+}
+
+fn config_update_requires_gateway_token(envelope: &Value) -> bool {
+    object_changes_sensitive_key(envelope.get("defaults"), sensitive_default_config_key)
+        || nested_objects_change_sensitive_key(envelope.get("providers"), credential_config_key)
+        || nested_objects_change_sensitive_key(envelope.get("channels"), credential_config_key)
+}
+
 impl WsGateway {
     pub fn new(config: WebSocketChannelConfig, agent_loop: AgentLoop) -> Self {
         WsGateway {
@@ -133,6 +233,13 @@ impl super::Channel for WsGateway {
     async fn start(&self) -> anyhow::Result<()> {
         let addr_str = format!("{}:{}", self.config.host, self.config.port);
         let addr: SocketAddr = addr_str.parse()?;
+
+        if gateway_token_required_for_host(&self.config.host) && !gateway_token_configured() {
+            return Err(anyhow::anyhow!(
+                "OPENZ_GATEWAY_TOKEN is required when binding gateway to non-loopback host '{}'",
+                self.config.host
+            ));
+        }
 
         let state = WsState {
             config: self.config.clone(),
@@ -310,7 +417,7 @@ async fn persist_attachments(attachments: &Value) -> Vec<String> {
     if tokio::fs::create_dir_all(&attach_dir).await.is_err() {
         return refs;
     }
-    use base64::{engine::general_purpose, Engine as _};
+    use base64::{Engine as _, engine::general_purpose};
     for att in arr.iter().take(8) {
         let Some(data_b64) = att.get("data").and_then(|v| v.as_str()) else {
             continue;
@@ -970,27 +1077,32 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         let ch = &config.channels;
 
                         let map_tg = |c: &Option<crate::config::schema::TelegramChannelConfig>| {
-                            c.as_ref().map(|cfg| serde_json::json!({
-                                "enabled": cfg.enabled,
-                                "bot_token": if cfg.bot_token.is_empty() { "" } else { "••••••••" }
-                            }))
+                            c.as_ref().map(|cfg| {
+                                serde_json::json!({
+                                    "enabled": cfg.enabled,
+                                    "bot_token": mask_config_secret(&cfg.bot_token)
+                                })
+                            })
                         };
                         let map_dc = |c: &Option<crate::config::schema::DiscordChannelConfig>| {
-                            c.as_ref().map(|cfg| serde_json::json!({
-                                "enabled": cfg.enabled,
-                                "bot_token": if cfg.bot_token.is_empty() { "" } else { "••••••••" }
-                            }))
+                            c.as_ref().map(|cfg| {
+                                serde_json::json!({
+                                    "enabled": cfg.enabled,
+                                    "bot_token": mask_config_secret(&cfg.bot_token)
+                                })
+                            })
                         };
-                        let map_wa =
-                            |c: &Option<crate::config::schema::WhatsAppChannelConfig>| {
-                                c.as_ref().map(|cfg| serde_json::json!({
-                                "enabled": cfg.enabled,
-                                "api_key": if cfg.api_key.is_empty() { "" } else { "••••••••" },
-                                "phone_number_id": cfg.phone_number_id,
-                                "webhook_port": cfg.webhook_port,
-                                "verify_token": cfg.verify_token
-                            }))
-                            };
+                        let map_wa = |c: &Option<crate::config::schema::WhatsAppChannelConfig>| {
+                            c.as_ref().map(|cfg| {
+                                serde_json::json!({
+                                    "enabled": cfg.enabled,
+                                    "api_key": mask_config_secret(&cfg.api_key),
+                                    "phone_number_id": cfg.phone_number_id,
+                                    "webhook_port": cfg.webhook_port,
+                                    "verify_token": mask_config_secret(&cfg.verify_token)
+                                })
+                            })
+                        };
 
                         channels_config.insert(
                             "telegram".to_string(),
@@ -1023,6 +1135,20 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         }
                     }
                     "set_config" => {
+                        if config_update_requires_gateway_token(&envelope)
+                            && !gateway_token_configured()
+                        {
+                            let evt = serde_json::json!({
+                                "event": "config_update_rejected",
+                                "reason": "OPENZ_GATEWAY_TOKEN is required for sensitive configuration updates",
+                                "requires_gateway_token": true,
+                            });
+                            if let Ok(evt_str) = serde_json::to_string(&evt) {
+                                let _ = tx.send(Message::Text(evt_str)).await;
+                            }
+                            continue;
+                        }
+
                         let mut config = match state.live_config.read() {
                             Ok(guard) => guard.clone(),
                             Err(_) => state.agent_loop.config.clone(),
@@ -1938,6 +2064,86 @@ mod tests {
         });
         let model_routed = determine_routed_model(&config, "gpt-4o", "Hi there");
         assert_eq!(model_routed, "deepseek/deepseek-chat");
+    }
+
+    #[test]
+    fn gateway_token_required_for_host_rejects_public_binds() {
+        assert!(!gateway_token_required_for_host("127.0.0.1"));
+        assert!(!gateway_token_required_for_host("localhost"));
+        assert!(!gateway_token_required_for_host("::1"));
+        assert!(gateway_token_required_for_host("0.0.0.0"));
+        assert!(gateway_token_required_for_host("192.168.1.10"));
+    }
+
+    #[test]
+    fn mask_config_secret_redacts_present_values() {
+        assert_eq!(mask_config_secret(""), "");
+        assert_eq!(mask_config_secret("secret"), "••••••••");
+    }
+
+    #[test]
+    fn config_update_requires_gateway_token_for_provider_api_key() {
+        assert!(config_update_requires_gateway_token(&serde_json::json!({
+            "type": "set_config",
+            "providers": {
+                "openai": { "api_key": "sk-live" }
+            }
+        })));
+
+        assert!(!config_update_requires_gateway_token(&serde_json::json!({
+            "type": "set_config",
+            "providers": {
+                "openai": { "api_key": "••••••••" }
+            }
+        })));
+    }
+
+    #[test]
+    fn config_update_requires_gateway_token_for_security_mode_and_workspace() {
+        assert!(config_update_requires_gateway_token(&serde_json::json!({
+            "defaults": { "security_mode": "auto" }
+        })));
+        assert!(config_update_requires_gateway_token(&serde_json::json!({
+            "defaults": { "workspace": "/tmp" }
+        })));
+        assert!(config_update_requires_gateway_token(&serde_json::json!({
+            "defaults": { "whitelisted_command_prefixes": ["cargo check"] }
+        })));
+    }
+
+    #[test]
+    fn config_update_requires_gateway_token_for_channel_tokens() {
+        assert!(config_update_requires_gateway_token(&serde_json::json!({
+            "channels": {
+                "telegram": { "bot_token": "123:abc" },
+                "whatsapp": { "verify_token": "webhook-secret" }
+            }
+        })));
+    }
+
+    #[test]
+    fn config_update_allows_benign_preferences_without_gateway_token() {
+        assert!(!config_update_requires_gateway_token(&serde_json::json!({
+            "defaults": {
+                "model": "openai/gpt-4o",
+                "temperature": 0.2,
+                "streaming": true,
+                "bot_name": "OpenZ"
+            },
+            "providers": {
+                "openai": {
+                    "api_base": "https://api.openai.com/v1",
+                    "default_model": "gpt-4o"
+                }
+            },
+            "channels": {
+                "whatsapp": {
+                    "enabled": false,
+                    "phone_number_id": "12345",
+                    "webhook_port": 8090
+                }
+            }
+        })));
     }
 
     #[test]

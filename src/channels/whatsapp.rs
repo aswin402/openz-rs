@@ -108,7 +108,7 @@ impl super::Channel for WhatsAppChannel {
             if let Some(ref wa_cfg) = self.agent_loop.config.channels.whatsapp {
                 (wa_cfg.webhook_port, wa_cfg.verify_token.clone())
             } else {
-                (8090, "openz".to_string())
+                (8090, String::new())
             };
 
         let port = std::env::var("WHATSAPP_WEBHOOK_PORT")
@@ -116,6 +116,14 @@ impl super::Channel for WhatsAppChannel {
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(port);
         let verify_token = std::env::var("WHATSAPP_WEBHOOK_VERIFY_TOKEN").unwrap_or(verify_token);
+        if verify_token.trim().is_empty() {
+            if !silent {
+                println!(
+                    "⚠️ WhatsApp webhook verify token is not configured. WhatsApp channel deactivated."
+                );
+            }
+            return Ok(());
+        }
         let app_secret = std::env::var("WHATSAPP_APP_SECRET").unwrap_or_default();
 
         let state = WhatsAppState {

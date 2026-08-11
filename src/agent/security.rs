@@ -760,6 +760,10 @@ impl SecurityGuard {
         }
     }
 
+    pub fn redacted_approval_arguments(arguments: &Value) -> Value {
+        Self::redacted_value(arguments)
+    }
+
     /// Formats a descriptive string showing the details of the sensitive action.
     pub fn format_description(tool_name: &str, arguments: &Value) -> String {
         if tool_name == "exec_command" {
@@ -937,7 +941,7 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
             "req_id": req_id,
             "tool_name": tool_name,
             "description": description,
-            "arguments": arguments,
+            "arguments": SecurityGuard::redacted_approval_arguments(arguments),
             "status": "pending",
         }));
 
@@ -1017,6 +1021,19 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn redacted_approval_arguments_mask_nested_secrets() {
+        let args = json!({
+            "action": "set_credential",
+            "provider": { "api_key": "sk-live", "token": "tok-live" },
+            "safe": "visible"
+        });
+        let redacted = SecurityGuard::redacted_approval_arguments(&args);
+        assert_eq!(redacted["provider"]["api_key"], "********");
+        assert_eq!(redacted["provider"]["token"], "********");
+        assert_eq!(redacted["safe"], "visible");
+    }
 
     #[test]
     fn test_manage_config_credentials_require_approval_and_redact_description() {

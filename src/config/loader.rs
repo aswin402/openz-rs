@@ -54,6 +54,59 @@ pub fn set_tokio_command_cwd(cmd: &mut tokio::process::Command) {
     }
 }
 
+pub fn verify_safe_path(path: &Path) -> Result<()> {
+    let mut check_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        let workspace = ACTIVE_WORKSPACE
+            .try_with(|w| w.clone())
+            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+        workspace.join(path)
+    };
+
+    loop {
+        if let Ok(canon) = check_path.canonicalize() {
+            check_path = canon;
+            break;
+        }
+        if let Some(parent) = check_path.parent() {
+            check_path = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+
+    let workspace = ACTIVE_WORKSPACE
+        .try_with(|w| w.clone())
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
+    if let Ok(w_canon) = workspace.canonicalize() {
+        if check_path.starts_with(&w_canon) {
+            return Ok(());
+        }
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        let openz_dir = home.join(".openz");
+        if let Ok(o_canon) = openz_dir.canonicalize() {
+            if check_path.starts_with(&o_canon) {
+                return Ok(());
+            }
+        }
+    }
+
+    let temp = std::env::temp_dir();
+    if let Ok(t_canon) = temp.canonicalize() {
+        if check_path.starts_with(&t_canon) {
+            return Ok(());
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "Path traversal prevention: Path {:?} is not allowed (must be inside workspace, ~/.openz, or temp)",
+        path
+    ))
+}
+
 pub fn config_dir() -> PathBuf {
     if let Ok(dir) = CONFIG_DIR_OVERRIDE.try_with(|p| p.clone()) {
         dir
@@ -426,8 +479,29 @@ pub fn save_config(config: &Config) -> Result<()> {
     // Write atomically: write to a temporary file first, then rename it
     let temp_name = format!("config.json.tmp.{}", uuid::Uuid::new_v4());
     let temp_path = dir.join(temp_name);
-    fs::write(&temp_path, content)
-        .with_context(|| format!("Failed to write temporary config file to {:?}", temp_path))?;
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut temp_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temp_path)
+            .with_context(|| format!("Failed to create temporary config file at {:?}", temp_path))?;
+        temp_file
+            .write_all(content.as_bytes())
+            .with_context(|| format!("Failed to write temporary config file to {:?}", temp_path))?;
+        temp_file
+            .sync_all()
+            .with_context(|| format!("Failed to sync temporary config file at {:?}", temp_path))?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(&temp_path, content)
+            .with_context(|| format!("Failed to write temporary config file to {:?}", temp_path))?;
+    }
 
     if let Err(e) = fs::rename(&temp_path, &path) {
         let _ = fs::remove_file(&temp_path);
@@ -563,6 +637,29 @@ mod tests {
         assert!(names.contains(&"memory.db-wal".to_string()));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn save_config_temp_write_uses_private_final_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("openz_cfg_perm_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        super::CONFIG_DIR_OVERRIDE
+            .scope(dir.clone(), async {
+                super::save_config(&crate::config::schema::Config::default()).unwrap();
+            })
+            .await;
+
+        let mode = std::fs::metadata(dir.join("config.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+
+        assert_eq!(mode, 0o600);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
