@@ -1,6 +1,6 @@
 use crate::config::schema::Config;
-use crate::providers::{anthropic::AnthropicProvider, openai::OpenAIProvider, LLMProvider};
-use anyhow::{anyhow, Result};
+use crate::providers::{LLMProvider, anthropic::AnthropicProvider, openai::OpenAIProvider};
+use anyhow::{Result, anyhow};
 use std::sync::Arc;
 
 /// Result of the full provider resolution pipeline.
@@ -89,50 +89,57 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
     let model_lower = model.to_lowercase();
     let has_openrouter_key = config.is_provider_available("openrouter");
     let has_nvidia_key = config.is_provider_available("nvidia");
+    let provider_is_auto = defaults.provider == "auto";
 
-    // 1. Explicit provider prefixes
-    for custom_name in config.custom_provider_names() {
-        let custom_prefix = format!("{}/", custom_name.to_lowercase());
-        if model_lower.starts_with(&custom_prefix) {
-            provider_name = custom_name.clone();
-            clean_model = &model[custom_name.len() + 1..];
-            break;
+    // 1. Explicit model prefixes are routing hints only when provider selection is auto.
+    let mut prefix_matched = false;
+    if provider_is_auto {
+        for custom_name in config.custom_provider_names() {
+            let custom_prefix = format!("{}/", custom_name.to_lowercase());
+            if model_lower.starts_with(&custom_prefix) {
+                provider_name = custom_name.clone();
+                clean_model = &model[custom_name.len() + 1..];
+                prefix_matched = true;
+                break;
+            }
         }
     }
-    if provider_name != defaults.provider || clean_model != model {
+    if prefix_matched {
         // custom provider prefix matched above
-    } else if model_lower == "mivi" || model_lower.starts_with("mivi/") {
+    } else if provider_is_auto && (model_lower == "mivi" || model_lower.starts_with("mivi/")) {
         provider_name = "mivi".to_string();
         clean_model = model.strip_prefix("mivi/").unwrap_or(model);
-    } else if model_lower.starts_with("openrouter/") {
+    } else if provider_is_auto && model_lower.starts_with("openrouter/") {
         provider_name = "openrouter".to_string();
         clean_model = &model["openrouter/".len()..];
-    } else if model_lower.ends_with(":free")
+    } else if provider_is_auto
+        && model_lower.ends_with(":free")
         && has_openrouter_key
         && !(model_lower.starts_with("nvidia/") && has_nvidia_key)
     {
         provider_name = "openrouter".to_string();
         clean_model = model;
-    } else if model_lower.starts_with("ollama_local/") {
+    } else if provider_is_auto && model_lower.starts_with("ollama_local/") {
         provider_name = "ollama_local".to_string();
         clean_model = &model["ollama_local/".len()..];
-    } else if model_lower.starts_with("ollama/") {
+    } else if provider_is_auto && model_lower.starts_with("ollama/") {
         provider_name = "ollama".to_string();
         clean_model = &model["ollama/".len()..];
-    } else if model_lower.starts_with("anthropic/") {
+    } else if provider_is_auto && model_lower.starts_with("anthropic/") {
         provider_name = "anthropic".to_string();
         clean_model = &model["anthropic/".len()..];
-    } else if model_lower.starts_with("openai/") {
+    } else if provider_is_auto && model_lower.starts_with("openai/") {
         provider_name = "openai".to_string();
         clean_model = &model["openai/".len()..];
-    } else if model_lower.starts_with("deepseek/") {
+    } else if provider_is_auto && model_lower.starts_with("deepseek/") {
         provider_name = "deepseek".to_string();
         clean_model = &model["deepseek/".len()..];
-    } else if model_lower.starts_with("groq/") {
+    } else if provider_is_auto && model_lower.starts_with("groq/") {
         provider_name = "groq".to_string();
         clean_model = &model["groq/".len()..];
-    } else if model_lower.starts_with("google_ai_studio/")
-        || model_lower.starts_with("google-ai-studio/")
+    } else if provider_is_auto
+        && (model_lower.starts_with("google_ai_studio/")
+            || model_lower.starts_with("google-ai-studio/"))
     {
         provider_name = "google_ai_studio".to_string();
         let prefix_len = if model_lower.starts_with("google_ai_studio/") {
@@ -141,7 +148,9 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
             "google-ai-studio/".len()
         };
         clean_model = &model[prefix_len..];
-    } else if model_lower.starts_with("opencode_zen/") || model_lower.starts_with("opencode-zen/") {
+    } else if provider_is_auto
+        && (model_lower.starts_with("opencode_zen/") || model_lower.starts_with("opencode-zen/"))
+    {
         provider_name = "opencode_zen".to_string();
         let prefix_len = if model_lower.starts_with("opencode_zen/") {
             "opencode_zen/".len()
@@ -149,7 +158,9 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
             "opencode-zen/".len()
         };
         clean_model = &model[prefix_len..];
-    } else if model_lower.starts_with("z.ai/") || model_lower.starts_with("z_ai/") {
+    } else if provider_is_auto
+        && (model_lower.starts_with("z.ai/") || model_lower.starts_with("z_ai/"))
+    {
         provider_name = "z.ai".to_string();
         let prefix_len = if model_lower.starts_with("z.ai/") {
             "z.ai/".len()
@@ -157,16 +168,18 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
             "z_ai/".len()
         };
         clean_model = &model[prefix_len..];
-    } else if model_lower.starts_with("nvidia/") {
+    } else if provider_is_auto && model_lower.starts_with("nvidia/") {
         provider_name = "nvidia".to_string();
         clean_model = &model["nvidia/".len()..];
-    } else if model_lower.starts_with("minimax/") {
+    } else if provider_is_auto && model_lower.starts_with("minimax/") {
         provider_name = "minimax".to_string();
         clean_model = &model["minimax/".len()..];
-    } else if model_lower.starts_with("mistral/") {
+    } else if provider_is_auto && model_lower.starts_with("mistral/") {
         provider_name = "mistral".to_string();
         clean_model = &model["mistral/".len()..];
-    } else if model_lower.starts_with("cerebras/") || model_lower.starts_with("cerebres/") {
+    } else if provider_is_auto
+        && (model_lower.starts_with("cerebras/") || model_lower.starts_with("cerebres/"))
+    {
         provider_name = "cerebras".to_string();
         let prefix_len = if model_lower.starts_with("cerebras/") {
             "cerebras/".len()
@@ -174,16 +187,16 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
             "cerebres/".len()
         };
         clean_model = &model[prefix_len..];
-    } else if model_lower.starts_with("cohere/") {
+    } else if provider_is_auto && model_lower.starts_with("cohere/") {
         provider_name = "cohere".to_string();
         clean_model = &model["cohere/".len()..];
-    } else if model_lower.starts_with("llm7/") {
+    } else if provider_is_auto && model_lower.starts_with("llm7/") {
         provider_name = "llm7".to_string();
         clean_model = &model["llm7/".len()..];
-    } else if model_lower.starts_with("sambanova/") {
+    } else if provider_is_auto && model_lower.starts_with("sambanova/") {
         provider_name = "sambanova".to_string();
         clean_model = &model["sambanova/".len()..];
-    } else if model_lower.starts_with("huggingface/") {
+    } else if provider_is_auto && model_lower.starts_with("huggingface/") {
         provider_name = "huggingface".to_string();
         clean_model = &model["huggingface/".len()..];
     } else if provider_name == "auto" {
@@ -552,20 +565,18 @@ mod tests {
     }
 
     #[test]
-    fn test_openrouter_free_model_routes_to_openrouter_even_when_default_openai() {
+    fn test_openrouter_free_model_routes_to_openrouter_when_provider_auto() {
         let _guard = env_lock().lock().unwrap();
-        let cfg = config_with("openai");
-        std::env::set_var("OPENAI_API_KEY", "k");
+        let cfg = config_with("auto");
         std::env::set_var("OPENROUTER_API_KEY", "rk");
         let r = resolve_provider_full(&cfg, "google/gemma-4-31b-it:free").unwrap();
         assert_eq!(r.provider_name, "openrouter");
         assert_eq!(r.model, "google/gemma-4-31b-it:free");
         std::env::remove_var("OPENROUTER_API_KEY");
-        std::env::remove_var("OPENAI_API_KEY");
     }
 
     #[test]
-    fn test_empty_configured_openrouter_key_is_not_available_for_free_model_routing() {
+    fn test_empty_configured_openrouter_key_is_not_used_for_free_model_routing() {
         let _guard = env_lock().lock().unwrap();
         for var in &[
             "OPENAI_API_KEY",
@@ -574,7 +585,7 @@ mod tests {
         ] {
             std::env::remove_var(var);
         }
-        let mut cfg = config_with("openai");
+        let mut cfg = config_with("auto");
         cfg.providers.openrouter = Some(ProviderConfig {
             api_key: Some(String::new()),
             api_key_env: None,
@@ -585,12 +596,18 @@ mod tests {
         });
 
         let err = match resolve_provider_full(&cfg, "google/gemma-4-31b-it:free") {
-            Ok(r) => panic!("expected missing OpenAI key error, got {}", r.provider_name),
+            Ok(r) => panic!(
+                "expected missing Google AI Studio key error, got {}",
+                r.provider_name
+            ),
             Err(err) => err.to_string(),
         };
 
-        assert!(err.contains("openai"), "unexpected error: {err}");
-        assert!(err.contains("OPENAI_API_KEY"), "unexpected error: {err}");
+        assert!(err.contains("google_ai_studio"), "unexpected error: {err}");
+        assert!(
+            err.contains("GOOGLE_AI_STUDIO_API_KEY"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -631,7 +648,7 @@ mod tests {
         for var in &["OPENAI_API_KEY", "OPENROUTER_API_KEY", "NVIDIA_API_KEY"] {
             std::env::remove_var(var);
         }
-        let mut cfg = config_with("openai");
+        let mut cfg = config_with("auto");
         cfg.providers.openrouter = Some(ProviderConfig {
             api_key: Some("rk".to_string()),
             api_key_env: None,
@@ -658,8 +675,7 @@ mod tests {
     #[test]
     fn test_openrouter_nvidia_free_preserves_provider_slug_when_nvidia_key_absent() {
         let _guard = env_lock().lock().unwrap();
-        let cfg = config_with("openai");
-        std::env::set_var("OPENAI_API_KEY", "k");
+        let cfg = config_with("auto");
         std::env::set_var("OPENROUTER_API_KEY", "rk");
         std::env::remove_var("NVIDIA_API_KEY");
         let r = resolve_provider_full(&cfg, "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free")
@@ -670,7 +686,6 @@ mod tests {
             "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
         );
         std::env::remove_var("OPENROUTER_API_KEY");
-        std::env::remove_var("OPENAI_API_KEY");
     }
 
     #[test]
@@ -731,6 +746,25 @@ mod tests {
         std::env::set_var("OPENAI_API_KEY", "k");
         let r = resolve_provider_full(&cfg, "claude-some-model").unwrap();
         assert_eq!(r.provider_name, "openai");
+        std::env::remove_var("OPENAI_API_KEY");
+    }
+
+    #[test]
+    fn test_explicit_provider_wins_over_model_prefix_and_free_suffix() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::set_var("OPENAI_API_KEY", "k");
+        std::env::set_var("ANTHROPIC_API_KEY", "ak");
+        std::env::set_var("OPENROUTER_API_KEY", "rk");
+        let cfg = config_with("openai");
+
+        let prefixed = resolve_provider_full(&cfg, "anthropic/claude-3-5-sonnet").unwrap();
+        assert_eq!(prefixed.provider_name, "openai");
+
+        let free = resolve_provider_full(&cfg, "google/gemma-4-31b-it:free").unwrap();
+        assert_eq!(free.provider_name, "openai");
+
+        std::env::remove_var("OPENROUTER_API_KEY");
+        std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("OPENAI_API_KEY");
     }
 
