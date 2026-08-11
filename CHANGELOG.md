@@ -5,6 +5,7 @@
 - **Configured Model Picker Scale**: WebUI model loading now starts with configured providers and compact previews, then loads a provider's full model list only when selected; recent and favorite models are available for faster switching.
 - **TUI Model Picker Parity**: The Ratatui `/model` command now understands recent/favorite model entries and records model selections per session without overwriting other active sessions.
 - **Session Resume Tool Rendering**: WebUI session-history replay now merges persisted assistant tool calls, tool outputs, and the final assistant answer back into one visual turn, matching the live active-session layout.
+- **Tab-Scoped Session Restore**: WebUI now keeps the current chat through page reloads in the same tab while fresh tabs/windows start on `New Session`, avoiding accidental continuation from old sessions.
 
 ### v0.0.125
 **Parallel TUI Sessions, Provider Resilience, and Activity Visibility:**

@@ -129,6 +129,7 @@ const EMPTY_MEMORY: CognitiveMemoryStats = {
 
 const EMPTY_MCP_STATS: McpStats = { loaded: 0, failed: 0, total: 0 };
 const DRAFT_SESSION_TITLE = 'New Session';
+const ACTIVE_CHAT_STORAGE_KEY = 'openz_active_chat_id';
 
 let msgCounter = 0;
 const newMsgId = (prefix: string) => `${prefix}-${Date.now()}-${msgCounter++}`;
@@ -151,6 +152,32 @@ function withRecentModel(recent: ModelRef[], provider: string, model: string): M
     { provider: cleanProvider, model: cleanModel },
     ...recent.filter((entry) => entry.provider !== cleanProvider || entry.model !== cleanModel),
   ].slice(0, 12);
+}
+
+function savedActiveChatId(): string {
+  try {
+    return normalizeChatId(sessionStorage.getItem(ACTIVE_CHAT_STORAGE_KEY) || '');
+  } catch {
+    return '';
+  }
+}
+
+function rememberActiveChatId(chatId: string) {
+  const normalizedChatId = normalizeChatId(chatId);
+  if (!normalizedChatId) return;
+  try {
+    sessionStorage.setItem(ACTIVE_CHAT_STORAGE_KEY, normalizedChatId);
+  } catch {
+    // Ignore storage failures; the active session still works for this page lifetime.
+  }
+}
+
+function forgetActiveChatId() {
+  try {
+    sessionStorage.removeItem(ACTIVE_CHAT_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
 }
 
 function createDraftSession(chatId: string): OpenZSession {
@@ -342,7 +369,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   wsToken: localStorage.getItem('openz_ws_token') || '',
 
   sessions: [],
-  activeChatId: '',
+  activeChatId: savedActiveChatId(),
   messages: {},
   isStreaming: false,
 
@@ -719,13 +746,18 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     // ----- Data events (replace every hardcoded value) -----
 
     wsService.on('ready', (payload) => {
-      const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
-      if (!get().activeChatId) {
-        set({ activeChatId: chatId, sessions: upsertDraftSession(get().sessions, chatId) });
+      const readyChatId = normalizeChatId(payload.chat_id || '');
+      const preferredChatId = get().activeChatId || savedActiveChatId() || readyChatId;
+      if (!get().activeChatId && preferredChatId) {
+        rememberActiveChatId(preferredChatId);
+        set({ activeChatId: preferredChatId, sessions: upsertDraftSession(get().sessions, preferredChatId) });
+      }
+      if (preferredChatId && preferredChatId !== readyChatId) {
+        wsService.attachChat(preferredChatId);
       }
       // Request everything real from the gateway on connect.
       wsService.requestSessions();
-      wsService.requestHistory(chatId);
+      if (preferredChatId) wsService.requestHistory(preferredChatId);
       wsService.requestCognitiveMemory();
       wsService.requestMcpServers();
       wsService.requestLogs();
@@ -745,8 +777,9 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
         const activeChatId = get().activeChatId;
         const exists = realSessions.some((s: OpenZSession) => s.id === activeChatId);
 
-        if (!exists && realSessions.length > 0 && get().messages[activeChatId]?.length === 0) {
+        if (!exists && realSessions.length > 0 && (get().messages[activeChatId]?.length ?? 0) === 0) {
           const first = realSessions[0];
+          rememberActiveChatId(first.id);
           set({ sessions: realSessions, activeChatId: first.id });
           wsService.requestHistory(first.id);
           return;
@@ -863,6 +896,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
         }
 
         const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
+        rememberActiveChatId(chatId);
         set({
           messages: { ...get().messages, [chatId]: normalized },
         });
@@ -1039,6 +1073,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     wsService.on('attached', (payload) => {
       if (payload.chat_id) {
         const chatId = normalizeChatId(payload.chat_id);
+        rememberActiveChatId(chatId);
         set({ activeChatId: chatId, activeView: 'chats', sessions: upsertDraftSession(get().sessions, chatId) });
         wsService.requestHistory(chatId);
       }
@@ -1134,12 +1169,14 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     const normalizedChatId = normalizeChatId(chatId);
     set({ activeView: 'chats' });
     if (get().activeChatId !== normalizedChatId) {
+      rememberActiveChatId(normalizedChatId);
       set({ activeChatId: normalizedChatId });
       wsService.attachChat(normalizedChatId);
     }
   },
 
   newSession: () => {
+    forgetActiveChatId();
     set({ activeView: 'chats' });
     wsService.createNewChat();
   },
