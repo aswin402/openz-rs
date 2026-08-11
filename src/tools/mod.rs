@@ -35,8 +35,7 @@ pub fn normalize_tool_args(args: &serde_json::Value) -> serde_json::Value {
             let mut new_map = serde_json::Map::new();
             for (k, v) in map {
                 let alias = match k.as_str() {
-                    "TargetFile" | "filepath" | "file" | "Path" | "AbsolutePath"
-                    | "DirectoryPath" => "path".to_string(),
+                    "Path" => "Path".to_string(),
                     "CommandLine" | "Command" | "command_line" => "command".to_string(),
                     "Query" => "query".to_string(),
                     "Url" | "UrlContent" => "url".to_string(),
@@ -1435,7 +1434,10 @@ mod route_cache_tests {
             "text": "payload",
             "sessionId": "session-1",
             "entities": [{"entityType": "person"}],
-            "TargetFile": "src/main.rs"
+            "CommandLine": "cargo check",
+            "Query": "openz",
+            "Url": "https://example.com",
+            "OutputPath": "/tmp/out.png"
         }));
 
         assert_eq!(normalized["text"], "payload");
@@ -1444,8 +1446,35 @@ mod route_cache_tests {
         assert_eq!(normalized["session_id"], "session-1");
         assert_eq!(normalized["entities"][0]["entityType"], "person");
         assert_eq!(normalized["entities"][0]["entity_type"], "person");
+        assert_eq!(normalized["CommandLine"], "cargo check");
+        assert_eq!(normalized["command"], "cargo check");
+        assert_eq!(normalized["Query"], "openz");
+        assert_eq!(normalized["query"], "openz");
+        assert_eq!(normalized["Url"], "https://example.com");
+        assert_eq!(normalized["url"], "https://example.com");
+        assert_eq!(normalized["OutputPath"], "/tmp/out.png");
+        assert_eq!(normalized["output_path"], "/tmp/out.png");
+    }
+
+    #[test]
+    fn normalize_tool_args_does_not_inject_filesystem_path_aliases() {
+        let normalized = normalize_tool_args(&serde_json::json!({
+            "TargetFile": "src/main.rs",
+            "filepath": "src/lib.rs",
+            "file": "README.md",
+            "Path": "Cargo.toml",
+            "AbsolutePath": "/tmp/out.txt",
+            "DirectoryPath": "src"
+        }));
+
+        assert!(normalized.get("path").is_none());
         assert_eq!(normalized["TargetFile"], "src/main.rs");
-        assert_eq!(normalized["path"], "src/main.rs");
+        assert_eq!(normalized["target_file"], "src/main.rs");
+        assert_eq!(normalized["filepath"], "src/lib.rs");
+        assert_eq!(normalized["file"], "README.md");
+        assert_eq!(normalized["Path"], "Cargo.toml");
+        assert_eq!(normalized["absolute_path"], "/tmp/out.txt");
+        assert_eq!(normalized["directory_path"], "src");
     }
 
     #[test]
