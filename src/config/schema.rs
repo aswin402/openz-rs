@@ -929,11 +929,13 @@ impl Config {
             "ollama" => self.providers.ollama = Some(provider_config),
             "minimax" => self.providers.minimax = Some(provider_config),
             "mistral" => self.providers.mistral = Some(provider_config),
-            "z.ai" => self.providers.z_ai = Some(provider_config),
+            "z.ai" | "z_ai" => self.providers.z_ai = Some(provider_config),
             "nvidia" => self.providers.nvidia = Some(provider_config),
-            "opencode_zen" => self.providers.opencode_zen = Some(provider_config),
+            "opencode_zen" | "opencode zen" => self.providers.opencode_zen = Some(provider_config),
             "cerebras" => self.providers.cerebras = Some(provider_config),
-            "google_ai_studio" => self.providers.google_ai_studio = Some(provider_config),
+            "google_ai_studio" | "google ai studio" => {
+                self.providers.google_ai_studio = Some(provider_config)
+            }
             "cohere" => self.providers.cohere = Some(provider_config),
             "llm7" => self.providers.llm7 = Some(provider_config),
             "sambanova" => self.providers.sambanova = Some(provider_config),
@@ -1163,6 +1165,68 @@ mod provider_resolution_tests {
                 "https://api.z.ai/api/paas/v4/".to_string()
             )
         );
+    }
+
+    #[test]
+    fn set_provider_config_uses_builtin_aliases() {
+        let mut config = blank_config();
+        config.set_provider_config(
+            "z_ai",
+            ProviderConfig {
+                api_key: Some("z-alias-key".to_string()),
+                api_key_env: None,
+                api_key_file: None,
+                api_base: None,
+                default_model: None,
+                extra: HashMap::new(),
+            },
+        );
+
+        assert_eq!(
+            config
+                .get_provider_config("z_ai")
+                .and_then(|provider| provider.api_key.as_deref()),
+            Some("z-alias-key")
+        );
+        assert!(!config.providers.others.contains_key("z_ai"));
+
+        config.set_provider_config(
+            "opencode zen",
+            ProviderConfig {
+                api_key: Some("zen-alias-key".to_string()),
+                api_key_env: None,
+                api_key_file: None,
+                api_base: None,
+                default_model: None,
+                extra: HashMap::new(),
+            },
+        );
+        assert_eq!(
+            config
+                .get_provider_config("opencode zen")
+                .and_then(|provider| provider.api_key.as_deref()),
+            Some("zen-alias-key")
+        );
+        assert!(!config.providers.others.contains_key("opencode zen"));
+
+        config.set_provider_config(
+            "google ai studio",
+            ProviderConfig {
+                api_key: Some("google-alias-key".to_string()),
+                api_key_env: None,
+                api_key_file: None,
+                api_base: None,
+                default_model: None,
+                extra: HashMap::new(),
+            },
+        );
+        assert_eq!(
+            config
+                .get_provider_config("google ai studio")
+                .and_then(|provider| provider.api_key.as_deref()),
+            Some("google-alias-key")
+        );
+        assert!(!config.providers.others.contains_key("google ai studio"));
     }
 
     #[test]
