@@ -61,12 +61,21 @@ pub fn resolve_subagent_timeout_secs(
     crate::tools::clamp_tool_timeout_secs(requested_timeout_secs.unwrap_or(default_timeout_secs))
 }
 
+fn resolve_provider_for_subagent_model(
+    config: &Config,
+    model: &str,
+) -> anyhow::Result<crate::providers::resolver::ResolvedProvider> {
+    let mut subagent_config = config.clone();
+    subagent_config.agents.defaults.provider = "auto".to_string();
+    crate::providers::resolver::resolve_provider_full(&subagent_config, model)
+}
+
 // Shared utility function used across tools:
 pub fn build_provider_for_model(
     config: &Config,
     model: &str,
 ) -> anyhow::Result<Arc<dyn LLMProvider>> {
-    let resolved = crate::providers::resolver::resolve_provider_full(config, model)?;
+    let resolved = resolve_provider_for_subagent_model(config, model)?;
     Ok(resolved.instance)
 }
 

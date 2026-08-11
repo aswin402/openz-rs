@@ -73,6 +73,31 @@ fn test_resolve_subagent_timeout_uses_default_and_clamps() {
 }
 
 #[test]
+fn test_subagent_provider_prefixed_model_overrides_default_provider() {
+    let mut config = Config::default();
+    config.agents.defaults.provider = "opencode_zen".to_string();
+    config.agents.defaults.model = "deepseek-v4-flash-free".to_string();
+    config.providers.groq = Some(crate::config::schema::ProviderConfig {
+        api_key: Some("groq-key".to_string()),
+        api_key_env: None,
+        api_key_file: None,
+        api_base: None,
+        default_model: None,
+        extra: Default::default(),
+    });
+
+    let resolved = resolve_provider_for_subagent_model(
+        &config,
+        "groq/llama-3.2-11b-vision-preview",
+    )
+    .expect("provider-prefixed subagent model should resolve");
+
+    assert_eq!(resolved.provider_name, "groq");
+    assert_eq!(resolved.model, "llama-3.2-11b-vision-preview");
+    assert_eq!(resolved.api_base, "https://api.groq.com/openai/v1");
+}
+
+#[test]
 fn test_delegate_task_metadata_is_explicit_for_router() {
     let tool = DelegateTaskTool {
         config: Config::default(),
