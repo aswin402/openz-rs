@@ -8,6 +8,11 @@ High-performance, async personal AI agent framework built in Rust. Rebranded fro
 
 | Command | Purpose |
 |---|---|
+| `just check openz` | Low-resource package check (`cargo check -p openz -j 2`) |
+| `just test-one <test_name> openz` | Run one focused test with capped parallelism |
+| `just test openz` | Run package tests with capped parallelism |
+| `just compile openz` | Compile one package with capped parallelism |
+| `just build` | Balanced global build/install through `localupdate.sh --balanced` |
 | `cargo build --release` | Production build (release profile strips symbols and uses thin LTO; exact size depends on enabled heavy dependencies) |
 | `cargo build` | Debug build |
 | `cargo run -- <subcommand>` | Run from source |
@@ -17,7 +22,7 @@ High-performance, async personal AI agent framework built in Rust. Rebranded fro
 | `cargo clippy` | Lint |
 | `cargo install --path .` | Install globally (see `localinstall.sh`; use `./localinstall.sh --clean-target` if Cargo `target/` fills disk) |
 
-No Makefile; no CI config (GitHub Actions, etc.) present.
+No Makefile; low-resource development commands live in `justfile`. No CI config (GitHub Actions, etc.) present.
 
 ### Runtime subcommands (`openz <subcommand>`)
 
@@ -209,13 +214,8 @@ When truncating session history (Compact state at `agent_loop.rs:107-217`), the 
 ### Sequential thinking, headroom, memory are native tools (not MCP servers)
 The systems for structured reasoning (`sequential_thinking.rs`), context compression (`headroom.rs`), knowledge graph memory (`graph_memory.rs`), and extended memory (`memory_extra.rs`) were ported from MCP servers to native Rust tools. They are registered directly in `cli.rs::build_agent_loop()` and require no MCP server config. The MCP server entries for `sequential-thinking`, `headroom-mcp`, and `memory` are intentionally omitted from `Config::default()`.
 
-### MCP binary resolution uses AI_AGENT_TOOLS_BASE
-`Config::default()` in `config/schema.rs` resolves MCP binary paths via `resolve_mcp_bin(binary, subproject)` with a three-stage priority:
-1. **`{AI_AGENT_TOOLS_BASE}/{subproject}/target/release/{binary}`** — local project build (e.g. `sequentialthinking_rs/target/release/mcp-server-sequential-thinking`)
-2. **`~/.cargo/bin/{binary}`** — cargo-installed binary
-3. **bare `{binary}` name** — fall back to `$PATH`
-
-`AI_AGENT_TOOLS_BASE` is the constant `"/home/aswin/programming/vscode/myProjects/ai_agent_tools"` defined at the top of `config/schema.rs`. All MCP servers in `Config::default()` (`chromewright`, `database-mcp`, `headroom-mcp`, `just-mcp`, `opendocswork-mcp`, `openz-docs-mcp`, `openz-github-mcp`, `sediment`, `spreadsheet-mcp`) are cargo-installed and resolve via stage 2. Note that `sequential-thinking`, `memory`, and `headroom` MCP servers are intentionally excluded from defaults — they have been replaced by native Rust tools (see `sequential_thinking.rs`, `graph_memory.rs`, `memory_extra.rs`, `headroom.rs`).
+### MCP defaults are user-managed
+`Config::default()` starts with an empty `mcp_servers` map. MCP servers are added and managed through `openz configure` or the native `manage_mcp` tool, and loaded from `~/.openz/config.json`. The removed native-equivalent MCP defaults (`sequential-thinking`, `memory`, `headroom`, `database`, and `context-bus`) are pruned during config loading in `config/loader.rs`.
 
 ### Subagents = tools at the LLM level
 Custom subagent profiles from `~/.openz/subagents.json` are dynamically registered as tools in `ToolRegistry::to_openai_format()` (`tools/mod.rs:100-129`). When the LLM "calls" a subagent name as a tool, `ToolRegistry::get()` (`tools/mod.rs:63-82`) matches it and returns a `DelegateProfileTool`.

@@ -5,7 +5,7 @@ OpenZ uses a pluggable, specialized subagent delegation framework. Subagents are
 ---
 
 ## 1. Core Concepts
-* **Built-in Profiles**: OpenZ comes pre-configured with **38 specialized subagent profiles** defined in [src/subagents/mod.rs](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/mod.rs):
+* **Built-in Profiles**: OpenZ comes pre-configured with **38 specialized subagent profiles** defined in [src/subagents/mod.rs](../src/subagents/mod.rs):
 
 | Profile | Description | Needs Workspace |
 |---------|-------------|:---:|

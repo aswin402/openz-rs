@@ -52,7 +52,7 @@ graph TD
 * **`agent/activity.rs`**: Tracks global execution states (active session ID, status, and currently running tool) to `~/.openz/activity.json`, providing other communication channels with real-time awareness of what the agent is doing on the machine.
 * **`channels/`**: Pluggable communication adapters conforming to a unified `Channel` trait. Standardizes message handling and execution. Currently supports Terminal CLI, WebSocket Gateway (with local OpenAI completions endpoint), Telegram Polling, Discord Gateway, WhatsApp Webhooks, and a **pure-Rust Email IMAP/SMTP channel** (`src/channels/email.rs`).
 * **`sop/`**: Resilient multi-step Directed Acyclic Graph (DAG) templates executing step tasks in parallel via Tokio. Performs dependency cycle checks, persists state to disk, and dynamically scopes context namespaces for context isolation.
-* **`subagents/`**: Built-in specialized subagent profiles. See [docs/subagents.md](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/subagents.md) for detailed subagent architecture, workspace optimizations, and fallback model resolution.
+* **`subagents/`**: Built-in specialized subagent profiles. See [docs/subagents.md](subagents.md) for detailed subagent architecture, workspace optimizations, and fallback model resolution.
  
 ---
  

@@ -71,7 +71,7 @@ OpenZ packages a comprehensive suite of local tools for file manipulation, syste
 *   **`create_animated_svg`** (`src/tools/svg_animator.rs`): Creates animated SVG files from motion descriptions (paths, morphing, draw-on effects).
 
 ### Subagent & Workflow Tools
-For details on subagent execution modes, workspace optimizations, and fallback resolution, see the [Subagents Documentation](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/subagents.md).
+For details on subagent execution modes, workspace optimizations, and fallback resolution, see the [Subagents Documentation](subagents.md).
 *   **`delegate_task`** (`src/tools/subagent.rs`): Spawns a child agent thread with isolated context to execute a specific subtask, and returns a summary.
 *   **`parallel_research`** (`src/tools/subagent.rs`): Runs multiple research subtasks in parallel across subagents and merges results.
 *   **`evaluator_optimizer_loop`** (`src/tools/subagent.rs`): Iteratively generates and evaluates responses until quality criteria are met.
