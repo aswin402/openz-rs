@@ -154,7 +154,7 @@ fn default_show_tool_router_status() -> bool {
 }
 
 fn default_show_auto_capture_notices() -> bool {
-    false
+    true
 }
 
 fn default_tui_thought_display() -> String {
@@ -1412,8 +1412,8 @@ mod tests {
     }
 
     #[test]
-    fn auto_capture_notices_are_hidden_by_default() {
+    fn auto_capture_notices_are_shown_by_default() {
         let defaults = AgentDefaults::default();
-        assert!(!defaults.show_auto_capture_notices);
+        assert!(defaults.show_auto_capture_notices);
     }
 }

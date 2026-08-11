@@ -162,6 +162,7 @@ export interface AgentDefaultsConfig {
   enable_sandbox: boolean;
   context_limit?: number | null;
   tool_output_limit?: number | null;
+  show_auto_capture_notices?: boolean;
   tui_thought_display?: string;
 }
 

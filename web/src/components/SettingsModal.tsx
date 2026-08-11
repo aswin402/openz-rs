@@ -266,6 +266,7 @@ export const SettingsModal: React.FC = () => {
           workspace: settings.workspace,
           context_limit: settings.context_limit ?? '',
           tool_output_limit: settings.tool_output_limit ?? '',
+          show_auto_capture_notices: settings.show_auto_capture_notices ?? true,
           tui_thought_display: settings.tui_thought_display ?? 'auto',
         });
       }
@@ -304,6 +305,11 @@ export const SettingsModal: React.FC = () => {
         max_tool_iterations: settings.max_tool_iterations,
         tool_timeout_secs: settings.tool_timeout_secs,
         security_mode: settings.security_mode,
+        workspace: settings.workspace,
+        context_limit: settings.context_limit ?? '',
+        tool_output_limit: settings.tool_output_limit ?? '',
+        show_auto_capture_notices: settings.show_auto_capture_notices ?? true,
+        tui_thought_display: settings.tui_thought_display ?? 'auto',
       });
     }
     setProvidersForm(jsonObjectToProviders(providersConfig));
@@ -340,6 +346,7 @@ export const SettingsModal: React.FC = () => {
       form.workspace !== settings.workspace ||
       String(form.context_limit ?? '') !== String(settings.context_limit ?? '') ||
       String(form.tool_output_limit ?? '') !== String(settings.tool_output_limit ?? '') ||
+      Boolean(form.show_auto_capture_notices ?? true) !== Boolean(settings.show_auto_capture_notices ?? true) ||
       form.tui_thought_display !== (settings.tui_thought_display ?? 'auto')
     ) : false;
     return urlInput !== wsUrl ||
@@ -374,6 +381,7 @@ export const SettingsModal: React.FC = () => {
       if (form.workspace !== undefined && form.workspace !== settings.workspace) defaultsPatch.workspace = form.workspace;
       if (form.context_limit !== undefined && String(form.context_limit) !== String(settings.context_limit ?? '')) defaultsPatch.context_limit = form.context_limit === '' ? null : Number(form.context_limit);
       if (form.tool_output_limit !== undefined && String(form.tool_output_limit) !== String(settings.tool_output_limit ?? '')) defaultsPatch.tool_output_limit = form.tool_output_limit === '' ? null : Number(form.tool_output_limit);
+      if (form.show_auto_capture_notices !== undefined && Boolean(form.show_auto_capture_notices) !== Boolean(settings.show_auto_capture_notices ?? true)) defaultsPatch.show_auto_capture_notices = Boolean(form.show_auto_capture_notices);
       if (form.tui_thought_display !== undefined && form.tui_thought_display !== (settings.tui_thought_display ?? 'auto')) defaultsPatch.tui_thought_display = form.tui_thought_display;
     }
 
@@ -674,6 +682,30 @@ export const SettingsModal: React.FC = () => {
                         <span
                           className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
                             settings.streaming ? 'translate-x-5' : 'translate-x-0'
+                          }`}
+                        />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/20 p-3">
+                      <div>
+                        <div className="font-semibold text-foreground flex items-center gap-1.5 select-none">
+                          <Link className="h-3.5 w-3.5 text-amber-500" /> Research Source Notices
+                        </div>
+                        <div className="text-[11px] text-muted-foreground mt-0.5">
+                          Show when research links and briefs are saved to knowledge memory
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => updateConfig({ defaults: { show_auto_capture_notices: !(settings.show_auto_capture_notices ?? true) } })}
+                        aria-pressed={settings.show_auto_capture_notices ?? true}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          (settings.show_auto_capture_notices ?? true) ? 'bg-amber-500' : 'bg-muted'
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                            (settings.show_auto_capture_notices ?? true) ? 'translate-x-5' : 'translate-x-0'
                           }`}
                         />
                       </button>

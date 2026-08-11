@@ -363,6 +363,39 @@ function mergeAssistantFinalIntoToolTurn(messages: OpenZMessage[], nextMessage: 
   return false;
 }
 
+
+function settleAssistantTurnMessages(messages: OpenZMessage[], reason: string, now = Date.now()): OpenZMessage[] {
+  let changed = false;
+
+  const settled = messages.map((message) => {
+    if (message.role !== 'assistant') return message;
+
+    const toolCalls = message.toolCalls?.map((tool) => {
+      if (tool.status !== 'running') return tool;
+
+      changed = true;
+      return {
+        ...tool,
+        status: 'error' as const,
+        output: tool.output || reason,
+        error: tool.error || reason,
+        endedAt: tool.endedAt || now,
+        durationMs: tool.durationMs ?? (tool.startedAt ? now - tool.startedAt : undefined),
+      };
+    });
+
+    if (message.isStreaming) changed = true;
+
+    return {
+      ...message,
+      isStreaming: false,
+      toolCalls,
+    };
+  });
+
+  return changed ? settled : messages;
+}
+
 export const useOpenZStore = create<OpenZState>((set, get) => ({
   connectionStatus: 'disconnected',
   wsUrl: localStorage.getItem('openz_ws_url') || 'ws://127.0.0.1:8765/ws',
@@ -630,32 +663,57 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     wsService.on('tool_end', (payload) => {
       const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
       const chatMessages = get().messages[chatId] || [];
+      const toolId = payload.tool_call_id || '';
+      const endedAt = Date.now();
+      const status: ToolExecution['status'] = payload.status === 'error' ? 'error' : 'success';
+      let matched = false;
+
+      const updatedMessages = chatMessages.map((message) => {
+        if (message.role !== 'assistant' || !message.toolCalls || !toolId) return message;
+
+        const existingIdx = message.toolCalls.findIndex((tool) => tool.id === toolId);
+        if (existingIdx < 0) return message;
+
+        matched = true;
+        return {
+          ...message,
+          toolCalls: message.toolCalls.map((tool, index) => {
+            if (index !== existingIdx) return tool;
+            const startedAt = tool.startedAt;
+            return {
+              ...tool,
+              id: toolId,
+              name: payload.name || tool.name || 'tool',
+              status,
+              output: payload.output,
+              error: payload.status === 'error' ? payload.output : undefined,
+              startedAt,
+              endedAt,
+              durationMs: startedAt ? endedAt - startedAt : undefined,
+            };
+          }),
+        };
+      });
+
+      if (matched) {
+        set({ messages: { ...get().messages, [chatId]: updatedMessages } });
+        return;
+      }
+
       const lastMsg = chatMessages[chatMessages.length - 1];
       if (!lastMsg || lastMsg.role !== 'assistant') return;
 
-      const toolCalls = lastMsg.toolCalls || [];
-      const existingIdx = toolCalls.findIndex((t) => t.id === (payload.tool_call_id || ''));
-      const existingTool = existingIdx >= 0 ? toolCalls[existingIdx] : undefined;
-      const endedAt = Date.now();
-      const startedAt = existingTool?.startedAt;
       const tool: ToolExecution = {
-        id: payload.tool_call_id || '',
+        id: toolId,
         name: payload.name || 'tool',
-        status: payload.status === 'error' ? 'error' : 'success',
+        status,
         output: payload.output,
         error: payload.status === 'error' ? payload.output : undefined,
-        startedAt,
         endedAt,
-        durationMs: startedAt ? endedAt - startedAt : undefined,
       };
       const updatedMsg: OpenZMessage = {
         ...lastMsg,
-        toolCalls:
-          existingIdx >= 0
-            ? toolCalls.map((t, i) =>
-                i === existingIdx ? { ...t, ...tool, args: t.args } : t,
-              )
-            : [...toolCalls, tool],
+        toolCalls: [...(lastMsg.toolCalls || []), tool],
       };
       set({
         messages: {
@@ -708,39 +766,32 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     wsService.on('turn_end', (payload) => {
       const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
       const chatMessages = get().messages[chatId] || [];
-      const lastMsg = chatMessages[chatMessages.length - 1];
+      const settledMessages = settleAssistantTurnMessages(
+        chatMessages,
+        'Turn ended before this tool reported completion.',
+      );
 
-      if (lastMsg && lastMsg.role === 'assistant') {
-        const updatedMsg = { ...lastMsg, isStreaming: false };
-        set({
-          messages: {
-            ...get().messages,
-            [chatId]: [...chatMessages.slice(0, -1), updatedMsg],
-          },
-          isStreaming: false,
-        });
-      } else {
-        set({ isStreaming: false });
-      }
+      set({
+        messages: { ...get().messages, [chatId]: settledMessages },
+        isStreaming: false,
+      });
       // Refresh the session list so titles/message counts stay in sync.
       wsService.requestSessions();
     });
 
     wsService.on('stopped', (payload) => {
-      set({ isStreaming: false });
       const payloadObj = isRecord(payload) ? payload : {};
       const chatId = normalizeChatId(asString(payloadObj.chat_id) || get().activeChatId);
       const chatMessages = get().messages[chatId] || [];
-      const lastMsg = chatMessages[chatMessages.length - 1];
-      if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
-        const updatedMsg = { ...lastMsg, isStreaming: false };
-        set({
-          messages: {
-            ...get().messages,
-            [chatId]: [...chatMessages.slice(0, -1), updatedMsg],
-          },
-        });
-      }
+      const settledMessages = settleAssistantTurnMessages(
+        chatMessages,
+        'Turn stopped before this tool completed.',
+      );
+
+      set({
+        messages: { ...get().messages, [chatId]: settledMessages },
+        isStreaming: false,
+      });
     });
 
     // ----- Data events (replace every hardcoded value) -----
@@ -1093,7 +1144,10 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
         return;
       }
       const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
-      const chatMessages = get().messages[chatId] || [];
+      const chatMessages = settleAssistantTurnMessages(
+        get().messages[chatId] || [],
+        'Turn errored before this tool reported completion.',
+      );
       const lastMsg = chatMessages[chatMessages.length - 1];
       const errorMsg: OpenZMessage = {
         id: newMsgId('err'),
@@ -1104,8 +1158,16 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
         isNotice: true,
       };
 
-      if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming && !lastMsg.content && !lastMsg.reasoningContent) {
-        // Replace empty placeholder with error
+      if (
+        lastMsg
+        && lastMsg.role === 'assistant'
+        && !lastMsg.content
+        && !lastMsg.reasoningContent
+        && !(lastMsg.toolCalls && lastMsg.toolCalls.length > 0)
+        && !(lastMsg.securityPrompts && lastMsg.securityPrompts.length > 0)
+        && !(lastMsg.activityNotices && lastMsg.activityNotices.length > 0)
+      ) {
+        // Replace empty placeholder with error.
         set({
           messages: {
             ...get().messages,
@@ -1113,24 +1175,9 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
           },
         });
       } else {
-        // Otherwise append/update
-        if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
-          const updatedMsg = {
-            ...lastMsg,
-            isStreaming: false,
-            content: lastMsg.content + `\n\n⚠️ **Error**: ${detail}`,
-          };
-          set({
-            messages: {
-              ...get().messages,
-              [chatId]: [...chatMessages.slice(0, -1), updatedMsg],
-            },
-          });
-        } else {
-          set({
-            messages: { ...get().messages, [chatId]: [...chatMessages, errorMsg] },
-          });
-        }
+        set({
+          messages: { ...get().messages, [chatId]: [...chatMessages, errorMsg] },
+        });
       }
     });
 

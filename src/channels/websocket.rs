@@ -784,6 +784,13 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                         if let Ok(evt_str) = serde_json::to_string(&err_evt) {
                                             let _ = tx_clone.send(Message::Text(evt_str)).await;
                                         }
+                                        let turn_end_evt = serde_json::json!({
+                                            "event": "turn_end",
+                                            "chat_id": chat_id_clone
+                                        });
+                                        if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
+                                            let _ = tx_clone.send(Message::Text(evt_str)).await;
+                                        }
                                         return;
                                     }
                                 };
@@ -808,6 +815,13 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                             "detail": format!("Failed to build agent loop: {}", e)
                                         });
                                         if let Ok(evt_str) = serde_json::to_string(&err_evt) {
+                                            let _ = tx_clone.send(Message::Text(evt_str)).await;
+                                        }
+                                        let turn_end_evt = serde_json::json!({
+                                            "event": "turn_end",
+                                            "chat_id": chat_id_clone
+                                        });
+                                        if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
                                             let _ = tx_clone.send(Message::Text(evt_str)).await;
                                         }
                                         return;
@@ -964,6 +978,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             "enable_sandbox": d.enable_sandbox,
                             "context_limit": d.context_limit,
                             "tool_output_limit": d.tool_output_limit,
+                            "show_auto_capture_notices": d.show_auto_capture_notices,
                             "tui_thought_display": d.tui_thought_display,
                         });
                         let mcp_resp = fetch_real_mcp_servers(&config).await;
@@ -1195,6 +1210,12 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             }
                             if let Some(v) = defaults.get("tool_output_limit") {
                                 d.tool_output_limit = v.as_u64().map(|n| n as usize);
+                            }
+                            if let Some(v) = defaults
+                                .get("show_auto_capture_notices")
+                                .and_then(|v| v.as_bool())
+                            {
+                                d.show_auto_capture_notices = v;
                             }
                             if let Some(v) =
                                 defaults.get("tui_thought_display").and_then(|v| v.as_str())
@@ -1454,6 +1475,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 "enable_sandbox": d.enable_sandbox,
                                 "context_limit": d.context_limit,
                                 "tool_output_limit": d.tool_output_limit,
+                                "show_auto_capture_notices": d.show_auto_capture_notices,
                                 "tui_thought_display": d.tui_thought_display,
                             }
                         });

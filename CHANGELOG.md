@@ -1,4 +1,12 @@
-### v0.0.127 (Latest Release)
+### v0.0.128 (Latest Release)
+**WebUI Turn Lifecycle Recovery and Research Source Notice Visibility:**
+- **Stale Tool Card Recovery**: WebUI tool completion events now update matching tool cards across the whole chat instead of only the latest assistant message, preventing older research cards from staying stuck on `executing` after late or reordered events.
+- **Turn-End Cleanup**: WebUI `turn_end`, `stopped`, and `error` events now settle any still-running tool cards and clear streaming state so the composer does not remain stuck on `Stop` after completed, interrupted, or failed turns.
+- **WebSocket Turn-End Consistency**: Gateway WebSocket turn-start failures, including rate-limit rejection and agent-loop construction errors, now emit `turn_end` after the error event.
+- **Research Source Notices by Default**: Auto-captured research links and briefs now show visible TUI/WebUI notices by default, and WebUI settings exposes a `Research Source Notices` toggle wired through the gateway config payload.
+- **Chore:** Bumped version to `v0.0.128`.
+
+### v0.0.127
 **Provider Alias Consistency, Filesystem Tool Compatibility, and Subagent Vision Fallback Routing:**
 - **Subagent Provider-Prefix Routing**: Subagent model overrides and fallback models now resolve provider-prefixed entries such as `groq/...`, `openrouter/...`, and `nvidia/...` independently from the parent agent provider, fixing vision fallback attempts that were being sent to the default `opencode_zen` endpoint.
 - **Provider Alias Persistence**: Built-in provider aliases (`z_ai`, `opencode zen`, `opencode-zen`, `google ai studio`, and `google-ai-studio`) now save to the correct built-in config fields, use canonical API-key environment variable guidance, and keep their intended default API bases in `openz configure`.
