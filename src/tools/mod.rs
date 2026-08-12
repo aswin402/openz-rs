@@ -434,6 +434,25 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         when_to_use: "Use to save, search, or record reusable procedures after repeated successful tasks or tool-workaround discoveries.",
         when_not_to_use: "Avoid leaving repeated multi-step workflows only in chat history.",
     },
+    StaticToolDef {
+        name: "orchestrate_workflow",
+        domain: "subagent",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: Some(300),
+        aliases: &[
+            "multi-agent workflow",
+            "orchestrator",
+            "workflow runtime",
+            "agent workflow",
+        ],
+        examples: &[
+            "Plan a sequential research and review workflow",
+            "Run a typed workflow across declared agents",
+        ],
+        when_to_use: "Use to run typed, observable multi-agent workflow specs through the native OpenZ orchestrator runtime.",
+        when_not_to_use: "Avoid when a single direct tool call or one delegate_task invocation is enough.",
+    },
 ];
 
 fn get_static_tool_def(name: &str) -> Option<&'static StaticToolDef> {
@@ -1570,6 +1589,7 @@ pub mod mermaid;
 pub mod network;
 pub mod notes;
 pub mod obscura;
+pub mod orchestrator;
 pub mod onpkg;
 pub mod open;
 pub mod opendoc;

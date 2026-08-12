@@ -17,6 +17,7 @@ use crate::tools::filesystem::{
 use crate::tools::js_format::JsFormatTool;
 use crate::tools::network::CheckPortTool;
 use crate::tools::notes::IndexNotesTool;
+use crate::tools::orchestrator::OrchestrateWorkflowTool;
 use crate::tools::remote::SendRemoteInputTool;
 use crate::tools::rust_docs::RustDocsTool;
 use crate::tools::semantic_search::SemanticSearchTool;
@@ -77,6 +78,7 @@ fn register_core_tools(
     registry.register(std::sync::Arc::new(KnowledgeSourceTool));
     registry.register(std::sync::Arc::new(ResearchBriefTool));
     registry.register(std::sync::Arc::new(WorkflowMemoryTool));
+    registry.register(std::sync::Arc::new(OrchestrateWorkflowTool));
     registry.register(std::sync::Arc::new(ZenflowEditTool {
         provider: provider.clone(),
     }));
