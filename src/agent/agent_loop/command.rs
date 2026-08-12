@@ -239,6 +239,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                 session_manager: loop_ref.session_manager.clone(),
                                 parent_tools,
                                 cancellation_token: CancellationToken::new(),
+                                capability_policy: None,
                             });
 
                         let args = serde_json::json!({

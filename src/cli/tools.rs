@@ -105,6 +105,7 @@ fn register_core_tools(
         session_manager: session_manager.clone(),
         parent_tools: Vec::new(),
         cancellation_token: crate::tools::subagent::CancellationToken::new(),
+        capability_policy: None,
     }));
     registry.register(std::sync::Arc::new(ParallelResearchTool {
         config: config.clone(),
@@ -112,6 +113,7 @@ fn register_core_tools(
         session_manager: session_manager.clone(),
         parent_tools: Vec::new(),
         cancellation_token: crate::tools::subagent::CancellationToken::new(),
+        capability_policy: None,
     }));
     registry.register(std::sync::Arc::new(
         crate::tools::subagent::EvaluatorOptimizerLoopTool {
@@ -120,6 +122,7 @@ fn register_core_tools(
             session_manager: session_manager.clone(),
             parent_tools: Vec::new(),
             cancellation_token: crate::tools::subagent::CancellationToken::new(),
+            capability_policy: None,
         },
     ));
 

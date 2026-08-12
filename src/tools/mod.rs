@@ -926,6 +926,7 @@ pub struct ToolRegistry {
     static_tools: Arc<std::sync::RwLock<HashMap<String, Arc<dyn Tool>>>>,
     pub context: Option<(Config, Arc<dyn LLMProvider>, SessionManager)>,
     pub filter_scope: Arc<std::sync::Mutex<Option<Vec<String>>>>,
+    capability_policy: Arc<std::sync::Mutex<Option<crate::orchestrator::spec::CapabilityPolicy>>>,
     route_cache: Arc<std::sync::Mutex<Option<(ToolRouteCacheKey, ToolRouteAnalysis)>>>,
 }
 
@@ -941,6 +942,7 @@ impl ToolRegistry {
             static_tools: Arc::new(std::sync::RwLock::new(HashMap::new())),
             context: None,
             filter_scope: Arc::new(std::sync::Mutex::new(None)),
+            capability_policy: Arc::new(std::sync::Mutex::new(None)),
             route_cache: Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -954,6 +956,7 @@ impl ToolRegistry {
             static_tools: Arc::new(std::sync::RwLock::new(HashMap::new())),
             context: Some((config, provider, session_manager)),
             filter_scope: Arc::new(std::sync::Mutex::new(None)),
+            capability_policy: Arc::new(std::sync::Mutex::new(None)),
             route_cache: Arc::new(std::sync::Mutex::new(None)),
         }
     }
@@ -978,7 +981,58 @@ impl ToolRegistry {
         }
     }
 
+    pub fn set_capability_policy(
+        &self,
+        policy: Option<crate::orchestrator::spec::CapabilityPolicy>,
+    ) {
+        if let Ok(mut capability_policy) = self.capability_policy.lock() {
+            *capability_policy = policy;
+        }
+        self.clear_route_cache();
+    }
+
+    fn tool_allowed_by_active_policy(&self, name: &str) -> bool {
+        let policy = self.capability_policy.lock().ok().and_then(|g| g.clone());
+        policy
+            .as_ref()
+            .map(|policy| crate::tools::orchestrator::tool_allowed_by_policy(name, policy))
+            .unwrap_or(true)
+    }
+
+    fn tool_allowed_by_active_policy_with_metadata(
+        &self,
+        name: &str,
+        metadata: &ToolMetadata,
+    ) -> bool {
+        self.active_capability_policy()
+            .as_ref()
+            .map(|policy| {
+                crate::tools::orchestrator::tool_allowed_by_policy_with_metadata(
+                    name, metadata, policy,
+                )
+            })
+            .unwrap_or(true)
+    }
+
+    fn tool_allowed_by_active_policy_for_tool(&self, tool: &dyn Tool) -> bool {
+        self.tool_allowed_by_active_policy_with_metadata(tool.name(), &tool.metadata())
+    }
+
+    fn active_capability_policy(&self) -> Option<crate::orchestrator::spec::CapabilityPolicy> {
+        self.capability_policy.lock().ok().and_then(|g| g.clone())
+    }
+
+    fn collect_parent_tools_excluding(&self, excluded: &[&str]) -> Vec<Arc<dyn Tool>> {
+        self.read_tools()
+            .values()
+            .filter(|tool| !excluded.contains(&tool.name()))
+            .filter(|tool| self.tool_allowed_by_active_policy_for_tool(tool.as_ref()))
+            .cloned()
+            .collect()
+    }
+
     pub fn register(&self, tool: Arc<dyn Tool>) {
+
         self.write_tools().insert(tool.name().to_string(), tool);
         self.clear_route_cache();
     }
@@ -1004,98 +1058,100 @@ impl ToolRegistry {
                 return None;
             }
         }
+        if !self.tool_allowed_by_active_policy(name) {
+            return None;
+        }
 
         if name == "orchestrate_workflow" {
             let (config, provider, session_manager) = self.context.as_ref()?;
-            let mut parent_tools = Vec::new();
-            for tool in self.read_tools().values() {
-                if tool.name() != "delegate_task"
-                    && tool.name() != "parallel_research"
-                    && tool.name() != "evaluator_optimizer_loop"
-                    && tool.name() != "orchestrate_workflow"
-                    && tool.name() != "send_remote_input"
-                {
-                    parent_tools.push(tool.clone());
-                }
-            }
+            let parent_tools = self.collect_parent_tools_excluding(&[
+                "delegate_task",
+                "parallel_research",
+                "evaluator_optimizer_loop",
+                "orchestrate_workflow",
+                "send_remote_input",
+            ]);
             return Some(Arc::new(crate::tools::orchestrator::OrchestrateWorkflowTool::new(
                 config.clone(),
                 provider.clone(),
                 session_manager.clone(),
                 parent_tools,
                 CancellationToken::new(),
+                self.active_capability_policy(),
             )));
         }
 
         // 1. If name is "delegate_task", override and inject parent tools dynamically
         if name == "delegate_task" {
             let (config, provider, session_manager) = self.context.as_ref()?;
-            let mut parent_tools = Vec::new();
-            for tool in self.read_tools().values() {
-                if tool.name() != "delegate_task"
-                    && tool.name() != "parallel_research"
-                    && tool.name() != "send_remote_input"
-                {
-                    parent_tools.push(tool.clone());
-                }
-            }
-            return Some(Arc::new(crate::tools::subagent::DelegateTaskTool {
+            let parent_tools = self.collect_parent_tools_excluding(&[
+                "delegate_task",
+                "parallel_research",
+                "send_remote_input",
+            ]);
+            let tool: Arc<dyn Tool> = Arc::new(crate::tools::subagent::DelegateTaskTool {
                 config: config.clone(),
                 parent_provider: provider.clone(),
                 session_manager: session_manager.clone(),
                 parent_tools,
                 cancellation_token: CancellationToken::new(),
-            }));
+                capability_policy: self.active_capability_policy(),
+            });
+            return self
+                .tool_allowed_by_active_policy_for_tool(tool.as_ref())
+                .then_some(tool);
         }
 
         // 1b. If name is "parallel_research", override and inject parent tools dynamically
         if name == "parallel_research" {
             let (config, provider, session_manager) = self.context.as_ref()?;
-            let mut parent_tools = Vec::new();
-            for tool in self.read_tools().values() {
-                if tool.name() != "delegate_task"
-                    && tool.name() != "parallel_research"
-                    && tool.name() != "send_remote_input"
-                {
-                    parent_tools.push(tool.clone());
-                }
-            }
-            return Some(Arc::new(crate::tools::subagent::ParallelResearchTool {
+            let parent_tools = self.collect_parent_tools_excluding(&[
+                "delegate_task",
+                "parallel_research",
+                "send_remote_input",
+            ]);
+            let tool: Arc<dyn Tool> = Arc::new(crate::tools::subagent::ParallelResearchTool {
                 config: config.clone(),
                 parent_provider: provider.clone(),
                 session_manager: session_manager.clone(),
                 parent_tools,
                 cancellation_token: CancellationToken::new(),
-            }));
+                capability_policy: self.active_capability_policy(),
+            });
+            return self
+                .tool_allowed_by_active_policy_for_tool(tool.as_ref())
+                .then_some(tool);
         }
 
         // 1c. If name is "evaluator_optimizer_loop", override and inject parent tools dynamically
         if name == "evaluator_optimizer_loop" {
             let (config, provider, session_manager) = self.context.as_ref()?;
-            let mut parent_tools = Vec::new();
-            for tool in self.read_tools().values() {
-                if tool.name() != "delegate_task"
-                    && tool.name() != "parallel_research"
-                    && tool.name() != "evaluator_optimizer_loop"
-                    && tool.name() != "send_remote_input"
-                {
-                    parent_tools.push(tool.clone());
-                }
-            }
-            return Some(Arc::new(
+            let parent_tools = self.collect_parent_tools_excluding(&[
+                "delegate_task",
+                "parallel_research",
+                "evaluator_optimizer_loop",
+                "send_remote_input",
+            ]);
+            let tool: Arc<dyn Tool> = Arc::new(
                 crate::tools::subagent::EvaluatorOptimizerLoopTool {
                     config: config.clone(),
                     parent_provider: provider.clone(),
                     session_manager: session_manager.clone(),
                     parent_tools,
                     cancellation_token: CancellationToken::new(),
+                    capability_policy: self.active_capability_policy(),
                 },
-            ));
+            );
+            return self
+                .tool_allowed_by_active_policy_for_tool(tool.as_ref())
+                .then_some(tool);
         }
 
         // 2. Check static tools
         if let Some(tool) = self.read_tools().get(name) {
-            return Some(tool.clone());
+            return self
+                .tool_allowed_by_active_policy_for_tool(tool.as_ref())
+                .then_some(tool.clone());
         }
 
         // 3. If not found, check if it matches a custom subagent profile dynamically
@@ -1108,16 +1164,28 @@ impl ToolRegistry {
         }
         let profiles = crate::subagents::load_profiles().ok()?;
         let profile = profiles.into_iter().find(|p| p.name == name)?;
-
-        let mut parent_tools = Vec::new();
-        for tool in self.read_tools().values() {
-            if tool.name() != "delegate_task"
-                && tool.name() != "parallel_research"
-                && tool.name() != "send_remote_input"
-            {
-                parent_tools.push(tool.clone());
-            }
+        let profile_metadata = crate::tools::subagent::subagent_tool_metadata(&profile.name);
+        if self
+            .active_capability_policy()
+            .as_ref()
+            .map(|policy| {
+                crate::tools::orchestrator::tool_allowed_by_policy_with_metadata(
+                    &profile.name,
+                    &profile_metadata,
+                    policy,
+                )
+            })
+            .unwrap_or(true)
+            == false
+        {
+            return None;
         }
+
+        let parent_tools = self.collect_parent_tools_excluding(&[
+            "delegate_task",
+            "parallel_research",
+            "send_remote_input",
+        ]);
 
         Some(Arc::new(crate::tools::subagent::DelegateProfileTool {
             config: config.clone(),
@@ -1126,6 +1194,7 @@ impl ToolRegistry {
             profile,
             parent_tools,
             cancellation_token: CancellationToken::new(),
+            capability_policy: self.active_capability_policy(),
         }))
     }
 
@@ -1134,8 +1203,11 @@ impl ToolRegistry {
         self.read_tools()
             .values()
             .filter(|t| {
+                let name = t.name();
+                if !self.tool_allowed_by_active_policy_for_tool(t.as_ref()) {
+                    return false;
+                }
                 if let Some(ref prefixes) = filter {
-                    let name = t.name();
                     name == "delegate_task"
                         || name == "send_remote_input"
                         || name == "optimize_tool_scope"
@@ -1348,7 +1420,13 @@ impl ToolRegistry {
         let mut selected: Vec<serde_json::Value> = route
             .entries
             .into_iter()
-            .filter(|entry| entry.exposed_to_model)
+            .filter(|entry| {
+                entry.exposed_to_model
+                    && self.tool_allowed_by_active_policy_with_metadata(
+                        &entry.name,
+                        &entry.metadata,
+                    )
+            })
             .map(|entry| {
                 serde_json::json!({
                     "type": "function",
@@ -1387,6 +1465,22 @@ impl ToolRegistry {
                         {
                             continue;
                         }
+                    }
+                    let profile_metadata = crate::tools::subagent::subagent_tool_metadata(&profile.name);
+                    let policy = self.active_capability_policy();
+                    if policy
+                        .as_ref()
+                        .map(|policy| {
+                            crate::tools::orchestrator::tool_allowed_by_policy_with_metadata(
+                                &profile.name,
+                                &profile_metadata,
+                                policy,
+                            )
+                        })
+                        .unwrap_or(true)
+                        == false
+                    {
+                        continue;
                     }
                     if !static_names.contains(&profile.name) {
                         subagent_tools.push(serde_json::json!({
@@ -1550,6 +1644,50 @@ mod route_cache_tests {
             cached_after_first.as_ref().map(|(key, _)| key.clone()),
             cached_after_second.as_ref().map(|(key, _)| key.clone())
         );
+    }
+
+
+
+    #[test]
+    fn capability_policy_blocks_static_subagent_wrappers_with_deny_shell() {
+        let config = Config::default();
+        let provider = Arc::new(crate::providers::mock::MockProvider::new());
+        let sessions = SessionManager::new(std::path::PathBuf::from(
+            "/tmp/openz-policy-wrapper-sessions",
+        ));
+        let registry = ToolRegistry::new_with_context(config, provider, sessions);
+        registry.set_capability_policy(Some(crate::orchestrator::spec::CapabilityPolicy {
+            allowed_tools: vec![],
+            denied_tools: vec![],
+            deny_shell: true,
+            deny_filesystem_write: false,
+        }));
+
+        assert!(registry.get("delegate_task").is_none());
+        assert!(registry.get("parallel_research").is_none());
+        assert!(registry.get("evaluator_optimizer_loop").is_none());
+    }
+
+    #[test]
+    fn capability_policy_blocks_dynamic_subagent_tool_lookup() {
+        let config = Config::default();
+        let provider = Arc::new(crate::providers::mock::MockProvider::new());
+        let sessions = SessionManager::new(std::path::PathBuf::from("/tmp/openz-policy-sessions"));
+        let registry = ToolRegistry::new_with_context(config, provider, sessions);
+        registry.set_capability_policy(Some(crate::orchestrator::spec::CapabilityPolicy {
+            allowed_tools: vec!["read_file".to_string()],
+            denied_tools: vec!["coding_agent".to_string()],
+            deny_shell: false,
+            deny_filesystem_write: false,
+        }));
+
+        assert!(registry.get("coding_agent").is_none());
+        let exposed_names = registry
+            .to_openai_format_for_prompt("")
+            .into_iter()
+            .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+        assert!(!exposed_names.iter().any(|name| name == "coding_agent"));
     }
 
     #[test]

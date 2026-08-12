@@ -2,6 +2,7 @@ use super::{build_provider_for_model, CancellationToken, DELEGATION_DEPTH};
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
 use crate::config::schema::Config;
+use crate::orchestrator::spec::CapabilityPolicy;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
 use crate::tools::Tool;
@@ -17,6 +18,7 @@ pub struct ParallelResearchTool {
     pub session_manager: SessionManager,
     pub parent_tools: Vec<Arc<dyn Tool>>,
     pub cancellation_token: CancellationToken,
+    pub capability_policy: Option<CapabilityPolicy>,
 }
 
 const PARALLEL_RESEARCH_RESULT_FLUSH_GRACE_SECS: u64 = 5;
@@ -164,10 +166,16 @@ impl Tool for ParallelResearchTool {
             let parent_provider = self.parent_provider.clone();
             let session_manager = self.session_manager.clone();
             let cancellation_token = self.cancellation_token.clone();
+            let capability_policy = self.capability_policy.clone();
 
             let mut read_only_parent_tools = Vec::new();
             for tool in &self.parent_tools {
-                if READ_ONLY_TOOLS.contains(&tool.name()) {
+                if READ_ONLY_TOOLS.contains(&tool.name())
+                    && capability_policy
+                        .as_ref()
+                        .map(|policy| crate::tools::orchestrator::tool_allowed_by_policy(tool.name(), policy))
+                        .unwrap_or(true)
+                {
                     read_only_parent_tools.push(tool.clone());
                 }
             }
@@ -207,6 +215,7 @@ impl Tool for ParallelResearchTool {
                             provider.clone(),
                             session_manager.clone(),
                         );
+                        child_registry.set_capability_policy(capability_policy.clone());
                         for tool in read_only_parent_tools {
                             child_registry.register(tool);
                         }

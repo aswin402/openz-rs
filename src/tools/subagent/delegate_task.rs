@@ -7,6 +7,7 @@ use super::{
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
 use crate::config::schema::Config;
+use crate::orchestrator::spec::CapabilityPolicy;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
 use crate::tools::Tool;
@@ -24,6 +25,14 @@ pub struct DelegateTaskTool {
     pub session_manager: SessionManager,
     pub parent_tools: Vec<Arc<dyn Tool>>,
     pub cancellation_token: CancellationToken,
+    pub capability_policy: Option<CapabilityPolicy>,
+}
+
+fn filesystem_write_denied_by_policy(policy: &Option<CapabilityPolicy>) -> bool {
+    policy
+        .as_ref()
+        .map(|policy| policy.deny_filesystem_write)
+        .unwrap_or(false)
 }
 
 #[async_trait::async_trait]
@@ -136,6 +145,7 @@ impl Tool for DelegateTaskTool {
             provider.clone(),
             self.session_manager.clone(),
         );
+        child_registry.set_capability_policy(self.capability_policy.clone());
         for tool in &self.parent_tools {
             let name = tool.name();
             if name != "delegate_task" && name != "parallel_research" && name != "evaluator_optimizer_loop" {
@@ -172,9 +182,11 @@ impl Tool for DelegateTaskTool {
             ));
         }
 
+        let filesystem_write_denied = filesystem_write_denied_by_policy(&self.capability_policy);
+
         let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
         let mut has_branch = false;
-        {
+        if !filesystem_write_denied {
             let tool = crate::tools::graph_memory::CreateDatabaseBranchTool;
             match tool.call(&serde_json::json!({ "branchId": branch_id })).await {
                 Ok(_) => {
@@ -188,15 +200,25 @@ impl Tool for DelegateTaskTool {
         }
 
         let parent_dir = current_workspace_root();
-        let parent_dir_clone = parent_dir.clone();
-        let workspace_res = tokio::task::spawn_blocking(move || {
-            create_isolated_workspace(&parent_dir_clone)
-        })
-        .await;
-
-        let mut workspace_isolation = "isolated_worktree".to_string();
-        let mut workspace_isolation_reason: Option<String> = None;
-        let workspace_dir = match workspace_res {
+        let mut workspace_isolation = if filesystem_write_denied {
+            "policy_no_filesystem_write".to_string()
+        } else {
+            "isolated_worktree".to_string()
+        };
+        let mut workspace_isolation_reason: Option<String> = if filesystem_write_denied {
+            Some("Capability policy denies filesystem writes; running without workspace isolation, graph branches, or sync-back.".to_string())
+        } else {
+            None
+        };
+        let workspace_dir = if filesystem_write_denied {
+            parent_dir.clone()
+        } else {
+            let parent_dir_clone = parent_dir.clone();
+            let workspace_res = tokio::task::spawn_blocking(move || {
+                create_isolated_workspace(&parent_dir_clone)
+            })
+            .await;
+            match workspace_res {
             Ok(Ok(dir)) => {
                 if is_scratch_workspace(&dir) {
                     workspace_isolation = "scratch_workspace".to_string();
@@ -223,6 +245,7 @@ impl Tool for DelegateTaskTool {
                 workspace_isolation_reason = Some(reason.clone());
                 crate::tui_println!("{}⚠️  Failed to create isolated workspace ({}). Running in active workspace without isolation.{}", AURA_GOLD, reason, COLOR_RESET);
                 parent_dir.clone()
+            }
             }
         };
 
@@ -345,7 +368,7 @@ impl Tool for DelegateTaskTool {
             }
         }
 
-        if run_res.is_ok() && should_sync_changes_back(&parent_dir, &workspace_dir) {
+        if run_res.is_ok() && !filesystem_write_denied && should_sync_changes_back(&parent_dir, &workspace_dir) {
             if let Err(e) = sync_changes_back(&workspace_dir, &parent_dir) {
                 if !crate::agent::style::is_silent() {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
@@ -1319,5 +1342,21 @@ fn clean_suffix_ticks(s: &str) -> &str {
         stripped
     } else {
         s
+    }
+}
+
+
+#[cfg(test)]
+mod capability_policy_tests {
+    use super::*;
+
+    #[test]
+    fn filesystem_write_denied_policy_helper_detects_denial() {
+        assert!(!filesystem_write_denied_by_policy(&None));
+        assert!(!filesystem_write_denied_by_policy(&Some(CapabilityPolicy::default())));
+        assert!(filesystem_write_denied_by_policy(&Some(CapabilityPolicy {
+            deny_filesystem_write: true,
+            ..Default::default()
+        })));
     }
 }

@@ -109,6 +109,7 @@ fn test_delegate_task_metadata_is_explicit_for_router() {
         session_manager: SessionManager::new(std::env::temp_dir()),
         parent_tools: Vec::new(),
         cancellation_token: CancellationToken::new(),
+        capability_policy: None,
     };
 
     let metadata = tool.metadata();
@@ -164,6 +165,7 @@ fn test_parallel_research_metadata_is_explicit_for_router() {
         session_manager: SessionManager::new(std::env::temp_dir()),
         parent_tools: Vec::new(),
         cancellation_token: CancellationToken::new(),
+        capability_policy: None,
     };
 
     let metadata = tool.metadata();
@@ -579,6 +581,7 @@ async fn test_delegation_depth_limit() {
         session_manager: SessionManager::new(std::env::temp_dir()),
         parent_tools: Vec::new(),
         cancellation_token: CancellationToken::new(),
+        capability_policy: None,
     };
 
     // If DELEGATION_DEPTH is 3, calling the tool should return an error immediately
@@ -922,6 +925,7 @@ async fn test_evaluator_optimizer_loop_success() -> Result<()> {
         session_manager: SessionManager::new(temp_dir.clone()),
         parent_tools: Vec::new(),
         cancellation_token: CancellationToken::new(),
+        capability_policy: None,
     };
 
     let res = crate::config::loader::CONFIG_DIR_OVERRIDE
@@ -984,6 +988,88 @@ impl crate::providers::LLMProvider for BlockingMockProvider {
     }
 }
 
+
+#[tokio::test]
+async fn test_delegate_profile_rejects_blocked_capability_policy() -> Result<()> {
+    let profile = crate::subagents::SubagentProfile {
+        name: "coding_agent".to_string(),
+        description: "mock coding profile".to_string(),
+        system_prompt: "mock".to_string(),
+        model: None,
+        fallbacks: None,
+        extra: serde_json::Map::new(),
+    };
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_delegate_profile_policy_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let tool = DelegateProfileTool {
+        config: Config::default(),
+        parent_provider: Arc::new(crate::providers::mock::MockProvider::new()),
+        session_manager: SessionManager::new(temp_dir.clone()),
+        profile,
+        parent_tools: Vec::new(),
+        cancellation_token: CancellationToken::new(),
+        capability_policy: Some(crate::orchestrator::spec::CapabilityPolicy {
+            allowed_tools: vec![],
+            denied_tools: vec![],
+            deny_shell: true,
+            deny_filesystem_write: false,
+        }),
+    };
+
+    let err = tool
+        .call(&serde_json::json!({ "goal": "should be blocked" }))
+        .await
+        .expect_err("deny_shell should block subagent profiles before execution");
+    assert!(err.to_string().contains("blocked by orchestrator capability policy"));
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_evaluator_optimizer_rejects_denied_optimizer_profile() -> Result<()> {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_eval_opt_policy_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let tool = EvaluatorOptimizerLoopTool {
+        config: Config::default(),
+        parent_provider: Arc::new(crate::providers::mock::MockProvider::new()),
+        session_manager: SessionManager::new(temp_dir.clone()),
+        parent_tools: Vec::new(),
+        cancellation_token: CancellationToken::new(),
+        capability_policy: Some(crate::orchestrator::spec::CapabilityPolicy {
+            allowed_tools: vec![],
+            denied_tools: vec!["coding_agent".to_string()],
+            deny_shell: false,
+            deny_filesystem_write: false,
+        }),
+    };
+
+    let err = crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            tool.call(&serde_json::json!({
+                "optimizer": "coding_agent",
+                "evaluator": "reviewer",
+                "goal": "produce a draft",
+                "checklist": "must pass"
+            }))
+            .await
+        })
+        .await
+        .expect_err("denied optimizer profile should be rejected before execution");
+    assert!(err.to_string().contains("blocked by orchestrator capability policy"));
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_delegate_task_cancels_while_child_run_is_active() -> Result<()> {
     let _guard = cancel_test_guard().await;
@@ -1011,6 +1097,7 @@ async fn test_delegate_task_cancels_while_child_run_is_active() -> Result<()> {
         session_manager: SessionManager::new(temp_dir.clone()),
         parent_tools: Vec::new(),
         cancellation_token: cancellation_token.clone(),
+        capability_policy: None,
     };
 
     let temp_for_task = temp_dir.clone();
@@ -1096,6 +1183,7 @@ async fn test_delegate_task_cancellation_propagation() -> Result<()> {
         session_manager: SessionManager::new(temp_dir.clone()),
         parent_tools: Vec::new(),
         cancellation_token,
+        capability_policy: None,
     };
 
     let res = crate::config::loader::CONFIG_DIR_OVERRIDE
@@ -1163,6 +1251,7 @@ async fn test_delegate_profile_cancels_while_child_run_is_active() -> Result<()>
         profile,
         parent_tools: Vec::new(),
         cancellation_token: cancellation_token.clone(),
+        capability_policy: None,
     };
 
     let temp_for_task = temp_dir.clone();
@@ -1259,6 +1348,7 @@ async fn test_delegate_profile_cancellation_propagation() -> Result<()> {
         profile,
         parent_tools: Vec::new(),
         cancellation_token,
+        capability_policy: None,
     };
 
     let res = crate::config::loader::CONFIG_DIR_OVERRIDE
