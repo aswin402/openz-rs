@@ -158,63 +158,77 @@ where
                     });
                     let started = std::time::Instant::now();
                     tasks.push(async move {
-                        let outcome = executor.execute_step(step, spec_ref, &[]).await;
-                        (index, step, started, outcome)
-                    });
-                }
-
-                let mut completed = futures_util::future::join_all(tasks).await;
-                completed.sort_by_key(|(index, _, _, _)| *index);
-
-                for (_, step, started, outcome) in completed {
-                    match outcome {
-                        Ok(output) => {
-                            self.sink.emit(WorkflowEvent::StepFinished {
-                                run_id: run_id.clone(),
-                                step_id: step.id.clone(),
-                                status: "success".to_string(),
-                                output: output.clone(),
-                            });
-                            results.push(StepRunResult {
+                        let step_result = match executor.execute_step(step, spec_ref, &[]).await {
+                            Ok(output) => StepRunResult {
                                 step_id: step.id.clone(),
                                 agent: step.agent.clone(),
                                 status: StepStatus::Success,
                                 output,
                                 error: None,
                                 duration_ms: started.elapsed().as_millis(),
-                            });
-                        }
-                        Err(err) => {
-                            let error = err.to_string();
-                            self.sink.emit(WorkflowEvent::StepFinished {
-                                run_id: run_id.clone(),
-                                step_id: step.id.clone(),
-                                status: "failed".to_string(),
-                                output: error.clone(),
-                            });
-                            results.push(StepRunResult {
+                            },
+                            Err(err) => StepRunResult {
                                 step_id: step.id.clone(),
                                 agent: step.agent.clone(),
                                 status: StepStatus::Failed,
                                 output: String::new(),
-                                error: Some(error),
+                                error: Some(err.to_string()),
                                 duration_ms: started.elapsed().as_millis(),
-                            });
-                            let summary = format!("workflow failed at step '{}'", step.id);
-                            self.sink.emit(WorkflowEvent::RunFinished {
-                                run_id: run_id.clone(),
-                                status: "failed".to_string(),
-                                summary: summary.clone(),
-                            });
-                            return Ok(WorkflowRunResult {
-                                run_id,
-                                status: WorkflowStatus::Failed,
-                                summary,
-                                steps: results,
-                                sources: vec![],
-                            });
+                            },
+                        };
+                        (index, step, step_result)
+                    });
+                }
+
+                let mut completed = futures_util::future::join_all(tasks).await;
+                completed.sort_by_key(|(index, _, _)| *index);
+
+                let mut first_failure_step = None;
+                for (_, step, step_result) in completed {
+                    let (status, event_output) = match &step_result.status {
+                        StepStatus::Success => ("success", step_result.output.clone()),
+                        StepStatus::Failed => {
+                            if first_failure_step.is_none() {
+                                first_failure_step = Some(step.id.clone());
+                            }
+                            (
+                                "failed",
+                                step_result
+                                    .error
+                                    .clone()
+                                    .unwrap_or_else(|| "step failed".to_string()),
+                            )
                         }
-                    }
+                        _ => {
+                            if first_failure_step.is_none() {
+                                first_failure_step = Some(step.id.clone());
+                            }
+                            ("failed", format!("unexpected step status: {:?}", step_result.status))
+                        }
+                    };
+                    self.sink.emit(WorkflowEvent::StepFinished {
+                        run_id: run_id.clone(),
+                        step_id: step.id.clone(),
+                        status: status.to_string(),
+                        output: event_output,
+                    });
+                    results.push(step_result);
+                }
+
+                if let Some(step_id) = first_failure_step {
+                    let summary = format!("workflow failed at step '{}'", step_id);
+                    self.sink.emit(WorkflowEvent::RunFinished {
+                        run_id: run_id.clone(),
+                        status: "failed".to_string(),
+                        summary: summary.clone(),
+                    });
+                    return Ok(WorkflowRunResult {
+                        run_id,
+                        status: WorkflowStatus::Failed,
+                        summary,
+                        steps: results,
+                        sources: vec![],
+                    });
                 }
             }
         }
@@ -345,6 +359,26 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
             self.active.fetch_sub(1, Ordering::SeqCst);
             Ok(format!("{} done", step.id))
+        }
+    }
+
+    struct FailNamedStepExecutor {
+        fail_step_id: String,
+    }
+
+    #[async_trait]
+    impl StepExecutor for FailNamedStepExecutor {
+        async fn execute_step(
+            &self,
+            step: &WorkflowStep,
+            _spec: &WorkflowSpec,
+            _prior_results: &[String],
+        ) -> anyhow::Result<String> {
+            if step.id == self.fail_step_id {
+                Err(anyhow::anyhow!("{} failed", step.id))
+            } else {
+                Ok(format!("{} done", step.id))
+            }
         }
     }
 
@@ -543,6 +577,42 @@ mod tests {
             max_active.load(Ordering::SeqCst) >= 2,
             "parallel steps should overlap in execution"
         );
+    }
+
+    #[tokio::test]
+    async fn parallel_runtime_reports_all_completed_results_when_one_step_fails() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let runtime = WorkflowRuntime::new(
+            FailNamedStepExecutor {
+                fail_step_id: "a".to_string(),
+            },
+            RecordingEventSink {
+                events: events.clone(),
+            },
+        );
+
+        let result = runtime
+            .run(
+                spec(
+                    WorkflowMode::Parallel,
+                    vec![step("a", vec![]), step("b", vec![])],
+                ),
+                &["planner".to_string()],
+            )
+            .await
+            .expect("workflow returns failed result");
+
+        assert!(matches!(result.status, WorkflowStatus::Failed));
+        assert_eq!(result.steps.len(), 2);
+        assert!(matches!(result.steps[0].status, StepStatus::Failed));
+        assert!(matches!(result.steps[1].status, StepStatus::Success));
+        let finished_steps = events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| matches!(event, WorkflowEvent::StepFinished { .. }))
+            .count();
+        assert_eq!(finished_steps, 2);
     }
 
     #[tokio::test]
