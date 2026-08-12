@@ -272,7 +272,7 @@ mod tests {
             crate::tools::shared_memory::WorkflowMemoryTool,
         ));
         registry.register(std::sync::Arc::new(
-            crate::tools::orchestrator::OrchestrateWorkflowTool,
+            crate::tools::orchestrator::OrchestrateWorkflowTool::default(),
         ));
 
         // Collect all registered tool names

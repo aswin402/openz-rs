@@ -78,7 +78,7 @@ fn register_core_tools(
     registry.register(std::sync::Arc::new(KnowledgeSourceTool));
     registry.register(std::sync::Arc::new(ResearchBriefTool));
     registry.register(std::sync::Arc::new(WorkflowMemoryTool));
-    registry.register(std::sync::Arc::new(OrchestrateWorkflowTool));
+    registry.register(std::sync::Arc::new(OrchestrateWorkflowTool::default()));
     registry.register(std::sync::Arc::new(ZenflowEditTool {
         provider: provider.clone(),
     }));

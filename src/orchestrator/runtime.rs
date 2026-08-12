@@ -10,7 +10,32 @@ use super::validation::validate_workflow_spec;
 
 #[async_trait]
 pub trait StepExecutor: Send + Sync + 'static {
-    async fn execute_step(&self, step: &WorkflowStep, spec: &WorkflowSpec) -> Result<String>;
+    async fn execute_step(
+        &self,
+        step: &WorkflowStep,
+        spec: &WorkflowSpec,
+        prior_results: &[String],
+    ) -> Result<String>;
+}
+
+pub fn build_step_prompt(
+    step: &WorkflowStep,
+    workflow_goal: &str,
+    prior_results: &[String],
+) -> String {
+    let prior = if prior_results.is_empty() {
+        "No prior step results.".to_string()
+    } else {
+        prior_results.join("\n")
+    };
+
+    format!(
+        "Workflow goal: {workflow_goal}\n\nStep id: {id}\nAssigned agent: {agent}\nStep goal: {goal}\nExpected output: {expected}\n\nPrior step results:\n{prior}\n\nReturn only the requested deliverable plus any blockers.",
+        id = step.id,
+        agent = step.agent,
+        goal = step.goal,
+        expected = step.expected_output,
+    )
 }
 
 pub struct WorkflowRuntime<E, S> {
@@ -54,6 +79,7 @@ where
         });
 
         let mut results = Vec::new();
+        let mut prior_results = Vec::new();
         match &spec.mode {
             WorkflowMode::Sequential
             | WorkflowMode::Graph
@@ -69,7 +95,7 @@ where
                         agent: step.agent.clone(),
                     });
                     let started = std::time::Instant::now();
-                    match self.executor.execute_step(step, &spec).await {
+                    match self.executor.execute_step(step, &spec, &prior_results).await {
                         Ok(output) => {
                             self.sink.emit(WorkflowEvent::StepFinished {
                                 run_id: run_id.clone(),
@@ -77,6 +103,7 @@ where
                                 status: "success".to_string(),
                                 output: output.clone(),
                             });
+                            prior_results.push(format!("{}: {}", step.id, output));
                             results.push(StepRunResult {
                                 step_id: step.id.clone(),
                                 agent: step.agent.clone(),
@@ -127,7 +154,7 @@ where
                         agent: step.agent.clone(),
                     });
                     let started = std::time::Instant::now();
-                    match self.executor.execute_step(step, &spec).await {
+                    match self.executor.execute_step(step, &spec, &prior_results).await {
                         Ok(output) => {
                             self.sink.emit(WorkflowEvent::StepFinished {
                                 run_id: run_id.clone(),
@@ -135,6 +162,7 @@ where
                                 status: "success".to_string(),
                                 output: output.clone(),
                             });
+                            prior_results.push(format!("{}: {}", step.id, output));
                             results.push(StepRunResult {
                                 step_id: step.id.clone(),
                                 agent: step.agent.clone(),
@@ -235,6 +263,7 @@ mod tests {
             &self,
             step: &WorkflowStep,
             _spec: &WorkflowSpec,
+            _prior_results: &[String],
         ) -> anyhow::Result<String> {
             Ok(format!("{} done", step.id))
         }
@@ -250,6 +279,7 @@ mod tests {
             &self,
             step: &WorkflowStep,
             _spec: &WorkflowSpec,
+            _prior_results: &[String],
         ) -> anyhow::Result<String> {
             self.calls.lock().unwrap().push(step.id.clone());
             Ok(format!("{} done", step.id))
@@ -264,6 +294,7 @@ mod tests {
             &self,
             _step: &WorkflowStep,
             _spec: &WorkflowSpec,
+            _prior_results: &[String],
         ) -> anyhow::Result<String> {
             Err(anyhow::anyhow!("executor failed"))
         }
@@ -294,6 +325,27 @@ mod tests {
             review: Default::default(),
             capabilities: Default::default(),
         }
+    }
+
+    #[test]
+    fn builds_step_prompt_with_expected_output_and_prior_results() {
+        let step = WorkflowStep {
+            id: "review".to_string(),
+            agent: "reviewer".to_string(),
+            goal: "Review implementation".to_string(),
+            depends_on: vec!["build".to_string()],
+            expected_output: "approve or concrete change list".to_string(),
+            max_retries: 0,
+        };
+        let prompt = build_step_prompt(
+            &step,
+            "Ship workflow runtime",
+            &["build: implementation completed".to_string()],
+        );
+        assert!(prompt.contains("Workflow goal: Ship workflow runtime"));
+        assert!(prompt.contains("Step id: review"));
+        assert!(prompt.contains("Expected output: approve or concrete change list"));
+        assert!(prompt.contains("build: implementation completed"));
     }
 
     #[tokio::test]

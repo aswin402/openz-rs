@@ -1005,6 +1005,28 @@ impl ToolRegistry {
             }
         }
 
+        if name == "orchestrate_workflow" {
+            let (config, provider, session_manager) = self.context.as_ref()?;
+            let mut parent_tools = Vec::new();
+            for tool in self.read_tools().values() {
+                if tool.name() != "delegate_task"
+                    && tool.name() != "parallel_research"
+                    && tool.name() != "evaluator_optimizer_loop"
+                    && tool.name() != "orchestrate_workflow"
+                    && tool.name() != "send_remote_input"
+                {
+                    parent_tools.push(tool.clone());
+                }
+            }
+            return Some(Arc::new(crate::tools::orchestrator::OrchestrateWorkflowTool::new(
+                config.clone(),
+                provider.clone(),
+                session_manager.clone(),
+                parent_tools,
+                CancellationToken::new(),
+            )));
+        }
+
         // 1. If name is "delegate_task", override and inject parent tools dynamically
         if name == "delegate_task" {
             let (config, provider, session_manager) = self.context.as_ref()?;
