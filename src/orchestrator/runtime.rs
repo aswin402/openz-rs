@@ -154,7 +154,7 @@ where
                         agent: step.agent.clone(),
                     });
                     let started = std::time::Instant::now();
-                    match self.executor.execute_step(step, &spec, &prior_results).await {
+                    match self.executor.execute_step(step, &spec, &[]).await {
                         Ok(output) => {
                             self.sink.emit(WorkflowEvent::StepFinished {
                                 run_id: run_id.clone(),
@@ -162,7 +162,6 @@ where
                                 status: "success".to_string(),
                                 output: output.clone(),
                             });
-                            prior_results.push(format!("{}: {}", step.id, output));
                             results.push(StepRunResult {
                                 step_id: step.id.clone(),
                                 agent: step.agent.clone(),
@@ -282,6 +281,23 @@ mod tests {
             _prior_results: &[String],
         ) -> anyhow::Result<String> {
             self.calls.lock().unwrap().push(step.id.clone());
+            Ok(format!("{} done", step.id))
+        }
+    }
+
+    struct PriorLengthRecordingStepExecutor {
+        prior_lengths: Arc<Mutex<Vec<usize>>>,
+    }
+
+    #[async_trait]
+    impl StepExecutor for PriorLengthRecordingStepExecutor {
+        async fn execute_step(
+            &self,
+            step: &WorkflowStep,
+            _spec: &WorkflowSpec,
+            prior_results: &[String],
+        ) -> anyhow::Result<String> {
+            self.prior_lengths.lock().unwrap().push(prior_results.len());
             Ok(format!("{} done", step.id))
         }
     }
@@ -424,6 +440,32 @@ mod tests {
         );
         assert!(events.lock().unwrap().is_empty());
         assert!(calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn parallel_runtime_passes_empty_prior_results_to_each_step() {
+        let prior_lengths = Arc::new(Mutex::new(Vec::new()));
+        let runtime = WorkflowRuntime::new(
+            PriorLengthRecordingStepExecutor {
+                prior_lengths: prior_lengths.clone(),
+            },
+            RecordingEventSink {
+                events: Arc::new(Mutex::new(Vec::new())),
+            },
+        );
+
+        runtime
+            .run(
+                spec(
+                    WorkflowMode::Parallel,
+                    vec![step("a", vec![]), step("b", vec![])],
+                ),
+                &["planner".to_string()],
+            )
+            .await
+            .expect("workflow runs");
+
+        assert_eq!(*prior_lengths.lock().unwrap(), vec![0, 0]);
     }
 
     #[tokio::test]

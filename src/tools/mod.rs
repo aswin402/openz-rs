@@ -439,7 +439,7 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         domain: "subagent",
         writes_disk: false,
         uses_network: false,
-        recommended_timeout_secs: Some(300),
+        recommended_timeout_secs: Some(600),
         aliases: &[
             "multi-agent workflow",
             "orchestrator",
