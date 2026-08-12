@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use uuid::Uuid;
+use std::collections::HashSet;
 
 use super::events::{WorkflowEvent, WorkflowEventSink};
 use super::result::{StepRunResult, StepStatus, WorkflowRunResult, WorkflowStatus};
@@ -46,7 +47,7 @@ where
             | WorkflowMode::ManagerWorker
             | WorkflowMode::ReviewLoop
             | WorkflowMode::SelectorGroup => {
-                for step in &spec.steps {
+                for step in ready_step_order(&spec)? {
                     self.sink.emit(WorkflowEvent::StepStarted {
                         run_id: run_id.clone(),
                         step_id: step.id.clone(),
@@ -110,21 +111,55 @@ where
                         step_id: step.id.clone(),
                         agent: step.agent.clone(),
                     });
-                    let output = self.executor.execute_step(step, &spec).await?;
-                    self.sink.emit(WorkflowEvent::StepFinished {
-                        run_id: run_id.clone(),
-                        step_id: step.id.clone(),
-                        status: "success".to_string(),
-                        output: output.clone(),
-                    });
-                    results.push(StepRunResult {
-                        step_id: step.id.clone(),
-                        agent: step.agent.clone(),
-                        status: StepStatus::Success,
-                        output,
-                        error: None,
-                        duration_ms: 0,
-                    });
+                    let started = std::time::Instant::now();
+                    match self.executor.execute_step(step, &spec).await {
+                        Ok(output) => {
+                            self.sink.emit(WorkflowEvent::StepFinished {
+                                run_id: run_id.clone(),
+                                step_id: step.id.clone(),
+                                status: "success".to_string(),
+                                output: output.clone(),
+                            });
+                            results.push(StepRunResult {
+                                step_id: step.id.clone(),
+                                agent: step.agent.clone(),
+                                status: StepStatus::Success,
+                                output,
+                                error: None,
+                                duration_ms: started.elapsed().as_millis(),
+                            });
+                        }
+                        Err(err) => {
+                            let error = err.to_string();
+                            self.sink.emit(WorkflowEvent::StepFinished {
+                                run_id: run_id.clone(),
+                                step_id: step.id.clone(),
+                                status: "failed".to_string(),
+                                output: error.clone(),
+                            });
+                            results.push(StepRunResult {
+                                step_id: step.id.clone(),
+                                agent: step.agent.clone(),
+                                status: StepStatus::Failed,
+                                output: String::new(),
+                                error: Some(error),
+                                duration_ms: started.elapsed().as_millis(),
+                            });
+                            let summary = format!("workflow failed at step '{}'", step.id);
+                            self.sink.emit(WorkflowEvent::RunFinished {
+                                run_id: run_id.clone(),
+                                status: "failed".to_string(),
+                                summary: summary.clone(),
+                            });
+                            return Ok(WorkflowRunResult {
+                                run_id,
+                                status: WorkflowStatus::Failed,
+                                summary,
+                                steps: results,
+                                sources: vec![],
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -145,6 +180,30 @@ where
     }
 }
 
+fn ready_step_order(spec: &WorkflowSpec) -> Result<Vec<&WorkflowStep>> {
+    let mut completed = HashSet::new();
+    let mut ordered = Vec::with_capacity(spec.steps.len());
+
+    while ordered.len() < spec.steps.len() {
+        let next = spec.steps.iter().find(|step| {
+            !completed.contains(step.id.as_str())
+                && step
+                    .depends_on
+                    .iter()
+                    .all(|dependency| completed.contains(dependency.as_str()))
+        });
+
+        let Some(step) = next else {
+            anyhow::bail!("workflow contains unresolved step dependencies");
+        };
+
+        completed.insert(step.id.as_str());
+        ordered.push(step);
+    }
+
+    Ok(ordered)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,6 +222,62 @@ mod tests {
             _spec: &WorkflowSpec,
         ) -> anyhow::Result<String> {
             Ok(format!("{} done", step.id))
+        }
+    }
+
+    struct RecordingStepExecutor {
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl StepExecutor for RecordingStepExecutor {
+        async fn execute_step(
+            &self,
+            step: &WorkflowStep,
+            _spec: &WorkflowSpec,
+        ) -> anyhow::Result<String> {
+            self.calls.lock().unwrap().push(step.id.clone());
+            Ok(format!("{} done", step.id))
+        }
+    }
+
+    struct FailingStepExecutor;
+
+    #[async_trait]
+    impl StepExecutor for FailingStepExecutor {
+        async fn execute_step(
+            &self,
+            _step: &WorkflowStep,
+            _spec: &WorkflowSpec,
+        ) -> anyhow::Result<String> {
+            Err(anyhow::anyhow!("executor failed"))
+        }
+    }
+
+    fn step(id: &str, depends_on: Vec<&str>) -> WorkflowStep {
+        WorkflowStep {
+            id: id.to_string(),
+            agent: "planner".to_string(),
+            goal: id.to_string(),
+            depends_on: depends_on.into_iter().map(str::to_string).collect(),
+            expected_output: id.to_string(),
+            max_retries: 0,
+        }
+    }
+
+    fn spec(mode: WorkflowMode, steps: Vec<WorkflowStep>) -> WorkflowSpec {
+        WorkflowSpec {
+            goal: "ship".to_string(),
+            mode,
+            agents: vec![AgentRef {
+                name: "planner".to_string(),
+                model: None,
+                tools: vec![],
+            }],
+            steps,
+            termination: Default::default(),
+            review: Default::default(),
+            capabilities: Default::default(),
         }
     }
 
@@ -190,4 +305,63 @@ mod tests {
         assert!(matches!(result.status, crate::orchestrator::result::WorkflowStatus::Success));
         assert!(events.lock().unwrap().iter().any(|event| matches!(event, WorkflowEvent::RunStarted { .. })));
     }
+    #[tokio::test]
+    async fn sequential_runtime_executes_reversed_declarations_in_dependency_order() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let runtime = WorkflowRuntime::new(
+            RecordingStepExecutor {
+                calls: calls.clone(),
+            },
+            RecordingEventSink {
+                events: Arc::new(Mutex::new(Vec::new())),
+            },
+        );
+        let workflow = spec(
+            WorkflowMode::Sequential,
+            vec![step("b", vec!["a"]), step("a", vec![])],
+        );
+
+        runtime
+            .run(workflow, &["planner".to_string()])
+            .await
+            .expect("workflow runs");
+
+        assert_eq!(*calls.lock().unwrap(), vec!["a", "b"]);
+    }
+
+    #[tokio::test]
+    async fn parallel_runtime_emits_failure_lifecycle_events() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let runtime = WorkflowRuntime::new(
+            FailingStepExecutor,
+            RecordingEventSink {
+                events: events.clone(),
+            },
+        );
+
+        let result = runtime
+            .run(
+                spec(WorkflowMode::Parallel, vec![step("a", vec![])]),
+                &["planner".to_string()],
+            )
+            .await
+            .expect("failed workflow returns a result");
+
+        assert!(matches!(result.status, WorkflowStatus::Failed));
+        assert_eq!(result.summary, "workflow failed at step 'a'");
+        assert!(matches!(
+            &events.lock().unwrap()[..],
+            [
+                WorkflowEvent::RunStarted { .. },
+                WorkflowEvent::StepStarted { step_id, .. },
+                WorkflowEvent::StepFinished { status, output, .. },
+                WorkflowEvent::RunFinished { status: run_status, summary, .. },
+            ] if step_id == "a"
+                && status == "failed"
+                && output == "executor failed"
+                && run_status == "failed"
+                && summary == "workflow failed at step 'a'"
+        ));
+    }
+
 }
