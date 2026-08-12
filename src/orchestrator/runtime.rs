@@ -147,14 +147,27 @@ where
                 }
             }
             WorkflowMode::Parallel => {
-                for step in &spec.steps {
+                let mut tasks = Vec::with_capacity(spec.steps.len());
+                let executor = &self.executor;
+                let spec_ref = &spec;
+                for (index, step) in spec.steps.iter().enumerate() {
                     self.sink.emit(WorkflowEvent::StepStarted {
                         run_id: run_id.clone(),
                         step_id: step.id.clone(),
                         agent: step.agent.clone(),
                     });
                     let started = std::time::Instant::now();
-                    match self.executor.execute_step(step, &spec, &[]).await {
+                    tasks.push(async move {
+                        let outcome = executor.execute_step(step, spec_ref, &[]).await;
+                        (index, step, started, outcome)
+                    });
+                }
+
+                let mut completed = futures_util::future::join_all(tasks).await;
+                completed.sort_by_key(|(index, _, _, _)| *index);
+
+                for (_, step, started, outcome) in completed {
+                    match outcome {
                         Ok(output) => {
                             self.sink.emit(WorkflowEvent::StepFinished {
                                 run_id: run_id.clone(),
@@ -252,7 +265,8 @@ mod tests {
     use crate::orchestrator::events::RecordingEventSink;
     use crate::orchestrator::spec::{AgentRef, WorkflowMode, WorkflowSpec, WorkflowStep};
     use async_trait::async_trait;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{atomic::{AtomicUsize, Ordering}, Arc, Mutex};
+    use std::time::Duration;
 
     struct FakeStepExecutor;
 
@@ -298,6 +312,38 @@ mod tests {
             prior_results: &[String],
         ) -> anyhow::Result<String> {
             self.prior_lengths.lock().unwrap().push(prior_results.len());
+            Ok(format!("{} done", step.id))
+        }
+    }
+
+    struct ConcurrentStepExecutor {
+        active: Arc<AtomicUsize>,
+        max_active: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl StepExecutor for ConcurrentStepExecutor {
+        async fn execute_step(
+            &self,
+            step: &WorkflowStep,
+            _spec: &WorkflowSpec,
+            _prior_results: &[String],
+        ) -> anyhow::Result<String> {
+            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            let mut observed = self.max_active.load(Ordering::SeqCst);
+            while active > observed {
+                match self.max_active.compare_exchange(
+                    observed,
+                    active,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => break,
+                    Err(current) => observed = current,
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            self.active.fetch_sub(1, Ordering::SeqCst);
             Ok(format!("{} done", step.id))
         }
     }
@@ -466,6 +512,37 @@ mod tests {
             .expect("workflow runs");
 
         assert_eq!(*prior_lengths.lock().unwrap(), vec![0, 0]);
+    }
+
+    #[tokio::test]
+    async fn parallel_runtime_starts_steps_concurrently() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let runtime = WorkflowRuntime::new(
+            ConcurrentStepExecutor {
+                active,
+                max_active: max_active.clone(),
+            },
+            RecordingEventSink {
+                events: Arc::new(Mutex::new(Vec::new())),
+            },
+        );
+
+        runtime
+            .run(
+                spec(
+                    WorkflowMode::Parallel,
+                    vec![step("a", vec![]), step("b", vec![])],
+                ),
+                &["planner".to_string()],
+            )
+            .await
+            .expect("workflow runs");
+
+        assert!(
+            max_active.load(Ordering::SeqCst) >= 2,
+            "parallel steps should overlap in execution"
+        );
     }
 
     #[tokio::test]
