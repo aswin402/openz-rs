@@ -33,6 +33,19 @@ where
         known_agents: &[String],
     ) -> Result<WorkflowRunResult> {
         validate_workflow_spec(&spec, known_agents)?;
+        let ordered_steps = if matches!(
+            spec.mode,
+            WorkflowMode::Sequential
+                | WorkflowMode::Graph
+                | WorkflowMode::ManagerWorker
+                | WorkflowMode::ReviewLoop
+                | WorkflowMode::SelectorGroup
+        ) {
+            Some(ready_step_order(&spec)?)
+        } else {
+            None
+        };
+
         let run_id = Uuid::new_v4().to_string();
         self.sink.emit(WorkflowEvent::RunStarted {
             run_id: run_id.clone(),
@@ -41,13 +54,15 @@ where
         });
 
         let mut results = Vec::new();
-        match spec.mode {
+        match &spec.mode {
             WorkflowMode::Sequential
             | WorkflowMode::Graph
             | WorkflowMode::ManagerWorker
             | WorkflowMode::ReviewLoop
             | WorkflowMode::SelectorGroup => {
-                for step in ready_step_order(&spec)? {
+                for step in
+                    ordered_steps.expect("dependency-aware modes are ordered before run start")
+                {
                     self.sink.emit(WorkflowEvent::StepStarted {
                         run_id: run_id.clone(),
                         step_id: step.id.clone(),
@@ -327,6 +342,36 @@ mod tests {
             .expect("workflow runs");
 
         assert_eq!(*calls.lock().unwrap(), vec!["a", "b"]);
+    }
+
+    #[tokio::test]
+    async fn sequential_runtime_rejects_cyclic_dependencies_before_run_start() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let runtime = WorkflowRuntime::new(
+            RecordingStepExecutor {
+                calls: calls.clone(),
+            },
+            RecordingEventSink {
+                events: events.clone(),
+            },
+        );
+        let workflow = spec(
+            WorkflowMode::Sequential,
+            vec![step("a", vec!["b"]), step("b", vec!["a"])],
+        );
+
+        let err = runtime
+            .run(workflow, &["planner".to_string()])
+            .await
+            .expect_err("cyclic dependencies fail before run starts");
+
+        assert!(
+            err.to_string()
+                .contains("workflow contains unresolved step dependencies")
+        );
+        assert!(events.lock().unwrap().is_empty());
+        assert!(calls.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
