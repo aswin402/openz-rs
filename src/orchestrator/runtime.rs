@@ -156,8 +156,8 @@ where
                         step_id: step.id.clone(),
                         agent: step.agent.clone(),
                     });
-                    let started = std::time::Instant::now();
                     tasks.push(async move {
+                        let started = std::time::Instant::now();
                         let step_result = match executor.execute_step(step, spec_ref, &[]).await {
                             Ok(output) => StepRunResult {
                                 step_id: step.id.clone(),
