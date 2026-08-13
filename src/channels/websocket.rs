@@ -55,6 +55,7 @@ struct OrchestrationEventBroker {
 fn active_ws_sender_snapshot_for_chat(
     chat_id: Option<&str>,
 ) -> Vec<(String, mpsc::Sender<Message>)> {
+    let normalized_chat_id = chat_id.map(normalize_ws_chat_id);
     let client_chats = crate::channels::get_active_ws_client_chats()
         .lock()
         .map(|chats| chats.clone())
@@ -66,11 +67,12 @@ fn active_ws_sender_snapshot_for_chat(
             senders
                 .iter()
                 .filter(|(id, _)| {
-                    chat_id
+                    normalized_chat_id
+                        .as_deref()
                         .and_then(|chat_id| {
                             client_chats
                                 .get(*id)
-                                .map(|client_chat| client_chat == chat_id)
+                                .map(|client_chat| normalize_ws_chat_id(client_chat) == chat_id)
                         })
                         .unwrap_or(true)
                 })
@@ -78,6 +80,20 @@ fn active_ws_sender_snapshot_for_chat(
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn normalize_ws_chat_id(chat_id: &str) -> String {
+    if chat_id.contains(':') {
+        ws_chat_id(chat_id).unwrap_or_else(|| chat_id.to_string())
+    } else if chat_id.starts_with("cli_")
+        || chat_id.starts_with("subagent_")
+        || chat_id.starts_with("telegram_")
+        || chat_id.starts_with("ws_")
+    {
+        chat_id.to_string()
+    } else {
+        format!("ws_{chat_id}")
+    }
 }
 
 fn remove_active_ws_sender(client_id: &str) {
@@ -2299,6 +2315,43 @@ mod tests {
             .lock()
             .unwrap()
             .remove(&client_id);
+    }
+
+    #[test]
+    fn orchestration_event_snapshot_matches_raw_webui_chat_id() {
+        let client_id = format!("client-{}", uuid::Uuid::new_v4());
+        let other_client_id = format!("client-{}", uuid::Uuid::new_v4());
+        let raw_chat_id = uuid::Uuid::new_v4().to_string();
+        let other_chat_id = uuid::Uuid::new_v4().to_string();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let (other_tx, _other_rx) = tokio::sync::mpsc::channel(1);
+
+        crate::channels::get_active_ws_senders()
+            .lock()
+            .unwrap()
+            .insert(client_id.clone(), tx);
+        crate::channels::get_active_ws_senders()
+            .lock()
+            .unwrap()
+            .insert(other_client_id.clone(), other_tx);
+        crate::channels::get_active_ws_client_chats()
+            .lock()
+            .unwrap()
+            .insert(client_id.clone(), raw_chat_id.clone());
+        crate::channels::get_active_ws_client_chats()
+            .lock()
+            .unwrap()
+            .insert(other_client_id.clone(), other_chat_id);
+
+        let matching = active_ws_sender_snapshot_for_chat(Some(&format!("ws_{raw_chat_id}")))
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(matching, vec![client_id.clone()]);
+
+        remove_active_ws_sender(&client_id);
+        remove_active_ws_sender(&other_client_id);
     }
 
     #[test]

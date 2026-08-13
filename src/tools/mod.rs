@@ -1061,16 +1061,7 @@ impl ToolRegistry {
             return None;
         }
 
-        let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT
-            .try_with(|s| s.clone())
-            .unwrap_or_default();
-        if !active_subagent.is_empty()
-            && !crate::tools::subagent::can_spawn_nested_subagents(&active_subagent)
-            && matches!(
-                name,
-                "delegate_task" | "parallel_research" | "evaluator_optimizer_loop"
-            )
-        {
+        if !self.tool_allowed_for_active_subagent(name) {
             return None;
         }
 
@@ -1410,6 +1401,21 @@ impl ToolRegistry {
         self.to_openai_format_for_prompt("")
     }
 
+    fn tool_allowed_for_active_subagent(&self, name: &str) -> bool {
+        let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT
+            .try_with(|s| s.clone())
+            .unwrap_or_default();
+        active_subagent.is_empty()
+            || crate::tools::subagent::can_spawn_nested_subagents(&active_subagent)
+            || !matches!(
+                name,
+                "delegate_task"
+                    | "parallel_research"
+                    | "evaluator_optimizer_loop"
+                    | "orchestrate_workflow"
+            )
+    }
+
     pub fn to_openai_format_for_prompt(&self, prompt: &str) -> Vec<serde_json::Value> {
         let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
         let static_tools = self.read_tools();
@@ -1440,6 +1446,7 @@ impl ToolRegistry {
             .into_iter()
             .filter(|entry| {
                 entry.exposed_to_model
+                    && self.tool_allowed_for_active_subagent(&entry.name)
                     && self
                         .tool_allowed_by_active_policy_with_metadata(&entry.name, &entry.metadata)
             })
@@ -1686,6 +1693,30 @@ mod route_cache_tests {
         assert!(registry.get("delegate_task").is_none());
         assert!(registry.get("parallel_research").is_none());
         assert!(registry.get("evaluator_optimizer_loop").is_none());
+    }
+
+    #[tokio::test]
+    async fn ordinary_subagent_cannot_access_orchestrator_tool() {
+        let config = Config::default();
+        let provider = Arc::new(crate::providers::mock::MockProvider::new());
+        let sessions = SessionManager::new(std::path::PathBuf::from(
+            "/tmp/openz-nested-orchestrator-policy-sessions",
+        ));
+        let registry = ToolRegistry::new_with_context(config, provider, sessions);
+
+        crate::tools::subagent::ACTIVE_SUBAGENT
+            .scope("coding_agent".to_string(), async {
+                assert!(registry.get("orchestrate_workflow").is_none());
+                let exposed_names = registry
+                    .to_openai_format_for_prompt("orchestrate workflow")
+                    .into_iter()
+                    .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
+                    .collect::<Vec<_>>();
+                assert!(!exposed_names
+                    .iter()
+                    .any(|name| name == "orchestrate_workflow"));
+            })
+            .await;
     }
 
     #[test]
