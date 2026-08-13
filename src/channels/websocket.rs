@@ -71,6 +71,16 @@ pub fn publish_activity_notice(
     }
 }
 
+/// Publish a structured orchestration event to WebUI clients for a chat/session.
+pub fn publish_orchestration_event(chat_id: &str, payload: serde_json::Value) {
+    publish_ws_event(serde_json::json!({
+        "event": "orchestration_event",
+        "chat_id": chat_id,
+        "run_id": payload.get("run_id").and_then(serde_json::Value::as_str),
+        "payload": payload,
+    }));
+}
+
 static WS_APPROVALS: std::sync::OnceLock<
     std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
 > = std::sync::OnceLock::new();

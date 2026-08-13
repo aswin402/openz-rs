@@ -23,6 +23,8 @@ import type {
   JsonValue,
   OpenZConfigPatch,
   WorkspaceNotice,
+  OrchestrationRunState,
+  OrchestrationStepState,
 } from '../types';
 import { wsService } from '../services/websocket';
 
@@ -40,6 +42,7 @@ export interface OpenZState {
   sessions: OpenZSession[];
   activeChatId: string;
   messages: Record<string, OpenZMessage[]>;
+  orchestrationRuns: Record<string, OrchestrationRunState[]>;
   isStreaming: boolean;
 
   // Realtime config (populated from backend events — never hardcoded)
@@ -338,6 +341,147 @@ function parseToolArgs(value: unknown): ToolExecution['args'] {
 }
 
 
+
+type OrchestrationPayload = {
+  type?: unknown;
+  run_id?: unknown;
+  goal?: unknown;
+  mode?: unknown;
+  step_id?: unknown;
+  agent?: unknown;
+  status?: unknown;
+  output?: unknown;
+  summary?: unknown;
+};
+
+function normalizeWorkflowStatus(value: unknown): OrchestrationRunState['status'] {
+  const raw = asString(value);
+  if (raw === 'success' || raw === 'failed' || raw === 'cancelled' || raw === 'awaiting_review') return raw;
+  return 'running';
+}
+
+function normalizeStepStatus(value: unknown): OrchestrationStepState['status'] {
+  const raw = asString(value);
+  if (raw === 'success' || raw === 'failed' || raw === 'skipped' || raw === 'awaiting_review') return raw;
+  return 'running';
+}
+
+function upsertOrchestrationRun(
+  runs: OrchestrationRunState[],
+  run: OrchestrationRunState,
+): OrchestrationRunState[] {
+  const index = runs.findIndex((existing) => existing.id === run.id);
+  if (index < 0) return [...runs, run];
+  return runs.map((existing, i) => (i === index ? { ...existing, ...run } : existing));
+}
+
+function upsertOrchestrationStep(
+  steps: OrchestrationStepState[],
+  step: OrchestrationStepState,
+): OrchestrationStepState[] {
+  const index = steps.findIndex((existing) => existing.id === step.id);
+  if (index < 0) return [...steps, step];
+  return steps.map((existing, i) => (i === index ? { ...existing, ...step } : existing));
+}
+
+function applyOrchestrationEvent(
+  runs: OrchestrationRunState[],
+  payload: OrchestrationPayload,
+  now = Date.now(),
+): OrchestrationRunState[] {
+  const type = asString(payload.type);
+  const runId = asString(payload.run_id);
+  if (!type || !runId) return runs;
+
+  if (type === 'run_started') {
+    return upsertOrchestrationRun(runs, {
+      id: runId,
+      goal: asString(payload.goal) || '',
+      mode: asString(payload.mode) || 'sequential',
+      status: 'running',
+      steps: [],
+      startedAt: now,
+    });
+  }
+
+  const run = runs.find((existing) => existing.id === runId) || {
+    id: runId,
+    goal: '',
+    mode: 'sequential',
+    status: 'running' as const,
+    steps: [],
+    startedAt: now,
+  };
+
+  if (type === 'step_started') {
+    const stepId = asString(payload.step_id);
+    if (!stepId) return runs;
+    return upsertOrchestrationRun(runs, {
+      ...run,
+      status: run.status === 'running' ? run.status : 'running',
+      steps: upsertOrchestrationStep(run.steps, {
+        id: stepId,
+        agent: asString(payload.agent) || '',
+        status: 'running',
+        startedAt: now,
+      }),
+    });
+  }
+
+  if (type === 'step_finished') {
+    const stepId = asString(payload.step_id);
+    if (!stepId) return runs;
+    const status = normalizeStepStatus(payload.status);
+    return upsertOrchestrationRun(runs, {
+      ...run,
+      steps: upsertOrchestrationStep(run.steps, {
+        id: stepId,
+        agent: asString(payload.agent) || run.steps.find((step) => step.id === stepId)?.agent || '',
+        status,
+        output: asString(payload.output),
+        error: status === 'failed' ? asString(payload.output) : undefined,
+        endedAt: now,
+      }),
+    });
+  }
+
+  if (type === 'run_finished') {
+    return upsertOrchestrationRun(runs, {
+      ...run,
+      status: normalizeWorkflowStatus(payload.status),
+      summary: asString(payload.summary),
+      endedAt: now,
+    });
+  }
+
+  return runs;
+}
+
+function settleOrchestrationRuns(
+  runs: OrchestrationRunState[],
+  status: OrchestrationRunState['status'],
+  summary: string,
+  now = Date.now(),
+): OrchestrationRunState[] {
+  let changed = false;
+  const settled = runs.map((run) => {
+    if (run.status !== 'running' && run.status !== 'awaiting_review') return run;
+    changed = true;
+    return {
+      ...run,
+      status,
+      summary: run.summary || summary,
+      endedAt: run.endedAt || now,
+      steps: run.steps.map((step) =>
+        step.status === 'running' || step.status === 'awaiting_review'
+          ? { ...step, status: status === 'cancelled' ? 'skipped' : 'failed', error: step.error || summary, endedAt: step.endedAt || now }
+          : step,
+      ),
+    };
+  });
+  return changed ? settled : runs;
+}
+
 function mergeAssistantFinalIntoToolTurn(messages: OpenZMessage[], nextMessage: OpenZMessage): boolean {
   if (nextMessage.role !== 'assistant') return false;
   if (nextMessage.toolCalls && nextMessage.toolCalls.length > 0) return false;
@@ -404,6 +548,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   sessions: [],
   activeChatId: savedActiveChatId(),
   messages: {},
+  orchestrationRuns: {},
   isStreaming: false,
 
   activeModel: '',
@@ -615,6 +760,17 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       attachActivityNotice(chatId, payload as Record<string, unknown>);
     });
 
+    wsService.on('orchestration_event', (payload) => {
+      const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
+      const eventPayload = isRecord(payload.payload) ? payload.payload as OrchestrationPayload : {};
+      set({
+        orchestrationRuns: {
+          ...get().orchestrationRuns,
+          [chatId]: applyOrchestrationEvent(get().orchestrationRuns[chatId] || [], eventPayload),
+        },
+      });
+    });
+
     wsService.on('tool_start', (payload) => {
       const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
       const tool: ToolExecution = {
@@ -773,6 +929,14 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
       set({
         messages: { ...get().messages, [chatId]: settledMessages },
+        orchestrationRuns: {
+          ...get().orchestrationRuns,
+          [chatId]: settleOrchestrationRuns(
+            get().orchestrationRuns[chatId] || [],
+            'failed',
+            'Turn ended before this orchestration run reported completion.',
+          ),
+        },
         isStreaming: false,
       });
       // Refresh the session list so titles/message counts stay in sync.
@@ -790,6 +954,14 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
       set({
         messages: { ...get().messages, [chatId]: settledMessages },
+        orchestrationRuns: {
+          ...get().orchestrationRuns,
+          [chatId]: settleOrchestrationRuns(
+            get().orchestrationRuns[chatId] || [],
+            'cancelled',
+            'Turn stopped before this orchestration run completed.',
+          ),
+        },
         isStreaming: false,
       });
     });
@@ -1148,6 +1320,14 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
         get().messages[chatId] || [],
         'Turn errored before this tool reported completion.',
       );
+      const orchestrationRuns = {
+        ...get().orchestrationRuns,
+        [chatId]: settleOrchestrationRuns(
+          get().orchestrationRuns[chatId] || [],
+          'failed',
+          'Turn errored before this orchestration run completed.',
+        ),
+      };
       const lastMsg = chatMessages[chatMessages.length - 1];
       const errorMsg: OpenZMessage = {
         id: newMsgId('err'),
@@ -1173,10 +1353,12 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
             ...get().messages,
             [chatId]: [...chatMessages.slice(0, -1), errorMsg],
           },
+          orchestrationRuns,
         });
       } else {
         set({
           messages: { ...get().messages, [chatId]: [...chatMessages, errorMsg] },
+          orchestrationRuns,
         });
       }
     });

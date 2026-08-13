@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::config::schema::Config;
-use crate::orchestrator::events::NoopEventSink;
+use crate::orchestrator::events::{WorkflowEvent, WorkflowEventSink};
 use crate::orchestrator::runtime::{build_step_prompt, StepExecutor, WorkflowRuntime};
 use crate::orchestrator::spec::{CapabilityPolicy, WorkflowSpec, WorkflowStep};
 use crate::providers::LLMProvider;
@@ -39,6 +39,21 @@ impl OrchestrateWorkflowTool {
             parent_tools,
             cancellation_token,
             inherited_capability_policy,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct WebUiWorkflowEventSink {
+    chat_id: Option<String>,
+}
+
+impl WorkflowEventSink for WebUiWorkflowEventSink {
+    fn emit(&self, event: WorkflowEvent) {
+        if let Some(chat_id) = &self.chat_id {
+            if let Ok(payload) = serde_json::to_value(event) {
+                crate::channels::websocket::publish_orchestration_event(chat_id, payload);
+            }
         }
     }
 }
@@ -408,7 +423,10 @@ impl Tool for OrchestrateWorkflowTool {
             cancellation_token: self.cancellation_token.clone(),
             inherited_capability_policy: self.inherited_capability_policy.clone(),
         };
-        let runtime = WorkflowRuntime::new(executor, NoopEventSink);
+        let chat_id = crate::agent::style::spinner::get_current_session_key()
+            .as_deref()
+            .and_then(crate::channels::websocket::ws_chat_id);
+        let runtime = WorkflowRuntime::new(executor, WebUiWorkflowEventSink { chat_id });
         let result = runtime.run(spec, &known_agents).await?;
 
         Ok(json!({

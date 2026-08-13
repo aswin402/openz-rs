@@ -70,6 +70,27 @@ export interface SecurityPromptInfo {
   status: 'pending' | 'approved' | 'denied';
 }
 
+export interface OrchestrationStepState {
+  id: string;
+  agent: string;
+  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped' | 'awaiting_review';
+  output?: string;
+  error?: string;
+  startedAt?: number;
+  endedAt?: number;
+}
+
+export interface OrchestrationRunState {
+  id: string;
+  goal: string;
+  mode: string;
+  status: 'running' | 'success' | 'failed' | 'cancelled' | 'awaiting_review';
+  steps: OrchestrationStepState[];
+  startedAt: number;
+  endedAt?: number;
+  summary?: string;
+}
+
 export interface OpenZSession {
   id: string;
   title: string;
