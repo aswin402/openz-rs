@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use uuid::Uuid;
 use std::collections::HashSet;
+use uuid::Uuid;
 
 use super::events::{WorkflowEvent, WorkflowEventSink};
 use super::result::{StepRunResult, StepStatus, WorkflowRunResult, WorkflowStatus};
@@ -132,8 +132,7 @@ where
         match &spec.mode {
             WorkflowMode::Sequential
             | WorkflowMode::Graph
-            | WorkflowMode::ManagerWorker
-            | WorkflowMode::SelectorGroup => {
+            | WorkflowMode::ManagerWorker => {
                 for step in
                     ordered_steps.expect("dependency-aware modes are ordered before run start")
                 {
@@ -192,6 +191,64 @@ where
                             });
                         }
                     }
+                }
+            }
+            WorkflowMode::SelectorGroup => {
+                let group_agents = if spec.agents.is_empty() {
+                    known_agents.to_vec()
+                } else {
+                    spec.agents
+                        .iter()
+                        .map(|agent| agent.name.clone())
+                        .collect::<Vec<_>>()
+                };
+                let mut last_speaker: Option<String> = None;
+                let mut next_agent_index = 0usize;
+                for step in ordered_steps.expect("selector group steps are ordered before run start") {
+                    let candidates = selector_candidates(&group_agents, last_speaker.as_deref());
+                    let selected_agent = if group_agents.is_empty() {
+                        step.agent.clone()
+                    } else {
+                        let mut selected = None;
+                        for offset in 0..group_agents.len() {
+                            let index = (next_agent_index + offset) % group_agents.len();
+                            let agent = &group_agents[index];
+                            if candidates.iter().any(|candidate| candidate == agent) {
+                                selected = Some((index, agent.clone()));
+                                break;
+                            }
+                        }
+                        let (index, agent) = selected.unwrap_or_else(|| {
+                            let index = next_agent_index % group_agents.len();
+                            (index, group_agents[index].clone())
+                        });
+                        next_agent_index = (index + 1) % group_agents.len();
+                        agent
+                    };
+                    let mut selected_step = step.clone();
+                    selected_step.agent = selected_agent;
+                    let step_result = self
+                        .run_step(&run_id, &spec, &selected_step, &prior_results)
+                        .await;
+                    if !matches!(step_result.status, StepStatus::Success) {
+                        let summary = format!("workflow failed at step '{}'", step.id);
+                        results.push(step_result);
+                        self.sink.emit(WorkflowEvent::RunFinished {
+                            run_id: run_id.clone(),
+                            status: "failed".to_string(),
+                            summary: summary.clone(),
+                        });
+                        return Ok(WorkflowRunResult {
+                            run_id,
+                            status: WorkflowStatus::Failed,
+                            summary,
+                            steps: results,
+                            sources: vec![],
+                        });
+                    }
+                    prior_results.push(format!("{}: {}", step.id, step_result.output));
+                    last_speaker = Some(step_result.agent.clone());
+                    results.push(step_result);
                 }
             }
             WorkflowMode::ReviewLoop => {
@@ -359,40 +416,44 @@ where
                 });
             }
             WorkflowMode::Parallel => {
-                let mut tasks = Vec::with_capacity(spec.steps.len());
                 let executor = &self.executor;
                 let spec_ref = &spec;
-                for (index, step) in spec.steps.iter().enumerate() {
-                    self.sink.emit(WorkflowEvent::StepStarted {
-                        run_id: run_id.clone(),
-                        step_id: step.id.clone(),
-                        agent: step.agent.clone(),
-                    });
-                    tasks.push(async move {
-                        let started = std::time::Instant::now();
-                        let step_result = match executor.execute_step(step, spec_ref, &[]).await {
-                            Ok(output) => StepRunResult {
-                                step_id: step.id.clone(),
-                                agent: step.agent.clone(),
-                                status: StepStatus::Success,
-                                output,
-                                error: None,
-                                duration_ms: started.elapsed().as_millis(),
-                            },
-                            Err(err) => StepRunResult {
-                                step_id: step.id.clone(),
-                                agent: step.agent.clone(),
-                                status: StepStatus::Failed,
-                                output: String::new(),
-                                error: Some(err.to_string()),
-                                duration_ms: started.elapsed().as_millis(),
-                            },
-                        };
-                        (index, step, step_result)
-                    });
+                let concurrency_limit = spec.steps.len().min(4).max(1);
+                let indexed_steps = spec.steps.iter().enumerate().collect::<Vec<_>>();
+                let mut completed = Vec::with_capacity(spec.steps.len());
+                for chunk in indexed_steps.chunks(concurrency_limit) {
+                    let mut batch = Vec::with_capacity(chunk.len());
+                    for &(index, step) in chunk {
+                        self.sink.emit(WorkflowEvent::StepStarted {
+                            run_id: run_id.clone(),
+                            step_id: step.id.clone(),
+                            agent: step.agent.clone(),
+                        });
+                        batch.push(async move {
+                            let started = std::time::Instant::now();
+                            let step_result = match executor.execute_step(step, spec_ref, &[]).await {
+                                Ok(output) => StepRunResult {
+                                    step_id: step.id.clone(),
+                                    agent: step.agent.clone(),
+                                    status: StepStatus::Success,
+                                    output,
+                                    error: None,
+                                    duration_ms: started.elapsed().as_millis(),
+                                },
+                                Err(err) => StepRunResult {
+                                    step_id: step.id.clone(),
+                                    agent: step.agent.clone(),
+                                    status: StepStatus::Failed,
+                                    output: String::new(),
+                                    error: Some(err.to_string()),
+                                    duration_ms: started.elapsed().as_millis(),
+                                },
+                            };
+                            (index, step, step_result)
+                        });
+                    }
+                    completed.extend(futures_util::future::join_all(batch).await);
                 }
-
-                let mut completed = futures_util::future::join_all(tasks).await;
                 completed.sort_by_key(|(index, _, _)| *index);
 
                 let mut first_failure_step = None;
@@ -459,6 +520,15 @@ where
             sources: vec![],
         })
     }
+}
+
+pub fn selector_candidates(agents: &[String], last_speaker: Option<&str>) -> Vec<String> {
+    let filtered = agents
+        .iter()
+        .filter(|agent| Some(agent.as_str()) != last_speaker)
+        .cloned()
+        .collect::<Vec<_>>();
+    if filtered.is_empty() { agents.to_vec() } else { filtered }
 }
 
 pub fn output_satisfies_termination(
@@ -555,6 +625,30 @@ mod tests {
             prior_results: &[String],
         ) -> anyhow::Result<String> {
             self.prior_lengths.lock().unwrap().push(prior_results.len());
+            Ok(format!("{} done", step.id))
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct CountingExecutor {
+        count: Arc<AtomicUsize>,
+    }
+
+    impl CountingExecutor {
+        fn count(&self) -> usize {
+            self.count.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl StepExecutor for CountingExecutor {
+        async fn execute_step(
+            &self,
+            step: &WorkflowStep,
+            _spec: &WorkflowSpec,
+            _prior_results: &[String],
+        ) -> anyhow::Result<String> {
+            self.count.fetch_add(1, Ordering::SeqCst);
             Ok(format!("{} done", step.id))
         }
     }
@@ -672,6 +766,46 @@ mod tests {
             depends_on: depends_on.into_iter().map(str::to_string).collect(),
             expected_output: id.to_string(),
             max_retries: 0,
+        }
+    }
+
+    fn parallel_spec_with_two_steps() -> WorkflowSpec {
+        WorkflowSpec {
+            goal: "compare".to_string(),
+            mode: WorkflowMode::Parallel,
+            agents: vec![
+                AgentRef {
+                    name: "researcher".to_string(),
+                    model: None,
+                    tools: vec![],
+                },
+                AgentRef {
+                    name: "reviewer".to_string(),
+                    model: None,
+                    tools: vec![],
+                },
+            ],
+            steps: vec![
+                WorkflowStep {
+                    id: "research".to_string(),
+                    agent: "researcher".to_string(),
+                    goal: "Research".to_string(),
+                    depends_on: vec![],
+                    expected_output: "notes".to_string(),
+                    max_retries: 0,
+                },
+                WorkflowStep {
+                    id: "review".to_string(),
+                    agent: "reviewer".to_string(),
+                    goal: "Review".to_string(),
+                    depends_on: vec![],
+                    expected_output: "review".to_string(),
+                    max_retries: 0,
+                },
+            ],
+            termination: Default::default(),
+            review: Default::default(),
+            capabilities: Default::default(),
         }
     }
 
@@ -933,6 +1067,105 @@ mod tests {
         };
 
         assert!(output_satisfies_termination("any output", &policy).is_none());
+    }
+
+
+
+    #[tokio::test]
+    async fn selector_group_uses_deterministic_round_robin() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let runtime = WorkflowRuntime::new(
+            RecordingStepExecutor {
+                calls: calls.clone(),
+            },
+            NoopEventSink,
+        );
+        let mut workflow = spec(
+            WorkflowMode::SelectorGroup,
+            vec![step("first", vec![]), step("second", vec!["first"])],
+        );
+        workflow.agents.push(AgentRef {
+            name: "researcher".to_string(),
+            model: None,
+            tools: vec![],
+        });
+        workflow.agents.push(AgentRef {
+            name: "reviewer".to_string(),
+            model: None,
+            tools: vec![],
+        });
+        workflow.steps.push(WorkflowStep {
+            id: "third".to_string(),
+            agent: "planner".to_string(),
+            goal: "third".to_string(),
+            depends_on: vec!["second".to_string()],
+            expected_output: "third".to_string(),
+            max_retries: 0,
+        });
+
+        let result = runtime
+            .run(workflow, &["planner".to_string(), "researcher".to_string()])
+            .await
+            .unwrap();
+
+        assert!(matches!(result.status, WorkflowStatus::Success));
+        assert_eq!(*calls.lock().unwrap(), vec!["first", "second", "third"]);
+        assert_eq!(
+            result
+                .steps
+                .iter()
+                .map(|step| step.agent.as_str())
+                .collect::<Vec<_>>(),
+            vec!["planner", "researcher", "reviewer"]
+        );
+    }
+
+    #[tokio::test]
+    async fn parallel_mode_runs_independent_steps() {
+        let executor = CountingExecutor::default();
+        let runtime = WorkflowRuntime::new(executor.clone(), NoopEventSink);
+        let spec = parallel_spec_with_two_steps();
+
+        let result = runtime
+            .run(spec, &["researcher".to_string(), "reviewer".to_string()])
+            .await
+            .unwrap();
+
+        assert!(matches!(result.status, WorkflowStatus::Success));
+        assert_eq!(result.steps.len(), 2);
+        assert_eq!(executor.count(), 2);
+    }
+
+    #[tokio::test]
+    async fn parallel_mode_caps_concurrency_at_four() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let runtime = WorkflowRuntime::new(
+            ConcurrentStepExecutor {
+                active,
+                max_active: max_active.clone(),
+            },
+            NoopEventSink,
+        );
+        let steps = (0..6)
+            .map(|index| step(&format!("step-{index}"), vec![]))
+            .collect::<Vec<_>>();
+
+        runtime
+            .run(spec(WorkflowMode::Parallel, steps), &["planner".to_string()])
+            .await
+            .expect("workflow runs");
+
+        assert_eq!(max_active.load(Ordering::SeqCst), 4);
+    }
+
+    #[test]
+    fn selector_candidates_exclude_last_speaker_when_possible() {
+        let candidates = selector_candidates(
+            &["planner".to_string(), "researcher".to_string()],
+            Some("planner"),
+        );
+        assert_eq!(candidates, vec!["researcher".to_string()]);
     }
 
     #[tokio::test]
