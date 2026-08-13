@@ -401,8 +401,9 @@ impl Tool for DelegateTaskTool {
                     );
                 }
 
-                // Run evolution review
-                let _ = run_evolution_review(&self.parent_provider, "subagent", &clean_goal, &clean_context, &res.content).await;
+                if !filesystem_write_denied {
+                    let _ = run_evolution_review(&self.parent_provider, "subagent", &clean_goal, &clean_context, &res.content).await;
+                }
 
                 Ok(serde_json::json!({
                     "status": "success",
@@ -1345,7 +1346,6 @@ fn clean_suffix_ticks(s: &str) -> &str {
     }
 }
 
-
 #[cfg(test)]
 mod capability_policy_tests {
     use super::*;
@@ -1353,7 +1353,9 @@ mod capability_policy_tests {
     #[test]
     fn filesystem_write_denied_policy_helper_detects_denial() {
         assert!(!filesystem_write_denied_by_policy(&None));
-        assert!(!filesystem_write_denied_by_policy(&Some(CapabilityPolicy::default())));
+        assert!(!filesystem_write_denied_by_policy(&Some(
+            CapabilityPolicy::default()
+        )));
         assert!(filesystem_write_denied_by_policy(&Some(CapabilityPolicy {
             deny_filesystem_write: true,
             ..Default::default()

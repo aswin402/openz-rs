@@ -1032,7 +1032,6 @@ impl ToolRegistry {
     }
 
     pub fn register(&self, tool: Arc<dyn Tool>) {
-
         self.write_tools().insert(tool.name().to_string(), tool);
         self.clear_route_cache();
     }
@@ -1062,6 +1061,19 @@ impl ToolRegistry {
             return None;
         }
 
+        let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT
+            .try_with(|s| s.clone())
+            .unwrap_or_default();
+        if !active_subagent.is_empty()
+            && !crate::tools::subagent::can_spawn_nested_subagents(&active_subagent)
+            && matches!(
+                name,
+                "delegate_task" | "parallel_research" | "evaluator_optimizer_loop"
+            )
+        {
+            return None;
+        }
+
         if name == "orchestrate_workflow" {
             let (config, provider, session_manager) = self.context.as_ref()?;
             let parent_tools = self.collect_parent_tools_excluding(&[
@@ -1071,14 +1083,16 @@ impl ToolRegistry {
                 "orchestrate_workflow",
                 "send_remote_input",
             ]);
-            return Some(Arc::new(crate::tools::orchestrator::OrchestrateWorkflowTool::new(
-                config.clone(),
-                provider.clone(),
-                session_manager.clone(),
-                parent_tools,
-                CancellationToken::new(),
-                self.active_capability_policy(),
-            )));
+            return Some(Arc::new(
+                crate::tools::orchestrator::OrchestrateWorkflowTool::new(
+                    config.clone(),
+                    provider.clone(),
+                    session_manager.clone(),
+                    parent_tools,
+                    CancellationToken::new(),
+                    self.active_capability_policy(),
+                ),
+            ));
         }
 
         // 1. If name is "delegate_task", override and inject parent tools dynamically
@@ -1132,16 +1146,15 @@ impl ToolRegistry {
                 "evaluator_optimizer_loop",
                 "send_remote_input",
             ]);
-            let tool: Arc<dyn Tool> = Arc::new(
-                crate::tools::subagent::EvaluatorOptimizerLoopTool {
+            let tool: Arc<dyn Tool> =
+                Arc::new(crate::tools::subagent::EvaluatorOptimizerLoopTool {
                     config: config.clone(),
                     parent_provider: provider.clone(),
                     session_manager: session_manager.clone(),
                     parent_tools,
                     cancellation_token: CancellationToken::new(),
                     capability_policy: self.active_capability_policy(),
-                },
-            );
+                });
             return self
                 .tool_allowed_by_active_policy_for_tool(tool.as_ref())
                 .then_some(tool);
@@ -1159,8 +1172,13 @@ impl ToolRegistry {
         let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT
             .try_with(|s| s.clone())
             .unwrap_or_default();
-        if !active_subagent.is_empty() && name == active_subagent {
-            return None;
+        if !active_subagent.is_empty() {
+            if name == active_subagent {
+                return None;
+            }
+            if !crate::tools::subagent::can_spawn_nested_subagents(&active_subagent) {
+                return None;
+            }
         }
         let profiles = crate::subagents::load_profiles().ok()?;
         let profile = profiles.into_iter().find(|p| p.name == name)?;
@@ -1422,10 +1440,8 @@ impl ToolRegistry {
             .into_iter()
             .filter(|entry| {
                 entry.exposed_to_model
-                    && self.tool_allowed_by_active_policy_with_metadata(
-                        &entry.name,
-                        &entry.metadata,
-                    )
+                    && self
+                        .tool_allowed_by_active_policy_with_metadata(&entry.name, &entry.metadata)
             })
             .map(|entry| {
                 serde_json::json!({
@@ -1454,6 +1470,11 @@ impl ToolRegistry {
                 let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT
                     .try_with(|s| s.clone())
                     .unwrap_or_default();
+                if !active_subagent.is_empty()
+                    && !crate::tools::subagent::can_spawn_nested_subagents(&active_subagent)
+                {
+                    return subagent_tools;
+                }
                 for profile in profiles {
                     if !active_subagent.is_empty() && profile.name == active_subagent {
                         continue;
@@ -1466,7 +1487,8 @@ impl ToolRegistry {
                             continue;
                         }
                     }
-                    let profile_metadata = crate::tools::subagent::subagent_tool_metadata(&profile.name);
+                    let profile_metadata =
+                        crate::tools::subagent::subagent_tool_metadata(&profile.name);
                     let policy = self.active_capability_policy();
                     if policy
                         .as_ref()
@@ -1646,8 +1668,6 @@ mod route_cache_tests {
         );
     }
 
-
-
     #[test]
     fn capability_policy_blocks_static_subagent_wrappers_with_deny_shell() {
         let config = Config::default();
@@ -1749,11 +1769,11 @@ pub mod mermaid;
 pub mod network;
 pub mod notes;
 pub mod obscura;
-pub mod orchestrator;
 pub mod onpkg;
 pub mod open;
 pub mod opendoc;
 pub mod openmedia;
+pub mod orchestrator;
 pub mod outline;
 pub mod remote;
 pub mod resource_policy;

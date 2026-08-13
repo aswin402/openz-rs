@@ -109,7 +109,7 @@ where
     ) -> Result<WorkflowRunResult> {
         validate_workflow_spec(&spec, known_agents)?;
         let ordered_steps = if matches!(
-            spec.mode,
+            &spec.mode,
             WorkflowMode::Sequential
                 | WorkflowMode::Graph
                 | WorkflowMode::ManagerWorker
@@ -130,9 +130,7 @@ where
         let mut results = Vec::new();
         let mut prior_results = Vec::new();
         match &spec.mode {
-            WorkflowMode::Sequential
-            | WorkflowMode::Graph
-            | WorkflowMode::ManagerWorker => {
+            WorkflowMode::Sequential | WorkflowMode::Graph | WorkflowMode::ManagerWorker => {
                 for step in
                     ordered_steps.expect("dependency-aware modes are ordered before run start")
                 {
@@ -142,7 +140,11 @@ where
                         agent: step.agent.clone(),
                     });
                     let started = std::time::Instant::now();
-                    match self.executor.execute_step(step, &spec, &prior_results).await {
+                    match self
+                        .executor
+                        .execute_step(step, &spec, &prior_results)
+                        .await
+                    {
                         Ok(output) => {
                             self.sink.emit(WorkflowEvent::StepFinished {
                                 run_id: run_id.clone(),
@@ -204,7 +206,9 @@ where
                 };
                 let mut last_speaker: Option<String> = None;
                 let mut next_agent_index = 0usize;
-                for step in ordered_steps.expect("selector group steps are ordered before run start") {
+                for step in
+                    ordered_steps.expect("selector group steps are ordered before run start")
+                {
                     let candidates = selector_candidates(&group_agents, last_speaker.as_deref());
                     let selected_agent = if group_agents.is_empty() {
                         step.agent.clone()
@@ -269,9 +273,7 @@ where
                         .iter()
                         .position(|step| step.id.eq_ignore_ascii_case("review"))
                         .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "review loop needs a review step or review.reviewer"
-                            )
+                            anyhow::anyhow!("review loop needs a review step or review.reviewer")
                         })?
                 };
                 let reviewer_step = ordered_steps[reviewer_index];
@@ -431,7 +433,8 @@ where
                         });
                         batch.push(async move {
                             let started = std::time::Instant::now();
-                            let step_result = match executor.execute_step(step, spec_ref, &[]).await {
+                            let step_result = match executor.execute_step(step, spec_ref, &[]).await
+                            {
                                 Ok(output) => StepRunResult {
                                     step_id: step.id.clone(),
                                     agent: step.agent.clone(),
@@ -476,7 +479,10 @@ where
                             if first_failure_step.is_none() {
                                 first_failure_step = Some(step.id.clone());
                             }
-                            ("failed", format!("unexpected step status: {:?}", step_result.status))
+                            (
+                                "failed",
+                                format!("unexpected step status: {:?}", step_result.status),
+                            )
                         }
                     };
                     self.sink.emit(WorkflowEvent::StepFinished {
@@ -528,19 +534,33 @@ pub fn selector_candidates(agents: &[String], last_speaker: Option<&str>) -> Vec
         .filter(|agent| Some(agent.as_str()) != last_speaker)
         .cloned()
         .collect::<Vec<_>>();
-    if filtered.is_empty() { agents.to_vec() } else { filtered }
+    if filtered.is_empty() {
+        agents.to_vec()
+    } else {
+        filtered
+    }
 }
 
 pub fn output_satisfies_termination(
     output: &str,
     policy: &TerminationPolicy,
 ) -> Option<WorkflowStatus> {
-    if let Some(keyword) = policy.failure_keyword.as_deref().map(str::trim).filter(|keyword| !keyword.is_empty()) {
+    if let Some(keyword) = policy
+        .failure_keyword
+        .as_deref()
+        .map(str::trim)
+        .filter(|keyword| !keyword.is_empty())
+    {
         if output.contains(keyword) {
             return Some(WorkflowStatus::Failed);
         }
     }
-    if let Some(keyword) = policy.success_keyword.as_deref().map(str::trim).filter(|keyword| !keyword.is_empty()) {
+    if let Some(keyword) = policy
+        .success_keyword
+        .as_deref()
+        .map(str::trim)
+        .filter(|keyword| !keyword.is_empty())
+    {
         if output.contains(keyword) {
             return Some(WorkflowStatus::Success);
         }
@@ -578,7 +598,10 @@ mod tests {
     use crate::orchestrator::events::{NoopEventSink, RecordingEventSink};
     use crate::orchestrator::spec::{AgentRef, WorkflowMode, WorkflowSpec, WorkflowStep};
     use async_trait::async_trait;
-    use std::sync::{atomic::{AtomicUsize, Ordering}, Arc, Mutex};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    };
     use std::time::Duration;
 
     struct FakeStepExecutor;
@@ -849,26 +872,56 @@ mod tests {
     #[tokio::test]
     async fn sequential_runtime_executes_steps_in_dependency_order() {
         let events = Arc::new(Mutex::new(Vec::new()));
-        let sink = RecordingEventSink { events: events.clone() };
+        let sink = RecordingEventSink {
+            events: events.clone(),
+        };
         let runtime = WorkflowRuntime::new(FakeStepExecutor, sink);
         let spec = WorkflowSpec {
             goal: "ship".to_string(),
             mode: WorkflowMode::Sequential,
-            agents: vec![AgentRef { name: "planner".to_string(), model: None, tools: vec![] }],
+            agents: vec![AgentRef {
+                name: "planner".to_string(),
+                model: None,
+                tools: vec![],
+            }],
             steps: vec![
-                WorkflowStep { id: "a".to_string(), agent: "planner".to_string(), goal: "A".to_string(), depends_on: vec![], expected_output: "A".to_string(), max_retries: 0 },
-                WorkflowStep { id: "b".to_string(), agent: "planner".to_string(), goal: "B".to_string(), depends_on: vec!["a".to_string()], expected_output: "B".to_string(), max_retries: 0 },
+                WorkflowStep {
+                    id: "a".to_string(),
+                    agent: "planner".to_string(),
+                    goal: "A".to_string(),
+                    depends_on: vec![],
+                    expected_output: "A".to_string(),
+                    max_retries: 0,
+                },
+                WorkflowStep {
+                    id: "b".to_string(),
+                    agent: "planner".to_string(),
+                    goal: "B".to_string(),
+                    depends_on: vec!["a".to_string()],
+                    expected_output: "B".to_string(),
+                    max_retries: 0,
+                },
             ],
             termination: Default::default(),
             review: Default::default(),
             capabilities: Default::default(),
         };
 
-        let result = runtime.run(spec, &["planner".to_string()]).await.expect("workflow runs");
+        let result = runtime
+            .run(spec, &["planner".to_string()])
+            .await
+            .expect("workflow runs");
         assert_eq!(result.steps.len(), 2);
         assert_eq!(result.summary, "2 step(s) completed");
-        assert!(matches!(result.status, crate::orchestrator::result::WorkflowStatus::Success));
-        assert!(events.lock().unwrap().iter().any(|event| matches!(event, WorkflowEvent::RunStarted { .. })));
+        assert!(matches!(
+            result.status,
+            crate::orchestrator::result::WorkflowStatus::Success
+        ));
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, WorkflowEvent::RunStarted { .. })));
     }
     #[tokio::test]
     async fn sequential_runtime_executes_reversed_declarations_in_dependency_order() {
@@ -916,14 +969,12 @@ mod tests {
             .await
             .expect_err("cyclic dependencies fail before run starts");
 
-        assert!(
-            err.to_string()
-                .contains("workflow contains unresolved step dependencies")
-        );
+        assert!(err
+            .to_string()
+            .contains("workflow contains unresolved step dependencies"));
         assert!(events.lock().unwrap().is_empty());
         assert!(calls.lock().unwrap().is_empty());
     }
-
 
     fn review_loop_spec_with_success_keyword(
         success_keyword: &str,
@@ -948,10 +999,8 @@ mod tests {
 
     #[tokio::test]
     async fn review_loop_retries_until_approval_keyword() {
-        let executor = ScriptedExecutor::new(vec![
-            "needs changes".to_string(),
-            "APPROVE".to_string(),
-        ]);
+        let executor =
+            ScriptedExecutor::new(vec!["needs changes".to_string(), "APPROVE".to_string()]);
         let runtime = WorkflowRuntime::new(executor, NoopEventSink);
         let spec = review_loop_spec_with_success_keyword("APPROVE", 3);
 
@@ -1001,14 +1050,10 @@ mod tests {
         assert_eq!(result.summary, "review loop reached max_rounds");
     }
 
-
-
     #[tokio::test]
     async fn review_loop_runs_post_review_steps_only_after_approval() {
-        let executor = ScriptedExecutor::new(vec![
-            "needs changes".to_string(),
-            "APPROVE".to_string(),
-        ]);
+        let executor =
+            ScriptedExecutor::new(vec!["needs changes".to_string(), "APPROVE".to_string()]);
         let calls = executor.calls();
         let runtime = WorkflowRuntime::new(executor, NoopEventSink);
         let mut workflow = review_loop_spec_with_success_keyword("APPROVE", 3);
@@ -1052,10 +1097,9 @@ mod tests {
             .await
             .expect_err("configured reviewer must match a workflow step");
 
-        assert!(
-            err.to_string()
-                .contains("review loop reviewer 'reviewer' has no matching workflow step")
-        );
+        assert!(err
+            .to_string()
+            .contains("review loop reviewer 'reviewer' has no matching workflow step"));
     }
 
     #[test]
@@ -1068,8 +1112,6 @@ mod tests {
 
         assert!(output_satisfies_termination("any output", &policy).is_none());
     }
-
-
 
     #[tokio::test]
     async fn selector_group_uses_deterministic_round_robin() {
@@ -1152,7 +1194,10 @@ mod tests {
             .collect::<Vec<_>>();
 
         runtime
-            .run(spec(WorkflowMode::Parallel, steps), &["planner".to_string()])
+            .run(
+                spec(WorkflowMode::Parallel, steps),
+                &["planner".to_string()],
+            )
             .await
             .expect("workflow runs");
 
@@ -1295,5 +1340,4 @@ mod tests {
                 && summary == "workflow failed at step 'a'"
         ));
     }
-
 }

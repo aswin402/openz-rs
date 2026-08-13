@@ -298,10 +298,7 @@ impl Tool for DelegateProfileTool {
             }
 
             // Only manager-style profiles can spawn generic workers. Standard subagents must finish their own task.
-            let allowed_delegate = match self.profile.name.as_str() {
-                "planner" | "sop_designer" | "openz_coordinator" => true,
-                _ => false,
-            };
+            let allowed_delegate = super::can_spawn_nested_subagents(&self.profile.name);
 
             if allowed_delegate {
                 child_registry.register(std::sync::Arc::new(super::delegate_task::DelegateTaskTool {
@@ -468,8 +465,9 @@ impl Tool for DelegateProfileTool {
                         let _ = sync_changes_back(&workspace_dir, &parent_dir);
                     }
 
-                    // Run evolution review
-                    let _ = run_evolution_review(&self.parent_provider, &self.profile.name, &clean_goal, &clean_context, &run_res.content).await;
+                    if !filesystem_write_denied {
+                        let _ = run_evolution_review(&self.parent_provider, &self.profile.name, &clean_goal, &clean_context, &run_res.content).await;
+                    }
 
                     return Ok(serde_json::json!({
                         "status": "success",
@@ -812,7 +810,6 @@ pub fn filter_tools_for_subagent(
     filtered
 }
 
-
 #[cfg(test)]
 mod capability_policy_tests {
     use super::*;
@@ -820,7 +817,9 @@ mod capability_policy_tests {
     #[test]
     fn filesystem_write_denied_policy_helper_detects_denial() {
         assert!(!filesystem_write_denied_by_policy(&None));
-        assert!(!filesystem_write_denied_by_policy(&Some(CapabilityPolicy::default())));
+        assert!(!filesystem_write_denied_by_policy(&Some(
+            CapabilityPolicy::default()
+        )));
         assert!(filesystem_write_denied_by_policy(&Some(CapabilityPolicy {
             deny_filesystem_write: true,
             ..Default::default()

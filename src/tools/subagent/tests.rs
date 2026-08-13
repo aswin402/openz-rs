@@ -86,11 +86,9 @@ fn test_subagent_provider_prefixed_model_overrides_default_provider() {
         extra: Default::default(),
     });
 
-    let resolved = resolve_provider_for_subagent_model(
-        &config,
-        "groq/llama-3.2-11b-vision-preview",
-    )
-    .expect("provider-prefixed subagent model should resolve");
+    let resolved =
+        resolve_provider_for_subagent_model(&config, "groq/llama-3.2-11b-vision-preview")
+            .expect("provider-prefixed subagent model should resolve");
 
     assert_eq!(resolved.provider_name, "groq");
     assert_eq!(resolved.model, "llama-3.2-11b-vision-preview");
@@ -988,9 +986,8 @@ impl crate::providers::LLMProvider for BlockingMockProvider {
     }
 }
 
-
 #[tokio::test]
-async fn test_delegate_profile_rejects_blocked_capability_policy() -> Result<()> {
+async fn test_delegate_profile_rejects_explicitly_denied_profile() -> Result<()> {
     let profile = crate::subagents::SubagentProfile {
         name: "coding_agent".to_string(),
         description: "mock coding profile".to_string(),
@@ -1014,8 +1011,8 @@ async fn test_delegate_profile_rejects_blocked_capability_policy() -> Result<()>
         cancellation_token: CancellationToken::new(),
         capability_policy: Some(crate::orchestrator::spec::CapabilityPolicy {
             allowed_tools: vec![],
-            denied_tools: vec![],
-            deny_shell: true,
+            denied_tools: vec!["coding_agent".to_string()],
+            deny_shell: false,
             deny_filesystem_write: false,
         }),
     };
@@ -1023,8 +1020,10 @@ async fn test_delegate_profile_rejects_blocked_capability_policy() -> Result<()>
     let err = tool
         .call(&serde_json::json!({ "goal": "should be blocked" }))
         .await
-        .expect_err("deny_shell should block subagent profiles before execution");
-    assert!(err.to_string().contains("blocked by orchestrator capability policy"));
+        .expect_err("explicit denied_tools should block subagent profiles before execution");
+    assert!(err
+        .to_string()
+        .contains("blocked by orchestrator capability policy"));
 
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
@@ -1064,7 +1063,9 @@ async fn test_evaluator_optimizer_rejects_denied_optimizer_profile() -> Result<(
         })
         .await
         .expect_err("denied optimizer profile should be rejected before execution");
-    assert!(err.to_string().contains("blocked by orchestrator capability policy"));
+    assert!(err
+        .to_string()
+        .contains("blocked by orchestrator capability policy"));
 
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())

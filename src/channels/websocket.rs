@@ -1,14 +1,14 @@
 use crate::agent::AgentLoop;
 use crate::config::schema::WebSocketChannelConfig;
 use axum::{
-    Json, Router,
     extract::{
-        Path as AxumPath, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
+        Path as AxumPath, State,
     },
     http::StatusCode,
     response::IntoResponse,
     routing::get,
+    Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -52,12 +52,28 @@ struct OrchestrationEventBroker {
     notify: tokio::sync::Notify,
 }
 
-fn active_ws_sender_snapshot() -> Vec<(String, mpsc::Sender<Message>)> {
+fn active_ws_sender_snapshot_for_chat(
+    chat_id: Option<&str>,
+) -> Vec<(String, mpsc::Sender<Message>)> {
+    let client_chats = crate::channels::get_active_ws_client_chats()
+        .lock()
+        .map(|chats| chats.clone())
+        .unwrap_or_default();
+
     crate::channels::get_active_ws_senders()
         .lock()
         .map(|senders| {
             senders
                 .iter()
+                .filter(|(id, _)| {
+                    chat_id
+                        .and_then(|chat_id| {
+                            client_chats
+                                .get(*id)
+                                .map(|client_chat| client_chat == chat_id)
+                        })
+                        .unwrap_or(true)
+                })
                 .map(|(id, sender)| (id.clone(), sender.clone()))
                 .collect()
         })
@@ -67,6 +83,9 @@ fn active_ws_sender_snapshot() -> Vec<(String, mpsc::Sender<Message>)> {
 fn remove_active_ws_sender(client_id: &str) {
     if let Ok(mut senders) = crate::channels::get_active_ws_senders().lock() {
         senders.remove(client_id);
+    }
+    if let Ok(mut client_chats) = crate::channels::get_active_ws_client_chats().lock() {
+        client_chats.remove(client_id);
     }
 }
 
@@ -85,7 +104,10 @@ fn orchestration_event_run_id(event: &serde_json::Value) -> Option<&str> {
 }
 
 fn is_critical_orchestration_event(event: &serde_json::Value) -> bool {
-    matches!(orchestration_event_type(event), Some("run_started" | "run_finished"))
+    matches!(
+        orchestration_event_type(event),
+        Some("run_started" | "run_finished")
+    )
 }
 
 fn enqueue_orchestration_event(
@@ -147,7 +169,8 @@ async fn publish_ws_event_with_timeout(event: serde_json::Value) {
         return;
     };
 
-    let sends = active_ws_sender_snapshot()
+    let chat_id = event.get("chat_id").and_then(serde_json::Value::as_str);
+    let sends = active_ws_sender_snapshot_for_chat(chat_id)
         .into_iter()
         .map(|(client_id, sender)| {
             let evt_str = evt_str.clone();
@@ -606,7 +629,7 @@ async fn persist_attachments(attachments: &Value) -> Vec<String> {
     if tokio::fs::create_dir_all(&attach_dir).await.is_err() {
         return refs;
     }
-    use base64::{Engine as _, engine::general_purpose};
+    use base64::{engine::general_purpose, Engine as _};
     for att in arr.iter().take(8) {
         let Some(data_b64) = att.get("data").and_then(|v| v.as_str()) else {
             continue;
@@ -690,12 +713,18 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
     if let Ok(mut senders) = crate::channels::get_active_ws_senders().lock() {
         senders.insert(client_id.clone(), tx.clone());
     }
+    if let Ok(mut client_chats) = crate::channels::get_active_ws_client_chats().lock() {
+        client_chats.insert(client_id.clone(), default_chat_id.clone());
+    }
 
     struct WsSenderGuard(String);
     impl Drop for WsSenderGuard {
         fn drop(&mut self) {
             if let Ok(mut senders) = crate::channels::get_active_ws_senders().lock() {
                 senders.remove(&self.0);
+            }
+            if let Ok(mut client_chats) = crate::channels::get_active_ws_client_chats().lock() {
+                client_chats.remove(&self.0);
             }
         }
     }
@@ -724,6 +753,9 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                     .and_then(|v| v.as_str())
                     .unwrap_or(&default_chat_id)
                     .to_string();
+                if let Ok(mut client_chats) = crate::channels::get_active_ws_client_chats().lock() {
+                    client_chats.insert(client_id.clone(), chat_id.clone());
+                }
 
                 match msg_type {
                     "new_chat" => {
@@ -2256,7 +2288,12 @@ mod tests {
         publisher.await.unwrap();
         assert_eq!(
             types,
-            ["run_started", "step_started", "step_finished", "run_finished"]
+            [
+                "run_started",
+                "step_started",
+                "step_finished",
+                "run_finished"
+            ]
         );
         crate::channels::get_active_ws_senders()
             .lock()

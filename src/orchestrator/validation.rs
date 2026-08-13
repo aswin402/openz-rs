@@ -15,7 +15,11 @@ pub fn validate_workflow_spec(spec: &WorkflowSpec, known_agents: &[String]) -> R
     }
 
     let known: HashSet<&str> = known_agents.iter().map(String::as_str).collect();
-    let declared: HashSet<&str> = spec.agents.iter().map(|agent| agent.name.as_str()).collect();
+    let declared: HashSet<&str> = spec
+        .agents
+        .iter()
+        .map(|agent| agent.name.as_str())
+        .collect();
     let mut step_ids = HashSet::new();
 
     for step in &spec.steps {
@@ -49,7 +53,7 @@ pub fn validate_workflow_spec(spec: &WorkflowSpec, known_agents: &[String]) -> R
         }
     }
 
-    if matches!(spec.mode, WorkflowMode::Parallel)
+    if matches!(&spec.mode, WorkflowMode::Parallel)
         && spec.steps.iter().any(|step| !step.depends_on.is_empty())
     {
         return Err(anyhow!(
@@ -57,8 +61,14 @@ pub fn validate_workflow_spec(spec: &WorkflowSpec, known_agents: &[String]) -> R
         ));
     }
 
-    if matches!(spec.review.mode, ReviewMode::Required)
-        && spec.review.reviewer.as_deref().unwrap_or("").trim().is_empty()
+    if matches!(&spec.review.mode, ReviewMode::Required)
+        && spec
+            .review
+            .reviewer
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
     {
         return Err(anyhow!("required review mode needs review.reviewer"));
     }
@@ -75,7 +85,11 @@ mod tests {
         WorkflowSpec {
             goal: "ship feature".to_string(),
             mode: WorkflowMode::Sequential,
-            agents: vec![AgentRef { name: "planner".to_string(), model: None, tools: vec![] }],
+            agents: vec![AgentRef {
+                name: "planner".to_string(),
+                model: None,
+                tools: vec![],
+            }],
             steps: vec![WorkflowStep {
                 id: "plan".to_string(),
                 agent: "planner".to_string(),

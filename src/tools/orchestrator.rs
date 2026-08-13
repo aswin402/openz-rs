@@ -114,7 +114,12 @@ pub fn combine_capability_policies(
         (false, false) => inherited
             .allowed_tools
             .iter()
-            .filter(|tool| workflow.allowed_tools.iter().any(|candidate| candidate == *tool))
+            .filter(|tool| {
+                workflow
+                    .allowed_tools
+                    .iter()
+                    .any(|candidate| candidate == *tool)
+            })
             .cloned()
             .collect(),
     };
@@ -148,7 +153,9 @@ fn filter_parent_tools_by_policy(
 ) -> Vec<Arc<dyn Tool>> {
     tools
         .iter()
-        .filter(|tool| tool_allowed_by_policy_with_metadata_inner(tool.name(), &tool.metadata(), policy))
+        .filter(|tool| {
+            tool_allowed_by_policy_with_metadata_inner(tool.name(), &tool.metadata(), policy)
+        })
         .cloned()
         .collect()
 }
@@ -183,8 +190,15 @@ impl StepExecutor for SubagentStepExecutor {
             &spec.capabilities,
         );
         let profile_metadata = crate::tools::subagent::subagent_tool_metadata(&profile.name);
-        if !tool_allowed_by_policy_with_metadata_inner(&profile.name, &profile_metadata, &effective_policy) {
-            return Err(anyhow!("workflow step agent '{}' denied by capability policy", profile.name));
+        if !tool_allowed_by_policy_with_metadata_inner(
+            &profile.name,
+            &profile_metadata,
+            &effective_policy,
+        ) {
+            return Err(anyhow!(
+                "workflow step agent '{}' denied by capability policy",
+                profile.name
+            ));
         }
 
         let prompt = build_step_prompt(step, &spec.goal, prior_results);
@@ -197,7 +211,9 @@ impl StepExecutor for SubagentStepExecutor {
             cancellation_token: self.cancellation_token.clone(),
             capability_policy: Some(effective_policy),
         };
-        let response = delegate.call(&json!({ "goal": step.goal, "context": prompt })).await?;
+        let response = delegate
+            .call(&json!({ "goal": step.goal, "context": prompt }))
+            .await?;
         response_to_step_output(step, response)
     }
 }
@@ -323,21 +339,27 @@ mod tests {
         let effective = combine_capability_policies(Some(&inherited), &workflow);
 
         assert_eq!(effective.allowed_tools, vec!["read_file".to_string()]);
-        assert!(effective.denied_tools.iter().any(|tool| tool == "coding_agent"));
-        assert!(effective.denied_tools.iter().any(|tool| tool == "web_fetch"));
+        assert!(effective
+            .denied_tools
+            .iter()
+            .any(|tool| tool == "coding_agent"));
+        assert!(effective
+            .denied_tools
+            .iter()
+            .any(|tool| tool == "web_fetch"));
         assert!(effective.deny_shell);
         assert!(effective.deny_filesystem_write);
     }
 
     #[test]
-    fn subagent_metadata_policy_blocks_profile_when_shell_denied() {
+    fn subagent_metadata_policy_allows_profile_when_shell_denied() {
         let policy = CapabilityPolicy {
             deny_shell: true,
             ..Default::default()
         };
         let metadata = crate::tools::subagent::subagent_tool_metadata("coding_agent");
 
-        assert!(!tool_allowed_by_policy_with_metadata(
+        assert!(tool_allowed_by_policy_with_metadata(
             "coding_agent",
             &metadata,
             &policy

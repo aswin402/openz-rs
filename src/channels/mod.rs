@@ -1740,6 +1740,12 @@ use std::sync::OnceLock;
 use tokio::sync::mpsc;
 
 pub type WsSendersMap = HashMap<String, mpsc::Sender<Message>>;
+pub type WsClientChatsMap = HashMap<String, String>;
+
+pub fn get_active_ws_client_chats() -> &'static Mutex<WsClientChatsMap> {
+    static CLIENT_CHATS: OnceLock<Mutex<WsClientChatsMap>> = OnceLock::new();
+    CLIENT_CHATS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 pub fn get_active_ws_senders() -> &'static Mutex<WsSendersMap> {
     static SENDERS: OnceLock<Mutex<WsSendersMap>> = OnceLock::new();
