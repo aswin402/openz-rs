@@ -366,13 +366,22 @@ function normalizeStepStatus(value: unknown): OrchestrationStepState['status'] {
   return 'running';
 }
 
+function isTerminalWorkflowStatus(status: OrchestrationRunState['status']): boolean {
+  return status === 'success' || status === 'failed' || status === 'cancelled';
+}
+
 function upsertOrchestrationRun(
   runs: OrchestrationRunState[],
   run: OrchestrationRunState,
 ): OrchestrationRunState[] {
   const index = runs.findIndex((existing) => existing.id === run.id);
   if (index < 0) return [...runs, run];
-  return runs.map((existing, i) => (i === index ? { ...existing, ...run } : existing));
+  return runs.map((existing, i) => {
+    if (i !== index) return existing;
+    if (existing.status === 'cancelled' && run.status !== 'cancelled') return existing;
+    if (isTerminalWorkflowStatus(existing.status) && existing.status !== run.status && !existing.provisionalFailure) return existing;
+    return { ...existing, ...run, provisionalFailure: run.provisionalFailure ?? false };
+  });
 }
 
 function upsertOrchestrationStep(
@@ -394,13 +403,15 @@ function applyOrchestrationEvent(
   if (!type || !runId) return runs;
 
   if (type === 'run_started') {
+    const existingRun = runs.find((existing) => existing.id === runId);
+    if (existingRun && isTerminalWorkflowStatus(existingRun.status)) return runs;
     return upsertOrchestrationRun(runs, {
       id: runId,
       goal: asString(payload.goal) || '',
       mode: asString(payload.mode) || 'sequential',
       status: 'running',
       steps: [],
-      startedAt: now,
+      startedAt: existingRun?.startedAt || now,
     });
   }
 
@@ -412,6 +423,10 @@ function applyOrchestrationEvent(
     steps: [],
     startedAt: now,
   };
+
+  if (run.status === 'cancelled') return runs;
+
+  if (type !== 'run_finished' && isTerminalWorkflowStatus(run.status)) return runs;
 
   if (type === 'step_started') {
     const stepId = asString(payload.step_id);
@@ -451,6 +466,7 @@ function applyOrchestrationEvent(
       status: normalizeWorkflowStatus(payload.status),
       summary: asString(payload.summary),
       endedAt: now,
+      provisionalFailure: false,
     });
   }
 
@@ -462,18 +478,27 @@ function settleOrchestrationRuns(
   status: OrchestrationRunState['status'],
   summary: string,
   now = Date.now(),
+  overrideTerminal = false,
+  runIds?: readonly string[],
 ): OrchestrationRunState[] {
+  const targetRunIds = runIds ? new Set(runIds) : null;
   let changed = false;
   const settled = runs.map((run) => {
-    if (run.status !== 'running' && run.status !== 'awaiting_review') return run;
+    if (targetRunIds && !targetRunIds.has(run.id)) return run;
+    const canSettle =
+      run.status === 'running' ||
+      run.status === 'awaiting_review' ||
+      (overrideTerminal && run.status !== status);
+    if (!canSettle) return run;
     changed = true;
     return {
       ...run,
       status,
-      summary: run.summary || summary,
-      endedAt: run.endedAt || now,
+      summary: status === 'cancelled' ? summary : run.summary || summary,
+      endedAt: now,
+      provisionalFailure: status === 'failed' && !overrideTerminal,
       steps: run.steps.map((step) =>
-        step.status === 'running' || step.status === 'awaiting_review'
+        step.status === 'running' || step.status === 'awaiting_review' || overrideTerminal
           ? { ...step, status: status === 'cancelled' ? 'skipped' : 'failed', error: step.error || summary, endedAt: step.endedAt || now }
           : step,
       ),
@@ -927,18 +952,30 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
         'Turn ended before this tool reported completion.',
       );
 
+      const pendingRunIds = (get().orchestrationRuns[chatId] || [])
+        .filter((run) => run.status === 'running' || run.status === 'awaiting_review')
+        .map((run) => run.id);
+
       set({
         messages: { ...get().messages, [chatId]: settledMessages },
-        orchestrationRuns: {
-          ...get().orchestrationRuns,
-          [chatId]: settleOrchestrationRuns(
-            get().orchestrationRuns[chatId] || [],
-            'failed',
-            'Turn ended before this orchestration run reported completion.',
-          ),
-        },
         isStreaming: false,
       });
+      window.setTimeout(() => {
+        if (pendingRunIds.length === 0) return;
+        set({
+          orchestrationRuns: {
+            ...get().orchestrationRuns,
+            [chatId]: settleOrchestrationRuns(
+              get().orchestrationRuns[chatId] || [],
+              'failed',
+              'Turn ended before this orchestration run reported completion.',
+              Date.now(),
+              false,
+              pendingRunIds,
+            ),
+          },
+        });
+      }, 750);
       // Refresh the session list so titles/message counts stay in sync.
       wsService.requestSessions();
     });
@@ -952,6 +989,10 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
         'Turn stopped before this tool completed.',
       );
 
+      const stoppableRunIds = (get().orchestrationRuns[chatId] || [])
+        .filter((run) => run.status === 'running' || run.status === 'awaiting_review' || run.provisionalFailure)
+        .map((run) => run.id);
+
       set({
         messages: { ...get().messages, [chatId]: settledMessages },
         orchestrationRuns: {
@@ -960,6 +1001,9 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
             get().orchestrationRuns[chatId] || [],
             'cancelled',
             'Turn stopped before this orchestration run completed.',
+            Date.now(),
+            true,
+            stoppableRunIds,
           ),
         },
         isStreaming: false,

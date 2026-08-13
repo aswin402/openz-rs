@@ -89,6 +89,7 @@ export interface OrchestrationRunState {
   startedAt: number;
   endedAt?: number;
   summary?: string;
+  provisionalFailure?: boolean;
 }
 
 export interface OpenZSession {
