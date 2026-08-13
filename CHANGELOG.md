@@ -1,3 +1,11 @@
+### v0.0.129 (Unreleased)
+**Typed Multi-Agent Orchestrator Runtime:**
+- Added `orchestrate_workflow` for typed sequential, parallel, review-loop, selector, manager-worker, and graph workflow specs.
+- Added dependency validation, bounded parallel execution, deterministic selector routing, review-loop termination, and structured workflow result reporting.
+- Added `capabilities` policies to restrict worker tools per workflow, including shell/process and filesystem-write controls.
+- Added WebUI orchestration lifecycle events and a run-tree panel in Agent Activity, with stop/error/turn-end settlement for stale running state.
+- Documented orchestrator runtime usage with minimal sequential and review-loop examples.
+
 ### v0.0.128 (Latest Release)
 **WebUI Turn Lifecycle Recovery and Research Source Notice Visibility:**
 - **Stale Tool Card Recovery**: WebUI tool completion events now update matching tool cards across the whole chat instead of only the latest assistant message, preventing older research cards from staying stuck on `executing` after late or reordered events.
