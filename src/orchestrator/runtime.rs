@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use super::events::{WorkflowEvent, WorkflowEventSink};
 use super::result::{StepRunResult, StepStatus, WorkflowRunResult, WorkflowStatus};
-use super::spec::{WorkflowMode, WorkflowSpec, WorkflowStep};
+use super::spec::{TerminationPolicy, WorkflowMode, WorkflowSpec, WorkflowStep};
 use super::validation::validate_workflow_spec;
 
 #[async_trait]
@@ -52,6 +52,56 @@ where
         Self { executor, sink }
     }
 
+    async fn run_step(
+        &self,
+        run_id: &str,
+        spec: &WorkflowSpec,
+        step: &WorkflowStep,
+        prior_results: &[String],
+    ) -> StepRunResult {
+        self.sink.emit(WorkflowEvent::StepStarted {
+            run_id: run_id.to_string(),
+            step_id: step.id.clone(),
+            agent: step.agent.clone(),
+        });
+        let started = std::time::Instant::now();
+        match self.executor.execute_step(step, spec, prior_results).await {
+            Ok(output) => {
+                self.sink.emit(WorkflowEvent::StepFinished {
+                    run_id: run_id.to_string(),
+                    step_id: step.id.clone(),
+                    status: "success".to_string(),
+                    output: output.clone(),
+                });
+                StepRunResult {
+                    step_id: step.id.clone(),
+                    agent: step.agent.clone(),
+                    status: StepStatus::Success,
+                    output,
+                    error: None,
+                    duration_ms: started.elapsed().as_millis(),
+                }
+            }
+            Err(err) => {
+                let error = err.to_string();
+                self.sink.emit(WorkflowEvent::StepFinished {
+                    run_id: run_id.to_string(),
+                    step_id: step.id.clone(),
+                    status: "failed".to_string(),
+                    output: error.clone(),
+                });
+                StepRunResult {
+                    step_id: step.id.clone(),
+                    agent: step.agent.clone(),
+                    status: StepStatus::Failed,
+                    output: String::new(),
+                    error: Some(error),
+                    duration_ms: started.elapsed().as_millis(),
+                }
+            }
+        }
+    }
+
     pub async fn run(
         &self,
         spec: WorkflowSpec,
@@ -63,7 +113,6 @@ where
             WorkflowMode::Sequential
                 | WorkflowMode::Graph
                 | WorkflowMode::ManagerWorker
-                | WorkflowMode::ReviewLoop
                 | WorkflowMode::SelectorGroup
         ) {
             Some(ready_step_order(&spec)?)
@@ -84,7 +133,6 @@ where
             WorkflowMode::Sequential
             | WorkflowMode::Graph
             | WorkflowMode::ManagerWorker
-            | WorkflowMode::ReviewLoop
             | WorkflowMode::SelectorGroup => {
                 for step in
                     ordered_steps.expect("dependency-aware modes are ordered before run start")
@@ -145,6 +193,170 @@ where
                         }
                     }
                 }
+            }
+            WorkflowMode::ReviewLoop => {
+                let ordered_steps = ready_step_order(&spec)?;
+                let reviewer_name = spec.review.reviewer.as_deref().unwrap_or("").trim();
+                let reviewer_index = if !reviewer_name.is_empty() {
+                    ordered_steps
+                        .iter()
+                        .position(|step| step.agent == reviewer_name)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "review loop reviewer '{}' has no matching workflow step",
+                                reviewer_name
+                            )
+                        })?
+                } else {
+                    ordered_steps
+                        .iter()
+                        .position(|step| step.id.eq_ignore_ascii_case("review"))
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "review loop needs a review step or review.reviewer"
+                            )
+                        })?
+                };
+                let reviewer_step = ordered_steps[reviewer_index];
+                let implementation_steps = ordered_steps
+                    .iter()
+                    .enumerate()
+                    .take_while(|(index, _)| *index < reviewer_index)
+                    .map(|(_, step)| *step)
+                    .collect::<Vec<_>>();
+                let post_approval_steps = ordered_steps
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, step)| (index > reviewer_index).then_some(*step))
+                    .collect::<Vec<_>>();
+                let max_rounds = spec.termination.max_rounds.max(1);
+
+                for round in 1..=max_rounds {
+                    let round_note = format!("review round {round}/{max_rounds}");
+                    for step in &implementation_steps {
+                        let step_result = self.run_step(&run_id, &spec, step, &prior_results).await;
+                        if !matches!(step_result.status, StepStatus::Success) {
+                            let summary = format!("workflow failed at step '{}'", step.id);
+                            results.push(step_result);
+                            self.sink.emit(WorkflowEvent::RunFinished {
+                                run_id: run_id.clone(),
+                                status: "failed".to_string(),
+                                summary: summary.clone(),
+                            });
+                            return Ok(WorkflowRunResult {
+                                run_id,
+                                status: WorkflowStatus::Failed,
+                                summary,
+                                steps: results,
+                                sources: vec![],
+                            });
+                        }
+                        prior_results.push(format!(
+                            "{} {}: {}",
+                            round_note, step.id, step_result.output
+                        ));
+                        results.push(step_result);
+                    }
+
+                    let review_result = self
+                        .run_step(&run_id, &spec, reviewer_step, &prior_results)
+                        .await;
+                    if !matches!(review_result.status, StepStatus::Success) {
+                        let summary = format!("workflow failed at step '{}'", reviewer_step.id);
+                        results.push(review_result);
+                        self.sink.emit(WorkflowEvent::RunFinished {
+                            run_id: run_id.clone(),
+                            status: "failed".to_string(),
+                            summary: summary.clone(),
+                        });
+                        return Ok(WorkflowRunResult {
+                            run_id,
+                            status: WorkflowStatus::Failed,
+                            summary,
+                            steps: results,
+                            sources: vec![],
+                        });
+                    }
+
+                    let termination_status =
+                        output_satisfies_termination(&review_result.output, &spec.termination);
+                    prior_results.push(format!(
+                        "{} {}: {}",
+                        round_note, reviewer_step.id, review_result.output
+                    ));
+                    results.push(review_result);
+
+                    match termination_status {
+                        Some(WorkflowStatus::Success) => {
+                            for step in &post_approval_steps {
+                                let step_result =
+                                    self.run_step(&run_id, &spec, step, &prior_results).await;
+                                if !matches!(step_result.status, StepStatus::Success) {
+                                    let summary = format!("workflow failed at step '{}'", step.id);
+                                    results.push(step_result);
+                                    self.sink.emit(WorkflowEvent::RunFinished {
+                                        run_id: run_id.clone(),
+                                        status: "failed".to_string(),
+                                        summary: summary.clone(),
+                                    });
+                                    return Ok(WorkflowRunResult {
+                                        run_id,
+                                        status: WorkflowStatus::Failed,
+                                        summary,
+                                        steps: results,
+                                        sources: vec![],
+                                    });
+                                }
+                                prior_results.push(format!("{}: {}", step.id, step_result.output));
+                                results.push(step_result);
+                            }
+
+                            let summary = format!("review loop approved after {round} round(s)");
+                            self.sink.emit(WorkflowEvent::RunFinished {
+                                run_id: run_id.clone(),
+                                status: "success".to_string(),
+                                summary: summary.clone(),
+                            });
+                            return Ok(WorkflowRunResult {
+                                run_id,
+                                status: WorkflowStatus::Success,
+                                summary,
+                                steps: results,
+                                sources: vec![],
+                            });
+                        }
+                        Some(WorkflowStatus::Failed) => {
+                            let summary = format!("review loop failed after {round} round(s)");
+                            self.sink.emit(WorkflowEvent::RunFinished {
+                                run_id: run_id.clone(),
+                                status: "failed".to_string(),
+                                summary: summary.clone(),
+                            });
+                            return Ok(WorkflowRunResult {
+                                run_id,
+                                status: WorkflowStatus::Failed,
+                                summary,
+                                steps: results,
+                                sources: vec![],
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+
+                let summary = "review loop reached max_rounds".to_string();
+                self.sink.emit(WorkflowEvent::RunFinished {
+                    run_id: run_id.clone(),
+                    status: "failed".to_string(),
+                    summary: summary.clone(),
+                });
+                return Ok(WorkflowRunResult {
+                    run_id,
+                    status: WorkflowStatus::Failed,
+                    summary,
+                    steps: results,
+                    sources: vec![],
+                });
             }
             WorkflowMode::Parallel => {
                 let mut tasks = Vec::with_capacity(spec.steps.len());
@@ -249,6 +461,23 @@ where
     }
 }
 
+pub fn output_satisfies_termination(
+    output: &str,
+    policy: &TerminationPolicy,
+) -> Option<WorkflowStatus> {
+    if let Some(keyword) = policy.failure_keyword.as_deref().map(str::trim).filter(|keyword| !keyword.is_empty()) {
+        if output.contains(keyword) {
+            return Some(WorkflowStatus::Failed);
+        }
+    }
+    if let Some(keyword) = policy.success_keyword.as_deref().map(str::trim).filter(|keyword| !keyword.is_empty()) {
+        if output.contains(keyword) {
+            return Some(WorkflowStatus::Success);
+        }
+    }
+    None
+}
+
 fn ready_step_order(spec: &WorkflowSpec) -> Result<Vec<&WorkflowStep>> {
     let mut completed = HashSet::new();
     let mut ordered = Vec::with_capacity(spec.steps.len());
@@ -276,7 +505,7 @@ fn ready_step_order(spec: &WorkflowSpec) -> Result<Vec<&WorkflowStep>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orchestrator::events::RecordingEventSink;
+    use crate::orchestrator::events::{NoopEventSink, RecordingEventSink};
     use crate::orchestrator::spec::{AgentRef, WorkflowMode, WorkflowSpec, WorkflowStep};
     use async_trait::async_trait;
     use std::sync::{atomic::{AtomicUsize, Ordering}, Arc, Mutex};
@@ -376,6 +605,45 @@ mod tests {
         ) -> anyhow::Result<String> {
             if step.id == self.fail_step_id {
                 Err(anyhow::anyhow!("{} failed", step.id))
+            } else {
+                Ok(format!("{} done", step.id))
+            }
+        }
+    }
+
+    struct ScriptedExecutor {
+        outputs: Arc<Mutex<Vec<String>>>,
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl ScriptedExecutor {
+        fn new(outputs: Vec<String>) -> Self {
+            Self {
+                outputs: Arc::new(Mutex::new(outputs)),
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn calls(&self) -> Arc<Mutex<Vec<String>>> {
+            self.calls.clone()
+        }
+    }
+
+    #[async_trait]
+    impl StepExecutor for ScriptedExecutor {
+        async fn execute_step(
+            &self,
+            step: &WorkflowStep,
+            _spec: &WorkflowSpec,
+            _prior_results: &[String],
+        ) -> anyhow::Result<String> {
+            self.calls.lock().unwrap().push(step.id.clone());
+            if step.id == "review" {
+                let mut outputs = self.outputs.lock().unwrap();
+                if outputs.is_empty() {
+                    anyhow::bail!("scripted executor has no output left");
+                }
+                Ok(outputs.remove(0))
             } else {
                 Ok(format!("{} done", step.id))
             }
@@ -520,6 +788,151 @@ mod tests {
         );
         assert!(events.lock().unwrap().is_empty());
         assert!(calls.lock().unwrap().is_empty());
+    }
+
+
+    fn review_loop_spec_with_success_keyword(
+        success_keyword: &str,
+        max_rounds: usize,
+    ) -> WorkflowSpec {
+        let mut workflow = spec(
+            WorkflowMode::ReviewLoop,
+            vec![step("implement", vec![]), step("review", vec!["implement"])],
+        );
+        workflow.agents.push(AgentRef {
+            name: "reviewer".to_string(),
+            model: None,
+            tools: vec![],
+        });
+        workflow.steps[1].agent = "reviewer".to_string();
+        workflow.termination.max_rounds = max_rounds;
+        workflow.termination.success_keyword = Some(success_keyword.to_string());
+        workflow.review.mode = crate::orchestrator::spec::ReviewMode::Required;
+        workflow.review.reviewer = Some("reviewer".to_string());
+        workflow
+    }
+
+    #[tokio::test]
+    async fn review_loop_retries_until_approval_keyword() {
+        let executor = ScriptedExecutor::new(vec![
+            "needs changes".to_string(),
+            "APPROVE".to_string(),
+        ]);
+        let runtime = WorkflowRuntime::new(executor, NoopEventSink);
+        let spec = review_loop_spec_with_success_keyword("APPROVE", 3);
+
+        let result = runtime
+            .run(spec, &["planner".to_string(), "reviewer".to_string()])
+            .await
+            .unwrap();
+
+        assert!(matches!(result.status, WorkflowStatus::Success));
+        assert_eq!(result.steps.len(), 4);
+        assert_eq!(result.summary, "review loop approved after 2 round(s)");
+    }
+
+    #[tokio::test]
+    async fn review_loop_failure_keyword_stops_immediately() {
+        let executor = ScriptedExecutor::new(vec!["BLOCKED".to_string()]);
+        let runtime = WorkflowRuntime::new(executor, NoopEventSink);
+        let mut spec = review_loop_spec_with_success_keyword("APPROVE", 3);
+        spec.termination.failure_keyword = Some("BLOCKED".to_string());
+
+        let result = runtime
+            .run(spec, &["planner".to_string(), "reviewer".to_string()])
+            .await
+            .unwrap();
+
+        assert!(matches!(result.status, WorkflowStatus::Failed));
+        assert_eq!(result.steps.len(), 2);
+        assert_eq!(result.summary, "review loop failed after 1 round(s)");
+    }
+
+    #[tokio::test]
+    async fn review_loop_fails_when_max_rounds_reached() {
+        let executor = ScriptedExecutor::new(vec![
+            "needs changes".to_string(),
+            "still needs changes".to_string(),
+        ]);
+        let runtime = WorkflowRuntime::new(executor, NoopEventSink);
+        let spec = review_loop_spec_with_success_keyword("APPROVE", 2);
+
+        let result = runtime
+            .run(spec, &["planner".to_string(), "reviewer".to_string()])
+            .await
+            .unwrap();
+
+        assert!(matches!(result.status, WorkflowStatus::Failed));
+        assert_eq!(result.steps.len(), 4);
+        assert_eq!(result.summary, "review loop reached max_rounds");
+    }
+
+
+
+    #[tokio::test]
+    async fn review_loop_runs_post_review_steps_only_after_approval() {
+        let executor = ScriptedExecutor::new(vec![
+            "needs changes".to_string(),
+            "APPROVE".to_string(),
+        ]);
+        let calls = executor.calls();
+        let runtime = WorkflowRuntime::new(executor, NoopEventSink);
+        let mut workflow = review_loop_spec_with_success_keyword("APPROVE", 3);
+        workflow.steps.push(WorkflowStep {
+            id: "publish".to_string(),
+            agent: "planner".to_string(),
+            goal: "Publish after approval".to_string(),
+            depends_on: vec!["review".to_string()],
+            expected_output: "published".to_string(),
+            max_retries: 0,
+        });
+
+        let result = runtime
+            .run(workflow, &["planner".to_string(), "reviewer".to_string()])
+            .await
+            .unwrap();
+
+        assert!(matches!(result.status, WorkflowStatus::Success));
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["implement", "review", "implement", "review", "publish"]
+        );
+    }
+
+    #[tokio::test]
+    async fn review_loop_rejects_missing_configured_reviewer_step() {
+        let executor = ScriptedExecutor::new(vec!["APPROVE".to_string()]);
+        let runtime = WorkflowRuntime::new(executor, NoopEventSink);
+        let mut workflow = spec(WorkflowMode::ReviewLoop, vec![step("implement", vec![])]);
+        workflow.agents.push(AgentRef {
+            name: "reviewer".to_string(),
+            model: None,
+            tools: vec![],
+        });
+        workflow.review.mode = crate::orchestrator::spec::ReviewMode::Required;
+        workflow.review.reviewer = Some("reviewer".to_string());
+        workflow.termination.success_keyword = Some("APPROVE".to_string());
+
+        let err = runtime
+            .run(workflow, &["planner".to_string(), "reviewer".to_string()])
+            .await
+            .expect_err("configured reviewer must match a workflow step");
+
+        assert!(
+            err.to_string()
+                .contains("review loop reviewer 'reviewer' has no matching workflow step")
+        );
+    }
+
+    #[test]
+    fn blank_termination_keywords_do_not_match() {
+        let policy = TerminationPolicy {
+            max_rounds: 1,
+            success_keyword: Some("".to_string()),
+            failure_keyword: Some("   ".to_string()),
+        };
+
+        assert!(output_satisfies_termination("any output", &policy).is_none());
     }
 
     #[tokio::test]
