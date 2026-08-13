@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import type { OpenZMessage, ToolExecution } from '../types';
+import type { OpenZMessage, OrchestrationRunState, ToolExecution } from '../types';
 import { cn } from '../lib/utils';
+import { OrchestrationRunPanel } from './OrchestrationRunPanel';
 import {
   Activity,
   AlertTriangle,
@@ -19,6 +20,7 @@ import {
 interface AgentActivityPanelProps {
   messages: OpenZMessage[];
   isStreaming: boolean;
+  orchestrationRuns?: OrchestrationRunState[];
   onClose?: () => void;
 }
 
@@ -122,12 +124,13 @@ function formatDuration(ms?: number): string | null {
   return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + 's';
 }
 
-export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({ messages, isStreaming, onClose }) => {
+export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({ messages, isStreaming, orchestrationRuns = [], onClose }) => {
   const [filter, setFilter] = useState<ActivityFilter>('all');
   const activity = useMemo(() => buildActivity(messages), [messages]);
   const filteredActivity = useMemo(() => activity.filter((item) => matchesFilter(item, filter)), [activity, filter]);
   const runningTools = activity.filter((item) => item.kind === 'tool' && item.status === 'running').length;
   const noticeCount = activity.filter((item) => item.kind === 'notice').length;
+  const visibleRuns = orchestrationRuns.slice(-5).reverse();
   const failedTools = activity.filter((item) => item.kind === 'tool' && item.status === 'error').length;
   const lastAssistant = [...messages].reverse().find((message) => message.role === 'assistant');
   const hasReasoning = Boolean(lastAssistant?.reasoningContent);
@@ -227,8 +230,16 @@ export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({ messages
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {visibleRuns.length > 0 ? (
+          <div className="mb-3 space-y-2">
+            {visibleRuns.map((run) => (
+              <OrchestrationRunPanel key={run.id} run={run} />
+            ))}
+          </div>
+        ) : null}
+
         {filteredActivity.length === 0 ? (
-          <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-border/60 px-4 text-center text-xs text-muted-foreground">
+          <div className="flex h-full min-h-[140px] items-center justify-center rounded-lg border border-dashed border-border/60 px-4 text-center text-xs text-muted-foreground">
             {activity.length === 0 ? 'Tool calls, workflow matches, memory saves, research context, approvals, and reasoning markers will appear here during a turn.' : 'No activity matches this filter.'}
           </div>
         ) : (
