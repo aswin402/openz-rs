@@ -401,7 +401,12 @@ impl Tool for DelegateTaskTool {
                     );
                 }
 
-                if !filesystem_write_denied {
+                if super::should_run_evolution_review(
+                    &clean_goal,
+                    &clean_context,
+                    &res.content,
+                    filesystem_write_denied,
+                ) {
                     let _ = run_evolution_review(&self.parent_provider, "subagent", &clean_goal, &clean_context, &res.content).await;
                 }
 

@@ -465,7 +465,12 @@ impl Tool for DelegateProfileTool {
                         let _ = sync_changes_back(&workspace_dir, &parent_dir);
                     }
 
-                    if !filesystem_write_denied {
+                    if super::should_run_evolution_review(
+                        &clean_goal,
+                        &clean_context,
+                        &run_res.content,
+                        filesystem_write_denied,
+                    ) {
                         let _ = run_evolution_review(&self.parent_provider, &self.profile.name, &clean_goal, &clean_context, &run_res.content).await;
                     }
 

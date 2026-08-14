@@ -69,6 +69,15 @@ pub fn limit_subagent_models_to_try(models: &mut Vec<String>) {
     models.truncate(max_subagent_model_attempts());
 }
 
+pub fn should_run_evolution_review(
+    goal: &str,
+    context: &str,
+    summary: &str,
+    filesystem_write_denied: bool,
+) -> bool {
+    !filesystem_write_denied && !crate::grounding::should_suppress_evolution(goal, context, summary)
+}
+
 pub fn resolve_subagent_timeout_secs(
     requested_timeout_secs: Option<u64>,
     default_timeout_secs: u64,

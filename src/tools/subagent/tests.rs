@@ -60,6 +60,36 @@ fn test_limit_subagent_models_to_try_keeps_primary_plus_two_fallbacks() {
 }
 
 #[test]
+fn evolution_gate_blocks_smoke_test_summary() {
+    assert!(!should_run_evolution_review(
+        "Run smoke test workflow",
+        "demo",
+        "Planner summary accurate. No issues.",
+        false,
+    ));
+}
+
+#[test]
+fn evolution_gate_blocks_when_filesystem_writes_denied() {
+    assert!(!should_run_evolution_review(
+        "Refactor routing",
+        "coding task",
+        "When changing routing, add a focused regression test and verify the exposed tool list.",
+        true,
+    ));
+}
+
+#[test]
+fn evolution_gate_allows_substantial_reusable_guidance() {
+    assert!(should_run_evolution_review(
+        "Refactor routing",
+        "coding task",
+        "When changing routing, add a focused regression test, inspect model-facing tool exposure, and verify the runtime lookup path uses the same policy.",
+        false,
+    ));
+}
+
+#[test]
 fn test_resolve_subagent_timeout_uses_default_and_clamps() {
     assert_eq!(resolve_subagent_timeout_secs(None, 300), 300);
     assert_eq!(
