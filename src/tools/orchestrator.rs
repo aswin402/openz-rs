@@ -97,6 +97,10 @@ fn tool_allowed_by_policy_with_metadata_inner(
         return false;
     }
 
+    if policy.deny_network && metadata.uses_network {
+        return false;
+    }
+
     if policy.deny_filesystem_write && metadata.writes_disk {
         return false;
     }
@@ -144,6 +148,7 @@ pub fn combine_capability_policies(
         denied_tools,
         deny_shell: inherited.deny_shell || workflow.deny_shell,
         deny_filesystem_write: inherited.deny_filesystem_write || workflow.deny_filesystem_write,
+        deny_network: inherited.deny_network || workflow.deny_network,
     }
 }
 
@@ -153,6 +158,16 @@ pub fn tool_allowed_by_policy_with_metadata(
     policy: &CapabilityPolicy,
 ) -> bool {
     tool_allowed_by_policy_with_metadata_inner(name, metadata, policy)
+}
+
+fn apply_step_grounding_policy(
+    mut policy: CapabilityPolicy,
+    step_policy: &crate::grounding::StepExecutionPolicy,
+) -> CapabilityPolicy {
+    if !step_policy.allow_web {
+        policy.deny_network = true;
+    }
+    policy
 }
 
 fn filter_parent_tools_by_policy(
@@ -212,6 +227,7 @@ impl StepExecutor for SubagentStepExecutor {
         let prompt = build_step_prompt(step, &spec.goal, prior_results);
         let step_policy =
             crate::grounding::step_execution_policy(&spec.goal, &step.goal, &step.agent);
+        let effective_policy = apply_step_grounding_policy(effective_policy, &step_policy);
         let delegate = DelegateProfileTool {
             config: self.config.clone(),
             parent_provider: self.parent_provider.clone(),
@@ -356,12 +372,14 @@ mod tests {
             denied_tools: vec!["coding_agent".to_string()],
             deny_shell: true,
             deny_filesystem_write: false,
+            deny_network: false,
         };
         let workflow = CapabilityPolicy {
             allowed_tools: vec!["read_file".to_string(), "web_fetch".to_string()],
             denied_tools: vec!["web_fetch".to_string()],
             deny_shell: false,
             deny_filesystem_write: true,
+            deny_network: true,
         };
 
         let effective = combine_capability_policies(Some(&inherited), &workflow);
@@ -377,6 +395,34 @@ mod tests {
             .any(|tool| tool == "web_fetch"));
         assert!(effective.deny_shell);
         assert!(effective.deny_filesystem_write);
+        assert!(effective.deny_network);
+    }
+
+    #[test]
+    fn capability_policy_can_block_network_tools() {
+        let policy = CapabilityPolicy {
+            deny_network: true,
+            ..Default::default()
+        };
+
+        assert!(tool_allowed_by_policy("read_file", &policy));
+        assert!(!tool_allowed_by_policy("web_fetch", &policy));
+        assert!(!tool_allowed_by_policy("web_search", &policy));
+        assert!(!tool_allowed_by_policy("searchxyz_read_url", &policy));
+    }
+
+    #[test]
+    fn step_grounding_policy_blocks_network_when_web_not_allowed() {
+        let policy = CapabilityPolicy::default();
+        let step_policy = crate::grounding::step_execution_policy(
+            "Run smoke test workflow",
+            "Summarize hello",
+            "planner",
+        );
+        let effective = apply_step_grounding_policy(policy, &step_policy);
+
+        assert!(effective.deny_network);
+        assert!(!tool_allowed_by_policy("web_fetch", &effective));
     }
 
     #[test]

@@ -1044,6 +1044,7 @@ async fn test_delegate_profile_rejects_explicitly_denied_profile() -> Result<()>
             denied_tools: vec!["coding_agent".to_string()],
             deny_shell: false,
             deny_filesystem_write: false,
+            deny_network: false,
         }),
     };
 
@@ -1078,6 +1079,7 @@ async fn test_evaluator_optimizer_rejects_denied_optimizer_profile() -> Result<(
             denied_tools: vec!["coding_agent".to_string()],
             deny_shell: false,
             deny_filesystem_write: false,
+            deny_network: false,
         }),
     };
 

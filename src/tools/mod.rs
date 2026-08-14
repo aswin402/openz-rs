@@ -1694,6 +1694,7 @@ mod route_cache_tests {
             denied_tools: vec![],
             deny_shell: true,
             deny_filesystem_write: false,
+            deny_network: false,
         }));
 
         assert!(registry.get("delegate_task").is_none());
@@ -1760,6 +1761,7 @@ mod route_cache_tests {
             denied_tools: vec!["coding_agent".to_string()],
             deny_shell: false,
             deny_filesystem_write: false,
+            deny_network: false,
         }));
 
         assert!(registry.get("coding_agent").is_none());

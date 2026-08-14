@@ -98,6 +98,8 @@ pub struct CapabilityPolicy {
     pub deny_shell: bool,
     #[serde(default)]
     pub deny_filesystem_write: bool,
+    #[serde(default)]
+    pub deny_network: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -146,7 +148,7 @@ mod tests {
             ],
             "termination": { "max_rounds": 4, "success_keyword": "APPROVE" },
             "review": { "mode": "required", "reviewer": "reviewer" },
-            "capabilities": { "allowed_tools": ["searchxyz_read_url"], "deny_shell": true }
+            "capabilities": { "allowed_tools": ["searchxyz_read_url"], "deny_shell": true, "deny_network": true }
         });
 
         let spec: WorkflowSpec = serde_json::from_value(raw).expect("valid workflow spec");
@@ -156,6 +158,7 @@ mod tests {
         assert_eq!(spec.steps[1].depends_on, vec!["research"]);
         assert_eq!(spec.termination.max_rounds, 4);
         assert_eq!(spec.capabilities.allowed_tools, vec!["searchxyz_read_url"]);
+        assert!(spec.capabilities.deny_network);
     }
 
     #[test]

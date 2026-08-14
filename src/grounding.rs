@@ -27,6 +27,11 @@ fn contains_any(text: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| text.contains(needle))
 }
 
+fn contains_any_word(text: &str, needles: &[&str]) -> bool {
+    text.split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|word| needles.iter().any(|needle| word == *needle))
+}
+
 fn looks_like_url_or_path(text: &str) -> bool {
     contains_any(
         text,
@@ -40,20 +45,18 @@ fn looks_trivial(text: &str) -> bool {
     let trimmed = text.trim();
     let words = trimmed.split_whitespace().count();
     words <= 10
-        && contains_any(
+        && (contains_any(
             text,
             &[
                 "hello",
-                "hi",
                 "hii",
-                "hey",
                 "greeting",
                 "smoke test",
                 "demo",
                 "simple two-step",
                 "summarize hello",
             ],
-        )
+        ) || contains_any_word(text, &["hi", "hey"]))
 }
 
 pub fn classify_grounding_text(text: &str) -> GroundingClass {
@@ -62,19 +65,24 @@ pub fn classify_grounding_text(text: &str) -> GroundingClass {
     if looks_like_url_or_path(&text) {
         return GroundingClass::SourceSpecific;
     }
-    if contains_any(
+    if contains_any_word(
         &text,
         &[
             "medical",
+            "medication",
+            "medicine",
             "legal",
             "financial",
             "diagnosis",
-            "law",
-            "security vulnerability",
+            "tax",
+            "investment",
+            "contract",
+            "safety",
             "exploit",
             "cve",
         ],
-    ) {
+    ) || contains_any(&text, &["security vulnerability"])
+    {
         return GroundingClass::HighStakes;
     }
     if contains_any(
@@ -153,16 +161,43 @@ fn asks_for_delegation_or_complex_work(text: &str) -> bool {
     })
 }
 
+fn should_inherit_workflow_grounding(step_goal: &str) -> bool {
+    let step = normalized(step_goal);
+    !contains_any(
+        &step,
+        &[
+            "review",
+            "validate",
+            "critique",
+            "approve",
+            "check output",
+            "review output",
+            "planner output",
+            "prior step",
+            "previous step",
+        ],
+    )
+}
+
 pub fn step_execution_policy(
     workflow_goal: &str,
     step_goal: &str,
     agent: &str,
 ) -> StepExecutionPolicy {
     let combined = format!("{workflow_goal}\n{step_goal}");
-    let class = classify_grounding_text(&combined);
+    let step_class = classify_grounding_text(step_goal);
+    let workflow_class = classify_grounding_text(workflow_goal);
+    let class = if matches!(step_class, GroundingClass::Stable)
+        && should_inherit_workflow_grounding(step_goal)
+    {
+        workflow_class
+    } else {
+        step_class
+    };
     let combined_norm = normalized(&combined);
+    let step_norm = normalized(step_goal);
     let agent_norm = normalized(agent);
-    let explicitly_complex = asks_for_delegation_or_complex_work(&combined_norm);
+    let explicitly_complex = asks_for_delegation_or_complex_work(&step_norm);
     let researcher_agent = contains_any(&agent_norm, &["researcher", "research"]);
 
     let require_sources = matches!(
@@ -174,7 +209,7 @@ pub fn step_execution_policy(
     );
     let allow_web = require_sources
         || researcher_agent
-        || contains_any(&combined_norm, &["web", "internet", "search", "docs"]);
+        || contains_any(&step_norm, &["web", "internet", "search", "docs"]);
     let allow_nested_delegation = explicitly_complex;
     let suppress_evolution = matches!(class, GroundingClass::Trivial)
         || contains_any(&combined_norm, &["smoke test", "demo", "hello"]);
@@ -219,20 +254,20 @@ pub fn should_suppress_evolution(goal: &str, context: &str, summary: &str) -> bo
     let summary_words = summary.split_whitespace().count();
     let reusable_guidance = looks_reusable_evolution_guidance(goal, context, summary);
 
-    matches!(class, GroundingClass::Trivial)
-        || contains_any(&combined, &["smoke test", "demo", "hello"])
-        || contains_any(
-            &combined,
-            &[
-                "timed out",
-                "failed",
-                "cannot research",
-                "missing tool",
-                "tool limitation",
-                "available tools",
-            ],
-        )
-        || (summary_words < 18 && !reusable_guidance)
+    contains_any(
+        &combined,
+        &[
+            "timed out",
+            "failed",
+            "cannot research",
+            "missing tool",
+            "tool limitation",
+            "available tools",
+        ],
+    ) || (!reusable_guidance
+        && (matches!(class, GroundingClass::Trivial)
+            || contains_any(&combined, &["smoke test", "demo", "hello"])
+            || summary_words < 18))
 }
 
 #[cfg(test)]
@@ -333,6 +368,59 @@ mod tests {
             classify_grounding_text("In this repo, where is orchestrate_workflow implemented?"),
             GroundingClass::LocalProject
         );
+    }
+
+    #[test]
+    fn step_policy_uses_step_goal_before_workflow_goal_for_trivial_steps() {
+        let policy = step_execution_policy(
+            "Research the latest external workflow behavior",
+            "Summarize hello",
+            "planner",
+        );
+
+        assert_eq!(policy.grounding_class, GroundingClass::Trivial);
+        assert!(!policy.allow_web);
+        assert!(!policy.require_sources);
+        assert!(!policy.allow_nested_delegation);
+    }
+
+    #[test]
+    fn review_steps_do_not_inherit_current_external_workflow_grounding() {
+        let policy = step_execution_policy(
+            "Research the latest external workflow behavior",
+            "Review planner output for clarity",
+            "reviewer",
+        );
+
+        assert_eq!(policy.grounding_class, GroundingClass::Stable);
+        assert!(!policy.allow_web);
+        assert!(!policy.require_sources);
+        assert!(!policy.allow_nested_delegation);
+    }
+
+    #[test]
+    fn grounding_policy_detects_high_stakes_variants() {
+        assert_eq!(
+            classify_grounding_text("Is this medication safe?"),
+            GroundingClass::HighStakes
+        );
+        assert_eq!(
+            classify_grounding_text("Should I sign this contract?"),
+            GroundingClass::HighStakes
+        );
+        assert_eq!(
+            classify_grounding_text("Any tax impact for this investment?"),
+            GroundingClass::HighStakes
+        );
+    }
+
+    #[test]
+    fn reusable_evolution_guidance_can_mention_demo_or_hello() {
+        assert!(!should_suppress_evolution(
+            "Refactor routing",
+            "coding task",
+            "When adding demo or hello routing, add a focused regression test and verify policy behavior with source-backed checks."
+        ));
     }
 
     #[test]
