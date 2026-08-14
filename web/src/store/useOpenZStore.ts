@@ -491,15 +491,22 @@ function settleOrchestrationRuns(
       (overrideTerminal && run.status !== status);
     if (!canSettle) return run;
     changed = true;
+    const settledStepStatus: OrchestrationStepState['status'] =
+      status === 'cancelled' ? 'skipped' : 'failed';
     return {
       ...run,
       status,
       summary: status === 'cancelled' ? summary : run.summary || summary,
       endedAt: now,
       provisionalFailure: status === 'failed' && !overrideTerminal,
-      steps: run.steps.map((step) =>
+      steps: run.steps.map((step): OrchestrationStepState =>
         step.status === 'running' || step.status === 'awaiting_review' || overrideTerminal
-          ? { ...step, status: status === 'cancelled' ? 'skipped' : 'failed', error: step.error || summary, endedAt: step.endedAt || now }
+          ? {
+              ...step,
+              status: settledStepStatus,
+              error: step.error || summary,
+              endedAt: step.endedAt || now,
+            }
           : step,
       ),
     };
