@@ -1,14 +1,14 @@
 use crate::agent::AgentLoop;
 use crate::config::schema::WebSocketChannelConfig;
 use axum::{
-    Json, Router,
     extract::{
-        Path as AxumPath, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
+        Path as AxumPath, State,
     },
     http::StatusCode,
     response::IntoResponse,
     routing::get,
+    Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -44,6 +44,224 @@ pub fn publish_ws_event(event: serde_json::Value) {
     }
 }
 
+const ORCHESTRATION_EVENT_SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+const ORCHESTRATION_EVENT_QUEUE_CAPACITY: usize = 1024;
+
+struct OrchestrationEventBroker {
+    queue: std::sync::Mutex<std::collections::VecDeque<serde_json::Value>>,
+    notify: tokio::sync::Notify,
+}
+
+fn active_ws_sender_snapshot_for_chat(
+    chat_id: Option<&str>,
+) -> Vec<(String, mpsc::Sender<Message>)> {
+    let normalized_chat_id = chat_id.map(normalize_ws_chat_id);
+    let client_chats = crate::channels::get_active_ws_client_chats()
+        .lock()
+        .map(|chats| chats.clone())
+        .unwrap_or_default();
+
+    crate::channels::get_active_ws_senders()
+        .lock()
+        .map(|senders| {
+            senders
+                .iter()
+                .filter(|(id, _)| {
+                    normalized_chat_id
+                        .as_deref()
+                        .and_then(|chat_id| {
+                            client_chats
+                                .get(*id)
+                                .map(|client_chat| normalize_ws_chat_id(client_chat) == chat_id)
+                        })
+                        .unwrap_or(true)
+                })
+                .map(|(id, sender)| (id.clone(), sender.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn normalize_ws_chat_id(chat_id: &str) -> String {
+    if chat_id.contains(':') {
+        ws_chat_id(chat_id).unwrap_or_else(|| chat_id.to_string())
+    } else if chat_id.starts_with("cli_")
+        || chat_id.starts_with("subagent_")
+        || chat_id.starts_with("telegram_")
+        || chat_id.starts_with("ws_")
+    {
+        chat_id.to_string()
+    } else {
+        format!("ws_{chat_id}")
+    }
+}
+
+fn remove_active_ws_sender(client_id: &str) {
+    if let Ok(mut senders) = crate::channels::get_active_ws_senders().lock() {
+        senders.remove(client_id);
+    }
+    if let Ok(mut client_chats) = crate::channels::get_active_ws_client_chats().lock() {
+        client_chats.remove(client_id);
+    }
+}
+
+fn orchestration_event_type(event: &serde_json::Value) -> Option<&str> {
+    event
+        .get("payload")
+        .and_then(|payload| payload.get("type"))
+        .and_then(serde_json::Value::as_str)
+}
+
+fn orchestration_event_run_id(event: &serde_json::Value) -> Option<&str> {
+    event
+        .get("payload")
+        .and_then(|payload| payload.get("run_id"))
+        .and_then(serde_json::Value::as_str)
+}
+
+fn is_critical_orchestration_event(event: &serde_json::Value) -> bool {
+    matches!(
+        orchestration_event_type(event),
+        Some("run_started" | "run_finished")
+    )
+}
+
+fn enqueue_orchestration_event(
+    broker: &OrchestrationEventBroker,
+    event: serde_json::Value,
+) -> Option<serde_json::Value> {
+    let Ok(mut queue) = broker.queue.lock() else {
+        return None;
+    };
+
+    if queue.len() >= ORCHESTRATION_EVENT_QUEUE_CAPACITY {
+        if !is_critical_orchestration_event(&event) {
+            return None;
+        }
+
+        let event_type = orchestration_event_type(&event);
+        let event_run_id = orchestration_event_run_id(&event);
+
+        if let Some(index) = queue
+            .iter()
+            .position(|queued| !is_critical_orchestration_event(queued))
+        {
+            queue.remove(index);
+        } else if event_type == Some("run_finished") {
+            if let Some(index) = queue
+                .iter()
+                .position(|queued| orchestration_event_run_id(queued) == event_run_id)
+            {
+                queue[index] = event;
+                broker.notify.notify_one();
+                return None;
+            }
+
+            if let Some(index) = queue
+                .iter()
+                .position(|queued| orchestration_event_type(queued) == Some("run_started"))
+            {
+                queue.remove(index);
+            } else {
+                return Some(event);
+            }
+        } else if queue
+            .iter()
+            .any(|queued| orchestration_event_run_id(queued) == event_run_id)
+        {
+            return None;
+        } else {
+            return Some(event);
+        }
+    }
+
+    queue.push_back(event);
+    broker.notify.notify_one();
+    None
+}
+
+async fn publish_ws_event_with_timeout(event: serde_json::Value) {
+    let Ok(evt_str) = serde_json::to_string(&event) else {
+        return;
+    };
+
+    let chat_id = event.get("chat_id").and_then(serde_json::Value::as_str);
+    let sends = active_ws_sender_snapshot_for_chat(chat_id)
+        .into_iter()
+        .map(|(client_id, sender)| {
+            let evt_str = evt_str.clone();
+            async move {
+                let send_result = tokio::time::timeout(
+                    ORCHESTRATION_EVENT_SEND_TIMEOUT,
+                    sender.send(Message::Text(evt_str)),
+                )
+                .await;
+
+                if !matches!(send_result, Ok(Ok(()))) {
+                    remove_active_ws_sender(&client_id);
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    futures_util::future::join_all(sends).await;
+}
+
+async fn run_orchestration_event_broker(broker: Arc<OrchestrationEventBroker>) {
+    loop {
+        while let Some(event) = broker
+            .queue
+            .lock()
+            .ok()
+            .and_then(|mut queue| queue.pop_front())
+        {
+            publish_ws_event_with_timeout(event).await;
+        }
+
+        broker.notify.notified().await;
+    }
+}
+
+fn orchestration_event_broker() -> Option<Arc<OrchestrationEventBroker>> {
+    static BROKER: std::sync::OnceLock<Arc<OrchestrationEventBroker>> = std::sync::OnceLock::new();
+
+    if let Some(broker) = BROKER.get() {
+        return Some(broker.clone());
+    }
+
+    let handle = tokio::runtime::Handle::try_current().ok()?;
+    Some(
+        BROKER
+            .get_or_init(|| {
+                let broker = Arc::new(OrchestrationEventBroker {
+                    queue: std::sync::Mutex::new(std::collections::VecDeque::new()),
+                    notify: tokio::sync::Notify::new(),
+                });
+                handle.spawn(run_orchestration_event_broker(broker.clone()));
+                broker
+            })
+            .clone(),
+    )
+}
+
+/// Publish a lifecycle event without dropping it when a client queue is full.
+///
+/// Progress broadcasts remain best-effort; workflow lifecycle events are routed
+/// through one ordered bounded broker. Under saturation, run-finished events
+/// coalesce queued lifecycle state; uncoalescable critical events bypass the
+/// broker with timeout delivery; non-critical step progress may be dropped.
+fn publish_reliable_ws_event(event: serde_json::Value) {
+    let Some(broker) = orchestration_event_broker() else {
+        return;
+    };
+
+    if let Some(overflow_event) = enqueue_orchestration_event(&broker, event) {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(publish_ws_event_with_timeout(overflow_event));
+        }
+    }
+}
+
 /// Extract the chat id from a session key (mapping colons to underscores to match WebUI format).
 pub fn ws_chat_id(session_key: &str) -> Option<String> {
     if session_key.is_empty() {
@@ -69,6 +287,16 @@ pub fn publish_activity_notice(
             "timestamp": chrono::Utc::now().timestamp_millis(),
         }));
     }
+}
+
+/// Publish a structured orchestration event to WebUI clients for a chat/session.
+pub fn publish_orchestration_event(chat_id: &str, payload: serde_json::Value) {
+    publish_reliable_ws_event(serde_json::json!({
+        "event": "orchestration_event",
+        "chat_id": chat_id,
+        "run_id": payload.get("run_id").and_then(serde_json::Value::as_str),
+        "payload": payload,
+    }));
 }
 
 static WS_APPROVALS: std::sync::OnceLock<
@@ -417,7 +645,7 @@ async fn persist_attachments(attachments: &Value) -> Vec<String> {
     if tokio::fs::create_dir_all(&attach_dir).await.is_err() {
         return refs;
     }
-    use base64::{Engine as _, engine::general_purpose};
+    use base64::{engine::general_purpose, Engine as _};
     for att in arr.iter().take(8) {
         let Some(data_b64) = att.get("data").and_then(|v| v.as_str()) else {
             continue;
@@ -501,12 +729,18 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
     if let Ok(mut senders) = crate::channels::get_active_ws_senders().lock() {
         senders.insert(client_id.clone(), tx.clone());
     }
+    if let Ok(mut client_chats) = crate::channels::get_active_ws_client_chats().lock() {
+        client_chats.insert(client_id.clone(), default_chat_id.clone());
+    }
 
     struct WsSenderGuard(String);
     impl Drop for WsSenderGuard {
         fn drop(&mut self) {
             if let Ok(mut senders) = crate::channels::get_active_ws_senders().lock() {
                 senders.remove(&self.0);
+            }
+            if let Ok(mut client_chats) = crate::channels::get_active_ws_client_chats().lock() {
+                client_chats.remove(&self.0);
             }
         }
     }
@@ -535,6 +769,9 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                     .and_then(|v| v.as_str())
                     .unwrap_or(&default_chat_id)
                     .to_string();
+                if let Ok(mut client_chats) = crate::channels::get_active_ws_client_chats().lock() {
+                    client_chats.insert(client_id.clone(), chat_id.clone());
+                }
 
                 match msg_type {
                     "new_chat" => {
@@ -2028,6 +2265,94 @@ async fn openai_chat_completions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn orchestration_lifecycle_events_survive_queue_pressure() {
+        let client_id = format!("test-orchestration-{}", uuid::Uuid::new_v4());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        crate::channels::get_active_ws_senders()
+            .lock()
+            .unwrap()
+            .insert(client_id.clone(), tx);
+
+        let publisher = tokio::spawn(async {
+            super::publish_ws_event(serde_json::json!({"event": "progress"}));
+            for payload in [
+                serde_json::json!({"type": "run_started", "run_id": "run-1"}),
+                serde_json::json!({"type": "step_started", "run_id": "run-1"}),
+                serde_json::json!({"type": "step_finished", "run_id": "run-1"}),
+                serde_json::json!({"type": "run_finished", "run_id": "run-1"}),
+            ] {
+                super::publish_orchestration_event("chat-1", payload);
+            }
+        });
+
+        let mut types = Vec::new();
+        for _ in 0..5 {
+            let message = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+                .await
+                .expect("event delivery timed out")
+                .expect("sender closed");
+            if let axum::extract::ws::Message::Text(text) = message {
+                let event: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if event["event"] == "orchestration_event" {
+                    types.push(event["payload"]["type"].as_str().unwrap().to_string());
+                }
+            }
+        }
+
+        publisher.await.unwrap();
+        assert_eq!(
+            types,
+            [
+                "run_started",
+                "step_started",
+                "step_finished",
+                "run_finished"
+            ]
+        );
+        crate::channels::get_active_ws_senders()
+            .lock()
+            .unwrap()
+            .remove(&client_id);
+    }
+
+    #[test]
+    fn orchestration_event_snapshot_matches_raw_webui_chat_id() {
+        let client_id = format!("client-{}", uuid::Uuid::new_v4());
+        let other_client_id = format!("client-{}", uuid::Uuid::new_v4());
+        let raw_chat_id = uuid::Uuid::new_v4().to_string();
+        let other_chat_id = uuid::Uuid::new_v4().to_string();
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let (other_tx, _other_rx) = tokio::sync::mpsc::channel(1);
+
+        crate::channels::get_active_ws_senders()
+            .lock()
+            .unwrap()
+            .insert(client_id.clone(), tx);
+        crate::channels::get_active_ws_senders()
+            .lock()
+            .unwrap()
+            .insert(other_client_id.clone(), other_tx);
+        crate::channels::get_active_ws_client_chats()
+            .lock()
+            .unwrap()
+            .insert(client_id.clone(), raw_chat_id.clone());
+        crate::channels::get_active_ws_client_chats()
+            .lock()
+            .unwrap()
+            .insert(other_client_id.clone(), other_chat_id);
+
+        let matching = active_ws_sender_snapshot_for_chat(Some(&format!("ws_{raw_chat_id}")))
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(matching, vec![client_id.clone()]);
+
+        remove_active_ws_sender(&client_id);
+        remove_active_ws_sender(&other_client_id);
+    }
 
     #[test]
     fn websocket_chat_uses_shared_stop_command_detection() {

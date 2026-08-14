@@ -2,6 +2,7 @@ use super::delegate_profile::DelegateProfileTool;
 use super::CancellationToken;
 use crate::agent::style::*;
 use crate::config::schema::Config;
+use crate::orchestrator::spec::CapabilityPolicy;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
 use crate::tools::Tool;
@@ -15,6 +16,7 @@ pub struct EvaluatorOptimizerLoopTool {
     pub session_manager: SessionManager,
     pub parent_tools: Vec<Arc<dyn Tool>>,
     pub cancellation_token: CancellationToken,
+    pub capability_policy: Option<CapabilityPolicy>,
 }
 
 #[async_trait::async_trait]
@@ -25,6 +27,10 @@ impl Tool for EvaluatorOptimizerLoopTool {
 
     fn description(&self) -> &str {
         "Run a stateful draft-and-review cycle (reflection loop) between an optimizer subagent (e.g. coding_agent) and an evaluator subagent (e.g. reviewer) to generate high-quality outputs."
+    }
+
+    fn metadata(&self) -> crate::tools::ToolMetadata {
+        super::subagent_tool_metadata(self.name())
     }
 
     fn parameters(&self) -> Value {
@@ -79,6 +85,22 @@ impl Tool for EvaluatorOptimizerLoopTool {
         let evaluator_profile = profiles.iter().find(|p| p.name == evaluator_name)
             .ok_or_else(|| anyhow!("Evaluator subagent profile '{}' not found", evaluator_name))?;
 
+        if let Some(policy) = &self.capability_policy {
+            for profile in [optimizer_profile, evaluator_profile] {
+                let metadata = super::subagent_tool_metadata(&profile.name);
+                if !crate::tools::orchestrator::tool_allowed_by_policy_with_metadata(
+                    &profile.name,
+                    &metadata,
+                    policy,
+                ) {
+                    return Err(anyhow!(
+                        "Subagent profile '{}' is blocked by orchestrator capability policy",
+                        profile.name
+                    ));
+                }
+            }
+        }
+
         let optimizer_tool = DelegateProfileTool {
             config: self.config.clone(),
             parent_provider: self.parent_provider.clone(),
@@ -86,6 +108,7 @@ impl Tool for EvaluatorOptimizerLoopTool {
             profile: optimizer_profile.clone(),
             parent_tools: self.parent_tools.clone(),
             cancellation_token: self.cancellation_token.clone(),
+            capability_policy: self.capability_policy.clone(),
         };
 
         let evaluator_tool = DelegateProfileTool {
@@ -95,6 +118,7 @@ impl Tool for EvaluatorOptimizerLoopTool {
             profile: evaluator_profile.clone(),
             parent_tools: self.parent_tools.clone(),
             cancellation_token: self.cancellation_token.clone(),
+            capability_policy: self.capability_policy.clone(),
         };
 
         let mut optimizer_output = String::new();

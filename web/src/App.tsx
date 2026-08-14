@@ -40,12 +40,14 @@ export const App: React.FC = () => {
   const setIsActivityPanelOpen = useOpenZStore((s) => s.setIsActivityPanelOpen);
   const toggleActivityPanel = useOpenZStore((s) => s.toggleActivityPanel);
   const messages = useOpenZStore((s) => s.messages);
+  const orchestrationRuns = useOpenZStore((s) => s.orchestrationRuns);
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const activeMessages = useMemo(() => messages[activeChatId] || [], [messages, activeChatId]);
+  const activeOrchestrationRuns = useMemo(() => orchestrationRuns[activeChatId] || [], [orchestrationRuns, activeChatId]);
   const resolvedTheme =
     theme === 'system'
       ? window.matchMedia('(prefers-color-scheme: dark)').matches
@@ -200,6 +202,7 @@ export const App: React.FC = () => {
               <AgentActivityPanel
                 messages={activeMessages}
                 isStreaming={activeMessages.some((msg) => !!msg.isStreaming)}
+                orchestrationRuns={activeOrchestrationRuns}
                 onClose={() => setIsActivityPanelOpen(false)}
               />
             )}

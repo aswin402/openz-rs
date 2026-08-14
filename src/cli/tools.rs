@@ -17,6 +17,7 @@ use crate::tools::filesystem::{
 use crate::tools::js_format::JsFormatTool;
 use crate::tools::network::CheckPortTool;
 use crate::tools::notes::IndexNotesTool;
+use crate::tools::orchestrator::OrchestrateWorkflowTool;
 use crate::tools::remote::SendRemoteInputTool;
 use crate::tools::rust_docs::RustDocsTool;
 use crate::tools::semantic_search::SemanticSearchTool;
@@ -77,6 +78,7 @@ fn register_core_tools(
     registry.register(std::sync::Arc::new(KnowledgeSourceTool));
     registry.register(std::sync::Arc::new(ResearchBriefTool));
     registry.register(std::sync::Arc::new(WorkflowMemoryTool));
+    registry.register(std::sync::Arc::new(OrchestrateWorkflowTool::default()));
     registry.register(std::sync::Arc::new(ZenflowEditTool {
         provider: provider.clone(),
     }));
@@ -103,6 +105,7 @@ fn register_core_tools(
         session_manager: session_manager.clone(),
         parent_tools: Vec::new(),
         cancellation_token: crate::tools::subagent::CancellationToken::new(),
+        capability_policy: None,
     }));
     registry.register(std::sync::Arc::new(ParallelResearchTool {
         config: config.clone(),
@@ -110,6 +113,7 @@ fn register_core_tools(
         session_manager: session_manager.clone(),
         parent_tools: Vec::new(),
         cancellation_token: crate::tools::subagent::CancellationToken::new(),
+        capability_policy: None,
     }));
     registry.register(std::sync::Arc::new(
         crate::tools::subagent::EvaluatorOptimizerLoopTool {
@@ -118,6 +122,7 @@ fn register_core_tools(
             session_manager: session_manager.clone(),
             parent_tools: Vec::new(),
             cancellation_token: crate::tools::subagent::CancellationToken::new(),
+            capability_policy: None,
         },
     ));
 

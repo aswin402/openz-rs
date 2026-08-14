@@ -271,6 +271,9 @@ mod tests {
         registry.register(std::sync::Arc::new(
             crate::tools::shared_memory::WorkflowMemoryTool,
         ));
+        registry.register(std::sync::Arc::new(
+            crate::tools::orchestrator::OrchestrateWorkflowTool::default(),
+        ));
 
         // Collect all registered tool names
         let tools = registry.to_openai_format();
@@ -413,9 +416,10 @@ mod tests {
             shared_count, 10,
             "Expected 10 shared memory tools, got {shared_count}"
         );
+        assert!(names.contains(&"orchestrate_workflow"));
         assert_eq!(
             names.len(),
-            5 + 21 + 12 + 32 + 10,
+            5 + 21 + 12 + 32 + 10 + 1,
             "Total tool count mismatch"
         );
     }

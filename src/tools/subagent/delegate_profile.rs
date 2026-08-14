@@ -13,6 +13,7 @@ use super::{
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
 use crate::config::schema::Config;
+use crate::orchestrator::spec::CapabilityPolicy;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
 use crate::subagents::SubagentProfile;
@@ -29,6 +30,14 @@ pub struct DelegateProfileTool {
     pub profile: SubagentProfile,
     pub parent_tools: Vec<Arc<dyn Tool>>,
     pub cancellation_token: CancellationToken,
+    pub capability_policy: Option<CapabilityPolicy>,
+}
+
+fn filesystem_write_denied_by_policy(policy: &Option<CapabilityPolicy>) -> bool {
+    policy
+        .as_ref()
+        .map(|policy| policy.deny_filesystem_write)
+        .unwrap_or(false)
 }
 
 #[async_trait::async_trait]
@@ -72,6 +81,20 @@ impl Tool for DelegateProfileTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         crate::agent::style::spinner::IS_SILENT.scope(crate::agent::style::is_silent(), async {
+        if let Some(policy) = &self.capability_policy {
+            let metadata = super::subagent_tool_metadata(&self.profile.name);
+            if !crate::tools::orchestrator::tool_allowed_by_policy_with_metadata(
+                &self.profile.name,
+                &metadata,
+                policy,
+            ) {
+                return Err(anyhow!(
+                    "Subagent profile '{}' is blocked by orchestrator capability policy",
+                    self.profile.name
+                ));
+            }
+        }
+
         let current_depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
         if current_depth >= 3 {
             crate::tui_println!("{}⚠️ Delegation depth limit reached ({}). Aborting nested subagent '{}'.{}", AURA_GOLD, current_depth, self.profile.name, COLOR_RESET);
@@ -149,8 +172,9 @@ impl Tool for DelegateProfileTool {
         let is_vision_profile = is_vision;
         let formatted_name = format_subagent_name(&self.profile.name);
         let mut last_error = None;
+        let filesystem_write_denied = filesystem_write_denied_by_policy(&self.capability_policy);
 
-        let needs_workspace = match self.profile.name.as_str() {
+        let needs_workspace = !filesystem_write_denied && match self.profile.name.as_str() {
             "orchestrator" | "architect" | "git_ops_agent" | "dependency_manager" |
             "frontend_architect" | "media_designer" | "sop_designer" | "api_integrator" |
             "performance_tuner" | "document_compiler" | "presentation_designer" |
@@ -161,12 +185,18 @@ impl Tool for DelegateProfileTool {
         };
 
         let parent_dir = current_workspace_root();
-        let mut workspace_isolation = if needs_workspace {
+        let mut workspace_isolation = if filesystem_write_denied {
+            "policy_no_filesystem_write".to_string()
+        } else if needs_workspace {
             "isolated_worktree".to_string()
         } else {
             "not_required".to_string()
         };
-        let mut workspace_isolation_reason: Option<String> = None;
+        let mut workspace_isolation_reason: Option<String> = if filesystem_write_denied {
+            Some("Capability policy denies filesystem writes; running without workspace isolation, graph branches, or sync-back.".to_string())
+        } else {
+            None
+        };
         let workspace_dir = if !needs_workspace {
             parent_dir.clone()
         } else {
@@ -262,15 +292,13 @@ impl Tool for DelegateProfileTool {
                 provider.clone(),
                 self.session_manager.clone(),
             );
+            child_registry.set_capability_policy(self.capability_policy.clone());
             for tool in &filtered_parent_tools {
                 child_registry.register(tool.clone());
             }
 
             // Only manager-style profiles can spawn generic workers. Standard subagents must finish their own task.
-            let allowed_delegate = match self.profile.name.as_str() {
-                "planner" | "sop_designer" | "openz_coordinator" => true,
-                _ => false,
-            };
+            let allowed_delegate = super::can_spawn_nested_subagents(&self.profile.name);
 
             if allowed_delegate {
                 child_registry.register(std::sync::Arc::new(super::delegate_task::DelegateTaskTool {
@@ -279,6 +307,7 @@ impl Tool for DelegateProfileTool {
                     session_manager: self.session_manager.clone(),
                     parent_tools: self.parent_tools.clone(),
                     cancellation_token: self.cancellation_token.clone(),
+                    capability_policy: self.capability_policy.clone(),
                 }));
             }
 
@@ -319,8 +348,10 @@ impl Tool for DelegateProfileTool {
 
             let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
             let mut has_branch = false;
-            if let Ok(_) = crate::tools::graph_memory::CreateDatabaseBranchTool.call(&serde_json::json!({ "branchId": branch_id })).await {
-                has_branch = true;
+            if !filesystem_write_denied {
+                if let Ok(_) = crate::tools::graph_memory::CreateDatabaseBranchTool.call(&serde_json::json!({ "branchId": branch_id })).await {
+                    has_branch = true;
+                }
             }
 
             let mut final_prompt = subagent_prompt.clone();
@@ -430,12 +461,13 @@ impl Tool for DelegateProfileTool {
                         );
                     }
 
-                    if should_sync_changes_back(&parent_dir, &workspace_dir) {
+                    if !filesystem_write_denied && should_sync_changes_back(&parent_dir, &workspace_dir) {
                         let _ = sync_changes_back(&workspace_dir, &parent_dir);
                     }
 
-                    // Run evolution review
-                    let _ = run_evolution_review(&self.parent_provider, &self.profile.name, &clean_goal, &clean_context, &run_res.content).await;
+                    if !filesystem_write_denied {
+                        let _ = run_evolution_review(&self.parent_provider, &self.profile.name, &clean_goal, &clean_context, &run_res.content).await;
+                    }
 
                     return Ok(serde_json::json!({
                         "status": "success",
@@ -776,4 +808,21 @@ pub fn filter_tools_for_subagent(
     };
     filtered.retain(|t| t.name() != "send_remote_input");
     filtered
+}
+
+#[cfg(test)]
+mod capability_policy_tests {
+    use super::*;
+
+    #[test]
+    fn filesystem_write_denied_policy_helper_detects_denial() {
+        assert!(!filesystem_write_denied_by_policy(&None));
+        assert!(!filesystem_write_denied_by_policy(&Some(
+            CapabilityPolicy::default()
+        )));
+        assert!(filesystem_write_denied_by_policy(&Some(CapabilityPolicy {
+            deny_filesystem_write: true,
+            ..Default::default()
+        })));
+    }
 }

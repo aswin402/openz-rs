@@ -5,6 +5,7 @@ pub mod config;
 pub mod cron;
 pub mod logs;
 pub mod model_registry;
+pub mod orchestrator;
 pub mod providers;
 pub mod session;
 pub mod shutdown;

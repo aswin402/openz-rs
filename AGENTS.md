@@ -125,6 +125,7 @@ openz/
 │   │   ├── memory_extra.rs # 31 tools: set_working_memory, smart_store, extract_and_store_facts, proactive_recall, query_fact_history, etc.
 │   │
 │   ├── cron/               # Scheduler loop (cron syntax + duration)
+│   ├── orchestrator/       # Typed multi-agent workflow specs, runtime, validation, and events
 │   ├── sop/                # Stateful SOP workflow engine (persisted JSON instances)
 │   └── subagents/          # SubagentProfile definitions (~/.openz/subagents.json)
 │       └── mod.rs          # 15+ default profiles (planner, researcher, reviewer, etc.)
@@ -216,6 +217,9 @@ The systems for structured reasoning (`sequential_thinking.rs`), context compres
 
 ### MCP defaults are user-managed
 `Config::default()` starts with an empty `mcp_servers` map. MCP servers are added and managed through `openz configure` or the native `manage_mcp` tool, and loaded from `~/.openz/config.json`. The removed native-equivalent MCP defaults (`sequential-thinking`, `memory`, `headroom`, `database`, and `context-bus`) are pruned during config loading in `config/loader.rs`.
+
+### Orchestrator runtime coordinates typed subagent workflows
+The native `orchestrate_workflow` tool accepts typed workflow specs and executes existing subagent profiles through `src/orchestrator/`. It supports sequential, parallel, review-loop, selector, manager-worker, and graph modes; validates step dependencies before execution; applies workflow capability policies to child tools; and publishes WebUI orchestration lifecycle events for the Agent Activity run tree. SOP remains the durable user-defined workflow engine.
 
 ### Subagents = tools at the LLM level
 Custom subagent profiles from `~/.openz/subagents.json` are dynamically registered as tools in `ToolRegistry::to_openai_format()` (`tools/mod.rs:100-129`). When the LLM "calls" a subagent name as a tool, `ToolRegistry::get()` (`tools/mod.rs:63-82`) matches it and returns a `DelegateProfileTool`.

@@ -30,11 +30,18 @@ pub use lifecycle::{
 pub use optimize_profile::{CreateSubagentTool, DeleteSubagentTool, OptimizeSubagentTool};
 pub use parallel_research::ParallelResearchTool;
 
+pub fn can_spawn_nested_subagents(profile_name: &str) -> bool {
+    matches!(
+        profile_name,
+        "planner" | "sop_designer" | "openz_coordinator"
+    )
+}
+
 pub fn subagent_tool_metadata(name: &str) -> crate::tools::ToolMetadata {
     let mut metadata = crate::tools::ToolMetadata::infer(name);
     metadata.domain = "subagent";
     metadata.risk = crate::tools::ToolRisk::Medium;
-    metadata.spawns_process = true;
+    metadata.spawns_process = false;
     metadata.requires_approval = false;
     metadata.priority = 100;
     metadata.recommended_timeout_secs = Some(600);
