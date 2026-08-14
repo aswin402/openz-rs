@@ -163,7 +163,6 @@ pub fn step_execution_policy(
     let combined_norm = normalized(&combined);
     let agent_norm = normalized(agent);
     let explicitly_complex = asks_for_delegation_or_complex_work(&combined_norm);
-    let manager_agent = contains_any(&agent_norm, &["manager", "coordinator", "orchestrator"]);
     let researcher_agent = contains_any(&agent_norm, &["researcher", "research"]);
 
     let require_sources = matches!(
@@ -176,7 +175,7 @@ pub fn step_execution_policy(
     let allow_web = require_sources
         || researcher_agent
         || contains_any(&combined_norm, &["web", "internet", "search", "docs"]);
-    let allow_nested_delegation = manager_agent || explicitly_complex;
+    let allow_nested_delegation = explicitly_complex;
     let suppress_evolution = matches!(class, GroundingClass::Trivial)
         || contains_any(&combined_norm, &["smoke test", "demo", "hello"]);
 
@@ -262,6 +261,18 @@ mod tests {
             classify_grounding_text("Compare the PDF at /tmp/report.pdf"),
             GroundingClass::SourceSpecific
         );
+    }
+
+    #[test]
+    fn manager_agent_does_not_delegate_trivial_steps_without_explicit_need() {
+        let policy = step_execution_policy(
+            "Run simple smoke test workflow",
+            "Summarize hello",
+            "manager",
+        );
+
+        assert_eq!(policy.grounding_class, GroundingClass::Trivial);
+        assert!(!policy.allow_nested_delegation);
     }
 
     #[test]
