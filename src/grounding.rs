@@ -197,12 +197,29 @@ Balanced grounding rules:
 - Cite or name sources when live sources are used. If sources are missing or weak, say verification is incomplete instead of pretending certainty."
 }
 
+fn looks_reusable_evolution_guidance(goal: &str, context: &str, summary: &str) -> bool {
+    let combined = normalized(&format!("{goal}\n{context}\n{summary}"));
+    contains_any(
+        &combined,
+        &[
+            "add a focused regression test",
+            "when adding",
+            "when changing",
+            "refactor",
+            "routing",
+            "implementation",
+            "verify",
+        ],
+    )
+}
+
 pub fn should_suppress_evolution(goal: &str, context: &str, summary: &str) -> bool {
     let combined = normalized(&format!("{goal}\n{context}\n{summary}"));
     let class = classify_grounding_text(&combined);
     let summary_words = summary.split_whitespace().count();
+    let reusable_guidance = looks_reusable_evolution_guidance(goal, context, summary);
+
     matches!(class, GroundingClass::Trivial)
-        || summary_words < 8
         || contains_any(&combined, &["smoke test", "demo", "hello"])
         || contains_any(
             &combined,
@@ -215,6 +232,7 @@ pub fn should_suppress_evolution(goal: &str, context: &str, summary: &str) -> bo
                 "available tools",
             ],
         )
+        || (summary_words < 18 && !reusable_guidance)
 }
 
 #[cfg(test)]
