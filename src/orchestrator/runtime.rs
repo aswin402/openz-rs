@@ -31,6 +31,8 @@ pub fn build_step_prompt(
     let policy = crate::grounding::step_execution_policy(workflow_goal, &step.goal, &step.agent);
     let grounding_guidance = if policy.require_sources {
         "Use web/docs/local tools when required for current, external, source-specific, uncertain, or high-stakes facts. Cite or name sources when used. If sources are unavailable or weak, say verification is incomplete."
+    } else if policy.allow_nested_delegation {
+        "Complete this step directly when possible, but nested delegation is permitted because this step explicitly asks for complex, delegated, research, scan, implementation, refactor, debug, or multi-source work."
     } else {
         "Complete this step directly when possible. Do not delegate or research for trivial/general-knowledge work unless the step explicitly asks for research, current facts, source-specific facts, or multi-source analysis."
     };
@@ -925,6 +927,23 @@ mod tests {
         assert!(prompt.contains("Use web/docs/local tools when required"));
         assert!(prompt.contains("source-specific"));
         assert!(prompt.contains("verification is incomplete"));
+    }
+
+    #[test]
+    fn step_prompt_allows_delegation_when_policy_allows_it() {
+        let step = WorkflowStep {
+            id: "debug".to_string(),
+            agent: "planner".to_string(),
+            goal: "Debug the repo-wide workflow routing issue".to_string(),
+            depends_on: vec![],
+            expected_output: "root cause and fix plan".to_string(),
+            max_retries: 0,
+        };
+
+        let prompt = build_step_prompt(&step, "Debug orchestration", &[]);
+
+        assert!(prompt.contains("nested delegation is permitted"));
+        assert!(prompt.contains("Nested delegation allowed: true"));
     }
 
     #[tokio::test]
