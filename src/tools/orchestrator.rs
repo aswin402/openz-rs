@@ -210,7 +210,8 @@ impl StepExecutor for SubagentStepExecutor {
         }
 
         let prompt = build_step_prompt(step, &spec.goal, prior_results);
-        let step_policy = crate::grounding::step_execution_policy(&spec.goal, &step.goal, &step.agent);
+        let step_policy =
+            crate::grounding::step_execution_policy(&spec.goal, &step.goal, &step.agent);
         let delegate = DelegateProfileTool {
             config: self.config.clone(),
             parent_provider: self.parent_provider.clone(),

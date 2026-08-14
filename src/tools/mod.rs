@@ -1167,7 +1167,9 @@ impl ToolRegistry {
             if name == active_subagent {
                 return None;
             }
-            if !crate::tools::subagent::nested_delegation_allowed_for_active_context(&active_subagent) {
+            if !crate::tools::subagent::nested_delegation_allowed_for_active_context(
+                &active_subagent,
+            ) {
                 return None;
             }
         }
@@ -1406,7 +1408,9 @@ impl ToolRegistry {
             .try_with(|s| s.clone())
             .unwrap_or_default();
         active_subagent.is_empty()
-            || crate::tools::subagent::nested_delegation_allowed_for_active_context(&active_subagent)
+            || crate::tools::subagent::nested_delegation_allowed_for_active_context(
+                &active_subagent,
+            )
             || !matches!(
                 name,
                 "delegate_task"
@@ -1478,7 +1482,9 @@ impl ToolRegistry {
                     .try_with(|s| s.clone())
                     .unwrap_or_default();
                 if !active_subagent.is_empty()
-                    && !crate::tools::subagent::nested_delegation_allowed_for_active_context(&active_subagent)
+                    && !crate::tools::subagent::nested_delegation_allowed_for_active_context(
+                        &active_subagent,
+                    )
                 {
                     return subagent_tools;
                 }
