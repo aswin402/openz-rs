@@ -5,6 +5,7 @@
 - Added `capabilities` policies to restrict worker tools per workflow, including shell/process and filesystem-write controls.
 - Added WebUI orchestration lifecycle events and a run-tree panel in Agent Activity, with stop/error/turn-end settlement for stale running state.
 - Documented orchestrator runtime usage with minimal sequential and review-loop examples.
+- **Fix:** Made `orchestrate_workflow` easier for weaker models by accepting `prompt` as a step-goal alias, accepting `agent` as an agent-name alias, and returning clearer schema repair errors.
 - **Chore:** Bumped version to `v0.0.129`.
 
 ### v0.0.128

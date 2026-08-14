@@ -24,6 +24,14 @@ pub struct OrchestrateWorkflowTool {
 }
 
 impl OrchestrateWorkflowTool {
+    fn parse_workflow_spec(arguments: &Value) -> Result<WorkflowSpec> {
+        serde_json::from_value(arguments.clone()).map_err(|err| {
+            anyhow!(
+                "invalid orchestrate_workflow spec: {err}. Required shape: top-level goal, mode, steps; each step needs id, agent, and goal. `prompt` is accepted as an alias for step goal; agent declarations use `name` and also accept `agent` as an alias."
+            )
+        })
+    }
+
     pub fn new(
         config: Config,
         parent_provider: Arc<dyn LLMProvider>,
@@ -296,6 +304,20 @@ mod tests {
     }
 
     #[test]
+    fn workflow_parse_error_explains_required_shape() {
+        let err = OrchestrateWorkflowTool::parse_workflow_spec(&json!({
+            "mode": "sequential",
+            "steps": [{ "id": "plan", "agent": "planner" }]
+        }))
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("invalid orchestrate_workflow spec"));
+        assert!(err.contains("top-level goal, mode, steps"));
+        assert!(err.contains("prompt"));
+    }
+
+    #[test]
     fn capability_policy_filters_shell_and_denied_tools() {
         let policy = CapabilityPolicy {
             denied_tools: vec!["web_fetch".to_string()],
@@ -399,20 +421,51 @@ impl Tool for OrchestrateWorkflowTool {
     }
 
     fn description(&self) -> &str {
-        "Run a typed multi-agent workflow using OpenZ subagent profiles, modes, termination policies, and review gates. Each workflow step executes through the assigned subagent profile."
+        "Run a typed multi-agent workflow using OpenZ subagent profiles. Required top-level fields: goal, mode, steps. Each step requires id, agent, and goal; prompt is accepted as an alias for step goal. Agent declarations use name; agent is accepted as an alias for name. Example: {\"goal\":\"Summarize hello and review it\",\"mode\":\"sequential\",\"agents\":[{\"name\":\"planner\"},{\"name\":\"reviewer\"}],\"steps\":[{\"id\":\"plan\",\"agent\":\"planner\",\"goal\":\"Summarize hello\"},{\"id\":\"review\",\"agent\":\"reviewer\",\"goal\":\"Review planner output\",\"depends_on\":[\"plan\"]}]}"
     }
 
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
-                "goal": { "type": "string" },
+                "goal": {
+                    "type": "string",
+                    "description": "Overall workflow goal. Required."
+                },
                 "mode": {
                     "type": "string",
                     "enum": ["sequential", "parallel", "manager_worker", "review_loop", "selector_group", "graph"]
                 },
-                "agents": { "type": "array", "items": { "type": "object" } },
-                "steps": { "type": "array", "items": { "type": "object" } },
+                "agents": {
+                    "type": "array",
+                    "description": "Optional subagent declarations. Each object requires name; agent is accepted as an alias for name.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "description": "Subagent profile name, e.g. planner or reviewer." },
+                            "agent": { "type": "string", "description": "Alias for name." },
+                            "model": { "type": "string" },
+                            "tools": { "type": "array", "items": { "type": "string" } }
+                        }
+                    }
+                },
+                "steps": {
+                    "type": "array",
+                    "description": "Workflow steps. Each step requires id, agent, and goal; prompt is accepted as an alias for goal.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string", "description": "Unique step id." },
+                            "agent": { "type": "string", "description": "Subagent profile assigned to this step." },
+                            "goal": { "type": "string", "description": "Step task/instruction. Required unless prompt is provided." },
+                            "prompt": { "type": "string", "description": "Alias for goal." },
+                            "depends_on": { "type": "array", "items": { "type": "string" } },
+                            "expected_output": { "type": "string" },
+                            "max_retries": { "type": "integer", "minimum": 0, "maximum": 8 }
+                        },
+                        "required": ["id", "agent", "goal"]
+                    }
+                },
                 "termination": { "type": "object" },
                 "review": { "type": "object" },
                 "capabilities": { "type": "object" }
@@ -422,7 +475,7 @@ impl Tool for OrchestrateWorkflowTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let spec: WorkflowSpec = serde_json::from_value(arguments.clone())?;
+        let spec = Self::parse_workflow_spec(arguments)?;
         let known_agents = crate::subagents::load_profiles()
             .unwrap_or_default()
             .into_iter()

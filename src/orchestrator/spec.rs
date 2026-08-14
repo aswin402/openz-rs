@@ -13,6 +13,7 @@ pub enum WorkflowMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentRef {
+    #[serde(alias = "agent")]
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -24,6 +25,7 @@ pub struct AgentRef {
 pub struct WorkflowStep {
     pub id: String,
     pub agent: String,
+    #[serde(alias = "prompt")]
     pub goal: String,
     #[serde(default)]
     pub depends_on: Vec<String>,
@@ -43,17 +45,27 @@ pub struct TerminationPolicy {
     pub failure_keyword: Option<String>,
 }
 
-fn default_max_rounds() -> usize { 8 }
+fn default_max_rounds() -> usize {
+    8
+}
 
 impl Default for TerminationPolicy {
     fn default() -> Self {
-        Self { max_rounds: default_max_rounds(), success_keyword: None, failure_keyword: None }
+        Self {
+            max_rounds: default_max_rounds(),
+            success_keyword: None,
+            failure_keyword: None,
+        }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ReviewMode { None, Optional, Required }
+pub enum ReviewMode {
+    None,
+    Optional,
+    Required,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReviewPolicy {
@@ -63,10 +75,17 @@ pub struct ReviewPolicy {
     pub reviewer: Option<String>,
 }
 
-fn default_review_mode() -> ReviewMode { ReviewMode::None }
+fn default_review_mode() -> ReviewMode {
+    ReviewMode::None
+}
 
 impl Default for ReviewPolicy {
-    fn default() -> Self { Self { mode: ReviewMode::None, reviewer: None } }
+    fn default() -> Self {
+        Self {
+            mode: ReviewMode::None,
+            reviewer: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -137,5 +156,27 @@ mod tests {
         assert_eq!(spec.steps[1].depends_on, vec!["research"]);
         assert_eq!(spec.termination.max_rounds, 4);
         assert_eq!(spec.capabilities.allowed_tools, vec!["searchxyz_read_url"]);
+    }
+
+    #[test]
+    fn workflow_spec_accepts_model_friendly_aliases() {
+        let raw = serde_json::json!({
+            "goal": "Run a small workflow",
+            "mode": "sequential",
+            "agents": [
+                { "agent": "planner" }
+            ],
+            "steps": [
+                {
+                    "id": "plan",
+                    "agent": "planner",
+                    "prompt": "Summarize hello"
+                }
+            ]
+        });
+
+        let spec: WorkflowSpec = serde_json::from_value(raw).expect("aliases are accepted");
+        assert_eq!(spec.agents[0].name, "planner");
+        assert_eq!(spec.steps[0].goal, "Summarize hello");
     }
 }
