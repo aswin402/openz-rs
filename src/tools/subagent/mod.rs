@@ -5,6 +5,7 @@ use std::sync::Arc;
 tokio::task_local! {
     pub static DELEGATION_DEPTH: usize;
     pub static ACTIVE_SUBAGENT: String;
+    pub static ORCHESTRATED_NESTED_DELEGATION_ALLOWED: bool;
 }
 
 pub mod cancellation_token;
@@ -35,6 +36,13 @@ pub fn can_spawn_nested_subagents(profile_name: &str) -> bool {
         profile_name,
         "planner" | "sop_designer" | "openz_coordinator"
     )
+}
+
+pub fn nested_delegation_allowed_for_active_context(profile_name: &str) -> bool {
+    if let Ok(allowed) = ORCHESTRATED_NESTED_DELEGATION_ALLOWED.try_with(|allowed| *allowed) {
+        return allowed;
+    }
+    can_spawn_nested_subagents(profile_name)
 }
 
 pub fn subagent_tool_metadata(name: &str) -> crate::tools::ToolMetadata {

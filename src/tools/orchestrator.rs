@@ -210,6 +210,7 @@ impl StepExecutor for SubagentStepExecutor {
         }
 
         let prompt = build_step_prompt(step, &spec.goal, prior_results);
+        let step_policy = crate::grounding::step_execution_policy(&spec.goal, &step.goal, &step.agent);
         let delegate = DelegateProfileTool {
             config: self.config.clone(),
             parent_provider: self.parent_provider.clone(),
@@ -219,8 +220,12 @@ impl StepExecutor for SubagentStepExecutor {
             cancellation_token: self.cancellation_token.clone(),
             capability_policy: Some(effective_policy),
         };
-        let response = delegate
-            .call(&json!({ "goal": step.goal, "context": prompt }))
+        let response = crate::tools::subagent::ORCHESTRATED_NESTED_DELEGATION_ALLOWED
+            .scope(step_policy.allow_nested_delegation, async {
+                delegate
+                    .call(&json!({ "goal": step.goal, "context": prompt }))
+                    .await
+            })
             .await?;
         response_to_step_output(step, response)
     }

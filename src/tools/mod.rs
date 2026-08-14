@@ -1167,7 +1167,7 @@ impl ToolRegistry {
             if name == active_subagent {
                 return None;
             }
-            if !crate::tools::subagent::can_spawn_nested_subagents(&active_subagent) {
+            if !crate::tools::subagent::nested_delegation_allowed_for_active_context(&active_subagent) {
                 return None;
             }
         }
@@ -1406,7 +1406,7 @@ impl ToolRegistry {
             .try_with(|s| s.clone())
             .unwrap_or_default();
         active_subagent.is_empty()
-            || crate::tools::subagent::can_spawn_nested_subagents(&active_subagent)
+            || crate::tools::subagent::nested_delegation_allowed_for_active_context(&active_subagent)
             || !matches!(
                 name,
                 "delegate_task"
@@ -1478,7 +1478,7 @@ impl ToolRegistry {
                     .try_with(|s| s.clone())
                     .unwrap_or_default();
                 if !active_subagent.is_empty()
-                    && !crate::tools::subagent::can_spawn_nested_subagents(&active_subagent)
+                    && !crate::tools::subagent::nested_delegation_allowed_for_active_context(&active_subagent)
                 {
                     return subagent_tools;
                 }
@@ -1715,6 +1715,30 @@ mod route_cache_tests {
                 assert!(!exposed_names
                     .iter()
                     .any(|name| name == "orchestrate_workflow"));
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn orchestrated_worker_policy_blocks_nested_delegation_tools() {
+        let config = Config::default();
+        let provider = Arc::new(crate::providers::mock::MockProvider::new());
+        let sessions = SessionManager::new(std::path::PathBuf::from(
+            "/tmp/openz-orchestrated-nested-delegation-sessions",
+        ));
+        let registry = ToolRegistry::new_with_context(config, provider, sessions);
+
+        assert!(registry.get("delegate_task").is_some());
+
+        crate::tools::subagent::ORCHESTRATED_NESTED_DELEGATION_ALLOWED
+            .scope(false, async {
+                assert!(registry.get("delegate_task").is_none());
+                let exposed_names = registry
+                    .to_openai_format_for_prompt("delegate this task")
+                    .into_iter()
+                    .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
+                    .collect::<Vec<_>>();
+                assert!(!exposed_names.iter().any(|name| name == "delegate_task"));
             })
             .await;
     }
