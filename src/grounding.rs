@@ -141,12 +141,16 @@ fn asks_for_delegation_or_complex_work(text: &str) -> bool {
             "research",
             "scan",
             "repo-wide",
-            "implement",
             "refactor",
             "debug",
             "compare sources",
         ],
-    )
+    ) || text.split_whitespace().any(|word| {
+        matches!(
+            word.trim_matches(|c: char| !c.is_ascii_alphanumeric()),
+            "implement" | "implementation"
+        )
+    })
 }
 
 pub fn step_execution_policy(
@@ -172,12 +176,7 @@ pub fn step_execution_policy(
     let allow_web = require_sources
         || researcher_agent
         || contains_any(&combined_norm, &["web", "internet", "search", "docs"]);
-    let allow_nested_delegation = manager_agent
-        || explicitly_complex
-        || matches!(
-            class,
-            GroundingClass::LocalProject | GroundingClass::SourceSpecific
-        ) && !matches!(class, GroundingClass::Trivial | GroundingClass::Stable);
+    let allow_nested_delegation = manager_agent || explicitly_complex;
     let suppress_evolution = matches!(class, GroundingClass::Trivial)
         || contains_any(&combined_norm, &["smoke test", "demo", "hello"]);
 
@@ -263,6 +262,40 @@ mod tests {
             classify_grounding_text("Compare the PDF at /tmp/report.pdf"),
             GroundingClass::SourceSpecific
         );
+    }
+
+    #[test]
+    fn simple_grounded_lookups_do_not_allow_nested_delegation() {
+        let local_policy = step_execution_policy(
+            "Answer a project question",
+            "In this repo, where is orchestrate_workflow implemented?",
+            "planner",
+        );
+        let source_policy = step_execution_policy(
+            "Summarize the provided source",
+            "Read https://example.com/docs and summarize it",
+            "planner",
+        );
+
+        assert!(!local_policy.allow_nested_delegation);
+        assert!(!source_policy.allow_nested_delegation);
+    }
+
+    #[test]
+    fn explicit_research_or_delegation_allows_nested_delegation() {
+        let research_policy = step_execution_policy(
+            "Research the project implementation",
+            "Research the relevant files and compare sources",
+            "planner",
+        );
+        let delegation_policy = step_execution_policy(
+            "Answer a project question",
+            "Delegate this repo-wide scan to a subagent",
+            "planner",
+        );
+
+        assert!(research_policy.allow_nested_delegation);
+        assert!(delegation_policy.allow_nested_delegation);
     }
 
     #[test]
