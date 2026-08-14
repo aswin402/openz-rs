@@ -77,3 +77,31 @@ The runtime emits orchestration lifecycle events to the WebUI when a workflow ru
 - Parallel workflow execution is deliberately capped to avoid local resource spikes.
 - Step IDs, agent names, dependencies, review settings, and termination settings are validated before execution.
 - The runtime is not a replacement for durable SOP workflows; SOP remains the user-defined process engine.
+
+## Balanced Grounding In Workflow Steps
+
+OpenZ uses balanced grounding inside orchestrated steps. Workers answer directly for trivial or stable tasks, such as small demos and simple definitions. Workers use local files, memory, docs, or web tools when the step depends on current, source-specific, high-stakes, project-local, or uncertain facts.
+
+For simple smoke tests, prefer direct goals:
+
+```json
+{
+  "goal": "Summarize hello and review it",
+  "mode": "sequential",
+  "agents": [{ "name": "planner" }, { "name": "reviewer" }],
+  "steps": [
+    { "id": "plan", "agent": "planner", "goal": "Summarize hello" },
+    { "id": "review", "agent": "reviewer", "goal": "Review planner output", "depends_on": ["plan"] }
+  ]
+}
+```
+
+Use explicit research wording only when sources are required:
+
+```json
+{
+  "id": "latest",
+  "agent": "researcher",
+  "goal": "Find the latest stable Rust version today and cite sources"
+}
+```

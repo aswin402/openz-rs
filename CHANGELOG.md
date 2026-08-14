@@ -6,6 +6,7 @@
 - Added WebUI orchestration lifecycle events and a run-tree panel in Agent Activity, with stop/error/turn-end settlement for stale running state.
 - Documented orchestrator runtime usage with minimal sequential and review-loop examples.
 - **Fix:** Made `orchestrate_workflow` easier for weaker models by accepting `prompt` as a step-goal alias, accepting `agent` as an agent-name alias, and returning clearer schema repair errors.
+- **Fix:** Added balanced grounding policy for orchestrated steps and main-agent guidance so trivial tasks answer directly, current/source-specific facts retrieve sources, nested delegation is capped, and smoke-test outputs do not create noisy skills.
 - **Chore:** Bumped version to `v0.0.129`.
 
 ### v0.0.128
