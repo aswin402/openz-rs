@@ -140,6 +140,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     )
     .await;
     let weak_model_rules = weak_model_operating_rules(&config.agents.defaults.model);
+    let grounding_rules = crate::grounding::main_agent_grounding_rules();
     let mut cross_session_memory = retrieve_cross_session_memories(ctx.user_content).await;
 
     // Calculate total character limit and base length
@@ -153,6 +154,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
     let base_len = header.chars().count()
         + system_guidelines.chars().count()
+        + grounding_rules.chars().count()
         + activity_part.chars().count()
         + summary_part.chars().count()
         + memory_part.chars().count()
@@ -204,10 +206,11 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     }
 
     ctx.system_prompt = format!(
-        "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
         header,
         persona_priority_part,
         system_guidelines,
+        grounding_rules,
         activity_part,
         summary_part,
         memory_part,

@@ -28,13 +28,35 @@ pub fn build_step_prompt(
     } else {
         prior_results.join("\n")
     };
+    let policy = crate::grounding::step_execution_policy(workflow_goal, &step.goal, &step.agent);
+    let grounding_guidance = if policy.require_sources {
+        "Use web/docs/local tools when required for current, external, source-specific, uncertain, or high-stakes facts. Cite or name sources when used. If sources are unavailable or weak, say verification is incomplete."
+    } else {
+        "Complete this step directly when possible. Do not delegate or research for trivial/general-knowledge work unless the step explicitly asks for research, current facts, source-specific facts, or multi-source analysis."
+    };
 
     format!(
-        "Workflow goal: {workflow_goal}\n\nStep id: {id}\nAssigned agent: {agent}\nStep goal: {goal}\nExpected output: {expected}\n\nPrior step results:\n{prior}\n\nReturn only the requested deliverable plus any blockers.",
+        "Workflow goal: {workflow_goal}
+
+Step id: {id}
+Assigned agent: {agent}
+Step goal: {goal}
+Expected output: {expected}
+
+Grounding guidance: {grounding_guidance}
+Nested delegation allowed: {nested}
+Live sources required: {sources}
+
+Prior step results:
+{prior}
+
+Return only the requested deliverable plus real blockers.",
         id = step.id,
         agent = step.agent,
         goal = step.goal,
         expected = step.expected_output,
+        nested = policy.allow_nested_delegation,
+        sources = policy.require_sources,
     )
 }
 
@@ -867,6 +889,42 @@ mod tests {
         assert!(prompt.contains("Step id: review"));
         assert!(prompt.contains("Expected output: approve or concrete change list"));
         assert!(prompt.contains("build: implementation completed"));
+    }
+
+    #[test]
+    fn step_prompt_instructs_direct_completion_for_trivial_steps() {
+        let step = WorkflowStep {
+            id: "plan".to_string(),
+            agent: "planner".to_string(),
+            goal: "Summarize hello".to_string(),
+            depends_on: vec![],
+            expected_output: "short summary".to_string(),
+            max_retries: 0,
+        };
+
+        let prompt = build_step_prompt(&step, "Run smoke test workflow", &[]);
+
+        assert!(prompt.contains("Complete this step directly when possible"));
+        assert!(prompt.contains("Do not delegate"));
+        assert!(prompt.contains("Do not research"));
+    }
+
+    #[test]
+    fn step_prompt_allows_research_for_current_external_steps() {
+        let step = WorkflowStep {
+            id: "latest".to_string(),
+            agent: "researcher".to_string(),
+            goal: "Find the latest stable Rust version today".to_string(),
+            depends_on: vec![],
+            expected_output: "version with source".to_string(),
+            max_retries: 0,
+        };
+
+        let prompt = build_step_prompt(&step, "Answer current software version question", &[]);
+
+        assert!(prompt.contains("Use web/docs/local tools when required"));
+        assert!(prompt.contains("source-specific"));
+        assert!(prompt.contains("verification is incomplete"));
     }
 
     #[tokio::test]
