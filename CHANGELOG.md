@@ -1,4 +1,13 @@
-### v0.0.133 (Latest Release)
+### v0.0.134 (Latest Release)
+**Ratatui TUI Overhaul (Aura Dark + OpenZ Red-Orange Dual-Tone Theme):**
+- **Minicode-Inspired Modern Architecture**: Complete rewrite of the Ratatui TUI channel layout with a 4-tier responsive structure featuring conversation timeline, dynamic slash autocomplete dock, elevated input box, and minimal status bar.
+- **Authentic CLI ASCII Wordmark**: Added the authentic dual-color OpenZ ASCII banner where `OPEN` is rendered in bold crisp white (`#f0f0f0`) and `Z` in signature Red-Orange (`#ff5500`), accompanied by workspace and git status metadata.
+- **Rich Timeline Rendering**: Markdown headers, bullet points, folded tool output blocks with syntax diff highlighting (`+` green, `-` red), and animated thinking indicators with elapsed execution timers.
+- **Floating Centered Modals**: Integrated floating centered modals for interactive LLM provider selection, live model search with instant fuzzy filtering, session history restore, and keyboard shortcuts help.
+- **Elevated Input & Autocomplete**: Added elevated input dock styling with floating command autocomplete dock triggered on `/` with smooth keyboard navigation.
+- **Chore:** Bumped version to `v0.0.134`.
+
+### v0.0.133
 **Obsidian Knowledge Graph Overhaul & Progressive Real-Time Streaming:**
 - **Obsidian Graph View Engine**: Built a canvas-based interactive force-directed graph visualizer in the WebUI with Coulomb repulsion, Hooke's spring attraction, velocity damping, dynamic node halos, traveling energy particles, and zoom/pan controls.
 - **Progressive One-by-One Stream Engine**: Introduced hierarchical progressive node staging (hub nodes first, then satellites and leaves) that organically streams entities into the graph with expanding entrance wave ripples and dynamic link illumination.

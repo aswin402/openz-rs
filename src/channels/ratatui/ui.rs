@@ -1,10 +1,10 @@
-use super::app::{ModelSelectState, RatatuiApp};
-use super::theme;
+use super::app::{ModalState, RatatuiApp};
+use super::theme::{self, Theme};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
     Frame,
 };
 use std::sync::OnceLock;
@@ -24,32 +24,83 @@ fn re_code() -> Option<&'static regex::Regex> {
 }
 
 /// Convert a single line of markdown text into styled ratatui Spans.
-/// Handles: **bold**, `inline code`, # headings, - list items
-fn markdown_line_to_spans(line: &str) -> Vec<Span<'static>> {
+fn markdown_line_to_spans(line: &str, theme: &Theme) -> Vec<Span<'static>> {
     let trimmed = line.trim_start();
 
     // Heading detection
-    if trimmed.starts_with("# ") {
-        return vec![Span::styled(line.to_string(), theme::heading_style())];
+    if let Some(rest) = trimmed.strip_prefix("### ") {
+        return vec![
+            Span::styled(
+                "### ",
+                Style::default()
+                    .fg(theme.highlight)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                rest.to_string(),
+                Style::default()
+                    .fg(theme.text_primary)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ];
     }
-    if trimmed.starts_with("## ") || trimmed.starts_with("### ") {
-        return vec![Span::styled(line.to_string(), theme::heading_style())];
+    if let Some(rest) = trimmed.strip_prefix("## ") {
+        return vec![
+            Span::styled(
+                "## ",
+                Style::default()
+                    .fg(theme.brand_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                rest.to_string(),
+                Style::default()
+                    .fg(theme.text_primary)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ];
+    }
+    if let Some(rest) = trimmed.strip_prefix("# ") {
+        return vec![
+            Span::styled(
+                "# ",
+                Style::default()
+                    .fg(theme.brand_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                rest.to_string(),
+                Style::default()
+                    .fg(theme.text_primary)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ];
     }
 
     // Horizontal rule
     if trimmed.chars().all(|c| c == '-') && trimmed.len() >= 3 {
-        return vec![Span::styled("──────".to_string(), theme::divider_style())];
+        return vec![Span::styled(
+            "────────────────────────────────────────────────────────────".to_string(),
+            Style::default().fg(theme.border),
+        )];
     }
 
     // List items
-    if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+    if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")).or_else(|| trimmed.strip_prefix("• ")) {
         let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-        let rest = &trimmed[2..];
         let mut spans = vec![
             Span::raw(indent),
-            Span::styled("• ".to_string(), theme::list_marker_style()),
+            Span::styled("• ", Style::default().fg(theme.brand_accent)),
         ];
-        spans.extend(parse_inline_markdown(rest));
+        spans.extend(parse_inline_markdown(rest, theme));
+        return spans;
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("  - ").or_else(|| trimmed.strip_prefix("  * ")).or_else(|| trimmed.strip_prefix("  • ")) {
+        let mut spans = vec![
+            Span::styled("    - ", Style::default().fg(theme.muted)),
+        ];
+        spans.extend(parse_inline_markdown(rest, theme));
         return spans;
     }
 
@@ -61,23 +112,22 @@ fn markdown_line_to_spans(line: &str) -> Vec<Span<'static>> {
             let rest = &trimmed[pos + 2..];
             let mut spans = vec![
                 Span::raw(indent),
-                Span::styled(format!("{}. ", number), theme::list_marker_style()),
+                Span::styled(format!("{}. ", number), Style::default().fg(theme.brand_accent)),
             ];
-            spans.extend(parse_inline_markdown(rest));
+            spans.extend(parse_inline_markdown(rest, theme));
             return spans;
         }
     }
 
     // Regular text with inline formatting
-    parse_inline_markdown(line)
+    parse_inline_markdown(line, theme)
 }
 
 /// Parse inline markdown (**bold** and `code`) into styled spans.
-fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
+fn parse_inline_markdown(text: &str, theme: &Theme) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     let mut remaining = text.to_string();
 
-    // Strategy: find the earliest bold or code match, split around it, recurse
     loop {
         if remaining.is_empty() {
             break;
@@ -103,25 +153,32 @@ fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
 
         match earliest {
             Some((start, end, kind)) => {
-                // Text before the match
                 if start > 0 {
                     spans.push(Span::styled(
                         remaining[..start].to_string(),
-                        theme::assistant_text_style(),
+                        Style::default().fg(theme.text_primary),
                     ));
                 }
 
                 let matched = &remaining[start..end];
                 match kind {
                     "bold" => {
-                        // Strip ** from both ends
                         let inner = &matched[2..matched.len() - 2];
-                        spans.push(Span::styled(inner.to_string(), theme::bold_style()));
+                        spans.push(Span::styled(
+                            inner.to_string(),
+                            Style::default()
+                                .fg(theme.brand_white)
+                                .add_modifier(Modifier::BOLD),
+                        ));
                     }
                     "code" => {
-                        // Strip ` from both ends
                         let inner = &matched[1..matched.len() - 1];
-                        spans.push(Span::styled(inner.to_string(), theme::code_style()));
+                        spans.push(Span::styled(
+                            format!(" {} ", inner),
+                            Style::default()
+                                .fg(theme.success)
+                                .bg(theme.bg_elevated),
+                        ));
                     }
                     _ => {}
                 }
@@ -129,10 +186,9 @@ fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
                 remaining = remaining[end..].to_string();
             }
             None => {
-                // No more matches — push remaining as plain text
                 spans.push(Span::styled(
                     remaining.clone(),
-                    theme::assistant_text_style(),
+                    Style::default().fg(theme.text_primary),
                 ));
                 break;
             }
@@ -142,18 +198,26 @@ fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
     if spans.is_empty() {
         spans.push(Span::styled(
             text.to_string(),
-            theme::assistant_text_style(),
+            Style::default().fg(theme.text_primary),
         ));
     }
 
     spans
 }
 
-// ── Main render function ────────────────────────────────────────────────────
+// ── Main Layout Renderer ────────────────────────────────────────────────────
 
 pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
+    let theme = &app.theme;
+
+    // Background fill
+    let bg_block = Block::default()
+        .borders(Borders::NONE)
+        .style(Style::default().bg(theme.bg_primary));
+    f.render_widget(bg_block, f.area());
+
     let matches = app.matching_slash_commands();
-    let has_popup = !app.typed_input.is_empty() && app.typed_input[0] == '/' && !matches.is_empty();
+    let has_popup = !matches.is_empty();
 
     let popup_lines_count = if has_popup {
         (matches.len().min(5) + 2) as u16
@@ -161,156 +225,166 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
         0
     };
 
-    let is_menu_active = match &app.model_select {
-        ModelSelectState::Closed => false,
-        _ => true,
-    };
-
-    let (input_height, menu_height) = if is_menu_active {
-        (9, 0) // Allocate 9 lines for the model selection menu
-    } else {
-        (3, popup_lines_count)
-    };
-
-    // Codex-style layout: chat (flex) → input (padded, height 3 or menu height 9) → status (bottom right) → (popup below status)
+    // Layout: Conversation (flex) -> Slash suggestions (if typing /) -> Input Box (3) -> Bottom Status Bar (1)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),               // Chat scrollback
-            Constraint::Length(input_height), // Input Box or Selection Menu
-            Constraint::Length(1),            // Status bar
-            Constraint::Length(menu_height),  // Autocomplete popup
+            Constraint::Min(4),
+            Constraint::Length(popup_lines_count),
+            Constraint::Length(3),
+            Constraint::Length(1),
         ])
         .split(f.area());
 
-    // ── 1. Chat Scrollback ──────────────────────────────────────────────────
-    let text_lines = render_conversation(app);
+    // 1. Conversation Timeline
+    render_timeline(f, app, chunks[0]);
 
-    let conversation = Paragraph::new(Text::from(text_lines))
-        .wrap(Wrap { trim: false })
-        .scroll((app.scroll_offset as u16, 0));
-    f.render_widget(conversation, chunks[0]);
-
-    // ── 2. Content Area (Menu or Input box) ──────────────────────────────────
-    if is_menu_active {
-        render_model_menu(f, app, chunks[1]);
-    } else {
-        render_input(f, app, chunks[1]);
+    // 2. Autocomplete Suggestions (placed right above input box)
+    if has_popup {
+        render_autocomplete_dock(f, app, &matches, chunks[1]);
     }
 
-    // ── 3. Status Bar (model · provider · MCP · context) ───────────────────
-    render_status_bar(f, app, chunks[2]);
+    // 3. Elevated Input Dock
+    render_input_dock(f, app, chunks[2]);
 
-    // ── 4. Autocomplete Popup (below status bar) ─────────────────────────────
-    if !is_menu_active && has_popup {
-        render_autocomplete(f, app, &matches, chunks[3]);
+    // 4. Minimal Bottom Status Line
+    render_status_bar(f, app, chunks[3]);
+
+    // 5. Modal Dialogs (Overlay)
+    if app.modal.is_active() {
+        render_modal_overlay(f, app, f.area());
     }
 }
 
-// ── Conversation Renderer ───────────────────────────────────────────────────
+// ── Conversation Timeline ───────────────────────────────────────────────────
 
-fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
+fn render_timeline(f: &mut Frame, app: &RatatuiApp, area: Rect) {
+    let theme = &app.theme;
     let mut lines = Vec::new();
 
-    // ASCII Logo (same style as CLI TUI)
-    let logo_lines = [
-        "     ██████╗ ██████╗ ███████╗███╗   ██╗███████╗",
-        "    ██╔═══██╗██╔══██╗██╔════╝████╗  ██║╚══███╔╝",
-    ];
-    let logo_mixed = [
-        ("    ██║   ██║██████╔╝█████╗  ██╔██╗ ██║  ", "███╔╝ "),
-        ("    ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║ ", "███╔╝  "),
+    // ── OpenZ CLI Authentic ASCII Logo Banner ───────────────────────────────
+    let logo_parts = [
+        ("     ██████╗ ██████╗ ███████╗███╗   ██╗", "███████╗"),
+        ("    ██╔═══██╗██╔══██╗██╔════╝████╗  ██║", "╚══███╔╝"),
+        ("    ██║   ██║██████╔╝█████╗  ██╔██╗ ██║", "  ███╔╝ "),
+        ("    ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║", " ███╔╝  "),
         ("    ╚██████╔╝██║     ███████╗██║ ╚████║", "███████╗"),
+        ("     ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝", "╚══════╝"),
     ];
-    let logo_bottom = "     ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝╚══════╝";
 
-    for l in &logo_lines {
-        lines.push(Line::from(vec![Span::styled(
-            l.to_string(),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        )]));
-    }
-    for (white_part, orange_part) in &logo_mixed {
+    lines.push(Line::from(String::new()));
+    for (white_part, orange_part) in &logo_parts {
         lines.push(Line::from(vec![
             Span::styled(
                 white_part.to_string(),
                 Style::default()
-                    .fg(Color::White)
+                    .fg(theme.brand_white)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 orange_part.to_string(),
                 Style::default()
-                    .fg(theme::RED_ORANGE)
+                    .fg(theme.brand_accent)
                     .add_modifier(Modifier::BOLD),
             ),
         ]));
     }
-    lines.push(Line::from(vec![Span::styled(
-        logo_bottom.to_string(),
-        Style::default()
-            .fg(theme::RED_ORANGE)
-            .add_modifier(Modifier::BOLD),
-    )]));
 
-    // Version line only (provider/model/cwd are in the status bar)
-    lines.push(Line::from(vec![Span::styled(
-        format!(" openz v{}", env!("CARGO_PKG_VERSION")),
-        Style::default()
-            .fg(theme::RED_ORANGE)
-            .add_modifier(Modifier::BOLD),
-    )]));
-    lines.push(Line::from(vec![Span::styled(
-        format!(" {} | {}", app.provider, app.model),
-        theme::status_accent_style(),
-    )]));
-    lines.push(Line::from(""));
+    lines.push(Line::from(String::new()));
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!(" openz v{}", env!("CARGO_PKG_VERSION")),
+            Style::default()
+                .fg(theme.brand_accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
 
-    // Empty line for breathing room
-    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(" ", Style::default()),
+        Span::styled(
+            format!("{} | {}", app.provider, app.model),
+            Style::default().fg(theme.warning),
+        ),
+    ]));
 
-    // ── Render messages ─────────────────────────────────────────────────────
+    lines.push(Line::from(vec![
+        Span::styled(" ", Style::default()),
+        Span::styled(app.cwd_display.clone(), Style::default().fg(theme.info)),
+    ]));
+
+    if let Some(branch) = RatatuiApp::get_git_branch(&app.workspace_root) {
+        lines.push(Line::from(vec![
+            Span::styled(" ", Style::default()),
+            Span::styled(
+                format!("git: {}", branch),
+                Style::default().fg(theme.success),
+            ),
+        ]));
+    }
+
+    lines.push(Line::from(vec![Span::styled(
+        "────────────────────────────────────────────────────────────",
+        Style::default().fg(theme.border),
+    )]));
+    lines.push(Line::from(String::new()));
+
+    // ── Message History ─────────────────────────────────────────────────────
     let mut prev_was_user = false;
 
     for msg in &app.messages {
         match msg.role.as_str() {
             "user" => {
-                // Divider between conversation turns (not before first user msg)
-                if prev_was_user || lines.len() > 12 {
-                    lines.push(Line::from(""));
+                if prev_was_user || lines.len() > 14 {
+                    lines.push(Line::from(String::new()));
                     lines.push(Line::from(vec![Span::styled(
-                        "─".repeat(50),
-                        theme::divider_style(),
+                        "─".repeat(area.width.saturating_sub(4) as usize),
+                        Style::default().fg(theme.border),
                     )]));
+                    lines.push(Line::from(String::new()));
                 }
 
-                // User message with `> ` prefix
                 let content_lines: Vec<&str> = msg.content.lines().collect();
                 for (i, line) in content_lines.iter().enumerate() {
                     if i == 0 {
                         lines.push(Line::from(vec![
-                            Span::styled("> ", theme::user_prefix_style()),
-                            Span::styled(line.to_string(), theme::user_text_style()),
+                            Span::styled(
+                                "› ",
+                                Style::default()
+                                    .fg(theme.brand_accent)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                line.to_string(),
+                                Style::default()
+                                    .fg(theme.brand_white)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
                         ]));
                     } else {
                         lines.push(Line::from(vec![
                             Span::styled("  ", Style::default()),
-                            Span::styled(line.to_string(), theme::user_text_style()),
+                            Span::styled(
+                                line.to_string(),
+                                Style::default()
+                                    .fg(theme.brand_white)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
                         ]));
                     }
                 }
                 prev_was_user = true;
             }
             "assistant" => {
-                // Thinking/Reasoning block (if present)
+                // Thinking / Reasoning Block
                 if let Some(thinking_time) = msg.thinking_time {
                     lines.push(Line::from(vec![
-                        Span::styled("● ", theme::thinking_bullet_style()),
+                        Span::styled("● ", Style::default().fg(theme.brand_accent)),
                         Span::styled(
                             format!("Thought for {:.1}s", thinking_time),
-                            theme::thinking_time_style(),
+                            Style::default()
+                                .fg(theme.warning)
+                                .add_modifier(Modifier::BOLD),
                         ),
                     ]));
                 }
@@ -320,15 +394,18 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
                     if !reasoning_trimmed.is_empty() {
                         for r_line in reasoning_trimmed.lines() {
                             lines.push(Line::from(vec![
-                                Span::styled("  L ", theme::reasoning_style()),
-                                Span::styled(r_line.to_string(), theme::reasoning_style()),
+                                Span::styled("  L ", Style::default().fg(theme.muted)),
+                                Span::styled(
+                                    r_line.to_string(),
+                                    Style::default().fg(theme.muted),
+                                ),
                             ]));
                         }
                     }
-                    lines.push(Line::from(""));
+                    lines.push(Line::from(String::new()));
                 }
 
-                // Assistant content with inline markdown
+                // Assistant Markdown content
                 if !msg.content.is_empty() {
                     let content = msg.content.trim();
                     let mut in_code_block = false;
@@ -336,104 +413,115 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
                     for line in content.lines() {
                         let trimmed = line.trim_start();
 
-                        // Code block fence
+                        // Code fence toggle
                         if trimmed.starts_with("```") {
                             in_code_block = !in_code_block;
                             if in_code_block {
-                                // Start of code block — show language label
                                 let lang = trimmed.strip_prefix("```").unwrap_or("").trim();
                                 if !lang.is_empty() {
                                     lines.push(Line::from(vec![Span::styled(
                                         format!("  ┌─ {} ", lang),
-                                        theme::code_style(),
+                                        Style::default().fg(theme.success),
                                     )]));
                                 } else {
                                     lines.push(Line::from(vec![Span::styled(
                                         "  ┌──",
-                                        theme::code_style(),
+                                        Style::default().fg(theme.success),
                                     )]));
                                 }
                             } else {
                                 lines.push(Line::from(vec![Span::styled(
                                     "  └──",
-                                    theme::code_style(),
+                                    Style::default().fg(theme.success),
                                 )]));
                             }
                             continue;
                         }
 
                         if in_code_block {
-                            // Code block content — indented, emerald color
                             lines.push(Line::from(vec![
-                                Span::styled("  │ ", theme::code_style()),
-                                Span::styled(line.to_string(), theme::code_style()),
+                                Span::styled("  │ ", Style::default().fg(theme.success)),
+                                Span::styled(
+                                    line.to_string(),
+                                    Style::default().fg(theme.text_primary),
+                                ),
                             ]));
                         } else {
-                            // Regular markdown line
                             let mut spans = vec![Span::raw("  ".to_string())];
-                            spans.extend(markdown_line_to_spans(line));
+                            spans.extend(markdown_line_to_spans(line, theme));
                             lines.push(Line::from(spans));
                         }
                     }
-                    lines.push(Line::from(""));
+                    lines.push(Line::from(String::new()));
                 }
 
                 prev_was_user = false;
             }
             "tool" => {
-                // Tool execution cell
-                if let Some(ref tool_name) = msg.tool_name {
-                    let details = msg.tool_details.as_deref().unwrap_or("");
-                    if details.is_empty() {
-                        lines.push(Line::from(vec![
-                            Span::styled("● ", theme::tool_bullet_style()),
-                            Span::styled(tool_name.to_string(), theme::tool_name_style()),
-                        ]));
-                    } else {
-                        lines.push(Line::from(vec![
-                            Span::styled("● ", theme::tool_bullet_style()),
-                            Span::styled(format!("{} ", tool_name), theme::tool_name_style()),
-                            Span::styled(details.to_string(), theme::tool_details_style()),
-                        ]));
-                    }
-                }
+                let tool_name = msg.tool_name.as_deref().unwrap_or("tool");
+                let details = msg.tool_details.as_deref().unwrap_or("");
 
-                // Tool outcome
+                let (verb, verb_style) = match msg.tool_success {
+                    Some(true) => ("Ran", Style::default().fg(theme.muted)),
+                    Some(false) => ("Failed", Style::default().fg(theme.destructive)),
+                    None => ("Running", Style::default().fg(theme.brand_accent)),
+                };
+
+                lines.push(Line::from(vec![
+                    Span::styled(format!("• {} ", verb), verb_style),
+                    Span::styled(
+                        if details.is_empty() {
+                            tool_name.to_string()
+                        } else {
+                            format!("{}: {}", tool_name, details)
+                        },
+                        Style::default().fg(theme.warning),
+                    ),
+                ]));
+
+                // Tool output formatting with diff colorization
                 if !msg.content.is_empty() {
-                    let content = msg.content.trim();
-                    // Check for error/success markers
-                    let has_error =
-                        content.contains('✗') || content.contains('✖') || content.contains("error");
-                    let summary = if content.len() > 120 {
-                        format!("{}...", &content[..120])
-                    } else {
-                        content.to_string()
-                    };
+                    let trimmed = msg.content.trim();
+                    let max_lines = 8;
+                    let mut count = 0;
+                    for out_line in trimmed.lines().take(max_lines) {
+                        count += 1;
+                        let prefix = if count == 1 { "  └ " } else { "    " };
 
-                    if has_error {
+                        let line_color = if out_line.starts_with('+') {
+                            theme.success
+                        } else if out_line.starts_with('-') {
+                            theme.destructive
+                        } else if out_line.starts_with("##") || out_line.starts_with("test result:") {
+                            theme.info
+                        } else {
+                            theme.muted
+                        };
+
                         lines.push(Line::from(vec![
-                            Span::styled("  └ ", theme::reasoning_style()),
-                            Span::styled("✗ ", theme::error_style()),
-                            Span::styled(summary, theme::reasoning_style()),
-                        ]));
-                    } else {
-                        lines.push(Line::from(vec![
-                            Span::styled("  └ ", theme::reasoning_style()),
-                            Span::styled("✓ ", theme::success_style()),
-                            Span::styled(summary, theme::reasoning_style()),
+                            Span::styled(prefix, Style::default().fg(theme.muted)),
+                            Span::styled(out_line.to_string(), Style::default().fg(line_color)),
                         ]));
                     }
+
+                    let total_out_lines = trimmed.lines().count();
+                    if total_out_lines > max_lines {
+                        lines.push(Line::from(vec![Span::styled(
+                            format!("    ... +{} lines (output folded)", total_out_lines - max_lines),
+                            Style::default().fg(theme.border),
+                        )]));
+                    }
+                    lines.push(Line::from(String::new()));
                 }
 
                 prev_was_user = false;
             }
             _ => {
-                // System or other messages
                 if !msg.content.is_empty() {
                     for line in msg.content.lines() {
                         lines.push(Line::from(vec![
-                            Span::styled("  ", Style::default()),
-                            Span::styled(line.to_string(), theme::reasoning_style()),
+                            Span::styled("• ", Style::default().fg(theme.brand_accent)),
+                            Span::styled(line.to_string(), Style::default().fg(theme.text_primary)),
                         ]));
                     }
                 }
@@ -442,44 +530,71 @@ fn render_conversation(app: &RatatuiApp) -> Vec<Line<'static>> {
         }
     }
 
-    // Thinking spinner at the end if agent is working
+    // Active working indicator at bottom of timeline
     if app.is_thinking {
         let frame_idx = app.spinner_idx % theme::SPINNER_FRAMES.len();
         let spinner = theme::SPINNER_FRAMES[frame_idx];
-        lines.push(Line::from(""));
+        let elapsed = app.work_start.map(|s| s.elapsed().as_secs()).unwrap_or(0);
+
         lines.push(Line::from(vec![
-            Span::styled(format!("{} ", spinner), theme::thinking_bullet_style()),
-            Span::styled("Working...".to_string(), theme::thinking_time_style()),
+            Span::styled(
+                format!("• {} Working ", spinner),
+                Style::default()
+                    .fg(theme.brand_white)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("({}s • esc or ctrl+c to interrupt)", elapsed),
+                Style::default().fg(theme.muted),
+            ),
         ]));
     }
 
-    lines
+    let total_lines = lines.len() as u16;
+    let viewport_height = area.height;
+    let max_scroll = total_lines.saturating_sub(viewport_height);
+    let scroll = if app.auto_scroll {
+        max_scroll
+    } else {
+        app.scroll_offset.min(max_scroll)
+    };
+
+    let paragraph = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::NONE))
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0));
+
+    f.render_widget(paragraph, area);
 }
 
-// ── Input Renderer ──────────────────────────────────────────────────────────
+// ── Elevated Input Dock (minicode style) ────────────────────────────────────
 
-fn render_input(f: &mut Frame, app: &RatatuiApp, area: Rect) {
-    let max_width = area.width.saturating_sub(3).max(1) as usize;
-    let input_bg = Color::Rgb(40, 44, 52); // Subtle grey background block
+fn render_input_dock(f: &mut Frame, app: &RatatuiApp, area: Rect) {
+    let theme = &app.theme;
 
-    let mut lines = Vec::new();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border))
+        .style(Style::default().bg(theme.bg_input));
 
-    // Line 1: Empty padding top
-    lines.push(Line::from(Span::styled(
-        " ".repeat(area.width as usize),
-        Style::default().bg(input_bg),
-    )));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
 
-    // Line 2: The actual input content
-    if app.typed_input.is_empty() {
-        // Placeholder
-        lines.push(Line::from(vec![
-            Span::styled("› ", Style::default().fg(theme::EMERALD).bg(input_bg)),
+    let max_width = inner.width.saturating_sub(3).max(1) as usize;
+
+    let line = if app.typed_input.is_empty() {
+        Line::from(vec![
             Span::styled(
-                format!("{:<width$}", "type here...", width = max_width),
-                Style::default().fg(theme::AURA_SLATE).bg(input_bg),
+                "› ",
+                Style::default()
+                    .fg(theme.brand_accent)
+                    .add_modifier(Modifier::BOLD),
             ),
-        ]));
+            Span::styled(
+                "Ask OpenZ anything or type '/' for slash commands...",
+                Style::default().fg(theme.muted),
+            ),
+        ])
     } else {
         let input_str: String = app.typed_input.iter().collect();
         let display = if input_str.len() > max_width {
@@ -488,25 +603,23 @@ fn render_input(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         } else {
             input_str
         };
-        let padded = format!("{:<width$}", display, width = max_width);
-        lines.push(Line::from(vec![
-            Span::styled("› ", Style::default().fg(theme::EMERALD).bg(input_bg)),
-            Span::styled(padded, Style::default().fg(Color::White).bg(input_bg)),
-        ]));
-    }
+        Line::from(vec![
+            Span::styled(
+                "› ",
+                Style::default()
+                    .fg(theme.brand_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(display, Style::default().fg(theme.brand_white)),
+        ])
+    };
 
-    // Line 3: Empty padding bottom
-    lines.push(Line::from(Span::styled(
-        " ".repeat(area.width as usize),
-        Style::default().bg(input_bg),
-    )));
+    let paragraph = Paragraph::new(line);
+    f.render_widget(paragraph, inner);
 
-    let input_p = Paragraph::new(Text::from(lines));
-    f.render_widget(input_p, area);
-
-    // Cursor position (on the middle line of the 3-line block)
+    // Set cursor position inside the input box
     let cursor_col = if app.typed_input.is_empty() {
-        2 // After "› "
+        2
     } else {
         let visible_len = app.typed_input.len().min(max_width);
         2 + if app.typed_input.len() > max_width {
@@ -515,251 +628,388 @@ fn render_input(f: &mut Frame, app: &RatatuiApp, area: Rect) {
             app.cursor_idx
         }
     };
-    f.set_cursor_position((area.x + cursor_col as u16, area.y + 1));
+    f.set_cursor_position((inner.x + cursor_col as u16, inner.y));
 }
 
-// ── Status Bar Renderer ─────────────────────────────────────────────────────
+// ── Autocomplete Suggestions Dock ───────────────────────────────────────────
 
-fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
-    let (mcp_loaded, mcp_failed, _mcp_total) = crate::tools::mcp::get_mcp_stats();
-    let mcp_done = crate::channels::cli::mcp::is_mcp_done();
+fn render_autocomplete_dock(
+    f: &mut Frame,
+    app: &RatatuiApp,
+    matches: &[(String, String)],
+    area: Rect,
+) {
+    let theme = &app.theme;
 
-    let mut spans = Vec::new();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border))
+        .title(" Commands ")
+        .title_alignment(Alignment::Left)
+        .style(Style::default().bg(theme.bg_elevated));
 
-    // 1. Model name
-    let model_display = if app.model.len() > 30 {
-        format!("{}…", &app.model[..29])
-    } else {
-        app.model.clone()
-    };
-    spans.push(Span::styled(model_display, theme::status_accent_style()));
-    spans.push(Span::styled(" · ", theme::status_bar_style()));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
 
-    // 2. Provider
-    spans.push(Span::styled(
-        app.provider.clone(),
-        theme::status_accent_style(),
-    ));
-    spans.push(Span::styled(" · ", theme::status_bar_style()));
-
-    // 3. MCP status (Styled RED_ORANGE without ◇ diamond symbol)
-    let mcp_style = Style::default().fg(theme::RED_ORANGE);
-    if !mcp_done {
-        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let frame_idx = app.spinner_idx % spinner_frames.len();
-        spans.push(Span::styled(
-            format!("MCP {} ", spinner_frames[frame_idx]),
-            mcp_style,
-        ));
-    } else if mcp_failed == 0 {
-        spans.push(Span::styled(format!("MCP {}✓", mcp_loaded), mcp_style));
-    } else {
-        spans.push(Span::styled(format!("MCP {}✓ ", mcp_loaded), mcp_style));
-        spans.push(Span::styled(
-            format!("{}✗", mcp_failed),
-            theme::error_style(),
-        ));
-    }
-    spans.push(Span::styled(" · ", theme::status_bar_style()));
-
-    // 4. Token Context
-    let token_context = format!("{}/1M", app.approx_tokens);
-    spans.push(Span::styled(token_context, theme::status_accent_style()));
-
-    // Add trailing space for padding on the right
-    spans.push(Span::raw(" "));
-
-    let status_line = Line::from(spans);
-    let status_p = Paragraph::new(status_line).alignment(Alignment::Right);
-    f.render_widget(status_p, area);
-}
-
-// ── Autocomplete Popup ──────────────────────────────────────────────────────
-
-fn render_autocomplete(f: &mut Frame, app: &RatatuiApp, matches: &[(String, String)], area: Rect) {
-    let mut popup_lines = Vec::new();
     let display_limit = 5;
-    let start_idx = if let Some(idx) = app.selected_index {
-        if idx >= display_limit {
-            idx - display_limit + 1
-        } else {
-            0
-        }
-    } else {
-        0
-    };
-    let end_idx = (start_idx + display_limit).min(matches.len());
-
-    for (i, (cmd, desc)) in matches.iter().enumerate().take(end_idx).skip(start_idx) {
-        let is_selected = app.selected_index == Some(i);
-        if is_selected {
-            popup_lines.push(Line::from(vec![
-                Span::styled("> ", theme::user_prefix_style()),
-                Span::styled(
-                    format!("{:<30}", cmd),
-                    Style::default()
-                        .fg(theme::RED_ORANGE)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(desc.as_str(), theme::status_accent_style()),
-            ]));
-        } else {
-            popup_lines.push(Line::from(vec![
-                Span::styled("  ", Style::default()),
-                Span::styled(format!("{:<30}", cmd), theme::assistant_text_style()),
-                Span::styled(desc.as_str(), theme::status_accent_style()),
-            ]));
-        }
-    }
-
-    popup_lines.push(Line::from(Span::styled(
-        "  ↑/↓ Navigate · enter Select · tab Complete",
-        theme::status_accent_style(),
-    )));
-
-    let help_p = Paragraph::new(Text::from(popup_lines));
-    f.render_widget(help_p, area);
-}
-
-// ── Interactive Model Selection Menu ────────────────────────────────────────
-
-fn render_model_menu(f: &mut Frame, app: &RatatuiApp, area: Rect) {
-    let mut lines = Vec::new();
-    let menu_bg = Color::Rgb(33, 37, 43); // Darker charcoal background for menu
-
-    // Header info line
-    lines.push(Line::from(vec![
-        Span::styled(
-            "Current active model: ",
-            Style::default().fg(theme::AURA_SLATE).bg(menu_bg),
-        ),
-        Span::styled(
-            app.model.clone(),
-            Style::default().fg(Color::White).bg(menu_bg),
-        ),
-        Span::styled(
-            " | Provider: ",
-            Style::default().fg(theme::AURA_SLATE).bg(menu_bg),
-        ),
-        Span::styled(
-            app.provider.clone(),
-            Style::default().fg(Color::White).bg(menu_bg),
-        ),
-    ]));
-
-    // Title / Prompt line
-    let prompt = match &app.model_select {
-        ModelSelectState::ChoosingProvider { .. } => "> Choose an LLM provider:".to_string(),
-        ModelSelectState::FetchingModels {
-            provider_display, ..
-        } => {
-            let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            let frame = spinner[app.spinner_idx as usize % spinner.len()];
-            format!("{} Fetching models from {}...", frame, provider_display)
-        }
-        ModelSelectState::ChoosingModel {
-            provider_display, ..
-        } => {
-            format!("> Choose a model from {}:", provider_display)
-        }
-        _ => String::new(),
-    };
-    lines.push(Line::from(Span::styled(
-        prompt,
-        Style::default()
-            .fg(theme::RED_ORANGE)
-            .add_modifier(Modifier::BOLD)
-            .bg(menu_bg),
-    )));
-
-    // Render list items
-    let (items, selected_idx): (Vec<String>, usize) = match &app.model_select {
-        ModelSelectState::ChoosingProvider {
-            providers,
-            selected_idx,
-        } => {
-            let list = providers
-                .iter()
-                .map(|(_, display)| display.clone())
-                .collect::<Vec<_>>();
-            (list, *selected_idx)
-        }
-        ModelSelectState::FetchingModels { .. } => {
-            // Show loading placeholder
-            (vec!["  Loading available models...".to_string()], 0)
-        }
-        ModelSelectState::ChoosingModel {
-            models,
-            selected_idx,
-            ..
-        } => (models.clone(), *selected_idx),
-        _ => (Vec::new(), 0),
-    };
-
-    // Calculate vertical scroll/slice for large lists (we have 4 lines for items in a 9-line menu block)
-    let display_limit = 4;
+    let selected_idx = app.selected_index.unwrap_or(0);
     let start_idx = if selected_idx >= display_limit {
         selected_idx - display_limit + 1
     } else {
         0
     };
-    let end_idx = (start_idx + display_limit).min(items.len());
+    let end_idx = (start_idx + display_limit).min(matches.len());
 
-    for i in start_idx..end_idx {
-        let is_selected = selected_idx == i;
+    let mut list_lines = Vec::new();
+    for (i, (cmd, desc)) in matches.iter().enumerate().take(end_idx).skip(start_idx) {
+        let is_selected = app.selected_index == Some(i);
         if is_selected {
-            lines.push(Line::from(vec![
+            list_lines.push(Line::from(vec![
                 Span::styled(
-                    "> ",
+                    " › ",
                     Style::default()
-                        .fg(theme::RED_ORANGE)
-                        .add_modifier(Modifier::BOLD)
-                        .bg(menu_bg),
+                        .fg(theme.brand_accent)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    items[i].clone(),
+                    format!("{:<20}", cmd),
                     Style::default()
-                        .fg(theme::RED_ORANGE)
-                        .add_modifier(Modifier::BOLD)
-                        .bg(menu_bg),
+                        .fg(theme.brand_accent)
+                        .add_modifier(Modifier::BOLD),
                 ),
+                Span::styled(desc.as_str(), Style::default().fg(theme.text_primary)),
             ]));
         } else {
-            lines.push(Line::from(vec![
-                Span::styled("  ", Style::default().bg(menu_bg)),
+            list_lines.push(Line::from(vec![
+                Span::raw("   "),
                 Span::styled(
-                    items[i].clone(),
-                    Style::default().fg(Color::White).bg(menu_bg),
+                    format!("{:<20}", cmd),
+                    Style::default().fg(theme.text_primary),
                 ),
+                Span::styled(desc.as_str(), Style::default().fg(theme.muted)),
             ]));
         }
     }
 
-    // Add scroll down helper if there are more items
-    if end_idx < items.len() {
-        lines.push(Line::from(Span::styled(
-            format!("  ↓ {} more", items.len() - end_idx),
-            Style::default().fg(theme::AURA_SLATE).bg(menu_bg),
-        )));
+    let p = Paragraph::new(Text::from(list_lines));
+    f.render_widget(p, inner);
+}
+
+// ── Status Bar (Bottom line) ────────────────────────────────────────────────
+
+fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
+    let theme = &app.theme;
+    let (mcp_loaded, mcp_failed, _mcp_total) = crate::tools::mcp::get_mcp_stats();
+    let mcp_done = crate::channels::cli::mcp::is_mcp_done();
+
+    let mut footer_spans = vec![
+        Span::styled(" ", Style::default()),
+        Span::styled(
+            app.model.clone(),
+            Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" · ", Style::default().fg(theme.muted)),
+        Span::styled(app.cwd_display.clone(), Style::default().fg(theme.info)),
+    ];
+
+    if let Some(branch) = RatatuiApp::get_git_branch(&app.workspace_root) {
+        footer_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+        footer_spans.push(Span::styled(
+            format!("git:{}", branch),
+            Style::default().fg(theme.success),
+        ));
+    }
+
+    // MCP status
+    footer_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+    if !mcp_done {
+        let frame_idx = app.spinner_idx % theme::SPINNER_FRAMES.len();
+        footer_spans.push(Span::styled(
+            format!("mcp:{} ", theme::SPINNER_FRAMES[frame_idx]),
+            Style::default().fg(theme.brand_accent),
+        ));
+    } else if mcp_failed == 0 {
+        footer_spans.push(Span::styled(
+            format!("mcp:{} active", mcp_loaded),
+            Style::default().fg(theme.brand_accent),
+        ));
     } else {
-        lines.push(Line::from(Span::styled("", Style::default().bg(menu_bg))));
+        footer_spans.push(Span::styled(
+            format!("mcp:{}✓ {}✗", mcp_loaded, mcp_failed),
+            Style::default().fg(theme.destructive),
+        ));
     }
 
-    // Help instructions line
-    lines.push(Line::from(Span::styled(
-        "  ↑/↓ Navigate · enter Select · esc to cancel",
-        Style::default().fg(theme::AURA_SLATE).bg(menu_bg),
-    )));
+    // Token context
+    footer_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+    footer_spans.push(Span::styled(
+        format!("{}/1M", app.approx_tokens),
+        Style::default().fg(theme.info),
+    ));
 
-    // Fill remaining lines to area height with background to avoid background bleed
-    let current_len = lines.len();
-    for _ in current_len..(area.height as usize) {
-        lines.push(Line::from(Span::styled(
-            " ".repeat(area.width as usize),
-            Style::default().bg(menu_bg),
-        )));
-    }
-
-    let p = Paragraph::new(Text::from(lines));
+    let footer_line = Line::from(footer_spans);
+    let p = Paragraph::new(footer_line).block(Block::default().borders(Borders::NONE));
     f.render_widget(p, area);
+}
+
+// ── Modal Overlays (minicode style centered dialogs) ────────────────────────
+
+fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) {
+    let theme = &app.theme;
+
+    match &app.modal {
+        ModalState::None => {}
+        ModalState::ProviderSelect {
+            providers,
+            selected_idx,
+        } => {
+            let popup_area = centered_rect(55, 50, area);
+            f.render_widget(Clear, popup_area);
+
+            let block = Block::default()
+                .title(" Select LLM Provider ")
+                .title_alignment(Alignment::Center)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.brand_accent))
+                .style(Style::default().bg(theme.bg_elevated));
+
+            let items: Vec<ListItem> = providers
+                .iter()
+                .enumerate()
+                .map(|(i, (_name, display))| {
+                    let is_selected = i == *selected_idx;
+                    let prefix = if is_selected { " › " } else { "   " };
+                    let style = if is_selected {
+                        Style::default()
+                            .fg(theme.bg_primary)
+                            .bg(theme.brand_accent)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.text_primary)
+                    };
+                    ListItem::new(format!("{}{}", prefix, display)).style(style)
+                })
+                .collect();
+
+            let list = List::new(items).block(block);
+            f.render_widget(list, popup_area);
+        }
+        ModalState::ModelSelect {
+            provider_display,
+            models,
+            filtered_indices,
+            selected_idx,
+            filter,
+            loading,
+            ..
+        } => {
+            let popup_area = centered_rect(75, 70, area);
+            f.render_widget(Clear, popup_area);
+
+            let outer_block = Block::default()
+                .title(format!(" Select Model ({}) ", provider_display))
+                .title_alignment(Alignment::Center)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.brand_accent))
+                .style(Style::default().bg(theme.bg_elevated));
+
+            let inner_area = outer_block.inner(popup_area);
+            f.render_widget(outer_block, popup_area);
+
+            if *loading {
+                let loading_p = Paragraph::new(format!(
+                    "Fetching live models from {}...",
+                    provider_display
+                ))
+                .style(Style::default().fg(theme.warning))
+                .alignment(Alignment::Center);
+                f.render_widget(loading_p, inner_area);
+                return;
+            }
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // Search box
+                    Constraint::Min(5),    // Model list
+                    Constraint::Length(1), // Help hints
+                ])
+                .split(inner_area);
+
+            // Search filter box
+            let search_text = format!(" Search: {}█", filter);
+            let search_box = Paragraph::new(search_text)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(theme.border))
+                        .title(" Filter Models "),
+                )
+                .style(Style::default().fg(theme.text_primary));
+            f.render_widget(search_box, chunks[0]);
+
+            // Model list items
+            let items: Vec<ListItem> = filtered_indices
+                .iter()
+                .enumerate()
+                .map(|(visual_idx, &real_idx)| {
+                    let m = &models[real_idx];
+                    let is_selected = visual_idx == *selected_idx;
+                    let prefix = if is_selected { " › " } else { "   " };
+
+                    let style = if is_selected {
+                        Style::default()
+                            .fg(theme.bg_primary)
+                            .bg(theme.brand_accent)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.text_primary)
+                    };
+                    ListItem::new(format!("{}{}", prefix, m)).style(style)
+                })
+                .collect();
+
+            let list = List::new(items).block(Block::default().borders(Borders::NONE));
+            f.render_widget(list, chunks[1]);
+
+            let hints = Paragraph::new(" ↑/↓ Navigate · enter Select · type to Filter · esc Cancel")
+                .style(Style::default().fg(theme.muted))
+                .alignment(Alignment::Center);
+            f.render_widget(hints, chunks[2]);
+        }
+        ModalState::Help => {
+            let popup_area = centered_rect(65, 60, area);
+            f.render_widget(Clear, popup_area);
+
+            let block = Block::default()
+                .title(" OpenZ Help & Commands ")
+                .title_alignment(Alignment::Center)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.brand_accent))
+                .style(Style::default().bg(theme.bg_elevated));
+
+            let inner = block.inner(popup_area);
+            f.render_widget(block, popup_area);
+
+            let help_text = vec![
+                Line::from(vec![
+                    Span::styled("Slash Commands:", Style::default().fg(theme.brand_accent).add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  /model       ", Style::default().fg(theme.warning)),
+                    Span::styled("Switch active LLM provider and model", Style::default().fg(theme.text_primary)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  /clear       ", Style::default().fg(theme.warning)),
+                    Span::styled("Clear current conversation timeline", Style::default().fg(theme.text_primary)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  /history     ", Style::default().fg(theme.warning)),
+                    Span::styled("Restore or switch previous sessions", Style::default().fg(theme.text_primary)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  /mcps        ", Style::default().fg(theme.warning)),
+                    Span::styled("List configured and active MCP tools", Style::default().fg(theme.text_primary)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  /memory      ", Style::default().fg(theme.warning)),
+                    Span::styled("View cognitive knowledge graph & facts", Style::default().fg(theme.text_primary)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  /skills      ", Style::default().fg(theme.warning)),
+                    Span::styled("View active autonomous skills", Style::default().fg(theme.text_primary)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  /exit        ", Style::default().fg(theme.warning)),
+                    Span::styled("Quit OpenZ interactive session", Style::default().fg(theme.text_primary)),
+                ]),
+                Line::from(String::new()),
+                Line::from(vec![
+                    Span::styled("Shortcuts:", Style::default().fg(theme.brand_accent).add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Enter        ", Style::default().fg(theme.info)),
+                    Span::styled("Send message / Select highlighted item", Style::default().fg(theme.text_primary)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Tab          ", Style::default().fg(theme.info)),
+                    Span::styled("Autocomplete slash command", Style::default().fg(theme.text_primary)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  ↑ / ↓        ", Style::default().fg(theme.info)),
+                    Span::styled("Navigate commands / prompt history", Style::default().fg(theme.text_primary)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  PgUp / PgDn  ", Style::default().fg(theme.info)),
+                    Span::styled("Scroll conversation timeline", Style::default().fg(theme.text_primary)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Esc / Ctrl+C ", Style::default().fg(theme.destructive)),
+                    Span::styled("Cancel active agent turn / Dismiss popup", Style::default().fg(theme.text_primary)),
+                ]),
+            ];
+
+            let p = Paragraph::new(help_text);
+            f.render_widget(p, inner);
+        }
+        ModalState::History {
+            sessions,
+            selected_idx,
+        } => {
+            let popup_area = centered_rect(65, 60, area);
+            f.render_widget(Clear, popup_area);
+
+            let block = Block::default()
+                .title(" Restore Chat Session ")
+                .title_alignment(Alignment::Center)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.brand_accent))
+                .style(Style::default().bg(theme.bg_elevated));
+
+            let items: Vec<ListItem> = sessions
+                .iter()
+                .enumerate()
+                .map(|(i, (key, title, time))| {
+                    let is_selected = i == *selected_idx;
+                    let prefix = if is_selected { " › " } else { "   " };
+                    let style = if is_selected {
+                        Style::default()
+                            .fg(theme.bg_primary)
+                            .bg(theme.brand_accent)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.text_primary)
+                    };
+                    ListItem::new(format!("{}{:<25} {:<20} ({})", prefix, title, key, time))
+                        .style(style)
+                })
+                .collect();
+
+            let list = List::new(items).block(block);
+            f.render_widget(list, popup_area);
+        }
+    }
+}
+
+/// Helper function to create a centered Rect for modals
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
