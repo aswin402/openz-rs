@@ -3,11 +3,44 @@ use anyhow::{anyhow, Result};
 use regex::Regex;
 use serde_json::{json, Value};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub struct GrepSearchTool;
 
 impl GrepSearchTool {
+    fn find_git_root(start: &Path) -> Option<PathBuf> {
+        let mut current = if start.is_file() {
+            start.parent()?.to_path_buf()
+        } else {
+            start.to_path_buf()
+        };
+
+        loop {
+            if current.join(".git").exists() {
+                return Some(current);
+            }
+            if !current.pop() {
+                return None;
+            }
+        }
+    }
+
+    fn scoped_search_dir(requested: PathBuf) -> PathBuf {
+        let workspace = crate::config::loader::resolve_path(".");
+        let Some(repo_root) = Self::find_git_root(&workspace) else {
+            return requested;
+        };
+
+        let requested = requested.canonicalize().unwrap_or(requested);
+        let repo_root = repo_root.canonicalize().unwrap_or(repo_root);
+
+        if repo_root.starts_with(&requested) && requested != repo_root {
+            repo_root
+        } else {
+            requested
+        }
+    }
+
     fn should_skip(path: &Path) -> bool {
         if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
             if name.starts_with('.') && name != "." && name != ".." {
@@ -230,7 +263,8 @@ impl Tool for GrepSearchTool {
             .unwrap_or(false);
 
         let search_dir_str = arguments.get("dir").and_then(|v| v.as_str()).unwrap_or(".");
-        let search_dir = crate::config::loader::resolve_path(search_dir_str);
+        let search_dir =
+            Self::scoped_search_dir(crate::config::loader::resolve_path(search_dir_str));
 
         if !search_dir.exists() {
             return Err(anyhow!("Directory '{}' does not exist", search_dir_str));
@@ -258,6 +292,25 @@ impl Tool for GrepSearchTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scoped_search_dir_clamps_ancestor_to_git_root() -> Result<()> {
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_grep_scope_test_{}", uuid::Uuid::new_v4()));
+        let repo = temp_dir.join("repo");
+        let src = repo.join("src");
+        std::fs::create_dir_all(repo.join(".git"))?;
+        std::fs::create_dir_all(&src)?;
+
+        let original = std::env::current_dir()?;
+        std::env::set_current_dir(&repo)?;
+        let scoped = GrepSearchTool::scoped_search_dir(temp_dir.clone());
+        std::env::set_current_dir(original)?;
+
+        assert_eq!(scoped.canonicalize()?, repo.canonicalize()?);
+        let _ = std::fs::remove_dir_all(temp_dir);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_grep_search() -> Result<()> {
