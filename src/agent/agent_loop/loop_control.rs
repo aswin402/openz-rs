@@ -119,6 +119,27 @@ fn tool_call_id(call: &serde_json::Value) -> Option<&str> {
         .or_else(|| call.get("tool_call_id").and_then(|v| v.as_str()))
 }
 
+fn exact_arg_repeat_counts_without_result_signature(tool_name: &str) -> bool {
+    matches!(tool_name, "grep_search" | "read_file" | "view_file")
+}
+
+fn is_state_changing_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "write_file"
+            | "write_to_file"
+            | "replace_file_content"
+            | "multi_replace_file_content"
+            | "patch_file"
+            | "replace_lines"
+            | "exec_command"
+            | "run_command"
+            | "cargo_manager"
+            | "git_manager"
+            | "db_write"
+    )
+}
+
 fn tool_result_signature(
     messages: &[Message],
     call_id: Option<&str>,
@@ -149,8 +170,35 @@ pub(crate) fn count_previous_tool_calls(
     let last_user_idx = messages.iter().rposition(|m| m.role == "user").unwrap_or(0);
     let turn_messages = &messages[last_user_idx..];
     let progress_sensitive_repeat = is_progress_sensitive_repeat(tool_name, tool_args);
+    let exact_arg_repeat = exact_arg_repeat_counts_without_result_signature(tool_name);
+    let mut state_epoch = 0usize;
+    let mut call_epochs = Vec::new();
+
+    for msg in turn_messages {
+        if msg.role != "assistant" {
+            continue;
+        }
+        if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
+            for tc in tool_calls {
+                let name = tc.get("name").and_then(|v| v.as_str()).or_else(|| {
+                    tc.get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|v| v.as_str())
+                });
+                call_epochs.push(state_epoch);
+                if let Some(name_str) = name {
+                    if is_state_changing_tool(name_str) {
+                        state_epoch += 1;
+                    }
+                }
+            }
+        }
+    }
+    let current_state_epoch = state_epoch;
+
     let mut seen_signatures = std::collections::HashSet::new();
     let mut count = 0;
+    let mut call_index = 0usize;
     for (idx, msg) in turn_messages.iter().enumerate() {
         if msg.role == "assistant" {
             if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
@@ -163,6 +211,8 @@ pub(crate) fn count_previous_tool_calls(
                     let args = tc
                         .get("arguments")
                         .or_else(|| tc.get("function").and_then(|f| f.get("arguments")));
+                    let call_epoch = call_epochs.get(call_index).copied().unwrap_or(0);
+                    call_index += 1;
 
                     if let (Some(name_str), Some(args_val)) = (name, args) {
                         if name_str == tool_name {
@@ -188,6 +238,10 @@ pub(crate) fn count_previous_tool_calls(
                                 args_val == tool_args
                             };
                             if match_args {
+                                if exact_arg_repeat && call_epoch == current_state_epoch {
+                                    count += 1;
+                                    continue;
+                                }
                                 if progress_sensitive_repeat {
                                     let signature = tool_result_signature(
                                         &turn_messages[idx + 1..],
@@ -392,6 +446,70 @@ mod tests {
         ];
 
         assert_eq!(count_previous_tool_calls(&messages, "web_search", &args), 0);
+    }
+
+    #[test]
+    fn repeated_grep_search_with_same_args_counts_even_when_results_differ() {
+        let args = json!({ "query": "orchestrate_workflow" });
+        let messages = vec![
+            Message {
+                role: "user".to_string(),
+                content: "find orchestrate_workflow".to_string(),
+                timestamp: None,
+                extra: serde_json::Map::new(),
+            },
+            assistant_named_tool_call("grep_search", "call_1", args.clone()),
+            tool_result("call_1", "grep_search", "src/tools/orchestrator.rs"),
+            assistant_named_tool_call("grep_search", "call_2", args.clone()),
+            tool_result("call_2", "grep_search", "docs/orchestrator-runtime.md"),
+        ];
+
+        assert_eq!(
+            count_previous_tool_calls(&messages, "grep_search", &args),
+            2
+        );
+    }
+
+    #[test]
+    fn repeated_read_file_with_same_args_counts_even_when_results_differ() {
+        let args = json!({ "path": "src/tools/orchestrator.rs" });
+        let messages = vec![
+            Message {
+                role: "user".to_string(),
+                content: "read orchestrator implementation".to_string(),
+                timestamp: None,
+                extra: serde_json::Map::new(),
+            },
+            assistant_named_tool_call("read_file", "call_1", args.clone()),
+            tool_result("call_1", "read_file", "first chunk"),
+            assistant_named_tool_call("read_file", "call_2", args.clone()),
+            tool_result("call_2", "read_file", "second chunk"),
+        ];
+
+        assert_eq!(count_previous_tool_calls(&messages, "read_file", &args), 2);
+    }
+
+    #[test]
+    fn repeated_read_file_after_state_change_does_not_count_previous_read() {
+        let args = json!({ "path": "src/tools/orchestrator.rs" });
+        let messages = vec![
+            Message {
+                role: "user".to_string(),
+                content: "edit then verify file".to_string(),
+                timestamp: None,
+                extra: serde_json::Map::new(),
+            },
+            assistant_named_tool_call("read_file", "call_1", args.clone()),
+            tool_result("call_1", "read_file", "before edit"),
+            assistant_named_tool_call(
+                "write_file",
+                "call_2",
+                json!({ "path": "src/tools/orchestrator.rs", "content": "after" }),
+            ),
+            tool_result("call_2", "write_file", "ok"),
+        ];
+
+        assert_eq!(count_previous_tool_calls(&messages, "read_file", &args), 0);
     }
 
     #[test]
