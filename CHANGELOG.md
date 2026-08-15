@@ -1,4 +1,10 @@
-### v0.0.130 (Latest Release)
+### v0.0.131 (Latest Release)
+**Filesystem Directory Evidence Fix:**
+- **Fix:** `list_dir` now returns the requested `path`, resolved `canonical_path`, and `entries`, giving the model explicit directory evidence for current-directory questions instead of forcing it to infer paths from file names.
+- **Tests:** Updated filesystem alias coverage to assert the resolved directory metadata returned by `list_dir`.
+- **Chore:** Bumped version to `v0.0.131`.
+
+### v0.0.130
 **Workspace-Scoped Agent Turns and Local Query Grounding:**
 - **Fix:** Scoped CLI, Ratatui, WebUI, and OpenAI-compatible API agent turns to the active workspace so local tools resolve `.` from the repo or configured workspace instead of drifting to the process home directory.
 - **Fix:** Suppressed live-source verification caveats for local operational questions such as current directory and in-repo implementation lookups while preserving web-required behavior for current external facts.

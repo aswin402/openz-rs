@@ -1,6 +1,6 @@
 use crate::config::resolve_path;
 use crate::tools::Tool;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use std::fs;
 
@@ -208,7 +208,12 @@ impl Tool for ListDirTool {
             }));
         }
 
-        Ok(serde_json::Value::Array(entries))
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.clone());
+        Ok(serde_json::json!({
+            "path": path.to_string_lossy(),
+            "canonical_path": canonical_path.to_string_lossy(),
+            "entries": entries
+        }))
     }
 }
 
@@ -810,13 +815,15 @@ mod tests {
                 "filePath": temp_dir.to_str().unwrap()
             }))
             .await?;
-        assert!(
-            list_res
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|entry| entry["name"] == "alias_match.txt")
+        assert_eq!(
+            list_res["canonical_path"].as_str().unwrap(),
+            temp_dir.canonicalize()?.to_string_lossy()
         );
+        assert!(list_res["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| { entry["name"] == "alias_match.txt" }));
 
         let find = FindFilesTool;
         let find_res = find
