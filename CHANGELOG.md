@@ -1,4 +1,8 @@
-### v0.0.131 (Latest Release)
+### v0.0.132 (Latest Release)
+**Release Metadata Refresh:**
+- **Chore:** Bumped version to `v0.0.132` after confirming workspace directory detection works across OpenZ and NexaDesk workspaces.
+
+### v0.0.131
 **Filesystem Directory Evidence Fix:**
 - **Fix:** `list_dir` now returns the requested `path`, resolved `canonical_path`, and `entries`, giving the model explicit directory evidence for current-directory questions instead of forcing it to infer paths from file names.
 - **Tests:** Updated filesystem alias coverage to assert the resolved directory metadata returned by `list_dir`.
