@@ -28,7 +28,9 @@ pub(crate) async fn evaluate_tool_approval(
 
     let repeat_count =
         super::loop_control::count_previous_tool_calls(messages, &call.name, &call.arguments);
-    let is_loop = repeat_count >= 2;
+    let repeat_threshold =
+        super::loop_control::tool_repetition_block_threshold(&call.name, &call.arguments);
+    let is_loop = repeat_count >= repeat_threshold;
     let mut should_halt = false;
     if is_loop && parse_error.is_none() {
         *loop_blocked_count += 1;

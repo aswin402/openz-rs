@@ -45,6 +45,14 @@ pub(crate) fn tool_arg_fingerprint(args: &serde_json::Value) -> Option<String> {
     read_scene_file_fingerprint(scene_file_arg_path(args)?)
 }
 
+pub(crate) fn tool_repetition_block_threshold(tool_name: &str, args: &serde_json::Value) -> usize {
+    if is_progress_sensitive_repeat(tool_name, args) {
+        1
+    } else {
+        2
+    }
+}
+
 fn is_progress_sensitive_repeat(tool_name: &str, args: &serde_json::Value) -> bool {
     if matches!(
         tool_name,
@@ -403,6 +411,24 @@ mod tests {
         ];
 
         assert_eq!(count_previous_tool_calls(&messages, "web_search", &args), 1);
+    }
+
+    #[test]
+    fn read_only_stale_repeats_block_after_one_duplicate_signature() {
+        let args = json!({ "query": "orchestrate_workflow" });
+
+        assert_eq!(tool_repetition_block_threshold("grep_search", &args), 1);
+        assert_eq!(
+            tool_repetition_block_threshold("read_file", &json!({ "path": "src/lib.rs" })),
+            1
+        );
+        assert_eq!(
+            tool_repetition_block_threshold(
+                "write_file",
+                &json!({ "path": "/tmp/x", "content": "x" })
+            ),
+            2
+        );
     }
 
     #[test]

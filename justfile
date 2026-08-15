@@ -48,6 +48,11 @@ test-all:
 test-one name package="openz":
     cargo test -p {{package}} {{name}} -j 2
 
+# Run one library unit test only, avoiding binary/integration test target compilation
+# Usage: just test-lib-one <test_name> [package_name]
+test-lib-one name package="openz":
+    cargo test -p {{package}} --lib {{name}} -j 2
+
 # Run cargo clippy on a specific package (defaults to "openz") using at most 2 parallel jobs
 clippy package="openz":
     cargo clippy -p {{package}} -j 2
