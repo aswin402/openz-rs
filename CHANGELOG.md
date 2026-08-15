@@ -1,4 +1,14 @@
-### v0.0.132 (Latest Release)
+### v0.0.133 (Latest Release)
+**Obsidian Knowledge Graph Overhaul & Progressive Real-Time Streaming:**
+- **Obsidian Graph View Engine**: Built a canvas-based interactive force-directed graph visualizer in the WebUI with Coulomb repulsion, Hooke's spring attraction, velocity damping, dynamic node halos, traveling energy particles, and zoom/pan controls.
+- **Progressive One-by-One Stream Engine**: Introduced hierarchical progressive node staging (hub nodes first, then satellites and leaves) that organically streams entities into the graph with expanding entrance wave ripples and dynamic link illumination.
+- **Isolated Page-Only Data Lifecycle**: Restricted WebSocket cognitive memory requests and polling timers strictly to the Knowledge View lifecycle, automatically tearing down compute and animation loops when navigating away.
+- **Complete Hardcoded Data & Mock Purge**: Removed all placeholder nodes (`OpenZ Agent`, `User Workspace`, `Cognitive Memory`, `Tool Registry`), fake edges, and Cartesian background grids in favor of a clean empty state and genuine SQLite-backed live entity data.
+- **Backend Query Scaling**: Lifted artificial database query limits in `fetch_real_cognitive_memory()` from 100 to 2,500 nodes and 5,000 edges; ingested `code_elements`, `code_calls`, `skills`, and `source_bookmarks` into the graph feed.
+- **DPR Scaling & Performance Optimizations**: Fixed cumulative canvas device pixel ratio scaling on window resize and added fast Manhattan distance rejection for many-body repulsion calculations.
+- **Chore:** Bumped version to `v0.0.133`.
+
+### v0.0.132
 **Release Metadata Refresh:**
 - **Chore:** Bumped version to `v0.0.132` after confirming workspace directory detection works across OpenZ and NexaDesk workspaces.
 

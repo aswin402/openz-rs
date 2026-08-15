@@ -46,6 +46,16 @@ export function ThemeProvider({
       return;
     }
 
+    // Use native View Transitions API if supported for ultra-smooth GPU crossfade
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const doc = document as any;
+    if (typeof doc.startViewTransition === 'function') {
+      doc.startViewTransition(() => {
+        updateTheme();
+      });
+      return;
+    }
+
     if (transitionTimerRef.current !== null) {
       window.clearTimeout(transitionTimerRef.current);
     }
@@ -56,7 +66,7 @@ export function ThemeProvider({
     transitionTimerRef.current = window.setTimeout(() => {
       root.classList.remove('theme-transitioning');
       transitionTimerRef.current = null;
-    }, 220);
+    }, 260);
 
     return () => {
       if (transitionTimerRef.current !== null) {

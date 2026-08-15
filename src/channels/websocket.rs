@@ -2736,7 +2736,7 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
     let mut edges: Vec<serde_json::Value> = Vec::new();
     let mut facts: Vec<serde_json::Value> = Vec::new();
 
-    // graph_memory.db uses graph_nodes and graph_edges
+    // graph_memory.db uses graph_nodes and graph_edges, plus code elements & calls
     let graph_db = crate::config::loader::runtime_db_path("graph_memory.db");
     if graph_db.exists() {
         if let Ok(conn) = rusqlite::Connection::open(&graph_db) {
@@ -2747,9 +2747,9 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
                 .query_row("SELECT COUNT(*) FROM graph_edges", [], |r| r.get(0))
                 .map(|c: i64| relations_count = c);
 
-            // Fetch nodes
+            // Fetch nodes without artificial small truncation (up to 2500 entities)
             if let Ok(mut stmt) =
-                conn.prepare("SELECT name, entity_type, observations FROM graph_nodes LIMIT 100")
+                conn.prepare("SELECT name, entity_type, observations FROM graph_nodes LIMIT 2500")
             {
                 if let Ok(rows) = stmt.query_map([], |r| {
                     Ok(serde_json::json!({
@@ -2762,9 +2762,9 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
                 }
             }
 
-            // Fetch edges
+            // Fetch edges (up to 5000 relations)
             if let Ok(mut stmt) =
-                conn.prepare("SELECT from_name, to_name, relation_type FROM graph_edges LIMIT 200")
+                conn.prepare("SELECT from_name, to_name, relation_type FROM graph_edges LIMIT 5000")
             {
                 if let Ok(rows) = stmt.query_map([], |r| {
                     Ok(serde_json::json!({
@@ -2776,26 +2776,92 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
                     edges = rows.filter_map(|r| r.ok()).collect();
                 }
             }
+
+            // Fetch code elements if available
+            if let Ok(mut stmt) = conn.prepare("SELECT name, element_type, file_path, doc_comment FROM code_elements LIMIT 250") {
+                if let Ok(rows) = stmt.query_map([], |r| {
+                    let name: String = r.get(0)?;
+                    let elem_type: String = r.get(1)?;
+                    let file_path: String = r.get(2).unwrap_or_default();
+                    let doc: String = r.get(3).unwrap_or_default();
+                    Ok(serde_json::json!({
+                        "name": name,
+                        "entity_type": if elem_type.is_empty() { "code".to_string() } else { elem_type },
+                        "observations": format!("File: {} | Doc: {}", file_path, doc),
+                    }))
+                }) {
+                    for elem in rows.filter_map(|r| r.ok()) {
+                        nodes.push(elem);
+                    }
+                }
+            }
+
+            // Fetch code calls if available
+            if let Ok(mut stmt) = conn.prepare("SELECT caller, callee, call_type FROM code_calls LIMIT 500") {
+                if let Ok(rows) = stmt.query_map([], |r| {
+                    Ok(serde_json::json!({
+                        "from_name": r.get::<_, String>(0)?,
+                        "to_name": r.get::<_, String>(1)?,
+                        "relation_type": r.get::<_, String>(2)?,
+                    }))
+                }) {
+                    for call_edge in rows.filter_map(|r| r.ok()) {
+                        edges.push(call_edge);
+                    }
+                }
+            }
         }
     }
 
-    // memory.db uses cognitive_memory table for stored facts/memories
+    // memory.db uses cognitive_memory table for stored facts/memories, plus skills and bookmarks
     let memory_db = crate::config::loader::runtime_db_path("memory.db");
     if memory_db.exists() {
         if let Ok(conn) = rusqlite::Connection::open(&memory_db) {
             let _ = conn
                 .query_row("SELECT COUNT(*) FROM cognitive_memory", [], |r| r.get(0))
                 .map(|c: i64| facts_count = c);
-            // Fetch working memory keys from interaction_history or skills if available
-            if let Ok(mut stmt) = conn.prepare("SELECT name FROM skills LIMIT 10") {
-                if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
-                    working_memory_keys = rows.filter_map(|r| r.ok()).collect();
+            // Fetch working memory keys and skills
+            if let Ok(mut stmt) = conn.prepare("SELECT name, content, trigger FROM skills LIMIT 100") {
+                if let Ok(rows) = stmt.query_map([], |r| {
+                    let name: String = r.get(0)?;
+                    let content: String = r.get(1).unwrap_or_default();
+                    let trigger: String = r.get(2).unwrap_or_default();
+                    Ok((name, content, trigger))
+                }) {
+                    for (name, content, trigger) in rows.filter_map(|r| r.ok()) {
+                        working_memory_keys.push(name.clone());
+                        nodes.push(serde_json::json!({
+                            "name": name,
+                            "entity_type": "skill",
+                            "observations": format!("Trigger: {} | Content snippet: {}", trigger, content.chars().take(80).collect::<String>()),
+                        }));
+                    }
                 }
             }
 
-            // Fetch facts
+            // Fetch source bookmarks (web research links / URLs)
+            if let Ok(mut stmt) = conn.prepare("SELECT url, title, domain, tags FROM source_bookmarks LIMIT 100") {
+                if let Ok(rows) = stmt.query_map([], |r| {
+                    let url: String = r.get(0)?;
+                    let title: String = r.get(1).unwrap_or_default();
+                    let domain: String = r.get(2).unwrap_or_default();
+                    let tags: String = r.get(3).unwrap_or_default();
+                    let label = if !title.is_empty() { title } else { url.clone() };
+                    Ok(serde_json::json!({
+                        "name": label,
+                        "entity_type": "link",
+                        "observations": format!("URL: {} | Domain: {} | Tags: {}", url, domain, tags),
+                    }))
+                }) {
+                    for bmk in rows.filter_map(|r| r.ok()) {
+                        nodes.push(bmk);
+                    }
+                }
+            }
+
+            // Fetch facts (up to 1000 facts)
             if let Ok(mut stmt) = conn
-                .prepare("SELECT text, timestamp, tags, importance FROM cognitive_memory LIMIT 100")
+                .prepare("SELECT text, timestamp, tags, importance FROM cognitive_memory LIMIT 1000")
             {
                 if let Ok(rows) = stmt.query_map([], |r| {
                     Ok(serde_json::json!({

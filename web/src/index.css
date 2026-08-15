@@ -228,22 +228,44 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
-/* Theme switches should only blend color tokens; root snapshots can hide live panels. */
-:root.theme-transitioning,
-:root.theme-transitioning *,
-:root.theme-transitioning *::before,
-:root.theme-transitioning *::after {
-  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
-  transition-duration: 180ms;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+/* Theme switches: Smooth surface, border, and text transitions without universal selector performance penalties */
+:root.theme-transitioning {
+  transition: background-color 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+:root.theme-transitioning body,
+:root.theme-transitioning aside,
+:root.theme-transitioning header,
+:root.theme-transitioning nav,
+:root.theme-transitioning main,
+:root.theme-transitioning button,
+:root.theme-transitioning input,
+:root.theme-transitioning select,
+:root.theme-transitioning textarea,
+:root.theme-transitioning [class*="bg-"],
+:root.theme-transitioning [class*="border-"],
+:root.theme-transitioning [class*="text-"] {
+  transition: background-color 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.25s;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
   :root.theme-transitioning,
-  :root.theme-transitioning *,
-  :root.theme-transitioning *::before,
-  :root.theme-transitioning *::after {
-    transition-duration: 0ms;
+  :root.theme-transitioning * {
+    transition-duration: 0ms !important;
+  }
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 0ms !important;
   }
 }
 
