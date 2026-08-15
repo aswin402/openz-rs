@@ -123,6 +123,90 @@ fn exact_arg_repeat_counts_without_result_signature(tool_name: &str) -> bool {
     matches!(tool_name, "grep_search" | "read_file" | "view_file")
 }
 
+fn object_arg_value<'a>(
+    map: &'a serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<&'a serde_json::Value> {
+    keys.iter().find_map(|key| map.get(*key))
+}
+
+fn canonical_tool_args_key(tool_name: &str, args: &serde_json::Value) -> Option<String> {
+    let parsed;
+    let args = if let Some(raw) = args.as_str() {
+        parsed = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+        &parsed
+    } else {
+        args
+    };
+    let map = args.as_object()?;
+
+    match tool_name {
+        "grep_search" => {
+            let query = object_arg_value(map, &["query", "Query"])
+                .and_then(|v| v.as_str())?
+                .trim();
+            let dir = object_arg_value(map, &["dir", "directory", "root", "path"])
+                .and_then(|v| v.as_str())
+                .unwrap_or(".")
+                .trim();
+            let is_regex = object_arg_value(map, &["is_regex", "isRegex", "regex"])
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Some(format!(
+                "grep_search|query={query}|dir={dir}|regex={is_regex}"
+            ))
+        }
+        "read_file" | "view_file" => {
+            let path = object_arg_value(
+                map,
+                &[
+                    "path",
+                    "file_path",
+                    "filePath",
+                    "TargetFile",
+                    "filepath",
+                    "file",
+                ],
+            )
+            .and_then(|v| v.as_str())?
+            .trim();
+            let start_line =
+                object_arg_value(map, &["start_line", "startLine"]).and_then(|v| v.as_u64());
+            let end_line = object_arg_value(map, &["end_line", "endLine"]).and_then(|v| v.as_u64());
+            Some(format!(
+                "{tool_name}|path={path}|start={start_line:?}|end={end_line:?}"
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn normalized_json_arg(args: &serde_json::Value) -> Option<serde_json::Value> {
+    if let Some(raw) = args.as_str() {
+        serde_json::from_str::<serde_json::Value>(raw).ok()
+    } else {
+        Some(args.clone())
+    }
+}
+
+fn tool_args_match(
+    tool_name: &str,
+    current: &serde_json::Value,
+    previous: &serde_json::Value,
+) -> bool {
+    if let (Some(current_key), Some(previous_key)) = (
+        canonical_tool_args_key(tool_name, current),
+        canonical_tool_args_key(tool_name, previous),
+    ) {
+        return current_key == previous_key;
+    }
+
+    match (normalized_json_arg(current), normalized_json_arg(previous)) {
+        (Some(current), Some(previous)) => current == previous,
+        _ => previous == current,
+    }
+}
+
 fn is_state_changing_tool(tool_name: &str) -> bool {
     matches!(
         tool_name,
@@ -226,16 +310,8 @@ pub(crate) fn count_previous_tool_calls(
                                 && scene_file_arg_path(tool_args).is_some()
                             {
                                 false
-                            } else if let Some(args_str) = args_val.as_str() {
-                                if let Ok(parsed) =
-                                    serde_json::from_str::<serde_json::Value>(args_str)
-                                {
-                                    parsed == *tool_args
-                                } else {
-                                    false
-                                }
                             } else {
-                                args_val == tool_args
+                                tool_args_match(tool_name, tool_args, args_val)
                             };
                             if match_args {
                                 if exact_arg_repeat && call_epoch == current_state_epoch {
@@ -471,6 +547,30 @@ mod tests {
     }
 
     #[test]
+    fn repeated_grep_search_counts_default_arg_variants_as_same_lookup() {
+        let args = json!({ "query": "orchestrate_workflow" });
+        let messages = vec![
+            Message {
+                role: "user".to_string(),
+                content: "find orchestrate_workflow".to_string(),
+                timestamp: None,
+                extra: serde_json::Map::new(),
+            },
+            assistant_named_tool_call(
+                "grep_search",
+                "call_1",
+                json!({ "query": "orchestrate_workflow", "dir": ".", "is_regex": false }),
+            ),
+            tool_result("call_1", "grep_search", "src/tools/orchestrator.rs"),
+        ];
+
+        assert_eq!(
+            count_previous_tool_calls(&messages, "grep_search", &args),
+            1
+        );
+    }
+
+    #[test]
     fn repeated_read_file_with_same_args_counts_even_when_results_differ() {
         let args = json!({ "path": "src/tools/orchestrator.rs" });
         let messages = vec![
@@ -487,6 +587,27 @@ mod tests {
         ];
 
         assert_eq!(count_previous_tool_calls(&messages, "read_file", &args), 2);
+    }
+
+    #[test]
+    fn repeated_read_file_counts_alias_arg_variants_as_same_lookup() {
+        let args = json!({ "path": "src/tools/orchestrator.rs" });
+        let messages = vec![
+            Message {
+                role: "user".to_string(),
+                content: "read orchestrator implementation".to_string(),
+                timestamp: None,
+                extra: serde_json::Map::new(),
+            },
+            assistant_named_tool_call(
+                "read_file",
+                "call_1",
+                json!({ "file_path": "src/tools/orchestrator.rs" }),
+            ),
+            tool_result("call_1", "read_file", "first chunk"),
+        ];
+
+        assert_eq!(count_previous_tool_calls(&messages, "read_file", &args), 1);
     }
 
     #[test]
