@@ -230,6 +230,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     let mut model = config.agents.defaults.model.clone();
     let mut provider = config.agents.defaults.provider.clone();
     let session_key = crate::config::loader::get_cli_session_key();
+    let workspace = crate::config::loader::active_workspace_or_current_dir();
 
     let sessions_dir = crate::config::loader::resolve_path("~/.openz/sessions");
     let session_manager = crate::session::SessionManager::new(sessions_dir);
@@ -1217,11 +1218,18 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     let session_key_clone = session_key.clone();
                                     let prompt_text = input_str.clone();
                                     let tx_clone = tx.clone();
+                                    let workspace_clone = workspace.clone();
 
                                     tokio::spawn(async move {
                                         let loop_guard = agent_loop_clone.lock().await;
-                                        match loop_guard.run(&prompt_text, &session_key_clone).await
-                                        {
+                                        let run_result = crate::config::loader::ACTIVE_WORKSPACE
+                                            .scope(workspace_clone, async {
+                                                loop_guard
+                                                    .run(&prompt_text, &session_key_clone)
+                                                    .await
+                                            })
+                                            .await;
+                                        match run_result {
                                             Ok(res) => {
                                                 let _ = tx_clone.send(ChatMessage::simple(
                                                     "assistant",

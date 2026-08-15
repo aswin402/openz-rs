@@ -1,4 +1,11 @@
-### v0.0.129 (Latest Release)
+### v0.0.130 (Latest Release)
+**Workspace-Scoped Agent Turns and Local Query Grounding:**
+- **Fix:** Scoped CLI, Ratatui, WebUI, and OpenAI-compatible API agent turns to the active workspace so local tools resolve `.` from the repo or configured workspace instead of drifting to the process home directory.
+- **Fix:** Suppressed live-source verification caveats for local operational questions such as current directory and in-repo implementation lookups while preserving web-required behavior for current external facts.
+- **Tests:** Added focused unit coverage for workspace resolution and local-query research intent classification.
+- **Chore:** Bumped version to `v0.0.130`.
+
+### v0.0.129
 **Typed Multi-Agent Orchestrator Runtime:**
 - Added `orchestrate_workflow` for typed sequential, parallel, review-loop, selector, manager-worker, and graph workflow specs.
 - Added dependency validation, bounded parallel execution, deterministic selector routing, review-loop termination, and structured workflow result reporting.

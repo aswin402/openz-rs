@@ -205,7 +205,32 @@ pub fn is_explicit_research_request(text: &str) -> bool {
             .any(|needle| lower.contains(needle))
 }
 
+fn is_local_operational_query(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    [
+        "which dir",
+        "which directory",
+        "what dir",
+        "what directory",
+        "where are we",
+        "where am i",
+        "current dir",
+        "current directory",
+        "cwd",
+        "working directory",
+        "in this repo",
+        "this repo",
+        "this codebase",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
 pub fn has_live_research_intent(text: &str) -> bool {
+    if is_local_operational_query(text) && !text_has_http_url(text) {
+        return false;
+    }
+
     text_has_http_url(text)
         || is_current_or_latest_query(text)
         || asks_to_revalidate_saved_research(text)
@@ -222,6 +247,21 @@ pub fn should_force_live_research_lookup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_operational_now_queries_are_not_live_research() {
+        assert!(!has_live_research_intent("in which dir we are now"));
+        assert!(!has_live_research_intent(
+            "Where is orchestrate_workflow implemented in this repo?"
+        ));
+    }
+
+    #[test]
+    fn current_external_queries_still_require_live_research() {
+        assert!(has_live_research_intent(
+            "What is the latest Rust stable version today?"
+        ));
+    }
 
     #[test]
     fn default_research_runtime_policy_has_bounded_budgets() {

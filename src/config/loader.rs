@@ -42,6 +42,20 @@ pub fn resolve_path(path_str: &str) -> PathBuf {
     }
 }
 
+pub fn active_workspace_or_current_dir() -> PathBuf {
+    ACTIVE_WORKSPACE
+        .try_with(|w| w.clone())
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+}
+
+pub fn workspace_for_agent_turn(config: &Config) -> PathBuf {
+    let workspace = config.agents.defaults.workspace.trim();
+    if workspace.is_empty() || workspace == "~/.openz/workspace" {
+        return std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    }
+    resolve_path(workspace)
+}
+
 pub fn set_command_cwd(cmd: &mut std::process::Command) {
     if let Ok(dir) = ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
         cmd.current_dir(dir);
@@ -489,7 +503,9 @@ pub fn save_config(config: &Config) -> Result<()> {
             .create_new(true)
             .mode(0o600)
             .open(&temp_path)
-            .with_context(|| format!("Failed to create temporary config file at {:?}", temp_path))?;
+            .with_context(|| {
+                format!("Failed to create temporary config file at {:?}", temp_path)
+            })?;
         temp_file
             .write_all(content.as_bytes())
             .with_context(|| format!("Failed to write temporary config file to {:?}", temp_path))?;
@@ -528,6 +544,7 @@ pub fn save_config(config: &Config) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::schema::Config;
 
     struct TestEnvLock;
 
@@ -599,6 +616,38 @@ mod tests {
         assert!(path.ends_with("memory.db"));
         assert!(path.to_string_lossy().contains(".openz"));
         let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    #[tokio::test]
+    async fn active_workspace_or_current_dir_prefers_task_local_workspace() {
+        let workspace =
+            std::env::temp_dir().join(format!("openz_active_ws_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let resolved = super::ACTIVE_WORKSPACE
+            .scope(workspace.clone(), async {
+                super::active_workspace_or_current_dir()
+            })
+            .await;
+
+        assert_eq!(resolved, workspace);
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn workspace_for_agent_turn_uses_cwd_for_default_placeholder() {
+        let original = std::env::current_dir().unwrap();
+        let workspace =
+            std::env::temp_dir().join(format!("openz_turn_ws_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::env::set_current_dir(&workspace).unwrap();
+
+        let config = Config::default();
+        let resolved = super::workspace_for_agent_turn(&config);
+
+        std::env::set_current_dir(original).unwrap();
+        let _ = std::fs::remove_dir_all(&workspace);
+        assert_eq!(resolved, workspace);
     }
 
     #[test]

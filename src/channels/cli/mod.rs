@@ -361,6 +361,7 @@ impl CliChannel {
         // Derive a unique session key per workspace directory so multiple
         // `openz agent` instances can run in different directories.
         let session_key = crate::config::loader::get_cli_session_key();
+        let workspace = crate::config::loader::active_workspace_or_current_dir();
         crate::shutdown::set_cli_active(true);
         let _guard = CliActiveGuard;
 
@@ -1500,7 +1501,12 @@ impl CliChannel {
                         );
 
                         let agent_loop = self.agent_loop.lock().await;
-                        match agent_loop.run(&combined_query, &session_key).await {
+                        let run_result = crate::config::loader::ACTIVE_WORKSPACE
+                            .scope(workspace.clone(), async {
+                                agent_loop.run(&combined_query, &session_key).await
+                            })
+                            .await;
+                        match run_result {
                             Ok(res) => {
                                 println!();
                                 render::print_colored_markdown(&res.content);

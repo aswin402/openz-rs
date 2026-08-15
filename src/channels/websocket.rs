@@ -1066,11 +1066,12 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 };
 
                                 let session_key = resolve_session_key(&agent_loop.session_manager, &chat_id_clone);
+                                let workspace = crate::config::loader::workspace_for_agent_turn(&agent_loop.config);
+                                let run_result = crate::config::loader::ACTIVE_WORKSPACE
+                                    .scope(workspace, async { agent_loop.run(&content_str, &session_key).await })
+                                    .await;
 
-                                match agent_loop
-                                    .run(&content_str, &session_key)
-                                    .await
-                                {
+                                match run_result {
                                     Ok(res) => {
                                         // Streaming deltas are emitted live from the agent loop
                                         // (event "delta"); only send a full-content delta when
@@ -2219,7 +2220,14 @@ async fn openai_chat_completions(
         .user
         .unwrap_or_else(|| "openai_proxy_default".to_string());
 
-    match agent_loop.run(&last_user_content, &session_key).await {
+    let workspace = crate::config::loader::workspace_for_agent_turn(&agent_loop.config);
+    let run_result = crate::config::loader::ACTIVE_WORKSPACE
+        .scope(workspace, async {
+            agent_loop.run(&last_user_content, &session_key).await
+        })
+        .await;
+
+    match run_result {
         Ok(res) => {
             let created = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
