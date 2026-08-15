@@ -1818,6 +1818,7 @@ Now provide only the final user-facing answer to my last message. Do not include
         let mut should_halt = false;
         let mut tool_results = Vec::new();
         let mut assistant_tool_calls_json = Vec::new();
+        let mut loop_detection_messages = ctx.messages.clone();
 
         for call in resp.tool_calls {
             let call = auto_adjust_tool_call_for_user_intent(call, ctx.user_content);
@@ -1878,7 +1879,7 @@ Now provide only the final user-facing answer to my last message. Do not include
                     .await;
             let approval = super::security_approval::evaluate_tool_approval(
                 &call,
-                &ctx.messages,
+                &loop_detection_messages,
                 ctx.session_key,
                 &config.agents.defaults.security_mode,
                 silent,
@@ -2212,11 +2213,12 @@ Now provide only the final user-facing answer to my last message. Do not include
                 &mut auto_suggested_open_targets,
             );
 
-            tool_results.push(super::transcript::ToolTranscriptResult {
+            let transcript_result = super::transcript::ToolTranscriptResult {
                 id: call.id.clone(),
                 name: call.name.clone(),
                 result: result_val,
-            });
+            };
+            tool_results.push(transcript_result.clone());
 
             let mut assistant_tool_call = serde_json::json!({
                 "id": call.id,
@@ -2234,7 +2236,28 @@ Now provide only the final user-facing answer to my last message. Do not include
                     );
                 }
             }
+            let loop_assistant_tool_call = assistant_tool_call.clone();
             assistant_tool_calls_json.push(assistant_tool_call);
+            super::transcript::append_assistant_tool_calls(
+                &mut loop_detection_messages,
+                vec![loop_assistant_tool_call],
+                None,
+            );
+            let mut loop_tool_extra = serde_json::Map::new();
+            loop_tool_extra.insert(
+                "tool_call_id".to_string(),
+                serde_json::Value::String(transcript_result.id),
+            );
+            loop_tool_extra.insert(
+                "name".to_string(),
+                serde_json::Value::String(transcript_result.name),
+            );
+            loop_detection_messages.push(crate::session::Message {
+                role: "tool".to_string(),
+                content: transcript_result.result.to_string(),
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                extra: loop_tool_extra,
+            });
 
             if let Some(suggest_call) = maybe_device_suggest_call {
                 if let Some(suggest_tool) = loop_ref.tools.get(&suggest_call.name) {
