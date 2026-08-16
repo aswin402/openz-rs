@@ -1,4 +1,12 @@
-### v0.0.136 (Latest Release)
+### v0.0.137 (Latest Release)
+**Tool Metadata Consolidation & Dead Classification Fix (recommendedfix §1.2):**
+- **Fixed silently-dead tool classifications:** four tools were referenced by misnamed match arms, so their intended timeouts and network flags never applied at runtime — `html_to_video` (was `html_video`, now 900s), `crawl_website` (was `crawl_site`, now 600s and correctly flagged `uses_network`), `create_animated_svg` (was `svg_animator`, 300s), and `render_mermaid` (was `mermaid`, 300s). Also moved `generate_image`, `generate_video`, `semantic_search`, and `python_sandbox` into the curated table with their intended timeouts.
+- **Consolidated on `STATIC_TOOL_DEFS`:** all tool metadata functions (domain, disk/network flags, aliases, examples, usage hints, recommended timeout) now treat the curated data table as the single source for named tools; `tool_recommended_timeout` shrank to dynamic families only (`browser*`, `opendoc_*`, `mcp_*`).
+- **Drift guard:** the full-registry registration test now asserts every `STATIC_TOOL_DEFS` entry matches a real registered tool, so future renames can't silently orphan a curated definition again; regression tests pin the fixed timeouts and the crawler's network flag.
+- **Docs:** recorded §1.2 progress in `recommendedfix.md`.
+- **Chore:** Bumped version to `v0.0.137`.
+
+### v0.0.136
 **Robustness & Guard Efficiency Pass:**
 - **Panic-free config cache:** `config/loader.rs` recovers from mutex poisoning instead of unwrapping, so a panic elsewhere can no longer take down subsequent config loads at startup. Audit note: the high `unwrap()` counts previously flagged in `providers/resolver.rs`, `memory_extra`, `headroom`, and `self_management` are confined to `#[cfg(test)]` code; production paths were verified unwrap-free apart from the two fixed here.
 - **Headroom diff parser:** removed the last production `unwrap()` in `compress.rs` by restructuring the diff-file state transition with `if let`.

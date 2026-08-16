@@ -453,10 +453,105 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         when_to_use: "Use to run typed, observable multi-agent workflow specs through the native OpenZ orchestrator runtime.",
         when_not_to_use: "Avoid when a single direct tool call or one delegate_task invocation is enough.",
     },
+    StaticToolDef {
+        name: "html_to_video",
+        domain: "media",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: Some(900),
+        aliases: &["render video", "html video", "animation to mp4"],
+        examples: &["Render an HTML animation timeline to MP4", "Convert a page animation into a video file"],
+        when_to_use: "Use to render HTML/CSS animation timelines into video files via CDP.",
+        when_not_to_use: "Avoid for programmatic video without HTML; use generate_video instead.",
+    },
+    StaticToolDef {
+        name: "generate_video",
+        domain: "media",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: Some(900),
+        aliases: &["make video", "programmatic video", "wavyte video"],
+        examples: &["Generate a programmatic MP4 via the Wavyte API", "Produce a video artifact from code"],
+        when_to_use: "Use to generate videos from programmatic scene descriptions.",
+        when_not_to_use: "Avoid when an HTML timeline already exists; html_to_video is cheaper.",
+    },
+    StaticToolDef {
+        name: "crawl_website",
+        domain: "web",
+        writes_disk: false,
+        uses_network: true,
+        recommended_timeout_secs: Some(600),
+        aliases: &["crawl site", "spider website", "multi-page scrape"],
+        examples: &["Crawl a documentation site for all pages", "Spider a domain and summarize its pages"],
+        when_to_use: "Use to fetch and analyze many pages of one website.",
+        when_not_to_use: "Avoid for a single known URL; use web_fetch instead.",
+    },
+    StaticToolDef {
+        name: "create_animated_svg",
+        domain: "media",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: Some(300),
+        aliases: &["animated svg", "svg animation"],
+        examples: &["Compile an animation timeline into an animated SVG", "Create an animated diagram"],
+        when_to_use: "Use to compile element/animation specs into a self-contained animated SVG.",
+        when_not_to_use: "Avoid for static SVGs or raster image output.",
+    },
+    StaticToolDef {
+        name: "generate_image",
+        domain: "media",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: Some(300),
+        aliases: &["make image", "render png", "html to image"],
+        examples: &["Render an HTML/CSS layout to PNG", "Generate a diagram image"],
+        when_to_use: "Use to render HTML/CSS/SVG specs into raster images.",
+        when_not_to_use: "Avoid for vector output; use create_animated_svg or SVG tools.",
+    },
+    StaticToolDef {
+        name: "render_mermaid",
+        domain: "media",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: Some(300),
+        aliases: &["mermaid diagram", "flowchart"],
+        examples: &["Render a Mermaid flowchart to an image", "Draw an architecture diagram"],
+        when_to_use: "Use to render Mermaid diagram definitions into visual artifacts.",
+        when_not_to_use: "Avoid for hand-authored SVG; use SVG tools directly.",
+    },
+    StaticToolDef {
+        name: "semantic_search",
+        domain: "code",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: Some(300),
+        aliases: &["vector search", "semantic code search", "embeddings search"],
+        examples: &["Find code by meaning across the repo", "Locate implementation similar to a description"],
+        when_to_use: "Use to search a repository by semantic similarity, including first-time indexing.",
+        when_not_to_use: "Avoid for exact-text lookups; grep_search is faster and cheaper.",
+    },
+    StaticToolDef {
+        name: "python_sandbox",
+        domain: "shell",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: Some(180),
+        aliases: &["run python", "python repl", "python script"],
+        examples: &["Run a short Python computation", "Process data with a Python snippet"],
+        when_to_use: "Use to execute isolated Python code for computation or data wrangling.",
+        when_not_to_use: "Avoid for shell-native tasks; exec_command covers most workflows.",
+    },
 ];
 
 fn get_static_tool_def(name: &str) -> Option<&'static StaticToolDef> {
     STATIC_TOOL_DEFS.iter().find(|def| def.name == name)
+}
+
+/// Names covered by the curated static tool definitions. Consumed by the
+/// full-registry registration test to catch drift between the table and the
+/// actual tool implementations (misnamed entries silently never apply).
+pub fn static_tool_def_names() -> Vec<&'static str> {
+    STATIC_TOOL_DEFS.iter().map(|def| def.name).collect()
 }
 
 fn infer_tool_domain(name: &str) -> &'static str {
@@ -585,7 +680,7 @@ fn tool_uses_network(name: &str) -> bool {
     }
     matches!(
         name,
-        "web_fetch" | "web_search" | "crawl_site" | "social_search" | "check_port"
+        "web_fetch" | "web_search" | "social_search" | "check_port"
     ) || name.starts_with("searchxyz")
         || name.starts_with("github")
         || name.starts_with("docs_install")
@@ -596,42 +691,21 @@ fn tool_uses_network(name: &str) -> bool {
 
 fn tool_recommended_timeout(name: &str) -> Option<u64> {
     if let Some(def) = get_static_tool_def(name) {
-        if def.recommended_timeout_secs.is_some() {
-            return def.recommended_timeout_secs;
-        }
+        return def.recommended_timeout_secs;
     }
-    match name {
-        // Subagent delegation — full LLM loop with tool execution
-        "delegate_task" | "parallel_research" | "evaluator_optimizer_loop" => Some(600),
-
+    // Dynamic tool families only — named tools belong in STATIC_TOOL_DEFS so
+    // name drift is caught by the registration drift test.
+    if name.contains("browser") || name.contains("obscura") {
         // Browser automation — CDP sessions with page load + interaction
-        name if name.contains("browser") || name.contains("obscura") => Some(600),
-
-        // Web crawling — multi-page spider
-        "crawl_site" => Some(600),
-
-        // Video generation — Chromium rendering or Wavyte API
-        "html_video" | "generate_video" => Some(900),
-
-        // Image generation — HTML/CSS/SVG render to PNG
-        "generate_image" | "svg_animator" => Some(300),
-
-        // Semantic search — indexing codebase
-        "semantic_search" => Some(300),
-
-        // MCP tools — external process communication
-        name if name.starts_with("mcp_") => Some(180),
-
-        // Shell commands — potentially long running
-        "exec_command" | "python_sandbox" => Some(180),
-
-        // HTML rendering via Mermaid
-        "mermaid" => Some(300),
-
+        Some(600)
+    } else if name.starts_with("opendoc_") {
         // Document conversion
-        name if name.starts_with("opendoc_") => Some(300),
-
-        _ => None,
+        Some(300)
+    } else if name.starts_with("mcp_") {
+        // MCP tools — external process communication
+        Some(180)
+    } else {
+        None
     }
 }
 
@@ -1861,3 +1935,61 @@ pub mod wasm_sandbox;
 pub mod watcher;
 pub mod web;
 pub mod web_search;
+
+#[cfg(test)]
+mod static_def_tests {
+    use super::*;
+
+    /// Regression guard: these tools were previously referenced by misnamed
+    /// match arms (html_video, crawl_site, svg_animator, mermaid) so their
+    /// intended timeouts and network flags silently never applied.
+    #[test]
+    fn curated_defs_apply_intended_timeouts() {
+        assert_eq!(
+            ToolMetadata::infer("html_to_video").recommended_timeout_secs,
+            Some(900)
+        );
+        assert_eq!(
+            ToolMetadata::infer("generate_video").recommended_timeout_secs,
+            Some(900)
+        );
+        assert_eq!(
+            ToolMetadata::infer("crawl_website").recommended_timeout_secs,
+            Some(600)
+        );
+        assert_eq!(
+            ToolMetadata::infer("create_animated_svg").recommended_timeout_secs,
+            Some(300)
+        );
+        assert_eq!(
+            ToolMetadata::infer("generate_image").recommended_timeout_secs,
+            Some(300)
+        );
+        assert_eq!(
+            ToolMetadata::infer("render_mermaid").recommended_timeout_secs,
+            Some(300)
+        );
+        assert_eq!(
+            ToolMetadata::infer("semantic_search").recommended_timeout_secs,
+            Some(300)
+        );
+        assert_eq!(
+            ToolMetadata::infer("python_sandbox").recommended_timeout_secs,
+            Some(180)
+        );
+    }
+
+    #[test]
+    fn crawl_website_is_a_network_tool() {
+        let metadata = ToolMetadata::infer("crawl_website");
+        assert!(metadata.uses_network);
+        assert_eq!(metadata.domain, "web");
+    }
+
+    #[test]
+    fn curated_defs_have_no_duplicate_names() {
+        let names = static_tool_def_names();
+        let unique: std::collections::BTreeSet<_> = names.iter().collect();
+        assert_eq!(names.len(), unique.len(), "duplicate STATIC_TOOL_DEFS entry");
+    }
+}

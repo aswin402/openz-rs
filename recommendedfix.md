@@ -57,6 +57,8 @@ Progress now done: timeout resolution is shared through `resolve_subagent_timeou
 
 Every new tool risks being forgotten in one or more of these functions, leading to incorrect domain classification, missing aliases, or missing timeout hints. First-pass progress is done for subagent tools: `delegate_task`, `delegate_profile`, and `parallel_research` now override `metadata()` through `subagent_tool_metadata()`.
 
+**Progress (v0.0.137):** Consolidated on the `STATIC_TOOL_DEFS` curated data table as the single source for named-tool metadata (the `metadata()` trait override remains the escape hatch, as subagent tools show). All seven functions now consult the table first; `tool_recommended_timeout()` was reduced to dynamic families only (`browser*`/`opendoc_*`/`mcp_*`). Fixed four dead misnamed arms found during the pass — `html_video`→`html_to_video` (900s), `crawl_site`→`crawl_website` (600s + `uses_network=true`), `svg_animator`→`create_animated_svg` (300s), `mermaid`→`render_mermaid` (300s) — whose intended timeouts/network classification silently never applied; also tabled `generate_image`, `generate_video`, `semantic_search`, and `python_sandbox`. Added a registration drift-guard test asserting every `STATIC_TOOL_DEFS` name is a real registered tool, plus regression tests for the fixed timeouts. Remaining heuristics (`infer_tool_domain`, `tool_writes_disk`, `tool_uses_network` substring fallbacks) only serve dynamically-named tools (subagent profiles, MCP wrappers) and are no longer extended for named tools.
+
 **Recommended fix:** Move metadata to the tool implementation itself. Add a method to the `Tool` trait that returns metadata in a structured way:
 
 ```rust

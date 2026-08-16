@@ -996,6 +996,17 @@ mod tests {
             unique.len(),
             "duplicate tool names must not appear"
         );
+
+        // Drift guard: every curated STATIC_TOOL_DEFS entry must match a real
+        // registered tool. A misnamed entry silently never applies (timeouts,
+        // network flags, routing hints), as happened with html_video/crawl_site.
+        for def_name in crate::tools::static_tool_def_names() {
+            assert!(
+                names.contains(&def_name.to_string()),
+                "STATIC_TOOL_DEFS entry '{def_name}' is not a registered tool — fix the name drift"
+            );
+        }
+
         assert!(names.contains(&"read_file".to_string()));
         assert!(names.contains(&"exec_command".to_string()));
         assert!(names.contains(&"delegate_task".to_string()));
