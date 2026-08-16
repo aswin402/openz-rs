@@ -1817,15 +1817,22 @@ mod route_cache_tests {
 
         assert!(registry.get("delegate_task").is_some());
 
+        // Mirror production: the orchestrator scopes the nested-delegation flag
+        // around delegate.call(), and execute_subagent_run scopes ACTIVE_SUBAGENT
+        // around the child run where its registry lookups happen.
         crate::tools::subagent::ORCHESTRATED_NESTED_DELEGATION_ALLOWED
             .scope(false, async {
-                assert!(registry.get("delegate_task").is_none());
-                let exposed_names = registry
-                    .to_openai_format_for_prompt("delegate this task")
-                    .into_iter()
-                    .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
-                    .collect::<Vec<_>>();
-                assert!(!exposed_names.iter().any(|name| name == "delegate_task"));
+                crate::tools::subagent::ACTIVE_SUBAGENT
+                    .scope("coding_agent".to_string(), async {
+                        assert!(registry.get("delegate_task").is_none());
+                        let exposed_names = registry
+                            .to_openai_format_for_prompt("delegate this task")
+                            .into_iter()
+                            .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
+                            .collect::<Vec<_>>();
+                        assert!(!exposed_names.iter().any(|name| name == "delegate_task"));
+                    })
+                    .await;
             })
             .await;
     }

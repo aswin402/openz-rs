@@ -292,7 +292,7 @@ The `format_tool_args()` function in `run.rs` has ~20 explicit mappings to handl
 
 ### 5.2 Pre-Existing Test Failures
 
-Status: **Resolved / stale finding.** A full sequential lib run currently passes: `cargo test --lib -- --test-threads=1` = 331 passed, 0 failed.
+Status: **Updated (v0.0.138):** a full sequential lib run passes: `cargo test -p openz --lib -- --test-threads=1` = 735 passed, 0 failed. Historical note: five stale tests had silently failed after b787471/ff11b0b reworded prompts and changed subagent metadata semantics — all repaired in v0.0.137/v0.0.138 (metadata `spawns_process`, deny-shell wrapper policy, step-prompt wording, orchestrated-worker scope, version surfaces). Known limitation: with default parallel test threads, ~7 tests fail from cross-test interference (shared env vars, global sender registries, source-scanning tests); run the suite sequentially. Fixing parallel isolation is optional follow-up work.
 
 **Recommended:** Keep this section as a reminder to run the full suite before releases; no immediate fix is needed.
 

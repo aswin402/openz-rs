@@ -5,6 +5,7 @@
 - **New tests:** the schema retry loop is now unit-tested end-to-end (fenced-JSON accept with in-place content replacement, retry-then-accept with corrected prompt, attempt-limit error after 2 reruns), plus coverage for the workspace-fields merge.
 - **Fixed three tests stale since b787471** (which deliberately set subagent `spawns_process = false` because delegation runs in-process): the two metadata assertions now pin `false`, and the deny-shell registry test now pins the intended policy semantics — `deny_shell` blocks shell tools while delegation wrappers stay available because child agent loops inherit the capability policy on their own registry.
 - **Docs:** recorded §1.1 progress in `recommendedfix.md`.
+- **Post-release test repairs (suite verification):** ran the full sequential suite (735 tests) after this release and repaired the remaining stale tests — the orchestrator step-prompt wording assertion (reworded in ff11b0b), the orchestrated-worker nested-delegation test (now scopes `ACTIVE_SUBAGENT` to mirror production), and the version-sync surfaces (README badge was stuck at v0.0.124, onpkg.json at v0.0.128). Sequential suite is fully green; ~7 tests remain parallel-run sensitive (documented in recommendedfix §5.2).
 - **Chore:** Bumped version to `v0.0.138`.
 
 ### v0.0.137

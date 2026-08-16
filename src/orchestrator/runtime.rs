@@ -907,8 +907,7 @@ mod tests {
         let prompt = build_step_prompt(&step, "Run smoke test workflow", &[]);
 
         assert!(prompt.contains("Complete this step directly when possible"));
-        assert!(prompt.contains("Do not delegate"));
-        assert!(prompt.contains("Do not research"));
+        assert!(prompt.contains("Do not delegate or research"));
     }
 
     #[test]
