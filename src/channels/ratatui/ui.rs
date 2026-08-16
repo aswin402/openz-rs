@@ -85,8 +85,8 @@ fn markdown_line_to_spans(line: &str, theme: &Theme) -> Vec<Span<'static>> {
         )];
     }
 
-    // List items
-    if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")).or_else(|| trimmed.strip_prefix("• ")) {
+    // List items — use classic crisp bullet (•)
+    if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")).or_else(|| trimmed.strip_prefix("• ")).or_else(|| trimmed.strip_prefix("· ")) {
         let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
         let mut spans = vec![
             Span::raw(indent),
@@ -96,9 +96,9 @@ fn markdown_line_to_spans(line: &str, theme: &Theme) -> Vec<Span<'static>> {
         return spans;
     }
 
-    if let Some(rest) = trimmed.strip_prefix("  - ").or_else(|| trimmed.strip_prefix("  * ")).or_else(|| trimmed.strip_prefix("  • ")) {
+    if let Some(rest) = trimmed.strip_prefix("  - ").or_else(|| trimmed.strip_prefix("  * ")).or_else(|| trimmed.strip_prefix("  • ")).or_else(|| trimmed.strip_prefix("  · ")) {
         let mut spans = vec![
-            Span::styled("    - ", Style::default().fg(theme.muted)),
+            Span::styled("    • ", Style::default().fg(theme.muted)),
         ];
         spans.extend(parse_inline_markdown(rest, theme));
         return spans;
@@ -207,7 +207,7 @@ fn parse_inline_markdown(text: &str, theme: &Theme) -> Vec<Span<'static>> {
 
 // ── Main Layout Renderer ────────────────────────────────────────────────────
 
-pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
+pub fn render_ratatui_ui(f: &mut Frame, app: &mut RatatuiApp) {
     let theme = &app.theme;
 
     // Background fill
@@ -258,7 +258,7 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &RatatuiApp) {
 
 // ── Conversation Timeline ───────────────────────────────────────────────────
 
-fn render_timeline(f: &mut Frame, app: &RatatuiApp, area: Rect) {
+fn render_timeline(f: &mut Frame, app: &mut RatatuiApp, area: Rect) {
     let theme = &app.theme;
     let mut lines = Vec::new();
 
@@ -376,14 +376,24 @@ fn render_timeline(f: &mut Frame, app: &RatatuiApp, area: Rect) {
                 prev_was_user = true;
             }
             "assistant" => {
-                // Thinking / Reasoning Block
+                // ── Thought badge + Monologue (CLI TUI style with bullet dot) ─
                 if let Some(thinking_time) = msg.thinking_time {
                     lines.push(Line::from(vec![
-                        Span::styled("● ", Style::default().fg(theme.brand_accent)),
+                        Span::styled("• ", Style::default().fg(theme.brand_accent)),
                         Span::styled(
                             format!("Thought for {:.1}s", thinking_time),
                             Style::default()
-                                .fg(theme.warning)
+                                .fg(theme.brand_accent)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]));
+                } else if msg.reasoning.is_some() {
+                    lines.push(Line::from(vec![
+                        Span::styled("• ", Style::default().fg(theme.brand_accent)),
+                        Span::styled(
+                            "Thoughts",
+                            Style::default()
+                                .fg(theme.brand_accent)
                                 .add_modifier(Modifier::BOLD),
                         ),
                     ]));
@@ -401,8 +411,8 @@ fn render_timeline(f: &mut Frame, app: &RatatuiApp, area: Rect) {
                                 ),
                             ]));
                         }
+                        lines.push(Line::from(String::new()));
                     }
-                    lines.push(Line::from(String::new()));
                 }
 
                 // Assistant Markdown content
@@ -467,8 +477,10 @@ fn render_timeline(f: &mut Frame, app: &RatatuiApp, area: Rect) {
                     None => ("Running", Style::default().fg(theme.brand_accent)),
                 };
 
+                // Bullet dot • prefix for tools
                 lines.push(Line::from(vec![
-                    Span::styled(format!("• {} ", verb), verb_style),
+                    Span::styled("• ", Style::default().fg(theme.brand_accent)),
+                    Span::styled(format!("{} ", verb), verb_style),
                     Span::styled(
                         if details.is_empty() {
                             tool_name.to_string()
@@ -530,15 +542,30 @@ fn render_timeline(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         }
     }
 
-    // Active working indicator at bottom of timeline
+    // ── Active Thinking Animation Indicator ──────────────────────────────────
     if app.is_thinking {
         let frame_idx = app.spinner_idx % theme::SPINNER_FRAMES.len();
         let spinner = theme::SPINNER_FRAMES[frame_idx];
         let elapsed = app.work_start.map(|s| s.elapsed().as_secs()).unwrap_or(0);
 
+        // Animated dots for thinking pulse
+        let dots = match (app.spinner_idx / 3) % 4 {
+            0 => ".  ",
+            1 => ".. ",
+            2 => "...",
+            _ => "   ",
+        };
+
         lines.push(Line::from(vec![
+            Span::styled("• ", Style::default().fg(theme.brand_accent)),
             Span::styled(
-                format!("• {} Working ", spinner),
+                format!("{} ", spinner),
+                Style::default()
+                    .fg(theme.brand_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("Thinking{} ", dots),
                 Style::default()
                     .fg(theme.brand_white)
                     .add_modifier(Modifier::BOLD),
@@ -550,19 +577,24 @@ fn render_timeline(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         ]));
     }
 
-    let total_lines = lines.len() as u16;
-    let viewport_height = area.height;
+    let total_lines = lines.len() as u32;
+    let viewport_height = area.height as u32;
     let max_scroll = total_lines.saturating_sub(viewport_height);
+    app.max_scroll = max_scroll;
+
     let scroll = if app.auto_scroll {
         max_scroll
     } else {
         app.scroll_offset.min(max_scroll)
     };
 
+    // Paragraph can only scroll within u16 range; clamp oversized timelines
+    let scroll_u16 = scroll.min(u16::MAX as u32) as u16;
+
     let paragraph = Paragraph::new(lines)
         .block(Block::default().borders(Borders::NONE))
         .wrap(Wrap { trim: false })
-        .scroll((scroll, 0));
+        .scroll((scroll_u16, 0));
 
     f.render_widget(paragraph, area);
 }
@@ -944,6 +976,10 @@ fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) {
                 Line::from(vec![
                     Span::styled("  PgUp / PgDn  ", Style::default().fg(theme.info)),
                     Span::styled("Scroll conversation timeline", Style::default().fg(theme.text_primary)),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Mouse Wheel  ", Style::default().fg(theme.info)),
+                    Span::styled("Scroll conversation up / down smoothly", Style::default().fg(theme.text_primary)),
                 ]),
                 Line::from(vec![
                     Span::styled("  Esc / Ctrl+C ", Style::default().fg(theme.destructive)),

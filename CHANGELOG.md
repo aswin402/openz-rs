@@ -1,4 +1,15 @@
-### v0.0.134 (Latest Release)
+### v0.0.135 (Latest Release)
+**Ratatui Session Handling Fixes, Scroll Model & In-Flight Guards:**
+- **Fix: Session restore now switches the active session.** The active session key is shared mutable state (`Arc<RwLock<String>>`), so prompts after a `/history` restore append to the restored session instead of the original one, and the timeline no longer reverts to the old session after a turn completes. The TUI instance marker is updated on restore.
+- **Fix: Session re-sync keeps UI-only notices.** Timeline messages gained an `ephemeral` flag; cancellations, error notices, and switch confirmations survive the full-session reload after each turn (capped at the 5 most recent).
+- **Fix: No duplicate sessions on resume.** Startup history selection and `/history` restore adopt the chosen session in place instead of copying its messages into the CLI session key; `/new-session` no longer re-archives an already-archived `cli:history_*` session.
+- **In-flight guards:** Enter during a running turn shows a notice and keeps the input instead of invisibly queueing on the agent mutex; `/history` restore and `/new-session` are blocked while a turn runs.
+- **Scroll improvements:** Mouse wheel and modifier-arrow scrolling with a clamped scroll model that re-engages auto-scroll at the bottom edge; scroll offsets widened to `u32`; scroll step sizes and the render tick lifted into named constants.
+- **Session restore fidelity:** Restored sessions render with full metadata (tool names, reasoning blocks, thinking timers) via `ChatMessage::from_session_message`.
+- **Tests:** Added unit coverage for the scroll state machine, session sync merge, and session-message metadata extraction.
+- **Chore:** Bumped version to `v0.0.135`.
+
+### v0.0.134
 **Ratatui TUI Overhaul (Aura Dark + OpenZ Red-Orange Dual-Tone Theme):**
 - **Minicode-Inspired Modern Architecture**: Complete rewrite of the Ratatui TUI channel layout with a 4-tier responsive structure featuring conversation timeline, dynamic slash autocomplete dock, elevated input box, and minimal status bar.
 - **Authentic CLI ASCII Wordmark**: Added the authentic dual-color OpenZ ASCII banner where `OPEN` is rendered in bold crisp white (`#f0f0f0`) and `Z` in signature Red-Orange (`#ff5500`), accompanied by workspace and git status metadata.
