@@ -28,6 +28,34 @@ fn filename_arg(map: &serde_json::Map<String, serde_json::Value>, keys: &[&str])
     })
 }
 
+// Canonical argument alias sets for display formatting. New tools should use
+// the first entry (snake_case) as their primary argument name; the remaining
+// entries are legacy aliases kept for compatibility with existing prompts.
+const PATH_KEYS: &[&str] = &["path", "file_path", "filePath", "TargetFile", "filepath", "file"];
+const COMMAND_KEYS: &[&str] = &["command", "Command", "CommandLine", "command_line"];
+const OUTPUT_KEYS: &[&str] = &["output_path", "outputPath", "OutputPath"];
+const QUERY_KEYS: &[&str] = &["query", "Query"];
+const URL_KEYS: &[&str] = &["url", "Url", "UrlContent"];
+
+/// Truncate to at most `max` characters with a trailing ellipsis.
+fn clip(s: &str, max: usize) -> String {
+    if s.chars().count() > max {
+        format!(
+            "{}...",
+            s.chars().take(max.saturating_sub(3)).collect::<String>()
+        )
+    } else {
+        s.to_string()
+    }
+}
+
+fn file_name_of(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
+}
+
 pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> String {
     let args = raw_args.clone();
     let friendly_name = match name {
@@ -64,334 +92,183 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
     };
 
     let details = if let serde_json::Value::Object(map) = &args {
-        if name == "grep_search" {
-            if let Some(q) = string_arg(map, &["query", "Query"]) {
-                if q.len() > 35 {
-                    format!("query: \"{}...\"", q.chars().take(32).collect::<String>())
-                } else {
-                    format!("query: \"{}\"", q)
-                }
-            } else {
-                String::new()
+        match name {
+            // Query-style tools
+            "grep_search" | "web_search" | "semantic_search" => string_arg(map, QUERY_KEYS)
+                .map(|q| format!("query: \"{}\"", clip(q, 35)))
+                .unwrap_or_default(),
+            // Filesystem-style tools — show just the target file name
+            "read_file" | "view_file" | "write_file" | "write_to_file" | "replace_file_content"
+            | "multi_replace_file_content" | "patch_file" | "replace_lines" | "list_dir" => {
+                filename_arg(map, PATH_KEYS).unwrap_or_default()
             }
-        } else if name == "read_file" || name == "view_file" {
-            filename_arg(
-                map,
-                &[
-                    "path",
-                    "file_path",
-                    "filePath",
-                    "TargetFile",
-                    "filepath",
-                    "file",
-                ],
-            )
-            .unwrap_or_default()
-        } else if name == "write_file"
-            || name == "write_to_file"
-            || name == "replace_file_content"
-            || name == "multi_replace_file_content"
-            || name == "patch_file"
-            || name == "replace_lines"
-        {
-            filename_arg(
-                map,
-                &[
-                    "path",
-                    "file_path",
-                    "filePath",
-                    "TargetFile",
-                    "filepath",
-                    "file",
-                ],
-            )
-            .unwrap_or_default()
-        } else if name == "run_command" || name == "exec_command" {
-            if let Some(cmd) =
-                string_arg(map, &["command", "Command", "CommandLine", "command_line"])
-            {
-                let first_line = cmd.lines().next().unwrap_or("").trim();
-                if first_line.len() > 40 {
-                    format!("{}...", first_line.chars().take(37).collect::<String>())
-                } else {
-                    first_line.to_string()
-                }
-            } else {
-                String::new()
-            }
-        } else if name == "list_dir" {
-            filename_arg(
-                map,
-                &[
-                    "path",
-                    "file_path",
-                    "filePath",
-                    "TargetFile",
-                    "filepath",
-                    "file",
-                ],
-            )
-            .unwrap_or_default()
-        } else if name == "git_manager" {
-            if let Some(action) = map.get("action").and_then(|v| v.as_str()) {
-                action.to_string()
-            } else {
-                String::new()
-            }
-        } else if name == "cargo_manager" {
-            if let Some(command) = map.get("command").and_then(|v| v.as_str()) {
-                command.to_string()
-            } else {
-                String::new()
-            }
-        } else if name == "web_search" {
-            if let Some(q) = string_arg(map, &["query", "Query"]) {
-                if q.len() > 35 {
-                    format!("query: \"{}...\"", q.chars().take(32).collect::<String>())
-                } else {
-                    format!("query: \"{}\"", q)
-                }
-            } else {
-                String::new()
-            }
-        } else if name == "web_fetch" || name == "read_url_content" || name == "read_url" {
-            if let Some(url) = string_arg(map, &["url", "Url", "UrlContent"]) {
-                if url.len() > 35 {
-                    format!("\"{}...\"", url.chars().take(32).collect::<String>())
-                } else {
-                    format!("\"{}\"", url)
-                }
-            } else {
-                String::new()
-            }
-        } else if name == "generate_image" {
-            let path = string_arg(map, &["output_path", "outputPath", "OutputPath"])
-                .unwrap_or("output.png");
-            let filename = std::path::Path::new(path)
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.to_string());
-            let shapes_count = map
-                .get("shapes")
-                .and_then(|v| v.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            if shapes_count > 0 {
-                format!("output: \"{}\", shapes: {}", filename, shapes_count)
-            } else {
-                format!("output: \"{}\"", filename)
-            }
-        } else if name == "generate_video" {
-            let path = string_arg(map, &["output_path", "outputPath", "OutputPath"])
-                .unwrap_or("output.mp4");
-            let filename = std::path::Path::new(path)
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.to_string());
-            format!("output: \"{}\"", filename)
-        } else if name == "html_to_video" {
-            let html_path = string_arg(map, &["html_path", "htmlPath"]).unwrap_or("");
-            let html_filename =
-                if html_path.starts_with("http://") || html_path.starts_with("https://") {
-                    if html_path.len() > 30 {
-                        format!("{}...", html_path.chars().take(27).collect::<String>())
-                    } else {
-                        html_path.to_string()
-                    }
-                } else {
-                    std::path::Path::new(html_path)
-                        .file_name()
-                        .map(|f| f.to_string_lossy().to_string())
-                        .unwrap_or_else(|| html_path.to_string())
-                };
-            let out_path = string_arg(map, &["output_path", "outputPath", "OutputPath"])
-                .unwrap_or("output.mp4");
-            let out_filename = std::path::Path::new(out_path)
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_else(|| out_path.to_string());
-            let duration = map
-                .get("duration_seconds")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(5.0);
-            let fps = map.get("fps").and_then(|v| v.as_i64()).unwrap_or(30);
-            let frames = (duration * fps as f64).round() as usize;
-            let duration_display = if duration.fract() == 0.0 {
-                format!("{:.0}", duration)
-            } else {
-                format!("{:.1}", duration)
-            };
-            format!(
-                "html: \"{}\", output: \"{}\", duration: {}s, fps: {}, frames: {}",
-                html_filename, out_filename, duration_display, fps, frames
-            )
-        } else if name == "create_animated_svg" {
-            let path = string_arg(map, &["output_path", "outputPath", "OutputPath"])
-                .unwrap_or("output.svg");
-            let filename = std::path::Path::new(path)
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.to_string());
-            let elem_count = map
-                .get("elements")
-                .and_then(|v| v.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            let anim_count: usize = map
-                .get("elements")
-                .and_then(|v| v.as_array())
-                .map(|elems| {
-                    elems
-                        .iter()
-                        .map(|e| {
-                            e.get("animations")
-                                .and_then(|a| a.as_array())
-                                .map(|a| a.len())
-                                .unwrap_or(0)
-                        })
-                        .sum()
-                })
-                .unwrap_or(0);
-            if elem_count > 0 {
-                format!(
-                    "output: \"{}\", elements: {}, animations: {}",
-                    filename, elem_count, anim_count
-                )
-            } else {
-                format!("output: \"{}\"", filename)
-            }
-        } else if name == "obscura_browser" {
-            let url = map.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            let action = map
+            // Shell tools — show the first command line
+            "run_command" | "exec_command" => string_arg(map, COMMAND_KEYS)
+                .map(|cmd| clip(cmd.lines().next().unwrap_or("").trim(), 40))
+                .unwrap_or_default(),
+            "git_manager" => map
                 .get("action")
                 .and_then(|v| v.as_str())
-                .unwrap_or("render");
-            let truncated_url = if url.len() > 30 {
-                format!("{}...", url.chars().take(27).collect::<String>())
-            } else {
-                url.to_string()
-            };
-            format!("action: \"{}\", url: \"{}\"", action, truncated_url)
-        } else if name == "gsd_browser" {
-            let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("");
-            let url = map.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            let ref_id = map.get("ref_id").and_then(|v| v.as_str()).unwrap_or("");
-            if !url.is_empty() {
-                let truncated_url = if url.len() > 30 {
-                    format!("{}...", url.chars().take(27).collect::<String>())
+                .unwrap_or("")
+                .to_string(),
+            "cargo_manager" => map
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            "web_fetch" | "read_url_content" | "read_url" => string_arg(map, URL_KEYS)
+                .map(|url| format!("\"{}\"", clip(url, 35)))
+                .unwrap_or_default(),
+            "ast_grep" => map
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .map(|p| format!("\"{}\"", clip(p, 35)))
+                .unwrap_or_default(),
+            "crawl" => map
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(|url| format!("url: \"{}\"", clip(url, 30)))
+                .unwrap_or_default(),
+            "generate_image" => {
+                let path = string_arg(map, OUTPUT_KEYS).unwrap_or("output.png");
+                let filename = file_name_of(path);
+                let shapes_count = map
+                    .get("shapes")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                if shapes_count > 0 {
+                    format!("output: \"{}\", shapes: {}", filename, shapes_count)
                 } else {
-                    url.to_string()
-                };
-                format!("action: \"{}\", url: \"{}\"", action, truncated_url)
-            } else if !ref_id.is_empty() {
-                format!("action: \"{}\", ref_id: \"{}\"", action, ref_id)
-            } else {
-                format!("action: \"{}\"", action)
-            }
-        } else if name == "ast_grep" {
-            if let Some(pattern) = map.get("pattern").and_then(|v| v.as_str()) {
-                if pattern.len() > 35 {
-                    format!("\"{}...\"", pattern.chars().take(32).collect::<String>())
-                } else {
-                    format!("\"{}\"", pattern)
+                    format!("output: \"{}\"", filename)
                 }
-            } else {
-                String::new()
             }
-        } else if name == "crawl" {
-            let url = map.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            if url.len() > 30 {
-                format!("url: \"{}...\"", url.chars().take(27).collect::<String>())
-            } else {
-                format!("url: \"{}\"", url)
+            "generate_video" => {
+                let path = string_arg(map, OUTPUT_KEYS).unwrap_or("output.mp4");
+                format!("output: \"{}\"", file_name_of(path))
             }
-        } else if name == "semantic_search" {
-            let query = map.get("query").and_then(|v| v.as_str()).unwrap_or("");
-            if query.len() > 35 {
+            "html_to_video" => {
+                let html_path = string_arg(map, &["html_path", "htmlPath"]).unwrap_or("");
+                let html_filename =
+                    if html_path.starts_with("http://") || html_path.starts_with("https://") {
+                        clip(html_path, 30)
+                    } else {
+                        file_name_of(html_path)
+                    };
+                let out_path = string_arg(map, OUTPUT_KEYS).unwrap_or("output.mp4");
+                let duration = map
+                    .get("duration_seconds")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(5.0);
+                let fps = map.get("fps").and_then(|v| v.as_i64()).unwrap_or(30);
+                let frames = (duration * fps as f64).round() as usize;
+                let duration_display = if duration.fract() == 0.0 {
+                    format!("{:.0}", duration)
+                } else {
+                    format!("{:.1}", duration)
+                };
                 format!(
-                    "query: \"{}...\"",
-                    query.chars().take(32).collect::<String>()
+                    "html: \"{}\", output: \"{}\", duration: {}s, fps: {}, frames: {}",
+                    html_filename,
+                    file_name_of(out_path),
+                    duration_display,
+                    fps,
+                    frames
                 )
-            } else {
-                format!("query: \"{}\"", query)
             }
-        } else if name == "doc_reader" {
-            let path = string_arg(map, &["path", "file_path", "filePath"]).unwrap_or("");
-            let filename = std::path::Path::new(path)
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.to_string());
-            format!("file: \"{}\"", filename)
-        } else if name == "wasm_sandbox" {
-            let path = string_arg(map, &["wasm_path", "wasmPath"]).unwrap_or("");
-            let filename = std::path::Path::new(path)
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.to_string());
-            format!("wasm: \"{}\"", filename)
-        } else if name == "cron" {
-            let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("");
-            format!("action: \"{}\"", action)
-        } else if name == "watcher" {
-            let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("");
-            format!("action: \"{}\"", action)
-        } else if name == "db_inspector" || name == "db_write" {
-            let db_path = string_arg(map, &["db_path", "dbPath"]).unwrap_or("");
-            let db_filename = std::path::Path::new(db_path)
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_else(|| db_path.to_string());
-            let sql = map.get("sql").and_then(|v| v.as_str()).unwrap_or("");
-            if !sql.is_empty() {
-                let truncated_sql = if sql.len() > 35 {
-                    format!("{}...", sql.chars().take(32).collect::<String>())
+            "create_animated_svg" => {
+                let path = string_arg(map, OUTPUT_KEYS).unwrap_or("output.svg");
+                let filename = file_name_of(path);
+                let elem_count = map
+                    .get("elements")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                let anim_count: usize = map
+                    .get("elements")
+                    .and_then(|v| v.as_array())
+                    .map(|elems| {
+                        elems
+                            .iter()
+                            .map(|e| {
+                                e.get("animations")
+                                    .and_then(|a| a.as_array())
+                                    .map(|a| a.len())
+                                    .unwrap_or(0)
+                            })
+                            .sum()
+                    })
+                    .unwrap_or(0);
+                if elem_count > 0 {
+                    format!(
+                        "output: \"{}\", elements: {}, animations: {}",
+                        filename, elem_count, anim_count
+                    )
                 } else {
-                    sql.to_string()
-                };
-                format!("db: \"{}\", sql: \"{}\"", db_filename, truncated_sql)
-            } else {
-                let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("");
-                format!("db: \"{}\", action: \"{}\"", db_filename, action)
-            }
-        } else {
-            let mut parts = Vec::new();
-            for (k, v) in map {
-                if k == "session_key" || k == "session_id" {
-                    continue;
+                    format!("output: \"{}\"", filename)
                 }
-                let val_str = match v {
-                    serde_json::Value::String(s) => {
-                        if s.len() > 20 {
-                            format!("\"{}...\"", s.chars().take(17).collect::<String>())
-                        } else {
-                            format!("\"{}\"", s)
-                        }
-                    }
-                    other => {
-                        let os = other.to_string();
-                        if os.len() > 20 {
-                            format!("{}...", os.chars().take(17).collect::<String>())
-                        } else {
-                            os
-                        }
-                    }
-                };
-                parts.push(format!("{}: {}", k, val_str));
             }
-            let joined = parts.join(", ");
-            if joined.len() > 50 {
-                format!("{}...", joined.chars().take(47).collect::<String>())
-            } else {
-                joined
+            "obscura_browser" => {
+                let url = map.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                let action = map
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("render");
+                format!("action: \"{}\", url: \"{}\"", action, clip(url, 30))
+            }
+            "gsd_browser" => {
+                let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("");
+                let url = map.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                let ref_id = map.get("ref_id").and_then(|v| v.as_str()).unwrap_or("");
+                if !url.is_empty() {
+                    format!("action: \"{}\", url: \"{}\"", action, clip(url, 30))
+                } else if !ref_id.is_empty() {
+                    format!("action: \"{}\", ref_id: \"{}\"", action, ref_id)
+                } else {
+                    format!("action: \"{}\"", action)
+                }
+            }
+            "doc_reader" => string_arg(map, PATH_KEYS)
+                .map(|path| format!("file: \"{}\"", file_name_of(path)))
+                .unwrap_or_default(),
+            "wasm_sandbox" => string_arg(map, &["wasm_path", "wasmPath"])
+                .map(|path| format!("wasm: \"{}\"", file_name_of(path)))
+                .unwrap_or_default(),
+            "cron" | "watcher" => map
+                .get("action")
+                .and_then(|v| v.as_str())
+                .map(|action| format!("action: \"{}\"", action))
+                .unwrap_or_default(),
+            "db_inspector" | "db_write" => {
+                let db_path = string_arg(map, &["db_path", "dbPath"]).unwrap_or("");
+                let db_filename = file_name_of(db_path);
+                let sql = map.get("sql").and_then(|v| v.as_str()).unwrap_or("");
+                if !sql.is_empty() {
+                    format!("db: \"{}\", sql: \"{}\"", db_filename, clip(sql, 35))
+                } else {
+                    let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("");
+                    format!("db: \"{}\", action: \"{}\"", db_filename, action)
+                }
+            }
+            // Generic fallback — renders any tool's arguments without special casing.
+            // New tools only need an arm above if they want custom truncation.
+            _ => {
+                let mut parts = Vec::new();
+                for (k, v) in map {
+                    if k == "session_key" || k == "session_id" {
+                        continue;
+                    }
+                    let val_str = match v {
+                        serde_json::Value::String(s) => format!("\"{}\"", clip(s, 20)),
+                        other => clip(&other.to_string(), 20),
+                    };
+                    parts.push(format!("{}: {}", k, val_str));
+                }
+                clip(&parts.join(", "), 50)
             }
         }
     } else {
-        let as_str = args.to_string();
-        if as_str.len() > 50 {
-            format!("{}...", as_str.chars().take(47).collect::<String>())
-        } else {
-            as_str
-        }
+        clip(&args.to_string(), 50)
     };
 
     if details.is_empty() {

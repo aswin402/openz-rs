@@ -328,8 +328,7 @@ pub fn parse_unified_diff(text: &str) -> DiffSummary {
                         is_deleted: false,
                         contexts: Vec::new(),
                     });
-                } else {
-                    let mut f = current_file.take().unwrap();
+                } else if let Some(mut f) = current_file.take() {
                     if f.path == "/dev/null" {
                         f.path = cleaned;
                     } else if f.path != cleaned {

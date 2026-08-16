@@ -1,4 +1,12 @@
-### v0.0.135 (Latest Release)
+### v0.0.136 (Latest Release)
+**Robustness & Guard Efficiency Pass:**
+- **Panic-free config cache:** `config/loader.rs` recovers from mutex poisoning instead of unwrapping, so a panic elsewhere can no longer take down subsequent config loads at startup. Audit note: the high `unwrap()` counts previously flagged in `providers/resolver.rs`, `memory_extra`, `headroom`, and `self_management` are confined to `#[cfg(test)]` code; production paths were verified unwrap-free apart from the two fixed here.
+- **Headroom diff parser:** removed the last production `unwrap()` in `compress.rs` by restructuring the diff-file state transition with `if let`.
+- **Security Guard pre-flight discipline:** the system prompt now tells the model exactly which call categories (sudo/su/chmod/chown/eval/source, power commands, destructive deletes and cleans, out-of-workspace writes) always require approval or get denied, steering it toward non-destructive alternatives before it spends a turn generating a doomed tool call.
+- **Unified tool-arg display formatting:** `format_tool_args` now uses shared alias tables (`PATH_KEYS`, `COMMAND_KEYS`, `OUTPUT_KEYS`, `QUERY_KEYS`, `URL_KEYS`), a single `clip()` truncation helper, and a consolidated `match` — new tools only need a custom arm when they want special truncation; the generic fallback renders everything else.
+- **Chore:** Bumped version to `v0.0.136`.
+
+### v0.0.135
 **Ratatui Session Handling Fixes, Scroll Model & In-Flight Guards:**
 - **Fix: Session restore now switches the active session.** The active session key is shared mutable state (`Arc<RwLock<String>>`), so prompts after a `/history` restore append to the restored session instead of the original one, and the timeline no longer reverts to the old session after a turn completes. The TUI instance marker is updated on restore.
 - **Fix: Session re-sync keeps UI-only notices.** Timeline messages gained an `ephemeral` flag; cancellations, error notices, and switch confirmations survive the full-session reload after each turn (capped at the 5 most recent).

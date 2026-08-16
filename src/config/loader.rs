@@ -395,6 +395,14 @@ struct ConfigCache {
 
 static CONFIG_CACHE: std::sync::Mutex<Option<ConfigCache>> = std::sync::Mutex::new(None);
 
+/// Lock the config cache, recovering from poisoning: a panic while the lock
+/// was held doesn't corrupt the cached value, so reuse the guard's data.
+fn lock_config_cache() -> std::sync::MutexGuard<'static, Option<ConfigCache>> {
+    CONFIG_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 pub fn load_config() -> Result<Config> {
     let path = config_path();
 
@@ -407,7 +415,7 @@ pub fn load_config() -> Result<Config> {
         let default_config = Config::default();
         let _ = save_config(&default_config);
 
-        let mut cache = CONFIG_CACHE.lock().unwrap();
+        let mut cache = lock_config_cache();
         *cache = Some(ConfigCache {
             config: default_config.clone(),
             last_modified: std::time::SystemTime::now(),
@@ -418,7 +426,7 @@ pub fn load_config() -> Result<Config> {
 
     // Try to retrieve from cache
     {
-        let cache = CONFIG_CACHE.lock().unwrap();
+        let cache = lock_config_cache();
         if let Some(ref c) = *cache {
             if c.path == path && c.last_modified == current_modified {
                 return Ok(c.config.clone());
@@ -443,7 +451,7 @@ pub fn load_config() -> Result<Config> {
             let default_config = Config::default();
             let _ = save_config(&default_config);
 
-            let mut cache = CONFIG_CACHE.lock().unwrap();
+            let mut cache = lock_config_cache();
             *cache = Some(ConfigCache {
                 config: default_config.clone(),
                 last_modified: std::time::SystemTime::now(),
@@ -469,7 +477,7 @@ pub fn load_config() -> Result<Config> {
 
     // Update cache
     {
-        let mut cache = CONFIG_CACHE.lock().unwrap();
+        let mut cache = lock_config_cache();
         *cache = Some(ConfigCache {
             config: config.clone(),
             last_modified: current_modified,
@@ -535,7 +543,7 @@ pub fn save_config(config: &Config) -> Result<()> {
 
     // Invalidate the cache so the next load gets the newly saved file
     {
-        let mut cache = CONFIG_CACHE.lock().unwrap();
+        let mut cache = lock_config_cache();
         *cache = None;
     }
 
