@@ -1756,7 +1756,7 @@ mod route_cache_tests {
     }
 
     #[test]
-    fn capability_policy_blocks_static_subagent_wrappers_with_deny_shell() {
+    fn capability_policy_deny_shell_blocks_shell_but_not_subagent_wrappers() {
         let config = Config::default();
         let provider = Arc::new(crate::providers::mock::MockProvider::new());
         let sessions = SessionManager::new(std::path::PathBuf::from(
@@ -1771,9 +1771,15 @@ mod route_cache_tests {
             deny_network: false,
         }));
 
-        assert!(registry.get("delegate_task").is_none());
-        assert!(registry.get("parallel_research").is_none());
-        assert!(registry.get("evaluator_optimizer_loop").is_none());
+        // Shell tools are blocked outright…
+        assert!(registry.get("exec_command").is_none());
+        assert!(registry.get("python_sandbox").is_none());
+        // …while delegation stays available: the child agent loop inherits the
+        // deny_shell policy (set_capability_policy on its registry), so it
+        // cannot shell out either — blocking the wrapper would be redundant.
+        assert!(registry.get("delegate_task").is_some());
+        assert!(registry.get("parallel_research").is_some());
+        assert!(registry.get("evaluator_optimizer_loop").is_some());
     }
 
     #[tokio::test]

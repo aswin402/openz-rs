@@ -1,4 +1,13 @@
-### v0.0.137 (Latest Release)
+### v0.0.138 (Latest Release)
+**Subagent Orchestration Deduplication & Stale Test Repairs (recommendedfix §1.1):**
+- **Shared orchestration helpers:** extracted the duplicated machinery between `delegate_task` and `delegate_profile` into `subagent/mod.rs` and `schema_retry.rs` — `execute_with_schema_retries()` (the 2-attempt schema-correction loop, previously copy-pasted ~42 lines in each tool), `create_workspace_isolation()` (worktree / scratch / active-workspace fallback setup returning a `WorkspaceIsolation` struct), `CancelOnDrop` (was defined verbatim twice), `filesystem_write_denied_by_policy()` (single shared copy and test), and `attach_workspace_fields()` (cancellation-JSON merge).
+- **Dead code removal:** deleted the never-compiled `subagent/context.rs`, a stale verbatim copy of `run_evolution_review`.
+- **New tests:** the schema retry loop is now unit-tested end-to-end (fenced-JSON accept with in-place content replacement, retry-then-accept with corrected prompt, attempt-limit error after 2 reruns), plus coverage for the workspace-fields merge.
+- **Fixed three tests stale since b787471** (which deliberately set subagent `spawns_process = false` because delegation runs in-process): the two metadata assertions now pin `false`, and the deny-shell registry test now pins the intended policy semantics — `deny_shell` blocks shell tools while delegation wrappers stay available because child agent loops inherit the capability policy on their own registry.
+- **Docs:** recorded §1.1 progress in `recommendedfix.md`.
+- **Chore:** Bumped version to `v0.0.138`.
+
+### v0.0.137
 **Tool Metadata Consolidation & Dead Classification Fix (recommendedfix §1.2):**
 - **Fixed silently-dead tool classifications:** four tools were referenced by misnamed match arms, so their intended timeouts and network flags never applied at runtime — `html_to_video` (was `html_video`, now 900s), `crawl_website` (was `crawl_site`, now 600s and correctly flagged `uses_network`), `create_animated_svg` (was `svg_animator`, 300s), and `render_mermaid` (was `mermaid`, 300s). Also moved `generate_image`, `generate_video`, `semantic_search`, and `python_sandbox` into the curated table with their intended timeouts.
 - **Consolidated on `STATIC_TOOL_DEFS`:** all tool metadata functions (domain, disk/network flags, aliases, examples, usage hints, recommended timeout) now treat the curated data table as the single source for named tools; `tool_recommended_timeout` shrank to dynamic families only (`browser*`, `opendoc_*`, `mcp_*`).

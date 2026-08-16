@@ -22,6 +22,8 @@
 **Files:** `src/tools/subagent/delegate_task.rs` (1243 lines), `src/tools/subagent/delegate_profile.rs` (~520 lines)
 
 **Problem:** These files still share significant orchestration logic:
+
+**Progress (v0.0.138):** Extracted the shared orchestration pieces into `subagent/mod.rs` and `schema_retry.rs`: `execute_with_schema_retries()` (the 42-line ×2 schema retry loop, now with unit tests pinning accept/retry/attempt-limit behavior), `create_workspace_isolation()` (the worktree/scratch/fallback setup block, returning a `WorkspaceIsolation` struct), `CancelOnDrop` (was defined verbatim in both files), `filesystem_write_denied_by_policy()` (single copy + one shared test), and `attach_workspace_fields()` (the cancellation JSON merge). Deleted the never-compiled dead `subagent/context.rs` (stale verbatim copy of `run_evolution_review`). Also fixed three tests made stale by b787471's in-process `spawns_process = false` change: the two metadata assertions and `capability_policy_blocks_static_subagent_wrappers_with_deny_shell` (now pins the intended semantics — deny_shell blocks shell tools while delegation stays available because children inherit the policy). Remaining duplication (workspace setup for image-path scanning, lifecycle display wiring, and the eventual `SubagentRunContext` + `run_subagent()` unification) is still open; the model-cascade vs single-model resolution difference is intentional and stays.
 - Workspace isolation (git worktree / recursive copy)
 - Image path scanning from goal/context
 - Schema validation retry loops (identical 3-attempt blocks copied verbatim)

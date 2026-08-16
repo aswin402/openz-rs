@@ -45,6 +45,134 @@ pub fn nested_delegation_allowed_for_active_context(profile_name: &str) -> bool 
     can_spawn_nested_subagents(profile_name)
 }
 
+pub(crate) fn filesystem_write_denied_by_policy(
+    policy: &Option<crate::orchestrator::spec::CapabilityPolicy>,
+) -> bool {
+    policy
+        .as_ref()
+        .map(|policy| policy.deny_filesystem_write)
+        .unwrap_or(false)
+}
+
+/// Cancels the subagent token if the owning tool future is dropped before the
+/// initial child run completes (panic, early return, forced shutdown).
+pub(crate) struct CancelOnDrop {
+    pub(crate) token: CancellationToken,
+    pub(crate) completed: bool,
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.token.cancel();
+        }
+    }
+}
+
+/// Result of attempting to set up an isolated workspace for a subagent run.
+pub(crate) struct WorkspaceIsolation {
+    pub(crate) dir: std::path::PathBuf,
+    /// "isolated_worktree" | "scratch_workspace" | "fallback_active_workspace"
+    pub(crate) label: String,
+    pub(crate) reason: Option<String>,
+}
+
+/// Attempt to create an isolated workspace (worktree, scratch fallback, or
+/// active-workspace fallback) for a subagent run. Shared by delegate_task and
+/// delegate_profile; prints the same status lines both tools printed inline.
+pub(crate) async fn create_workspace_isolation(
+    parent_dir: &std::path::Path,
+) -> WorkspaceIsolation {
+    let parent_dir_clone = parent_dir.to_path_buf();
+    let workspace_res = tokio::task::spawn_blocking(move || {
+        delegate_task::create_isolated_workspace(&parent_dir_clone)
+    })
+    .await;
+    match workspace_res {
+        Ok(Ok(dir)) => {
+            if delegate_task::is_scratch_workspace(&dir) {
+                let reason = Some(format!(
+                    "Active workspace '{}' is unsafe to copy; using an empty scratch workspace with no sync-back.",
+                    parent_dir.display()
+                ));
+                crate::tui_println!(
+                    "{}  ✓ Scratch subagent workspace created at {:?}{}",
+                    crate::agent::style::EMERALD_GREEN,
+                    dir,
+                    crate::agent::style::COLOR_RESET
+                );
+                WorkspaceIsolation {
+                    dir,
+                    label: "scratch_workspace".to_string(),
+                    reason,
+                }
+            } else {
+                crate::tui_println!(
+                    "{}  ✓ Isolated workspace worktree created at {:?}{}",
+                    crate::agent::style::EMERALD_GREEN,
+                    dir,
+                    crate::agent::style::COLOR_RESET
+                );
+                WorkspaceIsolation {
+                    dir,
+                    label: "isolated_worktree".to_string(),
+                    reason: None,
+                }
+            }
+        }
+        Ok(Err(e)) => {
+            let reason = e.to_string();
+            crate::tui_println!(
+                "{}⚠️  Failed to create isolated workspace ({}). Running in active workspace without isolation.{}",
+                crate::agent::style::AURA_GOLD,
+                reason,
+                crate::agent::style::COLOR_RESET
+            );
+            WorkspaceIsolation {
+                dir: parent_dir.to_path_buf(),
+                label: "fallback_active_workspace".to_string(),
+                reason: Some(reason),
+            }
+        }
+        Err(e) => {
+            let reason = format!("join error: {:?}", e);
+            crate::tui_println!(
+                "{}⚠️  Failed to create isolated workspace ({}). Running in active workspace without isolation.{}",
+                crate::agent::style::AURA_GOLD,
+                reason,
+                crate::agent::style::COLOR_RESET
+            );
+            WorkspaceIsolation {
+                dir: parent_dir.to_path_buf(),
+                label: "fallback_active_workspace".to_string(),
+                reason: Some(reason),
+            }
+        }
+    }
+}
+
+/// Attach the workspace-isolation outcome fields to a cancellation result.
+pub(crate) fn attach_workspace_fields(
+    mut json: serde_json::Value,
+    workspace_isolation: &str,
+    workspace_isolation_reason: &Option<String>,
+) -> serde_json::Value {
+    if let Some(obj) = json.as_object_mut() {
+        obj.insert(
+            "workspaceIsolation".to_string(),
+            serde_json::Value::String(workspace_isolation.to_string()),
+        );
+        obj.insert(
+            "workspaceIsolationReason".to_string(),
+            workspace_isolation_reason
+                .clone()
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        );
+    }
+    json
+}
+
 pub fn subagent_tool_metadata(name: &str) -> crate::tools::ToolMetadata {
     let mut metadata = crate::tools::ToolMetadata::infer(name);
     metadata.domain = "subagent";

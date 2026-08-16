@@ -144,7 +144,7 @@ fn test_delegate_task_metadata_is_explicit_for_router() {
 
     assert_eq!(metadata.domain, "subagent");
     assert_eq!(metadata.risk, crate::tools::ToolRisk::Medium);
-    assert!(metadata.spawns_process);
+    assert!(!metadata.spawns_process); // in-process child agent loop, no OS process
     assert!(!metadata.requires_approval);
     assert_eq!(metadata.priority, 100);
     assert_eq!(metadata.recommended_timeout_secs, Some(600));
@@ -200,7 +200,7 @@ fn test_parallel_research_metadata_is_explicit_for_router() {
 
     assert_eq!(metadata.domain, "subagent");
     assert_eq!(metadata.risk, crate::tools::ToolRisk::Medium);
-    assert!(metadata.spawns_process);
+    assert!(!metadata.spawns_process); // in-process child agent loop, no OS process
     assert!(!metadata.requires_approval);
     assert_eq!(metadata.priority, 100);
     assert_eq!(metadata.recommended_timeout_secs, Some(600));
@@ -1412,4 +1412,112 @@ async fn test_delegate_profile_cancellation_propagation() -> Result<()> {
     std::env::remove_var("OPENZ_USE_MOCK_PROVIDER");
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
+}
+
+#[test]
+fn filesystem_write_denied_policy_helper_detects_denial() {
+    use crate::orchestrator::spec::CapabilityPolicy;
+    assert!(!super::filesystem_write_denied_by_policy(&None));
+    assert!(!super::filesystem_write_denied_by_policy(&Some(
+        CapabilityPolicy::default()
+    )));
+    assert!(super::filesystem_write_denied_by_policy(&Some(
+        CapabilityPolicy {
+            deny_filesystem_write: true,
+            ..Default::default()
+        }
+    )));
+}
+
+#[tokio::test]
+async fn schema_retry_loop_accepts_fenced_json_and_cleans_content() {
+    let initial = Ok(fake_run_result("```json\n{\"answer\": 42}\n```"));
+    let mut rerun_calls = 0;
+    let result = super::schema_retry::execute_with_schema_retries(
+        initial,
+        &serde_json::json!({"type": "object", "properties": {"answer": {"type": "number"}}, "required": ["answer"]}),
+        |_prompt| {
+            rerun_calls += 1;
+            std::future::ready(Ok(fake_run_result("{\"answer\": 42}")))
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(rerun_calls, 0);
+    assert_eq!(result.content, "{\"answer\": 42}");
+}
+
+#[tokio::test]
+async fn schema_retry_loop_retries_then_accepts() {
+    // First response violates the schema; the corrected rerun is accepted.
+    let initial = Ok(fake_run_result("{\"wrong_field\": true}"));
+    let mut rerun_calls = 0;
+    let result = super::schema_retry::execute_with_schema_retries(
+        initial,
+        &serde_json::json!({"type": "object", "properties": {"answer": {"type": "number"}}, "required": ["answer"]}),
+        |prompt| {
+            rerun_calls += 1;
+            assert!(prompt.contains("did not conform to the JSON Schema"));
+            std::future::ready(Ok(fake_run_result("{\"answer\": 7}")))
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(rerun_calls, 1);
+    assert_eq!(result.content, "{\"answer\": 7}");
+}
+
+#[tokio::test]
+async fn schema_retry_loop_errors_after_attempt_limit() {
+    // Always-invalid JSON: attempt 1 and 2 retry, then evaluate returns Err at the limit.
+    let initial = Ok(fake_run_result("not json at all"));
+    let mut rerun_calls = 0;
+    let result = super::schema_retry::execute_with_schema_retries(
+        initial,
+        &serde_json::json!({"type": "object"}),
+        |_prompt| {
+            rerun_calls += 1;
+            std::future::ready(Ok(fake_run_result("still not json")))
+        },
+    )
+    .await;
+
+    assert!(result.is_err());
+    assert!(result
+        .err()
+        .expect("schema retry must fail at attempt limit")
+        .to_string()
+        .contains("failed to parse as JSON"));
+    // initial evaluation (attempt 0) + 2 reruns evaluated at attempts 1 and 2
+    assert_eq!(rerun_calls, 2);
+}
+
+#[test]
+fn attach_workspace_fields_merges_isolation_outcome() {
+    let base = serde_json::json!({"status": "cancelled", "session_id": "subagent:x"});
+    let merged = super::attach_workspace_fields(
+        base,
+        "scratch_workspace",
+        &Some("unsafe to copy".to_string()),
+    );
+    assert_eq!(merged["workspaceIsolation"], "scratch_workspace");
+    assert_eq!(merged["workspaceIsolationReason"], "unsafe to copy");
+    assert_eq!(merged["status"], "cancelled");
+
+    let merged_null = super::attach_workspace_fields(
+        serde_json::json!({"status": "cancelled"}),
+        "isolated_worktree",
+        &None,
+    );
+    assert_eq!(merged_null["workspaceIsolationReason"], serde_json::Value::Null);
+}
+
+fn fake_run_result(content: &str) -> crate::agent::agent_loop::RunResult {
+    crate::agent::agent_loop::RunResult {
+        content: content.to_string(),
+        tools_used: Vec::new(),
+        streamed: false,
+    }
 }

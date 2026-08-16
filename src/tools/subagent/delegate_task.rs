@@ -1,4 +1,3 @@
-use super::schema_retry::{evaluate_schema_retry, SchemaRetryDecision};
 use super::{
     build_provider_for_model, cancellation_result_json, classify_subagent_error,
     compact_lifecycle_line, execute_subagent_run, scan_for_images, status_json, CancellationToken,
@@ -26,13 +25,6 @@ pub struct DelegateTaskTool {
     pub parent_tools: Vec<Arc<dyn Tool>>,
     pub cancellation_token: CancellationToken,
     pub capability_policy: Option<CapabilityPolicy>,
-}
-
-fn filesystem_write_denied_by_policy(policy: &Option<CapabilityPolicy>) -> bool {
-    policy
-        .as_ref()
-        .map(|policy| policy.deny_filesystem_write)
-        .unwrap_or(false)
 }
 
 #[async_trait::async_trait]
@@ -182,7 +174,7 @@ impl Tool for DelegateTaskTool {
             ));
         }
 
-        let filesystem_write_denied = filesystem_write_denied_by_policy(&self.capability_policy);
+        let filesystem_write_denied = super::filesystem_write_denied_by_policy(&self.capability_policy);
 
         let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
         let mut has_branch = false;
@@ -213,40 +205,10 @@ impl Tool for DelegateTaskTool {
         let workspace_dir = if filesystem_write_denied {
             parent_dir.clone()
         } else {
-            let parent_dir_clone = parent_dir.clone();
-            let workspace_res = tokio::task::spawn_blocking(move || {
-                create_isolated_workspace(&parent_dir_clone)
-            })
-            .await;
-            match workspace_res {
-            Ok(Ok(dir)) => {
-                if is_scratch_workspace(&dir) {
-                    workspace_isolation = "scratch_workspace".to_string();
-                    workspace_isolation_reason = Some(format!(
-                        "Active workspace '{}' is unsafe to copy; using an empty scratch workspace with no sync-back.",
-                        parent_dir.display()
-                    ));
-                    crate::tui_println!("{}  ✓ Scratch subagent workspace created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
-                } else {
-                    crate::tui_println!("{}  ✓ Isolated workspace worktree created at {:?}{}", EMERALD_GREEN, dir, COLOR_RESET);
-                }
-                dir
-            }
-            Ok(Err(e)) => {
-                let reason = e.to_string();
-                workspace_isolation = "fallback_active_workspace".to_string();
-                workspace_isolation_reason = Some(reason.clone());
-                crate::tui_println!("{}⚠️  Failed to create isolated workspace ({}). Running in active workspace without isolation.{}", AURA_GOLD, reason, COLOR_RESET);
-                parent_dir.clone()
-            }
-            Err(e) => {
-                let reason = format!("join error: {:?}", e);
-                workspace_isolation = "fallback_active_workspace".to_string();
-                workspace_isolation_reason = Some(reason.clone());
-                crate::tui_println!("{}⚠️  Failed to create isolated workspace ({}). Running in active workspace without isolation.{}", AURA_GOLD, reason, COLOR_RESET);
-                parent_dir.clone()
-            }
-            }
+            let iso = super::create_workspace_isolation(&parent_dir).await;
+            workspace_isolation = iso.label;
+            workspace_isolation_reason = iso.reason;
+            iso.dir
         };
 
         let _worktree_guard = WorktreeGuard::new(parent_dir.clone(), workspace_dir.clone());
@@ -262,18 +224,7 @@ impl Tool for DelegateTaskTool {
         }
         let spinner_msg = crate::agent::style::get_tree_spinner_msg("subagent", "");
 
-        struct CancelOnDrop {
-            token: CancellationToken,
-            completed: bool,
-        }
-        impl Drop for CancelOnDrop {
-            fn drop(&mut self) {
-                if !self.completed {
-                    self.token.cancel();
-                }
-            }
-        }
-        let mut cancel_guard = CancelOnDrop {
+        let mut cancel_guard = super::CancelOnDrop {
             token: self.cancellation_token.clone(),
             completed: false,
         };
@@ -294,46 +245,34 @@ impl Tool for DelegateTaskTool {
         cancel_guard.completed = true;
 
         if let Some(ref schema) = json_schema {
-            let mut attempts = 0;
-            while run_res.is_ok() {
-                match evaluate_schema_retry(
-                    run_res.as_ref().map(|res| res.content.as_str()).unwrap_or_default(),
-                    schema,
-                    attempts,
-                    2,
-                ) {
-                    Ok(SchemaRetryDecision::Accepted(clean_json)) => {
-                        if let Ok(ref mut res) = run_res {
-                            res.content = clean_json;
-                        }
-                        break;
-                    }
-                    Ok(SchemaRetryDecision::Retry { prompt, reason }) => {
-                        attempts += 1;
-                        crate::tui_println!(
-                            "{}▲ [Reflection] Subagent output needs correction: {}. Retrying attempt {} of 2...{}",
-                            AURA_GOLD, reason, attempts, COLOR_RESET
-                        );
-                        run_res = execute_subagent_run(
-                            &child_agent,
+            run_res = super::schema_retry::execute_with_schema_retries(
+                run_res,
+                schema,
+                |prompt| {
+                    let agent = &child_agent;
+                    let session = &child_session_id;
+                    let model = &selected_model;
+                    let workspace = &workspace_dir;
+                    let token = &self.cancellation_token;
+                    let spinner = &spinner_msg;
+                    async move {
+                        execute_subagent_run(
+                            agent,
                             &prompt,
-                            &child_session_id,
+                            session,
                             "delegate_task",
-                            &selected_model,
-                            workspace_dir.clone(),
+                            model,
+                            workspace.clone(),
                             current_depth,
-                            &self.cancellation_token,
+                            token,
                             timeout_secs,
                             self.config.agents.defaults.tool_timeout_secs,
-                            &spinner_msg,
-                        ).await;
+                            spinner,
+                        ).await
                     }
-                    Err(e) => {
-                        run_res = Err(e);
-                        break;
-                    }
-                }
-            }
+                },
+            )
+            .await;
         }
 
         if has_branch {
@@ -435,23 +374,17 @@ impl Tool for DelegateTaskTool {
                             COLOR_RESET
                         );
                     }
-                    let mut cancelled = cancellation_result_json(
-                        "delegate_task",
-                        None,
-                        &child_session_id,
-                        &selected_model,
-                        &error_text,
+                    let cancelled = super::attach_workspace_fields(
+                        cancellation_result_json(
+                            "delegate_task",
+                            None,
+                            &child_session_id,
+                            &selected_model,
+                            &error_text,
+                        ),
+                        &workspace_isolation,
+                        &workspace_isolation_reason,
                     );
-                    if let Some(obj) = cancelled.as_object_mut() {
-                        obj.insert(
-                            "workspaceIsolation".to_string(),
-                            serde_json::Value::String(workspace_isolation.clone()),
-                        );
-                        obj.insert(
-                            "workspaceIsolationReason".to_string(),
-                            workspace_isolation_reason.clone().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
-                        );
-                    }
                     return Ok(cancelled);
                 }
                 if !crate::agent::style::is_silent() {
@@ -1351,19 +1284,3 @@ fn clean_suffix_ticks(s: &str) -> &str {
     }
 }
 
-#[cfg(test)]
-mod capability_policy_tests {
-    use super::*;
-
-    #[test]
-    fn filesystem_write_denied_policy_helper_detects_denial() {
-        assert!(!filesystem_write_denied_by_policy(&None));
-        assert!(!filesystem_write_denied_by_policy(&Some(
-            CapabilityPolicy::default()
-        )));
-        assert!(filesystem_write_denied_by_policy(&Some(CapabilityPolicy {
-            deny_filesystem_write: true,
-            ..Default::default()
-        })));
-    }
-}

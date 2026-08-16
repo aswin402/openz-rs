@@ -62,3 +62,48 @@ pub fn evaluate_schema_retry(
 
     Ok(SchemaRetryDecision::Accepted(clean_json_str.to_string()))
 }
+
+/// Drive the schema-validation retry loop around a completed subagent run.
+/// On `Accepted` the run's content is replaced in place with the cleaned
+/// JSON; on `Retry` the corrected prompt is handed to `rerun` (which
+/// re-executes the child agent); at the attempt limit the error propagates.
+/// Max 2 correction attempts, matching the previous inline loops.
+pub(crate) async fn execute_with_schema_retries<F, Fut>(
+    mut run_res: Result<crate::agent::agent_loop::RunResult>,
+    json_schema: &Value,
+    mut rerun: F,
+) -> Result<crate::agent::agent_loop::RunResult>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<crate::agent::agent_loop::RunResult>>,
+{
+    let mut attempts = 0;
+    while run_res.is_ok() {
+        match evaluate_schema_retry(
+            run_res.as_ref().map(|res| res.content.as_str()).unwrap_or_default(),
+            json_schema,
+            attempts,
+            2,
+        ) {
+            Ok(SchemaRetryDecision::Accepted(clean_json)) => {
+                if let Ok(ref mut res) = run_res {
+                    res.content = clean_json;
+                }
+                break;
+            }
+            Ok(SchemaRetryDecision::Retry { prompt, reason }) => {
+                attempts += 1;
+                crate::tui_println!(
+                    "{}▲ [Reflection] Subagent output needs correction: {}. Retrying attempt {} of 2...{}",
+                    crate::agent::style::AURA_GOLD, reason, attempts, crate::agent::style::COLOR_RESET
+                );
+                run_res = rerun(prompt).await;
+            }
+            Err(e) => {
+                run_res = Err(e);
+                break;
+            }
+        }
+    }
+    run_res
+}
