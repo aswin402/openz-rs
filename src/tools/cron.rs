@@ -366,7 +366,7 @@ impl Tool for RunJobNowTool {
     }
 
     fn description(&self) -> &str {
-        "Run a scheduled cron job immediately. This is wired after the scheduler run-now helper is exposed."
+        "Run a scheduled cron job immediately by its identifier."
     }
 
     fn parameters(&self) -> Value {
@@ -383,10 +383,17 @@ impl Tool for RunJobNowTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let _ = job_id_arg(arguments)?;
-        Err(anyhow!(
-            "run_job_now is registered after scheduler run-now helper is exposed in Task 4"
-        ))
+        let id = job_id_arg(arguments)?;
+        let job = load_jobs()?
+            .into_iter()
+            .find(|j| j.id == id)
+            .ok_or_else(|| anyhow!("Cron job with ID '{}' not found.", id))?;
+        let config = crate::config::loader::load_config()?;
+        let record = crate::cron::scheduler::run_single_job_now(&config, job).await?;
+        Ok(serde_json::json!({
+            "status": "success",
+            "run": record
+        }))
     }
 }
 
@@ -494,6 +501,28 @@ mod tests {
                 assert!(jobs[0].enabled);
                 assert_eq!(jobs[0].status, CronJobStatus::Idle);
                 assert!(jobs[0].next_run.is_none());
+            })
+            .await;
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn run_job_now_rejects_unknown_job() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_cron_run_now_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        CONFIG_DIR_OVERRIDE
+            .scope(temp_dir.clone(), async {
+                save_jobs_raw(&[sample_job("daily")]).unwrap();
+                let tool = RunJobNowTool;
+                let err = tool
+                    .call(&serde_json::json!({ "id": "missing" }))
+                    .await
+                    .unwrap_err()
+                    .to_string();
+                assert!(err.contains("Cron job with ID 'missing' not found"));
             })
             .await;
 

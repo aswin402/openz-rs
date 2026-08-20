@@ -115,6 +115,44 @@ fn update_job_failure(
     Ok(())
 }
 
+pub async fn run_single_job_now(config: &Config, job: CronJob) -> Result<CronRunRecord> {
+    let started_at = Utc::now();
+    crate::cron::with_cron_jobs_mut(|jobs| {
+        if let Some(j) = jobs.iter_mut().find(|j| j.id == job.id) {
+            j.status = CronJobStatus::Running;
+            j.last_started_at = Some(started_at.to_rfc3339());
+            j.updated_at = Some(started_at.to_rfc3339());
+            j.last_error = None;
+        }
+    })?;
+
+    match run_job(config, &job, started_at).await {
+        Ok(record) => {
+            if let Err(e) = append_cron_run_record(&record) {
+                tracing::error!(job_id = %job.id, error = ?e, "failed to append manual cron run record");
+            }
+            let completed_at = record
+                .finished_at
+                .as_deref()
+                .and_then(|dt| dt.parse::<chrono::DateTime<Utc>>().ok())
+                .unwrap_or_else(Utc::now);
+            update_job_success(&job.id, completed_at, &record)?;
+            Ok(record)
+        }
+        Err(e) => {
+            let run_record = failed_run_record(&job, started_at, &e);
+            let _ = append_cron_run_record(&run_record);
+            let completed_at = run_record
+                .finished_at
+                .as_deref()
+                .and_then(|dt| dt.parse::<chrono::DateTime<Utc>>().ok())
+                .unwrap_or_else(Utc::now);
+            update_job_failure(&job.id, completed_at, &e)?;
+            Err(e)
+        }
+    }
+}
+
 async fn tick_scheduler(config: &Config) -> Result<()> {
     let now = Utc::now();
     let mut jobs_to_run = Vec::new();
