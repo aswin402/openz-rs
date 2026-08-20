@@ -181,23 +181,27 @@ mod tests {
 
         // Define a run_once job and a recurring job
         let jobs = vec![
-            CronJob {
-                id: "test_run_once".to_string(),
-                schedule: "18:00".to_string(),
-                prompt: "run once prompt".to_string(),
-                enabled: true,
-                run_once: true,
-                last_run: None,
-                next_run: Some((now - chrono::Duration::seconds(10)).to_rfc3339()),
+            {
+                let mut job = CronJob::new(
+                    "test_run_once".to_string(),
+                    "18:00".to_string(),
+                    "run once prompt".to_string(),
+                    true,
+                    true,
+                );
+                job.next_run = Some((now - chrono::Duration::seconds(10)).to_rfc3339());
+                job
             },
-            CronJob {
-                id: "test_recurring".to_string(),
-                schedule: "5m".to_string(),
-                prompt: "recurring prompt".to_string(),
-                enabled: true,
-                run_once: false,
-                last_run: None,
-                next_run: Some((now - chrono::Duration::seconds(10)).to_rfc3339()),
+            {
+                let mut job = CronJob::new(
+                    "test_recurring".to_string(),
+                    "5m".to_string(),
+                    "recurring prompt".to_string(),
+                    true,
+                    false,
+                );
+                job.next_run = Some((now - chrono::Duration::seconds(10)).to_rfc3339());
+                job
             },
         ];
 

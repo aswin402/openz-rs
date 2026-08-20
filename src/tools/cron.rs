@@ -80,15 +80,13 @@ impl Tool for ScheduleJobTool {
             }
 
             if !found {
-                jobs.push(CronJob {
-                    id: id_str,
-                    schedule: schedule_str,
-                    prompt: prompt_str,
-                    enabled: true,
+                jobs.push(CronJob::new(
+                    id_str,
+                    schedule_str,
+                    prompt_str,
+                    true,
                     run_once,
-                    last_run: None,
-                    next_run: None,
-                });
+                ));
             }
         })?;
 
