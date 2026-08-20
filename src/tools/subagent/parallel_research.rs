@@ -26,7 +26,7 @@ const PARALLEL_RESEARCH_RESULT_FLUSH_GRACE_SECS: u64 = 5;
 const READ_ONLY_TOOLS: &[&str] = &[
     "read_file",
     "find_files",
-    "doc_reader",
+    "read_doc",
     "semantic_search",
     "rust_docs",
     "list_dir",
@@ -38,10 +38,15 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "system_info",
     "check_port",
     "ast_grep",
-    "crawl",
-    "obscura",
+    "crawl_website",
+    "obscura_browser",
     "recall_memory",
 ];
+
+#[cfg(test)]
+pub(crate) fn read_only_tool_names() -> &'static [&'static str] {
+    READ_ONLY_TOOLS
+}
 
 #[async_trait::async_trait]
 impl Tool for ParallelResearchTool {
@@ -173,7 +178,9 @@ impl Tool for ParallelResearchTool {
                 if READ_ONLY_TOOLS.contains(&tool.name())
                     && capability_policy
                         .as_ref()
-                        .map(|policy| crate::tools::orchestrator::tool_allowed_by_policy(tool.name(), policy))
+                        .map(|policy| {
+                            crate::tools::orchestrator::tool_allowed_by_policy(tool.name(), policy)
+                        })
                         .unwrap_or(true)
                 {
                     read_only_parent_tools.push(tool.clone());

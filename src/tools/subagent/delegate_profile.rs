@@ -1,6 +1,6 @@
 use super::delegate_task::{
-    current_workspace_root, ensure_markdown_images, run_evolution_review,
-    should_sync_changes_back, sync_changes_back, WorktreeGuard,
+    current_workspace_root, ensure_markdown_images, run_evolution_review, should_sync_changes_back,
+    sync_changes_back, WorktreeGuard,
 };
 use super::parallel_research::get_status_from_goal;
 use super::{
@@ -528,11 +528,8 @@ pub fn format_subagent_name(name: &str) -> String {
     }
 }
 
-pub fn filter_tools_for_subagent(
-    subagent_name: &str,
-    all_tools: &[Arc<dyn Tool>],
-) -> Vec<Arc<dyn Tool>> {
-    let allowed_names: Option<&[&str]> = match subagent_name {
+fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'static str]> {
+    match subagent_name {
         "planner" => Some(&[
             "read_file",
             "list_dir",
@@ -547,10 +544,10 @@ pub fn filter_tools_for_subagent(
             "find_files",
             "web_fetch",
             "web_search",
-            "doc_reader",
+            "read_doc",
             "semantic_search",
-            "crawl",
-            "obscura",
+            "crawl_website",
+            "obscura_browser",
         ]),
         "architect" => Some(&[
             "read_file",
@@ -571,7 +568,13 @@ pub fn filter_tools_for_subagent(
             "grep_search",
         ]),
         "database_specialist" => Some(&["read_file", "list_dir", "db_inspector"]),
-        "browser_operator" => Some(&["read_file", "list_dir", "web_fetch", "crawl", "obscura"]),
+        "browser_operator" => Some(&[
+            "read_file",
+            "list_dir",
+            "web_fetch",
+            "crawl_website",
+            "obscura_browser",
+        ]),
         "dependency_manager" => Some(&[
             "read_file",
             "write_file",
@@ -604,7 +607,7 @@ pub fn filter_tools_for_subagent(
             "write_file",
             "list_dir",
             "find_files",
-            "doc_reader",
+            "read_doc",
             "exec_command",
             "compile_template",
         ]),
@@ -633,8 +636,8 @@ pub fn filter_tools_for_subagent(
             "list_dir",
             "find_files",
             "gsd_browser",
-            "obscura",
-            "crawl",
+            "obscura_browser",
+            "crawl_website",
             "web_fetch",
             "schedule_job",
             "list_jobs",
@@ -707,7 +710,7 @@ pub fn filter_tools_for_subagent(
             "list_dir",
             "find_files",
             "generate_image",
-            "doc_reader",
+            "read_doc",
         ]),
         "skill_creator" => Some(&[
             "read_file",
@@ -731,7 +734,64 @@ pub fn filter_tools_for_subagent(
             "openmedia_video_preview",
         ]),
         _ => None,
-    };
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn all_static_subagent_allowlist_tools() -> Vec<&'static str> {
+    let profiles: &[&str] = &[
+        "planner",
+        "researcher",
+        "architect",
+        "git_ops_agent",
+        "ast_searcher",
+        "database_specialist",
+        "browser_operator",
+        "dependency_manager",
+        "frontend_architect",
+        "docs_lookup_agent",
+        "media_designer",
+        "sop_designer",
+        "api_integrator",
+        "performance_tuner",
+        "communication_manager",
+        "document_compiler",
+        "presentation_designer",
+        "code_synthesizer",
+        "summarizer_agent",
+        "automation_agent",
+        "coding_agent",
+        "reviewer",
+        "debugger",
+        "test_engineer",
+        "devops_agent",
+        "refactor_agent",
+        "memory_manager",
+        "openz_maintainer",
+        "mcps_manager",
+        "vision_agent",
+        "skill_creator",
+        "documentation_agent",
+        "diagram_designer",
+        "video_animator",
+    ];
+
+    let mut out = Vec::new();
+    for profile in profiles {
+        if let Some(tools) = static_allowlist_for_subagent(profile) {
+            out.extend_from_slice(tools);
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+pub fn filter_tools_for_subagent(
+    subagent_name: &str,
+    all_tools: &[Arc<dyn Tool>],
+) -> Vec<Arc<dyn Tool>> {
+    let allowed_names = static_allowlist_for_subagent(subagent_name);
 
     let mut filtered: Vec<Arc<dyn Tool>> = if let Some(allowed) = allowed_names {
         all_tools
@@ -745,4 +805,3 @@ pub fn filter_tools_for_subagent(
     filtered.retain(|t| t.name() != "send_remote_input");
     filtered
 }
-

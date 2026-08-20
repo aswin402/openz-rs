@@ -44,6 +44,36 @@ impl Tool for MockTool {
     }
 }
 
+#[tokio::test]
+async fn subagent_allowlisted_tools_exist_in_registry() {
+    use crate::cli::tools::register_all_tools;
+    use crate::providers::mock::MockProvider;
+    use crate::tools::ToolRegistry;
+
+    let registry = ToolRegistry::new();
+    let config = Config::default();
+    let provider = Arc::new(MockProvider::new());
+    let sessions = SessionManager::new(
+        std::env::temp_dir().join(format!("openz_subagent_allowlist_{}", uuid::Uuid::new_v4())),
+    );
+    register_all_tools(&registry, &config, provider, sessions).unwrap();
+    let registered = registry.tool_names();
+
+    for tool in crate::tools::subagent::delegate_profile::all_static_subagent_allowlist_tools() {
+        assert!(
+            registered.contains(&tool.to_string()),
+            "subagent allowlist references unregistered tool: {tool}"
+        );
+    }
+
+    for tool in crate::tools::subagent::parallel_research::read_only_tool_names() {
+        assert!(
+            registered.contains(&tool.to_string()),
+            "parallel_research read-only allowlist references unregistered tool: {tool}"
+        );
+    }
+}
+
 #[test]
 fn test_limit_subagent_models_to_try_keeps_primary_plus_two_fallbacks() {
     std::env::remove_var("OPENZ_MAX_FALLBACK_ATTEMPTS");
@@ -766,7 +796,7 @@ fn test_filter_tools_for_new_default_subagents() {
             name: "find_files".to_string(),
         }),
         Arc::new(MockTool {
-            name: "doc_reader".to_string(),
+            name: "read_doc".to_string(),
         }),
         Arc::new(MockTool {
             name: "exec_command".to_string(),
@@ -807,7 +837,7 @@ fn test_filter_tools_for_new_default_subagents() {
     let filtered = delegate_profile::filter_tools_for_subagent("document_compiler", &tools);
     assert_eq!(filtered.len(), 7);
     assert!(filtered.iter().any(|t| t.name() == "compile_template"));
-    assert!(filtered.iter().any(|t| t.name() == "doc_reader"));
+    assert!(filtered.iter().any(|t| t.name() == "read_doc"));
     assert!(!filtered.iter().any(|t| t.name() == "onpkg"));
 
     // Test presentation_designer
@@ -815,7 +845,7 @@ fn test_filter_tools_for_new_default_subagents() {
     assert_eq!(filtered.len(), 7);
     assert!(filtered.iter().any(|t| t.name() == "compile_template"));
     assert!(filtered.iter().any(|t| t.name() == "generate_image"));
-    assert!(!filtered.iter().any(|t| t.name() == "doc_reader"));
+    assert!(!filtered.iter().any(|t| t.name() == "read_doc"));
 
     // Test code_synthesizer
     let filtered = delegate_profile::filter_tools_for_subagent("code_synthesizer", &tools);
@@ -1511,7 +1541,10 @@ fn attach_workspace_fields_merges_isolation_outcome() {
         "isolated_worktree",
         &None,
     );
-    assert_eq!(merged_null["workspaceIsolationReason"], serde_json::Value::Null);
+    assert_eq!(
+        merged_null["workspaceIsolationReason"],
+        serde_json::Value::Null
+    );
 }
 
 fn fake_run_result(content: &str) -> crate::agent::agent_loop::RunResult {
