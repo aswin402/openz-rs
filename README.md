@@ -56,7 +56,7 @@ Most agent frameworks require users to manually select tools, switch providers, 
 
 ---
 
-## 🆕 What's New In `v0.0.115`
+## 🆕 Latest Highlights
 
 ### 💻 TUI Ergonomics & Multi-line Prompt Wrapping
 - **Visible Terminal Cursor**: Enabled explicit terminal hardware cursor (`crossterm::cursor::Show`) on raw mode start and every render frame, placing the cursor directly at the active typing location.
