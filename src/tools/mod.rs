@@ -35,7 +35,7 @@ pub fn normalize_tool_args(args: &serde_json::Value) -> serde_json::Value {
             let mut new_map = serde_json::Map::new();
             for (k, v) in map {
                 let alias = match k.as_str() {
-                    "Path" => "Path".to_string(),
+                    "Path" => "path".to_string(),
                     "CommandLine" | "Command" | "command_line" => "command".to_string(),
                     "Query" => "query".to_string(),
                     "Url" | "UrlContent" => "url".to_string(),
@@ -1701,7 +1701,7 @@ mod route_cache_tests {
     }
 
     #[test]
-    fn normalize_tool_args_does_not_inject_filesystem_path_aliases() {
+    fn normalize_tool_args_adds_filesystem_path_aliases_without_overwriting_explicit_path() {
         let normalized = normalize_tool_args(&serde_json::json!({
             "TargetFile": "src/main.rs",
             "filepath": "src/lib.rs",
@@ -1711,14 +1711,21 @@ mod route_cache_tests {
             "DirectoryPath": "src"
         }));
 
-        assert!(normalized.get("path").is_none());
         assert_eq!(normalized["TargetFile"], "src/main.rs");
         assert_eq!(normalized["target_file"], "src/main.rs");
         assert_eq!(normalized["filepath"], "src/lib.rs");
         assert_eq!(normalized["file"], "README.md");
         assert_eq!(normalized["Path"], "Cargo.toml");
+        assert_eq!(normalized["path"], "Cargo.toml");
         assert_eq!(normalized["absolute_path"], "/tmp/out.txt");
         assert_eq!(normalized["directory_path"], "src");
+
+        let explicit = normalize_tool_args(&serde_json::json!({
+            "path": "explicit.txt",
+            "Path": "Cargo.toml"
+        }));
+        assert_eq!(explicit["path"], "explicit.txt");
+        assert_eq!(explicit["Path"], "Cargo.toml");
     }
 
     #[test]
@@ -1828,7 +1835,9 @@ mod route_cache_tests {
                         let exposed_names = registry
                             .to_openai_format_for_prompt("delegate this task")
                             .into_iter()
-                            .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
+                            .filter_map(|tool| {
+                                tool["function"]["name"].as_str().map(str::to_string)
+                            })
                             .collect::<Vec<_>>();
                         assert!(!exposed_names.iter().any(|name| name == "delegate_task"));
                     })
@@ -2003,6 +2012,10 @@ mod static_def_tests {
     fn curated_defs_have_no_duplicate_names() {
         let names = static_tool_def_names();
         let unique: std::collections::BTreeSet<_> = names.iter().collect();
-        assert_eq!(names.len(), unique.len(), "duplicate STATIC_TOOL_DEFS entry");
+        assert_eq!(
+            names.len(),
+            unique.len(),
+            "duplicate STATIC_TOOL_DEFS entry"
+        );
     }
 }
