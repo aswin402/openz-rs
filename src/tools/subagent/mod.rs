@@ -80,9 +80,7 @@ pub(crate) struct WorkspaceIsolation {
 /// Attempt to create an isolated workspace (worktree, scratch fallback, or
 /// active-workspace fallback) for a subagent run. Shared by delegate_task and
 /// delegate_profile; prints the same status lines both tools printed inline.
-pub(crate) async fn create_workspace_isolation(
-    parent_dir: &std::path::Path,
-) -> WorkspaceIsolation {
+pub(crate) async fn create_workspace_isolation(parent_dir: &std::path::Path) -> WorkspaceIsolation {
     let parent_dir_clone = parent_dir.to_path_buf();
     let workspace_res = tokio::task::spawn_blocking(move || {
         delegate_task::create_isolated_workspace(&parent_dir_clone)

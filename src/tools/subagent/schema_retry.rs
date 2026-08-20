@@ -80,7 +80,10 @@ where
     let mut attempts = 0;
     while run_res.is_ok() {
         match evaluate_schema_retry(
-            run_res.as_ref().map(|res| res.content.as_str()).unwrap_or_default(),
+            run_res
+                .as_ref()
+                .map(|res| res.content.as_str())
+                .unwrap_or_default(),
             json_schema,
             attempts,
             2,

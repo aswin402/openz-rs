@@ -313,11 +313,10 @@ mod tests {
             }))
             .await;
 
-        assert!(
-            res.unwrap_err()
-                .to_string()
-                .contains("Path traversal prevention")
-        );
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("Path traversal prevention"));
     }
 
     #[tokio::test]
@@ -330,11 +329,10 @@ mod tests {
             }))
             .await;
 
-        assert!(
-            res.unwrap_err()
-                .to_string()
-                .contains("Path traversal prevention")
-        );
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("Path traversal prevention"));
     }
 
     #[tokio::test]

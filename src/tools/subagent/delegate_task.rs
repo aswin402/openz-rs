@@ -1283,4 +1283,3 @@ fn clean_suffix_ticks(s: &str) -> &str {
         s
     }
 }
-
