@@ -1,4 +1,13 @@
-### v0.0.139 (Latest Release)
+### v0.0.140 (Latest Release)
+**Cron Inventory & Quiet Background Runs:**
+- **Fix:** Cron jobs no longer inject normal start/success/log-saved messages into active CLI/TUI chat.
+- **Feature:** Added cron inventory metadata including status, run counts, failure counts, timestamps, last error, and last log path.
+- **Feature:** Added structured cron run history in `cron_runs.jsonl` plus `get_job_logs` for agent-readable run inspection.
+- **Feature:** Added cron management tools for get, pause, resume, run-now, and logs.
+- **Docs:** Documented the cron UX hardening plan and release behavior.
+- **Chore:** Bumped version to `v0.0.140`.
+
+### v0.0.139
 **Review Fix Hardening:**
 - **Fix:** Normalized capitalized filesystem `Path` tool arguments to `path` while preserving explicit native keys.
 - **Fix:** Scoped Ratatui git branch cache by workspace so parallel repo TUIs do not share stale branch names.
