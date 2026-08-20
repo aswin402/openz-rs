@@ -34,6 +34,7 @@
 /logs/
 .superpowers/
 .crush/
+.zcode/
 # Workspace-local OpenZ runtime state (<workspace>/.openz/).
 .openz/
 
