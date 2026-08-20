@@ -142,6 +142,7 @@ impl ToolMetadata {
             "filesystem" | "shell" | "code" => 90,
             "self_management" => 85,
             "search" | "web" | "git" => 75,
+            "cron" => 85,
             "memory" | "reasoning" | "context" => 65,
             "media" | "document" => 55,
             _ => 40,
@@ -416,6 +417,61 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         when_not_to_use: "Avoid shell systemctl, crontab editing, or pkill guesses for OpenZ scheduler cleanup.",
     },
     StaticToolDef {
+        name: "pause_job",
+        domain: "cron",
+        writes_disk: true,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &["pause cron job", "disable scheduled job", "stop timer"],
+        examples: &["Pause a recurring cron job without deleting it"],
+        when_to_use: "Use to pause or disable an OpenZ-managed scheduled job without deleting its inventory or run logs.",
+        when_not_to_use: "Avoid shell crontab, systemctl, or filesystem guessing for OpenZ-managed cron jobs.",
+    },
+    StaticToolDef {
+        name: "resume_job",
+        domain: "cron",
+        writes_disk: true,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &["resume cron job", "enable scheduled job", "restart timer"],
+        examples: &["Resume a paused OpenZ cron job"],
+        when_to_use: "Use to resume or enable a paused OpenZ-managed scheduled job and let the scheduler recalculate its next run.",
+        when_not_to_use: "Avoid shell crontab, systemctl, or filesystem guessing for OpenZ-managed cron jobs.",
+    },
+    StaticToolDef {
+        name: "get_job",
+        domain: "cron",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &["get cron job", "cron job details", "scheduled job details"],
+        examples: &["Show the inventory record for cron job daily"],
+        when_to_use: "Use to inspect one OpenZ-managed scheduled job inventory record before reporting automation status.",
+        when_not_to_use: "Avoid shell crontab, systemctl, or filesystem guessing for OpenZ-managed cron jobs.",
+    },
+    StaticToolDef {
+        name: "get_job_logs",
+        domain: "cron",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &["cron logs", "job logs", "scheduled job history", "cron run history"],
+        examples: &["Show recent structured logs for cron job daily"],
+        when_to_use: "Use to inspect structured run history for OpenZ-managed scheduled jobs before reporting cron automation status.",
+        when_not_to_use: "Avoid shell crontab, systemctl, or filesystem guessing for OpenZ-managed cron jobs.",
+    },
+    StaticToolDef {
+        name: "run_job_now",
+        domain: "cron",
+        writes_disk: true,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &["run cron job now", "trigger scheduled job", "manual cron run"],
+        examples: &["Run cron job daily immediately"],
+        when_to_use: "Use to manually trigger an existing OpenZ-managed scheduled job immediately from its inventory id.",
+        when_not_to_use: "Avoid shell crontab, systemctl, or filesystem guessing for OpenZ-managed cron jobs.",
+    },
+    StaticToolDef {
         name: "workflow_memory",
         domain: "self_management",
         writes_disk: false,
@@ -567,6 +623,11 @@ fn infer_tool_domain(name: &str) -> &'static str {
             | "schedule_job"
             | "list_jobs"
             | "remove_job"
+            | "pause_job"
+            | "resume_job"
+            | "get_job"
+            | "get_job_logs"
+            | "run_job_now"
     ) {
         "self_management"
     } else if matches!(
@@ -806,6 +867,11 @@ fn is_core_tool(name: &str) -> bool {
             | "schedule_job"
             | "list_jobs"
             | "remove_job"
+            | "pause_job"
+            | "resume_job"
+            | "get_job"
+            | "get_job_logs"
+            | "run_job_now"
             | "workflow_memory"
             | "curate_skill"
             | "optimize_tool_scope"
@@ -843,6 +909,23 @@ fn select_domains_for_prompt(prompt: &str) -> std::collections::BTreeSet<&'stati
         domains.insert("code");
         domains.insert("shell");
         domains.insert("git");
+    }
+
+    if contains_any(
+        &lower,
+        &[
+            "cron",
+            "cronjob",
+            "scheduled job",
+            "schedule job",
+            "timer",
+            "job logs",
+            "run job",
+            "pause job",
+            "resume job",
+        ],
+    ) {
+        domains.insert("cron");
     }
     if contains_any(
         &lower,

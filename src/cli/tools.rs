@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use crate::cli::is_silent_mode;
 use crate::tools::browser_status::InspectBrowsersTool;
-use crate::tools::cron::{ListJobsTool, RemoveJobTool, ScheduleJobTool};
+use crate::tools::cron::{
+    GetJobLogsTool, GetJobTool, ListJobsTool, PauseJobTool, RemoveJobTool, ResumeJobTool,
+    RunJobNowTool, ScheduleJobTool,
+};
 use crate::tools::db_inspector::{DbInspectorTool, DbWriteTool};
 use crate::tools::doc_reader::DocReaderTool;
 use crate::tools::filesystem::{
@@ -139,6 +142,11 @@ fn register_core_tools(
     registry.register(std::sync::Arc::new(ScheduleJobTool));
     registry.register(std::sync::Arc::new(ListJobsTool));
     registry.register(std::sync::Arc::new(RemoveJobTool));
+    registry.register(std::sync::Arc::new(PauseJobTool));
+    registry.register(std::sync::Arc::new(ResumeJobTool));
+    registry.register(std::sync::Arc::new(GetJobTool));
+    registry.register(std::sync::Arc::new(GetJobLogsTool));
+    registry.register(std::sync::Arc::new(RunJobNowTool));
     registry.register(std::sync::Arc::new(SendRemoteInputTool));
     registry.register(std::sync::Arc::new(
         crate::tools::telegram_send::TelegramSendDocumentTool,
@@ -1154,6 +1162,38 @@ mod tests {
         assert_eq!(schedule_metadata.domain, "self_management");
         assert!(schedule_metadata.aliases.contains(&"cron job"));
         assert!(schedule_metadata.when_to_use.contains("schedule"));
+    }
+
+    #[test]
+    fn cron_management_tools_stay_exposed_under_tool_limit() {
+        let registry = ToolRegistry::new();
+        for i in 0..180 {
+            registry.register(Arc::new(MetaTestTool {
+                name: format!("low_tool_{i:03}"),
+                domain: "general",
+                priority: 1,
+                risk: crate::tools::ToolRisk::Low,
+            }));
+        }
+        registry.register(Arc::new(crate::tools::cron::ScheduleJobTool));
+        registry.register(Arc::new(crate::tools::cron::ListJobsTool));
+        registry.register(Arc::new(crate::tools::cron::RemoveJobTool));
+        registry.register(Arc::new(crate::tools::cron::PauseJobTool));
+        registry.register(Arc::new(crate::tools::cron::ResumeJobTool));
+        registry.register(Arc::new(crate::tools::cron::GetJobTool));
+        registry.register(Arc::new(crate::tools::cron::GetJobLogsTool));
+
+        let names = registry
+            .to_openai_format_for_prompt("check all cron jobs and show logs for job daily")
+            .into_iter()
+            .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"list_jobs".to_string()));
+        assert!(names.contains(&"get_job".to_string()));
+        assert!(names.contains(&"get_job_logs".to_string()));
+        assert!(names.contains(&"pause_job".to_string()));
+        assert!(names.contains(&"resume_job".to_string()));
     }
 
     #[test]
