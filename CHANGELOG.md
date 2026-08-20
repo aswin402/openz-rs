@@ -1,4 +1,13 @@
-### v0.0.138 (Latest Release)
+### v0.0.139 (Latest Release)
+**Review Fix Hardening:**
+- **Fix:** Normalized capitalized filesystem `Path` tool arguments to `path` while preserving explicit native keys.
+- **Fix:** Scoped Ratatui git branch cache by workspace so parallel repo TUIs do not share stale branch names.
+- **Fix:** Replaced stale subagent allowlist names with registered `crawl_website`, `obscura_browser`, and `read_doc` tools, then added a registry drift guard.
+- **Docs:** Removed stale README "What's New" version heading and ignored local `.zcode` session state.
+- **Cleanup:** Removed regenerated ignored build/cache artifacts from the local checkout, reducing the working tree from ~80G to ~152M.
+- **Chore:** Bumped version to `v0.0.139`.
+
+### v0.0.138
 **Subagent Orchestration Deduplication & Stale Test Repairs (recommendedfix §1.1):**
 - **Shared orchestration helpers:** extracted the duplicated machinery between `delegate_task` and `delegate_profile` into `subagent/mod.rs` and `schema_retry.rs` — `execute_with_schema_retries()` (the 2-attempt schema-correction loop, previously copy-pasted ~42 lines in each tool), `create_workspace_isolation()` (worktree / scratch / active-workspace fallback setup returning a `WorkspaceIsolation` struct), `CancelOnDrop` (was defined verbatim twice), `filesystem_write_denied_by_policy()` (single shared copy and test), and `attach_workspace_fields()` (cancellation-JSON merge).
 - **Dead code removal:** deleted the never-compiled `subagent/context.rs`, a stale verbatim copy of `run_evolution_review`.
