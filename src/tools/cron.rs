@@ -530,6 +530,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_job_now_rejects_running_job_without_provider_call() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "openz_cron_running_now_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        CONFIG_DIR_OVERRIDE
+            .scope(temp_dir.clone(), async {
+                let mut job = sample_job("daily");
+                job.status = CronJobStatus::Running;
+                job.last_started_at = Some(chrono::Utc::now().to_rfc3339());
+                save_jobs_raw(&[job]).unwrap();
+
+                let tool = RunJobNowTool;
+                let err = tool
+                    .call(&serde_json::json!({ "id": "daily" }))
+                    .await
+                    .unwrap_err()
+                    .to_string();
+                assert!(err.contains("Cron job with ID 'daily' is already running"));
+            })
+            .await;
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
     async fn get_job_logs_returns_structured_runs() {
         let temp_dir = std::env::temp_dir().join(format!(
             "openz_cron_logs_tool_test_{}",

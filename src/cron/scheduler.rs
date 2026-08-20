@@ -4,10 +4,13 @@ use crate::cron::{
     append_cron_run_record, calculate_next_run, CronJob, CronJobStatus, CronNotifyPolicy,
     CronRunRecord,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::Utc;
 use std::time::Duration;
 use tokio::time::sleep;
+
+const CRON_RUNNING_LEASE_SECS: i64 = 60 * 60;
+const STALE_RUNNING_ERROR: &str = "Cron job marked failed after stale running lease expired.";
 
 pub fn start_scheduler(config: Config) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -43,6 +46,34 @@ pub fn start_scheduler(config: Config) -> tokio::task::JoinHandle<()> {
     })
 }
 
+fn running_state_is_stale(job: &CronJob, now: chrono::DateTime<Utc>) -> bool {
+    job.last_started_at
+        .as_deref()
+        .and_then(|dt| dt.parse::<chrono::DateTime<Utc>>().ok())
+        .map(|started_at| {
+            now.signed_duration_since(started_at).num_seconds() > CRON_RUNNING_LEASE_SECS
+        })
+        .unwrap_or(true)
+}
+
+fn mark_stale_running_failure(job: &mut CronJob, now: chrono::DateTime<Utc>) {
+    job.status = CronJobStatus::Failed;
+    job.last_run = Some(now.to_rfc3339());
+    job.last_finished_at = Some(now.to_rfc3339());
+    job.updated_at = Some(now.to_rfc3339());
+    job.run_count = job.run_count.saturating_add(1);
+    job.failure_count = job.failure_count.saturating_add(1);
+    job.last_error = Some(STALE_RUNNING_ERROR.to_string());
+    job.last_log_path = None;
+}
+
+fn mark_job_running(job: &mut CronJob, started_at: chrono::DateTime<Utc>) {
+    job.status = CronJobStatus::Running;
+    job.last_started_at = Some(started_at.to_rfc3339());
+    job.updated_at = Some(started_at.to_rfc3339());
+    job.last_error = None;
+}
+
 fn should_notify_cron(quiet: bool, notify_on: &CronNotifyPolicy, status: &CronJobStatus) -> bool {
     if quiet {
         return false;
@@ -61,7 +92,7 @@ fn failed_run_record(
 ) -> CronRunRecord {
     let finished_at = Utc::now();
     CronRunRecord {
-        run_id: format!("{}_{}", job.id, started_at.format("%Y%m%d_%H%M%S")),
+        run_id: format!("{}_{}", job.id, uuid::Uuid::new_v4()),
         job_id: job.id.clone(),
         schedule: job.schedule.clone(),
         started_at: started_at.to_rfc3339(),
@@ -110,6 +141,7 @@ fn update_job_failure(
             j.run_count = j.run_count.saturating_add(1);
             j.failure_count = j.failure_count.saturating_add(1);
             j.last_error = Some(error.to_string());
+            j.last_log_path = None;
         }
     })?;
     Ok(())
@@ -117,25 +149,33 @@ fn update_job_failure(
 
 pub async fn run_single_job_now(config: &Config, job: CronJob) -> Result<CronRunRecord> {
     let started_at = Utc::now();
-    crate::cron::with_cron_jobs_mut(|jobs| {
-        if let Some(j) = jobs.iter_mut().find(|j| j.id == job.id) {
-            j.status = CronJobStatus::Running;
-            j.last_started_at = Some(started_at.to_rfc3339());
-            j.updated_at = Some(started_at.to_rfc3339());
-            j.last_error = None;
+    crate::cron::with_cron_jobs_mut(|jobs| -> Result<()> {
+        let j = jobs
+            .iter_mut()
+            .find(|j| j.id == job.id)
+            .ok_or_else(|| anyhow!("Cron job with ID '{}' not found.", job.id))?;
+        if matches!(j.status, CronJobStatus::Running) {
+            if !running_state_is_stale(j, started_at) {
+                return Err(anyhow!("Cron job with ID '{}' is already running.", job.id));
+            }
+            mark_stale_running_failure(j, started_at);
         }
-    })?;
+        mark_job_running(j, started_at);
+        Ok(())
+    })??;
 
     match run_job(config, &job, started_at).await {
         Ok(record) => {
-            if let Err(e) = append_cron_run_record(&record) {
-                tracing::error!(job_id = %job.id, error = ?e, "failed to append manual cron run record");
-            }
             let completed_at = record
                 .finished_at
                 .as_deref()
                 .and_then(|dt| dt.parse::<chrono::DateTime<Utc>>().ok())
                 .unwrap_or_else(Utc::now);
+            if let Err(e) = append_cron_run_record(&record) {
+                tracing::error!(job_id = %job.id, error = ?e, "failed to append manual cron run record");
+                update_job_failure(&job.id, completed_at, &e)?;
+                return Err(e);
+            }
             update_job_success(&job.id, completed_at, &record)?;
             Ok(record)
         }
@@ -159,6 +199,12 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
 
     crate::cron::with_cron_jobs_mut(|jobs| {
         for job in jobs.iter_mut() {
+            if matches!(job.status, CronJobStatus::Running) {
+                if !running_state_is_stale(job, now) {
+                    continue;
+                }
+                mark_stale_running_failure(job, now);
+            }
             if !job.enabled {
                 continue;
             }
@@ -191,10 +237,7 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
                 } else {
                     job.next_run = Some(next_next.to_rfc3339());
                 }
-                job.status = CronJobStatus::Running;
-                job.last_started_at = Some(started_at.to_rfc3339());
-                job.updated_at = Some(started_at.to_rfc3339());
-                job.last_error = None;
+                mark_job_running(job, started_at);
                 jobs_to_run.push(job.clone());
             }
         }
@@ -215,32 +258,55 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
                 .unwrap_or_else(Utc::now);
             match run_job(&config_clone, &job_clone, started_at).await {
                 Ok(run_record) => {
-                    if let Err(e) = append_cron_run_record(&run_record) {
-                        tracing::error!(job_id = %job_clone.id, error = ?e, "failed to append cron run record");
-                    }
                     let completed_at = run_record
                         .finished_at
                         .as_deref()
                         .and_then(|dt| dt.parse::<chrono::DateTime<Utc>>().ok())
                         .unwrap_or_else(Utc::now);
-                    if let Err(e) = update_job_success(&job_clone.id, completed_at, &run_record) {
-                        tracing::error!("Failed to update cron jobs metadata: {:?}", e);
-                    }
-                    tracing::info!(job_id = %job_clone.id, "cron job completed successfully");
-                    if should_notify_cron(
-                        job_clone.quiet,
-                        &job_clone.notify_on,
-                        &CronJobStatus::Success,
-                    ) {
-                        crate::channels::cli::send_notification(&format!(
-                            "Cron Job {} completed successfully.",
-                            job_clone.id
-                        ));
+                    match append_cron_run_record(&run_record) {
+                        Ok(()) => {
+                            if let Err(e) =
+                                update_job_success(&job_clone.id, completed_at, &run_record)
+                            {
+                                tracing::error!("Failed to update cron jobs metadata: {:?}", e);
+                            }
+                            tracing::info!(job_id = %job_clone.id, "cron job completed successfully");
+                            if should_notify_cron(
+                                job_clone.quiet,
+                                &job_clone.notify_on,
+                                &CronJobStatus::Success,
+                            ) {
+                                crate::channels::cli::send_notification(&format!(
+                                    "Cron Job {} completed successfully.",
+                                    job_clone.id
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(job_id = %job_clone.id, error = ?e, "failed to append cron run record");
+                            if let Err(err) = update_job_failure(&job_clone.id, completed_at, &e) {
+                                tracing::error!(
+                                    "Failed to update cron jobs metadata after run-record append failure: {:?}",
+                                    err
+                                );
+                            }
+                            if should_notify_cron(
+                                job_clone.quiet,
+                                &job_clone.notify_on,
+                                &CronJobStatus::Failed,
+                            ) {
+                                crate::channels::cli::send_notification(&format!(
+                                    "Error running Cron Job {}: {}",
+                                    job_clone.id, e
+                                ));
+                            }
+                        }
                     }
                 }
                 Err(e) => {
                     let run_record = failed_run_record(&job_clone, started_at, &e);
-                    if let Err(err) = append_cron_run_record(&run_record) {
+                    let append_err = append_cron_run_record(&run_record).err();
+                    if let Some(err) = &append_err {
                         tracing::error!(job_id = %job_clone.id, error = ?err, "failed to append failed cron run record");
                     }
                     let completed_at = run_record
@@ -294,8 +360,9 @@ Task: {}",
     if !logs_dir.exists() {
         std::fs::create_dir_all(&logs_dir)?;
     }
-    let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
-    let log_file = logs_dir.join(format!("job_{}_{}.log", job.id, timestamp));
+    let timestamp = Utc::now().format("%Y%m%d_%H%M%S%.3f").to_string();
+    let run_id = format!("{}_{}", job.id, uuid::Uuid::new_v4());
+    let log_file = logs_dir.join(format!("job_{}_{}_{}.log", job.id, timestamp, run_id));
     let finished_at = Utc::now();
 
     let log_content = format!(
@@ -319,7 +386,7 @@ Executed At: {}
     tracing::info!(job_id = %job.id, log_path = %log_file.display(), "cron job log saved");
 
     Ok(CronRunRecord {
-        run_id: format!("{}_{}", job.id, timestamp),
+        run_id,
         job_id: job.id.clone(),
         schedule: job.schedule.clone(),
         started_at: started_at.to_rfc3339(),
@@ -365,6 +432,113 @@ mod tests {
             &CronNotifyPolicy::Failure,
             &CronJobStatus::Success
         ));
+    }
+
+    #[tokio::test]
+    async fn stale_running_job_is_recovered_before_next_due_run() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "openz_cron_stale_running_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let config_dir = temp_dir.clone();
+
+        let config = Config::default();
+        let now = Utc::now();
+        let stale_started = now - chrono::Duration::seconds(CRON_RUNNING_LEASE_SECS + 1);
+        let fresh_started = now - chrono::Duration::seconds(5);
+
+        let jobs = vec![
+            {
+                let mut job = CronJob::new(
+                    "stale".to_string(),
+                    "5m".to_string(),
+                    "stale prompt".to_string(),
+                    true,
+                    false,
+                );
+                job.status = CronJobStatus::Running;
+                job.last_started_at = Some(stale_started.to_rfc3339());
+                job.next_run = Some((now - chrono::Duration::seconds(10)).to_rfc3339());
+                job
+            },
+            {
+                let mut job = CronJob::new(
+                    "fresh".to_string(),
+                    "5m".to_string(),
+                    "fresh prompt".to_string(),
+                    true,
+                    false,
+                );
+                job.status = CronJobStatus::Running;
+                job.last_started_at = Some(fresh_started.to_rfc3339());
+                job.next_run = Some((now - chrono::Duration::seconds(10)).to_rfc3339());
+                job
+            },
+        ];
+
+        CONFIG_DIR_OVERRIDE
+            .scope(config_dir, async move {
+                save_jobs_raw(&jobs).unwrap();
+                tick_scheduler(&config).await.unwrap();
+
+                let updated_jobs = load_jobs_raw().unwrap();
+                let stale = updated_jobs.iter().find(|j| j.id == "stale").unwrap();
+                assert_eq!(stale.status, CronJobStatus::Running);
+                assert_eq!(stale.failure_count, 1);
+                assert_ne!(stale.last_started_at, Some(stale_started.to_rfc3339()));
+                let fresh = updated_jobs.iter().find(|j| j.id == "fresh").unwrap();
+                assert_eq!(fresh.status, CronJobStatus::Running);
+                assert_eq!(fresh.failure_count, 0);
+                assert_eq!(fresh.last_started_at, Some(fresh_started.to_rfc3339()));
+            })
+            .await;
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn stale_disabled_run_once_job_is_marked_failed_without_rerun() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "openz_cron_stale_run_once_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let config_dir = temp_dir.clone();
+
+        let config = Config::default();
+        let now = Utc::now();
+        let stale_started = now - chrono::Duration::seconds(CRON_RUNNING_LEASE_SECS + 1);
+
+        let jobs = vec![{
+            let mut job = CronJob::new(
+                "stale_once".to_string(),
+                "5m".to_string(),
+                "stale once prompt".to_string(),
+                false,
+                true,
+            );
+            job.status = CronJobStatus::Running;
+            job.last_started_at = Some(stale_started.to_rfc3339());
+            job.next_run = None;
+            job
+        }];
+
+        CONFIG_DIR_OVERRIDE
+            .scope(config_dir, async move {
+                save_jobs_raw(&jobs).unwrap();
+                tick_scheduler(&config).await.unwrap();
+
+                let updated_jobs = load_jobs_raw().unwrap();
+                let job = updated_jobs.iter().find(|j| j.id == "stale_once").unwrap();
+                assert!(!job.enabled);
+                assert_eq!(job.status, CronJobStatus::Failed);
+                assert_eq!(job.failure_count, 1);
+                assert_eq!(job.last_error.as_deref(), Some(STALE_RUNNING_ERROR));
+            })
+            .await;
+
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 
     #[tokio::test]

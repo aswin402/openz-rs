@@ -1182,6 +1182,7 @@ mod tests {
         registry.register(Arc::new(crate::tools::cron::ResumeJobTool));
         registry.register(Arc::new(crate::tools::cron::GetJobTool));
         registry.register(Arc::new(crate::tools::cron::GetJobLogsTool));
+        registry.register(Arc::new(crate::tools::cron::RunJobNowTool));
 
         let names = registry
             .to_openai_format_for_prompt("check all cron jobs and show logs for job daily")
@@ -1194,6 +1195,7 @@ mod tests {
         assert!(names.contains(&"get_job_logs".to_string()));
         assert!(names.contains(&"pause_job".to_string()));
         assert!(names.contains(&"resume_job".to_string()));
+        assert!(names.contains(&"run_job_now".to_string()));
     }
 
     #[test]
