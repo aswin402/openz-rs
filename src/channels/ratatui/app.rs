@@ -1,13 +1,15 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use super::theme::Theme;
 
 pub static IS_RATATUI_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-static BRANCH_CACHE: Mutex<Option<(Instant, Option<String>)>> = Mutex::new(None);
+static BRANCH_CACHE: LazyLock<Mutex<HashMap<PathBuf, (Instant, Option<String>)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 static IS_FETCHING_GIT: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone)]
@@ -232,7 +234,10 @@ pub struct RatatuiApp {
 }
 
 pub const SLASH_COMMANDS: &[(&str, &str)] = &[
-    ("/model", "Switch active LLM provider and model interactively"),
+    (
+        "/model",
+        "Switch active LLM provider and model interactively",
+    ),
     ("/clear", "Clear conversation timeline"),
     ("/history", "Restore or switch chat sessions"),
     ("/new-session", "Start a clean conversation session"),
@@ -340,21 +345,25 @@ impl RatatuiApp {
 
     /// Retrieve current git branch with background cache refresh
     pub fn get_git_branch(workspace: &Path) -> Option<String> {
+        let workspace_key = workspace
+            .canonicalize()
+            .unwrap_or_else(|_| workspace.to_path_buf());
         let now = Instant::now();
         let mut cached_branch = None;
         let mut needs_refresh = true;
 
         if let Ok(guard) = BRANCH_CACHE.lock() {
-            if let Some((last_check, ref branch)) = *guard {
+            if let Some((last_check, branch)) = guard.get(&workspace_key) {
                 cached_branch = branch.clone();
-                if now.duration_since(last_check) < Duration::from_secs(3) {
+                if now.duration_since(*last_check) < Duration::from_secs(3) {
                     needs_refresh = false;
                 }
             }
         }
 
         if needs_refresh && !IS_FETCHING_GIT.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            let ws = workspace.to_path_buf();
+            let cache_key = workspace_key.clone();
+            let ws = workspace_key;
             let fetcher = move || {
                 let output = std::process::Command::new("git")
                     .arg("rev-parse")
@@ -377,7 +386,7 @@ impl RatatuiApp {
                 });
 
                 if let Ok(mut guard) = BRANCH_CACHE.lock() {
-                    *guard = Some((Instant::now(), branch));
+                    guard.insert(cache_key, (Instant::now(), branch));
                 }
                 IS_FETCHING_GIT.store(false, std::sync::atomic::Ordering::SeqCst);
             };
@@ -412,9 +421,46 @@ mod tests {
     use super::*;
 
     fn app_with_scroll(max_scroll: u32) -> RatatuiApp {
-        let mut app = RatatuiApp::new("test-model".into(), "test-provider".into(), "cli:test".into());
+        let mut app = RatatuiApp::new(
+            "test-model".into(),
+            "test-provider".into(),
+            "cli:test".into(),
+        );
         app.max_scroll = max_scroll;
         app
+    }
+
+    #[test]
+    fn branch_cache_is_keyed_by_workspace() {
+        let first = std::env::temp_dir().join(format!("openz_branch_a_{}", uuid::Uuid::new_v4()));
+        let second = std::env::temp_dir().join(format!("openz_branch_b_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+
+        let first_key = first.canonicalize().unwrap();
+        let second_key = second.canonicalize().unwrap();
+
+        {
+            let mut guard = super::BRANCH_CACHE.lock().unwrap();
+            guard.clear();
+            guard.insert(
+                first_key.clone(),
+                (Instant::now(), Some("main".to_string())),
+            );
+            guard.insert(
+                second_key.clone(),
+                (Instant::now(), Some("feature".to_string())),
+            );
+        }
+
+        assert_eq!(RatatuiApp::get_git_branch(&first).as_deref(), Some("main"));
+        assert_eq!(
+            RatatuiApp::get_git_branch(&second).as_deref(),
+            Some("feature")
+        );
+
+        let _ = std::fs::remove_dir_all(first);
+        let _ = std::fs::remove_dir_all(second);
     }
 
     #[test]
@@ -472,10 +518,13 @@ mod tests {
     fn apply_sync_session_preserves_recent_notices_only() {
         let mut app = app_with_scroll(50);
         for i in 0..7 {
-            app.messages.push(ChatMessage::notice(format!("note {}", i)));
+            app.messages
+                .push(ChatMessage::notice(format!("note {}", i)));
         }
-        app.messages.push(ChatMessage::simple("user", "hello".into()));
-        app.messages.push(ChatMessage::simple("assistant", "hi".into()));
+        app.messages
+            .push(ChatMessage::simple("user", "hello".into()));
+        app.messages
+            .push(ChatMessage::simple("assistant", "hi".into()));
         app.scroll_to_top();
 
         let disk = vec![
@@ -492,7 +541,10 @@ mod tests {
             .iter()
             .map(|m| m.content.as_str())
             .collect();
-        assert_eq!(notices, vec!["note 2", "note 3", "note 4", "note 5", "note 6"]);
+        assert_eq!(
+            notices,
+            vec!["note 2", "note 3", "note 4", "note 5", "note 6"]
+        );
         assert!(app.auto_scroll); // re-anchored to bottom
     }
 
@@ -501,7 +553,10 @@ mod tests {
         let mut extra = serde_json::Map::new();
         extra.insert("tool_name".into(), serde_json::json!("read_file"));
         extra.insert("tool_details".into(), serde_json::json!("path=src/main.rs"));
-        extra.insert("reasoning_content".into(), serde_json::json!("let me think"));
+        extra.insert(
+            "reasoning_content".into(),
+            serde_json::json!("let me think"),
+        );
         extra.insert("thinking_time_secs".into(), serde_json::json!(1.25));
         let msg = crate::session::Message {
             role: "tool".into(),
