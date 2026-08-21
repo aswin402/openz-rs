@@ -1,7 +1,7 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use rusqlite::params;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::db::{get_db_mutex, with_db};
 use super::embeddings::{cosine_similarity, get_cloud_embeddings_batch, get_embedding, with_model};
@@ -138,7 +138,10 @@ pub async fn archive_research_entries(entries: Vec<(String, String, String)>) ->
                 }
                 Err(e) => {
                     if mode == "cloud_only" {
-                        return Err(anyhow::anyhow!("Cloud batch embedding failed and local model fallback is disabled: {:?}", e));
+                        return Err(anyhow::anyhow!(
+                            "Cloud batch embedding failed and local model fallback is disabled: {:?}",
+                            e
+                        ));
                     }
                     tracing::warn!(
                         "Cloud batch embedding failed: {:?}. Falling back to local fastembed.",

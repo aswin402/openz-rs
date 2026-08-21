@@ -33,9 +33,9 @@ pub use working::{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::Tool;
     use crate::tools::graph_memory::test_lock;
     use crate::tools::graph_memory::with_db;
-    use crate::tools::Tool;
     use rusqlite::params;
     use serde_json::json;
 
@@ -1198,18 +1198,24 @@ fn helper() {}
         })
         .unwrap();
 
-        assert!(indexed
-            .iter()
-            .any(|(typ, name, _)| typ == "Trait" && name == "Runner"));
-        assert!(indexed
-            .iter()
-            .any(|(typ, name, _)| typ == "Struct" && name == "Worker"));
+        assert!(
+            indexed
+                .iter()
+                .any(|(typ, name, _)| typ == "Trait" && name == "Runner")
+        );
+        assert!(
+            indexed
+                .iter()
+                .any(|(typ, name, _)| typ == "Struct" && name == "Worker")
+        );
         assert!(indexed.iter().any(|(typ, name, sig)| typ == "ImplBlock"
             && name == "impl_Worker"
             && sig.contains("Runner for Worker")));
-        assert!(indexed
-            .iter()
-            .any(|(typ, name, _)| typ == "Function" && name == "run"));
+        assert!(
+            indexed
+                .iter()
+                .any(|(typ, name, _)| typ == "Function" && name == "run")
+        );
 
         let _ = std::fs::remove_dir_all(dir);
     }

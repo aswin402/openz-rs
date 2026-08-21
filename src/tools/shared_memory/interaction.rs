@@ -1,6 +1,6 @@
 use anyhow::Result;
 use rusqlite::params;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::db::{get_db_mutex, with_db};
 

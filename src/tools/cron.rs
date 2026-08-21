@@ -1,6 +1,6 @@
-use crate::cron::{load_cron_run_records, load_jobs, CronJob, CronJobStatus, CronNotifyPolicy};
+use crate::cron::{CronJob, CronJobStatus, CronNotifyPolicy, load_cron_run_records, load_jobs};
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde_json::Value;
 
 fn parse_notify_policy(arguments: &Value) -> Result<CronNotifyPolicy> {
@@ -94,7 +94,10 @@ impl Tool for ScheduleJobTool {
         let now = chrono::Utc::now().to_rfc3339();
 
         if crate::cron::calculate_next_run(schedule, None).is_none() {
-            return Err(anyhow!("Invalid schedule format: {}. Use simple duration like '10s', '5m', '1h', local clock time like '18:00', or standard Unix cron like '*/5 * * * *'", schedule));
+            return Err(anyhow!(
+                "Invalid schedule format: {}. Use simple duration like '10s', '5m', '1h', local clock time like '18:00', or standard Unix cron like '*/5 * * * *'",
+                schedule
+            ));
         }
 
         let mut found = false;
@@ -445,7 +448,7 @@ mod tests {
     use super::*;
     use crate::config::loader::CONFIG_DIR_OVERRIDE;
     use crate::cron::{
-        load_jobs_raw, save_jobs_raw, CronJob, CronJobStatus, CronNotifyPolicy, CronRunRecord,
+        CronJob, CronJobStatus, CronNotifyPolicy, CronRunRecord, load_jobs_raw, save_jobs_raw,
     };
 
     fn sample_job(id: &str) -> CronJob {

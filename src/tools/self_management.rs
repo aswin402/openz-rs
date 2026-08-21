@@ -2,6 +2,68 @@ use crate::tools::Tool;
 use anyhow::Result;
 use serde_json::Value;
 
+pub struct RequestToolScopeTool;
+
+#[async_trait::async_trait]
+impl Tool for RequestToolScopeTool {
+    fn name(&self) -> &str {
+        "request_tool_scope"
+    }
+
+    fn description(&self) -> &str {
+        "Request additional tool domains or exact tools when the current scoped tool set is insufficient."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Why the current tool scope is insufficient."
+                },
+                "needed_domains": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional tool domains needed for the next turn."
+                },
+                "needed_tools": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional exact tool names needed for the next turn."
+                }
+            },
+            "required": ["reason"]
+        })
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let reason = arguments
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("no reason provided")
+            .to_string();
+        let needed_domains = arguments
+            .get("needed_domains")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let needed_tools = arguments
+            .get("needed_tools")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        Ok(serde_json::json!({
+            "status": "scope_request_recorded",
+            "reason": reason,
+            "needed_domains": needed_domains,
+            "needed_tools": needed_tools,
+            "message": "The next model turn can widen tool scope if the agent loop enables scope expansion."
+        }))
+    }
+}
+
 pub struct DiagnoseToolTool {
     registry: crate::tools::ToolRegistry,
 }
@@ -1960,30 +2022,38 @@ mod tests {
         assert_eq!(exec["spawns_process"].as_bool().unwrap(), true);
         assert_eq!(exec["requires_approval"].as_bool().unwrap(), true);
         assert_eq!(exec["matched_prompt_domain"].as_bool().unwrap(), true);
-        assert!(exec["selection_reason"]
-            .as_str()
-            .unwrap()
-            .contains("prompt_domain"));
+        assert!(
+            exec["selection_reason"]
+                .as_str()
+                .unwrap()
+                .contains("prompt_domain")
+        );
         assert!(exec["selected_score"].as_i64().unwrap() > 0);
-        assert!(exec["aliases"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|alias| alias.as_str() == Some("shell command")));
+        assert!(
+            exec["aliases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|alias| alias.as_str() == Some("shell command"))
+        );
         assert!(exec["examples"].as_array().unwrap().iter().any(|example| {
             example
                 .as_str()
                 .unwrap_or("")
                 .contains("safe project-local command")
         }));
-        assert!(exec["when_to_use"]
-            .as_str()
-            .unwrap()
-            .contains("shell commands"));
-        assert!(exec["when_not_to_use"]
-            .as_str()
-            .unwrap()
-            .contains("file reads"));
+        assert!(
+            exec["when_to_use"]
+                .as_str()
+                .unwrap()
+                .contains("shell commands")
+        );
+        assert!(
+            exec["when_not_to_use"]
+                .as_str()
+                .unwrap()
+                .contains("file reads")
+        );
 
         let selected_domains = res["selected_domains"].as_array().unwrap();
         assert!(selected_domains.iter().any(|d| d.as_str() == Some("shell")));
@@ -2016,19 +2086,27 @@ mod tests {
 
         assert_eq!(res["success"].as_bool().unwrap(), true);
         assert!(res["runtime_identity"].is_object());
-        assert!(res["runtime_identity"]["configured_model"]
-            .as_str()
-            .is_some());
-        assert!(res["runtime_identity"]["configured_provider"]
-            .as_str()
-            .is_some());
-        assert!(res["runtime_identity"]["model_supports_vision"]
-            .as_bool()
-            .is_some());
-        assert!(res["guidance"]
-            .as_str()
-            .unwrap()
-            .contains("model/provider identity"));
+        assert!(
+            res["runtime_identity"]["configured_model"]
+                .as_str()
+                .is_some()
+        );
+        assert!(
+            res["runtime_identity"]["configured_provider"]
+                .as_str()
+                .is_some()
+        );
+        assert!(
+            res["runtime_identity"]["model_supports_vision"]
+                .as_bool()
+                .is_some()
+        );
+        assert!(
+            res["guidance"]
+                .as_str()
+                .unwrap()
+                .contains("model/provider identity")
+        );
     }
 
     #[test]
@@ -2076,10 +2154,12 @@ mod tests {
             web_fetch["resource_policy"]["decision"].as_str(),
             Some("block")
         );
-        assert!(web_fetch["resource_policy"]["reason"]
-            .as_str()
-            .unwrap()
-            .contains("Network tools are disabled"));
+        assert!(
+            web_fetch["resource_policy"]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("Network tools are disabled")
+        );
         assert_eq!(
             web_fetch["resource_policy"]["free_disk_gb"].as_f64(),
             Some(100.0)
@@ -2121,6 +2201,23 @@ mod tests {
             args["scene"]["scenes"][0]["elements"][0]["style"]["font_weight"],
             800
         );
+    }
+
+    #[test]
+    fn request_tool_scope_returns_structured_scope_request() {
+        let tool = RequestToolScopeTool;
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(tool.call(&serde_json::json!({
+                "reason": "need to inspect repository files",
+                "needed_domains": ["code", "filesystem"],
+                "needed_tools": ["grep_search", "read_file"]
+            })))
+            .unwrap();
+
+        assert_eq!(result["status"], "scope_request_recorded");
+        assert_eq!(result["needed_domains"][0], "code");
+        assert_eq!(result["needed_tools"][0], "grep_search");
     }
 
     #[test]
@@ -2367,10 +2464,12 @@ mod tests {
             })))
             .unwrap();
         assert_eq!(invalid_res["success"].as_bool().unwrap(), false);
-        assert!(invalid_res["error"]
-            .as_str()
-            .unwrap()
-            .contains("invalid_field"));
+        assert!(
+            invalid_res["error"]
+                .as_str()
+                .unwrap()
+                .contains("invalid_field")
+        );
 
         // Restore original config
         crate::config::loader::save_config(&original_config).unwrap();

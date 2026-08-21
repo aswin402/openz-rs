@@ -1,4 +1,23 @@
-### v0.0.140 (Latest Release)
+### v0.0.142 (Latest Release)
+**OpenZ Core Inventory & WebUI Cron Control:**
+- **Feature:** Added a WebUI Core Inventory control-center page backed by the gateway runtime inventory, covering core defaults, tools, cron jobs, runtime paths, and channels.
+- **Feature:** Added WebSocket cron control commands for pause, resume, delete, and structured run-log retrieval, returning refreshed inventory after mutations.
+- **Feature:** Added Inventory Cron actions for pause/resume/delete and run-log inspection without injecting background cron noise into normal chat.
+- **Fix:** Restored frontend verification by reinstalling Bun dependencies from `bun.lock` and repaired the local Cargo registry source cache from already-downloaded crate archives.
+- **Tests:** Added focused WebSocket cron command coverage plus verified cron quiet-notification behavior.
+- **Chore:** Bumped version to `v0.0.142`.
+
+### v0.0.141
+**Layered Tool Scope & Balanced Agent Control:**
+- **Feature:** Added L0 deterministic turn intent classification for direct answers, local repo reads, local execution, live research, memory, cron, media/document, and orchestration turns.
+- **Feature:** Added L1 scoped tool packs so simple prompts do not expose heavyweight shell, web, or subagent tools by default.
+- **Feature:** Added `request_tool_scope` as a model-facing escape hatch for exact missing tools/domains.
+- **Fix:** Improved local-vs-live routing so repo questions stay local while latest/current/external URL questions route to web research.
+- **Fix:** Tightened orchestrator simple-step prompts so trivial planner/reviewer smoke workflows answer directly without unnecessary research or nested delegation.
+- **Fix:** Suppressed subagent evolution skill capture for short smoke-test outputs.
+- **Chore:** Bumped version to `v0.0.141`.
+
+### v0.0.140
 **Cron Inventory & Quiet Background Runs:**
 - **Fix:** Cron jobs no longer inject normal start/success/log-saved messages into active CLI/TUI chat.
 - **Feature:** Added cron inventory metadata including status, run counts, failure counts, timestamps, last error, and last log path.

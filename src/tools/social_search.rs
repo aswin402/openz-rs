@@ -1,7 +1,7 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub struct SocialSearchTool {
     client: Client,
@@ -109,7 +109,9 @@ impl SocialSearchTool {
     async fn search_twitter(&self, _query: &str) -> Result<Value> {
         // Twitter/X API requires authentication. Nitter public instances are all offline.
         // Return a clear message instead of silently failing.
-        Err(anyhow!("Twitter/X search is unavailable: all public Nitter instances have been shut down. Use web_search to search X.com directly."))
+        Err(anyhow!(
+            "Twitter/X search is unavailable: all public Nitter instances have been shut down. Use web_search to search X.com directly."
+        ))
     }
 
     async fn search_youtube(&self, query: &str) -> Result<Value> {

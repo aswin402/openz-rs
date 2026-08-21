@@ -1,6 +1,6 @@
 use crate::tools::{Tool, ToolMetadata, ToolRisk};
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use serde_json::{Value, json};
 use std::path::Path;
 
 const MAX_TELEGRAM_DOCUMENT_BYTES: u64 = 50 * 1024 * 1024;

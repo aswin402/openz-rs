@@ -105,6 +105,7 @@ export const DashboardView: React.FC = () => {
   const activeModel = useOpenZStore((s) => s.activeModel);
   const settings = useOpenZStore((s) => s.settings);
   const status = useOpenZStore((s) => s.status);
+  const runtimeInventory = useOpenZStore((s) => s.runtimeInventory);
   const sessions = useOpenZStore((s) => s.sessions);
   const activeChatId = useOpenZStore((s) => s.activeChatId);
   const mcpStats = useOpenZStore((s) => s.mcpStats);
@@ -174,6 +175,13 @@ export const DashboardView: React.FC = () => {
           icon={MessageSquare}
           onClick={() => setActiveView('chats')}
         />
+        <StatCard
+          label="Core Inventory"
+          value={runtimeInventory ? `${runtimeInventory.counts.subagents} agents / ${runtimeInventory.counts.tools} tools` : 'Loading'}
+          sub={runtimeInventory ? `${runtimeInventory.counts.skills} skills · ${runtimeInventory.counts.activeCronJobs}/${runtimeInventory.counts.cronJobs} cron active` : 'Waiting for gateway inventory'}
+          icon={Database}
+          onClick={() => setActiveView('inventory')}
+        />
       </div>
 
       {/* Workspace Section */}
@@ -203,6 +211,14 @@ export const DashboardView: React.FC = () => {
             badge="Cognitive"
             accent="text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
             onClick={() => setActiveView('knowledge')}
+          />
+          <LauncherCard
+            label="Core Inventory"
+            desc="Inspect runtime paths, tools, cron jobs, channels, and shared OpenZ core metadata."
+            icon={Database}
+            badge={runtimeInventory ? String(runtimeInventory.counts.tools) : undefined}
+            accent="text-amber-500 bg-amber-500/10 border-amber-500/20"
+            onClick={() => setActiveView('inventory')}
           />
         </div>
       </div>

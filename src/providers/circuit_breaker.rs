@@ -196,7 +196,11 @@ where
                     if breaker.check().is_err() {
                         return Err(anyhow::anyhow!(
                             "Provider '{}' error (HTTP {}): Circuit breaker opened after {}/{} retries. Last error: {}",
-                            provider_name, status, attempt, max_retries, error_text
+                            provider_name,
+                            status,
+                            attempt,
+                            max_retries,
+                            error_text
                         ));
                     }
                 } else {
@@ -216,7 +220,9 @@ where
     let (status, error_text) = last_err.unwrap_or((0, "Unknown error".into()));
     Err(anyhow::anyhow!(
         "Provider '{}' error (HTTP {}): All retries exhausted ({max_retries} attempts). Last error: {}",
-        provider_name, status, error_text
+        provider_name,
+        status,
+        error_text
     ))
 }
 

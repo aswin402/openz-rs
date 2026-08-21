@@ -904,7 +904,9 @@ mod tests {
             "mem0"
         );
         assert_eq!(
-            canonical_research_topic("https://github.com/tinyhumansai/openhuman research about this and tell me about this"),
+            canonical_research_topic(
+                "https://github.com/tinyhumansai/openhuman research about this and tell me about this"
+            ),
             "tinyhumansai/openhuman"
         );
         let matches = crate::tools::shared_memory::search_source_bookmarks(&marker, 5)
@@ -953,7 +955,9 @@ mod tests {
             "web_search",
             &serde_json::json!({"query": format!("hollow knight dark wallpaper 4k {marker}")}),
             &result,
-            &format!("find a good platform to download a dark wallpaper image and show it to me {marker}"),
+            &format!(
+                "find a good platform to download a dark wallpaper image and show it to me {marker}"
+            ),
         )
         .await
         .unwrap();

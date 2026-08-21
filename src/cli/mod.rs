@@ -132,7 +132,9 @@ pub async fn run_cli() -> Result<()> {
         }
         Some(Command::McpBridge { port, command_args }) => {
             if command_args.is_empty() {
-                return Err(anyhow::anyhow!("No target command specified. Usage: openz mcp-bridge --port <port> -- <command> [args...]"));
+                return Err(anyhow::anyhow!(
+                    "No target command specified. Usage: openz mcp-bridge --port <port> -- <command> [args...]"
+                ));
             }
             let command = &command_args[0];
             let args = &command_args[1..];

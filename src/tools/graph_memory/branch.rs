@@ -1,9 +1,9 @@
 use super::db::*;
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use rusqlite::Connection;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::{Mutex, OnceLock};
 
 static BRANCH_MUTEX: OnceLock<Mutex<Option<String>>> = OnceLock::new();

@@ -3,9 +3,15 @@ import type { ConnectionStatus } from '../types';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type EventListener = (data: any) => void;
 
+export function defaultWebSocketUrl(): string {
+  if (typeof window === 'undefined') return '';
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws`;
+}
+
 export class OpenZWebSocketService {
   private ws: WebSocket | null = null;
-  private url: string = 'ws://127.0.0.1:8765/ws';
+  private url: string = defaultWebSocketUrl();
   private token: string = '';
   private listeners: Map<string, Set<EventListener>> = new Map();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -60,6 +66,11 @@ export class OpenZWebSocketService {
     if (this.ws) {
       this.ws.close();
       this.ws = null;
+    }
+
+    if (!this.url.trim()) {
+      this.updateStatus('error');
+      return;
     }
 
     this.updateStatus('connecting');
@@ -270,6 +281,26 @@ export class OpenZWebSocketService {
   public requestStatus() {
     this.send({ type: 'get_status' });
   }
+
+  public requestRuntimeInventory() {
+    this.send({ type: 'get_runtime_inventory' });
+  }
+  public pauseCronJob(id: string) {
+    this.send({ type: 'pause_cron_job', id });
+  }
+
+  public resumeCronJob(id: string) {
+    this.send({ type: 'resume_cron_job', id });
+  }
+
+  public deleteCronJob(id: string) {
+    this.send({ type: 'delete_cron_job', id });
+  }
+
+  public requestCronLogs(id?: string, limit = 20) {
+    this.send({ type: 'get_cron_logs', id, limit });
+  }
+
 
   /** Resolve a pending security-approval request. */
   public sendSecurityResponse(reqId: string, approved: boolean) {

@@ -1,6 +1,6 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
+use anyhow::{Result, anyhow};
+use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 use serde_json::Value;
 use std::env;
 

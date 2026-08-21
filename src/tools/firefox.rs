@@ -1,6 +1,6 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use serde_json::{Value, json};
 use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -286,10 +286,12 @@ mod tests {
             payload["browser_preflight"]["health"]["geckodriver"],
             "missing"
         );
-        assert!(payload["error"]
-            .as_str()
-            .expect("error string")
-            .contains("Browser preflight failed"));
+        assert!(
+            payload["error"]
+                .as_str()
+                .expect("error string")
+                .contains("Browser preflight failed")
+        );
     }
 
     #[tokio::test]

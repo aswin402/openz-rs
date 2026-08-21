@@ -2,7 +2,7 @@ use crate::config::resolve_path;
 use crate::config::schema::Config;
 use crate::providers::GenerationSettings;
 use crate::session::Message;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use inquire::{Confirm, Text};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -19,6 +19,54 @@ pub struct SubagentProfile {
     pub fallbacks: Option<Vec<String>>, // Fallback models override
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+pub const MAX_SUBAGENT_FALLBACKS: usize = 3;
+
+pub const DEFAULT_SUBAGENT_NAMES: &[&str] = &[
+    "orchestrator",
+    "planner",
+    "researcher",
+    "architect",
+    "skill_creator",
+    "reviewer",
+    "code_auditor",
+    "debugger",
+    "test_engineer",
+    "devops_agent",
+    "refactor_agent",
+    "memory_manager",
+    "vision_agent",
+    "documentation_agent",
+    "self_improvement",
+    "skill_improvement",
+    "openz_maintainer",
+    "mcps_manager",
+    "git_ops_agent",
+    "ast_searcher",
+    "database_specialist",
+    "browser_operator",
+    "dependency_manager",
+    "frontend_architect",
+    "docs_lookup_agent",
+    "document_compiler",
+    "presentation_designer",
+    "code_synthesizer",
+    "summarizer_agent",
+    "media_designer",
+    "openz_coordinator",
+    "sop_designer",
+    "api_integrator",
+    "performance_tuner",
+    "communication_manager",
+    "automation_agent",
+    "coding_agent",
+    "diagram_designer",
+    "video_animator",
+];
+
+pub fn is_default_subagent(name: &str) -> bool {
+    DEFAULT_SUBAGENT_NAMES.contains(&name)
 }
 
 pub fn subagents_file_path() -> PathBuf {
@@ -390,7 +438,8 @@ pub fn load_profiles_uncached() -> Result<Vec<SubagentProfile>> {
             let _ = fs::copy(&path, &backup_path);
             tracing::error!(
                 "Failed to parse subagents.json ({:?}). A backup was created at {:?}. Reverting to defaults.",
-                e, backup_path
+                e,
+                backup_path
             );
             save_profiles(&defaults)?;
             return Ok(defaults);
@@ -441,49 +490,8 @@ pub fn load_profiles_uncached() -> Result<Vec<SubagentProfile>> {
         }
     }
 
-    let default_names = vec![
-        "planner",
-        "researcher",
-        "architect",
-        "skill_creator",
-        "reviewer",
-        "code_auditor",
-        "debugger",
-        "test_engineer",
-        "devops_agent",
-        "refactor_agent",
-        "memory_manager",
-        "vision_agent",
-        "documentation_agent",
-        "self_improvement",
-        "skill_improvement",
-        "openz_maintainer",
-        "mcps_manager",
-        "git_ops_agent",
-        "ast_searcher",
-        "database_specialist",
-        "browser_operator",
-        "dependency_manager",
-        "frontend_architect",
-        "docs_lookup_agent",
-        "document_compiler",
-        "presentation_designer",
-        "code_synthesizer",
-        "summarizer_agent",
-        "media_designer",
-        "openz_coordinator",
-        "sop_designer",
-        "api_integrator",
-        "performance_tuner",
-        "communication_manager",
-        "automation_agent",
-        "coding_agent",
-        "diagram_designer",
-        "video_animator",
-    ];
-
     for profile in &mut loaded_profiles {
-        if default_names.contains(&profile.name.as_str()) {
+        if is_default_subagent(&profile.name) {
             let is_old_default_model = matches!(
                 profile.model.as_deref(),
                 Some("gpt-4o-mini")
@@ -500,7 +508,7 @@ pub fn load_profiles_uncached() -> Result<Vec<SubagentProfile>> {
 
         if let Some(ref mut fbs) = profile.fallbacks {
             fbs.retain(|s| !s.is_empty());
-            if fbs.len() < 3 {
+            if fbs.len() < MAX_SUBAGENT_FALLBACKS {
                 while fbs.len() < 2 {
                     fbs.push(String::new());
                 }
@@ -1117,5 +1125,18 @@ async fn prompt_choose_model(
             }
         }
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_subagent_policy_includes_orchestrator() {
+        assert!(is_default_subagent("orchestrator"));
+        assert!(is_default_subagent("planner"));
+        assert!(!is_default_subagent("custom_planner"));
+        assert_eq!(MAX_SUBAGENT_FALLBACKS, 3);
     }
 }

@@ -1,5 +1,5 @@
 use super::{AgentLoop, TurnContext, TurnState};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
     ctx.session_file_lock = Some(

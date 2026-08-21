@@ -1,3 +1,4 @@
+use std::sync::Arc;
 /// Configurable mock LLM provider for testing.
 ///
 /// This module is only compiled under `#[cfg(test)]`. It provides
@@ -9,7 +10,6 @@
 /// - Inspecting call history for assertions
 /// - Custom error injection
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 /// A single canned response returned by [`MockProvider`].
 #[derive(Debug, Clone)]
@@ -165,11 +165,7 @@ impl crate::providers::LLMProvider for MockProvider {
         let prev = self
             .inject_errors
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
-                if current > 0 {
-                    Some(current - 1)
-                } else {
-                    None
-                }
+                if current > 0 { Some(current - 1) } else { None }
             });
         if prev.is_ok() {
             anyhow::bail!("MockProvider injected error");

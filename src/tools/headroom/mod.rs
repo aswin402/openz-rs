@@ -31,8 +31,8 @@ pub fn estimate_tokens(text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::graph_memory::test_lock;
     use crate::tools::Tool;
+    use crate::tools::graph_memory::test_lock;
     use serde_json::json;
     use std::path::Path;
 
@@ -340,10 +340,12 @@ mod tests {
         let search = SearchCacheTool;
         let res = search.call(&json!({ "query": "needle" })).await.unwrap();
         assert!(res["count"].as_u64().unwrap() > 0);
-        assert!(res["results"][0]["snippet"]
-            .as_str()
-            .unwrap()
-            .contains("needle"));
+        assert!(
+            res["results"][0]["snippet"]
+                .as_str()
+                .unwrap()
+                .contains("needle")
+        );
     }
 
     #[tokio::test]
@@ -388,9 +390,11 @@ mod tests {
             .await
             .unwrap();
         let results = res["results"].as_array().unwrap();
-        assert!(results
-            .iter()
-            .any(|row| row["ccr_id"].as_str() == Some(&id)));
+        assert!(
+            results
+                .iter()
+                .any(|row| row["ccr_id"].as_str() == Some(&id))
+        );
     }
 
     #[tokio::test]

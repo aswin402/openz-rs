@@ -1,15 +1,15 @@
 use super::delegate_task::{
-    current_workspace_root, ensure_markdown_images, run_evolution_review, should_sync_changes_back,
-    sync_changes_back, WorktreeGuard,
+    WorktreeGuard, current_workspace_root, ensure_markdown_images, run_evolution_review,
+    should_sync_changes_back, sync_changes_back,
 };
 use super::parallel_research::get_status_from_goal;
 use super::{
-    build_provider_for_model, cancellation_result_json, classify_subagent_error,
-    compact_lifecycle_line, execute_subagent_run, scan_for_images, status_json, CancellationToken,
-    SubagentRunStatus, DELEGATION_DEPTH,
+    CancellationToken, DELEGATION_DEPTH, SubagentRunStatus, build_provider_for_model,
+    cancellation_result_json, classify_subagent_error, compact_lifecycle_line,
+    execute_subagent_run, scan_for_images, status_json,
 };
-use crate::agent::style::*;
 use crate::agent::AgentLoop;
+use crate::agent::style::*;
 use crate::config::schema::Config;
 use crate::orchestrator::spec::CapabilityPolicy;
 use crate::providers::LLMProvider;
@@ -17,7 +17,7 @@ use crate::session::SessionManager;
 use crate::subagents::SubagentProfile;
 use crate::tools::Tool;
 use crate::tools::ToolRegistry;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde_json::Value;
 use std::sync::Arc;
 

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde_json::Value;
 
 use super::evaluator_optimizer::validate_schema;
@@ -98,7 +98,10 @@ where
                 attempts += 1;
                 crate::tui_println!(
                     "{}▲ [Reflection] Subagent output needs correction: {}. Retrying attempt {} of 2...{}",
-                    crate::agent::style::AURA_GOLD, reason, attempts, crate::agent::style::COLOR_RESET
+                    crate::agent::style::AURA_GOLD,
+                    reason,
+                    attempts,
+                    crate::agent::style::COLOR_RESET
                 );
                 run_res = rerun(prompt).await;
             }

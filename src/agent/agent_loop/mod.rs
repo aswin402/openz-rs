@@ -14,6 +14,7 @@ const HARD_MAX_FALLBACK_ATTEMPTS: usize = 8;
 pub mod build;
 pub mod command;
 pub mod compact;
+pub mod intent;
 pub mod loop_control;
 pub mod research_policy;
 pub mod restore;
@@ -735,10 +736,12 @@ mod tests {
         .await
         .expect("chat_with_fallback should not hang after CLI cancel");
 
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Cancelled by user"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Cancelled by user")
+        );
     }
 
     #[tokio::test]
@@ -768,10 +771,12 @@ mod tests {
             .chat_with_fallback(&mut provider, "", &[], &[], &settings, "test")
             .await;
 
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("counting provider failed"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("counting provider failed")
+        );
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
@@ -801,10 +806,12 @@ mod tests {
         .await
         .expect("provider attempt timeout should finish before outer timeout");
 
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Provider response timed out after 1s"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Provider response timed out after 1s")
+        );
     }
 
     #[test]

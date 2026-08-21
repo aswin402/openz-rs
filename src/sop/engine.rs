@@ -1,7 +1,7 @@
 use crate::config::schema::Config;
 use crate::sop::{
-    get_definition, load_instance, save_instance, substitute_template, SopInstance, SopStatus,
-    StepExecutionState,
+    SopInstance, SopStatus, StepExecutionState, get_definition, load_instance, save_instance,
+    substitute_template,
 };
 use anyhow::Result;
 use chrono::Utc;

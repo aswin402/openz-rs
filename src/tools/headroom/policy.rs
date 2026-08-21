@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::path::{Path, PathBuf};
 
 pub const MAX_CACHE_ALIGN_PADDING: usize = 65_536;

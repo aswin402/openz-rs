@@ -2,7 +2,7 @@ use anyhow::Result;
 use opendoc_mcp::server::OpendocServer;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub fn get_server() -> &'static OpendocServer {
     static SERVER: std::sync::OnceLock<OpendocServer> = std::sync::OnceLock::new();
@@ -56,9 +56,13 @@ pub struct OpenDocumentParams {
     #[schemars(description = "Optional password for encrypted documents")]
     pub password: Option<String>,
 }
-define_opendoc_tool!(OpendocOpenDocumentTool, "opendoc_open_document", "Open any supported document (DOCX, PPTX, PDF, XLSX, HTML, MD, CSV, TXT) and return structured JSON layout or content.", OpenDocumentParams, |p: OpenDocumentParams| {
-    get_server().open_document(p.file_path, p.detail_level, p.password)
-});
+define_opendoc_tool!(
+    OpendocOpenDocumentTool,
+    "opendoc_open_document",
+    "Open any supported document (DOCX, PPTX, PDF, XLSX, HTML, MD, CSV, TXT) and return structured JSON layout or content.",
+    OpenDocumentParams,
+    |p: OpenDocumentParams| { get_server().open_document(p.file_path, p.detail_level, p.password) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ReadDocumentTextParams {
@@ -145,9 +149,15 @@ pub struct DiffDocumentsVisualParams {
     #[schemars(description = "Output format: html or markdown (default: html)")]
     pub format: Option<String>,
 }
-define_opendoc_tool!(OpendocDiffDocumentsVisualTool, "opendoc_diff_documents_visual", "Compare two documents and render a visual HTML/Markdown diff with additions and deletions highlighted.", DiffDocumentsVisualParams, |p: DiffDocumentsVisualParams| {
-    get_server().diff_documents_visual(p.file_a, p.file_b, p.format)
-});
+define_opendoc_tool!(
+    OpendocDiffDocumentsVisualTool,
+    "opendoc_diff_documents_visual",
+    "Compare two documents and render a visual HTML/Markdown diff with additions and deletions highlighted.",
+    DiffDocumentsVisualParams,
+    |p: DiffDocumentsVisualParams| {
+        get_server().diff_documents_visual(p.file_a, p.file_b, p.format)
+    }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ChunkForEmbeddingParams {
@@ -160,9 +170,15 @@ pub struct ChunkForEmbeddingParams {
     #[schemars(description = "Token overlap between consecutive chunks (default: 50)")]
     pub overlap: Option<usize>,
 }
-define_opendoc_tool!(OpendocChunkForEmbeddingTool, "opendoc_chunk_for_embedding", "Chunk document content using smart strategies (fixed token count, heading, page) for RAG input pipelines.", ChunkForEmbeddingParams, |p: ChunkForEmbeddingParams| {
-    get_server().chunk_for_embedding(p.file_path, p.strategy, p.max_tokens, p.overlap)
-});
+define_opendoc_tool!(
+    OpendocChunkForEmbeddingTool,
+    "opendoc_chunk_for_embedding",
+    "Chunk document content using smart strategies (fixed token count, heading, page) for RAG input pipelines.",
+    ChunkForEmbeddingParams,
+    |p: ChunkForEmbeddingParams| {
+        get_server().chunk_for_embedding(p.file_path, p.strategy, p.max_tokens, p.overlap)
+    }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct FillTemplateParams {
@@ -175,9 +191,13 @@ pub struct FillTemplateParams {
     #[schemars(description = "Optional password for encrypted documents")]
     pub password: Option<String>,
 }
-define_opendoc_tool!(OpendocFillTemplateTool, "opendoc_fill_template", "Fill template placeholders in a document using a JSON context (supports nested structures, conditionals, loops).", FillTemplateParams, |p: FillTemplateParams| {
-    get_server().fill_template(p.file_path, p.variables, p.password)
-});
+define_opendoc_tool!(
+    OpendocFillTemplateTool,
+    "opendoc_fill_template",
+    "Fill template placeholders in a document using a JSON context (supports nested structures, conditionals, loops).",
+    FillTemplateParams,
+    |p: FillTemplateParams| { get_server().fill_template(p.file_path, p.variables, p.password) }
+);
 
 // ────────────────────────────────────────────────────────────────
 //  3. Document Validation & Metadata Tools
@@ -190,9 +210,13 @@ pub struct ValidateDocumentParams {
     #[schemars(description = "Optional password for encrypted documents")]
     pub password: Option<String>,
 }
-define_opendoc_tool!(OpendocValidateDocumentTool, "opendoc_validate_document", "Validate document integrity and return structural statistics (character count, paragraphs, sections, tables, images).", ValidateDocumentParams, |p: ValidateDocumentParams| {
-    get_server().validate_document(p.file_path, p.password)
-});
+define_opendoc_tool!(
+    OpendocValidateDocumentTool,
+    "opendoc_validate_document",
+    "Validate document integrity and return structural statistics (character count, paragraphs, sections, tables, images).",
+    ValidateDocumentParams,
+    |p: ValidateDocumentParams| { get_server().validate_document(p.file_path, p.password) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ValidatePdfAComplianceParams {
@@ -239,9 +263,13 @@ pub struct ConvertParams {
     #[schemars(description = "Optional password for encrypted source documents")]
     pub password: Option<String>,
 }
-define_opendoc_tool!(OpendocConvertTool, "opendoc_convert", "Convert a document from one format to another (e.g. DOCX to PDF, HTML to XLSX, PDF to Markdown).", ConvertParams, |p: ConvertParams| {
-    get_server().convert(p.source, p.target_format, p.output, p.password)
-});
+define_opendoc_tool!(
+    OpendocConvertTool,
+    "opendoc_convert",
+    "Convert a document from one format to another (e.g. DOCX to PDF, HTML to XLSX, PDF to Markdown).",
+    ConvertParams,
+    |p: ConvertParams| { get_server().convert(p.source, p.target_format, p.output, p.password) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ExtractImagesParams {
@@ -271,9 +299,21 @@ pub struct SplitPdfParams {
     #[schemars(description = "Optional password for encrypted documents")]
     pub password: Option<String>,
 }
-define_opendoc_tool!(OpendocSplitPdfTool, "opendoc_split_pdf", "Split a PDF document into a subset of pages specified by a start and end page (1-based, inclusive).", SplitPdfParams, |p: SplitPdfParams| {
-    get_server().split_pdf(p.file_path, p.output_path, p.start_page, p.end_page, p.password)
-});
+define_opendoc_tool!(
+    OpendocSplitPdfTool,
+    "opendoc_split_pdf",
+    "Split a PDF document into a subset of pages specified by a start and end page (1-based, inclusive).",
+    SplitPdfParams,
+    |p: SplitPdfParams| {
+        get_server().split_pdf(
+            p.file_path,
+            p.output_path,
+            p.start_page,
+            p.end_page,
+            p.password,
+        )
+    }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct CreateHtmlParams {
@@ -614,20 +654,26 @@ pub struct CreateFormattedPdfParams {
     #[schemars(description = "Right margin in points (default: 72 = 1 inch).")]
     pub margin_right: Option<f64>,
 }
-define_opendoc_tool!(OpendocCreateFormattedPdfTool, "opendoc_create_formatted_pdf", "Create a highly structured multi-page PDF document with automatic word-wrap, headings, tables, margins, and page numbers.", CreateFormattedPdfParams, |p: CreateFormattedPdfParams| {
-    get_server().create_formatted_pdf(
-        p.file_path,
-        p.text,
-        p.title,
-        p.author,
-        p.page_numbers,
-        p.font_size,
-        p.margin_top,
-        p.margin_bottom,
-        p.margin_left,
-        p.margin_right
-    )
-});
+define_opendoc_tool!(
+    OpendocCreateFormattedPdfTool,
+    "opendoc_create_formatted_pdf",
+    "Create a highly structured multi-page PDF document with automatic word-wrap, headings, tables, margins, and page numbers.",
+    CreateFormattedPdfParams,
+    |p: CreateFormattedPdfParams| {
+        get_server().create_formatted_pdf(
+            p.file_path,
+            p.text,
+            p.title,
+            p.author,
+            p.page_numbers,
+            p.font_size,
+            p.margin_top,
+            p.margin_bottom,
+            p.margin_left,
+            p.margin_right,
+        )
+    }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct MergePdfsParams {
@@ -711,9 +757,13 @@ pub struct AnalyzeDocumentComplexityParams {
     #[schemars(description = "File path to the document")]
     pub file_path: String,
 }
-define_opendoc_tool!(OpendocAnalyzeDocumentComplexityTool, "opendoc_analyze_document_complexity", "Analyze document properties to determine processing complexity (text density, scanned page heuristics, OCR recommendations).", AnalyzeDocumentComplexityParams, |p: AnalyzeDocumentComplexityParams| {
-    get_server().analyze_document_complexity(p.file_path)
-});
+define_opendoc_tool!(
+    OpendocAnalyzeDocumentComplexityTool,
+    "opendoc_analyze_document_complexity",
+    "Analyze document properties to determine processing complexity (text density, scanned page heuristics, OCR recommendations).",
+    AnalyzeDocumentComplexityParams,
+    |p: AnalyzeDocumentComplexityParams| { get_server().analyze_document_complexity(p.file_path) }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct OcrDocumentParams {
@@ -768,9 +818,15 @@ pub struct RenderDocumentPagesParams {
     #[schemars(description = "Optional list of 1-based page numbers to render")]
     pub pages: Option<Vec<u32>>,
 }
-define_opendoc_tool!(OpendocRenderDocumentPagesTool, "opendoc_render_document_pages", "Render PDF/Office document pages directly into high-fidelity image paths for AI vision inspection.", RenderDocumentPagesParams, |p: RenderDocumentPagesParams| {
-    get_server().render_document_pages(p.file_path, p.output_dir, p.dpi, p.pages)
-});
+define_opendoc_tool!(
+    OpendocRenderDocumentPagesTool,
+    "opendoc_render_document_pages",
+    "Render PDF/Office document pages directly into high-fidelity image paths for AI vision inspection.",
+    RenderDocumentPagesParams,
+    |p: RenderDocumentPagesParams| {
+        get_server().render_document_pages(p.file_path, p.output_dir, p.dpi, p.pages)
+    }
+);
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ExtractArchiveDigestParams {

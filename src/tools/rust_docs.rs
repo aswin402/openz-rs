@@ -1,7 +1,7 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use scraper::{Html, Selector};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub struct RustDocsTool {
     client: reqwest::Client,

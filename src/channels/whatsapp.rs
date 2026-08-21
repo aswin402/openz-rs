@@ -1,10 +1,10 @@
 use crate::agent::AgentLoop;
 use axum::{
+    Router,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use reqwest::Client;
 use std::collections::HashMap;
@@ -480,11 +480,7 @@ fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
 
         let candidate = &remaining[..split_at];
         let final_split = if let Some(idx) = candidate.rfind('\n') {
-            if idx > 0 {
-                idx
-            } else {
-                split_at
-            }
+            if idx > 0 { idx } else { split_at }
         } else {
             split_at
         };

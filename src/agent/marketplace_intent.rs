@@ -129,10 +129,10 @@ mod tests {
             ),
             MarketplaceIntent::Buyer
         );
-        assert!(clarification_question_for_marketplace_intent(
-            "platform where we can buy ai agents"
-        )
-        .is_none());
+        assert!(
+            clarification_question_for_marketplace_intent("platform where we can buy ai agents")
+                .is_none()
+        );
     }
 
     #[test]
@@ -143,10 +143,12 @@ mod tests {
             ),
             MarketplaceIntent::Buyer
         );
-        assert!(clarification_question_for_marketplace_intent(
-            "Research buyer-side AI agent marketplaces where customers buy agents"
-        )
-        .is_none());
+        assert!(
+            clarification_question_for_marketplace_intent(
+                "Research buyer-side AI agent marketplaces where customers buy agents"
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -157,10 +159,12 @@ mod tests {
             ),
             MarketplaceIntent::Seller
         );
-        assert!(clarification_question_for_marketplace_intent(
-            "Research seller-side AI agent monetization platforms"
-        )
-        .is_none());
+        assert!(
+            clarification_question_for_marketplace_intent(
+                "Research seller-side AI agent monetization platforms"
+            )
+            .is_none()
+        );
     }
 
     #[test]

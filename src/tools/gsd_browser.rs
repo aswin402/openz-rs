@@ -1,6 +1,6 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use tokio::process::Command;
 
@@ -352,9 +352,11 @@ mod tests {
         assert_eq!(payload["error_kind"], "browser_disconnected");
         assert_eq!(payload["recovered"], true);
         assert_eq!(payload["retryable"], false);
-        assert!(payload["next_step"]
-            .as_str()
-            .unwrap()
-            .contains("inspect_browsers"));
+        assert!(
+            payload["next_step"]
+                .as_str()
+                .unwrap()
+                .contains("inspect_browsers")
+        );
     }
 }

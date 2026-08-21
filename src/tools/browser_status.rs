@@ -1,6 +1,6 @@
 use crate::tools::Tool;
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::process::Command;
 
@@ -335,9 +335,11 @@ mod tests {
         };
 
         assert_eq!(recommended_browser_backend(&health), None);
-        assert!(health
-            .actionable_summary()
-            .contains("No browser backend available"));
+        assert!(
+            health
+                .actionable_summary()
+                .contains("No browser backend available")
+        );
     }
 
     #[test]
@@ -356,10 +358,12 @@ mod tests {
             payload["browser_preflight"]["health"]["geckodriver"],
             "missing"
         );
-        assert!(payload["browser_preflight"]["summary"]
-            .as_str()
-            .expect("summary string")
-            .contains("No browser backend available"));
+        assert!(
+            payload["browser_preflight"]["summary"]
+                .as_str()
+                .expect("summary string")
+                .contains("No browser backend available")
+        );
     }
 
     #[tokio::test]

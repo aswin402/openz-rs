@@ -162,7 +162,9 @@ impl Session {
                     } else {
                         anyhow::bail!(
                             "Cryptographic verification failed: message at index {} has been tampered with. Stored: {}, Calculated: {}",
-                            i, stored, calculated
+                            i,
+                            stored,
+                            calculated
                         );
                     }
                 }

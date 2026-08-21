@@ -1,4 +1,4 @@
-use crate::providers::circuit_breaker::{retry_with_backoff, CircuitBreaker};
+use crate::providers::circuit_breaker::{CircuitBreaker, retry_with_backoff};
 use crate::providers::{GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest};
 use crate::session::Message;
 use anyhow::Result;

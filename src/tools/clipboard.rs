@@ -1,7 +1,7 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use arboard::Clipboard;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub struct ClipboardTool;
 
@@ -100,7 +100,9 @@ mod tests {
                         println!("Retrieved clipboard text successfully: {}", text_val);
                     }
                 } else {
-                    println!("Get clipboard text failed (which is normal on Linux if no clipboard manager daemon is active to persist dropped clipboard buffers).");
+                    println!(
+                        "Get clipboard text failed (which is normal on Linux if no clipboard manager daemon is active to persist dropped clipboard buffers)."
+                    );
                 }
             }
             Err(e) => {

@@ -8,7 +8,7 @@ use crate::tools::memory_extra::working::{
 use crate::tools::shared_memory::cosine_similarity;
 use anyhow::Result;
 use rusqlite::params;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

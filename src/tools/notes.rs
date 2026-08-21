@@ -1,10 +1,10 @@
-use crate::tools::shared_memory::{
-    get_current_workspace, get_db_mutex, get_embedding, with_db, CognitiveMemoryEntry,
-};
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use crate::tools::shared_memory::{
+    CognitiveMemoryEntry, get_current_workspace, get_db_mutex, get_embedding, with_db,
+};
+use anyhow::{Result, anyhow};
 use rusqlite::params;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 

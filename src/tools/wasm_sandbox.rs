@@ -1,11 +1,11 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use serde_json::{Value, json};
 use std::path::Path;
 use wasmtime::*;
+use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi::p1::{self, WasiP1Ctx};
 use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
-use wasmtime_wasi::WasiCtxBuilder;
 
 pub struct WasmSandboxTool;
 

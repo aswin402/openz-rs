@@ -1,11 +1,11 @@
 use super::{get_server, map_mcp_err};
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use rmcp::handler::server::wrapper::Parameters;
 use searchxyz::tools::{
     DeepResearchRequest, ReadUrlRequest, SearchAndReadRequest, SearchWebRequest, SiteMapRequest,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
@@ -1397,10 +1397,12 @@ mod tests {
         assert_eq!(payload["status"], "search_failed");
         assert_eq!(payload["error_kind"], "rate_limited");
         assert_eq!(payload["retryable"], true);
-        assert!(payload["next_step"]
-            .as_str()
-            .unwrap()
-            .contains("searchxyz_browser_search"));
+        assert!(
+            payload["next_step"]
+                .as_str()
+                .unwrap()
+                .contains("searchxyz_browser_search")
+        );
     }
 
     #[test]
@@ -1414,9 +1416,11 @@ mod tests {
         assert_eq!(active.len(), 2);
         assert!(active.iter().any(|entry| entry["backend"] == "duckduckgo"));
         assert!(active.iter().any(|entry| entry["error_kind"] == "blocked"));
-        assert!(active
-            .iter()
-            .all(|entry| entry["cooldown_remaining_secs"].as_u64().unwrap() > 0));
+        assert!(
+            active
+                .iter()
+                .all(|entry| entry["cooldown_remaining_secs"].as_u64().unwrap() > 0)
+        );
         clear_search_backend_cooldowns_for_tests();
     }
 

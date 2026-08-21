@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::agent::style::{select_menu_with_history, HistoryItem};
+use crate::agent::style::{HistoryItem, select_menu_with_history};
 use crate::channels::{
     Channel, CliChannel, DiscordChannel, EmailChannel, TelegramChannel, WhatsAppChannel, WsGateway,
 };

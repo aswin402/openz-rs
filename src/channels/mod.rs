@@ -1231,7 +1231,10 @@ pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
                                 let status = resp.status();
                                 if !status.is_success() {
                                     if let Ok(body) = resp.text().await {
-                                        eprintln!("Failed to send Telegram offline message: status {}, response: {}", status, body);
+                                        eprintln!(
+                                            "Failed to send Telegram offline message: status {}, response: {}",
+                                            status, body
+                                        );
                                     } else {
                                         eprintln!(
                                             "Failed to send Telegram offline message: status {}",
@@ -1280,7 +1283,10 @@ pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
                             let status = resp.status();
                             if !status.is_success() {
                                 if let Ok(body) = resp.text().await {
-                                    eprintln!("Failed to send Discord offline message: status {}, response: {}", status, body);
+                                    eprintln!(
+                                        "Failed to send Discord offline message: status {}, response: {}",
+                                        status, body
+                                    );
                                 } else {
                                     eprintln!(
                                         "Failed to send Discord offline message: status {}",
@@ -1328,7 +1334,10 @@ pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
                         let status = resp.status();
                         if !status.is_success() {
                             if let Ok(body) = resp.text().await {
-                                eprintln!("Failed to send WhatsApp offline message: status {}, response: {}", status, body);
+                                eprintln!(
+                                    "Failed to send WhatsApp offline message: status {}, response: {}",
+                                    status, body
+                                );
                             } else {
                                 eprintln!(
                                     "Failed to send WhatsApp offline message: status {}",
@@ -1988,10 +1997,11 @@ mod model_switch_tests {
     fn model_risk_marks_unknown_free_models() {
         let risk = classify_model_risk("opencode_zen", "big-pickle");
         assert!(risk.risky);
-        assert!(risk
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("not in OpenZ curated")));
+        assert!(
+            risk.reasons
+                .iter()
+                .any(|reason| reason.contains("not in OpenZ curated"))
+        );
     }
 
     #[test]
@@ -2005,10 +2015,11 @@ mod model_switch_tests {
     fn model_risk_warns_for_small_models() {
         let risk = classify_model_risk("groq", "llama-3.1-8b-instant");
         assert!(risk.risky);
-        assert!(risk
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("small/weak")));
+        assert!(
+            risk.reasons
+                .iter()
+                .any(|reason| reason.contains("small/weak"))
+        );
     }
 
     #[test]
@@ -2063,9 +2074,11 @@ mod model_switch_tests {
 
         assert!(configured.iter().all(|provider| provider.available));
         assert!(!configured.iter().any(|provider| provider.name == "openai"));
-        assert!(configured
-            .iter()
-            .any(|provider| provider.name == "ollama_local"));
+        assert!(
+            configured
+                .iter()
+                .any(|provider| provider.name == "ollama_local")
+        );
     }
 
     #[test]

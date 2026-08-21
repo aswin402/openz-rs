@@ -197,6 +197,9 @@ fn register_core_tools(
         crate::tools::self_management::OpenZInventoryTool::new(registry.clone()),
     ));
     registry.register(std::sync::Arc::new(
+        crate::tools::self_management::RequestToolScopeTool,
+    ));
+    registry.register(std::sync::Arc::new(
         crate::tools::self_management::CurateSkillTool,
     ));
     registry.register(std::sync::Arc::new(
@@ -1203,10 +1206,12 @@ mod tests {
         let metadata = crate::tools::ToolMetadata::infer("cargo_manager");
         assert!(metadata.aliases.contains(&"cargo test"));
         assert!(metadata.aliases.contains(&"cargo check"));
-        assert!(metadata
-            .examples
-            .iter()
-            .any(|example| example.contains("cargo test")));
+        assert!(
+            metadata
+                .examples
+                .iter()
+                .any(|example| example.contains("cargo test"))
+        );
         assert!(metadata.when_to_use.contains("Rust"));
         assert!(metadata.when_not_to_use.contains("read"));
     }

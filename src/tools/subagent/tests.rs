@@ -120,6 +120,37 @@ fn evolution_gate_allows_substantial_reusable_guidance() {
 }
 
 #[test]
+fn skips_evolution_for_short_smoke_test_outputs() {
+    assert!(crate::tools::subagent::should_skip_evolution_capture(
+        "Summarize hello",
+        "\"Hello\" means greeting."
+    ));
+}
+
+#[test]
+fn does_not_skip_evolution_for_substantial_new_skill_output() {
+    let output = "A reliable code review workflow should inspect diffs, map risk areas, run focused tests, and report file-line findings with severity.";
+    assert!(!crate::tools::subagent::should_skip_evolution_capture(
+        "Design a reusable review workflow for Rust services",
+        output
+    ));
+}
+
+#[test]
+fn simple_step_does_not_allow_nested_delegation() {
+    assert!(!crate::tools::subagent::step_allows_nested_delegation(
+        "Summarize hello"
+    ));
+}
+
+#[test]
+fn explicit_specialist_step_allows_nested_delegation() {
+    assert!(crate::tools::subagent::step_allows_nested_delegation(
+        "Delegate research to a specialist and summarize findings"
+    ));
+}
+
+#[test]
 fn test_resolve_subagent_timeout_uses_default_and_clamps() {
     assert_eq!(resolve_subagent_timeout_secs(None, 300), 300);
     assert_eq!(
@@ -272,7 +303,7 @@ fn test_lifecycle_status_labels_are_stable_for_tui() {
 
 #[test]
 fn test_compact_lifecycle_line_for_cancellation_is_stable() {
-    use super::lifecycle::{compact_lifecycle_line, SubagentRunStatus};
+    use super::lifecycle::{SubagentRunStatus, compact_lifecycle_line};
 
     let line = compact_lifecycle_line(
         "vision_agent",
@@ -289,7 +320,7 @@ fn test_compact_lifecycle_line_for_cancellation_is_stable() {
 
 #[test]
 fn test_lifecycle_classifies_timeout_without_user_cancel() {
-    use super::lifecycle::{classify_subagent_error, SubagentRunStatus};
+    use super::lifecycle::{SubagentRunStatus, classify_subagent_error};
     let token = CancellationToken::new();
 
     assert_eq!(
@@ -302,7 +333,7 @@ fn test_lifecycle_classifies_timeout_without_user_cancel() {
 
 #[test]
 fn test_lifecycle_classifies_timeout_duration_seconds() {
-    use super::lifecycle::{classify_subagent_error, SubagentRunStatus};
+    use super::lifecycle::{SubagentRunStatus, classify_subagent_error};
     let token = CancellationToken::new();
 
     assert_eq!(
@@ -315,7 +346,7 @@ fn test_lifecycle_classifies_timeout_duration_seconds() {
 
 #[test]
 fn test_lifecycle_timeout_status_json_includes_duration() {
-    use super::lifecycle::{status_json, SubagentRunStatus};
+    use super::lifecycle::{SubagentRunStatus, status_json};
 
     let value = status_json(&SubagentRunStatus::TimedOut {
         duration_secs: Some(900),
@@ -328,7 +359,7 @@ fn test_lifecycle_timeout_status_json_includes_duration() {
 
 #[test]
 fn test_compact_lifecycle_line_includes_timeout_duration() {
-    use super::lifecycle::{compact_lifecycle_line, SubagentRunStatus};
+    use super::lifecycle::{SubagentRunStatus, compact_lifecycle_line};
 
     let line = compact_lifecycle_line(
         "delegate_task",
@@ -346,7 +377,7 @@ fn test_compact_lifecycle_line_includes_timeout_duration() {
 
 #[test]
 fn test_lifecycle_classifies_user_cancel_from_token() {
-    use super::lifecycle::{classify_subagent_error, SubagentRunStatus};
+    use super::lifecycle::{SubagentRunStatus, classify_subagent_error};
     let token = CancellationToken::new();
     token.cancel();
 
@@ -653,10 +684,11 @@ async fn test_delegation_depth_limit() {
         .await;
 
     assert!(res.is_err());
-    assert!(res
-        .unwrap_err()
-        .to_string()
-        .contains("Delegation limit reached"));
+    assert!(
+        res.unwrap_err()
+            .to_string()
+            .contains("Delegation limit reached")
+    );
 }
 
 #[test]
@@ -880,17 +912,21 @@ fn test_filter_tools_for_new_default_subagents() {
     // Test diagram_designer
     let filtered = delegate_profile::filter_tools_for_subagent("diagram_designer", &tools);
     assert_eq!(filtered.len(), 4);
-    assert!(filtered
-        .iter()
-        .any(|t| t.name() == "openmedia_diagram_generate_mermaid"));
+    assert!(
+        filtered
+            .iter()
+            .any(|t| t.name() == "openmedia_diagram_generate_mermaid")
+    );
     assert!(!filtered.iter().any(|t| t.name() == "exec_command"));
 
     // Test video_animator
     let filtered = delegate_profile::filter_tools_for_subagent("video_animator", &tools);
     assert_eq!(filtered.len(), 5);
-    assert!(filtered
-        .iter()
-        .any(|t| t.name() == "openmedia_video_create"));
+    assert!(
+        filtered
+            .iter()
+            .any(|t| t.name() == "openmedia_video_create")
+    );
     assert!(!filtered.iter().any(|t| t.name() == "exec_command"));
 }
 
@@ -1002,11 +1038,12 @@ async fn test_evaluator_optimizer_loop_success() -> Result<()> {
     assert_eq!(res.get("status").and_then(|v| v.as_str()), Some("success"));
     assert_eq!(res.get("passed").and_then(|v| v.as_bool()), Some(true));
     assert!(res.get("iterations_run").and_then(|v| v.as_i64()).unwrap() > 1);
-    assert!(res
-        .get("final_output")
-        .and_then(|v| v.as_str())
-        .unwrap()
-        .contains("Draft version"));
+    assert!(
+        res.get("final_output")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .contains("Draft version")
+    );
 
     // Cleanup env vars
     std::env::remove_var("ANTHROPIC_API_KEY");
@@ -1082,9 +1119,10 @@ async fn test_delegate_profile_rejects_explicitly_denied_profile() -> Result<()>
         .call(&serde_json::json!({ "goal": "should be blocked" }))
         .await
         .expect_err("explicit denied_tools should block subagent profiles before execution");
-    assert!(err
-        .to_string()
-        .contains("blocked by orchestrator capability policy"));
+    assert!(
+        err.to_string()
+            .contains("blocked by orchestrator capability policy")
+    );
 
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
@@ -1125,9 +1163,10 @@ async fn test_evaluator_optimizer_rejects_denied_optimizer_profile() -> Result<(
         })
         .await
         .expect_err("denied optimizer profile should be rejected before execution");
-    assert!(err
-        .to_string()
-        .contains("blocked by orchestrator capability policy"));
+    assert!(
+        err.to_string()
+            .contains("blocked by orchestrator capability policy")
+    );
 
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
@@ -1200,12 +1239,16 @@ async fn test_delegate_task_cancels_while_child_run_is_active() -> Result<()> {
     assert_eq!(value["lifecycle"]["code"], "cancelled");
     assert_eq!(value["lifecycle"]["label"], "cancelled");
     assert_eq!(value["tool"], "delegate_task");
-    assert!(value["session_id"]
-        .as_str()
-        .is_some_and(|id| !id.is_empty()));
-    assert!(value["model_used"]
-        .as_str()
-        .is_some_and(|model| !model.is_empty()));
+    assert!(
+        value["session_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+    );
+    assert!(
+        value["model_used"]
+            .as_str()
+            .is_some_and(|model| !model.is_empty())
+    );
     assert!(
         value["error"]
             .as_str()
@@ -1263,12 +1306,16 @@ async fn test_delegate_task_cancellation_propagation() -> Result<()> {
     assert_eq!(value["status"], "cancelled");
     assert_eq!(value["lifecycle"]["code"], "cancelled");
     assert_eq!(value["tool"], "delegate_task");
-    assert!(value["session_id"]
-        .as_str()
-        .is_some_and(|id| !id.is_empty()));
-    assert!(value["model_used"]
-        .as_str()
-        .is_some_and(|model| !model.is_empty()));
+    assert!(
+        value["session_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+    );
+    assert!(
+        value["model_used"]
+            .as_str()
+            .is_some_and(|model| !model.is_empty())
+    );
 
     // Cleanup env vars
     std::env::remove_var("ANTHROPIC_API_KEY");
@@ -1355,12 +1402,16 @@ async fn test_delegate_profile_cancels_while_child_run_is_active() -> Result<()>
     assert_eq!(value["lifecycle"]["label"], "cancelled");
     assert_eq!(value["tool"], "delegate_profile");
     assert_eq!(value["subagent"], "test_subagent");
-    assert!(value["session_id"]
-        .as_str()
-        .is_some_and(|id| !id.is_empty()));
-    assert!(value["model_used"]
-        .as_str()
-        .is_some_and(|model| !model.is_empty()));
+    assert!(
+        value["session_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+    );
+    assert!(
+        value["model_used"]
+            .as_str()
+            .is_some_and(|model| !model.is_empty())
+    );
     assert!(
         value["error"]
             .as_str()
@@ -1429,12 +1480,16 @@ async fn test_delegate_profile_cancellation_propagation() -> Result<()> {
     assert_eq!(value["lifecycle"]["code"], "cancelled");
     assert_eq!(value["tool"], "delegate_profile");
     assert_eq!(value["subagent"], "test_subagent");
-    assert!(value["session_id"]
-        .as_str()
-        .is_some_and(|id| !id.is_empty()));
-    assert!(value["model_used"]
-        .as_str()
-        .is_some_and(|model| !model.is_empty()));
+    assert!(
+        value["session_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+    );
+    assert!(
+        value["model_used"]
+            .as_str()
+            .is_some_and(|model| !model.is_empty())
+    );
 
     // Cleanup env vars
     std::env::remove_var("ANTHROPIC_API_KEY");
@@ -1515,11 +1570,13 @@ async fn schema_retry_loop_errors_after_attempt_limit() {
     .await;
 
     assert!(result.is_err());
-    assert!(result
-        .err()
-        .expect("schema retry must fail at attempt limit")
-        .to_string()
-        .contains("failed to parse as JSON"));
+    assert!(
+        result
+            .err()
+            .expect("schema retry must fail at attempt limit")
+            .to_string()
+            .contains("failed to parse as JSON")
+    );
     // initial evaluation (attempt 0) + 2 reruns evaluated at attempts 1 and 2
     assert_eq!(rerun_calls, 2);
 }

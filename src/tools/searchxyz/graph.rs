@@ -3,7 +3,7 @@ use crate::tools::Tool;
 use anyhow::Result;
 use rmcp::handler::server::wrapper::Parameters;
 use searchxyz::tools::{IndexRelationshipRequest, QueryGraphRequest, ReadGithubRepoRequest};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // ── 9. Index Relationship ─────────────────────────────────────
 pub struct SearchXyzIndexRelationshipTool;
@@ -258,10 +258,12 @@ mod tests {
         assert_eq!(payload["files"], 22);
         assert_eq!(payload["max_files"], 5);
         assert_eq!(payload["recommended_max_files"], 22);
-        assert!(payload["next_step"]
-            .as_str()
-            .unwrap()
-            .contains("max_files >= 22"));
+        assert!(
+            payload["next_step"]
+                .as_str()
+                .unwrap()
+                .contains("max_files >= 22")
+        );
     }
 
     #[test]

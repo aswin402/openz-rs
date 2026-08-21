@@ -30,7 +30,7 @@ export interface OpenZMessage {
   attachments?: ChatAttachment[];
 }
 
-export type WorkspaceNoticeScope = 'skills' | 'agents' | 'settings' | 'knowledge' | 'global';
+export type WorkspaceNoticeScope = 'skills' | 'agents' | 'settings' | 'knowledge' | 'inventory' | 'global';
 
 export interface WorkspaceNotice {
   scope: WorkspaceNoticeScope;
@@ -191,7 +191,7 @@ export interface AgentDefaultsConfig {
 /** Full config response from the `get_config` WS command. */
 export interface ConfigData {
   defaults: AgentDefaultsConfig;
-  skills: { name: string; content: string }[];
+  skills: SkillInfo[];
   mcp_servers: McpServerInfo[];
   version: string;
 }
@@ -214,6 +214,100 @@ export interface AgentStatus {
   mcp: McpStats;
 }
 
+export interface CronRunRecord {
+  run_id: string;
+  job_id: string;
+  schedule: string;
+  started_at: string;
+  finished_at?: string | null;
+  status: string;
+  log_path?: string | null;
+  summary?: string | null;
+  error?: string | null;
+}
+
+export interface RuntimeInventory {
+  version: string;
+  paths: {
+    configDir: string;
+    workspace: string;
+    memoryDb: string;
+    graphDb: string;
+    subagentsFile: string;
+    skillsDir: string;
+    workspaceSkillsDir: string;
+  };
+  defaults: {
+    model: string;
+    provider: string;
+    streaming: boolean;
+    cavemanMode: boolean;
+    maxMessages: number;
+    maxToolIterations: number;
+    toolTimeoutSecs: number;
+  };
+  counts: {
+    subagents: number;
+    skills: number;
+    coreSubagents: number;
+    customSubagents: number;
+    channels: number;
+    enabledChannels: number;
+    tools: number;
+    cronJobs: number;
+    activeCronJobs: number;
+  };
+  channels: Array<{ name: string; enabled: boolean; configured: boolean }>;
+  subagents: Array<{
+    name: string;
+    description: string;
+    model: string;
+    provider: string;
+    fallbackCount: number;
+    isCore: boolean;
+    isProtected: boolean;
+    source: string;
+  }>;
+  skills: SkillInfo[];
+  memory: {
+    memoryDb: { path: string; exists: boolean };
+    graphDb: { path: string; exists: boolean };
+  };
+  tools: Array<{
+    name: string;
+    domain: string;
+    risk: string;
+    usesNetwork: boolean;
+    writesDisk: boolean;
+    spawnsProcess: boolean;
+    requiresApproval: boolean;
+    priority: number;
+    description: string;
+  }>;
+  cron: {
+    jobsFile: string;
+    runsFile: string;
+    recentRuns: number;
+    jobs: Array<{
+      id: string;
+      schedule: string;
+      enabled: boolean;
+      runOnce: boolean;
+      status: string;
+      quiet: boolean;
+      notifyOn: string;
+      nextRun?: string | null;
+      lastRun?: string | null;
+      lastStartedAt?: string | null;
+      lastFinishedAt?: string | null;
+      lastError?: string | null;
+      lastLogPath?: string | null;
+      runCount: number;
+      failureCount: number;
+    }>;
+  };
+}
+
 export type ConnectionStatus =
   | 'disconnected'
   | 'connecting'
@@ -231,6 +325,16 @@ export interface BackgroundServerInfo {
 export interface SkillInfo {
   name: string;
   content: string;
+  scope?: string;
+  profile?: string | null;
+  source?: string;
+  path?: string | null;
+  enabled?: boolean;
+  isProtected?: boolean;
+  useCount?: number;
+  createdAt?: string | null;
+  lastUsed?: string | null;
+  validationErrors?: string[];
 }
 
 export interface SubagentInfo {
@@ -240,6 +344,10 @@ export interface SubagentInfo {
   model: string;
   provider: string;
   fallbacks?: string[];
+  isCore?: boolean;
+  isProtected?: boolean;
+  source?: 'core' | 'user' | string;
+  fallbackLimit?: number;
 }
 
 export interface ChannelConfigInfo {

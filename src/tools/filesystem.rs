@@ -1,6 +1,6 @@
 use crate::config::resolve_path;
 use crate::tools::Tool;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 use std::fs;
 
@@ -819,11 +819,13 @@ mod tests {
             list_res["canonical_path"].as_str().unwrap(),
             temp_dir.canonicalize()?.to_string_lossy()
         );
-        assert!(list_res["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|entry| { entry["name"] == "alias_match.txt" }));
+        assert!(
+            list_res["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| { entry["name"] == "alias_match.txt" })
+        );
 
         let find = FindFilesTool;
         let find_res = find

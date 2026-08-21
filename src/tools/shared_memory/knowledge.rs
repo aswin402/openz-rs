@@ -1,8 +1,8 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
-use rusqlite::{params, OptionalExtension};
+use anyhow::{Result, anyhow};
+use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::auto_capture::canonical_research_topic;
 use super::db::{get_db_mutex, with_db};
@@ -1027,9 +1027,11 @@ mod tests {
         .await
         .unwrap();
         let url_matches = search_research_briefs(&url_topic, 5).await.unwrap();
-        assert!(url_matches
-            .iter()
-            .any(|m| m.topic == format!("example/{marker}")));
+        assert!(
+            url_matches
+                .iter()
+                .any(|m| m.topic == format!("example/{marker}"))
+        );
         let question_matches = search_research_briefs(&format!("what is {marker}"), 5)
             .await
             .unwrap();

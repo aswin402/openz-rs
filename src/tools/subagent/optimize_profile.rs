@@ -3,7 +3,7 @@ use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::subagents::SubagentProfile;
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -211,52 +211,13 @@ impl Tool for CreateSubagentTool {
                 .chars()
                 .any(|c| !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '_')
         {
-            return Err(anyhow!("Subagent name must start with a letter and contain only lowercase alphanumeric characters and underscores."));
+            return Err(anyhow!(
+                "Subagent name must start with a letter and contain only lowercase alphanumeric characters and underscores."
+            ));
         }
 
         // Do not allow overwriting default subagents
-        let defaults = [
-            "orchestrator",
-            "planner",
-            "researcher",
-            "architect",
-            "skill_creator",
-            "reviewer",
-            "code_auditor",
-            "debugger",
-            "test_engineer",
-            "devops_agent",
-            "refactor_agent",
-            "memory_manager",
-            "vision_agent",
-            "documentation_agent",
-            "self_improvement",
-            "skill_improvement",
-            "openz_maintainer",
-            "mcps_manager",
-            "git_ops_agent",
-            "ast_searcher",
-            "database_specialist",
-            "browser_operator",
-            "dependency_manager",
-            "frontend_architect",
-            "docs_lookup_agent",
-            "document_compiler",
-            "presentation_designer",
-            "code_synthesizer",
-            "summarizer_agent",
-            "media_designer",
-            "openz_coordinator",
-            "sop_designer",
-            "api_integrator",
-            "performance_tuner",
-            "communication_manager",
-            "automation_agent",
-            "coding_agent",
-            "diagram_designer",
-            "video_animator",
-        ];
-        if defaults.contains(&name.as_str()) {
+        if crate::subagents::is_default_subagent(&name) {
             return Err(anyhow!("Cannot overwrite default subagent '{}'", name));
         }
 
@@ -325,48 +286,7 @@ impl Tool for DeleteSubagentTool {
             .trim()
             .to_string();
 
-        let defaults = [
-            "orchestrator",
-            "planner",
-            "researcher",
-            "architect",
-            "skill_creator",
-            "reviewer",
-            "code_auditor",
-            "debugger",
-            "test_engineer",
-            "devops_agent",
-            "refactor_agent",
-            "memory_manager",
-            "vision_agent",
-            "documentation_agent",
-            "self_improvement",
-            "skill_improvement",
-            "openz_maintainer",
-            "mcps_manager",
-            "git_ops_agent",
-            "ast_searcher",
-            "database_specialist",
-            "browser_operator",
-            "dependency_manager",
-            "frontend_architect",
-            "docs_lookup_agent",
-            "document_compiler",
-            "presentation_designer",
-            "code_synthesizer",
-            "summarizer_agent",
-            "media_designer",
-            "openz_coordinator",
-            "sop_designer",
-            "api_integrator",
-            "performance_tuner",
-            "communication_manager",
-            "automation_agent",
-            "coding_agent",
-            "diagram_designer",
-            "video_animator",
-        ];
-        if defaults.contains(&name.as_str()) {
+        if crate::subagents::is_default_subagent(&name) {
             return Err(anyhow!("Cannot delete default subagent '{}'", name));
         }
 

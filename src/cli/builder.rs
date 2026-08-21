@@ -7,11 +7,7 @@ use anyhow::Result;
 
 pub fn get_provider_api_key(config: &Config, provider_name: &str) -> Option<String> {
     let (key, _) = config.resolve_provider_config(provider_name);
-    if key.is_empty() {
-        None
-    } else {
-        Some(key)
-    }
+    if key.is_empty() { None } else { Some(key) }
 }
 
 pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {

@@ -1,6 +1,6 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use serde_json::{Value, json};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
@@ -67,7 +67,10 @@ impl Tool for CheckPortTool {
             })
             .await?;
             if !resolves_to_localhost {
-                return Err(anyhow!("Security: check_port only allows localhost targets to prevent internal network enumeration. Got host: {}", host));
+                return Err(anyhow!(
+                    "Security: check_port only allows localhost targets to prevent internal network enumeration. Got host: {}",
+                    host
+                ));
             }
         }
 

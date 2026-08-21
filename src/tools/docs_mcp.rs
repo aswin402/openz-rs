@@ -1,10 +1,10 @@
 use anyhow::Result;
 use openz_docs_mcp::{
-    init_db, DocsMcpServer, InstallDocsetRequest, ListDocsetsRequest, ReadDocPageRequest,
-    ReadRustDocsRequest, SearchDocsRequest, SearchRustCrateRequest,
+    DocsMcpServer, InstallDocsetRequest, ListDocsetsRequest, ReadDocPageRequest,
+    ReadRustDocsRequest, SearchDocsRequest, SearchRustCrateRequest, init_db,
 };
 use rmcp::handler::server::wrapper::Parameters;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub fn get_server() -> &'static DocsMcpServer {
     static SERVER: std::sync::OnceLock<DocsMcpServer> = std::sync::OnceLock::new();

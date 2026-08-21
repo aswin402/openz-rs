@@ -1,8 +1,8 @@
 use crate::agent::style::colors::{AURA_GOLD, COLOR_RESET, EMERALD_GREEN};
 use crate::providers::{GenerationSettings, LLMProvider};
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 pub struct CargoManagerTool {
@@ -122,7 +122,10 @@ impl Tool for CargoManagerTool {
 
                 crate::tui_println!(
                     "{}◇ [Self-Heal] Compiler error detected in '{}' on line {}. Requesting auto-patch...{}",
-                    AURA_GOLD, errors_found[0].0, errors_found[0].1, COLOR_RESET
+                    AURA_GOLD,
+                    errors_found[0].0,
+                    errors_found[0].1,
+                    COLOR_RESET
                 );
 
                 // Group by file path and collect errors
@@ -212,7 +215,9 @@ impl Tool for CargoManagerTool {
                                         if std::fs::write(&resolved_path, corrected_code).is_ok() {
                                             crate::tui_println!(
                                                 "{}✓ [Self-Heal] Successfully patched '{}'. Re-compiling...{}",
-                                                EMERALD_GREEN, target_file, COLOR_RESET
+                                                EMERALD_GREEN,
+                                                target_file,
+                                                COLOR_RESET
                                             );
                                             // Re-run cargo build
                                             output = run_cargo_cmd(action, &cwd).await?;

@@ -3,19 +3,17 @@ pub mod theme;
 pub mod ui;
 
 use anyhow::Result;
-use app::{ChatMessage, ModalState, RatatuiApp, IS_RATATUI_ACTIVE};
-use crossterm::event::{
-    self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind,
-};
-use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-};
+use app::{ChatMessage, IS_RATATUI_ACTIVE, ModalState, RatatuiApp};
 use crossterm::ExecutableCommand;
-use ratatui::backend::CrosstermBackend;
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use std::io::stdout;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 pub enum TurnEvent {
@@ -325,7 +323,8 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                     app.messages.push(msg);
                 }
                 TurnEvent::Error(err) => {
-                    app.messages.push(ChatMessage::notice(format!("⚠ Error: {}", err)));
+                    app.messages
+                        .push(ChatMessage::notice(format!("⚠ Error: {}", err)));
                 }
             }
             app.scroll_to_bottom();
@@ -426,10 +425,9 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                             }
                                             let curated = app::curated_models_for(&fetch_prov);
                                             for m in curated {
-                                                if !models
-                                                    .iter()
-                                                    .any(|existing| existing.eq_ignore_ascii_case(&m))
-                                                {
+                                                if !models.iter().any(|existing| {
+                                                    existing.eq_ignore_ascii_case(&m)
+                                                }) {
                                                     models.push(m);
                                                 }
                                             }
@@ -437,7 +435,8 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                 &fetch_prov,
                                                 models,
                                             );
-                                            let _ = fetch_tx.send((fetch_prov, fetch_display, models));
+                                            let _ =
+                                                fetch_tx.send((fetch_prov, fetch_display, models));
                                         });
                                     }
                                     _ => {}
@@ -463,7 +462,8 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                             if *selected_idx > 0 {
                                                 *selected_idx -= 1;
                                             } else {
-                                                *selected_idx = filtered_indices.len().saturating_sub(1);
+                                                *selected_idx =
+                                                    filtered_indices.len().saturating_sub(1);
                                             }
                                         }
                                         KeyCode::Down => {
@@ -488,8 +488,10 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                             if !filtered_indices.is_empty() {
                                                 let real_idx = filtered_indices[*selected_idx];
                                                 let chosen_model =
-                                                    crate::channels::model_menu_model_name(&models[real_idx])
-                                                        .to_string();
+                                                    crate::channels::model_menu_model_name(
+                                                        &models[real_idx],
+                                                    )
+                                                    .to_string();
                                                 let prov = provider_name.clone();
 
                                                 match apply_session_model_selection(
@@ -507,14 +509,17 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                         app.provider = prov.clone();
                                                         app.messages.push(ChatMessage::notice(
                                                             format!(
-                                                                "✓ Switched this session to: {} ({})",
-                                                                chosen_model, prov
-                                                            ),
+                                                            "✓ Switched this session to: {} ({})",
+                                                            chosen_model, prov
+                                                        ),
                                                         ));
                                                     }
                                                     Err(e) => {
                                                         app.messages.push(ChatMessage::notice(
-                                                            format!("⚠ Failed to switch model: {}", e),
+                                                            format!(
+                                                                "⚠ Failed to switch model: {}",
+                                                                e
+                                                            ),
                                                         ));
                                                     }
                                                 }
@@ -560,7 +565,8 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                             continue;
                                         }
                                         if !sessions.is_empty() {
-                                            let (target_key, title, _) = sessions[*selected_idx].clone();
+                                            let (target_key, title, _) =
+                                                sessions[*selected_idx].clone();
                                             if let Ok(loaded) = session_manager.load(&target_key) {
                                                 // Archive whatever we're leaving, then adopt the
                                                 // target key so future prompts append to it
@@ -575,12 +581,15 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                 app.messages.clear();
                                                 app.session_key = target_key.clone();
                                                 for msg in loaded.messages {
-                                                    app.messages.push(ChatMessage::from_session_message(&msg));
+                                                    app.messages.push(
+                                                        ChatMessage::from_session_message(&msg),
+                                                    );
                                                 }
                                                 app.scroll_to_bottom();
-                                                app.messages.push(ChatMessage::notice(
-                                                    format!("✓ Restored session: {}", title),
-                                                ));
+                                                app.messages.push(ChatMessage::notice(format!(
+                                                    "✓ Restored session: {}",
+                                                    title
+                                                )));
                                                 let _ = write_tui_marker_in_dir(
                                                     &marker_dir,
                                                     std::process::id(),
@@ -648,12 +657,15 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         if idx > 0 {
                                             app.selected_index = Some(idx - 1);
                                         } else {
-                                            app.selected_index = Some(matches.len().saturating_sub(1));
+                                            app.selected_index =
+                                                Some(matches.len().saturating_sub(1));
                                         }
                                     } else {
                                         app.selected_index = Some(matches.len().saturating_sub(1));
                                     }
-                                } else if !app.prompt_history.is_empty() && (app.history_idx.is_some() || !app.typed_input.is_empty()) {
+                                } else if !app.prompt_history.is_empty()
+                                    && (app.history_idx.is_some() || !app.typed_input.is_empty())
+                                {
                                     let next_idx = match app.history_idx {
                                         None => app.prompt_history.len().saturating_sub(1),
                                         Some(i) => i.saturating_sub(1),
@@ -706,11 +718,14 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                             KeyCode::Char(c) => {
                                 if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'p' {
                                     app.scroll_up(SCROLL_STEP_EM);
-                                } else if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'n' {
+                                } else if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'n'
+                                {
                                     app.scroll_down(SCROLL_STEP_EM);
-                                } else if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'u' {
+                                } else if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'u'
+                                {
                                     app.scroll_up(SCROLL_HALF);
-                                } else if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'd' {
+                                } else if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'd'
+                                {
                                     app.scroll_down(SCROLL_HALF);
                                 } else {
                                     app.typed_input.insert(app.cursor_idx, c);
@@ -728,14 +743,18 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                 }
                             }
                             KeyCode::Home => {
-                                if key.modifiers.contains(KeyModifiers::SHIFT) || key.modifiers.contains(KeyModifiers::CONTROL) {
+                                if key.modifiers.contains(KeyModifiers::SHIFT)
+                                    || key.modifiers.contains(KeyModifiers::CONTROL)
+                                {
                                     app.scroll_to_top();
                                 } else {
                                     app.cursor_idx = 0;
                                 }
                             }
                             KeyCode::End => {
-                                if key.modifiers.contains(KeyModifiers::SHIFT) || key.modifiers.contains(KeyModifiers::CONTROL) {
+                                if key.modifiers.contains(KeyModifiers::SHIFT)
+                                    || key.modifiers.contains(KeyModifiers::CONTROL)
+                                {
                                     app.scroll_to_bottom();
                                 } else {
                                     app.cursor_idx = app.typed_input.len();
@@ -771,13 +790,16 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         app.messages.clear();
                                         app.scroll_to_top();
                                     } else if trimmed == "/model" || trimmed == "/models" {
-                                        let cfg = crate::config::loader::load_config().unwrap_or_default();
+                                        let cfg = crate::config::loader::load_config()
+                                            .unwrap_or_default();
                                         let configured = app::build_configured_providers(&cfg);
                                         app.modal = ModalState::ProviderSelect {
                                             providers: if configured.is_empty() {
                                                 app::PROVIDER_REGISTRY
                                                     .iter()
-                                                    .map(|p| (p.name.to_string(), p.display.to_string()))
+                                                    .map(|p| {
+                                                        (p.name.to_string(), p.display.to_string())
+                                                    })
                                                     .collect()
                                             } else {
                                                 configured
@@ -833,7 +855,8 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                             "Started a fresh conversation session.".to_string(),
                                         ));
                                     } else if trimmed == "/mcps" {
-                                        app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                        app.messages
+                                            .push(ChatMessage::simple("user", input_str.clone()));
                                         let mut mcp_msg = String::from("Configured MCP Servers:\n");
                                         let loop_guard = agent_loop.lock().await;
                                         if loop_guard.config.mcp_servers.is_empty() {
@@ -851,9 +874,11 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                 ));
                                             }
                                         }
-                                        app.messages.push(ChatMessage::simple("assistant", mcp_msg));
+                                        app.messages
+                                            .push(ChatMessage::simple("assistant", mcp_msg));
                                     } else if trimmed == "/streaming" {
-                                        app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                        app.messages
+                                            .push(ChatMessage::simple("user", input_str.clone()));
                                         let key_snapshot = session_key.read().await.clone();
                                         let current_streaming = session_manager
                                             .load(&key_snapshot)
@@ -863,7 +888,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                     .metadata
                                                     .get("streaming")
                                                     .and_then(|v| v.as_bool())
-                                                })
+                                            })
                                             .unwrap_or_else(|| {
                                                 agent_loop
                                                     .try_lock()
@@ -881,11 +906,16 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                             "assistant",
                                             format!(
                                                 "Response streaming is now {} for this session.",
-                                                if next_streaming { "enabled" } else { "disabled" }
+                                                if next_streaming {
+                                                    "enabled"
+                                                } else {
+                                                    "disabled"
+                                                }
                                             ),
                                         ));
                                     } else if trimmed.starts_with('/') {
-                                        app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                        app.messages
+                                            .push(ChatMessage::simple("user", input_str.clone()));
                                         app.messages.push(ChatMessage::simple(
                                             "assistant",
                                             format!("Command {} executed. Type /help for all available commands.", trimmed),
@@ -898,7 +928,8 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         continue;
                                     } else {
                                         // Standard User Prompt -> Dispatch to AgentLoop
-                                        app.messages.push(ChatMessage::simple("user", input_str.clone()));
+                                        app.messages
+                                            .push(ChatMessage::simple("user", input_str.clone()));
                                         app.is_thinking = true;
                                         app.work_start = Some(Instant::now());
                                         app.scroll_to_bottom();
@@ -912,29 +943,43 @@ pub async fn handle_ratatui_tui() -> Result<()> {
 
                                         tokio::spawn(async move {
                                             let loop_guard = agent_loop_clone.lock().await;
-                                            let run_result = crate::config::loader::ACTIVE_WORKSPACE
-                                                .scope(workspace_clone, async {
-                                                    loop_guard
-                                                        .run(&prompt_text, &turn_session_key)
-                                                        .await
-                                                })
-                                                .await;
+                                            let run_result =
+                                                crate::config::loader::ACTIVE_WORKSPACE
+                                                    .scope(workspace_clone, async {
+                                                        loop_guard
+                                                            .run(&prompt_text, &turn_session_key)
+                                                            .await
+                                                    })
+                                                    .await;
                                             match run_result {
                                                 Ok(_res) => {
-                                                    if let Ok(session) = session_manager_clone.load(&turn_session_key) {
+                                                    if let Ok(session) = session_manager_clone
+                                                        .load(&turn_session_key)
+                                                    {
                                                         let mut msgs = Vec::new();
                                                         for m in session.messages {
-                                                            msgs.push(ChatMessage::from_session_message(&m));
+                                                            msgs.push(
+                                                                ChatMessage::from_session_message(
+                                                                    &m,
+                                                                ),
+                                                            );
                                                         }
-                                                        let _ = turn_tx_clone.send(TurnEvent::SyncSession(msgs));
+                                                        let _ = turn_tx_clone
+                                                            .send(TurnEvent::SyncSession(msgs));
                                                     } else {
-                                                        let _ = turn_tx_clone.send(TurnEvent::SingleMessage(
-                                                            ChatMessage::simple("assistant", _res.content),
-                                                        ));
+                                                        let _ = turn_tx_clone.send(
+                                                            TurnEvent::SingleMessage(
+                                                                ChatMessage::simple(
+                                                                    "assistant",
+                                                                    _res.content,
+                                                                ),
+                                                            ),
+                                                        );
                                                     }
                                                 }
                                                 Err(err) => {
-                                                    let _ = turn_tx_clone.send(TurnEvent::Error(err.to_string()));
+                                                    let _ = turn_tx_clone
+                                                        .send(TurnEvent::Error(err.to_string()));
                                                 }
                                             }
                                         });

@@ -2,7 +2,7 @@ use crate::agent::style::*;
 use crate::config::loader::{load_config, save_config};
 use crate::config::schema::{Config, ProviderConfig};
 use crate::println;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use inquire::{Confirm, Password, PasswordDisplayMode, Text};
 
 fn default_base_for_provider(provider_name: &str) -> &'static str {
@@ -630,7 +630,10 @@ async fn handle_gateway_submenu(config: &mut Config) -> Result<()> {
                         ERROR_RED, e, COLOR_RESET
                     );
                 } else {
-                    println!("{}✓ systemd service openz-gateway.service installed and enabled successfully!{}", EMERALD_GREEN, COLOR_RESET);
+                    println!(
+                        "{}✓ systemd service openz-gateway.service installed and enabled successfully!{}",
+                        EMERALD_GREEN, COLOR_RESET
+                    );
                 }
             }
             Some(1) => {
@@ -900,8 +903,12 @@ async fn handle_sandbox_submenu(config: &mut Config) -> Result<()> {
         "{}--- Sandbox (seccomp) Configuration ---{}",
         COLOR_BOLD, COLOR_RESET
     );
-    println!("The process sandbox (seccomp) restricts system calls (network, browser, tools like ps/which) inside the command execution sandbox.");
-    println!("Disabling it allows browser automation tools (gsd_browser, chromewright) and local compiler tools to run without seccomp blocking.");
+    println!(
+        "The process sandbox (seccomp) restricts system calls (network, browser, tools like ps/which) inside the command execution sandbox."
+    );
+    println!(
+        "Disabling it allows browser automation tools (gsd_browser, chromewright) and local compiler tools to run without seccomp blocking."
+    );
     println!("Security is still enforced via openz's internal SecurityGuard prompt confirmations.");
     println!();
 
@@ -919,7 +926,10 @@ async fn handle_sandbox_submenu(config: &mut Config) -> Result<()> {
             EMERALD_GREEN, COLOR_RESET
         );
     } else {
-        println!("{}✓ Sandbox disabled successfully! (Highly recommended for browser tools and developer shells){}", EMERALD_GREEN, COLOR_RESET);
+        println!(
+            "{}✓ Sandbox disabled successfully! (Highly recommended for browser tools and developer shells){}",
+            EMERALD_GREEN, COLOR_RESET
+        );
     }
     println!(
         "{}────────────────────────────────────────────────────────────{}",

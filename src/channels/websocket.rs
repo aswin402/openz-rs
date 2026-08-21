@@ -1,14 +1,14 @@
 use crate::agent::AgentLoop;
 use crate::config::schema::WebSocketChannelConfig;
 use axum::{
+    Json, Router,
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         Path as AxumPath, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::StatusCode,
     response::IntoResponse,
     routing::get,
-    Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -326,6 +326,7 @@ fn subagent_profile_events() -> Vec<serde_json::Value> {
         .unwrap_or_default()
         .into_iter()
         .map(|p| {
+            let is_core = crate::subagents::is_default_subagent(&p.name);
             let model = p.model.unwrap_or_else(|| "default".to_string());
             let provider = model
                 .split_once('/')
@@ -338,9 +339,110 @@ fn subagent_profile_events() -> Vec<serde_json::Value> {
                 "model": model,
                 "provider": provider,
                 "fallbacks": p.fallbacks.unwrap_or_default(),
+                "isCore": is_core,
+                "isProtected": is_core,
+                "source": if is_core { "core" } else { "user" },
+                "fallbackLimit": crate::subagents::MAX_SUBAGENT_FALLBACKS,
             })
         })
         .collect::<Vec<_>>()
+}
+
+fn runtime_inventory_event(
+    config: &crate::config::schema::Config,
+    tools: Option<&crate::tools::ToolRegistry>,
+) -> serde_json::Value {
+    let inventory = crate::core::inventory::build_runtime_inventory(config, tools);
+    serde_json::json!({
+        "event": "runtime_inventory",
+        "inventory": inventory,
+    })
+}
+
+async fn cron_update_event(
+    msg_type: &str,
+    envelope: &serde_json::Value,
+    config: &crate::config::schema::Config,
+    tools: Option<&crate::tools::ToolRegistry>,
+) -> serde_json::Value {
+    let id = envelope
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if id.is_empty() {
+        return serde_json::json!({
+            "event": "error",
+            "detail": "Cron job id is required."
+        });
+    }
+
+    let args = serde_json::json!({ "id": id });
+    let result = match msg_type {
+        "pause_cron_job" => {
+            let tool = crate::tools::cron::PauseJobTool;
+            crate::tools::Tool::call(&tool, &args).await
+        }
+        "resume_cron_job" => {
+            let tool = crate::tools::cron::ResumeJobTool;
+            crate::tools::Tool::call(&tool, &args).await
+        }
+        "delete_cron_job" => {
+            let tool = crate::tools::cron::RemoveJobTool;
+            crate::tools::Tool::call(&tool, &args).await
+        }
+        other => Err(anyhow::anyhow!(
+            "Unsupported cron WebSocket command: {}",
+            other
+        )),
+    };
+
+    match result {
+        Ok(result) => {
+            let inventory = crate::core::inventory::build_runtime_inventory(config, tools);
+            let status = match msg_type {
+                "pause_cron_job" => "paused",
+                "resume_cron_job" => "resumed",
+                "delete_cron_job" => "deleted",
+                _ => "updated",
+            };
+            serde_json::json!({
+                "event": "cron_jobs_updated",
+                "status": status,
+                "id": id,
+                "result": result,
+                "inventory": inventory,
+            })
+        }
+        Err(err) => serde_json::json!({
+            "event": "error",
+            "detail": format!("Failed to update cron job: {}", err)
+        }),
+    }
+}
+
+fn cron_logs_event(envelope: &serde_json::Value) -> serde_json::Value {
+    let id = envelope
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+    let limit = envelope
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20)
+        .min(200) as usize;
+    match crate::cron::load_cron_run_records(id, limit) {
+        Ok(runs) => serde_json::json!({
+            "event": "cron_logs",
+            "id": id,
+            "runs": runs,
+        }),
+        Err(err) => serde_json::json!({
+            "event": "error",
+            "detail": format!("Failed to load cron logs: {}", err)
+        }),
+    }
 }
 
 fn gateway_token_required_for_host(host: &str) -> bool {
@@ -645,7 +747,7 @@ async fn persist_attachments(attachments: &Value) -> Vec<String> {
     if tokio::fs::create_dir_all(&attach_dir).await.is_err() {
         return refs;
     }
-    use base64::{engine::general_purpose, Engine as _};
+    use base64::{Engine as _, engine::general_purpose};
     for att in arr.iter().take(8) {
         let Some(data_b64) = att.get("data").and_then(|v| v.as_str()) else {
             continue;
@@ -1194,11 +1296,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             Ok(g) => g.clone(),
                             Err(_) => state.agent_loop.config.clone(),
                         };
-                        let skills = crate::agent::skills::load_skills()
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|s| serde_json::json!({ "name": s.name, "content": s.content }))
-                            .collect::<Vec<_>>();
+                        let skills = crate::agent::skills::load_skill_views().unwrap_or_default();
                         let d = &config.agents.defaults;
                         let defaults = serde_json::json!({
                             "model": d.model,
@@ -1739,11 +1837,8 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         } else {
                             match crate::agent::skills::save_skill(name, content) {
                                 Ok(()) => {
-                                    let skills = crate::agent::skills::load_skills()
-                                        .unwrap_or_default()
-                                        .into_iter()
-                                        .map(|s| serde_json::json!({ "name": s.name, "content": s.content }))
-                                        .collect::<Vec<_>>();
+                                    let skills = crate::agent::skills::load_skill_views()
+                                        .unwrap_or_default();
                                     serde_json::json!({
                                         "event": "skills_updated",
                                         "skills": skills,
@@ -1775,11 +1870,8 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         } else {
                             match crate::agent::skills::delete_skill(name) {
                                 Ok(()) => {
-                                    let skills = crate::agent::skills::load_skills()
-                                        .unwrap_or_default()
-                                        .into_iter()
-                                        .map(|s| serde_json::json!({ "name": s.name, "content": s.content }))
-                                        .collect::<Vec<_>>();
+                                    let skills = crate::agent::skills::load_skill_views()
+                                        .unwrap_or_default();
                                     serde_json::json!({
                                         "event": "skills_updated",
                                         "skills": skills,
@@ -1924,6 +2016,38 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 "total": total,
                             },
                         });
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "pause_cron_job" | "resume_cron_job" | "delete_cron_job" => {
+                        let config = match state.live_config.read() {
+                            Ok(g) => g.clone(),
+                            Err(_) => state.agent_loop.config.clone(),
+                        };
+                        let evt = cron_update_event(
+                            msg_type,
+                            &envelope,
+                            &config,
+                            Some(&state.agent_loop.tools),
+                        )
+                        .await;
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "get_cron_logs" => {
+                        let evt = cron_logs_event(&envelope);
+                        if let Ok(evt_str) = serde_json::to_string(&evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+                    }
+                    "get_runtime_inventory" => {
+                        let config = match state.live_config.read() {
+                            Ok(g) => g.clone(),
+                            Err(_) => state.agent_loop.config.clone(),
+                        };
+                        let evt = runtime_inventory_event(&config, Some(&state.agent_loop.tools));
                         if let Ok(evt_str) = serde_json::to_string(&evt) {
                             let _ = tx.send(Message::Text(evt_str)).await;
                         }
@@ -2273,6 +2397,87 @@ async fn openai_chat_completions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn websocket_cron_commands_update_inventory_and_logs() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "openz_ws_cron_commands_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        crate::config::loader::CONFIG_DIR_OVERRIDE
+            .scope(temp_dir.clone(), async {
+                let job = crate::cron::CronJob::new(
+                    "job-a".to_string(),
+                    "10s".to_string(),
+                    "say hi".to_string(),
+                    true,
+                    false,
+                );
+                crate::cron::save_jobs_raw(&[job]).unwrap();
+                let config = crate::config::schema::Config::default();
+
+                let missing =
+                    cron_update_event("pause_cron_job", &serde_json::json!({}), &config, None)
+                        .await;
+                assert_eq!(missing["event"], "error");
+
+                let paused = cron_update_event(
+                    "pause_cron_job",
+                    &serde_json::json!({ "id": "job-a" }),
+                    &config,
+                    None,
+                )
+                .await;
+                assert_eq!(paused["event"], "cron_jobs_updated");
+                assert_eq!(paused["status"], "paused");
+                assert_eq!(paused["inventory"]["counts"]["cronJobs"], 1);
+                assert_eq!(paused["inventory"]["counts"]["activeCronJobs"], 0);
+
+                let resumed = cron_update_event(
+                    "resume_cron_job",
+                    &serde_json::json!({ "id": "job-a" }),
+                    &config,
+                    None,
+                )
+                .await;
+                assert_eq!(resumed["event"], "cron_jobs_updated");
+                assert_eq!(resumed["status"], "resumed");
+                assert_eq!(resumed["inventory"]["counts"]["activeCronJobs"], 1);
+
+                crate::cron::append_cron_run_record(&crate::cron::CronRunRecord {
+                    run_id: "run-a".to_string(),
+                    job_id: "job-a".to_string(),
+                    schedule: "10s".to_string(),
+                    started_at: "2026-08-21T00:00:00Z".to_string(),
+                    finished_at: Some("2026-08-21T00:00:01Z".to_string()),
+                    status: crate::cron::CronJobStatus::Success,
+                    log_path: Some("/tmp/job-a.log".to_string()),
+                    summary: Some("ok".to_string()),
+                    error: None,
+                })
+                .unwrap();
+                let logs = cron_logs_event(&serde_json::json!({ "id": "job-a", "limit": 5 }));
+                assert_eq!(logs["event"], "cron_logs");
+                assert_eq!(logs["runs"].as_array().unwrap().len(), 1);
+                assert_eq!(logs["runs"][0]["job_id"], "job-a");
+
+                let deleted = cron_update_event(
+                    "delete_cron_job",
+                    &serde_json::json!({ "id": "job-a" }),
+                    &config,
+                    None,
+                )
+                .await;
+                assert_eq!(deleted["event"], "cron_jobs_updated");
+                assert_eq!(deleted["status"], "deleted");
+                assert_eq!(deleted["inventory"]["counts"]["cronJobs"], 0);
+            })
+            .await;
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn orchestration_lifecycle_events_survive_queue_pressure() {
@@ -2778,7 +2983,9 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
             }
 
             // Fetch code elements if available
-            if let Ok(mut stmt) = conn.prepare("SELECT name, element_type, file_path, doc_comment FROM code_elements LIMIT 250") {
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT name, element_type, file_path, doc_comment FROM code_elements LIMIT 250",
+            ) {
                 if let Ok(rows) = stmt.query_map([], |r| {
                     let name: String = r.get(0)?;
                     let elem_type: String = r.get(1)?;
@@ -2797,7 +3004,9 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
             }
 
             // Fetch code calls if available
-            if let Ok(mut stmt) = conn.prepare("SELECT caller, callee, call_type FROM code_calls LIMIT 500") {
+            if let Ok(mut stmt) =
+                conn.prepare("SELECT caller, callee, call_type FROM code_calls LIMIT 500")
+            {
                 if let Ok(rows) = stmt.query_map([], |r| {
                     Ok(serde_json::json!({
                         "from_name": r.get::<_, String>(0)?,
@@ -2821,7 +3030,9 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
                 .query_row("SELECT COUNT(*) FROM cognitive_memory", [], |r| r.get(0))
                 .map(|c: i64| facts_count = c);
             // Fetch working memory keys and skills
-            if let Ok(mut stmt) = conn.prepare("SELECT name, content, trigger FROM skills LIMIT 100") {
+            if let Ok(mut stmt) =
+                conn.prepare("SELECT name, content, trigger FROM skills LIMIT 100")
+            {
                 if let Ok(rows) = stmt.query_map([], |r| {
                     let name: String = r.get(0)?;
                     let content: String = r.get(1).unwrap_or_default();
@@ -2840,7 +3051,9 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
             }
 
             // Fetch source bookmarks (web research links / URLs)
-            if let Ok(mut stmt) = conn.prepare("SELECT url, title, domain, tags FROM source_bookmarks LIMIT 100") {
+            if let Ok(mut stmt) =
+                conn.prepare("SELECT url, title, domain, tags FROM source_bookmarks LIMIT 100")
+            {
                 if let Ok(rows) = stmt.query_map([], |r| {
                     let url: String = r.get(0)?;
                     let title: String = r.get(1).unwrap_or_default();
@@ -2860,9 +3073,9 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
             }
 
             // Fetch facts (up to 1000 facts)
-            if let Ok(mut stmt) = conn
-                .prepare("SELECT text, timestamp, tags, importance FROM cognitive_memory LIMIT 1000")
-            {
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT text, timestamp, tags, importance FROM cognitive_memory LIMIT 1000",
+            ) {
                 if let Ok(rows) = stmt.query_map([], |r| {
                     Ok(serde_json::json!({
                         "text": r.get::<_, String>(0)?,

@@ -1,6 +1,6 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use serde_json::{Value, json};
 use std::fmt::Write as FmtWrite;
 use std::fs;
 
@@ -608,7 +608,11 @@ fn build_svg_document(args: &Value) -> Result<String> {
                                 stop.get("color").and_then(|v| v.as_str()).unwrap_or("#000");
                             let opacity =
                                 stop.get("opacity").and_then(|v| v.as_str()).unwrap_or("1");
-                            let _ = writeln!(defs_content, "      <stop offset=\"{}\" style=\"stop-color:{};stop-opacity:{}\"/>", offset, color, opacity);
+                            let _ = writeln!(
+                                defs_content,
+                                "      <stop offset=\"{}\" style=\"stop-color:{};stop-opacity:{}\"/>",
+                                offset, color, opacity
+                            );
                         }
                     }
                     let _ = writeln!(defs_content, "    </linearGradient>");
@@ -631,7 +635,11 @@ fn build_svg_document(args: &Value) -> Result<String> {
                                 stop.get("color").and_then(|v| v.as_str()).unwrap_or("#000");
                             let opacity =
                                 stop.get("opacity").and_then(|v| v.as_str()).unwrap_or("1");
-                            let _ = writeln!(defs_content, "      <stop offset=\"{}\" style=\"stop-color:{};stop-opacity:{}\"/>", offset, color, opacity);
+                            let _ = writeln!(
+                                defs_content,
+                                "      <stop offset=\"{}\" style=\"stop-color:{};stop-opacity:{}\"/>",
+                                offset, color, opacity
+                            );
                         }
                     }
                     let _ = writeln!(defs_content, "    </radialGradient>");
@@ -648,7 +656,11 @@ fn build_svg_document(args: &Value) -> Result<String> {
                                 .get("stdDeviation")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("3");
-                            let _ = writeln!(defs_content, "    <filter id=\"{}\"><feGaussianBlur stdDeviation=\"{}\"/></filter>", id, std);
+                            let _ = writeln!(
+                                defs_content,
+                                "    <filter id=\"{}\"><feGaussianBlur stdDeviation=\"{}\"/></filter>",
+                                id, std
+                            );
                         }
                         "shadow" => {
                             let dx = def.get("dx").and_then(|v| v.as_str()).unwrap_or("3");
@@ -658,7 +670,11 @@ fn build_svg_document(args: &Value) -> Result<String> {
                                 .get("color")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("rgba(0,0,0,0.5)");
-                            let _ = writeln!(defs_content, "    <filter id=\"{}\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\"><feDropShadow dx=\"{}\" dy=\"{}\" stdDeviation=\"{}\" flood-color=\"{}\"/></filter>", id, dx, dy, blur, color);
+                            let _ = writeln!(
+                                defs_content,
+                                "    <filter id=\"{}\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\"><feDropShadow dx=\"{}\" dy=\"{}\" stdDeviation=\"{}\" flood-color=\"{}\"/></filter>",
+                                id, dx, dy, blur, color
+                            );
                         }
                         _ => {}
                     }

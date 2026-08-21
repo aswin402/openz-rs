@@ -595,18 +595,14 @@ mod auto_tool_arg_tests {
         let result = json!({ "error": "Failed to open '/tmp/demo.png': no application found" });
         let mut suggested = std::collections::HashSet::new();
 
-        assert!(auto_device_inventory_suggest_call_after_open_failure(
-            &call,
-            &result,
-            &mut suggested
-        )
-        .is_some());
-        assert!(auto_device_inventory_suggest_call_after_open_failure(
-            &call,
-            &result,
-            &mut suggested
-        )
-        .is_none());
+        assert!(
+            auto_device_inventory_suggest_call_after_open_failure(&call, &result, &mut suggested)
+                .is_some()
+        );
+        assert!(
+            auto_device_inventory_suggest_call_after_open_failure(&call, &result, &mut suggested)
+                .is_none()
+        );
     }
 
     #[test]
@@ -2585,11 +2581,13 @@ mod tests {
 
     #[test]
     fn direct_research_url_ignores_non_url_research_tools() {
-        assert!(direct_research_url(
-            "web_search",
-            &serde_json::json!({"query": "9router get started"}),
-        )
-        .is_none());
+        assert!(
+            direct_research_url(
+                "web_search",
+                &serde_json::json!({"query": "9router get started"}),
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -2803,12 +2801,14 @@ mod tests {
             provider_turn_lock_key_for_mode("opencode_zen", "deepseek-v4-flash-free", None)
                 .is_none()
         );
-        assert!(provider_turn_lock_key_for_mode(
-            "opencode_zen",
-            "deepseek-v4-flash-free",
-            Some("fragile")
-        )
-        .is_some());
+        assert!(
+            provider_turn_lock_key_for_mode(
+                "opencode_zen",
+                "deepseek-v4-flash-free",
+                Some("fragile")
+            )
+            .is_some()
+        );
         assert!(
             provider_turn_lock_key_for_mode("openrouter", "qwen/qwen3:free", Some("free"))
                 .is_some()

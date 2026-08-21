@@ -1,8 +1,8 @@
-use crate::tools::graph_memory::{scope_from_args, with_db};
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use crate::tools::graph_memory::{scope_from_args, with_db};
+use anyhow::{Result, anyhow};
 use rusqlite::params;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 // ─── Tool: LogRepositoryEvolutionTool ────────────────────────────

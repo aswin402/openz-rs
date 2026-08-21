@@ -1,4 +1,4 @@
-use crate::providers::circuit_breaker::{retry_with_backoff, CircuitBreaker};
+use crate::providers::circuit_breaker::{CircuitBreaker, retry_with_backoff};
 use crate::providers::{GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest};
 use crate::session::Message;
 use anyhow::Result;
@@ -931,10 +931,12 @@ mod tests {
         assert_eq!(content_array.len(), 2);
 
         assert_eq!(content_array[0]["type"], "image_url");
-        assert!(content_array[0]["image_url"]["url"]
-            .as_str()
-            .unwrap()
-            .starts_with("data:image/png;base64,"));
+        assert!(
+            content_array[0]["image_url"]["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/png;base64,")
+        );
 
         assert_eq!(content_array[1]["type"], "text");
         assert_eq!(content_array[1]["text"], " check this image");

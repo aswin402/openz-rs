@@ -2,11 +2,24 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum StepStatus { Pending, Running, Success, Failed, Skipped, AwaitingReview }
+pub enum StepStatus {
+    Pending,
+    Running,
+    Success,
+    Failed,
+    Skipped,
+    AwaitingReview,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkflowStatus { Running, Success, Failed, Cancelled, AwaitingReview }
+pub enum WorkflowStatus {
+    Running,
+    Success,
+    Failed,
+    Cancelled,
+    AwaitingReview,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StepRunResult {

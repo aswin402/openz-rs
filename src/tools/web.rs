@@ -1,11 +1,11 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures_util::StreamExt;
 use regex::Regex;
-use reqwest::{header, Client};
+use reqwest::{Client, header};
 use rusqlite::OptionalExtension;
-use scraper::node::Node;
 use scraper::Html;
+use scraper::node::Node;
 use std::time::Duration;
 
 const WEB_CONNECT_TIMEOUT_SECS: u64 = 10;
@@ -925,9 +925,11 @@ mod tests {
     #[tokio::test]
     async fn test_validate_url() {
         assert!(validate_url("http://example.com").await.is_ok());
-        assert!(validate_url("https://google.com/search?q=rust")
-            .await
-            .is_ok());
+        assert!(
+            validate_url("https://google.com/search?q=rust")
+                .await
+                .is_ok()
+        );
 
         assert!(validate_url("ftp://example.com").await.is_err());
         assert!(validate_url("http://127.0.0.1").await.is_err());

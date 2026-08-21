@@ -300,6 +300,20 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         when_not_to_use: "Avoid for GitHub API operations; use GitHub tools for remote provider actions.",
     },
     StaticToolDef {
+        name: "request_tool_scope",
+        domain: "self_management",
+        writes_disk: false,
+        uses_network: false,
+        recommended_timeout_secs: None,
+        aliases: &["need more tools", "missing tool", "expand tool scope"],
+        examples: &[
+            "Ask for grep_search when the current turn only has core tools",
+            "Request web tools when the user clarifies they need live research",
+        ],
+        when_to_use: "Use when the current scoped tool set is missing the exact tool or domain required to complete the request.",
+        when_not_to_use: "Avoid when the required tool is already visible or the answer can be completed directly.",
+    },
+    StaticToolDef {
         name: "tool_catalog",
         domain: "self_management",
         writes_disk: false,
@@ -455,7 +469,12 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         writes_disk: false,
         uses_network: false,
         recommended_timeout_secs: None,
-        aliases: &["cron logs", "job logs", "scheduled job history", "cron run history"],
+        aliases: &[
+            "cron logs",
+            "job logs",
+            "scheduled job history",
+            "cron run history",
+        ],
         examples: &["Show recent structured logs for cron job daily"],
         when_to_use: "Use to inspect structured run history for OpenZ-managed scheduled jobs before reporting cron automation status.",
         when_not_to_use: "Avoid shell crontab, systemctl, or filesystem guessing for OpenZ-managed cron jobs.",
@@ -466,7 +485,11 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         writes_disk: true,
         uses_network: false,
         recommended_timeout_secs: None,
-        aliases: &["run cron job now", "trigger scheduled job", "manual cron run"],
+        aliases: &[
+            "run cron job now",
+            "trigger scheduled job",
+            "manual cron run",
+        ],
         examples: &["Run cron job daily immediately"],
         when_to_use: "Use to manually trigger an existing OpenZ-managed scheduled job immediately from its inventory id.",
         when_not_to_use: "Avoid shell crontab, systemctl, or filesystem guessing for OpenZ-managed cron jobs.",
@@ -516,7 +539,10 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         uses_network: false,
         recommended_timeout_secs: Some(900),
         aliases: &["render video", "html video", "animation to mp4"],
-        examples: &["Render an HTML animation timeline to MP4", "Convert a page animation into a video file"],
+        examples: &[
+            "Render an HTML animation timeline to MP4",
+            "Convert a page animation into a video file",
+        ],
         when_to_use: "Use to render HTML/CSS animation timelines into video files via CDP.",
         when_not_to_use: "Avoid for programmatic video without HTML; use generate_video instead.",
     },
@@ -527,7 +553,10 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         uses_network: false,
         recommended_timeout_secs: Some(900),
         aliases: &["make video", "programmatic video", "wavyte video"],
-        examples: &["Generate a programmatic MP4 via the Wavyte API", "Produce a video artifact from code"],
+        examples: &[
+            "Generate a programmatic MP4 via the Wavyte API",
+            "Produce a video artifact from code",
+        ],
         when_to_use: "Use to generate videos from programmatic scene descriptions.",
         when_not_to_use: "Avoid when an HTML timeline already exists; html_to_video is cheaper.",
     },
@@ -538,7 +567,10 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         uses_network: true,
         recommended_timeout_secs: Some(600),
         aliases: &["crawl site", "spider website", "multi-page scrape"],
-        examples: &["Crawl a documentation site for all pages", "Spider a domain and summarize its pages"],
+        examples: &[
+            "Crawl a documentation site for all pages",
+            "Spider a domain and summarize its pages",
+        ],
         when_to_use: "Use to fetch and analyze many pages of one website.",
         when_not_to_use: "Avoid for a single known URL; use web_fetch instead.",
     },
@@ -549,7 +581,10 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         uses_network: false,
         recommended_timeout_secs: Some(300),
         aliases: &["animated svg", "svg animation"],
-        examples: &["Compile an animation timeline into an animated SVG", "Create an animated diagram"],
+        examples: &[
+            "Compile an animation timeline into an animated SVG",
+            "Create an animated diagram",
+        ],
         when_to_use: "Use to compile element/animation specs into a self-contained animated SVG.",
         when_not_to_use: "Avoid for static SVGs or raster image output.",
     },
@@ -560,7 +595,10 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         uses_network: false,
         recommended_timeout_secs: Some(300),
         aliases: &["make image", "render png", "html to image"],
-        examples: &["Render an HTML/CSS layout to PNG", "Generate a diagram image"],
+        examples: &[
+            "Render an HTML/CSS layout to PNG",
+            "Generate a diagram image",
+        ],
         when_to_use: "Use to render HTML/CSS/SVG specs into raster images.",
         when_not_to_use: "Avoid for vector output; use create_animated_svg or SVG tools.",
     },
@@ -571,7 +609,10 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         uses_network: false,
         recommended_timeout_secs: Some(300),
         aliases: &["mermaid diagram", "flowchart"],
-        examples: &["Render a Mermaid flowchart to an image", "Draw an architecture diagram"],
+        examples: &[
+            "Render a Mermaid flowchart to an image",
+            "Draw an architecture diagram",
+        ],
         when_to_use: "Use to render Mermaid diagram definitions into visual artifacts.",
         when_not_to_use: "Avoid for hand-authored SVG; use SVG tools directly.",
     },
@@ -582,7 +623,10 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         uses_network: false,
         recommended_timeout_secs: Some(300),
         aliases: &["vector search", "semantic code search", "embeddings search"],
-        examples: &["Find code by meaning across the repo", "Locate implementation similar to a description"],
+        examples: &[
+            "Find code by meaning across the repo",
+            "Locate implementation similar to a description",
+        ],
         when_to_use: "Use to search a repository by semantic similarity, including first-time indexing.",
         when_not_to_use: "Avoid for exact-text lookups; grep_search is faster and cheaper.",
     },
@@ -593,7 +637,10 @@ static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         uses_network: false,
         recommended_timeout_secs: Some(180),
         aliases: &["run python", "python repl", "python script"],
-        examples: &["Run a short Python computation", "Process data with a Python snippet"],
+        examples: &[
+            "Run a short Python computation",
+            "Process data with a Python snippet",
+        ],
         when_to_use: "Use to execute isolated Python code for computation or data wrangling.",
         when_not_to_use: "Avoid for shell-native tasks; exec_command covers most workflows.",
     },
@@ -1203,12 +1250,29 @@ impl ToolRegistry {
         self.read_tools().len()
     }
 
+    pub fn tool_inventory_snapshot(&self) -> Vec<(String, String, ToolMetadata)> {
+        let mut tools = self
+            .read_tools()
+            .values()
+            .map(|tool| {
+                (
+                    tool.name().to_string(),
+                    tool.description().to_string(),
+                    tool.metadata(),
+                )
+            })
+            .collect::<Vec<_>>();
+        tools.sort_by(|a, b| a.0.cmp(&b.0));
+        tools
+    }
+
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
         let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
         if let Some(ref prefixes) = filter {
             if name != "delegate_task"
                 && name != "send_remote_input"
                 && name != "optimize_tool_scope"
+                && name != "request_tool_scope"
                 && !prefixes.iter().any(|prefix| name.starts_with(prefix))
             {
                 return None;
@@ -1474,31 +1538,43 @@ impl ToolRegistry {
             }
         }
 
+        let intent = crate::agent::agent_loop::intent::classify_turn_intent(prompt);
+        let scope = crate::tools::scope::ToolScopeEngine::default().decide(&intent, 20);
         let selected_domains_set = select_domains_for_prompt(prompt);
-        let selected_domains: Vec<String> = selected_domains_set
+        let mut selected_domain_labels: std::collections::BTreeSet<String> = selected_domains_set
             .iter()
             .map(|domain| (*domain).to_string())
             .collect();
-        let static_names: HashSet<String> = static_tool_names.into_iter().collect();
-        let reserved_subagents = self
-            .dynamic_subagent_tools(filter.as_ref(), &static_names)
-            .len()
-            .min(128);
-        let static_limit = 128usize.saturating_sub(reserved_subagents);
+        for pack in &scope.packs {
+            selected_domain_labels.insert(format!("{:?}", pack).to_lowercase());
+        }
+        let selected_domains: Vec<String> = selected_domain_labels.into_iter().collect();
+        let _static_names: HashSet<String> = static_tool_names.into_iter().collect();
+        let static_limit = scope.max_visible_tools;
 
         let mut entries: Vec<ToolRouteEntry> = static_tools
             .values()
             .filter(|tool| tool_allowed_by_filter(tool.name(), filter.as_ref()))
             .map(|tool| {
                 let metadata = tool.metadata();
-                let selected_score =
+                let in_scope = scope.allowed_names.contains(tool.name())
+                    || crate::tools::scope::tool_matches_pack(tool.name(), &metadata, &scope.packs);
+                let base_score =
                     tool_selection_score(tool.name(), &metadata, &selected_domains_set);
+                let selected_score = if in_scope {
+                    base_score.saturating_add(100)
+                } else {
+                    base_score
+                };
                 let matched_prompt_domain = selected_domains_set.contains(metadata.domain);
-                let selection_reason =
+                let mut selection_reason =
                     tool_selection_reasons(tool.name(), &metadata, &selected_domains_set)
                         .into_iter()
                         .map(str::to_string)
-                        .collect();
+                        .collect::<Vec<_>>();
+                if in_scope {
+                    selection_reason.push("intent_scope".to_string());
+                }
                 ToolRouteEntry {
                     name: tool.name().to_string(),
                     description: tool.description().to_string(),
@@ -1520,15 +1596,26 @@ impl ToolRegistry {
                 .then_with(|| a.name.cmp(&b.name))
         });
 
-        let selected_count = entries.len().min(static_limit);
-        let dropped_count = entries.len().saturating_sub(selected_count);
-        for (idx, entry) in entries.iter_mut().enumerate() {
-            if idx < selected_count {
+        let mut selected_count = 0usize;
+        for entry in entries.iter_mut() {
+            let in_scope = scope.allowed_names.contains(entry.name.as_str())
+                || crate::tools::scope::tool_matches_pack(
+                    &entry.name,
+                    &entry.metadata,
+                    &scope.packs,
+                );
+            if in_scope && selected_count < static_limit {
                 entry.exposed_to_model = true;
+                selected_count += 1;
             } else {
-                entry.hidden_reason = Some("api_limit");
+                entry.hidden_reason = Some(if in_scope {
+                    "scope_limit"
+                } else {
+                    "out_of_scope"
+                });
             }
         }
+        let dropped_count = entries.len().saturating_sub(selected_count);
 
         let route = ToolRouteAnalysis {
             selected_domains,
@@ -1582,7 +1669,19 @@ impl ToolRegistry {
         let static_tools = self.read_tools();
         let static_names: HashSet<String> = static_tools.keys().cloned().collect();
         drop(static_tools);
-        let mut subagent_tools = self.dynamic_subagent_tools(filter.as_ref(), &static_names);
+        let intent = crate::agent::agent_loop::intent::classify_turn_intent(prompt);
+        let scope = crate::tools::scope::ToolScopeEngine::default().decide(&intent, 20);
+        let mut subagent_tools = if scope.packs.iter().any(|pack| {
+            matches!(
+                pack,
+                crate::tools::scope::ToolPack::Subagent
+                    | crate::tools::scope::ToolPack::Orchestrator
+            )
+        }) {
+            self.dynamic_subagent_tools(filter.as_ref(), &static_names)
+        } else {
+            Vec::new()
+        };
         let route = self.route_for_prompt(prompt);
         let total_tools = route.entries.len() + subagent_tools.len();
         if total_tools > 128 {
@@ -1889,9 +1988,11 @@ mod route_cache_tests {
                     .into_iter()
                     .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
                     .collect::<Vec<_>>();
-                assert!(!exposed_names
-                    .iter()
-                    .any(|name| name == "orchestrate_workflow"));
+                assert!(
+                    !exposed_names
+                        .iter()
+                        .any(|name| name == "orchestrate_workflow")
+                );
             })
             .await;
     }
@@ -1950,6 +2051,136 @@ mod route_cache_tests {
             .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
             .collect::<Vec<_>>();
         assert!(!exposed_names.iter().any(|name| name == "coding_agent"));
+    }
+
+    #[test]
+    fn simple_prompt_does_not_expose_heavy_execution_tools() {
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(CacheTestTool {
+            name: "exec_command",
+            domain: "shell",
+            priority: 90,
+        }));
+        registry.register(Arc::new(CacheTestTool {
+            name: "openz_inventory",
+            domain: "self_management",
+            priority: 85,
+        }));
+        registry.register(Arc::new(CacheTestTool {
+            name: "request_tool_scope",
+            domain: "self_management",
+            priority: 100,
+        }));
+
+        let exposed_names: Vec<String> = registry
+            .to_openai_format_for_prompt("summarize hello")
+            .into_iter()
+            .filter_map(|value| value["function"]["name"].as_str().map(str::to_string))
+            .collect();
+
+        assert!(exposed_names.contains(&"openz_inventory".to_string()));
+        assert!(exposed_names.contains(&"request_tool_scope".to_string()));
+        assert!(!exposed_names.contains(&"exec_command".to_string()));
+    }
+
+    #[test]
+    fn repo_prompt_exposes_repo_read_tools() {
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(CacheTestTool {
+            name: "grep_search",
+            domain: "code",
+            priority: 90,
+        }));
+        registry.register(Arc::new(CacheTestTool {
+            name: "web_fetch",
+            domain: "web",
+            priority: 75,
+        }));
+
+        let exposed_names: Vec<String> = registry
+            .to_openai_format_for_prompt("Where is orchestrate_workflow implemented in this repo?")
+            .into_iter()
+            .filter_map(|value| value["function"]["name"].as_str().map(str::to_string))
+            .collect();
+
+        assert!(exposed_names.contains(&"grep_search".to_string()));
+        assert!(!exposed_names.contains(&"web_fetch".to_string()));
+    }
+
+    fn registry_with_named_tools(tools: &[(&'static str, &'static str)]) -> ToolRegistry {
+        let registry = ToolRegistry::new();
+        for (name, domain) in tools {
+            registry.register(Arc::new(CacheTestTool {
+                name: *name,
+                domain: *domain,
+                priority: 90,
+            }));
+        }
+        registry
+    }
+
+    fn exposed_tool_names(registry: &ToolRegistry, prompt: &str) -> Vec<String> {
+        registry
+            .to_openai_format_for_prompt(prompt)
+            .into_iter()
+            .filter_map(|value| value["function"]["name"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    #[test]
+    fn current_external_prompt_exposes_web_research_pack() {
+        let registry = registry_with_named_tools(&[
+            ("web_search", "web"),
+            ("web_fetch", "web"),
+            ("grep_search", "code"),
+        ]);
+        let names = exposed_tool_names(&registry, "What is the latest Rust stable version today?");
+        assert!(names.contains(&"web_search".to_string()));
+        assert!(names.contains(&"web_fetch".to_string()));
+        assert!(!names.contains(&"grep_search".to_string()));
+    }
+
+    #[test]
+    fn cron_prompt_exposes_cron_pack() {
+        let registry = registry_with_named_tools(&[
+            ("list_jobs", "cron"),
+            ("get_job_logs", "cron"),
+            ("web_fetch", "web"),
+        ]);
+        let names = exposed_tool_names(&registry, "what are my running cron jobs and logs?");
+        assert!(names.contains(&"list_jobs".to_string()));
+        assert!(names.contains(&"get_job_logs".to_string()));
+        assert!(!names.contains(&"web_fetch".to_string()));
+    }
+
+    #[test]
+    fn orchestration_prompt_exposes_orchestrator_tool() {
+        let registry = registry_with_named_tools(&[
+            ("orchestrate_workflow", "subagent"),
+            ("delegate_task", "subagent"),
+            ("web_fetch", "web"),
+        ]);
+        let names = exposed_tool_names(
+            &registry,
+            "Use orchestrate_workflow to run a simple planner reviewer workflow",
+        );
+        assert!(names.contains(&"orchestrate_workflow".to_string()));
+        assert!(names.contains(&"delegate_task".to_string()));
+        assert!(!names.contains(&"web_fetch".to_string()));
+    }
+
+    #[test]
+    fn tool_router_status_line_reports_scope() {
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(CacheTestTool {
+            name: "grep_search",
+            domain: "code",
+            priority: 90,
+        }));
+
+        let line = registry.tool_router_status_line("Where is this implemented in repo?");
+        assert!(line.contains("Tool Router selected"));
+        assert!(line.contains("code") || line.contains("reporead"));
     }
 
     #[test]
@@ -2020,6 +2251,7 @@ pub mod outline;
 pub mod remote;
 pub mod resource_policy;
 pub mod rust_docs;
+pub mod scope;
 #[path = "searchxyz/mod.rs"]
 pub mod searchxyz;
 pub mod self_management;

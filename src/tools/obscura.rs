@@ -1,10 +1,10 @@
+use crate::tools::Tool;
 use crate::tools::browser_common::{
     connect_to_tab, ensure_browser_running, kill_browser_on_port_9222, send_cdp_cmd,
 };
 use crate::tools::web::is_safe_ip;
-use crate::tools::Tool;
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 

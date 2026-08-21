@@ -1,5 +1,5 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde_json::Value;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -161,7 +161,11 @@ impl McpClient {
                         }
                         Err(e) => {
                             if i == 19 {
-                                return Err(anyhow!("Failed to connect to gRPC MCP server at 127.0.0.1:{} after 3s: {}", port, e));
+                                return Err(anyhow!(
+                                    "Failed to connect to gRPC MCP server at 127.0.0.1:{} after 3s: {}",
+                                    port,
+                                    e
+                                ));
                             }
                         }
                     }

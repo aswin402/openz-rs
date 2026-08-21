@@ -4,63 +4,17 @@ import type { SubagentInfo } from '../types/openz';
 import { ArrowLeft, Bot, Check, Copy, Cpu, Edit3, Plus, Save, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 
 const DEFAULT_PROMPT = 'You are a specialized OpenZ subagent. Focus on one clear responsibility, use available tools carefully, and return concise, actionable results.';
-const DEFAULT_AGENT_NAMES = new Set([
-  'orchestrator',
-  'planner',
-  'researcher',
-  'architect',
-  'skill_creator',
-  'reviewer',
-  'code_auditor',
-  'debugger',
-  'test_engineer',
-  'devops_agent',
-  'refactor_agent',
-  'memory_manager',
-  'vision_agent',
-  'documentation_agent',
-  'self_improvement',
-  'skill_improvement',
-  'openz_maintainer',
-  'mcps_manager',
-  'git_ops_agent',
-  'ast_searcher',
-  'database_specialist',
-  'browser_operator',
-  'dependency_manager',
-  'frontend_architect',
-  'docs_lookup_agent',
-  'document_compiler',
-  'presentation_designer',
-  'code_synthesizer',
-  'summarizer_agent',
-  'media_designer',
-  'openz_coordinator',
-  'sop_designer',
-  'api_integrator',
-  'performance_tuner',
-  'communication_manager',
-  'automation_agent',
-  'coding_agent',
-  'diagram_designer',
-  'video_animator',
-]);
-
 function normalizeAgentName(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
 }
-
-function isProtectedAgent(name: string): boolean {
-  return DEFAULT_AGENT_NAMES.has(name);
-}
-
 
 function fallbacksToText(fallbacks?: string[]): string {
   return (fallbacks || []).join(', ');
 }
 
-function parseFallbacks(value: string): string[] {
-  return value.split(',').map((item) => item.trim()).filter(Boolean).slice(0, 3);
+function parseFallbacks(value: string, limit?: number): string[] {
+  const parsed = value.split(',').map((item) => item.trim()).filter(Boolean);
+  return typeof limit === 'number' && limit > 0 ? parsed.slice(0, limit) : parsed;
 }
 
 export const AgentsView: React.FC = () => {
@@ -92,12 +46,13 @@ export const AgentsView: React.FC = () => {
   const activeAgent = sortedAgents.find((agent) => agent.name === selectedAgentName);
   const normalizedName = normalizeAgentName(draftName);
   const isNew = selectedAgentName === '__new__';
-  const isProtected = Boolean(activeAgent && isProtectedAgent(activeAgent.name));
+  const fallbackLimit = activeAgent?.fallbackLimit ?? sortedAgents.find((agent) => agent.fallbackLimit)?.fallbackLimit;
+  const isProtected = Boolean(activeAgent?.isProtected);
   const showEditor = Boolean(selectedAgentName);
   const listPanelClass = 'w-full flex-col gap-2 overflow-y-auto pr-1 md:flex md:w-80 md:shrink-0 ' + (showEditor ? 'hidden' : 'flex');
   const editorPanelClass = 'min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/80 bg-card/40 shadow-sm md:flex ' + (showEditor ? 'flex' : 'hidden');
   const nameExists = sortedAgents.some((agent) => agent.name === normalizedName && agent.name !== activeAgent?.name);
-  const currentFallbacks = parseFallbacks(draftFallbacks);
+  const currentFallbacks = parseFallbacks(draftFallbacks, fallbackLimit);
   const comparableModel = draftModel.trim() || 'default';
   const isDirty = isNew
     ? Boolean(normalizedName || draftDescription.trim() || draftPrompt.trim() !== DEFAULT_PROMPT || draftModel.trim() || draftFallbacks.trim())
@@ -242,7 +197,7 @@ export const AgentsView: React.FC = () => {
           ) : (
             filteredAgents.map((agent) => {
               const selected = agent.name === selectedAgentName;
-              const protectedProfile = isProtectedAgent(agent.name);
+              const protectedProfile = Boolean(agent.isProtected);
               const itemClass = 'flex w-full items-center gap-3 rounded-lg border p-3 text-left transition ' +
                 (selected ? 'border-amber-500/40 bg-amber-500/10 text-amber-200' : 'border-border/60 bg-card/40 text-foreground hover:border-border hover:bg-muted/20');
               return (
@@ -363,7 +318,7 @@ export const AgentsView: React.FC = () => {
                   {isProtected ? 'Core profiles are read-only. Duplicate one to create an editable custom variant.' : nameExists ? (
                     <span className="text-red-400">A subagent named {normalizedName} already exists.</span>
                   ) : normalizedName ? (
-                    <span>Saved as <code>{normalizedName}</code>. Fallbacks accept up to three comma-separated model names.</span>
+                    <span>Saved as <code>{normalizedName}</code>. {fallbackLimit ? `Fallbacks accept up to ${fallbackLimit} comma-separated model names.` : 'Fallbacks accept comma-separated model names.'}</span>
                   ) : (
                     <span>Names must start with a letter and use lowercase letters, numbers, and underscores.</span>
                   )}

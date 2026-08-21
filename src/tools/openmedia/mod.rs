@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use openmedia_core::Config;
 use openmedia_mcp::{McpObject, OpenMediaServer};
 use rmcp::handler::server::wrapper::{Json, Parameters};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub async fn get_server() -> Result<&'static OpenMediaServer> {
     static SERVER: std::sync::OnceLock<OpenMediaServer> = std::sync::OnceLock::new();
@@ -377,7 +377,13 @@ fn video_scene_parameter_schema(include_preview_fields: bool) -> Value {
 }
 
 // ── 1. Model & SVG Tools ───────────────────────────────────────
-define_openmedia_tool!(OpenMediaModelDownloadTool, "openmedia_model_download", "Download a specified model file (CLIP text/vision or Aesthetic predictor) from Hugging Face Hub with progress tracking.", openmedia_mcp::ModelDownloadRequest, model_download);
+define_openmedia_tool!(
+    OpenMediaModelDownloadTool,
+    "openmedia_model_download",
+    "Download a specified model file (CLIP text/vision or Aesthetic predictor) from Hugging Face Hub with progress tracking.",
+    openmedia_mcp::ModelDownloadRequest,
+    model_download
+);
 define_openmedia_tool!(
     OpenMediaRasterizeSvgTool,
     "openmedia_rasterize_svg",
@@ -821,9 +827,11 @@ mod tests {
     fn test_openmedia_create_svg_schema_includes_examples_and_output_path() {
         let tool = OpenMediaCreateSvgTool;
         let schema = tool.parameters();
-        assert!(schema["properties"]["elements"]["examples"]
-            .as_array()
-            .is_some());
+        assert!(
+            schema["properties"]["elements"]["examples"]
+                .as_array()
+                .is_some()
+        );
         assert_eq!(
             schema["properties"]["elements"]["examples"][0][0]["type"],
             "rect"

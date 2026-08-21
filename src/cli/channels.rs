@@ -6,7 +6,7 @@ use crate::config::loader::load_config;
 use crate::config::schema::Config;
 use crate::cron::scheduler::start_scheduler;
 use crate::{eprintln, println};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 pub async fn handle_ratatui_tui() -> Result<()> {
     crate::channels::handle_ratatui_tui().await

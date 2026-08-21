@@ -210,11 +210,13 @@ mod tests {
             entries[0].is_file(),
             "tool output path must be a file, not a nested path"
         );
-        assert!(!entries[0]
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .contains('/'));
+        assert!(
+            !entries[0]
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains('/')
+        );
         let expected_ref = format!("file://{}", entries[0].to_string_lossy());
         assert!(messages[0].content.contains(&expected_ref));
         assert_eq!(

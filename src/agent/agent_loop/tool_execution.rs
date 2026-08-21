@@ -31,7 +31,14 @@ fn filename_arg(map: &serde_json::Map<String, serde_json::Value>, keys: &[&str])
 // Canonical argument alias sets for display formatting. New tools should use
 // the first entry (snake_case) as their primary argument name; the remaining
 // entries are legacy aliases kept for compatibility with existing prompts.
-const PATH_KEYS: &[&str] = &["path", "file_path", "filePath", "TargetFile", "filepath", "file"];
+const PATH_KEYS: &[&str] = &[
+    "path",
+    "file_path",
+    "filePath",
+    "TargetFile",
+    "filepath",
+    "file",
+];
 const COMMAND_KEYS: &[&str] = &["command", "Command", "CommandLine", "command_line"];
 const OUTPUT_KEYS: &[&str] = &["output_path", "outputPath", "OutputPath"];
 const QUERY_KEYS: &[&str] = &["query", "Query"];
@@ -98,10 +105,15 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 .map(|q| format!("query: \"{}\"", clip(q, 35)))
                 .unwrap_or_default(),
             // Filesystem-style tools — show just the target file name
-            "read_file" | "view_file" | "write_file" | "write_to_file" | "replace_file_content"
-            | "multi_replace_file_content" | "patch_file" | "replace_lines" | "list_dir" => {
-                filename_arg(map, PATH_KEYS).unwrap_or_default()
-            }
+            "read_file"
+            | "view_file"
+            | "write_file"
+            | "write_to_file"
+            | "replace_file_content"
+            | "multi_replace_file_content"
+            | "patch_file"
+            | "replace_lines"
+            | "list_dir" => filename_arg(map, PATH_KEYS).unwrap_or_default(),
             // Shell tools — show the first command line
             "run_command" | "exec_command" => string_arg(map, COMMAND_KEYS)
                 .map(|cmd| clip(cmd.lines().next().unwrap_or("").trim(), 40))

@@ -1,6 +1,6 @@
 use crate::agent::style::*;
 use crate::println;
-use std::io::{stdout, Write};
+use std::io::{Write, stdout};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 

@@ -249,7 +249,9 @@ fn recent_session_context(messages: &[crate::session::Message], max_chars: usize
     if lines.is_empty() {
         return String::new();
     }
-    let mut out = String::from("\n\n[Recent Session Context]\nUse these latest turns before claiming there is no current-session context:\n");
+    let mut out = String::from(
+        "\n\n[Recent Session Context]\nUse these latest turns before claiming there is no current-session context:\n",
+    );
     for line in lines {
         if out.chars().count() + line.chars().count() + 1 > max_chars {
             break;
@@ -310,6 +312,7 @@ fn identity_memory_candidate(text: &str) -> bool {
 fn runtime_tool_discipline_rules() -> &'static str {
     "- When asked what OpenZ can do, what features/tools exist, or how OpenZ compares, call 'openz_inventory' (and 'tool_catalog' only for deeper schema/routing details) before giving exact counts. Do not guess feature/tool counts from memory.\n\
             - When asked model/provider identity questions such as 'what model are you', 'are you DeepSeek', 'which provider are you using', or model capability questions such as 'which programming language are you best at', call 'openz_inventory' first and answer from runtime_identity. Do not guess hidden model architecture, training data, parameter count, or benchmark ranking. State uncertainty when the live config only exposes a model label/provider.\n\
+            - Layered tool use: L0 classify the turn as direct answer, local repo, local execution, web research, memory, cron, media/document, or orchestration. Complete the request directly when the answer is stable, trivial, or already available in local context. Do not delegate or research for trivial/general-knowledge tasks. Use web/search/browser tools only when the user asks for research, provides an external URL, asks for latest/current/recent info, or when accuracy depends on live external facts. Use local repo tools for questions about this repository, current directory, implementation locations, diffs, tests, or files. If a required tool is not visible, call 'request_tool_scope' with the exact missing tool or domain instead of guessing.\n\
             - Task lifecycle discipline: OpenZ tracks OpenZ-owned browsers, servers, agents, subagents, MCP bridges, watchers, and background jobs automatically. Use 'manage_tasks' internally to clean/list/stop OpenZ-owned resources when their purpose ends, when the user says done/stop/cleanup, or before finalizing verification-only resources. Never ask the user to run manual task-management slash commands. Never stop external/user-owned resources unless the user explicitly asks and approval flow allows it. When 'exec_command' launches a dev server/background server and returns server_registered=true, treat the launch as complete. Do not retry with pkill/ps guesses. If the user is actively previewing a server, report the server id and leave it running until no longer needed.\n\
             - When creating large websites, generated source files, or video timelines, avoid one huge 'write_file' payload. Prefer chunked file creation/append steps or smaller artifacts, then verify file exists. For 20s+ HTML videos, render in shorter segments and concatenate. After a repeated successful workaround, save it with 'workflow_memory' or 'curate_skill'.
             - When answering from recent memory or saved research, do not scold the user for repeating a question. Answer normally and mention the saved context only if useful."
@@ -484,7 +487,9 @@ fn format_research_brief_context_items(
         return String::new();
     }
     let current_sensitive = super::research_policy::has_live_research_intent(user_content);
-    let mut out = String::from("\n\n[Relevant Research Briefs]\nUse these saved briefs first for simple definition/comparison questions. Do not call web/search tools when a fresh brief answers a stable non-live question. If the user provides a URL, asks to verify/check again, or asks for latest/current data, refresh the exact source or web before final answer. Only state facts present in the briefs or saved sources; say unknown if a requested detail is missing. Do not guess licenses, channels, release numbers, integrations, or comparisons from memory alone:\n");
+    let mut out = String::from(
+        "\n\n[Relevant Research Briefs]\nUse these saved briefs first for simple definition/comparison questions. Do not call web/search tools when a fresh brief answers a stable non-live question. If the user provides a URL, asks to verify/check again, or asks for latest/current data, refresh the exact source or web before final answer. Only state facts present in the briefs or saved sources; say unknown if a requested detail is missing. Do not guess licenses, channels, release numbers, integrations, or comparisons from memory alone:\n",
+    );
     if current_sensitive {
         out.push_str("- Live/refresh intent detected: verify exact saved sources or web before final answer.\n");
     } else {
@@ -1145,6 +1150,8 @@ mod tests {
         assert!(rule.contains("model/provider identity"));
         assert!(rule.contains("openz_inventory"));
         assert!(rule.contains("Do not guess"));
+        assert!(rule.contains("Do not delegate or research for trivial/general-knowledge tasks."));
+        assert!(rule.contains("call 'request_tool_scope'"));
     }
 
     #[test]

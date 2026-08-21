@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
 static DISCORD_BOT_INFO: OnceLock<(String, Client)> = OnceLock::new();
@@ -148,7 +148,13 @@ impl super::Channel for DiscordChannel {
                         break;
                     }
                     if !silent {
-                        tracing::error!("Discord gateway connection error: {}. Reconnecting in {}s... (attempt {}/{})", err_msg, backoff.as_secs(), retry_count, MAX_RETRIES);
+                        tracing::error!(
+                            "Discord gateway connection error: {}. Reconnecting in {}s... (attempt {}/{})",
+                            err_msg,
+                            backoff.as_secs(),
+                            retry_count,
+                            MAX_RETRIES
+                        );
                     }
                     tokio::select! {
                         biased;
@@ -430,11 +436,7 @@ fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
 
         let candidate = &remaining[..split_at];
         let final_split = if let Some(idx) = candidate.rfind('\n') {
-            if idx > 0 {
-                idx
-            } else {
-                split_at
-            }
+            if idx > 0 { idx } else { split_at }
         } else {
             split_at
         };

@@ -9,9 +9,9 @@ pub mod source_ledger;
 pub mod style;
 
 pub use self::activity::{
-    get_activity, pop_inbox_message, send_inbox_message, update_activity, AgentActivity,
-    InboxMessage,
+    AgentActivity, InboxMessage, get_activity, pop_inbox_message, send_inbox_message,
+    update_activity,
 };
 pub use self::agent_loop::{AgentLoop, RunResult, TurnState};
-pub use self::security::{ask_approval, SecurityGuard};
+pub use self::security::{SecurityGuard, ask_approval};
 pub use self::skills::Skill;

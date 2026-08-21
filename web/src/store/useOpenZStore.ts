@@ -14,6 +14,8 @@ import type {
   AgentDefaultsConfig,
   SlashCommand,
   AgentStatus,
+  RuntimeInventory,
+  CronRunRecord,
   ChatAttachment,
   BackgroundServerInfo,
   SkillInfo,
@@ -26,10 +28,10 @@ import type {
   OrchestrationRunState,
   OrchestrationStepState,
 } from '../types';
-import { wsService } from '../services/websocket';
+import { defaultWebSocketUrl, wsService } from '../services/websocket';
 
 /** Workspace views available from the left navigation rail. */
-export type WorkspaceView = 'dashboard' | 'chats' | 'agents' | 'skills' | 'knowledge';
+export type WorkspaceView = 'dashboard' | 'chats' | 'agents' | 'skills' | 'knowledge' | 'inventory';
 
 export interface OpenZState {
   // Connection
@@ -55,6 +57,8 @@ export interface OpenZState {
   loadingModelProvider: string | null;
   slashCommands: SlashCommand[];
   status: AgentStatus | null;
+  runtimeInventory: RuntimeInventory | null;
+  cronLogs: CronRunRecord[];
 
   // Settings & Toggles (bound to real config via set_config)
   cavemanMode: boolean;
@@ -118,6 +122,10 @@ export interface OpenZState {
   deleteSkill: (name: string) => void;
   saveSubagent: (data: { name: string; description: string; systemPrompt: string; model?: string; fallbacks?: string[] }) => void;
   deleteSubagent: (name: string) => void;
+  pauseCronJob: (id: string) => void;
+  resumeCronJob: (id: string) => void;
+  deleteCronJob: (id: string) => void;
+  requestCronLogs: (id?: string, limit?: number) => void;
 }
 
 const EMPTY_MEMORY: CognitiveMemoryStats = {
@@ -574,7 +582,7 @@ function settleAssistantTurnMessages(messages: OpenZMessage[], reason: string, n
 
 export const useOpenZStore = create<OpenZState>((set, get) => ({
   connectionStatus: 'disconnected',
-  wsUrl: localStorage.getItem('openz_ws_url') || 'ws://127.0.0.1:8765/ws',
+  wsUrl: localStorage.getItem('openz_ws_url') || defaultWebSocketUrl(),
   wsToken: localStorage.getItem('openz_ws_token') || '',
 
   sessions: [],
@@ -592,6 +600,8 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   loadingModelProvider: null,
   slashCommands: [],
   status: null,
+  runtimeInventory: null,
+  cronLogs: [],
 
   cavemanMode: false,
   streamingMode: true,
@@ -1039,6 +1049,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       wsService.requestConfig();
       wsService.requestSlashCommands();
       wsService.requestStatus();
+      wsService.requestRuntimeInventory();
     });
 
     wsService.on('sessions_list', (payload) => {
@@ -1344,6 +1355,34 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       });
     });
 
+    wsService.on('runtime_inventory', (payload) => {
+      if (payload.inventory) {
+        set({ runtimeInventory: payload.inventory as RuntimeInventory });
+      }
+    });
+
+    wsService.on('cron_jobs_updated', (payload) => {
+      const id = typeof payload.id === 'string' ? payload.id : 'cron job';
+      const status = typeof payload.status === 'string' ? payload.status : 'updated';
+      if (payload.inventory) {
+        set({ runtimeInventory: payload.inventory as RuntimeInventory });
+      }
+      set({
+        workspaceNotice: {
+          scope: 'inventory',
+          type: 'success',
+          message: `Cron job ${id} ${status}.`,
+          timestamp: Date.now(),
+        },
+      });
+    });
+
+    wsService.on('cron_logs', (payload) => {
+      if (Array.isArray(payload.runs)) {
+        set({ cronLogs: payload.runs as CronRunRecord[] });
+      }
+    });
+
     wsService.on('attached', (payload) => {
       if (payload.chat_id) {
         const chatId = normalizeChatId(payload.chat_id);
@@ -1360,7 +1399,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
         const activeView = get().activeView;
         const scope = get().isSettingsOpen
           ? 'settings'
-          : activeView === 'agents' || activeView === 'skills' || activeView === 'knowledge'
+          : activeView === 'agents' || activeView === 'skills' || activeView === 'knowledge' || activeView === 'inventory'
             ? activeView
             : 'global';
         set({ workspaceNotice: { scope, type: 'error', message: String(detail), timestamp: Date.now() } });
@@ -1443,6 +1482,25 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   deleteSubagent: (name) => {
     set({ workspaceNotice: { scope: 'agents', type: 'info', message: 'Subagent delete requested. Waiting for gateway refresh.', timestamp: Date.now() } });
     wsService.deleteSubagent(name);
+  },
+
+  pauseCronJob: (id) => {
+    set({ workspaceNotice: { scope: 'inventory', type: 'info', message: `Pausing cron job ${id}.`, timestamp: Date.now() } });
+    wsService.pauseCronJob(id);
+  },
+
+  resumeCronJob: (id) => {
+    set({ workspaceNotice: { scope: 'inventory', type: 'info', message: `Resuming cron job ${id}.`, timestamp: Date.now() } });
+    wsService.resumeCronJob(id);
+  },
+
+  deleteCronJob: (id) => {
+    set({ workspaceNotice: { scope: 'inventory', type: 'info', message: `Deleting cron job ${id}.`, timestamp: Date.now() } });
+    wsService.deleteCronJob(id);
+  },
+
+  requestCronLogs: (id, limit = 20) => {
+    wsService.requestCronLogs(id, limit);
   },
 
   selectSession: (chatId) => {

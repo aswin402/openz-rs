@@ -1,6 +1,6 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use serde_json::{Value, json};
 use tokio::process::Command;
 
 pub struct OnpkgTool;
@@ -241,7 +241,9 @@ pub fn sync_onpkg_manifest() -> Result<()> {
 
     // 4. Update INDEX.md dynamically
     let index_path = docs_dir.join("INDEX.md");
-    let mut index_content = String::from("# Project AI Agent Skills 🧠\n\nThis directory contains instructions and guidelines for AI agents working on this project.\n\n## Available Skills\n");
+    let mut index_content = String::from(
+        "# Project AI Agent Skills 🧠\n\nThis directory contains instructions and guidelines for AI agents working on this project.\n\n## Available Skills\n",
+    );
     for skill in &active_skills {
         let name_without_ext = skill.strip_suffix(".md").unwrap_or(skill);
         index_content.push_str(&format!(

@@ -1,13 +1,13 @@
-use super::{build_provider_for_model, CancellationToken, DELEGATION_DEPTH};
-use crate::agent::style::*;
+use super::{CancellationToken, DELEGATION_DEPTH, build_provider_for_model};
 use crate::agent::AgentLoop;
+use crate::agent::style::*;
 use crate::config::schema::Config;
 use crate::orchestrator::spec::CapabilityPolicy;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
 use crate::tools::Tool;
 use crate::tools::ToolRegistry;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::task::JoinSet;

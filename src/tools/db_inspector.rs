@@ -1,7 +1,7 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use rusqlite::Connection;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn normalize_sql(sql: &str) -> String {
     let sql_upper = sql.to_uppercase();
@@ -103,7 +103,9 @@ impl Tool for DbInspectorTool {
                 // Allow a single trailing semicolon (normal SQL syntax) but block mid-query semicolons.
                 let trimmed_sql = sql.trim_end_matches(';').trim();
                 if trimmed_sql.contains(';') {
-                    return Err(anyhow!("Only simple SELECT queries are allowed. Semicolons (stacked queries) are blocked."));
+                    return Err(anyhow!(
+                        "Only simple SELECT queries are allowed. Semicolons (stacked queries) are blocked."
+                    ));
                 }
                 if sql.contains("--") || sql.contains("/*") {
                     return Err(anyhow!(
@@ -313,10 +315,11 @@ mod tests {
             }))
             .await;
 
-        assert!(res
-            .unwrap_err()
-            .to_string()
-            .contains("Path traversal prevention"));
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Path traversal prevention")
+        );
     }
 
     #[tokio::test]
@@ -329,10 +332,11 @@ mod tests {
             }))
             .await;
 
-        assert!(res
-            .unwrap_err()
-            .to_string()
-            .contains("Path traversal prevention"));
+        assert!(
+            res.unwrap_err()
+                .to_string()
+                .contains("Path traversal prevention")
+        );
     }
 
     #[tokio::test]
@@ -364,10 +368,12 @@ mod tests {
             }))
             .await?;
         assert_eq!(res["status"], "success");
-        assert!(res["stdout"]
-            .as_str()
-            .unwrap()
-            .contains("CREATE TABLE users"));
+        assert!(
+            res["stdout"]
+                .as_str()
+                .unwrap()
+                .contains("CREATE TABLE users")
+        );
 
         // Test action: query
         let res = tool

@@ -1,7 +1,7 @@
 use crate::tools::{Tool, ToolMetadata, ToolRisk};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::path::PathBuf;

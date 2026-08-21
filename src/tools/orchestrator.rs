@@ -1,17 +1,17 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use crate::config::schema::Config;
 use crate::orchestrator::events::{WorkflowEvent, WorkflowEventSink};
-use crate::orchestrator::runtime::{build_step_prompt, StepExecutor, WorkflowRuntime};
+use crate::orchestrator::runtime::{StepExecutor, WorkflowRuntime, build_step_prompt};
 use crate::orchestrator::spec::{CapabilityPolicy, WorkflowSpec, WorkflowStep};
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
 use crate::subagents::SubagentProfile;
-use crate::tools::subagent::{CancellationToken, DelegateProfileTool};
 use crate::tools::Tool;
+use crate::tools::subagent::{CancellationToken, DelegateProfileTool};
 
 #[derive(Default)]
 pub struct OrchestrateWorkflowTool {
@@ -385,14 +385,18 @@ mod tests {
         let effective = combine_capability_policies(Some(&inherited), &workflow);
 
         assert_eq!(effective.allowed_tools, vec!["read_file".to_string()]);
-        assert!(effective
-            .denied_tools
-            .iter()
-            .any(|tool| tool == "coding_agent"));
-        assert!(effective
-            .denied_tools
-            .iter()
-            .any(|tool| tool == "web_fetch"));
+        assert!(
+            effective
+                .denied_tools
+                .iter()
+                .any(|tool| tool == "coding_agent")
+        );
+        assert!(
+            effective
+                .denied_tools
+                .iter()
+                .any(|tool| tool == "web_fetch")
+        );
         assert!(effective.deny_shell);
         assert!(effective.deny_filesystem_write);
         assert!(effective.deny_network);

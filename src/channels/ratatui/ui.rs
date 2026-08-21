@@ -1,11 +1,11 @@
 use super::app::{ModalState, RatatuiApp};
 use super::theme::{self, Theme};
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
-    Frame,
 };
 use std::sync::OnceLock;
 
@@ -86,7 +86,12 @@ fn markdown_line_to_spans(line: &str, theme: &Theme) -> Vec<Span<'static>> {
     }
 
     // List items — use classic crisp bullet (•)
-    if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")).or_else(|| trimmed.strip_prefix("• ")).or_else(|| trimmed.strip_prefix("· ")) {
+    if let Some(rest) = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+        .or_else(|| trimmed.strip_prefix("• "))
+        .or_else(|| trimmed.strip_prefix("· "))
+    {
         let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
         let mut spans = vec![
             Span::raw(indent),
@@ -96,10 +101,13 @@ fn markdown_line_to_spans(line: &str, theme: &Theme) -> Vec<Span<'static>> {
         return spans;
     }
 
-    if let Some(rest) = trimmed.strip_prefix("  - ").or_else(|| trimmed.strip_prefix("  * ")).or_else(|| trimmed.strip_prefix("  • ")).or_else(|| trimmed.strip_prefix("  · ")) {
-        let mut spans = vec![
-            Span::styled("    • ", Style::default().fg(theme.muted)),
-        ];
+    if let Some(rest) = trimmed
+        .strip_prefix("  - ")
+        .or_else(|| trimmed.strip_prefix("  * "))
+        .or_else(|| trimmed.strip_prefix("  • "))
+        .or_else(|| trimmed.strip_prefix("  · "))
+    {
+        let mut spans = vec![Span::styled("    • ", Style::default().fg(theme.muted))];
         spans.extend(parse_inline_markdown(rest, theme));
         return spans;
     }
@@ -112,7 +120,10 @@ fn markdown_line_to_spans(line: &str, theme: &Theme) -> Vec<Span<'static>> {
             let rest = &trimmed[pos + 2..];
             let mut spans = vec![
                 Span::raw(indent),
-                Span::styled(format!("{}. ", number), Style::default().fg(theme.brand_accent)),
+                Span::styled(
+                    format!("{}. ", number),
+                    Style::default().fg(theme.brand_accent),
+                ),
             ];
             spans.extend(parse_inline_markdown(rest, theme));
             return spans;
@@ -175,9 +186,7 @@ fn parse_inline_markdown(text: &str, theme: &Theme) -> Vec<Span<'static>> {
                         let inner = &matched[1..matched.len() - 1];
                         spans.push(Span::styled(
                             format!(" {} ", inner),
-                            Style::default()
-                                .fg(theme.success)
-                                .bg(theme.bg_elevated),
+                            Style::default().fg(theme.success).bg(theme.bg_elevated),
                         ));
                     }
                     _ => {}
@@ -291,14 +300,12 @@ fn render_timeline(f: &mut Frame, app: &mut RatatuiApp, area: Rect) {
     }
 
     lines.push(Line::from(String::new()));
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!(" openz v{}", env!("CARGO_PKG_VERSION")),
-            Style::default()
-                .fg(theme.brand_accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]));
+    lines.push(Line::from(vec![Span::styled(
+        format!(" openz v{}", env!("CARGO_PKG_VERSION")),
+        Style::default()
+            .fg(theme.brand_accent)
+            .add_modifier(Modifier::BOLD),
+    )]));
 
     lines.push(Line::from(vec![
         Span::styled(" ", Style::default()),
@@ -405,10 +412,7 @@ fn render_timeline(f: &mut Frame, app: &mut RatatuiApp, area: Rect) {
                         for r_line in reasoning_trimmed.lines() {
                             lines.push(Line::from(vec![
                                 Span::styled("  L ", Style::default().fg(theme.muted)),
-                                Span::styled(
-                                    r_line.to_string(),
-                                    Style::default().fg(theme.muted),
-                                ),
+                                Span::styled(r_line.to_string(), Style::default().fg(theme.muted)),
                             ]));
                         }
                         lines.push(Line::from(String::new()));
@@ -504,7 +508,8 @@ fn render_timeline(f: &mut Frame, app: &mut RatatuiApp, area: Rect) {
                             theme.success
                         } else if out_line.starts_with('-') {
                             theme.destructive
-                        } else if out_line.starts_with("##") || out_line.starts_with("test result:") {
+                        } else if out_line.starts_with("##") || out_line.starts_with("test result:")
+                        {
                             theme.info
                         } else {
                             theme.muted
@@ -519,7 +524,10 @@ fn render_timeline(f: &mut Frame, app: &mut RatatuiApp, area: Rect) {
                     let total_out_lines = trimmed.lines().count();
                     if total_out_lines > max_lines {
                         lines.push(Line::from(vec![Span::styled(
-                            format!("    ... +{} lines (output folded)", total_out_lines - max_lines),
+                            format!(
+                                "    ... +{} lines (output folded)",
+                                total_out_lines - max_lines
+                            ),
                             Style::default().fg(theme.border),
                         )]));
                     }
@@ -851,12 +859,10 @@ fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) {
             f.render_widget(outer_block, popup_area);
 
             if *loading {
-                let loading_p = Paragraph::new(format!(
-                    "Fetching live models from {}...",
-                    provider_display
-                ))
-                .style(Style::default().fg(theme.warning))
-                .alignment(Alignment::Center);
+                let loading_p =
+                    Paragraph::new(format!("Fetching live models from {}...", provider_display))
+                        .style(Style::default().fg(theme.warning))
+                        .alignment(Alignment::Center);
                 f.render_widget(loading_p, inner_area);
                 return;
             }
@@ -906,9 +912,10 @@ fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) {
             let list = List::new(items).block(Block::default().borders(Borders::NONE));
             f.render_widget(list, chunks[1]);
 
-            let hints = Paragraph::new(" ↑/↓ Navigate · enter Select · type to Filter · esc Cancel")
-                .style(Style::default().fg(theme.muted))
-                .alignment(Alignment::Center);
+            let hints =
+                Paragraph::new(" ↑/↓ Navigate · enter Select · type to Filter · esc Cancel")
+                    .style(Style::default().fg(theme.muted))
+                    .alignment(Alignment::Center);
             f.render_widget(hints, chunks[2]);
         }
         ModalState::Help => {
@@ -926,64 +933,109 @@ fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) {
             f.render_widget(block, popup_area);
 
             let help_text = vec![
-                Line::from(vec![
-                    Span::styled("Slash Commands:", Style::default().fg(theme.brand_accent).add_modifier(Modifier::BOLD)),
-                ]),
+                Line::from(vec![Span::styled(
+                    "Slash Commands:",
+                    Style::default()
+                        .fg(theme.brand_accent)
+                        .add_modifier(Modifier::BOLD),
+                )]),
                 Line::from(vec![
                     Span::styled("  /model       ", Style::default().fg(theme.warning)),
-                    Span::styled("Switch active LLM provider and model", Style::default().fg(theme.text_primary)),
+                    Span::styled(
+                        "Switch active LLM provider and model",
+                        Style::default().fg(theme.text_primary),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("  /clear       ", Style::default().fg(theme.warning)),
-                    Span::styled("Clear current conversation timeline", Style::default().fg(theme.text_primary)),
+                    Span::styled(
+                        "Clear current conversation timeline",
+                        Style::default().fg(theme.text_primary),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("  /history     ", Style::default().fg(theme.warning)),
-                    Span::styled("Restore or switch previous sessions", Style::default().fg(theme.text_primary)),
+                    Span::styled(
+                        "Restore or switch previous sessions",
+                        Style::default().fg(theme.text_primary),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("  /mcps        ", Style::default().fg(theme.warning)),
-                    Span::styled("List configured and active MCP tools", Style::default().fg(theme.text_primary)),
+                    Span::styled(
+                        "List configured and active MCP tools",
+                        Style::default().fg(theme.text_primary),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("  /memory      ", Style::default().fg(theme.warning)),
-                    Span::styled("View cognitive knowledge graph & facts", Style::default().fg(theme.text_primary)),
+                    Span::styled(
+                        "View cognitive knowledge graph & facts",
+                        Style::default().fg(theme.text_primary),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("  /skills      ", Style::default().fg(theme.warning)),
-                    Span::styled("View active autonomous skills", Style::default().fg(theme.text_primary)),
+                    Span::styled(
+                        "View active autonomous skills",
+                        Style::default().fg(theme.text_primary),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("  /exit        ", Style::default().fg(theme.warning)),
-                    Span::styled("Quit OpenZ interactive session", Style::default().fg(theme.text_primary)),
+                    Span::styled(
+                        "Quit OpenZ interactive session",
+                        Style::default().fg(theme.text_primary),
+                    ),
                 ]),
                 Line::from(String::new()),
-                Line::from(vec![
-                    Span::styled("Shortcuts:", Style::default().fg(theme.brand_accent).add_modifier(Modifier::BOLD)),
-                ]),
+                Line::from(vec![Span::styled(
+                    "Shortcuts:",
+                    Style::default()
+                        .fg(theme.brand_accent)
+                        .add_modifier(Modifier::BOLD),
+                )]),
                 Line::from(vec![
                     Span::styled("  Enter        ", Style::default().fg(theme.info)),
-                    Span::styled("Send message / Select highlighted item", Style::default().fg(theme.text_primary)),
+                    Span::styled(
+                        "Send message / Select highlighted item",
+                        Style::default().fg(theme.text_primary),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("  Tab          ", Style::default().fg(theme.info)),
-                    Span::styled("Autocomplete slash command", Style::default().fg(theme.text_primary)),
+                    Span::styled(
+                        "Autocomplete slash command",
+                        Style::default().fg(theme.text_primary),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("  ↑ / ↓        ", Style::default().fg(theme.info)),
-                    Span::styled("Navigate commands / prompt history", Style::default().fg(theme.text_primary)),
+                    Span::styled(
+                        "Navigate commands / prompt history",
+                        Style::default().fg(theme.text_primary),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("  PgUp / PgDn  ", Style::default().fg(theme.info)),
-                    Span::styled("Scroll conversation timeline", Style::default().fg(theme.text_primary)),
+                    Span::styled(
+                        "Scroll conversation timeline",
+                        Style::default().fg(theme.text_primary),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("  Mouse Wheel  ", Style::default().fg(theme.info)),
-                    Span::styled("Scroll conversation up / down smoothly", Style::default().fg(theme.text_primary)),
+                    Span::styled(
+                        "Scroll conversation up / down smoothly",
+                        Style::default().fg(theme.text_primary),
+                    ),
                 ]),
                 Line::from(vec![
                     Span::styled("  Esc / Ctrl+C ", Style::default().fg(theme.destructive)),
-                    Span::styled("Cancel active agent turn / Dismiss popup", Style::default().fg(theme.text_primary)),
+                    Span::styled(
+                        "Cancel active agent turn / Dismiss popup",
+                        Style::default().fg(theme.text_primary),
+                    ),
                 ]),
             ];
 

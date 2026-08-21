@@ -3,7 +3,7 @@ use openz_github_mcp::{
     CreatePullRequestRequest, GetIssueCommentsRequest, GithubMcpServer, SearchIssuesRequest,
 };
 use rmcp::handler::server::wrapper::Parameters;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub fn get_server() -> &'static GithubMcpServer {
     static SERVER: std::sync::OnceLock<GithubMcpServer> = std::sync::OnceLock::new();

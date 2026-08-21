@@ -1,5 +1,5 @@
 use crate::agent::AgentLoop;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use std::sync::Arc;

@@ -1,11 +1,11 @@
 use crate::config::resolve_path;
+use crate::tools::Tool;
 use crate::tools::browser_common::{
     connect_to_tab, ensure_browser_running, kill_browser_on_port_9222, send_cdp_cmd,
 };
-use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use base64::prelude::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;

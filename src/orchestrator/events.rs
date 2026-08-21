@@ -3,10 +3,27 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkflowEvent {
-    RunStarted { run_id: String, goal: String, mode: String },
-    StepStarted { run_id: String, step_id: String, agent: String },
-    StepFinished { run_id: String, step_id: String, status: String, output: String },
-    RunFinished { run_id: String, status: String, summary: String },
+    RunStarted {
+        run_id: String,
+        goal: String,
+        mode: String,
+    },
+    StepStarted {
+        run_id: String,
+        step_id: String,
+        agent: String,
+    },
+    StepFinished {
+        run_id: String,
+        step_id: String,
+        status: String,
+        output: String,
+    },
+    RunFinished {
+        run_id: String,
+        status: String,
+        summary: String,
+    },
 }
 
 pub trait WorkflowEventSink: Send + Sync + 'static {

@@ -1,7 +1,7 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
-use rusqlite::{params, Connection};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use rusqlite::{Connection, params};
+use serde_json::{Value, json};
 use tokio::process::Command;
 
 pub struct AstGrepTool;

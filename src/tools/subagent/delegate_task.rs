@@ -1,21 +1,21 @@
 use super::{
-    build_provider_for_model, cancellation_result_json, classify_subagent_error,
-    compact_lifecycle_line, execute_subagent_run, scan_for_images, status_json, CancellationToken,
-    SubagentRunStatus, DELEGATION_DEPTH,
+    CancellationToken, DELEGATION_DEPTH, SubagentRunStatus, build_provider_for_model,
+    cancellation_result_json, classify_subagent_error, compact_lifecycle_line,
+    execute_subagent_run, scan_for_images, status_json,
 };
-use crate::agent::style::*;
 use crate::agent::AgentLoop;
+use crate::agent::style::*;
 use crate::config::schema::Config;
 use crate::orchestrator::spec::CapabilityPolicy;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
 use crate::tools::Tool;
 use crate::tools::ToolRegistry;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde_json::Value;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc, Mutex, OnceLock,
+    atomic::{AtomicU64, Ordering},
 };
 
 pub struct DelegateTaskTool {

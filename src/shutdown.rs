@@ -1,6 +1,6 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::watch;
 
 static SHUTDOWN_TX: OnceLock<watch::Sender<bool>> = OnceLock::new();
@@ -255,8 +255,8 @@ pub fn sigint_action(cli_active: bool, raw_input_active: bool) -> SigintAction {
 #[cfg(test)]
 mod tests {
     use super::{
-        list_registered_children, sigint_action, stop_registered_child, RegisteredChildInfo,
-        SigintAction,
+        RegisteredChildInfo, SigintAction, list_registered_children, sigint_action,
+        stop_registered_child,
     };
 
     #[test]

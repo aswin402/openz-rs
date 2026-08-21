@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::HashSet;
 
 use super::spec::{ReviewMode, WorkflowMode, WorkflowSpec};

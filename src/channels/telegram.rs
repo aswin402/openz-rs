@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 use tokio::sync::oneshot;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 fn telegram_channel_silent() -> bool {
     std::env::var("OPENZ_SILENT").is_ok() || crate::cli::is_silent_mode()
@@ -710,7 +710,10 @@ impl super::Channel for TelegramChannel {
                                                     args[1].parse::<usize>()
                                                 {
                                                     if index == 0 || index > sessions.len() {
-                                                        format!("Invalid session number. Use /resume to list 1..{}.", sessions.len())
+                                                        format!(
+                                                            "Invalid session number. Use /resume to list 1..{}.",
+                                                            sessions.len()
+                                                        )
                                                     } else {
                                                         match crate::channels::resume_channel_session(
                                                             session_manager,
@@ -996,7 +999,10 @@ impl super::Channel for TelegramChannel {
                                                         e
                                                     );
                                                     tokio::spawn(async move {
-                                                        let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
+                                                        let send_url = format!(
+                                                            "https://api.telegram.org/bot{}/sendMessage",
+                                                            token
+                                                        );
                                                         let payload = serde_json::json!({ "chat_id": chat_id, "text": response });
                                                         let _ = client
                                                             .post(&send_url)
@@ -1450,7 +1456,9 @@ impl super::Channel for TelegramChannel {
                                                         "Model switched to {} with provider {}. New channel turns will use this default.",
                                                         model, provider.name
                                                     ),
-                                                    Err(e) => format!("Failed to switch model: {}", e),
+                                                    Err(e) => {
+                                                        format!("Failed to switch model: {}", e)
+                                                    }
                                                 }
                                             } else {
                                                 "That model selection is no longer available. Use /switch-model again.".to_string()
@@ -1696,7 +1704,10 @@ impl super::Channel for TelegramChannel {
                                     if let Some(ref inner_msg) = cb.message {
                                         let chat_id = inner_msg.chat.id;
                                         if let Some(message_id) = inner_msg.message_id {
-                                            let edit_markup_url = format!("https://api.telegram.org/bot{}/editMessageReplyMarkup", self.bot_token);
+                                            let edit_markup_url = format!(
+                                                "https://api.telegram.org/bot{}/editMessageReplyMarkup",
+                                                self.bot_token
+                                            );
                                             let edit_payload = serde_json::json!({
                                                 "chat_id": chat_id,
                                                 "message_id": message_id,
@@ -1768,11 +1779,7 @@ fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
 
         let candidate = &remaining[..split_at];
         let final_split = if let Some(idx) = candidate.rfind('\n') {
-            if idx > 0 {
-                idx
-            } else {
-                split_at
-            }
+            if idx > 0 { idx } else { split_at }
         } else {
             split_at
         };
@@ -1827,9 +1834,11 @@ mod tests {
 
     #[test]
     fn registered_telegram_commands_use_telegram_safe_names() {
-        assert!(TELEGRAM_COMMANDS
-            .iter()
-            .all(|(command, _)| valid_telegram_command_name(command)));
+        assert!(
+            TELEGRAM_COMMANDS
+                .iter()
+                .all(|(command, _)| valid_telegram_command_name(command))
+        );
         let payload = telegram_commands_payload();
         assert_eq!(
             payload["commands"].as_array().unwrap().len(),

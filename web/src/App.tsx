@@ -10,6 +10,7 @@ import { DashboardView } from './components/DashboardView';
 import { KnowledgeView } from './components/KnowledgeView';
 import { SkillsView } from './components/SkillsView';
 import { AgentsView } from './components/AgentsView';
+import { InventoryView } from './components/InventoryView';
 import { CognitiveMemoryModal } from './components/CognitiveMemoryModal';
 import { LogsDrawer } from './components/LogsDrawer';
 import { McpServersModal } from './components/McpServersModal';
@@ -20,6 +21,7 @@ import {
   Bot,
   BookOpen,
   BrainCircuit,
+  Archive,
   LayoutDashboard,
   Menu,
   MessageSquare,
@@ -131,6 +133,8 @@ export const App: React.FC = () => {
         return <AgentsView />;
       case 'skills':
         return <SkillsView />;
+      case 'inventory':
+        return <InventoryView />;
       default:
         return null;
     }
@@ -246,6 +250,7 @@ const WorkspaceQuickActions: React.FC<{
     { id: 'agents', view: 'agents', label: 'Agents', icon: Bot, action: () => onViewChange('agents'), active: activeView === 'agents' },
     { id: 'skills', view: 'skills', label: 'Skills', icon: BookOpen, action: () => onViewChange('skills'), active: activeView === 'skills' },
     { id: 'knowledge', view: 'knowledge', label: 'Knowledge', icon: BrainCircuit, action: () => onViewChange('knowledge'), active: activeView === 'knowledge' },
+    { id: 'inventory', view: 'inventory', label: 'Inventory', icon: Archive, action: () => onViewChange('inventory'), active: activeView === 'inventory' },
     { id: 'theme', label: themeLabel, icon: themeIcon, action: onThemeToggle, active: false },
     { id: 'activity', label: activityOpen ? 'Hide activity' : 'Show activity', icon: activityOpen ? PanelRightClose : PanelRightOpen, action: onActivityToggle, active: activeView === 'chats' && activityOpen },
   ];

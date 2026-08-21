@@ -1,15 +1,15 @@
 use super::cache::{cache_content, get_cache_connection, log_compression};
 use super::policy::{
-    command_is_allowed, ensure_path_is_safe_for_headroom, resolve_user_path, MAX_RUN_OUTPUT_BYTES,
-    MAX_RUN_TIMEOUT_SECS,
+    MAX_RUN_OUTPUT_BYTES, MAX_RUN_TIMEOUT_SECS, command_is_allowed,
+    ensure_path_is_safe_for_headroom, resolve_user_path,
 };
-use super::{estimate_tokens, MAX_INPUT_SIZE};
+use super::{MAX_INPUT_SIZE, estimate_tokens};
 use crate::agent::context_compactor;
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::Utc;
 use rusqlite::params;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
@@ -433,12 +433,22 @@ pub fn compress_diff_text(diff_text: &str) -> String {
         return "No files changed in diff.".to_string();
     }
     let files_count = summary.files.len();
-    let mut output =
-        format!(
+    let mut output = format!(
         "Diff Summary: {} file{} changed, {} insertion{}(+), {} deletion{}(-)\n\nModified files:",
-        files_count, if files_count == 1 { "" } else { "s" },
-        summary.total_insertions, if summary.total_insertions == 1 { "" } else { "s" },
-        summary.total_deletions, if summary.total_deletions == 1 { "" } else { "s" }
+        files_count,
+        if files_count == 1 { "" } else { "s" },
+        summary.total_insertions,
+        if summary.total_insertions == 1 {
+            ""
+        } else {
+            "s"
+        },
+        summary.total_deletions,
+        if summary.total_deletions == 1 {
+            ""
+        } else {
+            "s"
+        }
     );
     for f in summary.files {
         output.push_str("\n- ");
@@ -742,8 +752,15 @@ impl Tool for CompressContentTool {
             auto_detect_type(&raw_text)
         } else {
             match content_type.as_str() {
-                "json" | "code" | "text_logs" | "csv" | "markdown" | "yaml" => content_type.as_str(),
-                other => return Err(anyhow!("Unknown content_type '{}'. Use 'json', 'code', 'text_logs', 'csv', 'markdown', 'yaml', or 'auto'.", other)),
+                "json" | "code" | "text_logs" | "csv" | "markdown" | "yaml" => {
+                    content_type.as_str()
+                }
+                other => {
+                    return Err(anyhow!(
+                        "Unknown content_type '{}'. Use 'json', 'code', 'text_logs', 'csv', 'markdown', 'yaml', or 'auto'.",
+                        other
+                    ));
+                }
             }
         };
 

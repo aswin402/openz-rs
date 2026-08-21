@@ -1,5 +1,5 @@
-use crate::agent::style::*;
 use crate::agent::AgentLoop;
+use crate::agent::style::*;
 use crate::config::schema::AgentDefaults;
 use anyhow::Result;
 use std::io::{self, Write};

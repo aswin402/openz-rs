@@ -1,5 +1,5 @@
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::process::{Command, Stdio};
 
 #[cfg(unix)]

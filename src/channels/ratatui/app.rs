@@ -201,7 +201,7 @@ impl ModalState {
 }
 
 // Re-export shared provider data from channels/mod.rs — single source of truth
-pub use crate::channels::{build_configured_providers, curated_models_for, PROVIDER_REGISTRY};
+pub use crate::channels::{PROVIDER_REGISTRY, build_configured_providers, curated_models_for};
 
 pub struct RatatuiApp {
     pub model: String,
@@ -375,11 +375,7 @@ impl RatatuiApp {
                 let branch = output.ok().and_then(|out| {
                     if out.status.success() {
                         let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                        if !b.is_empty() {
-                            Some(b)
-                        } else {
-                            None
-                        }
+                        if !b.is_empty() { Some(b) } else { None }
                     } else {
                         None
                     }

@@ -73,6 +73,28 @@ pub struct ProvidersConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ToolRoutingConfig {
+    pub enabled: bool,
+    pub max_visible_tools: usize,
+    pub always_visible_tools: Vec<String>,
+}
+
+impl Default for ToolRoutingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_visible_tools: 20,
+            always_visible_tools: vec![
+                "request_tool_scope".to_string(),
+                "tool_catalog".to_string(),
+                "openz_inventory".to_string(),
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentDefaults {
     #[serde(default = "default_workspace")]
@@ -121,6 +143,8 @@ pub struct AgentDefaults {
     pub show_auto_capture_notices: bool,
     #[serde(default = "default_tui_thought_display", alias = "tui_thought_display")]
     pub tui_thought_display: String,
+    #[serde(default, alias = "layered_tool_routing")]
+    pub layered_tool_routing: ToolRoutingConfig,
     #[serde(default = "default_min_free_disk_gb", alias = "min_free_disk_gb")]
     pub min_free_disk_gb: f64,
     #[serde(default = "default_allow_network_tools", alias = "allow_network_tools")]
@@ -247,6 +271,7 @@ impl Default for AgentDefaults {
             show_tool_router_status: default_show_tool_router_status(),
             show_auto_capture_notices: default_show_auto_capture_notices(),
             tui_thought_display: default_tui_thought_display(),
+            layered_tool_routing: ToolRoutingConfig::default(),
             min_free_disk_gb: default_min_free_disk_gb(),
             allow_network_tools: default_allow_network_tools(),
             max_concurrent_process_tools: default_max_concurrent_process_tools(),
@@ -1415,5 +1440,32 @@ mod tests {
     fn auto_capture_notices_are_shown_by_default() {
         let defaults = AgentDefaults::default();
         assert!(defaults.show_auto_capture_notices);
+    }
+}
+
+#[cfg(test)]
+mod layered_tool_routing_tests {
+    use super::*;
+
+    #[test]
+    fn layered_tool_routing_defaults_are_balanced() {
+        let config = Config::default();
+        assert!(config.agents.defaults.layered_tool_routing.enabled);
+        assert_eq!(
+            config
+                .agents
+                .defaults
+                .layered_tool_routing
+                .max_visible_tools,
+            20
+        );
+        assert!(
+            config
+                .agents
+                .defaults
+                .layered_tool_routing
+                .always_visible_tools
+                .contains(&"request_tool_scope".to_string())
+        );
     }
 }

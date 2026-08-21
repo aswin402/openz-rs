@@ -22,11 +22,11 @@ mod tests;
 
 pub use cancellation_token::CancellationToken;
 pub use delegate_profile::DelegateProfileTool;
-pub use delegate_task::{cleanup_registered_worktrees, cleanup_stale_resources, DelegateTaskTool};
+pub use delegate_task::{DelegateTaskTool, cleanup_registered_worktrees, cleanup_stale_resources};
 pub use evaluator_optimizer::EvaluatorOptimizerLoopTool;
 pub use lifecycle::{
-    cancellation_result_json, classify_subagent_error, compact_lifecycle_line, status_json,
-    SubagentRunStatus,
+    SubagentRunStatus, cancellation_result_json, classify_subagent_error, compact_lifecycle_line,
+    status_json,
 };
 pub use optimize_profile::{CreateSubagentTool, DeleteSubagentTool, OptimizeSubagentTool};
 pub use parallel_research::ParallelResearchTool;
@@ -195,13 +195,45 @@ pub fn limit_subagent_models_to_try(models: &mut Vec<String>) {
     models.truncate(max_subagent_model_attempts());
 }
 
+pub fn should_skip_evolution_capture(goal: &str, output: &str) -> bool {
+    let goal_lower = goal.to_lowercase();
+    let output_words = output.split_whitespace().count();
+    let smoke_goal = [
+        "summarize hello",
+        "review planner output",
+        "where is orchestrate_workflow implemented",
+        "simple two-step workflow",
+        "smoke test workflow",
+    ]
+    .iter()
+    .any(|needle| goal_lower.contains(needle));
+
+    smoke_goal || output_words < 24
+}
+
+pub fn step_allows_nested_delegation(goal: &str) -> bool {
+    let lower = goal.to_lowercase();
+    [
+        "delegate",
+        "subagent",
+        "parallel",
+        "specialist",
+        "orchestrate",
+        "workflow",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
 pub fn should_run_evolution_review(
     goal: &str,
     context: &str,
     summary: &str,
     filesystem_write_denied: bool,
 ) -> bool {
-    !filesystem_write_denied && !crate::grounding::should_suppress_evolution(goal, context, summary)
+    !filesystem_write_denied
+        && !should_skip_evolution_capture(goal, summary)
+        && !crate::grounding::should_suppress_evolution(goal, context, summary)
 }
 
 pub fn resolve_subagent_timeout_secs(

@@ -46,11 +46,11 @@ pub fn select_menu_with_history_first_option(
     history: &[HistoryItem],
     first_option: &str,
 ) -> Result<usize> {
+    use crossterm::ExecutableCommand;
     use crossterm::event::{self, Event, KeyCode, KeyEventKind};
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-    use crossterm::ExecutableCommand;
-    use std::io::stdout;
     use std::io::Write;
+    use std::io::stdout;
 
     let mut stdout = stdout();
     let _ = stdout.execute(crossterm::cursor::Hide);
@@ -218,10 +218,10 @@ pub fn select_menu_custom(
     header: Option<&str>,
     show_divider: bool,
 ) -> Result<Option<usize>> {
+    use crossterm::ExecutableCommand;
     use crossterm::event::{self, Event, KeyCode, KeyEventKind};
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-    use crossterm::ExecutableCommand;
-    use std::io::{stdout, Write};
+    use std::io::{Write, stdout};
 
     let mut stdout = stdout();
     let _ = stdout.execute(crossterm::cursor::Hide);
@@ -479,10 +479,10 @@ fn drain_pending_key_events() {
 }
 
 pub fn select_menu_horizontal(options: &[String]) -> Result<Option<usize>> {
+    use crossterm::ExecutableCommand;
     use crossterm::event::{self, Event, KeyCode, KeyEventKind};
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-    use crossterm::ExecutableCommand;
-    use std::io::{stdout, Write};
+    use std::io::{Write, stdout};
 
     let mut stdout = stdout();
     let _ = stdout.execute(crossterm::cursor::Hide);

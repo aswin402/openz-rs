@@ -1,9 +1,9 @@
-use crate::tools::graph_memory::{scope_from_args, with_db};
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+use crate::tools::graph_memory::{scope_from_args, with_db};
+use anyhow::{Result, anyhow};
 use regex::Regex;
-use rusqlite::{params, Connection};
-use serde_json::{json, Value};
+use rusqlite::{Connection, params};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -890,7 +890,12 @@ impl Tool for AnalyzeCodeImpactTool {
 
             let details = format!(
                 "Symbol '{}' ({}) in {} has {} direct callers and {} transitive callers. Maximum propagation depth: {}.",
-                element_name, element_type, file_path, direct_callers, transitive_callers, max_depth
+                element_name,
+                element_type,
+                file_path,
+                direct_callers,
+                transitive_callers,
+                max_depth
             );
 
             Ok(json!({

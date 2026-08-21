@@ -486,7 +486,7 @@ export const SettingsModal: React.FC = () => {
                   type="text"
                   value={urlInput}
                   onChange={(e) => setUrlInput(e.target.value)}
-                  placeholder="ws://127.0.0.1:8765/ws"
+                  placeholder="Auto-detected from current gateway"
                   className="w-full rounded-lg border border-border bg-muted/40 p-2.5 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
                 />
               </div>

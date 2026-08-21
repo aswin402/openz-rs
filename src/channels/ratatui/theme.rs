@@ -6,19 +6,19 @@ use ratatui::style::{Color, Modifier, Style};
 /// Complete Aura Dark + Red-Orange OpenZ Theme
 #[derive(Debug, Clone)]
 pub struct Theme {
-    pub bg_primary: Color,      // #15141b (Aura Deep Dark)
-    pub bg_elevated: Color,     // #21202e (Aura Elevated Surface)
-    pub bg_input: Color,        // #29263c (Aura Input Dock)
-    pub brand_accent: Color,    // #ff5500 (OpenZ Vibrant Red-Orange)
-    pub brand_white: Color,     // #f0f0f0 (OpenZ Crisp White)
-    pub success: Color,         // #61ffca (Aura Mint Green)
-    pub destructive: Color,     // #ff6767 (Aura Coral Red)
-    pub warning: Color,         // #ffca85 (Aura Warm Amber)
-    pub highlight: Color,       // #f694ff (Aura Pink / Highlight)
-    pub info: Color,            // #82e2ff (Aura Cyan Blue)
-    pub text_primary: Color,    // #edecee (Aura Bright Text)
-    pub muted: Color,           // #8a8a93 (Aura Slate Comment)
-    pub border: Color,          // #3d375e (Aura Line Border)
+    pub bg_primary: Color,   // #15141b (Aura Deep Dark)
+    pub bg_elevated: Color,  // #21202e (Aura Elevated Surface)
+    pub bg_input: Color,     // #29263c (Aura Input Dock)
+    pub brand_accent: Color, // #ff5500 (OpenZ Vibrant Red-Orange)
+    pub brand_white: Color,  // #f0f0f0 (OpenZ Crisp White)
+    pub success: Color,      // #61ffca (Aura Mint Green)
+    pub destructive: Color,  // #ff6767 (Aura Coral Red)
+    pub warning: Color,      // #ffca85 (Aura Warm Amber)
+    pub highlight: Color,    // #f694ff (Aura Pink / Highlight)
+    pub info: Color,         // #82e2ff (Aura Cyan Blue)
+    pub text_primary: Color, // #edecee (Aura Bright Text)
+    pub muted: Color,        // #8a8a93 (Aura Slate Comment)
+    pub border: Color,       // #3d375e (Aura Line Border)
 }
 
 // ── Static Color Constants for Backward Compatibility ────────────────────────
@@ -59,9 +59,9 @@ impl Theme {
     /// Official OpenZ Aura Soft Dark Theme
     pub fn aura_soft_dark() -> Self {
         Self {
-            bg_primary: Color::Rgb(18, 16, 22),      // #121016
-            bg_elevated: Color::Rgb(28, 26, 36),     // #1c1a24
-            bg_input: Color::Rgb(36, 33, 49),        // #242131
+            bg_primary: Color::Rgb(18, 16, 22),  // #121016
+            bg_elevated: Color::Rgb(28, 26, 36), // #1c1a24
+            bg_input: Color::Rgb(36, 33, 49),    // #242131
             brand_accent: Color::Rgb(255, 85, 0),
             brand_white: Color::Rgb(240, 240, 240),
             success: Color::Rgb(97, 255, 202),
@@ -102,9 +102,7 @@ impl Theme {
 // ── Semantic Style Helpers ──────────────────────────────────────────────────
 
 pub fn user_prefix_style() -> Style {
-    Style::default()
-        .fg(RED_ORANGE)
-        .add_modifier(Modifier::BOLD)
+    Style::default().fg(RED_ORANGE).add_modifier(Modifier::BOLD)
 }
 
 pub fn user_text_style() -> Style {
@@ -156,9 +154,7 @@ pub fn divider_style() -> Style {
 }
 
 pub fn input_prefix_style() -> Style {
-    Style::default()
-        .fg(RED_ORANGE)
-        .add_modifier(Modifier::BOLD)
+    Style::default().fg(RED_ORANGE).add_modifier(Modifier::BOLD)
 }
 
 pub fn placeholder_style() -> Style {
@@ -184,9 +180,7 @@ pub fn code_style() -> Style {
 }
 
 pub fn bold_style() -> Style {
-    Style::default()
-        .fg(FOREGROUND)
-        .add_modifier(Modifier::BOLD)
+    Style::default().fg(FOREGROUND).add_modifier(Modifier::BOLD)
 }
 
 pub fn list_marker_style() -> Style {

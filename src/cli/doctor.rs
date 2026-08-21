@@ -298,14 +298,18 @@ fn print_disk_report(data_dir: &Path) {
             cargo_dir.join("registry"),
             5,
             15,
-            Some("Cargo registry cache is rebuildable/downloadable; clean selectively if disk remains low"),
+            Some(
+                "Cargo registry cache is rebuildable/downloadable; clean selectively if disk remains low",
+            ),
         ),
         DiskItem::new(
             "Cargo git cache",
             cargo_dir.join("git"),
             2,
             5,
-            Some("Cargo git cache is rebuildable/downloadable; clean selectively if disk remains low"),
+            Some(
+                "Cargo git cache is rebuildable/downloadable; clean selectively if disk remains low",
+            ),
         ),
         DiskItem::new(
             "Cargo installed binaries",
@@ -350,9 +354,13 @@ fn print_disk_report(data_dir: &Path) {
                 format_bytes(bytes)
             );
             if bytes < gib(5) {
-                println!("🚨 Critical: less than 5 GiB free. Clean target/ or archive caches before running large builds/media tools.");
+                println!(
+                    "🚨 Critical: less than 5 GiB free. Clean target/ or archive caches before running large builds/media tools."
+                );
             } else if bytes < gib(20) {
-                println!("⚠️  Warning: less than 20 GiB free. Large builds, video renders, and crawls may fail.");
+                println!(
+                    "⚠️  Warning: less than 20 GiB free. Large builds, video renders, and crawls may fail."
+                );
             }
         }
         None => println!("   • Free space on current filesystem: unavailable on this platform"),

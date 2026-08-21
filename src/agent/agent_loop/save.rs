@@ -1,4 +1,4 @@
-use super::{get_session_lock, AgentLoop, TurnContext, TurnState};
+use super::{AgentLoop, TurnContext, TurnState, get_session_lock};
 use crate::agent::style::*;
 use anyhow::Result;
 use serde::Deserialize;

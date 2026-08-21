@@ -1,8 +1,8 @@
 use crate::config::schema::McpServerConfig;
 use crate::config::{load_config, save_config};
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use anyhow::{Result, anyhow};
+use serde_json::{Value, json};
 
 pub struct ManageMcpTool;
 
@@ -261,10 +261,12 @@ mod tests {
 
                 // Verify removed state via list
                 let res = tool.call(&list_args).await?;
-                assert!(!res["mcp_servers"]
-                    .as_object()
-                    .unwrap()
-                    .contains_key("test-mcp"));
+                assert!(
+                    !res["mcp_servers"]
+                        .as_object()
+                        .unwrap()
+                        .contains_key("test-mcp")
+                );
 
                 // Clean up
                 let _ = std::fs::remove_dir_all(&temp_dir);
