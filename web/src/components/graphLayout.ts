@@ -124,7 +124,7 @@ export function buildClusters(
   });
 
   const groups = new Map<string, number[]>();
-  nodes.forEach((node, index) => {
+  nodes.forEach((_, index) => {
     const root = sets.find(index).toString();
     const group = groups.get(root) || [];
     group.push(index);
@@ -248,7 +248,12 @@ export function selectVisibleGraph(
     node.y - node.radius <= viewport.bottom;
 
   if (mode === 'overview') {
-    clusters.forEach((cluster) => cluster.representativeIds.forEach((id) => visibleIds.add(id)));
+    clusters.forEach((cluster) => {
+      const revealCount = zoom > 1.35
+        ? Math.min(cluster.nodeIds.length, Math.max(cluster.representativeIds.length, Math.ceil((zoom - 1) * 12)))
+        : cluster.representativeIds.length;
+      cluster.nodeIds.slice(0, revealCount).forEach((id) => visibleIds.add(id));
+    });
   }
   if (mode === 'all') {
     nodes.forEach((node) => {
