@@ -36,7 +36,7 @@ export interface VisibleGraph {
 const OVERVIEW_REPRESENTATIVE_LIMIT = 6;
 const DEFAULT_PADDING = 72;
 
-/** A stable, inexpensive hash suitable for layout seeds (not cryptography). */
+/** A stable, inexpensive hash suitable for layout points (not cryptography). */
 export function stableHash(value: string): number {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
@@ -58,12 +58,12 @@ export function stablePoint(
   const safePadding = Math.max(0, Math.min(padding, Math.min(safeWidth, safeHeight) / 2));
   const usableWidth = Math.max(1, safeWidth - safePadding * 2);
   const usableHeight = Math.max(1, safeHeight - safePadding * 2);
-  const xSeed = stableHash(`${id}:x`) / 0xffffffff;
-  const ySeed = stableHash(`${id}:y`) / 0xffffffff;
+  const xFraction = stableHash(`${id}:x`) / 0xffffffff;
+  const yFraction = stableHash(`${id}:y`) / 0xffffffff;
 
   return {
-    x: safePadding + xSeed * usableWidth,
-    y: safePadding + ySeed * usableHeight,
+    x: safePadding + xFraction * usableWidth,
+    y: safePadding + yFraction * usableHeight,
   };
 }
 
