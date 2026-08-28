@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
 import { wsService } from '../services/websocket';
 import {
@@ -16,11 +16,14 @@ import {
   Download,
   Filter,
   Search,
+  X,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ObsidianGraph } from './ObsidianGraph';
 import type { CognitiveNode, CognitiveEdge } from '../types/openz';
+import { cn } from '../lib/utils';
+import type { GraphMode } from './graphLayout';
 
 export const GraphVisualizer: React.FC<{ nodes: CognitiveNode[]; edges: CognitiveEdge[] }> = ({
   nodes,
@@ -51,10 +54,79 @@ function downloadTextFile(filename: string, content: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
+const MemoryEntityInspector: React.FC<{
+  node: CognitiveNode | null;
+  edges: CognitiveEdge[];
+  neighbors: CognitiveNode[];
+  onFocusNeighborhood: () => void;
+  onClear: () => void;
+}> = ({ node, edges, neighbors, onFocusNeighborhood, onClear }) => {
+  if (!node) {
+    return (
+      <aside className="flex min-h-[220px] flex-col justify-center rounded-2xl border border-dashed border-border/70 bg-card/30 p-5 text-center">
+        <BrainCircuit className="mx-auto h-7 w-7 text-muted-foreground/40" />
+        <h2 className="mt-3 text-sm font-semibold text-foreground">Select an entity</h2>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          Click a node or cluster to inspect its persisted observations and relationships.
+        </p>
+      </aside>
+    );
+  }
+
+  return (
+    <aside aria-label="Selected memory entity" className="flex min-h-[220px] flex-col rounded-2xl border border-amber-500/20 bg-card/60 p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-amber-400">
+            <span className="h-2 w-2 rounded-full bg-amber-400" />
+            {node.entity_type}
+          </div>
+          <h2 className="mt-1 break-words text-base font-bold text-foreground">{node.name}</h2>
+        </div>
+        <button type="button" onClick={onClear} className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground" aria-label="Clear selected entity">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="mt-4 rounded-xl border border-border/60 bg-background/40 p-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Observations</div>
+        <p className="mt-2 max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground/80">
+          {observationText(node.observations) || 'No observations recorded.'}
+        </p>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <div className="rounded-xl bg-muted/40 p-2.5">
+          <div className="text-[10px] text-muted-foreground">Relations</div>
+          <div className="mt-1 text-lg font-bold text-foreground">{edges.length}</div>
+        </div>
+        <div className="rounded-xl bg-muted/40 p-2.5">
+          <div className="text-[10px] text-muted-foreground">Neighbors</div>
+          <div className="mt-1 text-lg font-bold text-foreground">{neighbors.length}</div>
+        </div>
+      </div>
+      <div className="mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto">
+        {edges.slice(0, 12).map((edge) => {
+          const neighbor = edge.from_name === node.name ? edge.to_name : edge.from_name;
+          return (
+            <div key={edge.from_name + ':' + edge.to_name + ':' + edge.relation_type} className="flex items-center justify-between gap-2 rounded-lg border border-border/50 px-2.5 py-2 text-[10px]">
+              <span className="min-w-0 truncate font-medium text-foreground">{neighbor}</span>
+              <span className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 font-mono text-amber-400">{edge.relation_type}</span>
+            </div>
+          );
+        })}
+        {edges.length === 0 && <div className="py-3 text-xs text-muted-foreground">No persisted relationships for this entity.</div>}
+      </div>
+      <button type="button" onClick={onFocusNeighborhood} className="mt-3 min-h-10 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 text-xs font-semibold text-amber-300 transition hover:bg-amber-500/20">
+        Focus this neighborhood
+      </button>
+    </aside>
+  );
+};
+
 export const KnowledgeView: React.FC = () => {
   const cognitiveStats = useOpenZStore((s) => s.cognitiveStats);
   const setIsMemoryOpen = useOpenZStore((s) => s.setIsMemoryOpen);
   const setActiveView = useOpenZStore((s) => s.setActiveView);
+  const runtimeInventory = useOpenZStore((s) => s.runtimeInventory);
 
   const [activeTab, setActiveTab] = useState<'graph' | 'markdown' | 'facts'>('graph');
   const [copied, setCopied] = useState(false);
@@ -63,6 +135,9 @@ export const KnowledgeView: React.FC = () => {
   const [nodeTypeFilter, setNodeTypeFilter] = useState('all');
   const [factTagFilter, setFactTagFilter] = useState('all');
   const [sortMode, setSortMode] = useState<'importance' | 'newest'>('importance');
+  const [graphMode, setGraphMode] = useState<GraphMode>('overview');
+  const [selectedNodeName, setSelectedNodeName] = useState<string | null>(null);
+  const [visibleGraphStats, setVisibleGraphStats] = useState({ loaded: 0, visible: 0, edges: 0 });
 
   // Real-time synchronization on mount and recurring poll
   useEffect(() => {
@@ -97,17 +172,28 @@ export const KnowledgeView: React.FC = () => {
   ).sort();
 
   const normalizedSearch = searchQuery.trim().toLowerCase();
+  const matchingEdgeEndpoints = useMemo(() => {
+    if (!normalizedSearch) return new Set<string>();
+    return new Set(
+      (cognitiveStats.edges || [])
+        .filter((edge) => [edge.from_name, edge.to_name, edge.relation_type].join(' ').toLowerCase().includes(normalizedSearch))
+        .flatMap((edge) => [edge.from_name, edge.to_name]),
+    );
+  }, [cognitiveStats.edges, normalizedSearch]);
+
   const filteredNodes = (cognitiveStats.nodes || []).filter((node) => {
     const matchesType = nodeTypeFilter === 'all' || node.entity_type === nodeTypeFilter;
     const haystack = [node.name, node.entity_type, observationText(node.observations)].join(' ').toLowerCase();
-    return matchesType && (!normalizedSearch || haystack.includes(normalizedSearch));
+    return matchesType && (!normalizedSearch || haystack.includes(normalizedSearch) || matchingEdgeEndpoints.has(node.name));
   });
 
   const filteredNodeNames = new Set(filteredNodes.map((node) => node.name));
   const filteredEdges = (cognitiveStats.edges || []).filter((edge) => {
     const endpointMatch = filteredNodeNames.has(edge.from_name) || filteredNodeNames.has(edge.to_name);
     const haystack = [edge.from_name, edge.to_name, edge.relation_type].join(' ').toLowerCase();
-    return endpointMatch && (!normalizedSearch || haystack.includes(normalizedSearch) || endpointMatch);
+    const relationMatch = !normalizedSearch || haystack.includes(normalizedSearch);
+    const nodeMatch = !normalizedSearch || filteredNodeNames.has(edge.from_name) || filteredNodeNames.has(edge.to_name);
+    return endpointMatch && (relationMatch || nodeMatch);
   });
 
   const filteredFacts = (cognitiveStats.facts || [])
@@ -128,15 +214,43 @@ export const KnowledgeView: React.FC = () => {
     );
 
   const snapshotStats = {
-    entitiesCount: Math.max(filteredNodes.length, cognitiveStats.entitiesCount || 0),
-    relationsCount: Math.max(filteredEdges.length, cognitiveStats.relationsCount || 0),
-    factsCount: Math.max(filteredFacts.length, cognitiveStats.factsCount || 0),
+    entitiesCount: filteredNodes.length,
+    relationsCount: filteredEdges.length,
+    factsCount: filteredFacts.length,
   };
+
+  const totalStats = {
+    entitiesCount: cognitiveStats.entitiesCount || 0,
+    relationsCount: cognitiveStats.relationsCount || 0,
+    factsCount: cognitiveStats.factsCount || 0,
+  };
+  const allNodes = cognitiveStats.nodes || [];
+  const selectedNode = selectedNodeName
+    ? allNodes.find((node) => node.name === selectedNodeName) || null
+    : null;
+  const selectedNodeEdges = selectedNode
+    ? (cognitiveStats.edges || []).filter((edge) => edge.from_name === selectedNode.name || edge.to_name === selectedNode.name)
+    : [];
+  const selectedNeighborNames = new Set(
+    selectedNodeEdges.flatMap((edge) => [edge.from_name, edge.to_name]).filter((name) => name !== selectedNode?.name),
+  );
+  const selectedNeighbors = allNodes.filter((node) => selectedNeighborNames.has(node.name));
+  const graphNodes = selectedNode && !filteredNodes.some((node) => node.name === selectedNode.name)
+    ? [...filteredNodes, selectedNode]
+    : filteredNodes;
+  const graphNodeNames = new Set(graphNodes.map((node) => node.name));
+  const graphEdges = filteredEdges.filter((edge) => graphNodeNames.has(edge.from_name) && graphNodeNames.has(edge.to_name));
+  const graphDbExists = runtimeInventory?.memory.graphDb.exists ?? Boolean(cognitiveStats.paths?.graphDb);
+  const memoryDbExists = runtimeInventory?.memory.memoryDb.exists ?? Boolean(cognitiveStats.paths?.memoryDb);
+  const syncLabel = allNodes.length > 0 ? 'Live now' : 'Waiting for gateway';
+  const memoryDbPath = cognitiveStats.paths?.memoryDb || runtimeInventory?.paths.memoryDb || 'Runtime path unavailable';
+  const graphDbPath = cognitiveStats.paths?.graphDb || runtimeInventory?.paths.graphDb || 'Runtime path unavailable';
 
   const generateMarkdownString = () => {
     let md = `# Knowledge Graph Memory Snapshot\n\n`;
     md += `Generated at: \`${new Date().toLocaleString()}\`\n`;
-    md += `Path: \`~/.openz/memory.db\` and \`~/.openz/graph_memory.db\`\n\n`;
+    md += `Memory DB: \`${memoryDbPath}\`\n`;
+    md += `Graph DB: \`${graphDbPath}\`\n\n`;
 
     md += `## 1. Node Entities (${snapshotStats.entitiesCount})\n\n`;
     if (filteredNodes.length > 0) {
@@ -221,7 +335,7 @@ export const KnowledgeView: React.FC = () => {
   ];
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-6">
       {/* Header section */}
       <div className="flex items-center justify-between pb-4 border-b border-border/50">
         <div className="space-y-1">
@@ -250,6 +364,32 @@ export const KnowledgeView: React.FC = () => {
         </div>
       </div>
 
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-2xl border border-border/70 bg-card/50 p-3 shadow-sm">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Loaded entities</div>
+          <div className="mt-1 text-xl font-extrabold text-foreground">{totalStats.entitiesCount}</div>
+          <div className="text-[10px] text-muted-foreground">{visibleGraphStats.loaded > 0 ? visibleGraphStats.visible : 0} visible now</div>
+        </div>
+        <div className="rounded-2xl border border-border/70 bg-card/50 p-3 shadow-sm">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Relations</div>
+          <div className="mt-1 text-xl font-extrabold text-foreground">{totalStats.relationsCount}</div>
+          <div className="text-[10px] text-muted-foreground">{visibleGraphStats.loaded > 0 ? visibleGraphStats.edges : 0} rendered now</div>
+        </div>
+        <div className="rounded-2xl border border-border/70 bg-card/50 p-3 shadow-sm">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Memory stores</div>
+          <div className="mt-1 flex items-center gap-2 text-sm font-bold text-foreground">
+            <span className={cn('h-2 w-2 rounded-full', memoryDbExists ? 'bg-emerald-400' : 'bg-red-400')} />
+            {memoryDbExists ? 'Memory ready' : 'Memory unavailable'}
+          </div>
+          <div className="mt-1 text-[10px] text-muted-foreground">{graphDbExists ? 'Graph database ready' : 'Graph database unavailable'}</div>
+        </div>
+        <div className="rounded-2xl border border-border/70 bg-card/50 p-3 shadow-sm">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Last sync</div>
+          <div className="mt-1 text-sm font-bold text-foreground">{syncLabel}</div>
+          <div className="text-[10px] text-muted-foreground">{allNodes.length > 0 ? 'Authoritative gateway payload' : 'No records received'}</div>
+        </div>
+      </div>
+
       {/* Filter and Search Bar */}
       <div className="rounded-xl border border-border/70 bg-card/40 p-3 shadow-sm">
         <div className="grid gap-3 lg:grid-cols-[1fr_160px_160px_140px]">
@@ -259,7 +399,7 @@ export const KnowledgeView: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search nodes, relations, facts, tags..."
-              className="w-full rounded-lg border border-border/60 bg-background py-2 pl-9 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+              className="min-h-10 w-full rounded-lg border border-border/60 bg-background py-2 pl-9 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
             />
           </div>
           <label className="relative">
@@ -267,7 +407,7 @@ export const KnowledgeView: React.FC = () => {
             <select
               value={nodeTypeFilter}
               onChange={(e) => setNodeTypeFilter(e.target.value)}
-              className="w-full appearance-none rounded-lg border border-border/60 bg-background py-2 pl-9 pr-3 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+              className="min-h-10 w-full appearance-none rounded-lg border border-border/60 bg-background py-2 pl-9 pr-3 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
             >
               <option value="all">All node types</option>
               {nodeTypes.map((type) => (
@@ -281,7 +421,7 @@ export const KnowledgeView: React.FC = () => {
             <select
               value={factTagFilter}
               onChange={(e) => setFactTagFilter(e.target.value)}
-              className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+              className="min-h-10 w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
             >
               <option value="all">All fact tags</option>
               {factTags.map((tag) => (
@@ -295,7 +435,7 @@ export const KnowledgeView: React.FC = () => {
             <select
               value={sortMode}
               onChange={(e) => setSortMode(e.target.value as 'importance' | 'newest')}
-              className="w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+              className="min-h-10 w-full rounded-lg border border-border/60 bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
             >
               <option value="importance">Importance</option>
               <option value="newest">Newest</option>
@@ -306,6 +446,9 @@ export const KnowledgeView: React.FC = () => {
           <span className="rounded bg-muted/50 px-2 py-0.5 font-mono">nodes: {snapshotStats.entitiesCount}</span>
           <span className="rounded bg-muted/50 px-2 py-0.5 font-mono">{snapshotStats.relationsCount} relations</span>
           <span className="rounded bg-muted/50 px-2 py-0.5 font-mono">{snapshotStats.factsCount} facts</span>
+          <span className="rounded bg-muted/30 px-2 py-0.5 font-mono text-muted-foreground/80">
+            backend total: {totalStats.entitiesCount} nodes / {totalStats.relationsCount} relations / {totalStats.factsCount} facts
+          </span>
           {(searchQuery || nodeTypeFilter !== 'all' || factTagFilter !== 'all') && (
             <button
               type="button"
@@ -339,7 +482,7 @@ export const KnowledgeView: React.FC = () => {
       </div>
 
       {/* Mode Selector Tab Row */}
-      <div className="flex items-center justify-between border-b border-border/40 pb-2">
+      <div className="flex flex-col gap-3 border-b border-border/40 pb-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex gap-1.5">
           <button
             onClick={() => setActiveTab('graph')}
@@ -373,7 +516,28 @@ export const KnowledgeView: React.FC = () => {
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 rounded-xl border border-border/60 bg-card/50 p-1">
+            {([
+              ['overview', 'Overview'],
+              ['all', 'All nodes'],
+              ['neighborhood', 'Neighborhood'],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setGraphMode(value)}
+                disabled={value === 'neighborhood' && !selectedNode}
+                className={cn(
+                  'min-h-9 rounded-lg px-3 text-[11px] font-semibold transition',
+                  graphMode === value ? 'bg-amber-500/15 text-amber-400' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                  value === 'neighborhood' && !selectedNode && 'cursor-not-allowed opacity-40',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           {activeTab === 'markdown' && (
             <button
               onClick={handleCopyMarkdown}
@@ -409,14 +573,29 @@ export const KnowledgeView: React.FC = () => {
       <div className="min-h-[480px]">
         {activeTab === 'graph' && (
           <div className="space-y-3">
-            <ObsidianGraph
-              nodes={filteredNodes}
-              edges={filteredEdges}
-              facts={filteredFacts}
-              height={520}
-            />
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
+              <ObsidianGraph
+                nodes={graphNodes}
+                edges={graphEdges}
+                facts={filteredFacts}
+                mode={graphMode}
+                searchQuery={searchQuery}
+                selectedNodeName={selectedNodeName}
+                onSelectNode={setSelectedNodeName}
+                onModeChange={setGraphMode}
+                onVisibleStatsChange={setVisibleGraphStats}
+                height={560}
+              />
+              <MemoryEntityInspector
+                node={selectedNode}
+                edges={selectedNodeEdges}
+                neighbors={selectedNeighbors}
+                onFocusNeighborhood={() => setGraphMode('neighborhood')}
+                onClear={() => setSelectedNodeName(null)}
+              />
+            </div>
             <div className="flex items-center justify-between text-[11px] text-muted-foreground px-1 select-none">
-              <span>💡 Drag nodes to interact. Scroll wheel to zoom in/out. Click background to pan.</span>
+              <span>Overview groups records for readability. Search, zoom, or select a cluster to reveal individual entities.</span>
               <span className="font-mono text-emerald-400 flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" /> Live Realtime Sync Active
               </span>
@@ -449,7 +628,7 @@ export const KnowledgeView: React.FC = () => {
                 <div className="space-y-2">
                   <div className="font-semibold text-amber-400">Why are my Stored Facts showing 0?</div>
                   <p className="text-muted-foreground text-[11px]">
-                    OpenZ utilizes an asynchronous <strong>Self-Improvement Memory Curator</strong> that runs in the background after turns. It compiles conversation observations into long-term facts in SQLite (<code>~/.openz/memory.db</code>).
+                    OpenZ utilizes an asynchronous <strong>Self-Improvement Memory Curator</strong> that runs in the background after turns. It compiles conversation observations into long-term facts in the configured runtime database (<code>{memoryDbPath}</code>).
                   </p>
                   <p className="text-muted-foreground text-[11px]">
                     You can also store facts directly using native memory tools like <code>extract_and_store_facts</code>, <code>smart_store</code>, or <code>set_working_memory</code>.
@@ -465,9 +644,9 @@ export const KnowledgeView: React.FC = () => {
                   No facts in cognitive database. Start chatting or execute memory tools to store memories!
                 </div>
               ) : (
-                filteredFacts.map((fact, idx) => (
+                filteredFacts.map((fact) => (
                   <div
-                    key={idx}
+                    key={`${fact.timestamp}-${fact.text}`}
                     className="rounded-xl border border-border bg-card p-4 shadow-sm hover:border-amber-500/40 transition-colors"
                   >
                     <div className="flex items-center gap-2 mb-1.5">
