@@ -1,6 +1,6 @@
 # WebSocket Protocol Contracts and Acknowledgements Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add typed WebUI WebSocket command/event contracts and request-correlated command acknowledgements without breaking existing streaming or data events.
 
@@ -28,7 +28,7 @@
 - Produces `WebSocketCommand`, `WebSocketCommandEnvelope`, `WebSocketEventEnvelope`, `WebSocketCommandAckEvent`, `createRequestId`, `buildCommandEnvelope`, `parseWebSocketEvent`, and `isCommandAckEvent` for the WebSocket service and store.
 - Consumes existing payload field names from `web/src/services/websocket.ts` and `src/channels/websocket.rs`.
 
-- [ ] **Step 1: Write the failing protocol tests**
+- [x] **Step 1: Write the failing protocol tests**
 
 Create tests for the required pure contract behavior:
 
@@ -77,7 +77,7 @@ describe('WebSocket protocol contracts', () => {
 });
 ```
 
-- [ ] **Step 2: Run the protocol tests to verify the initial failure**
+- [x] **Step 2: Run the protocol tests to verify the initial failure**
 
 Run from `web/`:
 
@@ -87,7 +87,7 @@ bun test ./src/types/websocket.test.ts
 
 Expected: FAIL because `websocket.ts` does not yet exist.
 
-- [ ] **Step 3: Implement the minimal typed command/event module**
+- [x] **Step 3: Implement the minimal typed command/event module**
 
 Define the outgoing command union with all current WebUI command names and their existing fields:
 
@@ -133,7 +133,7 @@ export interface WebSocketCommandAckEvent extends WebSocketEventEnvelope {
 
 `createRequestId(sequence, now)` must produce a nonempty ID containing the timestamp and monotonically increasing sequence; `parseWebSocketEvent` must accept either `event` or legacy `type` string fields and return `null` for non-object/missing-name input. `isCommandAckEvent` must validate request ID, command, and status before narrowing.
 
-- [ ] **Step 4: Run the focused protocol tests**
+- [x] **Step 4: Run the focused protocol tests**
 
 Run:
 
@@ -143,7 +143,7 @@ bun test ./src/types/websocket.test.ts
 
 Expected: all protocol tests pass.
 
-- [ ] **Step 5: Commit the protocol contract**
+- [x] **Step 5: Commit the protocol contract**
 
 ```bash
 git add web/src/types/websocket.ts web/src/types/websocket.test.ts
@@ -159,7 +159,7 @@ git commit -m "feat: define websocket protocol contracts"
 - Consumes `WebSocketCommand`, `WebSocketCommandEnvelope`, `WebSocketEventEnvelope`, `WebSocketCommandAckEvent`, and helper functions from Task 1.
 - Produces request-correlated JSON commands and a typed `command_ack` event; existing `on('delta', ...)` and data listeners retain their current behavior.
 
-- [ ] **Step 1: Add service-level request correlation behavior test**
+- [x] **Step 1: Add service-level request correlation behavior test**
 
 Extend `web/src/types/websocket.test.ts` with a pure envelope assertion that covers the exact gateway field:
 
@@ -173,7 +173,7 @@ test('uses request_id rather than a UI-only correlation field', () => {
 
 Run `bun test ./src/types/websocket.test.ts`; it must fail until `buildCommandEnvelope` preserves command fields and adds `request_id`.
 
-- [ ] **Step 2: Implement typed send and parser integration**
+- [x] **Step 2: Implement typed send and parser integration**
 
 Replace the untyped `Record<string, unknown>` send path with:
 
@@ -200,11 +200,11 @@ private send(command: WebSocketCommand, options: { acknowledge?: boolean; requir
 
 Use `acknowledge: false` only for the heartbeat ping. Route `sendMessage` through this method with `requireConnected: true`; route every other existing command method through it. In `onmessage`, parse JSON as `unknown`, call `parseWebSocketEvent`, emit only valid envelopes, and remove acknowledged IDs from `pendingCommands`. Keep the existing `event || type` compatibility through the parser.
 
-- [ ] **Step 3: Add typed acknowledgement listener overload**
+- [x] **Step 3: Add typed acknowledgement listener overload**
 
 Add an overload for `on('command_ack', ...)` accepting `WebSocketCommandAckEvent`, while retaining the existing broad listener overload for legacy event consumers. Do not rewrite all store listeners in this task.
 
-- [ ] **Step 4: Run WebUI checks**
+- [x] **Step 4: Run WebUI checks**
 
 Run from `web/`:
 
@@ -216,7 +216,7 @@ bun run build
 
 Expected: tests and lint pass; Vite builds with only the existing chunk-size advisory.
 
-- [ ] **Step 5: Commit the service changes**
+- [x] **Step 5: Commit the service changes**
 
 ```bash
 git add web/src/services/websocket.ts web/src/types/websocket.test.ts
@@ -232,7 +232,7 @@ git commit -m "feat: correlate websocket commands"
 - Consumes optional incoming `request_id` values from JSON commands.
 - Produces `{ event: "command_ack", request_id, command, status, detail? }` receipts on the requesting socket only.
 
-- [ ] **Step 1: Write failing Rust helper tests**
+- [x] **Step 1: Write failing Rust helper tests**
 
 Add tests in the existing `#[cfg(test)] mod tests`:
 
@@ -263,15 +263,15 @@ just test-one websocket_request_id_is_trimmed_and_bounded openz
 
 Expected: FAIL because the helper functions do not yet exist.
 
-- [ ] **Step 2: Implement bounded request IDs and acknowledgement helper**
+- [x] **Step 2: Implement bounded request IDs and acknowledgement helper**
 
 Add `MAX_WS_REQUEST_ID_LEN: usize = 128`, `ws_request_id(&Value) -> Option<String>`, and `command_ack_event(...) -> Value`. Include `detail` only when provided. Treat an absent request ID as a legacy command that receives no acknowledgement.
 
-- [ ] **Step 3: Acknowledge commands at the receive boundary**
+- [x] **Step 3: Acknowledge commands at the receive boundary**
 
 Immediately after extracting `msg_type` in `handle_socket`, send an accepted acknowledgement when a valid request ID is present. Do not add IDs to existing event payloads. For the unknown-command arm, send a rejected acknowledgement with `detail: "Unknown WebSocket command."`. Heartbeat pings are acknowledged only when a caller explicitly supplies a request ID; the WebUI heartbeat will not supply one.
 
-- [ ] **Step 4: Run focused Rust checks**
+- [x] **Step 4: Run focused Rust checks**
 
 Run only:
 
@@ -283,7 +283,7 @@ just check openz
 
 Expected: both tests pass and the package check succeeds with `-j 2`.
 
-- [ ] **Step 5: Commit the gateway changes**
+- [x] **Step 5: Commit the gateway changes**
 
 ```bash
 git add src/channels/websocket.rs
@@ -300,7 +300,7 @@ git commit -m "feat: acknowledge websocket commands"
 - Consumes typed `command_ack` events from `OpenZWebSocketService`.
 - Produces a global error notice only for rejected command receipts; accepted receipts remain silent to avoid UI noise.
 
-- [ ] **Step 1: Write the store behavior test contract**
+- [x] **Step 1: Write the store behavior test contract**
 
 Document the reducer behavior in a focused pure assertion near the protocol tests:
 
@@ -312,7 +312,7 @@ test('rejected acknowledgements carry actionable detail', () => {
 });
 ```
 
-- [ ] **Step 2: Add the acknowledgement listener**
+- [x] **Step 2: Add the acknowledgement listener**
 
 Register one `wsService.on('command_ack', ...)` listener during store initialization:
 
@@ -330,7 +330,7 @@ wsService.on('command_ack', (payload) => {
 
 Do not set `isStreaming` or alter chat messages for command receipts; command-specific errors still use their existing events.
 
-- [ ] **Step 3: Mark the protocol reliability item complete**
+- [x] **Step 3: Mark the protocol reliability item complete**
 
 Change the unchecked item in `plan/webui-remediation-todo.md` to:
 
@@ -338,7 +338,7 @@ Change the unchecked item in `plan/webui-remediation-todo.md` to:
 - [x] Add typed WebSocket event/envelope contracts and command acknowledgement IDs.
 ```
 
-- [ ] **Step 4: Run final focused checks**
+- [x] **Step 4: Run final focused checks**
 
 Run from `web/`:
 
@@ -357,7 +357,7 @@ just check openz
 
 Expected: all focused checks pass; no full Cargo command is run.
 
-- [ ] **Step 5: Commit store and documentation changes**
+- [x] **Step 5: Commit store and documentation changes**
 
 ```bash
 git add web/src/store/useOpenZStore.ts plan/webui-remediation-todo.md docs/superpowers/plans/2026-08-29-websocket-protocol-acknowledgements.md

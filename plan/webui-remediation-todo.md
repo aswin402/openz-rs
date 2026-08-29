@@ -2,7 +2,7 @@
 
 - [x] Restore `web/src/services/websocket.ts` and add `updateSubagentSettings`.
 - [x] Fix SettingsModal syntax; run `bun run build`.
-- [ ] Add typed event/envelope contracts and command acknowledgement IDs.
+- [x] Add typed WebSocket event/envelope contracts and command acknowledgement IDs.
 - [x] Enforce WebSocket Origin validation and redact token query logging.
 - [ ] Bind security approvals to the requesting client and chat; add rejection tests.
 - [ ] Replace global WebUI stop with per-turn/session cancellation.

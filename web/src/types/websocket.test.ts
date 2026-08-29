@@ -48,4 +48,16 @@ describe('WebSocket protocol contracts', () => {
     expect(envelope.request_id).toBe('req-9');
     expect(envelope.req_id).toBe('sec-1');
   });
+
+  test('rejected acknowledgements carry actionable detail', () => {
+    const ack = parseWebSocketEvent({
+      event: 'command_ack',
+      request_id: 'req-1',
+      command: 'set_config',
+      status: 'rejected',
+      detail: 'WebSocket is not connected',
+    });
+    expect(isCommandAckEvent(ack)).toBe(true);
+    expect(ack && isCommandAckEvent(ack) && ack.detail).toBe('WebSocket is not connected');
+  });
 });

@@ -1029,6 +1029,18 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     // ----- Data events (replace every hardcoded value) -----
 
+    wsService.on('command_ack', (payload) => {
+      if (payload.status !== 'rejected') return;
+      set({
+        workspaceNotice: {
+          scope: 'global',
+          type: 'error',
+          message: payload.detail || `Gateway rejected ${payload.command}.`,
+          timestamp: Date.now(),
+        },
+      });
+    });
+
     wsService.on('ready', (payload) => {
       const readyChatId = normalizeChatId(payload.chat_id || '');
       const preferredChatId = get().activeChatId || savedActiveChatId() || readyChatId;
