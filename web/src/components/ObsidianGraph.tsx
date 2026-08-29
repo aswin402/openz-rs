@@ -38,7 +38,9 @@ export interface ObsidianGraphProps {
   mode?: GraphMode;
   searchQuery?: string;
   selectedNodeName?: string | null;
+  selectedEdgeKey?: string | null;
   onSelectNode?: (nodeName: string | null) => void;
+  onSelectEdge?: (edgeKey: string | null) => void;
   onModeChange?: (mode: GraphMode) => void;
   onVisibleStatsChange?: (stats: { loaded: number; visible: number; edges: number }) => void;
   className?: string;
@@ -169,7 +171,9 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
   mode,
   searchQuery,
   selectedNodeName,
+  selectedEdgeKey,
   onSelectNode,
+  onSelectEdge,
   onModeChange,
   onVisibleStatsChange,
   className,
@@ -461,6 +465,14 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
       focusCluster(cluster);
       return;
     }
+    const edge = findEdgeAt(event.clientX, event.clientY);
+    if (edge) {
+      onSelectEdge?.(edgeKey({ from_name: edge.source.id, to_name: edge.target.id, relation_type: edge.type }));
+      updateSelection(edge.source);
+      focusNode(edge.source);
+      return;
+    }
+    onSelectEdge?.(null);
     isPanningRef.current = true;
     panStartRef.current = {
       x: event.clientX - transformRef.current.x,
@@ -745,15 +757,16 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
         context.restore();
       }
 
-      const activeEdge = hoveredEdgeRef.current;
+      const selectedEdge = selectedEdgeKey ? edgeDetailsRef.current.get(selectedEdgeKey) : null;
       visibleEdgesRef.current.forEach((edge) => {
         const source = edge.source;
         const target = edge.target;
         const connected = Boolean(activeNode && (source.id === activeNode.id || target.id === activeNode.id));
-        const edgeIsHovered = Boolean(activeEdge && edge.source.id === activeEdge.source.id && edge.target.id === activeEdge.target.id && edge.type === activeEdge.type);
-        const dimmed = Boolean(activeNode && !connected && !edgeIsHovered);
+        const edgeIsHovered = Boolean(hoveredEdgeRef.current && edge.source.id === hoveredEdgeRef.current.source.id && edge.target.id === hoveredEdgeRef.current.target.id && edge.type === hoveredEdgeRef.current.type);
+        const edgeIsSelected = Boolean(selectedEdge && edge.source.id === selectedEdge.source.id && edge.target.id === selectedEdge.target.id && edge.type === selectedEdge.type);
+        const dimmed = Boolean(activeNode && !connected && !edgeIsHovered && !edgeIsSelected);
         const confidenceAlpha = edge.confidence === null ? 0.22 : 0.25 + edge.confidence * 0.5;
-        const edgeColor = edgeIsHovered ? '#f8fafc' : connected ? (activeNode?.color || '#f59e0b') : `rgba(148, 163, 184, ${dimmed ? 0.035 : confidenceAlpha})`;
+        const edgeColor = edgeIsHovered ? '#f8fafc' : edgeIsSelected ? '#67e8f9' : connected ? (activeNode?.color || '#f59e0b') : `rgba(148, 163, 184, ${dimmed ? 0.035 : confidenceAlpha})`;
         context.beginPath();
         if (display.curvedLinks) {
           const midX = (source.x + target.x) / 2 + (target.y - source.y) * 0.12;
@@ -765,11 +778,11 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
           context.lineTo(target.x, target.y);
         }
         context.strokeStyle = edgeColor;
-        context.lineWidth = edgeIsHovered ? 2.2 : connected ? 1.7 : 0.62;
+        context.lineWidth = edgeIsHovered || edgeIsSelected ? 2.2 : connected ? 1.7 : 0.62;
         context.setLineDash(edge.provenance === 'not_recorded' ? [4, 5] : []);
         context.stroke();
         context.setLineDash([]);
-        if (transform.k > 0.7 && (connected || edgeIsHovered)) {
+        if (transform.k > 0.7 && (connected || edgeIsHovered || edgeIsSelected)) {
           drawArrowhead(context, source, target, edgeColor, transform.k);
         }
         if (display.showParticles && !reducedMotion && (connected || (!activeNode && visibleEdgesRef.current.length < 900))) {
@@ -919,7 +932,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
       animationFrameRef.current = null;
       requestRenderRef.current = () => undefined;
     };
-  }, [activeMode, activeSearch, activeSelectionName, display, graphData, graphSemantics, reportVisibleStats, viewportFor]);
+  }, [activeMode, activeSearch, activeSelectionName, display, graphData, graphSemantics, onSelectEdge, reportVisibleStats, selectedEdgeKey, viewportFor]);
 
   const hasData = graphData.nodes.length > 0;
   const selectedInfo = selectedNode || hoveredNode;

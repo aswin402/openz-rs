@@ -24,6 +24,7 @@ import { ObsidianGraph } from './ObsidianGraph';
 import type { CognitiveNode, CognitiveEdge } from '../types/openz';
 import { cn } from '../lib/utils';
 import type { GraphMode } from './graphLayout';
+import { buildGraphSemantics, edgeKey, formatConfidence, formatProvenance, type EdgeSemantics } from './graphSemantics';
 
 export const GraphVisualizer: React.FC<{ nodes: CognitiveNode[]; edges: CognitiveEdge[] }> = ({
   nodes,
@@ -58,9 +59,12 @@ const MemoryEntityInspector: React.FC<{
   node: CognitiveNode | null;
   edges: CognitiveEdge[];
   neighbors: CognitiveNode[];
+  edgeSemantics: Map<string, EdgeSemantics>;
+  selectedEdgeKey: string | null;
+  onSelectEdge: (key: string) => void;
   onFocusNeighborhood: () => void;
   onClear: () => void;
-}> = ({ node, edges, neighbors, onFocusNeighborhood, onClear }) => {
+}> = ({ node, edges, neighbors, edgeSemantics, selectedEdgeKey, onSelectEdge, onFocusNeighborhood, onClear }) => {
   if (!node) {
     return (
       <aside className="flex min-h-[220px] flex-col justify-center rounded-2xl border border-dashed border-border/70 bg-card/30 p-5 text-center">
@@ -105,12 +109,29 @@ const MemoryEntityInspector: React.FC<{
       </div>
       <div className="mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto">
         {edges.slice(0, 12).map((edge) => {
+          const relationKey = edgeKey(edge);
+          const detail = edgeSemantics.get(relationKey);
           const neighbor = edge.from_name === node.name ? edge.to_name : edge.from_name;
+          const isSelected = selectedEdgeKey === relationKey;
           return (
-            <div key={edge.from_name + ':' + edge.to_name + ':' + edge.relation_type} className="flex items-center justify-between gap-2 rounded-lg border border-border/50 px-2.5 py-2 text-[10px]">
-              <span className="min-w-0 truncate font-medium text-foreground">{neighbor}</span>
-              <span className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 font-mono text-amber-400">{edge.relation_type}</span>
-            </div>
+            <button
+              key={relationKey}
+              type="button"
+              onClick={() => onSelectEdge(relationKey)}
+              className={cn('w-full rounded-lg border px-2.5 py-2 text-left text-[10px] transition', isSelected ? 'border-cyan-400/40 bg-cyan-400/10' : 'border-border/50 hover:border-amber-500/30 hover:bg-muted/40')}
+              aria-pressed={isSelected}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate font-medium text-foreground">{edge.from_name} → {edge.to_name}</span>
+                <span className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 font-mono text-amber-400">{edge.relation_type}</span>
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-x-2 gap-y-1 font-mono text-[9px] text-muted-foreground">
+                <span>Neighbor: {neighbor}</span>
+                <span>Confidence: {formatConfidence(detail?.confidence ?? null)}</span>
+                <span>Provenance: {formatProvenance(detail?.provenance ?? 'not_recorded')}</span>
+                <span>Source: {detail?.source ?? 'Not recorded'}</span>
+              </div>
+            </button>
           );
         })}
         {edges.length === 0 && <div className="py-3 text-xs text-muted-foreground">No persisted relationships for this entity.</div>}
@@ -137,6 +158,10 @@ export const KnowledgeView: React.FC = () => {
   const [sortMode, setSortMode] = useState<'importance' | 'newest'>('importance');
   const [graphMode, setGraphMode] = useState<GraphMode>('overview');
   const [selectedNodeName, setSelectedNodeName] = useState<string | null>(null);
+  const [selectedEdgeKey, setSelectedEdgeKey] = useState<string | null>(null);
+  const [communityFilter, setCommunityFilter] = useState('all');
+  const [relationTypeFilter, setRelationTypeFilter] = useState('all');
+  const [mostConnectedOnly, setMostConnectedOnly] = useState(false);
   const [visibleGraphStats, setVisibleGraphStats] = useState({ loaded: 0, visible: 0, edges: 0 });
 
   // Real-time synchronization on mount and recurring poll
@@ -171,29 +196,49 @@ export const KnowledgeView: React.FC = () => {
     ),
   ).sort();
 
+  const allNodes = useMemo(() => cognitiveStats.nodes || [], [cognitiveStats.nodes]);
+  const allEdges = useMemo(() => cognitiveStats.edges || [], [cognitiveStats.edges]);
+  const graphSemantics = useMemo(() => buildGraphSemantics(allNodes, allEdges), [allEdges, allNodes]);
+  const communityOptions = useMemo(
+    () => graphSemantics.clusterIds.map((id, index) => ({ id, label: `Constellation ${String(index + 1).padStart(2, '0')}` })),
+    [graphSemantics.clusterIds],
+  );
+  const relationTypes = useMemo(
+    () => Array.from(new Set(allEdges.map((edge) => edge.relation_type).filter(Boolean))).sort(),
+    [allEdges],
+  );
+  const degreeThreshold = useMemo(() => {
+    const degrees = Array.from(graphSemantics.nodeMetrics.values()).map((metric) => metric.degree).sort((left, right) => right - left);
+    return degrees.length === 0 ? 0 : degrees[Math.min(degrees.length - 1, Math.floor(degrees.length * 0.25))];
+  }, [graphSemantics]);
+
   const normalizedSearch = searchQuery.trim().toLowerCase();
   const matchingEdgeEndpoints = useMemo(() => {
     if (!normalizedSearch) return new Set<string>();
     return new Set(
-      (cognitiveStats.edges || [])
+      allEdges
         .filter((edge) => [edge.from_name, edge.to_name, edge.relation_type].join(' ').toLowerCase().includes(normalizedSearch))
         .flatMap((edge) => [edge.from_name, edge.to_name]),
     );
-  }, [cognitiveStats.edges, normalizedSearch]);
+  }, [allEdges, normalizedSearch]);
 
-  const filteredNodes = (cognitiveStats.nodes || []).filter((node) => {
+  const filteredNodes = allNodes.filter((node) => {
+    const metric = graphSemantics.nodeMetrics.get(node.name);
     const matchesType = nodeTypeFilter === 'all' || node.entity_type === nodeTypeFilter;
+    const matchesCommunity = communityFilter === 'all' || metric?.clusterId === communityFilter;
+    const matchesConnected = !mostConnectedOnly || (metric?.degree || 0) >= degreeThreshold;
     const haystack = [node.name, node.entity_type, observationText(node.observations)].join(' ').toLowerCase();
-    return matchesType && (!normalizedSearch || haystack.includes(normalizedSearch) || matchingEdgeEndpoints.has(node.name));
+    return matchesType && matchesCommunity && matchesConnected && (!normalizedSearch || haystack.includes(normalizedSearch) || matchingEdgeEndpoints.has(node.name));
   });
 
   const filteredNodeNames = new Set(filteredNodes.map((node) => node.name));
-  const filteredEdges = (cognitiveStats.edges || []).filter((edge) => {
+  const filteredEdges = allEdges.filter((edge) => {
     const endpointMatch = filteredNodeNames.has(edge.from_name) || filteredNodeNames.has(edge.to_name);
+    const matchesRelationType = relationTypeFilter === 'all' || edge.relation_type === relationTypeFilter;
     const haystack = [edge.from_name, edge.to_name, edge.relation_type].join(' ').toLowerCase();
     const relationMatch = !normalizedSearch || haystack.includes(normalizedSearch);
     const nodeMatch = !normalizedSearch || filteredNodeNames.has(edge.from_name) || filteredNodeNames.has(edge.to_name);
-    return endpointMatch && (relationMatch || nodeMatch);
+    return endpointMatch && matchesRelationType && (relationMatch || nodeMatch);
   });
 
   const filteredFacts = (cognitiveStats.facts || [])
@@ -224,12 +269,11 @@ export const KnowledgeView: React.FC = () => {
     relationsCount: cognitiveStats.relationsCount || 0,
     factsCount: cognitiveStats.factsCount || 0,
   };
-  const allNodes = cognitiveStats.nodes || [];
   const selectedNode = selectedNodeName
     ? allNodes.find((node) => node.name === selectedNodeName) || null
     : null;
   const selectedNodeEdges = selectedNode
-    ? (cognitiveStats.edges || []).filter((edge) => edge.from_name === selectedNode.name || edge.to_name === selectedNode.name)
+    ? allEdges.filter((edge) => edge.from_name === selectedNode.name || edge.to_name === selectedNode.name)
     : [];
   const selectedNeighborNames = new Set(
     selectedNodeEdges.flatMap((edge) => [edge.from_name, edge.to_name]).filter((name) => name !== selectedNode?.name),
@@ -240,6 +284,17 @@ export const KnowledgeView: React.FC = () => {
     : filteredNodes;
   const graphNodeNames = new Set(graphNodes.map((node) => node.name));
   const graphEdges = filteredEdges.filter((edge) => graphNodeNames.has(edge.from_name) && graphNodeNames.has(edge.to_name));
+  const selectedEdge = selectedEdgeKey ? allEdges.find((edge) => edgeKey(edge) === selectedEdgeKey) || null : null;
+  const handleSelectNode = (nodeName: string | null) => {
+    setSelectedNodeName(nodeName);
+    setSelectedEdgeKey(null);
+  };
+  const handleSelectEdge = (key: string | null) => {
+    setSelectedEdgeKey(key);
+    if (!key) return;
+    const edge = allEdges.find((candidate) => edgeKey(candidate) === key);
+    if (edge) setSelectedNodeName(edge.from_name);
+  };
   const graphDbExists = runtimeInventory?.memory.graphDb.exists ?? Boolean(cognitiveStats.paths?.graphDb);
   const memoryDbExists = runtimeInventory?.memory.memoryDb.exists ?? Boolean(cognitiveStats.paths?.memoryDb);
   const syncLabel = allNodes.length > 0 ? 'Live now' : 'Waiting for gateway';
@@ -314,7 +369,7 @@ export const KnowledgeView: React.FC = () => {
   const handleDownloadJson = () => {
     const payload = {
       generatedAt: new Date().toISOString(),
-      filters: { searchQuery, nodeTypeFilter, factTagFilter, sortMode },
+      filters: { searchQuery, nodeTypeFilter, communityFilter, relationTypeFilter, mostConnectedOnly, factTagFilter, sortMode },
       stats: snapshotStats,
       nodes: filteredNodes,
       edges: filteredEdges,
@@ -392,8 +447,8 @@ export const KnowledgeView: React.FC = () => {
 
       {/* Filter and Search Bar */}
       <div className="rounded-xl border border-border/70 bg-card/40 p-3 shadow-sm">
-        <div className="grid gap-3 lg:grid-cols-[1fr_160px_160px_140px]">
-          <div className="relative">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">
+          <div className="relative xl:col-span-2">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <input
               value={searchQuery}
@@ -413,6 +468,34 @@ export const KnowledgeView: React.FC = () => {
               {nodeTypes.map((type) => (
                 <option key={type} value={type}>
                   {type}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <select
+              value={communityFilter}
+              onChange={(e) => setCommunityFilter(e.target.value)}
+              className="min-h-10 w-full appearance-none rounded-lg border border-border/60 bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+            >
+              <option value="all">All constellations</option>
+              {communityOptions.map((community) => (
+                <option key={community.id} value={community.id}>
+                  {community.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <select
+              value={relationTypeFilter}
+              onChange={(e) => setRelationTypeFilter(e.target.value)}
+              className="min-h-10 w-full appearance-none rounded-lg border border-border/60 bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+            >
+              <option value="all">All relations</option>
+              {relationTypes.map((relation) => (
+                <option key={relation} value={relation}>
+                  {relation}
                 </option>
               ))}
             </select>
@@ -443,18 +526,25 @@ export const KnowledgeView: React.FC = () => {
           </label>
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+          <label className="flex min-h-7 cursor-pointer items-center gap-1.5 rounded border border-border/60 bg-muted/20 px-2 py-0.5 font-semibold text-foreground/80">
+            <input type="checkbox" checked={mostConnectedOnly} onChange={(e) => setMostConnectedOnly(e.target.checked)} className="h-3.5 w-3.5 accent-amber-500" />
+            Most connected
+          </label>
           <span className="rounded bg-muted/50 px-2 py-0.5 font-mono">nodes: {snapshotStats.entitiesCount}</span>
           <span className="rounded bg-muted/50 px-2 py-0.5 font-mono">{snapshotStats.relationsCount} relations</span>
           <span className="rounded bg-muted/50 px-2 py-0.5 font-mono">{snapshotStats.factsCount} facts</span>
           <span className="rounded bg-muted/30 px-2 py-0.5 font-mono text-muted-foreground/80">
             backend total: {totalStats.entitiesCount} nodes / {totalStats.relationsCount} relations / {totalStats.factsCount} facts
           </span>
-          {(searchQuery || nodeTypeFilter !== 'all' || factTagFilter !== 'all') && (
+          {(searchQuery || nodeTypeFilter !== 'all' || communityFilter !== 'all' || relationTypeFilter !== 'all' || factTagFilter !== 'all' || mostConnectedOnly) && (
             <button
               type="button"
               onClick={() => {
                 setSearchQuery('');
                 setNodeTypeFilter('all');
+                setCommunityFilter('all');
+                setRelationTypeFilter('all');
+                setMostConnectedOnly(false);
                 setFactTagFilter('all');
               }}
               className="ml-auto rounded border border-border/60 px-2 py-0.5 font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
@@ -581,7 +671,9 @@ export const KnowledgeView: React.FC = () => {
                 mode={graphMode}
                 searchQuery={searchQuery}
                 selectedNodeName={selectedNodeName}
-                onSelectNode={setSelectedNodeName}
+                selectedEdgeKey={selectedEdgeKey}
+                onSelectNode={handleSelectNode}
+                onSelectEdge={handleSelectEdge}
                 onModeChange={setGraphMode}
                 onVisibleStatsChange={setVisibleGraphStats}
                 height={560}
@@ -590,10 +682,25 @@ export const KnowledgeView: React.FC = () => {
                 node={selectedNode}
                 edges={selectedNodeEdges}
                 neighbors={selectedNeighbors}
+                edgeSemantics={graphSemantics.edgeMetrics}
+                selectedEdgeKey={selectedEdgeKey}
+                onSelectEdge={handleSelectEdge}
                 onFocusNeighborhood={() => setGraphMode('neighborhood')}
-                onClear={() => setSelectedNodeName(null)}
+                onClear={() => {
+                  setSelectedNodeName(null);
+                  setSelectedEdgeKey(null);
+                }}
               />
             </div>
+            {selectedEdge && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-cyan-400/20 bg-cyan-400/5 px-3 py-2 text-[10px] text-muted-foreground">
+                <span className="font-semibold text-cyan-300">Selected relation</span>
+                <span className="font-mono text-foreground">{selectedEdge.from_name} → {selectedEdge.to_name}</span>
+                <span className="rounded bg-cyan-400/10 px-1.5 py-0.5 font-mono text-cyan-300">{selectedEdge.relation_type}</span>
+                <span>Confidence: {formatConfidence(graphSemantics.edgeMetrics.get(selectedEdgeKey || '')?.confidence ?? null)}</span>
+                <span>Provenance: {formatProvenance(graphSemantics.edgeMetrics.get(selectedEdgeKey || '')?.provenance ?? 'not_recorded')}</span>
+              </div>
+            )}
             <div className="flex items-center justify-between text-[11px] text-muted-foreground px-1 select-none">
               <span>Overview groups records for readability. Search, zoom, or select a cluster to reveal individual entities.</span>
               <span className="font-mono text-emerald-400 flex items-center gap-1">
