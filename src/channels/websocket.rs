@@ -332,6 +332,121 @@ static WS_APPROVALS: std::sync::OnceLock<
     std::sync::Mutex<std::collections::HashMap<String, PendingWsApproval>>,
 > = std::sync::OnceLock::new();
 
+#[derive(Clone)]
+struct ActiveWsTurn {
+    client_id: String,
+    chat_id: String,
+    token: crate::tools::subagent::CancellationToken,
+}
+
+struct WsTurnGuard(String);
+
+impl Drop for WsTurnGuard {
+    fn drop(&mut self) {
+        remove_ws_turn(&self.0);
+    }
+}
+
+static ACTIVE_WS_TURNS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, ActiveWsTurn>>,
+> = std::sync::OnceLock::new();
+
+pub fn register_ws_turn(
+    turn_id: String,
+    client_id: String,
+    chat_id: String,
+    token: crate::tools::subagent::CancellationToken,
+) {
+    let map = ACTIVE_WS_TURNS.get_or_init(std::sync::Mutex::default);
+    if let Ok(mut turns) = map.lock() {
+        turns.insert(
+            turn_id,
+            ActiveWsTurn {
+                client_id,
+                chat_id,
+                token,
+            },
+        );
+    }
+}
+
+pub fn remove_ws_turn(turn_id: &str) {
+    let map = ACTIVE_WS_TURNS.get_or_init(std::sync::Mutex::default);
+    if let Ok(mut turns) = map.lock() {
+        turns.remove(turn_id);
+    }
+}
+
+pub fn cancel_ws_turn(turn_id: &str, client_id: &str, chat_id: &str) -> bool {
+    let map = ACTIVE_WS_TURNS.get_or_init(std::sync::Mutex::default);
+    let pending = map.lock().ok().and_then(|mut turns| {
+        let matches = turns.get(turn_id).is_some_and(|turn| {
+            turn.client_id == client_id && turn.chat_id == chat_id
+        });
+        if matches {
+            turns.remove(turn_id)
+        } else {
+            None
+        }
+    });
+
+    pending
+        .map(|turn| {
+            turn.token.cancel();
+            true
+        })
+        .unwrap_or(false)
+}
+
+pub fn cancel_ws_turn_for_client_chat(
+    client_id: &str,
+    chat_id: &str,
+    requested_turn_id: Option<&str>,
+) -> Option<String> {
+    let map = ACTIVE_WS_TURNS.get_or_init(std::sync::Mutex::default);
+    let pending = map.lock().ok().and_then(|mut turns| {
+        let turn_id = turns
+            .iter()
+            .find(|(turn_id, turn)| {
+                turn.client_id == client_id
+                    && turn.chat_id == chat_id
+                    && requested_turn_id
+                        .map(|requested| requested == turn_id.as_str())
+                        .unwrap_or(true)
+            })
+            .map(|(turn_id, _)| turn_id.clone());
+        turn_id.and_then(|turn_id| turns.remove(&turn_id).map(|turn| (turn_id, turn)))
+    });
+
+    pending.map(|(turn_id, turn)| {
+        turn.token.cancel();
+        turn_id
+    })
+}
+
+pub fn cancel_ws_turns_for_client(client_id: &str) {
+    let map = ACTIVE_WS_TURNS.get_or_init(std::sync::Mutex::default);
+    let pending = map
+        .lock()
+        .ok()
+        .map(|mut turns| {
+            let turn_ids = turns
+                .iter()
+                .filter(|(_, turn)| turn.client_id == client_id)
+                .map(|(turn_id, _)| turn_id.clone())
+                .collect::<Vec<_>>();
+            turn_ids
+                .into_iter()
+                .filter_map(|turn_id| turns.remove(&turn_id))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    for turn in pending {
+        turn.token.cancel();
+    }
+}
+
 /// Register a pending security-approval request for a WebSocket client.
 pub fn register_ws_approval(
     req_id: String,
@@ -995,6 +1110,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
     struct WsSenderGuard(String);
     impl Drop for WsSenderGuard {
         fn drop(&mut self) {
+            cancel_ws_turns_for_client(&self.0);
             cancel_ws_approvals_for_client(&self.0);
             if let Ok(mut senders) = crate::channels::get_active_ws_senders().lock() {
                 senders.remove(&self.0);
@@ -1125,11 +1241,28 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                         };
 
                         if crate::channels::is_stop_command(&content) {
-                            crate::shutdown::trigger_cli_cancel();
+                            let requested_turn_id = envelope
+                                .get("turn_id")
+                                .and_then(|value| value.as_str())
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty());
+                            let normalized_chat_id = normalize_ws_chat_id(&chat_id);
+                            let stopped_turn_id = cancel_ws_turn_for_client_chat(
+                                &client_id,
+                                &normalized_chat_id,
+                                requested_turn_id,
+                            );
+                            let had_active_turn = stopped_turn_id.is_some();
                             let stopped_evt = serde_json::json!({
                                 "event": "stopped",
                                 "chat_id": chat_id,
-                                "detail": "Stop requested. Active OpenZ turn interrupted."
+                                "turn_id": stopped_turn_id,
+                                "status": if had_active_turn { "cancelled" } else { "idle" },
+                                "detail": if had_active_turn {
+                                    "Stop requested. Active OpenZ turn interrupted."
+                                } else {
+                                    "No active OpenZ turn for this client and chat."
+                                }
                             });
                             if let Ok(evt_str) = serde_json::to_string(&stopped_evt) {
                                 let _ = tx.send(Message::Text(evt_str)).await;
@@ -1281,19 +1414,51 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             msg_provider
                         );
 
+                        let turn_id = format!(
+                            "turn-{}",
+                            &uuid::Uuid::new_v4().to_string()[..12],
+                        );
+                        let turn_token = crate::tools::subagent::CancellationToken::new();
+                        let normalized_chat_id = normalize_ws_chat_id(&chat_id_clone);
+                        register_ws_turn(
+                            turn_id.clone(),
+                            client_id.clone(),
+                            normalized_chat_id.clone(),
+                            turn_token.clone(),
+                        );
+                        let turn_started_evt = serde_json::json!({
+                            "event": "turn_started",
+                            "chat_id": chat_id_clone,
+                            "turn_id": turn_id,
+                        });
+                        if let Ok(evt_str) = serde_json::to_string(&turn_started_evt) {
+                            let _ = tx.send(Message::Text(evt_str)).await;
+                        }
+
                         let approval_context = WsApprovalContext {
                             client_id: client_id.clone(),
-                            chat_id: normalize_ws_chat_id(&chat_id_clone),
+                            chat_id: normalized_chat_id,
                         };
+                        let turn_context = crate::agent::agent_loop::TurnCancellationContext {
+                            turn_id: turn_id.clone(),
+                            token: turn_token,
+                        };
+                        let turn_id_for_guard = turn_id.clone();
+                        let turn_id_for_events = turn_id.clone();
                         tokio::spawn(async move {
+                            let _turn_guard = WsTurnGuard(turn_id_for_guard);
                             crate::agent::style::spinner::IS_WEBSOCKET.scope(true, async move {
-                                with_ws_approval_context(approval_context, async move {
+                                crate::agent::agent_loop::with_turn_cancellation_context(
+                                    turn_context,
+                                    async move {
+                                        with_ws_approval_context(approval_context, async move {
                                 let _permit = match sem_clone.try_acquire() {
                                     Ok(p) => p,
                                     Err(_) => {
                                         let err_evt = serde_json::json!({
                                             "event": "error",
                                             "chat_id": chat_id_clone,
+                                            "turn_id": turn_id_for_events.clone(),
                                             "detail": "Rate limit exceeded: Only one message can be processed at a time."
                                         });
                                         if let Ok(evt_str) = serde_json::to_string(&err_evt) {
@@ -1301,7 +1466,8 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                         }
                                         let turn_end_evt = serde_json::json!({
                                             "event": "turn_end",
-                                            "chat_id": chat_id_clone
+                                            "chat_id": chat_id_clone,
+                                            "turn_id": turn_id_for_events.clone()
                                         });
                                         if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
                                             let _ = tx_clone.send(Message::Text(evt_str)).await;
@@ -1327,6 +1493,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                         let err_evt = serde_json::json!({
                                             "event": "error",
                                             "chat_id": chat_id_clone,
+                                            "turn_id": turn_id_for_events.clone(),
                                             "detail": format!("Failed to build agent loop: {}", e)
                                         });
                                         if let Ok(evt_str) = serde_json::to_string(&err_evt) {
@@ -1334,7 +1501,8 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                         }
                                         let turn_end_evt = serde_json::json!({
                                             "event": "turn_end",
-                                            "chat_id": chat_id_clone
+                                            "chat_id": chat_id_clone,
+                                            "turn_id": turn_id_for_events.clone()
                                         });
                                         if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
                                             let _ = tx_clone.send(Message::Text(evt_str)).await;
@@ -1358,6 +1526,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                             let delta_evt = serde_json::json!({
                                                 "event": "delta",
                                                 "chat_id": chat_id_clone,
+                                            "turn_id": turn_id_for_events.clone(),
                                                 "content": res.content
                                             });
                                             if let Ok(evt_str) = serde_json::to_string(&delta_evt) {
@@ -1367,7 +1536,8 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
 
                                         let turn_end_evt = serde_json::json!({
                                             "event": "turn_end",
-                                            "chat_id": chat_id_clone
+                                            "chat_id": chat_id_clone,
+                                            "turn_id": turn_id_for_events.clone()
                                         });
                                         if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
                                             let _ = tx_clone.send(Message::Text(evt_str)).await;
@@ -1377,6 +1547,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                         let err_evt = serde_json::json!({
                                             "event": "error",
                                             "chat_id": chat_id_clone,
+                                            "turn_id": turn_id_for_events.clone(),
                                             "detail": e.to_string()
                                         });
                                         if let Ok(evt_str) = serde_json::to_string(&err_evt) {
@@ -1384,15 +1555,21 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                         }
                                         let turn_end_evt = serde_json::json!({
                                             "event": "turn_end",
-                                            "chat_id": chat_id_clone
+                                            "chat_id": chat_id_clone,
+                                            "turn_id": turn_id_for_events.clone()
                                         });
                                         if let Ok(evt_str) = serde_json::to_string(&turn_end_evt) {
                                             let _ = tx_clone.send(Message::Text(evt_str)).await;
                                         }
                                     }
                                 }
-                                }).await
-                            }).await
+                                        })
+                                        .await
+                                    },
+                                )
+                                .await
+                            })
+                            .await;
                         });
                     }
                     "security_response" => {
@@ -2587,6 +2764,53 @@ async fn openai_chat_completions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn websocket_turn_stop_is_scoped_to_owner() {
+        let turn_id = format!("turn-test-{}", uuid::Uuid::new_v4());
+        let token = crate::tools::subagent::CancellationToken::new();
+        register_ws_turn(
+            turn_id.clone(),
+            "client-a".to_string(),
+            "ws-chat-a".to_string(),
+            token.clone(),
+        );
+
+        assert!(!cancel_ws_turn(&turn_id, "client-b", "ws-chat-a"));
+        assert!(!token.is_cancelled());
+        assert!(!cancel_ws_turn(&turn_id, "client-a", "ws-chat-b"));
+        assert!(!token.is_cancelled());
+
+        assert!(cancel_ws_turn(&turn_id, "client-a", "ws-chat-a"));
+        assert!(token.is_cancelled());
+        assert!(!cancel_ws_turn(&turn_id, "client-a", "ws-chat-a"));
+    }
+
+    #[tokio::test]
+    async fn websocket_turn_stop_does_not_cancel_another_client() {
+        let first_turn = format!("turn-first-{}", uuid::Uuid::new_v4());
+        let second_turn = format!("turn-second-{}", uuid::Uuid::new_v4());
+        let first_token = crate::tools::subagent::CancellationToken::new();
+        let second_token = crate::tools::subagent::CancellationToken::new();
+        register_ws_turn(
+            first_turn.clone(),
+            "client-a".to_string(),
+            "ws-chat".to_string(),
+            first_token.clone(),
+        );
+        register_ws_turn(
+            second_turn.clone(),
+            "client-b".to_string(),
+            "ws-chat".to_string(),
+            second_token.clone(),
+        );
+
+        assert!(cancel_ws_turn(&first_turn, "client-a", "ws-chat"));
+        assert!(first_token.is_cancelled());
+        assert!(!second_token.is_cancelled());
+
+        cancel_ws_turn(&second_turn, "client-b", "ws-chat");
+    }
 
     #[tokio::test]
     async fn websocket_approval_rejects_wrong_client_or_chat() {

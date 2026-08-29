@@ -3,6 +3,7 @@ import {
   buildCommandEnvelope,
   createRequestId,
   isCommandAckEvent,
+  isTurnEventCurrent,
   parseWebSocketEvent,
 } from './websocket';
 
@@ -47,6 +48,13 @@ describe('WebSocket protocol contracts', () => {
     );
     expect(envelope.request_id).toBe('req-9');
     expect(envelope.req_id).toBe('sec-1');
+  });
+
+  test('ignores stale turn events while accepting current and legacy events', () => {
+    const activeTurns = { 'chat-1': 'turn-current' };
+    expect(isTurnEventCurrent({ chat_id: 'chat-1', turn_id: 'turn-old' }, activeTurns)).toBe(false);
+    expect(isTurnEventCurrent({ chat_id: 'chat-1', turn_id: 'turn-current' }, activeTurns)).toBe(true);
+    expect(isTurnEventCurrent({ chat_id: 'chat-1' }, activeTurns)).toBe(true);
   });
 
   test('rejected acknowledgements carry actionable detail', () => {

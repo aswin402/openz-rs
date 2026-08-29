@@ -5,7 +5,7 @@
 - [x] Add typed WebSocket event/envelope contracts and command acknowledgement IDs.
 - [x] Enforce WebSocket Origin validation and redact token query logging.
 - [x] Bind security approvals to the requesting client and chat; add rejection tests.
-- [ ] Replace global WebUI stop with per-turn/session cancellation.
+- [x] Replace global WebUI stop with per-turn/session cancellation.
 - [ ] Queue/retry configuration writes after reconnect; surface acknowledgements/errors.
 - [ ] Reconcile attachment limits, add aggregate quota and TTL cleanup, and validate content server-side.
 - [ ] Replace provider/security/channel policy literals with backend capabilities.

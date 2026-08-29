@@ -29,6 +29,7 @@ import type {
   OrchestrationStepState,
 } from '../types';
 import { defaultWebSocketUrl, wsService } from '../services/websocket';
+import { isTurnEventCurrent } from '../types/websocket';
 
 /** Workspace views available from the left navigation rail. */
 export type WorkspaceView = 'dashboard' | 'chats' | 'agents' | 'skills' | 'knowledge' | 'inventory';
@@ -46,6 +47,7 @@ export interface OpenZState {
   messages: Record<string, OpenZMessage[]>;
   orchestrationRuns: Record<string, OrchestrationRunState[]>;
   isStreaming: boolean;
+  activeTurnIds: Record<string, string>;
 
   // Realtime config (populated from backend events — never hardcoded)
   activeModel: string;
@@ -590,6 +592,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   messages: {},
   orchestrationRuns: {},
   isStreaming: false,
+  activeTurnIds: {},
 
   activeModel: '',
   activeProvider: '',
@@ -730,8 +733,21 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     // ----- Realtime turn events (streamed from the agent loop) -----
 
+    wsService.on('turn_started', (payload) => {
+      const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
+      const turnId = asString(payload.turn_id)?.trim();
+      if (!turnId) return;
+      const activeTurns = get().activeTurnIds;
+      if (activeTurns[chatId] && activeTurns[chatId] !== turnId) return;
+      set({
+        activeTurnIds: { ...activeTurns, [chatId]: turnId },
+        isStreaming: true,
+      });
+    });
+
     wsService.on('delta', (payload) => {
       const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
+      if (!isTurnEventCurrent({ chat_id: chatId, turn_id: payload.turn_id }, get().activeTurnIds)) return;
       const content = payload.content || '';
       const chatMessages = get().messages[chatId] || [];
       const lastMsg = chatMessages[chatMessages.length - 1];
@@ -763,6 +779,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     wsService.on('reasoning_delta', (payload) => {
       const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
+      if (!isTurnEventCurrent({ chat_id: chatId, turn_id: payload.turn_id }, get().activeTurnIds)) return;
       const content = payload.content || '';
       const chatMessages = get().messages[chatId] || [];
       const lastMsg = chatMessages[chatMessages.length - 1];
@@ -815,6 +832,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     wsService.on('tool_start', (payload) => {
       const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
+      if (!isTurnEventCurrent({ chat_id: chatId, turn_id: payload.turn_id }, get().activeTurnIds)) return;
       const tool: ToolExecution = {
         id: payload.tool_call_id || newMsgId('tool'),
         name: payload.name || 'tool',
@@ -860,6 +878,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     wsService.on('tool_end', (payload) => {
       const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
+      if (!isTurnEventCurrent({ chat_id: chatId, turn_id: payload.turn_id }, get().activeTurnIds)) return;
       const chatMessages = get().messages[chatId] || [];
       const toolId = payload.tool_call_id || '';
       const endedAt = Date.now();
@@ -923,6 +942,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     wsService.on('security_request', (payload) => {
       const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
+      if (!isTurnEventCurrent({ chat_id: chatId, turn_id: payload.turn_id }, get().activeTurnIds)) return;
       const prompt: SecurityPromptInfo = {
         id: payload.req_id || newMsgId('sec'),
         toolName: payload.tool_name || 'exec_command',
@@ -974,6 +994,10 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     wsService.on('turn_end', (payload) => {
       const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
+      const turnId = asString(payload.turn_id)?.trim();
+      if (!isTurnEventCurrent({ chat_id: chatId, turn_id: turnId }, get().activeTurnIds)) return;
+      const activeTurns = { ...get().activeTurnIds };
+      if (!turnId || activeTurns[chatId] === turnId) delete activeTurns[chatId];
       const chatMessages = get().messages[chatId] || [];
       const settledMessages = settleAssistantTurnMessages(
         chatMessages,
@@ -986,7 +1010,8 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
       set({
         messages: { ...get().messages, [chatId]: settledMessages },
-        isStreaming: false,
+        activeTurnIds: activeTurns,
+        isStreaming: Object.keys(activeTurns).length > 0,
       });
       window.setTimeout(() => {
         if (pendingRunIds.length === 0) return;
@@ -1011,6 +1036,10 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     wsService.on('stopped', (payload) => {
       const payloadObj = isRecord(payload) ? payload : {};
       const chatId = normalizeChatId(asString(payloadObj.chat_id) || get().activeChatId);
+      const turnId = asString(payloadObj.turn_id)?.trim();
+      if (!isTurnEventCurrent({ chat_id: chatId, turn_id: turnId }, get().activeTurnIds)) return;
+      const activeTurns = { ...get().activeTurnIds };
+      if (!turnId || activeTurns[chatId] === turnId) delete activeTurns[chatId];
       const chatMessages = get().messages[chatId] || [];
       const settledMessages = settleAssistantTurnMessages(
         chatMessages,
@@ -1034,7 +1063,8 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
             stoppableRunIds,
           ),
         },
-        isStreaming: false,
+        activeTurnIds: activeTurns,
+        isStreaming: Object.keys(activeTurns).length > 0,
       });
     });
 
@@ -1429,7 +1459,6 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     });
 
     wsService.on('error', (payload) => {
-      set({ isStreaming: false });
       const detail = payload.detail || 'Gateway error occurred.';
       if (!payload.chat_id && (get().activeView !== 'chats' || get().isSettingsOpen)) {
         const activeView = get().activeView;
@@ -1442,6 +1471,10 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
         return;
       }
       const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
+      const turnId = asString(payload.turn_id)?.trim();
+      if (!isTurnEventCurrent({ chat_id: chatId, turn_id: turnId }, get().activeTurnIds)) return;
+      const activeTurns = { ...get().activeTurnIds };
+      if (!turnId || activeTurns[chatId] === turnId) delete activeTurns[chatId];
       const chatMessages = settleAssistantTurnMessages(
         get().messages[chatId] || [],
         'Turn errored before this tool reported completion.',
@@ -1480,11 +1513,15 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
             [chatId]: [...chatMessages.slice(0, -1), errorMsg],
           },
           orchestrationRuns,
+          activeTurnIds: activeTurns,
+          isStreaming: Object.keys(activeTurns).length > 0,
         });
       } else {
         set({
           messages: { ...get().messages, [chatId]: [...chatMessages, errorMsg] },
           orchestrationRuns,
+          activeTurnIds: activeTurns,
+          isStreaming: Object.keys(activeTurns).length > 0,
         });
       }
     });
@@ -1661,8 +1698,33 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   stopTurn: () => {
     const chatId = get().activeChatId;
     if (!chatId) return;
-    wsService.sendStop(chatId);
-    set({ isStreaming: false });
+    const activeTurnId = get().activeTurnIds[chatId];
+    wsService.sendStop(chatId, activeTurnId);
+    const activeTurns = { ...get().activeTurnIds };
+    if (activeTurnId) delete activeTurns[chatId];
+    const settledMessages = settleAssistantTurnMessages(
+      get().messages[chatId] || [],
+      'Turn stopped before this tool completed.',
+    );
+    const stoppableRunIds = (get().orchestrationRuns[chatId] || [])
+      .filter((run) => run.status === 'running' || run.status === 'awaiting_review' || run.provisionalFailure)
+      .map((run) => run.id);
+    set({
+      messages: { ...get().messages, [chatId]: settledMessages },
+      orchestrationRuns: {
+        ...get().orchestrationRuns,
+        [chatId]: settleOrchestrationRuns(
+          get().orchestrationRuns[chatId] || [],
+          'cancelled',
+          'Turn stopped before this orchestration run completed.',
+          Date.now(),
+          true,
+          stoppableRunIds,
+        ),
+      },
+      activeTurnIds: activeTurns,
+      isStreaming: Object.keys(activeTurns).length > 0,
+    });
   },
 
   handleSecurityChoice: (reqId, choice) => {

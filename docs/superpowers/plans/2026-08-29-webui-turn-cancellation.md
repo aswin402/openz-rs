@@ -78,10 +78,10 @@ Mark the cancellation item complete in `plan/webui-remediation-todo.md` and this
 
 ## Completion checklist
 
-- [ ] WebUI stop no longer triggers global CLI cancellation.
-- [ ] Active turns are owned by client, chat, and turn ID.
-- [ ] Wrong-client/wrong-chat stop requests are rejected.
-- [ ] Provider streaming, provider requests, and tools observe turn cancellation.
-- [ ] Lifecycle events carry turn IDs and stale events are ignored.
-- [ ] One client’s stop does not affect another client’s active turn.
-- [ ] Focused Rust/WebUI verification passes without full Cargo commands.
+- [x] WebUI stop no longer triggers global CLI cancellation.
+- [x] Active turns are owned by client, chat, and turn ID.
+- [x] Wrong-client/wrong-chat stop requests are rejected.
+- [x] Provider streaming, provider requests, and tools observe turn cancellation.
+- [x] Lifecycle events carry turn IDs and stale events are ignored.
+- [x] One client’s stop does not affect another client’s active turn.
+- [x] Focused Rust/WebUI verification passes without full Cargo commands.

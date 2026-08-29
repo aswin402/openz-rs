@@ -49,6 +49,34 @@ pub struct RunResult {
     pub streamed: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct TurnCancellationContext {
+    pub turn_id: String,
+    pub token: crate::tools::subagent::CancellationToken,
+}
+
+tokio::task_local! {
+    static TURN_CANCELLATION_CONTEXT: TurnCancellationContext;
+}
+
+pub fn current_turn_cancellation_context() -> Option<TurnCancellationContext> {
+    TURN_CANCELLATION_CONTEXT.try_with(Clone::clone).ok()
+}
+
+pub fn current_turn_id() -> Option<String> {
+    current_turn_cancellation_context().map(|context| context.turn_id)
+}
+
+pub async fn with_turn_cancellation_context<F, T>(
+    context: TurnCancellationContext,
+    future: F,
+) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    TURN_CANCELLATION_CONTEXT.scope(context, future).await
+}
+
 pub struct TurnContext<'a> {
     pub session_key: &'a str,
     pub user_content: &'a str,
@@ -192,6 +220,14 @@ fn fallback_models_for_turn(config: &Config) -> Vec<String> {
     fallbacks
 }
 
+async fn wait_for_turn_cancellation() {
+    let Some(context) = current_turn_cancellation_context() else {
+        std::future::pending::<()>().await;
+        return;
+    };
+    context.token.wait_for_cancellation().await;
+}
+
 async fn wait_for_cli_cancel_since(initial: u64) {
     let mut rx = crate::shutdown::cli_cancel_tx().subscribe();
     while *rx.borrow() == initial {
@@ -211,6 +247,7 @@ where
 {
     tokio::select! {
         biased;
+        _ = wait_for_turn_cancellation() => Err(anyhow::anyhow!("Cancelled by user")),
         _ = wait_for_cli_cancel_since(initial_cancel) => Err(anyhow::anyhow!("Cancelled by user")),
         result = with_spinner(activity_msg, future) => result,
     }
@@ -674,6 +711,23 @@ mod tests {
         ) -> Result<crate::providers::LLMResponse> {
             std::future::pending::<Result<crate::providers::LLMResponse>>().await
         }
+    }
+
+    #[tokio::test]
+    async fn turn_cancellation_context_is_visible_inside_scope() {
+        let context = TurnCancellationContext {
+            turn_id: "turn-context-test".to_string(),
+            token: crate::tools::subagent::CancellationToken::new(),
+        };
+        let observed = with_turn_cancellation_context(context.clone(), async {
+            current_turn_cancellation_context()
+        })
+        .await
+        .expect("turn cancellation context should be scoped");
+
+        assert_eq!(observed.turn_id, context.turn_id);
+        observed.token.cancel();
+        assert!(context.token.is_cancelled());
     }
 
     #[test]

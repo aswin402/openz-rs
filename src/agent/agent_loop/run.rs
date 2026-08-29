@@ -753,6 +753,9 @@ impl<'a> ToolExecutionPipeline<'a> {
         let cancel_aware_fut = async {
             tokio::select! {
                 biased;
+                _ = self.params.turn_cancel.wait_for_cancellation() => {
+                    Err(anyhow::anyhow!("Cancelled by user"))
+                }
                 _ = async {
                     while *tool_cancel_rx.borrow() == tool_cancel_initial {
                         if tool_cancel_rx.changed().await.is_err() { break; }
@@ -986,7 +989,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
     // Build a turn-level cancellation token from the current CLI context.
     // This provides early cancellation detection even before the CLI select! drops run_fut.
-    let turn_cancel = crate::tools::subagent::CancellationToken::new();
+    let turn_cancel = super::current_turn_cancellation_context()
+        .map(|context| context.token)
+        .unwrap_or_else(crate::tools::subagent::CancellationToken::new);
     let turn_cancel_clone = turn_cancel.clone();
 
     loop {
@@ -1131,6 +1136,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 // Race: next stream chunk vs cancellation signal vs an idle provider stream.
                 let chunk = tokio::select! {
                     biased;
+                    _ = turn_cancel_clone.wait_for_cancellation() => {
+                        return Err(anyhow::anyhow!("Cancelled by user"));
+                    }
                     _ = async {
                         while *stream_cancel_rx.borrow() == stream_cancel_initial {
                             if stream_cancel_rx.changed().await.is_err() { break; }
@@ -1198,6 +1206,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             crate::channels::websocket::publish_ws_event(serde_json::json!({
                                 "event": "delta",
                                 "chat_id": chat_id,
+                                "turn_id": super::current_turn_id(),
                                 "content": text,
                             }));
                         }
@@ -1212,6 +1221,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             crate::channels::websocket::publish_ws_event(serde_json::json!({
                                 "event": "reasoning_delta",
                                 "chat_id": chat_id,
+                                "turn_id": super::current_turn_id(),
                                 "content": text,
                             }));
                         }
@@ -1327,6 +1337,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             );
             tokio::select! {
                 biased;
+                _ = turn_cancel_clone.wait_for_cancellation() => {
+                    turn_cancel_clone.cancel();
+                    let msg = "LLM request cancelled by user.".to_string();
+                    ctx.final_content = msg.clone();
+                    return Ok(TurnState::Save);
+                }
                 _ = async {
                     while *ns_cancel_rx.borrow() == ns_cancel_initial {
                         if ns_cancel_rx.changed().await.is_err() { break; }
@@ -1853,6 +1869,7 @@ Now provide only the final user-facing answer to my last message. Do not include
                 crate::channels::websocket::publish_ws_event(serde_json::json!({
                     "event": "tool_start",
                     "chat_id": chat_id,
+                    "turn_id": super::current_turn_id(),
                     "tool_call_id": call.id.clone(),
                     "name": call.name.clone(),
                     "args": call.arguments.clone(),

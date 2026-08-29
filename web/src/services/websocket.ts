@@ -224,8 +224,14 @@ export class OpenZWebSocketService {
     this.send({ type: 'attach', chat_id: chatId });
   }
 
-  public sendStop(chatId: string) {
-    this.sendMessage(chatId, '/stop');
+  public sendStop(chatId: string, turnId?: string) {
+    const payload: Extract<WebSocketCommand, { type: 'message' }> = {
+      type: 'message',
+      chat_id: chatId,
+      content: '/stop',
+    };
+    if (turnId) payload.turn_id = turnId;
+    return this.send(payload, { requireConnected: true });
   }
 
   public requestSessions() {

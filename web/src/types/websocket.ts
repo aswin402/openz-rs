@@ -7,7 +7,7 @@ export interface WebSocketAttachment {
 
 export type WebSocketCommand =
   | { type: 'ping' }
-  | { type: 'message'; chat_id: string; content: string; model?: string; provider?: string; attachments?: WebSocketAttachment[] }
+  | { type: 'message'; chat_id: string; content: string; model?: string; provider?: string; turn_id?: string; attachments?: WebSocketAttachment[] }
   | { type: 'new_chat' }
   | { type: 'attach' | 'load_history' | 'archive_session' | 'delete_session'; chat_id: string }
   | { type: 'list_sessions' | 'get_cognitive_memory' | 'get_mcp_servers' | 'get_logs' | 'get_servers' | 'get_config' | 'get_slash_commands' | 'get_status' | 'get_runtime_inventory' }
@@ -107,4 +107,17 @@ export function isCommandAckEvent(value: WebSocketEventEnvelope | null): value i
     COMMAND_NAMES.has(value.command as WebSocketCommandName) &&
     (value.status === 'accepted' || value.status === 'rejected')
   );
+}
+
+
+/** Return false when an event belongs to an older turn for the same chat. */
+export function isTurnEventCurrent(
+  value: { chat_id?: unknown; turn_id?: unknown },
+  activeTurns: Record<string, string>,
+): boolean {
+  const turnId = typeof value.turn_id === 'string' ? value.turn_id.trim() : '';
+  if (!turnId) return true;
+  const chatId = typeof value.chat_id === 'string' ? value.chat_id.trim() : '';
+  if (!chatId) return true;
+  return activeTurns[chatId] === turnId;
 }

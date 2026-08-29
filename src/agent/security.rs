@@ -947,6 +947,7 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
             serde_json::json!({
                 "event": "security_request",
                 "chat_id": context.chat_id,
+                "turn_id": crate::agent::agent_loop::current_turn_id(),
                 "req_id": req_id,
                 "tool_name": tool_name,
                 "description": description,
@@ -955,7 +956,12 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
             }),
         );
         if !delivered {
-            crate::channels::websocket::cancel_ws_approvals_for_client(&context.client_id);
+            let _ = crate::channels::websocket::resolve_ws_approval(
+                &req_id,
+                &context.client_id,
+                &context.chat_id,
+                false,
+            );
             return Ok(false);
         }
 
