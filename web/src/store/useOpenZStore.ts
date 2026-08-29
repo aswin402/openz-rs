@@ -1199,7 +1199,20 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
               ? payload.stats.workingMemoryKeys
               : [],
             nodes: Array.isArray(payload.nodes) ? payload.nodes : [],
-            edges: Array.isArray(payload.edges) ? payload.edges : [],
+            edges: Array.isArray(payload.edges)
+              ? payload.edges
+                  .filter((edge: Record<string, unknown>) => edge && typeof edge === 'object')
+                  .map((edge: Record<string, unknown>) => ({
+                    from_name: typeof edge.from_name === 'string' ? edge.from_name : '',
+                    to_name: typeof edge.to_name === 'string' ? edge.to_name : '',
+                    relation_type: typeof edge.relation_type === 'string' ? edge.relation_type : '',
+                    ...(typeof edge.confidence === 'number' ? { confidence: edge.confidence } : {}),
+                    ...(typeof edge.valid_from === 'string' ? { valid_from: edge.valid_from } : {}),
+                    ...(typeof edge.provenance === 'string' ? { provenance: edge.provenance } : {}),
+                    ...(typeof edge.source === 'string' ? { source: edge.source } : {}),
+                  }))
+                  .filter((edge: { from_name: string; to_name: string }) => edge.from_name.length > 0 && edge.to_name.length > 0)
+              : [],
             facts: Array.isArray(payload.facts) ? payload.facts : [],
           },
         });

@@ -111,6 +111,10 @@ export interface CognitiveEdge {
   from_name: string;
   to_name: string;
   relation_type: string;
+  confidence?: number;
+  valid_from?: string;
+  provenance?: string;
+  source?: string;
 }
 
 export interface CognitiveFact {

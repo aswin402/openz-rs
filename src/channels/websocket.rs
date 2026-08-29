@@ -2967,15 +2967,19 @@ async fn fetch_real_cognitive_memory() -> serde_json::Value {
                 }
             }
 
-            // Fetch edges (up to 5000 relations)
-            if let Ok(mut stmt) =
-                conn.prepare("SELECT from_name, to_name, relation_type FROM graph_edges LIMIT 5000")
+            // Fetch every active relation; expired historical edges are excluded.
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT from_name, to_name, relation_type, confidence, valid_from
+                 FROM graph_edges WHERE valid_until IS NULL",
+            )
             {
                 if let Ok(rows) = stmt.query_map([], |r| {
                     Ok(serde_json::json!({
                         "from_name": r.get::<_, String>(0)?,
                         "to_name": r.get::<_, String>(1)?,
                         "relation_type": r.get::<_, String>(2)?,
+                        "confidence": r.get::<_, f64>(3)?,
+                        "valid_from": r.get::<_, String>(4)?,
                     }))
                 }) {
                     edges = rows.filter_map(|r| r.ok()).collect();
