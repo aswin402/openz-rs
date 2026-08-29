@@ -1,4 +1,13 @@
 import type { ConnectionStatus } from '../types';
+import {
+  buildCommandEnvelope,
+  createRequestId,
+  isCommandAckEvent,
+  parseWebSocketEvent,
+  type WebSocketCommand,
+  type WebSocketCommandAckEvent,
+  type WebSocketAttachment,
+} from '../types/websocket';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type EventListener = (data: any) => void;
@@ -18,6 +27,8 @@ export class OpenZWebSocketService {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private status: ConnectionStatus = 'disconnected';
   private onStatusChange: ((status: ConnectionStatus) => void) | null = null;
+  private requestSequence = 0;
+  private pendingCommands = new Map<string, WebSocketCommand['type']>();
 
   constructor() {
     const savedUrl = localStorage.getItem('openz_ws_url');
@@ -53,13 +64,33 @@ export class OpenZWebSocketService {
     return !!this.ws && this.ws.readyState === WebSocket.OPEN;
   }
 
-  /** Send a raw envelope, ignoring failures silently (used for fire-and-forget requests). */
-  private send(envelope: Record<string, unknown>) {
+  /** Send a typed command and attach a request ID unless acknowledgements are disabled. */
+  private send(
+    command: WebSocketCommand,
+    options: { acknowledge?: boolean; requireConnected?: boolean } = {},
+  ): string | null {
+    const requestId = options.acknowledge === false ? null : createRequestId(++this.requestSequence);
     if (!this.socketOpen) {
-      console.warn('[ws] Dropped message, socket not connected:', envelope.type);
-      return;
+      if (options.requireConnected) {
+        throw new Error('WebSocket is not connected');
+      }
+      console.warn('[ws] Dropped command, socket not connected:', command.type);
+      if (requestId) {
+        this.emit('command_ack', {
+          event: 'command_ack',
+          request_id: requestId,
+          command: command.type,
+          status: 'rejected',
+          detail: 'WebSocket is not connected',
+        } satisfies WebSocketCommandAckEvent);
+      }
+      return requestId;
     }
+
+    const envelope = requestId ? buildCommandEnvelope(command, requestId) : command;
+    if (requestId) this.pendingCommands.set(requestId, command.type);
     this.ws!.send(JSON.stringify(envelope));
+    return requestId;
   }
 
   public connect() {
@@ -95,12 +126,13 @@ export class OpenZWebSocketService {
 
       this.ws.onmessage = (event) => {
         try {
-          const payload = JSON.parse(event.data);
-          const eventType = payload.event || payload.type;
-
-          if (eventType) {
-            this.emit(eventType, payload);
+          const payload = parseWebSocketEvent(JSON.parse(event.data) as unknown);
+          if (!payload) {
+            console.error('Invalid WebSocket event envelope:', event.data);
+            return;
           }
+          if (isCommandAckEvent(payload)) this.pendingCommands.delete(payload.request_id);
+          this.emit(payload.event, payload);
           this.emit('*', payload);
         } catch (err) {
           console.error('Failed to parse WebSocket message:', err, event.data);
@@ -134,7 +166,7 @@ export class OpenZWebSocketService {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
       if (this.socketOpen) {
-        this.send({ type: 'ping' });
+        this.send({ type: 'ping' }, { acknowledge: false });
       }
     }, 15000);
   }
@@ -175,16 +207,13 @@ export class OpenZWebSocketService {
     content: string,
     model?: string,
     provider?: string,
-    attachments?: Array<{ name: string; mime: string; size: number; data: string }>,
+    attachments?: WebSocketAttachment[],
   ) {
-    if (!this.socketOpen) {
-      throw new Error('WebSocket is not connected');
-    }
-    const payload: Record<string, unknown> = { type: 'message', chat_id: chatId, content };
+    const payload: Extract<WebSocketCommand, { type: 'message' }> = { type: 'message', chat_id: chatId, content };
     if (model) payload.model = model;
     if (provider) payload.provider = provider;
     if (attachments?.length) payload.attachments = attachments;
-    this.ws!.send(JSON.stringify(payload));
+    return this.send(payload, { requireConnected: true });
   }
 
   public createNewChat() {
@@ -205,6 +234,14 @@ export class OpenZWebSocketService {
 
   public requestHistory(chatId: string) {
     this.send({ type: 'load_history', chat_id: chatId });
+  }
+
+  public archiveSession(chatId: string) {
+    this.send({ type: 'archive_session', chat_id: chatId });
+  }
+
+  public deleteSession(chatId: string) {
+    this.send({ type: 'delete_session', chat_id: chatId });
   }
 
   public requestCognitiveMemory() {
@@ -268,6 +305,10 @@ export class OpenZWebSocketService {
     this.send({ type: 'save_subagent', ...data });
   }
 
+  public updateSubagentSettings(data: { name: string; model?: string | null; fallbacks?: string[] | null }) {
+    this.send({ type: 'update_subagent_settings', ...data });
+  }
+
   public deleteSubagent(name: string) {
     this.send({ type: 'delete_subagent', name });
   }
@@ -309,6 +350,8 @@ export class OpenZWebSocketService {
 
   // ---- Event bus ----
 
+  public on(event: 'command_ack', fn: (data: WebSocketCommandAckEvent) => void): void;
+  public on(event: string, fn: EventListener): void;
   public on(event: string, fn: EventListener) {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
