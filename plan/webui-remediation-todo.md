@@ -6,7 +6,7 @@
 - [x] Enforce WebSocket Origin validation and redact token query logging.
 - [x] Bind security approvals to the requesting client and chat; add rejection tests.
 - [x] Replace global WebUI stop with per-turn/session cancellation.
-- [ ] Queue/retry configuration writes after reconnect; surface acknowledgements/errors.
+- [x] Queue/retry configuration writes after reconnect; surface acknowledgements/errors.
 - [ ] Reconcile attachment limits, add aggregate quota and TTL cleanup, and validate content server-side.
 - [ ] Replace provider/security/channel policy literals with backend capabilities.
 - [x] Run focused Rust tests with `just test-one <test> openz` and `just check openz`; avoid full workspace Cargo commands.

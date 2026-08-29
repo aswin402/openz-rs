@@ -3,6 +3,7 @@ import {
   buildCommandEnvelope,
   createRequestId,
   isCommandAckEvent,
+  isRetryableWebSocketCommand,
   isTurnEventCurrent,
   parseWebSocketEvent,
 } from './websocket';
@@ -55,6 +56,11 @@ describe('WebSocket protocol contracts', () => {
     expect(isTurnEventCurrent({ chat_id: 'chat-1', turn_id: 'turn-old' }, activeTurns)).toBe(false);
     expect(isTurnEventCurrent({ chat_id: 'chat-1', turn_id: 'turn-current' }, activeTurns)).toBe(true);
     expect(isTurnEventCurrent({ chat_id: 'chat-1' }, activeTurns)).toBe(true);
+  });
+
+  test('classifies only configuration writes as reconnect-retryable', () => {
+    expect(isRetryableWebSocketCommand({ type: 'set_config', defaults: { streaming: false } })).toBe(true);
+    expect(isRetryableWebSocketCommand({ type: 'message', chat_id: 'ws:chat', content: 'hello' })).toBe(false);
   });
 
   test('rejected acknowledgements carry actionable detail', () => {

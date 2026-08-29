@@ -121,3 +121,8 @@ export function isTurnEventCurrent(
   if (!chatId) return true;
   return activeTurns[chatId] === turnId;
 }
+
+/** Configuration patches are idempotent and safe to replay after reconnect. */
+export function isRetryableWebSocketCommand(command: WebSocketCommand): boolean {
+  return command.type === 'set_config';
+}

@@ -3,6 +3,7 @@ import {
   buildCommandEnvelope,
   createRequestId,
   isCommandAckEvent,
+  isRetryableWebSocketCommand,
   parseWebSocketEvent,
   type WebSocketCommand,
   type WebSocketCommandAckEvent,
@@ -11,6 +12,7 @@ import {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type EventListener = (data: any) => void;
+type QueuedCommand = { command: WebSocketCommand; requestId: string | null };
 
 export function defaultWebSocketUrl(): string {
   if (typeof window === 'undefined') return '';
@@ -29,6 +31,8 @@ export class OpenZWebSocketService {
   private onStatusChange: ((status: ConnectionStatus) => void) | null = null;
   private requestSequence = 0;
   private pendingCommands = new Map<string, WebSocketCommand['type']>();
+  private queuedCommands: QueuedCommand[] = [];
+  private replayableCommands = new Map<string, QueuedCommand>();
 
   constructor() {
     const savedUrl = localStorage.getItem('openz_ws_url');
@@ -67,12 +71,26 @@ export class OpenZWebSocketService {
   /** Send a typed command and attach a request ID unless acknowledgements are disabled. */
   private send(
     command: WebSocketCommand,
-    options: { acknowledge?: boolean; requireConnected?: boolean } = {},
+    options: { acknowledge?: boolean; requireConnected?: boolean; queueIfDisconnected?: boolean } = {},
   ): string | null {
     const requestId = options.acknowledge === false ? null : createRequestId(++this.requestSequence);
     if (!this.socketOpen) {
       if (options.requireConnected) {
         throw new Error('WebSocket is not connected');
+      }
+      if (options.queueIfDisconnected && isRetryableWebSocketCommand(command)) {
+        const queued = { command, requestId };
+        this.queuedCommands.push(queued);
+        if (requestId) {
+          this.pendingCommands.set(requestId, command.type);
+          this.replayableCommands.set(requestId, queued);
+        }
+        this.emit('command_queued', {
+          event: 'command_queued',
+          request_id: requestId,
+          command: command.type,
+        });
+        return requestId;
       }
       console.warn('[ws] Dropped command, socket not connected:', command.type);
       if (requestId) {
@@ -88,9 +106,43 @@ export class OpenZWebSocketService {
     }
 
     const envelope = requestId ? buildCommandEnvelope(command, requestId) : command;
-    if (requestId) this.pendingCommands.set(requestId, command.type);
+    if (requestId) {
+      this.pendingCommands.set(requestId, command.type);
+      if (isRetryableWebSocketCommand(command)) {
+        this.replayableCommands.set(requestId, { command, requestId });
+      }
+    }
     this.ws!.send(JSON.stringify(envelope));
     return requestId;
+  }
+
+  private flushQueuedCommands() {
+    if (!this.socketOpen || this.queuedCommands.length === 0) return;
+    const queued = this.queuedCommands.splice(0);
+    for (let index = 0; index < queued.length; index += 1) {
+      if (!this.socketOpen) {
+        this.queuedCommands.unshift(...queued.slice(index));
+        return;
+      }
+      const entry = queued[index];
+      const envelope = entry.requestId
+        ? buildCommandEnvelope(entry.command, entry.requestId)
+        : entry.command;
+      try {
+        this.ws!.send(JSON.stringify(envelope));
+      } catch {
+        this.queuedCommands.unshift(...queued.slice(index));
+        return;
+      }
+    }
+  }
+
+  private requeueUnacknowledgedConfigWrites() {
+    for (const entry of this.replayableCommands.values()) {
+      if (!this.queuedCommands.some((queued) => queued.requestId === entry.requestId)) {
+        this.queuedCommands.push(entry);
+      }
+    }
   }
 
   public connect() {
@@ -122,6 +174,7 @@ export class OpenZWebSocketService {
           this.reconnectTimer = null;
         }
         this.startHeartbeat();
+        this.flushQueuedCommands();
       };
 
       this.ws.onmessage = (event) => {
@@ -131,7 +184,10 @@ export class OpenZWebSocketService {
             console.error('Invalid WebSocket event envelope:', event.data);
             return;
           }
-          if (isCommandAckEvent(payload)) this.pendingCommands.delete(payload.request_id);
+          if (isCommandAckEvent(payload)) {
+            this.pendingCommands.delete(payload.request_id);
+            this.replayableCommands.delete(payload.request_id);
+          }
           this.emit(payload.event, payload);
           this.emit('*', payload);
         } catch (err) {
@@ -148,6 +204,7 @@ export class OpenZWebSocketService {
 
       this.ws.onclose = (event) => {
         this.stopHeartbeat();
+        this.requeueUnacknowledgedConfigWrites();
         if (event.code === 4001 || event.reason === 'Unauthorized') {
           this.updateStatus('unauthorized');
         } else {
@@ -292,11 +349,17 @@ export class OpenZWebSocketService {
   }
 
   public updateConfig(patch: Record<string, unknown>) {
-    this.send({ type: 'set_config', defaults: patch });
+    return this.send(
+      { type: 'set_config', defaults: patch },
+      { queueIfDisconnected: true },
+    );
   }
 
   public sendSetConfig(data: { defaults?: Record<string, unknown>; providers?: Record<string, unknown>; channels?: Record<string, unknown> }) {
-    this.send({ type: 'set_config', ...data });
+    return this.send(
+      { type: 'set_config', ...data },
+      { queueIfDisconnected: true },
+    );
   }
 
   public saveSkill(name: string, content: string) {

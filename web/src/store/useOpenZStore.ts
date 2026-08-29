@@ -1070,13 +1070,47 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     // ----- Data events (replace every hardcoded value) -----
 
+    wsService.on('command_queued', (payload) => {
+      if (payload.command !== 'set_config') return;
+      set({
+        workspaceNotice: {
+          scope: 'settings',
+          type: 'info',
+          message: 'Settings queued until the gateway reconnects.',
+          timestamp: Date.now(),
+        },
+      });
+    });
+
     wsService.on('command_ack', (payload) => {
+      if (payload.command === 'set_config' && payload.status === 'accepted') {
+        set({
+          workspaceNotice: {
+            scope: 'settings',
+            type: 'info',
+            message: 'Settings update accepted; waiting for gateway confirmation.',
+            timestamp: Date.now(),
+          },
+        });
+        return;
+      }
       if (payload.status !== 'rejected') return;
       set({
         workspaceNotice: {
-          scope: 'global',
+          scope: payload.command === 'set_config' ? 'settings' : 'global',
           type: 'error',
           message: payload.detail || `Gateway rejected ${payload.command}.`,
+          timestamp: Date.now(),
+        },
+      });
+    });
+
+    wsService.on('config_update_rejected', (payload) => {
+      set({
+        workspaceNotice: {
+          scope: 'settings',
+          type: 'error',
+          message: asString(payload.reason) || 'Gateway rejected the settings update.',
           timestamp: Date.now(),
         },
       });
