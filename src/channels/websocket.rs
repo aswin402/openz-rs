@@ -727,6 +727,70 @@ async fn hono_log_middleware(
 
 const MAX_WS_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16 MB
 const MAX_ATTACHMENT_BYTES: usize = 15 * 1024 * 1024; // 15 MB each
+const MAX_WS_REQUEST_ID_LEN: usize = 128;
+
+fn ws_request_id(envelope: &Value) -> Option<String> {
+    let request_id = envelope.get("request_id").and_then(Value::as_str)?.trim();
+    if request_id.is_empty() || request_id.len() > MAX_WS_REQUEST_ID_LEN {
+        return None;
+    }
+    Some(request_id.to_string())
+}
+
+fn is_known_ws_command(command: &str) -> bool {
+    matches!(
+        command,
+        "ping"
+            | "message"
+            | "new_chat"
+            | "attach"
+            | "load_history"
+            | "archive_session"
+            | "delete_session"
+            | "list_sessions"
+            | "get_cognitive_memory"
+            | "get_mcp_servers"
+            | "get_logs"
+            | "get_servers"
+            | "stop_server"
+            | "get_models"
+            | "toggle_favorite_model"
+            | "get_config"
+            | "set_config"
+            | "save_skill"
+            | "delete_skill"
+            | "save_subagent"
+            | "update_subagent_settings"
+            | "delete_subagent"
+            | "get_slash_commands"
+            | "get_status"
+            | "get_runtime_inventory"
+            | "pause_cron_job"
+            | "resume_cron_job"
+            | "delete_cron_job"
+            | "get_cron_logs"
+            | "security_response"
+    )
+}
+
+fn command_ack_event(
+    request_id: &str,
+    command: &str,
+    status: &str,
+    detail: Option<&str>,
+) -> Value {
+    let mut event = serde_json::json!({
+        "event": "command_ack",
+        "request_id": request_id,
+        "command": command,
+        "status": status,
+    });
+    if let Some(detail) = detail {
+        event["detail"] = Value::String(detail.to_string());
+    }
+    event
+}
+
 
 /// Persist base64 attachment payloads (sent by the WebUI) to
 /// `<config_dir>/attachments/` and return a list of markdown reference lines
@@ -866,6 +930,17 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
             let parsed: Result<Value, _> = serde_json::from_str(&text);
             if let Ok(envelope) = parsed {
                 let msg_type = envelope.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                if let Some(request_id) = ws_request_id(&envelope) {
+                    let (status, detail) = if is_known_ws_command(msg_type) {
+                        ("accepted", None)
+                    } else {
+                        ("rejected", Some("Unknown WebSocket command."))
+                    };
+                    let ack = command_ack_event(&request_id, msg_type, status, detail);
+                    if let Ok(ack_str) = serde_json::to_string(&ack) {
+                        let _ = tx.send(Message::Text(ack_str)).await;
+                    }
+                }
                 let chat_id = envelope
                     .get("chat_id")
                     .and_then(|v| v.as_str())
@@ -2743,6 +2818,28 @@ mod tests {
 
         // Clean up
         std::env::remove_var("OPENZ_GATEWAY_TOKEN");
+    }
+    #[test]
+    fn websocket_request_id_is_trimmed_and_bounded() {
+        assert_eq!(
+            ws_request_id(&serde_json::json!({"request_id": " req-7 "})),
+            Some("req-7".to_string())
+        );
+        assert_eq!(ws_request_id(&serde_json::json!({"request_id": ""})), None);
+        let oversized = "x".repeat(MAX_WS_REQUEST_ID_LEN + 1);
+        assert_eq!(
+            ws_request_id(&serde_json::json!({"request_id": oversized})),
+            None
+        );
+    }
+
+    #[test]
+    fn websocket_command_ack_has_stable_wire_shape() {
+        let ack = command_ack_event("req-7", "get_status", "accepted", None);
+        assert_eq!(ack["event"], "command_ack");
+        assert_eq!(ack["request_id"], "req-7");
+        assert_eq!(ack["command"], "get_status");
+        assert_eq!(ack["status"], "accepted");
     }
 }
 use super::secure_compare;
