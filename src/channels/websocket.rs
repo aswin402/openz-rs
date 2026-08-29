@@ -299,26 +299,119 @@ pub fn publish_orchestration_event(chat_id: &str, payload: serde_json::Value) {
     }));
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WsApprovalContext {
+    pub client_id: String,
+    pub chat_id: String,
+}
+
+struct PendingWsApproval {
+    context: WsApprovalContext,
+    tx: tokio::sync::oneshot::Sender<bool>,
+}
+
+tokio::task_local! {
+    static WS_APPROVAL_CONTEXT: Option<WsApprovalContext>;
+}
+
+pub fn current_ws_approval_context() -> Option<WsApprovalContext> {
+    WS_APPROVAL_CONTEXT
+        .try_with(|context| context.clone())
+        .ok()
+        .flatten()
+}
+
+pub async fn with_ws_approval_context<F, T>(context: WsApprovalContext, future: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    WS_APPROVAL_CONTEXT.scope(Some(context), future).await
+}
+
 static WS_APPROVALS: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
+    std::sync::Mutex<std::collections::HashMap<String, PendingWsApproval>>,
 > = std::sync::OnceLock::new();
 
 /// Register a pending security-approval request for a WebSocket client.
-pub fn register_ws_approval(req_id: String, tx: tokio::sync::oneshot::Sender<bool>) {
+pub fn register_ws_approval(
+    req_id: String,
+    context: WsApprovalContext,
+    tx: tokio::sync::oneshot::Sender<bool>,
+) {
     let map = WS_APPROVALS.get_or_init(std::sync::Mutex::default);
     if let Ok(mut approvals) = map.lock() {
-        approvals.insert(req_id, tx);
+        approvals.insert(req_id, PendingWsApproval { context, tx });
     }
 }
 
 /// Resolve a pending security-approval request from a client response.
-pub fn resolve_ws_approval(req_id: &str, approved: bool) {
+pub fn resolve_ws_approval(req_id: &str, client_id: &str, chat_id: &str, approved: bool) -> bool {
     let map = WS_APPROVALS.get_or_init(std::sync::Mutex::default);
-    if let Ok(mut approvals) = map.lock() {
-        if let Some(tx) = approvals.remove(req_id) {
-            let _ = tx.send(approved);
+    let pending = map.lock().ok().and_then(|mut approvals| {
+        let matches = approvals.get(req_id).is_some_and(|pending| {
+            pending.context.client_id == client_id && pending.context.chat_id == chat_id
+        });
+        if matches {
+            approvals.remove(req_id)
+        } else {
+            None
         }
+    });
+
+    pending
+        .map(|pending| {
+            let _ = pending.tx.send(approved);
+            true
+        })
+        .unwrap_or(false)
+}
+
+/// Deny and remove all pending approvals owned by a disconnected client.
+pub fn cancel_ws_approvals_for_client(client_id: &str) {
+    let map = WS_APPROVALS.get_or_init(std::sync::Mutex::default);
+    let pending = map
+        .lock()
+        .ok()
+        .map(|mut approvals| {
+            let req_ids = approvals
+                .iter()
+                .filter(|(_, pending)| pending.context.client_id == client_id)
+                .map(|(req_id, _)| req_id.clone())
+                .collect::<Vec<_>>();
+            req_ids
+                .into_iter()
+                .filter_map(|req_id| approvals.remove(&req_id))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    for pending in pending {
+        let _ = pending.tx.send(false);
     }
+}
+
+/// Deliver an event to one authenticated WebSocket client.
+pub fn publish_ws_event_to_client(client_id: &str, event: serde_json::Value) -> bool {
+    let Ok(event_str) = serde_json::to_string(&event) else {
+        return false;
+    };
+    let sender = crate::channels::get_active_ws_senders()
+        .lock()
+        .ok()
+        .and_then(|senders| senders.get(client_id).cloned());
+    sender
+        .map(|sender| sender.try_send(Message::Text(event_str)).is_ok())
+        .unwrap_or(false)
+}
+
+fn security_response_rejected_event(req_id: &str, chat_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "event": "security_response_rejected",
+        "req_id": req_id,
+        "chat_id": chat_id,
+        "status": "rejected",
+        "detail": "Security approval is no longer pending or belongs to another client or chat.",
+    })
 }
 
 fn subagent_profile_events() -> Vec<serde_json::Value> {
@@ -902,6 +995,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
     struct WsSenderGuard(String);
     impl Drop for WsSenderGuard {
         fn drop(&mut self) {
+            cancel_ws_approvals_for_client(&self.0);
             if let Ok(mut senders) = crate::channels::get_active_ws_senders().lock() {
                 senders.remove(&self.0);
             }
@@ -946,8 +1040,10 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                     .and_then(|v| v.as_str())
                     .unwrap_or(&default_chat_id)
                     .to_string();
-                if let Ok(mut client_chats) = crate::channels::get_active_ws_client_chats().lock() {
-                    client_chats.insert(client_id.clone(), chat_id.clone());
+                if msg_type != "security_response" {
+                    if let Ok(mut client_chats) = crate::channels::get_active_ws_client_chats().lock() {
+                        client_chats.insert(client_id.clone(), chat_id.clone());
+                    }
                 }
 
                 match msg_type {
@@ -1185,8 +1281,13 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             msg_provider
                         );
 
+                        let approval_context = WsApprovalContext {
+                            client_id: client_id.clone(),
+                            chat_id: normalize_ws_chat_id(&chat_id_clone),
+                        };
                         tokio::spawn(async move {
                             crate::agent::style::spinner::IS_WEBSOCKET.scope(true, async move {
+                                with_ws_approval_context(approval_context, async move {
                                 let _permit = match sem_clone.try_acquire() {
                                     Ok(p) => p,
                                     Err(_) => {
@@ -1290,6 +1391,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                         }
                                     }
                                 }
+                                }).await
                             }).await
                         });
                     }
@@ -1303,7 +1405,20 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             .get("approved")
                             .and_then(|v| v.as_bool())
                             .unwrap_or(false);
-                        crate::channels::websocket::resolve_ws_approval(&req_id, approved);
+                        let response_chat_id = normalize_ws_chat_id(&chat_id);
+                        let resolved = resolve_ws_approval(
+                            &req_id,
+                            &client_id,
+                            &response_chat_id,
+                            approved,
+                        );
+                        if !resolved {
+                            let rejection = security_response_rejected_event(
+                                &req_id,
+                                &response_chat_id,
+                            );
+                            let _ = publish_ws_event_to_client(&client_id, rejection);
+                        }
                     }
                     "get_models" => {
                         let config = match state.live_config.read() {
@@ -2472,6 +2587,90 @@ async fn openai_chat_completions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn websocket_approval_rejects_wrong_client_or_chat() {
+        let req_id = format!("approval-test-{}", uuid::Uuid::new_v4());
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        register_ws_approval(
+            req_id.clone(),
+            WsApprovalContext {
+                client_id: "client-a".to_string(),
+                chat_id: "ws-chat-a".to_string(),
+            },
+            tx,
+        );
+
+        assert!(!resolve_ws_approval(&req_id, "client-b", "ws-chat-a", true));
+        assert!(rx.try_recv().is_err(), "mismatched client consumed approval");
+
+        assert!(!resolve_ws_approval(&req_id, "client-a", "ws-chat-b", true));
+        assert!(rx.try_recv().is_err(), "mismatched chat consumed approval");
+
+        assert!(resolve_ws_approval(&req_id, "client-a", "ws-chat-a", true));
+        assert_eq!(rx.await.unwrap(), true);
+    }
+
+    #[tokio::test]
+    async fn websocket_approval_event_targets_only_requesting_client() {
+        let client_id = format!("approval-target-{}", uuid::Uuid::new_v4());
+        let other_client_id = format!("approval-other-{}", uuid::Uuid::new_v4());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let (other_tx, mut other_rx) = tokio::sync::mpsc::channel(1);
+        crate::channels::get_active_ws_senders()
+            .lock()
+            .unwrap()
+            .insert(client_id.clone(), tx);
+        crate::channels::get_active_ws_senders()
+            .lock()
+            .unwrap()
+            .insert(other_client_id.clone(), other_tx);
+
+        assert!(publish_ws_event_to_client(
+            &client_id,
+            serde_json::json!({ "event": "security_request", "req_id": "req-1" }),
+        ));
+        assert!(rx.try_recv().is_ok());
+        assert!(other_rx.try_recv().is_err());
+
+        crate::channels::get_active_ws_senders()
+            .lock()
+            .unwrap()
+            .remove(&client_id);
+        crate::channels::get_active_ws_senders()
+            .lock()
+            .unwrap()
+            .remove(&other_client_id);
+    }
+
+    #[tokio::test]
+    async fn websocket_approval_cancels_on_client_disconnect() {
+        let req_id = format!("approval-disconnect-{}", uuid::Uuid::new_v4());
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        register_ws_approval(
+            req_id.clone(),
+            WsApprovalContext {
+                client_id: "client-disconnect".to_string(),
+                chat_id: "ws-chat".to_string(),
+            },
+            tx,
+        );
+
+        cancel_ws_approvals_for_client("client-disconnect");
+
+        assert_eq!(rx.await.unwrap(), false);
+        assert!(!resolve_ws_approval(&req_id, "client-disconnect", "ws-chat", true));
+    }
+
+    #[test]
+    fn websocket_approval_rejection_event_is_safe_and_targeted() {
+        let event = security_response_rejected_event("req-1", "ws-chat-a");
+        assert_eq!(event["event"], "security_response_rejected");
+        assert_eq!(event["req_id"], "req-1");
+        assert_eq!(event["chat_id"], "ws-chat-a");
+        assert!(event["detail"].as_str().unwrap().contains("pending"));
+        assert!(!event.to_string().contains("tool_name"));
+    }
 
     #[tokio::test]
     async fn websocket_cron_commands_update_inventory_and_logs() {

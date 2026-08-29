@@ -847,7 +847,7 @@ fn compact_approval_description(description: &str, max_width: usize) -> String {
     compact
 }
 
-/// Request approval for a sensitive tool call over TUI or Telegram.
+/// Request approval for a sensitive tool call over TUI, Telegram, or the WebUI.
 pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value) -> Result<bool> {
     let description = SecurityGuard::format_description(tool_name, arguments);
 
@@ -929,25 +929,46 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
             Err(_) => Ok(false),
         }
     } else if crate::agent::style::spinner::is_websocket() || actual_session.starts_with("ws:") {
-        // WebUI approval flow: publish a security_request event and wait for a
-        // `security_response` WS message with the matching req_id.
-        let chat_id = crate::channels::websocket::ws_chat_id(&actual_session)
-            .unwrap_or_else(|| actual_session.replace(':', "_"));
+        // WebUI approval flow: publish a security_request event to the socket
+        // that owns this turn and wait for a matching, authenticated response.
+        let Some(context) = crate::channels::websocket::current_ws_approval_context() else {
+            tracing::warn!(
+                session = %actual_session,
+                "WebSocket approval requested without an originating client context; denying"
+            );
+            return Ok(false);
+        };
         let req_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = tokio::sync::oneshot::channel();
-        crate::channels::websocket::register_ws_approval(req_id.clone(), tx);
+        crate::channels::websocket::register_ws_approval(req_id.clone(), context.clone(), tx);
 
-        crate::channels::websocket::publish_ws_event(serde_json::json!({
-            "event": "security_request",
-            "chat_id": chat_id,
-            "req_id": req_id,
-            "tool_name": tool_name,
-            "description": description,
-            "arguments": SecurityGuard::redacted_approval_arguments(arguments),
-            "status": "pending",
-        }));
+        let delivered = crate::channels::websocket::publish_ws_event_to_client(
+            &context.client_id,
+            serde_json::json!({
+                "event": "security_request",
+                "chat_id": context.chat_id,
+                "req_id": req_id,
+                "tool_name": tool_name,
+                "description": description,
+                "arguments": SecurityGuard::redacted_approval_arguments(arguments),
+                "status": "pending",
+            }),
+        );
+        if !delivered {
+            crate::channels::websocket::cancel_ws_approvals_for_client(&context.client_id);
+            return Ok(false);
+        }
 
-        match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
+        let approval_result = tokio::time::timeout(std::time::Duration::from_secs(120), rx).await;
+        if !matches!(approval_result, Ok(Ok(_))) {
+            let _ = crate::channels::websocket::resolve_ws_approval(
+                &req_id,
+                &context.client_id,
+                &context.chat_id,
+                false,
+            );
+        }
+        match approval_result {
             Ok(Ok(approved)) => Ok(approved),
             _ => Ok(false),
         }

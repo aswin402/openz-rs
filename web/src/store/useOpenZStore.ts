@@ -961,6 +961,17 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
       }
     });
 
+    wsService.on('security_response_rejected', (payload) => {
+      set({
+        workspaceNotice: {
+          scope: 'global',
+          type: 'error',
+          message: asString(payload.detail) || 'Security approval was rejected because it belongs to another client or chat.',
+          timestamp: Date.now(),
+        },
+      });
+    });
+
     wsService.on('turn_end', (payload) => {
       const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
       const chatMessages = get().messages[chatId] || [];

@@ -70,9 +70,9 @@ Review the final diff for accidental staging of unrelated WebSocket/store change
 
 ## Completion checklist
 
-- [ ] Pending approvals carry client and chat ownership.
-- [ ] Security prompts are delivered only to the initiating socket.
-- [ ] Wrong-client and wrong-chat responses are rejected and tested.
-- [ ] Disconnects deny and clean up pending approvals.
-- [ ] WebUI shows a useful rejection notice.
-- [ ] Focused Rust/WebUI verification passes without full Cargo commands.
+- [x] Pending approvals carry client and chat ownership.
+- [x] Security prompts are delivered only to the initiating socket.
+- [x] Wrong-client and wrong-chat responses are rejected and tested.
+- [x] Disconnects deny and clean up pending approvals.
+- [x] WebUI shows a useful rejection notice.
+- [x] Focused Rust/WebUI verification passes without full Cargo commands.
