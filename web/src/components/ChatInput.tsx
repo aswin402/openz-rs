@@ -2,9 +2,13 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
 import { Send, Square, Zap, ChevronsUpDown, Loader2, Paperclip, X, FileText, Image as ImageIcon, AlertTriangle, Star } from 'lucide-react';
 import type { ChatAttachment } from '../types';
-
-const MAX_ATTACHMENTS = 8;
-const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
+import {
+  attachmentFitsQuota,
+  attachmentMimeAllowed,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_TOTAL_BYTES,
+  MAX_ATTACHMENTS,
+} from '../types/attachments';
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024 * 1024) return Math.max(1, Math.round(bytes / 1024)) + ' KB';
@@ -114,6 +118,7 @@ export const ChatInput: React.FC = () => {
 
     const accepted = incoming.slice(0, slotsLeft);
     const rejected: string[] = [];
+    let totalBytes = attachments.reduce((total, attachment) => total + attachment.size, 0);
     if (incoming.length > slotsLeft) {
       const skipped = incoming.length - slotsLeft;
       rejected.push(skipped + ' file' + (skipped === 1 ? '' : 's') + ' skipped because the limit is ' + MAX_ATTACHMENTS);
@@ -124,12 +129,22 @@ export const ChatInput: React.FC = () => {
         rejected.push(file.name + ' is larger than ' + formatFileSize(MAX_ATTACHMENT_BYTES));
         return;
       }
+      if (!attachmentFitsQuota(totalBytes, file.size)) {
+        rejected.push(file.name + ' would exceed the total attachment limit of ' + formatFileSize(MAX_ATTACHMENT_TOTAL_BYTES));
+        return;
+      }
+      const mime = file.type.trim().toLowerCase();
+      if (!attachmentMimeAllowed(mime)) {
+        rejected.push(file.name + ' has an unsupported file type.');
+        return;
+      }
+      totalBytes += file.size;
 
       const reader = new FileReader();
       reader.onload = () => {
         const result = String(reader.result || '');
         const data = result.includes(',') ? result.slice(result.indexOf(',') + 1) : result;
-        const mime = file.type || 'application/octet-stream';
+        const mime = file.type.trim().toLowerCase();
         setAttachments((current) => [
           ...current,
           {

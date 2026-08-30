@@ -933,8 +933,11 @@ async fn hono_log_middleware(
     response
 }
 
-const MAX_WS_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16 MB
-const MAX_ATTACHMENT_BYTES: usize = 15 * 1024 * 1024; // 15 MB each
+const MAX_WS_MESSAGE_SIZE: usize = 40 * 1024 * 1024; // base64 envelope for the aggregate attachment quota
+const MAX_ATTACHMENT_COUNT: usize = 8;
+const MAX_ATTACHMENT_BYTES: usize = 8 * 1024 * 1024; // 8 MiB each
+const MAX_ATTACHMENT_TOTAL_BYTES: usize = 24 * 1024 * 1024; // 24 MiB decoded per message
+const ATTACHMENT_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 const MAX_WS_REQUEST_ID_LEN: usize = 128;
 
 fn ws_request_id(envelope: &Value) -> Option<String> {
@@ -1000,6 +1003,81 @@ fn command_ack_event(
 }
 
 
+fn attachment_mime_allowed(mime: &str) -> bool {
+    let mime = mime.trim().to_ascii_lowercase();
+    if mime.is_empty() || mime.len() > 128 || mime.chars().any(char::is_control) {
+        return false;
+    }
+    if mime.starts_with("image/") {
+        return matches!(
+            mime.as_str(),
+            "image/png"
+                | "image/jpeg"
+                | "image/gif"
+                | "image/webp"
+                | "image/bmp"
+                | "image/tiff"
+                | "image/svg+xml"
+        );
+    }
+    matches!(
+        mime.as_str(),
+        "application/pdf"
+            | "text/plain"
+            | "text/markdown"
+            | "text/csv"
+            | "application/json"
+            | "application/xml"
+            | "text/xml"
+            | "application/msword"
+            | "application/vnd.ms-excel"
+            | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            | "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
+}
+
+fn attachment_total_within_quota(current: usize, next: usize) -> bool {
+    current <= MAX_ATTACHMENT_TOTAL_BYTES
+        && next <= MAX_ATTACHMENT_TOTAL_BYTES.saturating_sub(current)
+}
+
+fn sanitize_attachment_name(raw_name: &str) -> Option<String> {
+    let clean_name: String = raw_name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || matches!(c, '.' | '-' | '_' | ' '))
+        .take(64)
+        .collect::<String>()
+        .trim()
+        .to_string();
+    if clean_name.is_empty() || clean_name == "." || clean_name == ".." {
+        None
+    } else {
+        Some(clean_name)
+    }
+}
+
+async fn cleanup_stale_attachments(attach_dir: &Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(attach_dir).await else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let Ok(metadata) = entry.metadata().await else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        if now.duration_since(modified).unwrap_or_default() > ATTACHMENT_TTL {
+            let _ = tokio::fs::remove_file(entry.path()).await;
+        }
+    }
+}
+
 /// Persist base64 attachment payloads (sent by the WebUI) to
 /// `<config_dir>/attachments/` and return a list of markdown reference lines
 /// that get prepended to the outgoing message content before it reaches the
@@ -1019,44 +1097,46 @@ async fn persist_attachments(attachments: &Value) -> Vec<String> {
     if tokio::fs::create_dir_all(&attach_dir).await.is_err() {
         return refs;
     }
-    use base64::{Engine as _, engine::general_purpose};
-    for att in arr.iter().take(8) {
+    cleanup_stale_attachments(&attach_dir).await;
+    use base64::{engine::general_purpose, Engine as _};
+    let mut total_bytes = 0usize;
+    for att in arr.iter().take(MAX_ATTACHMENT_COUNT) {
         let Some(data_b64) = att.get("data").and_then(|v| v.as_str()) else {
             continue;
         };
+        if data_b64.len() > (MAX_ATTACHMENT_BYTES * 4 / 3 + 4) {
+            continue;
+        }
         let Ok(bytes) = general_purpose::STANDARD.decode(data_b64) else {
             continue;
         };
-        if bytes.is_empty() || bytes.len() > MAX_ATTACHMENT_BYTES {
+        if bytes.is_empty()
+            || bytes.len() > MAX_ATTACHMENT_BYTES
+            || !attachment_total_within_quota(total_bytes, bytes.len())
+        {
             continue;
         }
         let mime = att
             .get("mime")
             .and_then(|v| v.as_str())
-            .unwrap_or("application/octet-stream")
-            .to_string();
+            .unwrap_or("");
+        if !attachment_mime_allowed(mime) {
+            continue;
+        }
         let raw_name = att
             .get("name")
             .and_then(|v| v.as_str())
-            .unwrap_or("attachment");
-        // Sanitize the filename: keep safe characters, strip path separators.
-        let clean_name: String = raw_name
-            .chars()
-            .filter(|c| c.is_alphanumeric() || matches!(c, '.' | '-' | '_' | ' '))
-            .take(64)
-            .collect::<String>()
-            .trim()
-            .to_string();
-        let clean_name = if clean_name.is_empty() {
-            "attachment".to_string()
-        } else {
-            clean_name
+            .unwrap_or("");
+        let Some(clean_name) = sanitize_attachment_name(raw_name) else {
+            continue;
         };
+        let mime = mime.trim().to_ascii_lowercase();
         let file_name = format!("{}_{}", &uuid::Uuid::new_v4().to_string()[..8], clean_name);
         let path = attach_dir.join(&file_name);
         if tokio::fs::write(&path, &bytes).await.is_err() {
             continue;
         }
+        total_bytes += bytes.len();
         let link = format!("file://{}", path.to_string_lossy());
         if mime.starts_with("image/") {
             refs.push(format!("![]({link})"));
@@ -2764,6 +2844,18 @@ async fn openai_chat_completions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attachment_policy_rejects_unsafe_mime_and_aggregate_overflow() {
+        assert!(attachment_mime_allowed("image/png"));
+        assert!(attachment_mime_allowed("application/pdf"));
+        assert!(!attachment_mime_allowed("application/x-sh"));
+        assert!(attachment_total_within_quota(0, MAX_ATTACHMENT_BYTES));
+        assert!(!attachment_total_within_quota(
+            MAX_ATTACHMENT_TOTAL_BYTES - 1,
+            2,
+        ));
+    }
 
     #[tokio::test]
     async fn websocket_turn_stop_is_scoped_to_owner() {
