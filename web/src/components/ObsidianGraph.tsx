@@ -17,6 +17,7 @@ import { cn } from '../lib/utils';
 import {
   buildClusters,
   layoutNodes,
+  prioritizeGraphEdges,
   selectVisibleGraph,
   stableHash,
   type GraphCluster,
@@ -639,8 +640,13 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
       visibleNodesRef.current = visible.nodes
         .map((node) => layoutRef.current.get(node.id))
         .filter((node): node is RenderNode => Boolean(node));
-      visibleEdgesRef.current = visible.edges
-        .slice(0, 1800)
+      visibleEdgesRef.current = prioritizeGraphEdges(
+        visible.edges,
+        visible.nodes,
+        selectedNodeRef.current?.id || null,
+        transform.k,
+        1800,
+      )
         .map((edge) => edgeDetailsRef.current.get(edgeKey(edge)))
         .filter((edge): edge is GraphEdge => Boolean(edge));
 

@@ -248,12 +248,8 @@ export function selectVisibleGraph(
     node.y - node.radius <= viewport.bottom;
 
   if (mode === 'overview') {
-    clusters.forEach((cluster) => {
-      const revealCount = zoom > 1.35
-        ? Math.min(cluster.nodeIds.length, Math.max(cluster.representativeIds.length, Math.ceil((zoom - 1) * 12)))
-        : cluster.representativeIds.length;
-      const orderedIds = Array.from(new Set(cluster.representativeIds.concat(cluster.nodeIds)));
-      orderedIds.slice(0, revealCount).forEach((id) => visibleIds.add(id));
+    nodes.forEach((node) => {
+      if (isInViewport(node)) visibleIds.add(node.id);
     });
   }
   if (mode === 'all') {
@@ -297,4 +293,41 @@ export function selectVisibleGraph(
     visibleNodeCount: visibleNodes.length,
     visibleEdgeCount: visibleEdges.length,
   };
+}
+
+/**
+ * Order drawable edges by the detail most useful to the current graph view.
+ * The complete edge set remains available to selection/statistics callers;
+ * consumers can use this only when they need a bounded render budget.
+ */
+export function prioritizeGraphEdges(
+  edges: CognitiveEdge[],
+  nodes: LayoutNode[],
+  selectedId: string | null,
+  zoom: number,
+  maxEdges = edges.length,
+): CognitiveEdge[] {
+  const degree = new Map(nodes.map((item) => [item.id, item.degree]));
+  const selected = selectedId
+    ? new Set(edges.filter((item) => item.from_name === selectedId || item.to_name === selectedId))
+    : new Set<CognitiveEdge>();
+  const zoomBoost = zoom > 1 ? zoom : 1;
+
+  return [...edges]
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const leftSelected = selected.has(left.item) ? 1 : 0;
+      const rightSelected = selected.has(right.item) ? 1 : 0;
+      const leftConfidence = left.item.confidence ?? 0;
+      const rightConfidence = right.item.confidence ?? 0;
+      const leftDegree = (degree.get(left.item.from_name) ?? 0) + (degree.get(left.item.to_name) ?? 0);
+      const rightDegree = (degree.get(right.item.from_name) ?? 0) + (degree.get(right.item.to_name) ?? 0);
+
+      return rightSelected - leftSelected
+        || (rightConfidence - leftConfidence) * zoomBoost
+        || rightDegree - leftDegree
+        || left.index - right.index;
+    })
+    .slice(0, Math.max(0, maxEdges))
+    .map(({ item }) => item);
 }
