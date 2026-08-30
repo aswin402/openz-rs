@@ -118,6 +118,7 @@ export const DashboardView: React.FC = () => {
   const toggleCavemanMode = useOpenZStore((s) => s.toggleCavemanMode);
   const providersConfig = useOpenZStore((s) => s.providersConfig) || {};
   const channelsConfig = useOpenZStore((s) => s.channelsConfig) || {};
+  const capabilities = useOpenZStore((s) => s.capabilities);
 
   const setActiveView = useOpenZStore((s) => s.setActiveView);
   const setIsMemoryOpen = useOpenZStore((s) => s.setIsMemoryOpen);
@@ -253,7 +254,9 @@ export const DashboardView: React.FC = () => {
           />
           <LauncherCard
             label="Background Bots"
-            desc="Configure Slack, Discord, Telegram, and WhatsApp bot listeners."
+            desc={capabilities.channels.length > 0
+              ? 'Configure ' + capabilities.channels.map((channel) => channel.label).join(', ') + '.'
+              : 'Configure background channel listeners from the gateway.'}
             icon={Server}
             badge={servers.length > 0 ? String(servers.length) : undefined}
             accent="text-cyan-400 bg-cyan-500/10 border-cyan-500/20"
@@ -334,22 +337,26 @@ export const DashboardView: React.FC = () => {
             <h2 className="text-sm font-bold text-foreground">Active Bot Listeners</h2>
           </div>
           <div className="space-y-4">
-            {['telegram', 'discord', 'whatsapp'].map((chanKey) => {
-              const cfg = isJsonObject(channelsConfig[chanKey]) ? channelsConfig[chanKey] : {};
-              const webhookPort = jsonNumber(cfg.webhook_port) || 8090;
+            {capabilities.channels.length === 0 ? (
+              <div className="text-sm text-muted-foreground">Channel capabilities are not loaded yet.</div>
+            ) : capabilities.channels.map((channel) => {
+              const rawChannelConfig = channelsConfig[channel.name];
+              const cfg = isJsonObject(rawChannelConfig) ? rawChannelConfig : {};
               const isEnabled = jsonBool(cfg.enabled);
+              const portField = channel.fields.find((field) => field.kind === 'number');
+              const portValue = portField
+                ? jsonNumber(cfg[portField.key]) ?? jsonNumber(channel.defaults[portField.key])
+                : undefined;
               return (
-                <div key={chanKey} className="flex items-center justify-between text-xs py-1 border-b border-border/10 last:border-0">
+                <div key={channel.name} className="flex items-center justify-between text-xs py-1 border-b border-border/10 last:border-0">
                   <div className="flex flex-col">
-                    <span className="font-semibold text-foreground capitalize">{chanKey} Listener</span>
-                    <span className="text-[10px] text-muted-foreground font-mono">
-                      {chanKey === 'whatsapp' ? `Webhook Port: ${webhookPort}` : isEnabled ? 'Background polling' : 'Offline'}
+                    <span className="font-semibold text-foreground">{channel.label}</span>
+                    <span className="text-[10px] text-muted-foreground font-mono truncate">
+                      {portField && portValue !== undefined ? portField.label + ': ' + portValue : isEnabled ? 'Background listener' : 'Offline'}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 select-none">
-                    <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider ${
-                      isEnabled ? 'bg-amber-500/10 text-amber-400' : 'bg-muted text-muted-foreground'
-                    }`}>
+                    <span className={isEnabled ? 'px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider bg-amber-500/10 text-amber-400' : 'px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider bg-muted text-muted-foreground'}>
                       {isEnabled ? 'Enabled' : 'Disabled'}
                     </span>
                   </div>
