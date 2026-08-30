@@ -9,6 +9,7 @@
 - [x] Queue/retry configuration writes after reconnect; surface acknowledgements/errors.
 - [x] Reconcile attachment limits, add aggregate quota and TTL cleanup, and validate content server-side.
 - [x] Replace provider/security/channel policy literals with backend capabilities.
+- [x] Align REST CORS origins with the configured gateway and supported Vite development origins.
 - [x] Run focused Rust tests with `just test-one <test> openz` and `just check openz`; avoid full workspace Cargo commands.
 
 ## Page repair checklist

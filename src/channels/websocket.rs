@@ -17,7 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::services::ServeDir;
 
 pub struct WsGateway {
@@ -748,6 +748,30 @@ fn gateway_token_required_for_host(host: &str) -> bool {
     }
 }
 
+fn websocket_cors_origins(config: &WebSocketChannelConfig) -> Vec<axum::http::HeaderValue> {
+    let mut origins = vec![
+        axum::http::HeaderValue::from_static("http://localhost"),
+        axum::http::HeaderValue::from_static("http://127.0.0.1"),
+        axum::http::HeaderValue::from_static("http://localhost:3000"),
+        axum::http::HeaderValue::from_static("http://127.0.0.1:3000"),
+        axum::http::HeaderValue::from_static("http://localhost:5173"),
+        axum::http::HeaderValue::from_static("http://127.0.0.1:5173"),
+        axum::http::HeaderValue::from_static("http://localhost:8765"),
+        axum::http::HeaderValue::from_static("http://127.0.0.1:8765"),
+    ];
+
+    for scheme in ["http", "https"] {
+        let origin = format!("{scheme}://{}:{}", config.host, config.port);
+        if let Ok(header) = axum::http::HeaderValue::try_from(origin) {
+            if !origins.contains(&header) {
+                origins.push(header);
+            }
+        }
+    }
+
+    origins
+}
+
 fn gateway_token_configured() -> bool {
     std::env::var("OPENZ_GATEWAY_TOKEN")
         .map(|token| !token.trim().is_empty())
@@ -868,16 +892,9 @@ impl super::Channel for WsGateway {
             live_config: Arc::new(std::sync::RwLock::new(self.agent_loop.config.clone())),
             agent_loop: self.agent_loop.clone(),
         };
-        // Restrict CORS to localhost origins only for security
+        // Keep REST CORS aligned with the WebSocket origin policy and local dev ports.
         let cors = CorsLayer::new()
-            .allow_origin([
-                "http://localhost".parse().unwrap(),
-                "http://127.0.0.1".parse().unwrap(),
-                "http://localhost:3000".parse().unwrap(),
-                "http://127.0.0.1:3000".parse().unwrap(),
-                "http://localhost:8765".parse().unwrap(),
-                "http://127.0.0.1:8765".parse().unwrap(),
-            ])
+            .allow_origin(AllowOrigin::list(websocket_cors_origins(&self.config)))
             .allow_methods([
                 axum::http::Method::GET,
                 axum::http::Method::POST,
@@ -3400,6 +3417,23 @@ mod tests {
                 }
             }
         })));
+    }
+
+    #[test]
+    fn websocket_cors_origins_include_configured_and_vite_origins() {
+        let config = WebSocketChannelConfig {
+            enabled: true,
+            host: "192.168.1.20".to_string(),
+            port: 9000,
+            start_on_boot: false,
+            start_on_tui: false,
+        };
+
+        let origins = websocket_cors_origins(&config);
+        assert!(origins.iter().any(|origin| origin == "http://192.168.1.20:9000"));
+        assert!(origins.iter().any(|origin| origin == "https://192.168.1.20:9000"));
+        assert!(origins.iter().any(|origin| origin == "http://localhost:5173"));
+        assert!(origins.iter().any(|origin| origin == "http://127.0.0.1:5173"));
     }
 
     #[test]
