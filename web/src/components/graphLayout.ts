@@ -150,8 +150,9 @@ export function buildClusters(
   const points = nodes.map((node) => stablePoint(node.name, width, height));
   return connectedGroups
     .map((group) => {
-      const nodeIds = group.map((index) => nodes[index].name).sort((a, b) => a.localeCompare(b));
-      const center = group.reduce(
+      const sortedGroup = [...group].sort((left, right) => nodes[left].name.localeCompare(nodes[right].name));
+      const nodeIds = sortedGroup.map((index) => nodes[index].name);
+      const center = sortedGroup.reduce(
         (acc, index) => ({ x: acc.x + points[index].x, y: acc.y + points[index].y }),
         { x: 0, y: 0 },
       );
@@ -185,6 +186,36 @@ export function buildClusters(
     .sort((left, right) => left.id.localeCompare(right.id));
 }
 
+function clusterPoint(
+  cluster: GraphCluster,
+  node: CognitiveNode,
+  degree: number,
+  width: number,
+  height: number,
+): { x: number; y: number } {
+  const safeWidth = Math.max(1, Number.isFinite(width) ? width : 1);
+  const safeHeight = Math.max(1, Number.isFinite(height) ? height : 1);
+  const padding = Math.max(0, Math.min(DEFAULT_PADDING, Math.min(safeWidth, safeHeight) / 2));
+  if (cluster.nodeIds.length === 1) {
+    return {
+      x: Math.min(safeWidth - padding, Math.max(padding, cluster.x)),
+      y: Math.min(safeHeight - padding, Math.max(padding, cluster.y)),
+    };
+  }
+
+  const angle = (stableHash(`${node.name}:cluster-angle`) / 0xffffffff) * Math.PI * 2;
+  const radialHash = stableHash(`${node.name}:cluster-radius`) / 0xffffffff;
+  const radialFraction = degree <= 1
+    ? 0.72 + radialHash * 0.2
+    : Math.min(0.48, (0.5 + radialHash * 0.12) / degree);
+  const distance = Math.max(6, cluster.radius - 8) * radialFraction;
+
+  return {
+    x: Math.min(safeWidth - padding, Math.max(padding, cluster.x + Math.cos(angle) * distance)),
+    y: Math.min(safeHeight - padding, Math.max(padding, cluster.y + Math.sin(angle) * distance)),
+  };
+}
+
 export function layoutNodes(
   nodes: CognitiveNode[],
   edges: CognitiveEdge[],
@@ -197,22 +228,20 @@ export function layoutNodes(
   clusters.forEach((cluster) => cluster.nodeIds.forEach((id) => clusterByNode.set(id, cluster)));
 
   return nodes.map((node) => {
-    const point = stablePoint(node.name, width, height);
     const cluster = clusterByNode.get(node.name);
     const degree = degrees.get(node.name) || 0;
     const radius = Math.min(13, Math.max(3.5, 3.5 + Math.sqrt(degree) * 1.8));
-    // Keep cluster members near their deterministic cluster center while
-    // retaining a unique point for every node.
-    const x = cluster ? cluster.x + (point.x - width / 2) * 0.38 : point.x;
-    const y = cluster ? cluster.y + (point.y - height / 2) * 0.38 : point.y;
+    const point = cluster
+      ? clusterPoint(cluster, node, degree, width, height)
+      : stablePoint(node.name, width, height);
     return {
       id: node.name,
       name: node.name,
       type: node.entity_type,
       observations: node.observations,
       degree,
-      x,
-      y,
+      x: point.x,
+      y: point.y,
       radius,
       color: '#94a3b8',
     };
