@@ -211,6 +211,106 @@ export interface WebUiCapabilities {
   attachments: AttachmentCapabilities;
 }
 
+function capabilityRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function capabilityNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function capabilityString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+const CAPABILITY_FIELD_KINDS: CapabilityFieldKind[] = ['boolean', 'secret', 'number', 'text'];
+
+export function normalizeWebUiCapabilities(value: unknown): WebUiCapabilities {
+  const source = capabilityRecord(value);
+  const providers = Array.isArray(source?.providers)
+    ? source.providers.flatMap((value) => {
+        const row = capabilityRecord(value);
+        const name = capabilityString(row?.name);
+        const configKey = capabilityString(row?.configKey);
+        const display = capabilityString(row?.display);
+        if (!name || !configKey || !display) return [];
+        return [{
+          name,
+          configKey,
+          display,
+          available: row?.available === true,
+          apiBaseEditable: row?.apiBaseEditable === true,
+        }];
+      })
+    : [];
+  const securityModes = Array.isArray(source?.securityModes)
+    ? source.securityModes.flatMap((value) => {
+        const row = capabilityRecord(value);
+        const mode = capabilityString(row?.value);
+        const label = capabilityString(row?.label);
+        return mode && label ? [{ value: mode, label }] : [];
+      })
+    : [];
+  const channels = Array.isArray(source?.channels)
+    ? source.channels.flatMap((value) => {
+        const row = capabilityRecord(value);
+        const name = capabilityString(row?.name);
+        const label = capabilityString(row?.label);
+        if (!name || !label) return [];
+        const fields = Array.isArray(row?.fields)
+          ? row.fields.flatMap((fieldValue) => {
+              const field = capabilityRecord(fieldValue);
+              const key = capabilityString(field?.key);
+              const fieldLabel = capabilityString(field?.label);
+              const kind = capabilityString(field?.kind);
+              return key && fieldLabel && kind && CAPABILITY_FIELD_KINDS.includes(kind as CapabilityFieldKind)
+                ? [{ key, label: fieldLabel, kind: kind as CapabilityFieldKind }]
+                : [];
+            })
+          : [];
+        const defaults: Record<string, JsonValue> = {};
+        const rawDefaults = capabilityRecord(row?.defaults);
+        if (rawDefaults) {
+          Object.entries(rawDefaults).forEach(([key, defaultValue]) => {
+            if (
+              defaultValue === null ||
+              typeof defaultValue === 'string' ||
+              typeof defaultValue === 'number' ||
+              typeof defaultValue === 'boolean'
+            ) {
+              defaults[key] = defaultValue;
+            }
+          });
+        }
+        return [{ name, label, fields, defaults }];
+      })
+    : [];
+  const attachmentSource = capabilityRecord(source?.attachments);
+  const allowedMimeTypes = Array.isArray(attachmentSource?.allowedMimeTypes)
+    ? attachmentSource.allowedMimeTypes.flatMap((mime) => {
+        const normalized = capabilityString(mime);
+        return normalized ? [normalized] : [];
+      })
+    : [];
+
+  return {
+    version: capabilityNumber(source?.version),
+    providers,
+    securityModes,
+    channels,
+    attachments: {
+      maxCount: capabilityNumber(attachmentSource?.maxCount),
+      maxFileBytes: capabilityNumber(attachmentSource?.maxFileBytes),
+      maxTotalBytes: capabilityNumber(attachmentSource?.maxTotalBytes),
+      maxMessageBytes: capabilityNumber(attachmentSource?.maxMessageBytes),
+      ttlSeconds: capabilityNumber(attachmentSource?.ttlSeconds),
+      allowedMimeTypes,
+    },
+  };
+}
+
 /** Runtime agent defaults editable over the `set_config` WS command. */
 export interface AgentDefaultsConfig {
   model: string;

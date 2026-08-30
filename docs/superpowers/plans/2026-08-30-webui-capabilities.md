@@ -10,6 +10,7 @@ Make SettingsModal and attachment handling follow the gateway's runtime policy. 
 2. Keep sensitive values out of capabilities. The existing masked providers/channels config remains the only editable credential payload.
 3. Store capabilities in Zustand with safe empty defaults. SettingsModal derives provider keys, security options, and channel cards/defaults from the payload, falling back to currently loaded config keys while the gateway is still loading.
 4. Add focused Rust and WebUI contract tests proving the payload has runtime provider/security/channel/attachment policy and the client consumes it without reintroducing literals.
+5. Normalize capability payloads at the client boundary so older or malformed gateway events retain safe nested defaults instead of crashing settings or uploads.
 
 ## Completion checklist
 
@@ -18,3 +19,4 @@ Make SettingsModal and attachment handling follow the gateway's runtime policy. 
 - [x] Channel/default metadata is sourced from capabilities.
 - [x] Attachment limits/MIME policy can be refreshed from capabilities.
 - [x] Focused verification passes.
+- [x] Legacy and malformed capability payloads normalize safely.

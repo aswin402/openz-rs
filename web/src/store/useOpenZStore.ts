@@ -29,6 +29,7 @@ import type {
   OrchestrationRunState,
   OrchestrationStepState,
 } from '../types';
+import { normalizeWebUiCapabilities } from '../types';
 import { defaultWebSocketUrl, wsService } from '../services/websocket';
 import { isTurnEventCurrent } from '../types/websocket';
 
@@ -1393,7 +1394,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     wsService.on('config_data', (payload) => {
       if (payload.capabilities && typeof payload.capabilities === 'object') {
-        set({ capabilities: payload.capabilities as WebUiCapabilities });
+        set({ capabilities: normalizeWebUiCapabilities(payload.capabilities) });
       }
       if (payload.defaults) {
         set({
@@ -1445,7 +1446,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
 
     wsService.on('config_updated', (payload) => {
       if (payload.capabilities && typeof payload.capabilities === 'object') {
-        set({ capabilities: payload.capabilities as WebUiCapabilities });
+        set({ capabilities: normalizeWebUiCapabilities(payload.capabilities) });
       }
       if (payload.defaults) {
         set({
