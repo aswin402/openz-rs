@@ -5,9 +5,7 @@ import type { ChatAttachment } from '../types';
 import {
   attachmentFitsQuota,
   attachmentMimeAllowed,
-  MAX_ATTACHMENT_BYTES,
-  MAX_ATTACHMENT_TOTAL_BYTES,
-  MAX_ATTACHMENTS,
+  DEFAULT_ATTACHMENT_POLICY,
 } from '../types/attachments';
 
 function formatFileSize(bytes: number): string {
@@ -31,6 +29,11 @@ export const ChatInput: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modelButtonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+
+  const capabilities = useOpenZStore((s) => s.capabilities);
+  const attachmentPolicy = capabilities.attachments.maxCount > 0
+    ? capabilities.attachments
+    : DEFAULT_ATTACHMENT_POLICY;
 
   const sendMessage = useOpenZStore((s) => s.sendMessage);
   const stopTurn = useOpenZStore((s) => s.stopTurn);
@@ -109,7 +112,7 @@ export const ChatInput: React.FC = () => {
     if (!files) return;
     setAttachmentError(null);
     const incoming = Array.from(files);
-    const slotsLeft = MAX_ATTACHMENTS - attachments.length;
+    const slotsLeft = attachmentPolicy.maxCount - attachments.length;
 
     if (slotsLeft <= 0) {
       setAttachmentError('Attachment limit reached. Remove a file before adding another.');
@@ -121,20 +124,20 @@ export const ChatInput: React.FC = () => {
     let totalBytes = attachments.reduce((total, attachment) => total + attachment.size, 0);
     if (incoming.length > slotsLeft) {
       const skipped = incoming.length - slotsLeft;
-      rejected.push(skipped + ' file' + (skipped === 1 ? '' : 's') + ' skipped because the limit is ' + MAX_ATTACHMENTS);
+      rejected.push(skipped + ' file' + (skipped === 1 ? '' : 's') + ' skipped because the limit is ' + attachmentPolicy.maxCount);
     }
 
     accepted.forEach((file) => {
-      if (file.size > MAX_ATTACHMENT_BYTES) {
-        rejected.push(file.name + ' is larger than ' + formatFileSize(MAX_ATTACHMENT_BYTES));
+      if (file.size > attachmentPolicy.maxFileBytes) {
+        rejected.push(file.name + ' is larger than ' + formatFileSize(attachmentPolicy.maxFileBytes));
         return;
       }
-      if (!attachmentFitsQuota(totalBytes, file.size)) {
-        rejected.push(file.name + ' would exceed the total attachment limit of ' + formatFileSize(MAX_ATTACHMENT_TOTAL_BYTES));
+      if (!attachmentFitsQuota(totalBytes, file.size, attachmentPolicy.maxTotalBytes)) {
+        rejected.push(file.name + ' would exceed the total attachment limit of ' + formatFileSize(attachmentPolicy.maxTotalBytes));
         return;
       }
       const mime = file.type.trim().toLowerCase();
-      if (!attachmentMimeAllowed(mime)) {
+      if (!attachmentMimeAllowed(mime, attachmentPolicy.allowedMimeTypes)) {
         rejected.push(file.name + ' has an unsupported file type.');
         return;
       }
@@ -406,7 +409,7 @@ export const ChatInput: React.FC = () => {
         <div className="flex items-center justify-between px-3 py-2 border-t border-border/30 text-xs">
           <div className="flex min-w-0 items-center gap-2">
             <input ref={fileInputRef} type="file" multiple accept="image/*,.pdf,.txt,.md,.json,.csv,.rs,.ts,.tsx,.js,.jsx,.py,.toml,.yaml,.yml" className="hidden" onChange={(event) => { addFiles(event.target.files); event.target.value = ''; }} />
-            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isStreaming || attachments.length >= MAX_ATTACHMENTS} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40" title="Attach files" aria-label="Attach files">
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isStreaming || attachments.length >= attachmentPolicy.maxCount} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40" title="Attach files" aria-label="Attach files">
               <Paperclip className="h-3.5 w-3.5" />
             </button>
             {/* Model selector (real data from models_list) */}

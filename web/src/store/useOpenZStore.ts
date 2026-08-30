@@ -12,6 +12,7 @@ import type {
   ProviderModelOption,
   ModelRef,
   AgentDefaultsConfig,
+  WebUiCapabilities,
   SlashCommand,
   AgentStatus,
   RuntimeInventory,
@@ -53,6 +54,7 @@ export interface OpenZState {
   activeModel: string;
   activeProvider: string;
   settings: AgentDefaultsConfig | null;
+  capabilities: WebUiCapabilities;
   providers: ProviderModelOption[];
   recentModels: ModelRef[];
   favoriteModels: ModelRef[];
@@ -141,6 +143,20 @@ const EMPTY_MEMORY: CognitiveMemoryStats = {
 };
 
 const EMPTY_MCP_STATS: McpStats = { loaded: 0, failed: 0, total: 0 };
+const EMPTY_CAPABILITIES: WebUiCapabilities = {
+  version: 0,
+  providers: [],
+  securityModes: [],
+  channels: [],
+  attachments: {
+    maxCount: 0,
+    maxFileBytes: 0,
+    maxTotalBytes: 0,
+    maxMessageBytes: 0,
+    ttlSeconds: 0,
+    allowedMimeTypes: [],
+  },
+};
 const DRAFT_SESSION_TITLE = 'New Session';
 const ACTIVE_CHAT_STORAGE_KEY = 'openz_active_chat_id';
 
@@ -597,6 +613,7 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
   activeModel: '',
   activeProvider: '',
   settings: null,
+  capabilities: EMPTY_CAPABILITIES,
   providers: [],
   recentModels: [],
   favoriteModels: [],
@@ -1375,6 +1392,9 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     });
 
     wsService.on('config_data', (payload) => {
+      if (payload.capabilities && typeof payload.capabilities === 'object') {
+        set({ capabilities: payload.capabilities as WebUiCapabilities });
+      }
       if (payload.defaults) {
         set({
           settings: payload.defaults,
@@ -1424,6 +1444,9 @@ export const useOpenZStore = create<OpenZState>((set, get) => ({
     });
 
     wsService.on('config_updated', (payload) => {
+      if (payload.capabilities && typeof payload.capabilities === 'object') {
+        set({ capabilities: payload.capabilities as WebUiCapabilities });
+      }
       if (payload.defaults) {
         set({
           settings: payload.defaults,

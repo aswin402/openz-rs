@@ -567,6 +567,90 @@ fn runtime_inventory_event(
     })
 }
 
+fn webui_capabilities(config: &crate::config::schema::Config) -> serde_json::Value {
+    let providers = crate::channels::provider_model_catalog_options(config, false)
+        .into_iter()
+        .map(|provider| {
+            let config_key = if provider.name == "z.ai" {
+                "z_ai".to_string()
+            } else {
+                provider.name.clone()
+            };
+            serde_json::json!({
+                "name": provider.name,
+                "configKey": config_key,
+                "display": provider.display,
+                "available": provider.available,
+                "apiBaseEditable": provider.name != "anthropic"
+                    && provider.name != "google_ai_studio",
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let security_modes = [
+        ("strict", "Strict"),
+        ("normal", "Normal"),
+        ("loose", "Loose"),
+    ]
+    .into_iter()
+    .map(|(value, label)| serde_json::json!({ "value": value, "label": label }))
+    .collect::<Vec<_>>();
+
+    let channels = vec![
+        serde_json::json!({
+            "name": "telegram",
+            "label": "Telegram Bot Listener",
+            "fields": [
+                { "key": "enabled", "label": "Enabled", "kind": "boolean" },
+                { "key": "bot_token", "label": "Bot API Token", "kind": "secret" }
+            ],
+            "defaults": { "enabled": false, "bot_token": "" }
+        }),
+        serde_json::json!({
+            "name": "discord",
+            "label": "Discord Bot Gateway",
+            "fields": [
+                { "key": "enabled", "label": "Enabled", "kind": "boolean" },
+                { "key": "bot_token", "label": "Bot Token", "kind": "secret" }
+            ],
+            "defaults": { "enabled": false, "bot_token": "" }
+        }),
+        serde_json::json!({
+            "name": "whatsapp",
+            "label": "WhatsApp Webhook Receiver",
+            "fields": [
+                { "key": "enabled", "label": "Enabled", "kind": "boolean" },
+                { "key": "api_key", "label": "API Key", "kind": "secret" },
+                { "key": "phone_number_id", "label": "Phone Number ID", "kind": "text" },
+                { "key": "webhook_port", "label": "Webhook Port", "kind": "number" },
+                { "key": "verify_token", "label": "Verify Token", "kind": "secret" }
+            ],
+            "defaults": {
+                "enabled": false,
+                "api_key": "",
+                "phone_number_id": "",
+                "webhook_port": 8090,
+                "verify_token": ""
+            }
+        })
+    ];
+
+    serde_json::json!({
+        "version": 1,
+        "providers": providers,
+        "securityModes": security_modes,
+        "channels": channels,
+        "attachments": {
+            "maxCount": MAX_ATTACHMENT_COUNT,
+            "maxFileBytes": MAX_ATTACHMENT_BYTES,
+            "maxTotalBytes": MAX_ATTACHMENT_TOTAL_BYTES,
+            "maxMessageBytes": MAX_WS_MESSAGE_SIZE,
+            "ttlSeconds": ATTACHMENT_TTL.as_secs(),
+            "allowedMimeTypes": ATTACHMENT_ALLOWED_MIME_TYPES,
+        }
+    })
+}
+
 async fn cron_update_event(
     msg_type: &str,
     envelope: &serde_json::Value,
@@ -938,6 +1022,27 @@ const MAX_ATTACHMENT_COUNT: usize = 8;
 const MAX_ATTACHMENT_BYTES: usize = 8 * 1024 * 1024; // 8 MiB each
 const MAX_ATTACHMENT_TOTAL_BYTES: usize = 24 * 1024 * 1024; // 24 MiB decoded per message
 const ATTACHMENT_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+const ATTACHMENT_ALLOWED_MIME_TYPES: &[&str] = &[
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/bmp",
+    "image/tiff",
+    "image/svg+xml",
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/json",
+    "application/xml",
+    "text/xml",
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+];
 const MAX_WS_REQUEST_ID_LEN: usize = 128;
 
 fn ws_request_id(envelope: &Value) -> Option<String> {
@@ -1008,33 +1113,7 @@ fn attachment_mime_allowed(mime: &str) -> bool {
     if mime.is_empty() || mime.len() > 128 || mime.chars().any(char::is_control) {
         return false;
     }
-    if mime.starts_with("image/") {
-        return matches!(
-            mime.as_str(),
-            "image/png"
-                | "image/jpeg"
-                | "image/gif"
-                | "image/webp"
-                | "image/bmp"
-                | "image/tiff"
-                | "image/svg+xml"
-        );
-    }
-    matches!(
-        mime.as_str(),
-        "application/pdf"
-            | "text/plain"
-            | "text/markdown"
-            | "text/csv"
-            | "application/json"
-            | "application/xml"
-            | "text/xml"
-            | "application/msword"
-            | "application/vnd.ms-excel"
-            | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            | "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    )
+    ATTACHMENT_ALLOWED_MIME_TYPES.contains(&mime.as_str())
 }
 
 fn attachment_total_within_quota(current: usize, next: usize) -> bool {
@@ -1926,6 +2005,7 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                             "subagents": subagents,
                             "providers": providers_config,
                             "channels": channels_config,
+                            "capabilities": webui_capabilities(&config),
                             "version": env!("CARGO_PKG_VERSION"),
                         });
                         if let Ok(evt_str) = serde_json::to_string(&evt) {
@@ -2260,7 +2340,8 @@ async fn handle_socket(socket: WebSocket, state: WsState) {
                                 "tool_output_limit": d.tool_output_limit,
                                 "show_auto_capture_notices": d.show_auto_capture_notices,
                                 "tui_thought_display": d.tui_thought_display,
-                            }
+                            },
+                            "capabilities": webui_capabilities(&config),
                         });
                         if let Ok(evt_str) = serde_json::to_string(&evt) {
                             let _ = tx.send(Message::Text(evt_str)).await;
@@ -2844,6 +2925,31 @@ async fn openai_chat_completions(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn webui_capabilities_include_runtime_policy() {
+        let config = crate::config::schema::Config::default();
+        let capabilities = webui_capabilities(&config);
+        assert_eq!(capabilities["version"], 1);
+        assert!(capabilities["securityModes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|mode| mode["value"] == "normal"));
+        assert!(capabilities["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|provider| provider["name"] == "anthropic"));
+        assert!(capabilities["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|channel| channel["name"] == "telegram"));
+        assert_eq!(capabilities["attachments"]["maxCount"], 8);
+        assert_eq!(capabilities["attachments"]["maxFileBytes"], 8 * 1024 * 1024);
+        assert_eq!(capabilities["attachments"]["maxTotalBytes"], 24 * 1024 * 1024);
+    }
 
     #[test]
     fn attachment_policy_rejects_unsafe_mime_and_aggregate_overflow() {

@@ -14,21 +14,8 @@ type ProviderForm = {
 
 type ProvidersForm = Record<string, ProviderForm>;
 
-type TelegramChannelForm = { enabled?: boolean; bot_token?: string };
-type DiscordChannelForm = { enabled?: boolean; bot_token?: string };
-type WhatsAppChannelForm = {
-  enabled?: boolean;
-  api_key?: string;
-  phone_number_id?: string;
-  webhook_port?: number;
-  verify_token?: string;
-};
-
-type ChannelsForm = {
-  telegram?: TelegramChannelForm;
-  discord?: DiscordChannelForm;
-  whatsapp?: WhatsAppChannelForm;
-};
+type ChannelFieldValue = string | number | boolean;
+type ChannelsForm = Record<string, Record<string, ChannelFieldValue>>;
 
 function cloneObject<T>(value: T): T {
   return JSON.parse(JSON.stringify(value || {})) as T;
@@ -228,6 +215,8 @@ export const SettingsModal: React.FC = () => {
   const setWsConfig = useOpenZStore((s) => s.setWsConfig);
 
   const settings = useOpenZStore((s) => s.settings);
+  const capabilities = useOpenZStore((s) => s.capabilities);
+  const channelCapabilities = capabilities.channels;
   const providers = useOpenZStore((s) => s.providers);
   const providersConfig = useOpenZStore((s) => s.providersConfig);
   const channelsConfig = useOpenZStore((s) => s.channelsConfig);
@@ -327,10 +316,20 @@ export const SettingsModal: React.FC = () => {
     if (Number(form.tool_timeout_secs ?? 1) < 1) return 'Tool timeout must be at least 1 second.';
     if (form.context_limit !== '' && form.context_limit !== undefined && Number(form.context_limit) < 1) return 'Context limit must be blank or at least 1.';
     if (form.tool_output_limit !== '' && form.tool_output_limit !== undefined && Number(form.tool_output_limit) < 1) return 'Tool output limit must be blank or at least 1.';
-    const whatsappPort = channelsForm.whatsapp?.webhook_port;
-    if (whatsappPort !== undefined && (Number(whatsappPort) < 1 || Number(whatsappPort) > 65535)) return 'WhatsApp webhook port must be 1-65535.';
+    for (const channel of channelCapabilities) {
+      const values = channelsForm[channel.name] || {};
+      for (const field of channel.fields) {
+        if (field.kind !== 'number') continue;
+        const raw = values[field.key] ?? channel.defaults[field.key];
+        if (raw === undefined || raw === '') continue;
+        const number = Number(raw);
+        if (!Number.isFinite(number) || number < 1 || number > 65535) {
+          return channel.label + ' ' + field.label + ' must be 1-65535.';
+        }
+      }
+    }
     return null;
-  }, [channelsForm.whatsapp?.webhook_port, form.context_limit, form.max_messages, form.max_tokens, form.max_tool_iterations, form.temperature, form.tool_output_limit, form.tool_timeout_secs, urlInput]);
+  }, [channelCapabilities, channelsForm, form.context_limit, form.max_messages, form.max_tokens, form.max_tool_iterations, form.temperature, form.tool_output_limit, form.tool_timeout_secs, urlInput]);
 
   const hasChanges = useMemo(() => {
     const defaultsChanged = settings ? (
@@ -410,9 +409,15 @@ export const SettingsModal: React.FC = () => {
   ] : [];
   const uniqueProviders = Array.from(new Map(providerOptions.map(item => [item.value, item])).values());
 
-  const builtins = ['openai', 'anthropic', 'openrouter', 'deepseek', 'groq', 'ollama', 'minimax', 'mistral', 'z_ai', 'nvidia', 'opencode_zen', 'cerebras', 'google_ai_studio'];
-  const customKeys = Object.keys(providersForm).filter(k => !builtins.includes(k));
-  const allProviderKeys = [...builtins, ...customKeys];
+  const providerCapabilities = capabilities.providers;
+  const providerCapabilityByKey = new Map(providerCapabilities.map((provider) => [provider.configKey, provider]));
+  const capabilityProviderKeys = providerCapabilities.map((provider) => provider.configKey);
+  const allProviderKeys = Array.from(new Set([...capabilityProviderKeys, ...Object.keys(providersForm)]));
+  const securityModeOptions = capabilities.securityModes.length > 0
+    ? capabilities.securityModes
+    : settings?.security_mode
+      ? [{ value: settings.security_mode, label: settings.security_mode }]
+      : [];
 
   if (!isSettingsOpen) return null;
 
@@ -575,11 +580,7 @@ export const SettingsModal: React.FC = () => {
                           label="Security Mode"
                           value={String(form.security_mode ?? settings.security_mode)}
                           onChange={(val) => setField('security_mode', val)}
-                          options={[
-                            { value: 'strict', label: 'strict' },
-                            { value: 'moderate', label: 'moderate' },
-                            { value: 'permissive', label: 'permissive' },
-                          ]}
+                          options={securityModeOptions}
                         />
                       </div>
 
@@ -761,8 +762,9 @@ export const SettingsModal: React.FC = () => {
                     },
                   }));
                 };
-                const label = provKey === 'google_ai_studio' ? 'Google AI Studio' : provKey === 'z_ai' ? 'z.ai' : provKey === 'opencode_zen' ? 'OpenCode Zen' : provKey.toUpperCase();
-                const isCustom = !builtins.includes(provKey);
+                const providerCapability = providerCapabilityByKey.get(provKey);
+                const label = providerCapability?.display || provKey;
+                const isCustom = !providerCapability;
 
                 return (
                   <div key={provKey} className="rounded-xl border border-border/50 bg-muted/15 p-4 space-y-3 relative">
@@ -797,7 +799,7 @@ export const SettingsModal: React.FC = () => {
                           className="w-full rounded-lg border border-border bg-muted/40 p-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
                         />
                       </div>
-                      {(provKey !== 'anthropic' && provKey !== 'google_ai_studio') && (
+                      {(providerCapability?.apiBaseEditable ?? true) && (
                         <div>
                           <label className="mb-1 block font-medium text-muted-foreground select-none">API Base Endpoint</label>
                           <input
@@ -896,183 +898,80 @@ export const SettingsModal: React.FC = () => {
                 Enable external channels and background listeners. Modifying keys/tokens requires a daemon restart to re-init connections.
               </div>
 
-              {/* Telegram Bot */}
-              <div className="rounded-xl border border-border/50 bg-muted/15 p-4 space-y-3">
-                <div className="flex items-center justify-between border-b border-border/30 pb-1.5">
-                  <div className="font-semibold text-foreground select-none">Telegram Bot Listener</div>
-                  <button
-                    onClick={() => {
-                      const tg = channelsForm.telegram || { enabled: false, bot_token: '' };
-                      setChannelsForm((cf: ChannelsForm) => ({
-                        ...cf,
-                        telegram: { ...tg, enabled: !tg.enabled },
-                      }));
-                    }}
-                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                      channelsForm.telegram?.enabled ? 'bg-amber-500' : 'bg-muted'
-                    }`}
-                  >
-                    <span
-                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                        channelsForm.telegram?.enabled ? 'translate-x-4' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
+              {channelCapabilities.length === 0 ? (
+                <div className="rounded-lg border border-border/40 bg-muted/20 p-3 text-[11px] text-muted-foreground select-none">
+                  Channel capabilities are not loaded yet — they appear once the gateway responds.
                 </div>
-                <div className="space-y-2.5">
-                  <div>
-                    <label className="mb-1 block font-medium text-muted-foreground select-none">Bot API Token</label>
-                    <input
-                      type="password"
-                      value={channelsForm.telegram?.bot_token || ''}
-                      onChange={(e) => {
-                        const tg = channelsForm.telegram || { enabled: false, bot_token: '' };
-                        setChannelsForm((cf: ChannelsForm) => ({
-                          ...cf,
-                          telegram: { ...tg, bot_token: e.target.value },
-                        }));
-                      }}
-                      placeholder={channelsForm.telegram?.bot_token === '••••••••' ? '••••••••' : 'bot_token'}
-                      className="w-full rounded-lg border border-border bg-muted/40 p-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    />
-                  </div>
-                </div>
-              </div>
+              ) : channelCapabilities.map((channel) => {
+                const defaults = channel.defaults || {};
+                const values = channelsForm[channel.name] || {};
+                const valueFor = (key: string) => values[key] ?? defaults[key] ?? '';
+                const setChannelField = (key: string, value: ChannelFieldValue) => {
+                  setSaveNotice(null);
+                  setChannelsForm((current) => ({
+                    ...current,
+                    [channel.name]: {
+                      ...(current[channel.name] || {}),
+                      [key]: value,
+                    },
+                  }));
+                };
+                const enabledField = channel.fields.find((field) => field.key === 'enabled');
+                const enabled = Boolean(valueFor('enabled'));
 
-              {/* Discord Bot */}
-              <div className="rounded-xl border border-border/50 bg-muted/15 p-4 space-y-3">
-                <div className="flex items-center justify-between border-b border-border/30 pb-1.5">
-                  <div className="font-semibold text-foreground select-none">Discord Bot Gateway</div>
-                  <button
-                    onClick={() => {
-                      const dc = channelsForm.discord || { enabled: false, bot_token: '' };
-                      setChannelsForm((cf: ChannelsForm) => ({
-                        ...cf,
-                        discord: { ...dc, enabled: !dc.enabled },
-                      }));
-                    }}
-                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                      channelsForm.discord?.enabled ? 'bg-amber-500' : 'bg-muted'
-                    }`}
-                  >
-                    <span
-                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                        channelsForm.discord?.enabled ? 'translate-x-4' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
-                </div>
-                <div className="space-y-2.5">
-                  <div>
-                    <label className="mb-1 block font-medium text-muted-foreground select-none">Bot Token</label>
-                    <input
-                      type="password"
-                      value={channelsForm.discord?.bot_token || ''}
-                      onChange={(e) => {
-                        const dc = channelsForm.discord || { enabled: false, bot_token: '' };
-                        setChannelsForm((cf: ChannelsForm) => ({
-                          ...cf,
-                          discord: { ...dc, bot_token: e.target.value },
-                        }));
-                      }}
-                      placeholder={channelsForm.discord?.bot_token === '••••••••' ? '••••••••' : 'bot_token'}
-                      className="w-full rounded-lg border border-border bg-muted/40 p-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* WhatsApp Business API */}
-              <div className="rounded-xl border border-border/50 bg-muted/15 p-4 space-y-3">
-                <div className="flex items-center justify-between border-b border-border/30 pb-1.5">
-                  <div className="font-semibold text-foreground select-none">WhatsApp Webhook Receiver</div>
-                  <button
-                    onClick={() => {
-                      const wa = channelsForm.whatsapp || { enabled: false, api_key: '', phone_number_id: '', webhook_port: 8090, verify_token: 'openz' };
-                      setChannelsForm((cf: ChannelsForm) => ({
-                        ...cf,
-                        whatsapp: { ...wa, enabled: !wa.enabled },
-                      }));
-                    }}
-                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                      channelsForm.whatsapp?.enabled ? 'bg-amber-500' : 'bg-muted'
-                    }`}
-                  >
-                    <span
-                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                        channelsForm.whatsapp?.enabled ? 'translate-x-4' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
-                </div>
-                <div className="space-y-2.5">
-                  <div>
-                    <label className="mb-1 block font-medium text-muted-foreground select-none">API Key</label>
-                    <input
-                      type="password"
-                      value={channelsForm.whatsapp?.api_key || ''}
-                      onChange={(e) => {
-                        const wa = channelsForm.whatsapp || { enabled: false, api_key: '', phone_number_id: '', webhook_port: 8090, verify_token: 'openz' };
-                        setChannelsForm((cf: ChannelsForm) => ({
-                          ...cf,
-                          whatsapp: { ...wa, api_key: e.target.value },
-                        }));
-                      }}
-                      placeholder={channelsForm.whatsapp?.api_key === '••••••••' ? '••••••••' : 'api_key'}
-                      className="w-full rounded-lg border border-border bg-muted/40 p-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block font-medium text-muted-foreground select-none">Phone Number ID</label>
-                    <input
-                      type="text"
-                      value={channelsForm.whatsapp?.phone_number_id || ''}
-                      onChange={(e) => {
-                        const wa = channelsForm.whatsapp || { enabled: false, api_key: '', phone_number_id: '', webhook_port: 8090, verify_token: 'openz' };
-                        setChannelsForm((cf: ChannelsForm) => ({
-                          ...cf,
-                          whatsapp: { ...wa, phone_number_id: e.target.value },
-                        }));
-                      }}
-                      placeholder="Phone number ID"
-                      className="w-full rounded-lg border border-border bg-muted/40 p-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="mb-1 block font-medium text-muted-foreground select-none">Webhook Port</label>
-                      <input
-                        type="number"
-                        value={channelsForm.whatsapp?.webhook_port ?? 8090}
-                        onChange={(e) => {
-                          const wa = channelsForm.whatsapp || { enabled: false, api_key: '', phone_number_id: '', webhook_port: 8090, verify_token: 'openz' };
-                          setChannelsForm((cf: ChannelsForm) => ({
-                            ...cf,
-                            whatsapp: { ...wa, webhook_port: Number(e.target.value) },
-                          }));
-                        }}
-                        className="w-full rounded-lg border border-border bg-muted/40 p-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
-                      />
+                return (
+                  <div key={channel.name} className="rounded-xl border border-border/50 bg-muted/15 p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-border/30 pb-1.5">
+                      <div className="font-semibold text-foreground select-none">{channel.label}</div>
+                      {enabledField && (
+                        <button
+                          type="button"
+                          onClick={() => setChannelField('enabled', !enabled)}
+                          aria-pressed={enabled}
+                          className={enabled ? 'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none bg-amber-500' : 'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none bg-muted'}
+                        >
+                          <span
+                            className={enabled ? 'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out translate-x-4' : 'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out translate-x-0'}
+                          />
+                        </button>
+                      )}
                     </div>
-                    <div>
-                      <label className="mb-1 block font-medium text-muted-foreground select-none">Verify Token</label>
-                      <input
-                        type="text"
-                        value={channelsForm.whatsapp?.verify_token || ''}
-                        onChange={(e) => {
-                          const wa = channelsForm.whatsapp || { enabled: false, api_key: '', phone_number_id: '', webhook_port: 8090, verify_token: 'openz' };
-                          setChannelsForm((cf: ChannelsForm) => ({
-                            ...cf,
-                            whatsapp: { ...wa, verify_token: e.target.value },
-                          }));
-                        }}
-                        placeholder="openz"
-                        className="w-full rounded-lg border border-border bg-muted/40 p-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
-                      />
+                    <div className="space-y-2.5">
+                      {channel.fields.filter((field) => field.key !== 'enabled').map((field) => {
+                        const value = valueFor(field.key);
+                        if (field.kind === 'boolean') {
+                          return (
+                            <label key={field.key} className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 px-3 py-2">
+                              <span className="font-medium text-muted-foreground">{field.label}</span>
+                              <input
+                                type="checkbox"
+                                checked={Boolean(value)}
+                                onChange={(event) => setChannelField(field.key, event.target.checked)}
+                                className="h-3.5 w-3.5 accent-amber-500"
+                              />
+                            </label>
+                          );
+                        }
+                        return (
+                          <div key={field.key}>
+                            <label className="mb-1 block font-medium text-muted-foreground select-none">{field.label}</label>
+                            <input
+                              type={field.kind === 'secret' ? 'password' : field.kind === 'number' ? 'number' : 'text'}
+                              value={field.kind === 'number' ? Number(value || 0) : String(value)}
+                              onChange={(event) => setChannelField(
+                                field.key,
+                                field.kind === 'number' ? Number(event.target.value) : event.target.value,
+                              )}
+                              placeholder={field.kind === 'secret' && String(value) === '••••••••' ? '••••••••' : field.label}
+                              className="w-full rounded-lg border border-border bg-muted/40 p-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
+                            />
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
-                </div>
-              </div>
+                );
+              })}
             </div>
           )}
         </div>

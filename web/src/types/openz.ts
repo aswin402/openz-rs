@@ -171,6 +171,46 @@ export interface ProviderModelOption {
   full?: boolean;
 }
 
+export interface ProviderCapability {
+  name: string;
+  configKey: string;
+  display: string;
+  available: boolean;
+  apiBaseEditable: boolean;
+}
+
+export type CapabilityFieldKind = "boolean" | "secret" | "number" | "text";
+
+export interface ChannelFieldCapability {
+  key: string;
+  label: string;
+  kind: CapabilityFieldKind;
+}
+
+export interface ChannelCapability {
+  name: string;
+  label: string;
+  fields: ChannelFieldCapability[];
+  defaults: Record<string, JsonValue>;
+}
+
+export interface AttachmentCapabilities {
+  maxCount: number;
+  maxFileBytes: number;
+  maxTotalBytes: number;
+  maxMessageBytes: number;
+  ttlSeconds: number;
+  allowedMimeTypes: string[];
+}
+
+export interface WebUiCapabilities {
+  version: number;
+  providers: ProviderCapability[];
+  securityModes: Array<{ value: string; label: string }>;
+  channels: ChannelCapability[];
+  attachments: AttachmentCapabilities;
+}
+
 /** Runtime agent defaults editable over the `set_config` WS command. */
 export interface AgentDefaultsConfig {
   model: string;
@@ -197,6 +237,7 @@ export interface ConfigData {
   defaults: AgentDefaultsConfig;
   skills: SkillInfo[];
   mcp_servers: McpServerInfo[];
+  capabilities: WebUiCapabilities;
   version: string;
 }
 

@@ -2,6 +2,20 @@ export const MAX_ATTACHMENTS = 8;
 export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 export const MAX_ATTACHMENT_TOTAL_BYTES = 24 * 1024 * 1024;
 
+export interface AttachmentPolicy {
+  maxCount: number;
+  maxFileBytes: number;
+  maxTotalBytes: number;
+  allowedMimeTypes: string[];
+}
+
+export const DEFAULT_ATTACHMENT_POLICY: AttachmentPolicy = {
+  maxCount: MAX_ATTACHMENTS,
+  maxFileBytes: MAX_ATTACHMENT_BYTES,
+  maxTotalBytes: MAX_ATTACHMENT_TOTAL_BYTES,
+  allowedMimeTypes: [],
+};
+
 const ALLOWED_ATTACHMENT_MIME = new Set([
   'image/png',
   'image/jpeg',
@@ -24,18 +38,25 @@ const ALLOWED_ATTACHMENT_MIME = new Set([
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 ]);
 
-export function attachmentMimeAllowed(mime: string): boolean {
+export function attachmentMimeAllowed(mime: string, allowedMimeTypes?: readonly string[]): boolean {
   const normalized = mime.trim().toLowerCase();
   const hasControlCharacter = [...normalized].some((character) => {
     const code = character.charCodeAt(0);
     return code <= 0x1f || code === 0x7f;
   });
-  return normalized.length <= 128 && !hasControlCharacter && ALLOWED_ATTACHMENT_MIME.has(normalized);
+  const allowed = allowedMimeTypes && allowedMimeTypes.length > 0
+    ? new Set(allowedMimeTypes.map((type) => type.trim().toLowerCase()))
+    : ALLOWED_ATTACHMENT_MIME;
+  return normalized.length <= 128 && !hasControlCharacter && allowed.has(normalized);
 }
 
-export function attachmentFitsQuota(currentBytes: number, nextBytes: number): boolean {
+export function attachmentFitsQuota(
+  currentBytes: number,
+  nextBytes: number,
+  maxTotalBytes = MAX_ATTACHMENT_TOTAL_BYTES,
+): boolean {
   return currentBytes >= 0
     && nextBytes > 0
-    && currentBytes <= MAX_ATTACHMENT_TOTAL_BYTES
-    && nextBytes <= MAX_ATTACHMENT_TOTAL_BYTES - currentBytes;
+    && currentBytes <= maxTotalBytes
+    && nextBytes <= maxTotalBytes - currentBytes;
 }
