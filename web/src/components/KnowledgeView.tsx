@@ -162,7 +162,13 @@ export const KnowledgeView: React.FC = () => {
   const [communityFilter, setCommunityFilter] = useState('all');
   const [relationTypeFilter, setRelationTypeFilter] = useState('all');
   const [mostConnectedOnly, setMostConnectedOnly] = useState(false);
-  const [visibleGraphStats, setVisibleGraphStats] = useState({ loaded: 0, visible: 0, edges: 0 });
+  const [visibleGraphStats, setVisibleGraphStats] = useState({
+    loaded: 0,
+    visible: 0,
+    edges: 0,
+    renderedNodes: 0,
+    renderedEdges: 0,
+  });
 
   // Real-time synchronization on mount and recurring poll
   useEffect(() => {
@@ -428,7 +434,7 @@ export const KnowledgeView: React.FC = () => {
         <div className="rounded-2xl border border-border/70 bg-card/50 p-3 shadow-sm">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Relations</div>
           <div className="mt-1 text-xl font-extrabold text-foreground">{totalStats.relationsCount}</div>
-          <div className="text-[10px] text-muted-foreground">{visibleGraphStats.loaded > 0 ? visibleGraphStats.edges : 0} rendered now</div>
+          <div className="text-[10px] text-muted-foreground">{visibleGraphStats.loaded > 0 ? visibleGraphStats.renderedEdges : 0} rendered now</div>
         </div>
         <div className="rounded-2xl border border-border/70 bg-card/50 p-3 shadow-sm">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Memory stores</div>

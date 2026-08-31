@@ -253,7 +253,7 @@ export function selectVisibleGraph(
   edges: CognitiveEdge[],
   clusters: GraphCluster[],
   mode: GraphMode,
-  zoom: number,
+  _zoom: number,
   viewport: { left: number; top: number; right: number; bottom: number },
   selectedId?: string | null,
   searchQuery = '',

@@ -120,6 +120,33 @@ const MAX_RENDERED_EDGES = 1800;
 const MAX_PARTICLE_EDGES = 720;
 const MAX_PARTICLES = 240;
 
+// eslint-disable-next-line react-refresh/only-export-components
+export function resolveSettleFrames(frames: number, reducedMotion: boolean): number {
+  return reducedMotion ? 0 : frames;
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function findGraphFocusNodeId(
+  nodes: Array<Pick<CognitiveNode, 'name' | 'entity_type' | 'observations'>>,
+  edges: Array<Pick<CognitiveEdge, 'from_name' | 'to_name' | 'relation_type'>>,
+  searchQuery: string,
+): string | null {
+  const query = searchQuery.trim().toLowerCase();
+  if (!query) return null;
+  const matchingNode = nodes.find((node) =>
+    [node.name, node.entity_type, node.observations].join(' ').toLowerCase().includes(query),
+  );
+  if (matchingNode) return matchingNode.name;
+  const matchingEdge = edges.find((edge) =>
+    [edge.from_name, edge.to_name, edge.relation_type].join(' ').toLowerCase().includes(query),
+  );
+  return matchingEdge?.from_name ?? null;
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
+}
+
 function colorHash(value: string): number {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -251,6 +278,12 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
   const activeSearch = searchQuery ?? localSearch;
   const activeSelectionName = selectedNodeName !== undefined ? selectedNodeName : selectedNode?.id || null;
 
+  const setSettleFrames = useCallback((frames: number) => {
+    const reducedMotion = prefersReducedMotion();
+    settleFramesRef.current = resolveSettleFrames(frames, reducedMotion);
+    if (reducedMotion) focusTargetRef.current = null;
+  }, []);
+
   const graphData = useMemo(() => {
     const nodeMap = new Map<string, CognitiveNode>();
     nodes.forEach((node) => {
@@ -279,9 +312,9 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
   const setGraphMode = useCallback((nextMode: GraphMode) => {
     setLocalMode(nextMode);
     onModeChange?.(nextMode);
-    settleFramesRef.current = 8;
+    setSettleFrames(8);
     requestRenderRef.current();
-  }, [onModeChange]);
+  }, [onModeChange, setSettleFrames]);
 
   const updateSelection = useCallback((node: RenderNode | null) => {
     selectedNodeRef.current = node;
@@ -333,6 +366,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
       activeMode,
       activeSearch,
       visible.visibleNodeCount,
+      visible.visibleEdgeCount,
       visible.loadedNodeCount,
       graphData.edges.length,
       visible.nodes.length,
@@ -383,13 +417,27 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
     const canvas = canvasRef.current;
     if (!canvas) return;
     const scale = Math.min(2.2, Math.max(transformRef.current.k, 1.18));
-    focusTargetRef.current = {
+    const target = {
       x: (canvas.clientWidth || 800) / 2 - node.x * scale,
       y: (canvas.clientHeight || 560) / 2 - node.y * scale,
       k: scale,
     };
+    if (prefersReducedMotion()) {
+      settleFramesRef.current = 0;
+      focusTargetRef.current = null;
+      transformRef.current = target;
+      reportVisibleStats();
+    } else {
+      focusTargetRef.current = target;
+    }
     requestRenderRef.current();
-  }, []);
+  }, [reportVisibleStats]);
+
+  useEffect(() => {
+    if (selectedNodeName === undefined) return;
+    const node = selectedNodeName ? layoutRef.current.get(selectedNodeName) : null;
+    if (node) focusNode(node);
+  }, [focusNode, selectedNodeName]);
 
   const zoomAroundCenter = useCallback((factor: number) => {
     const canvas = canvasRef.current;
@@ -413,9 +461,9 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
       node.vx = 0;
       node.vy = 0;
     });
-    settleFramesRef.current = 12;
+    setSettleFrames(12);
     fitToView();
-  }, [fitToView]);
+  }, [fitToView, setSettleFrames]);
 
   const getGraphCoords = useCallback((screenX: number, screenY: number) => {
     const canvas = canvasRef.current;
@@ -495,7 +543,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
       node.isPinned = true;
       updateSelection(node);
       if (!event.shiftKey) focusNode(node);
-      settleFramesRef.current = 8;
+      setSettleFrames(8);
       return;
     }
     const cluster = findClusterAt(event.clientX, event.clientY);
@@ -526,7 +574,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
       draggedNodeRef.current.y = point.y;
       draggedNodeRef.current.vx = 0;
       draggedNodeRef.current.vy = 0;
-      settleFramesRef.current = 6;
+      setSettleFrames(6);
       requestRenderRef.current();
       return;
     }
@@ -640,18 +688,16 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
     setHoveredEdge(null);
     selectedNodeRef.current = activeSelectionName ? next.get(activeSelectionName) || null : null;
     setSelectedNode(selectedNodeRef.current);
-    settleFramesRef.current = 12;
+    setSettleFrames(12);
     lastReportedStatsRef.current = '';
 
     if (activeSearch.trim()) {
-      const query = activeSearch.trim().toLowerCase();
-      const match = Array.from(next.values()).find((node) =>
-        (node.name + ' ' + node.type + ' ' + node.observations).toLowerCase().includes(query),
-      );
-      if (match) {
+      const match = findGraphFocusNodeId(graphData.nodes, graphData.edges, activeSearch);
+      const node = match ? next.get(match) : null;
+      if (node) {
         const scale = Math.max(transformRef.current.k, 1.05);
-        transformRef.current.x = width / 2 - match.x * scale;
-        transformRef.current.y = height / 2 - match.y * scale;
+        transformRef.current.x = width / 2 - node.x * scale;
+        transformRef.current.y = height / 2 - node.y * scale;
         transformRef.current.k = scale;
       }
     } else if (previous.size === 0) {
@@ -696,7 +742,13 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
       context.fillStyle = gradient;
       context.fillRect(0, 0, canvasWidth, canvasHeight);
 
-      const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+      const reducedMotion = prefersReducedMotion();
+      if (reducedMotion) {
+        settleFramesRef.current = 0;
+        const focusTarget = focusTargetRef.current;
+        if (focusTarget) transformRef.current = focusTarget;
+        focusTargetRef.current = null;
+      }
       const particlesEnabled = display.showParticles && !reducedMotion && visible.edges.length <= MAX_PARTICLE_EDGES;
       if (display.showGrid) {
         context.strokeStyle = 'rgba(71, 85, 105, 0.08)';
@@ -1009,7 +1061,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
       animationFrameRef.current = null;
       requestRenderRef.current = () => undefined;
     };
-  }, [activeMode, activeSearch, activeSelectionName, display, graphData, graphSemantics, onSelectEdge, reportVisibleStats, selectedEdgeKey, viewportFor]);
+  }, [activeMode, activeSearch, activeSelectionName, display, focusNode, graphData, graphSemantics, onSelectEdge, reportVisibleStats, selectedEdgeKey, setSettleFrames, viewportFor]);
 
   const hasData = graphData.nodes.length > 0;
   const selectedInfo = selectedNode || hoveredNode;
