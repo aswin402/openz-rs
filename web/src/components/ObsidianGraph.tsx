@@ -126,6 +126,12 @@ export function resolveSettleFrames(frames: number, reducedMotion: boolean): num
 }
 
 // eslint-disable-next-line react-refresh/only-export-components
+export function layoutNeedsSettling(previousIds: ReadonlySet<string>, nextIds: Iterable<string>): boolean {
+  const next = Array.from(nextIds);
+  return previousIds.size !== next.length || next.some((id) => !previousIds.has(id));
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
 export function findGraphFocusNodeId(
   nodes: Array<Pick<CognitiveNode, 'name' | 'entity_type' | 'observations'>>,
   edges: Array<Pick<CognitiveEdge, 'from_name' | 'to_name' | 'relation_type'>>,
@@ -688,7 +694,12 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
     setHoveredEdge(null);
     selectedNodeRef.current = activeSelectionName ? next.get(activeSelectionName) || null : null;
     setSelectedNode(selectedNodeRef.current);
-    setSettleFrames(12);
+    if (layoutNeedsSettling(new Set(previous.keys()), next.keys())) {
+      setSettleFrames(12);
+    } else {
+      settleFramesRef.current = 0;
+      focusTargetRef.current = null;
+    }
     lastReportedStatsRef.current = '';
 
     if (activeSearch.trim()) {

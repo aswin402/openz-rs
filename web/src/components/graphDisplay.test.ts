@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { DEFAULT_GRAPH_DISPLAY, findGraphFocusNodeId, resolveSettleFrames } from './ObsidianGraph';
+import { DEFAULT_GRAPH_DISPLAY, findGraphFocusNodeId, layoutNeedsSettling, resolveSettleFrames } from './ObsidianGraph';
 
 test('constellation display defaults keep overlays quiet and the atlas visible', () => {
   expect(DEFAULT_GRAPH_DISPLAY.showGrid).toBe(false);
@@ -22,4 +22,9 @@ test('graph focus resolves relation-only searches to the first relation endpoint
 test('reduced motion disables bounded graph settling', () => {
   expect(resolveSettleFrames(12, true)).toBe(0);
   expect(resolveSettleFrames(12, false)).toBe(12);
+});
+
+test('routine refreshes do not re-settle unchanged graph membership', () => {
+  expect(layoutNeedsSettling(new Set(['hub', 'leaf']), ['hub', 'leaf'])).toBe(false);
+  expect(layoutNeedsSettling(new Set(['hub']), ['hub', 'leaf'])).toBe(true);
 });
