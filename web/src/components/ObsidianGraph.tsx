@@ -43,7 +43,13 @@ export interface ObsidianGraphProps {
   onSelectNode?: (nodeName: string | null) => void;
   onSelectEdge?: (edgeKey: string | null) => void;
   onModeChange?: (mode: GraphMode) => void;
-  onVisibleStatsChange?: (stats: { loaded: number; visible: number; edges: number }) => void;
+  onVisibleStatsChange?: (stats: {
+    loaded: number;
+    visible: number;
+    edges: number;
+    renderedNodes: number;
+    renderedEdges: number;
+  }) => void;
   className?: string;
   height?: number | string;
 }
@@ -94,6 +100,26 @@ const NODE_COLOR_PALETTE: Array<{ main: string; glow: string }> = [
   { main: '#94a3b8', glow: 'rgba(148, 163, 184, 0.34)' },
 ];
 
+// Kept here so the data-only regression test verifies the component's real defaults.
+// eslint-disable-next-line react-refresh/only-export-components
+export const DEFAULT_GRAPH_DISPLAY = {
+  showLabels: true,
+  showGlow: true,
+  showParticles: true,
+  curvedLinks: false,
+  showSpaceField: true,
+  showGrid: false,
+  showOrbits: false,
+} as const;
+
+type GraphDisplayState = {
+  -readonly [Key in keyof typeof DEFAULT_GRAPH_DISPLAY]: boolean;
+};
+
+const MAX_RENDERED_EDGES = 1800;
+const MAX_PARTICLE_EDGES = 720;
+const MAX_PARTICLES = 240;
+
 function colorHash(value: string): number {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -105,6 +131,14 @@ function colorHash(value: string): number {
 function getNodeColor(type: string) {
   const key = type.trim().toLowerCase() || 'unknown';
   return NODE_COLOR_PALETTE[colorHash(key) % NODE_COLOR_PALETTE.length];
+}
+
+function colorWithAlpha(color: string, alpha: number): string {
+  const hex = color.replace('#', '');
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
 const SPACE_STARS: SpaceStar[] = Array.from({ length: 96 }, (_, index) => {
@@ -211,15 +245,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
   const [selectedNode, setSelectedNode] = useState<RenderNode | null>(null);
   const [visibleStatus, setVisibleStatus] = useState({ visible: 0, edges: 0 });
   const [showSettings, setShowSettings] = useState(false);
-  const [display, setDisplay] = useState({
-    showLabels: true,
-    showGlow: true,
-    showParticles: true,
-    curvedLinks: false,
-    showSpaceField: true,
-    showGrid: true,
-    showOrbits: true,
-  });
+  const [display, setDisplay] = useState<GraphDisplayState>({ ...DEFAULT_GRAPH_DISPLAY });
 
   const activeMode = mode ?? localMode;
   const activeSearch = searchQuery ?? localSearch;
@@ -296,12 +322,21 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
       activeSelectionName,
       activeSearch,
     );
+    const renderedEdges = prioritizeGraphEdges(
+      visible.edges,
+      visible.nodes,
+      activeSelectionName,
+      transformRef.current.k,
+      MAX_RENDERED_EDGES,
+    ).length;
     const signature = [
       activeMode,
       activeSearch,
       visible.visibleNodeCount,
-      visible.visibleEdgeCount,
       visible.loadedNodeCount,
+      graphData.edges.length,
+      visible.nodes.length,
+      renderedEdges,
     ].join(':');
     if (signature === lastReportedStatsRef.current) return;
     lastReportedStatsRef.current = signature;
@@ -309,7 +344,9 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
     onVisibleStatsChange({
       loaded: visible.loadedNodeCount,
       visible: visible.visibleNodeCount,
-      edges: visible.visibleEdgeCount,
+      edges: graphData.edges.length,
+      renderedNodes: visible.nodes.length,
+      renderedEdges,
     });
   }, [activeMode, activeSearch, activeSelectionName, graphData.edges, onVisibleStatsChange, viewportFor]);
 
@@ -645,7 +682,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
         visible.nodes,
         selectedNodeRef.current?.id || null,
         transform.k,
-        1800,
+        MAX_RENDERED_EDGES,
       )
         .map((edge) => edgeDetailsRef.current.get(edgeKey(edge)))
         .filter((edge): edge is GraphEdge => Boolean(edge));
@@ -660,6 +697,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
       context.fillRect(0, 0, canvasWidth, canvasHeight);
 
       const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+      const particlesEnabled = display.showParticles && !reducedMotion && visible.edges.length <= MAX_PARTICLE_EDGES;
       if (display.showGrid) {
         context.strokeStyle = 'rgba(71, 85, 105, 0.08)';
         context.lineWidth = 1;
@@ -677,7 +715,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
           context.stroke();
         }
       }
-      if (display.showSpaceField && !reducedMotion) {
+      if (display.showSpaceField) {
         SPACE_STARS.forEach((star) => {
           context.beginPath();
           context.arc(star.x * canvasWidth, star.y * canvasHeight, star.radius, 0, Math.PI * 2);
@@ -699,21 +737,24 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
           const right = (canvasWidth - transform.x) / transform.k + 100;
           const bottom = (canvasHeight - transform.y) / transform.k + 100;
           if (cluster.x + cluster.radius < left || cluster.x - cluster.radius > right || cluster.y + cluster.radius < top || cluster.y - cluster.radius > bottom) return;
-          const halo = context.createRadialGradient(cluster.x, cluster.y, cluster.radius * 0.08, cluster.x, cluster.y, cluster.radius);
-          halo.addColorStop(0, isHovered ? palette.glow : 'rgba(30, 41, 59, 0.54)');
-          halo.addColorStop(0.5, isHovered ? 'rgba(30, 41, 59, 0.32)' : 'rgba(15, 23, 42, 0.3)');
-          halo.addColorStop(1, 'rgba(2, 6, 23, 0)');
+          const halo = context.createRadialGradient(
+            cluster.x,
+            cluster.y,
+            cluster.radius * 0.06,
+            cluster.x,
+            cluster.y,
+            cluster.radius,
+          );
+          halo.addColorStop(0, colorWithAlpha(palette.main, isHovered ? 0.16 : 0.075));
+          halo.addColorStop(0.48, colorWithAlpha(palette.main, isHovered ? 0.07 : 0.028));
+          halo.addColorStop(1, colorWithAlpha(palette.main, 0));
           context.beginPath();
           context.arc(cluster.x, cluster.y, cluster.radius, 0, Math.PI * 2);
           context.fillStyle = halo;
           context.fill();
-          context.beginPath();
-          context.arc(cluster.x, cluster.y, cluster.radius * 0.72, 0, Math.PI * 2);
-          context.fillStyle = isHovered ? palette.glow.replace(/0\.4[25]/, '0.08') : 'rgba(15, 23, 42, 0.2)';
-          context.fill();
-          context.strokeStyle = isHovered ? palette.main : 'rgba(100, 116, 139, 0.24)';
-          context.lineWidth = isHovered ? 1.4 : 0.8;
-          context.setLineDash(isHovered ? [5, 4] : [2, 7]);
+          context.strokeStyle = isHovered ? colorWithAlpha(palette.main, 0.52) : colorWithAlpha(palette.main, 0.16);
+          context.lineWidth = isHovered ? 1.3 : 0.7;
+          context.setLineDash(isHovered ? [5, 4] : [2, 8]);
           context.beginPath();
           context.arc(cluster.x, cluster.y, cluster.radius * 0.82, 0, Math.PI * 2);
           context.stroke();
@@ -764,15 +805,29 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
       }
 
       const selectedEdge = selectedEdgeKey ? edgeDetailsRef.current.get(selectedEdgeKey) : null;
-      visibleEdgesRef.current.forEach((edge) => {
+      visibleEdgesRef.current.forEach((edge, edgeIndex) => {
         const source = edge.source;
         const target = edge.target;
         const connected = Boolean(activeNode && (source.id === activeNode.id || target.id === activeNode.id));
         const edgeIsHovered = Boolean(hoveredEdgeRef.current && edge.source.id === hoveredEdgeRef.current.source.id && edge.target.id === hoveredEdgeRef.current.target.id && edge.type === hoveredEdgeRef.current.type);
         const edgeIsSelected = Boolean(selectedEdge && edge.source.id === selectedEdge.source.id && edge.target.id === selectedEdge.target.id && edge.type === selectedEdge.type);
         const dimmed = Boolean(activeNode && !connected && !edgeIsHovered && !edgeIsSelected);
-        const confidenceAlpha = edge.confidence === null ? 0.22 : 0.25 + edge.confidence * 0.5;
-        const edgeColor = edgeIsHovered ? '#f8fafc' : edgeIsSelected ? '#67e8f9' : connected ? (activeNode?.color || '#f59e0b') : `rgba(148, 163, 184, ${dimmed ? 0.035 : confidenceAlpha})`;
+        const highConfidence = edge.confidence !== null && edge.confidence >= 0.82;
+        const sourceColor = getNodeColor(source.type).main;
+        const ordinaryAlpha = dimmed
+          ? 0.025
+          : edge.confidence === null
+            ? 0.1
+            : 0.1 + edge.confidence * 0.24;
+        const edgeColor = edgeIsHovered
+          ? '#f8fafc'
+          : edgeIsSelected
+            ? '#67e8f9'
+            : connected
+              ? colorWithAlpha(activeNode?.color || sourceColor, 0.82)
+              : highConfidence
+                ? colorWithAlpha(sourceColor, 0.62)
+                : colorWithAlpha(sourceColor, ordinaryAlpha);
         context.beginPath();
         if (display.curvedLinks) {
           const midX = (source.x + target.x) / 2 + (target.y - source.y) * 0.12;
@@ -784,42 +839,66 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
           context.lineTo(target.x, target.y);
         }
         context.strokeStyle = edgeColor;
-        context.lineWidth = edgeIsHovered || edgeIsSelected ? 2.2 : connected ? 1.7 : 0.62;
+        context.lineWidth = edgeIsHovered || edgeIsSelected ? 2.2 : connected ? 1.7 : highConfidence ? 1.05 : 0.62;
         context.setLineDash(edge.provenance === 'not_recorded' ? [4, 5] : []);
         context.stroke();
         context.setLineDash([]);
         if (transform.k > 0.7 && (connected || edgeIsHovered || edgeIsSelected)) {
           drawArrowhead(context, source, target, edgeColor, transform.k);
         }
-        if (display.showParticles && !reducedMotion && (connected || (!activeNode && visibleEdgesRef.current.length < 900))) {
+        if (particlesEnabled && edgeIndex < MAX_PARTICLES && (connected || !activeNode)) {
           const pulse = (performance.now() / 2200 + colorHash(source.id + ':' + target.id) / 1000) % 1;
           context.beginPath();
           context.arc(source.x + (target.x - source.x) * pulse, source.y + (target.y - source.y) * pulse, connected ? 1.8 : 1.05, 0, Math.PI * 2);
-          context.fillStyle = connected ? (activeNode?.color || '#f59e0b') : 'rgba(226, 232, 240, 0.5)';
-          context.globalAlpha = connected ? 0.9 : 0.35;
+          context.fillStyle = connected ? (activeNode?.color || sourceColor) : colorWithAlpha(sourceColor, 0.58);
+          context.globalAlpha = connected ? 0.9 : 0.38;
           context.fill();
           context.globalAlpha = 1;
         }
       });
 
       const maxDegree = Math.max(...visible.nodes.map((node) => node.degree), 0);
-      const labelThreshold = visible.nodes.length > 80 ? Math.max(3, Math.ceil(maxDegree * 0.35)) : 1;
+      const labelBudget = Math.min(72, Math.max(18, Math.floor(canvasWidth / 18)));
+      const labelThreshold = visible.nodes.length > 80 ? Math.max(3, Math.ceil(maxDegree * 0.35)) : Math.max(1, Math.ceil(maxDegree * 0.2));
+      const query = activeSearch.trim().toLowerCase();
+      const matchesSearch = (node: RenderNode) => Boolean(query) &&
+        (node.name + ' ' + node.type + ' ' + node.observations).toLowerCase().includes(query);
+      const labelIds = new Set(
+        visibleNodesRef.current
+          .filter((node) => hoveredNodeRef.current?.id === node.id || selectedNodeRef.current?.id === node.id || matchesSearch(node))
+          .map((node) => node.id),
+      );
+      const maximumLabels = Math.max(labelBudget, labelIds.size);
+      const labelCandidates = [...visibleNodesRef.current].sort((left, right) => {
+        const leftHub = left.degree >= labelThreshold ? 1 : 0;
+        const rightHub = right.degree >= labelThreshold ? 1 : 0;
+        return rightHub - leftHub || right.degree - left.degree || right.importance - left.importance || left.name.localeCompare(right.name);
+      });
+      for (const node of labelCandidates) {
+        if (labelIds.has(node.id)) continue;
+        const isHub = node.degree > 0 && node.degree >= labelThreshold;
+        if (!isHub && transform.k <= 1.15) continue;
+        if (labelIds.size >= maximumLabels) break;
+        labelIds.add(node.id);
+      }
+
       visibleNodesRef.current.forEach((node) => {
         const connected = activeNode ? connectedIds.has(node.id) : true;
         const isHovered = hoveredNodeRef.current?.id === node.id;
         const isSelected = selectedNodeRef.current?.id === node.id;
-        const query = activeSearch.trim().toLowerCase();
-        const isSearchMatch = Boolean(query) && (node.name + ' ' + node.type + ' ' + node.observations).toLowerCase().includes(query);
+        const isSearchMatch = matchesSearch(node);
         const palette = getNodeColor(node.type);
+        const renderRadius = Math.max(2 / Math.max(transform.k, 0.01), Math.min(14, 3.5 + Math.sqrt(node.degree) * 1.8));
         const alpha = activeNode && !connected ? 0.12 : 0.72 + node.importance * 0.28;
         const isImportant = node.importance >= 0.62;
+        const stronglyEmphasized = isSelected || isSearchMatch;
         context.save();
         context.globalAlpha = alpha;
-        if (display.showGlow && (isHovered || isSelected || isSearchMatch || connected)) {
-          const glowRadius = node.radius * (isHovered || isSelected ? 3.5 : 2.1);
-          const glow = context.createRadialGradient(node.x, node.y, node.radius * 0.3, node.x, node.y, glowRadius);
-          glow.addColorStop(0, palette.glow);
-          glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        if (display.showGlow && (stronglyEmphasized || isHovered || (connected && node.degree > 0))) {
+          const glowRadius = renderRadius * (stronglyEmphasized ? 4.5 : isHovered ? 3.4 : 1.9);
+          const glow = context.createRadialGradient(node.x, node.y, renderRadius * 0.25, node.x, node.y, glowRadius);
+          glow.addColorStop(0, stronglyEmphasized ? colorWithAlpha(palette.main, 0.68) : palette.glow);
+          glow.addColorStop(1, colorWithAlpha(palette.main, 0));
           context.fillStyle = glow;
           context.beginPath();
           context.arc(node.x, node.y, glowRadius, 0, Math.PI * 2);
@@ -827,7 +906,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
         }
         if (isSearchMatch) {
           context.beginPath();
-          context.arc(node.x, node.y, node.radius + 5, 0, Math.PI * 2);
+          context.arc(node.x, node.y, renderRadius + 5, 0, Math.PI * 2);
           context.strokeStyle = '#7dd3fc';
           context.lineWidth = 1.3;
           context.setLineDash([3, 3]);
@@ -835,7 +914,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
           context.setLineDash([]);
         }
         context.beginPath();
-        context.arc(node.x, node.y, node.radius * (0.88 + node.importance * 0.36) + (isSelected ? 1.5 : 0), 0, Math.PI * 2);
+        context.arc(node.x, node.y, renderRadius + (isSelected ? 1.5 : 0), 0, Math.PI * 2);
         context.fillStyle = palette.main;
         context.fill();
         context.lineWidth = isHovered || isSelected || isImportant ? 1.8 : 0.7;
@@ -843,7 +922,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
         context.stroke();
         if (isImportant && !isSelected) {
           context.beginPath();
-          context.arc(node.x, node.y, node.radius + 3.5, 0, Math.PI * 2);
+          context.arc(node.x, node.y, renderRadius + 3.5, 0, Math.PI * 2);
           context.strokeStyle = palette.glow;
           context.lineWidth = 0.8;
           context.globalAlpha = 0.55;
@@ -852,21 +931,14 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
         }
         if (isSelected) {
           context.beginPath();
-          context.arc(node.x, node.y, node.radius + 5, 0, Math.PI * 2);
+          context.arc(node.x, node.y, renderRadius + 5, 0, Math.PI * 2);
           context.strokeStyle = palette.main;
           context.lineWidth = 1.2;
           context.stroke();
         }
         context.restore();
 
-        const showLabel = display.showLabels && (
-          isHovered || isSelected || isSearchMatch ||
-          Boolean(activeNode && connected) ||
-          isImportant ||
-          (activeMode !== 'overview' && transform.k > 1.15 && node.degree >= labelThreshold) ||
-          (activeMode === 'overview' && node.degree >= labelThreshold * 2)
-        );
-        if (showLabel) {
+        if (display.showLabels && labelIds.has(node.id)) {
           context.save();
           context.globalAlpha = alpha;
           context.font = (isSelected ? '600 ' : '500 ') + (isSelected ? '11px' : '10px') + ' Inter, system-ui, sans-serif';
@@ -874,7 +946,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
           context.shadowColor = 'rgba(0, 0, 0, 0.95)';
           context.shadowBlur = 4;
           const label = node.name.length > 36 ? node.name.slice(0, 33) + '…' : node.name;
-          context.fillText(label, node.x + node.radius + 5, node.y + 3.5);
+          context.fillText(label, node.x + renderRadius + 5, node.y + 3.5);
           context.restore();
         }
       });
@@ -916,8 +988,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
           needsRenderRef.current = true;
         }
       }
-      const animateParticles = display.showParticles && !reducedMotion && visible.edges.length < 900;
-      if (animateParticles || settleFramesRef.current > 0 || needsRenderRef.current) {
+      if (particlesEnabled || settleFramesRef.current > 0 || needsRenderRef.current) {
         animationFrameRef.current = requestAnimationFrame(draw);
       } else {
         animationFrameRef.current = null;
@@ -975,7 +1046,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
           requestRenderRef.current();
         }}
         onWheel={handleWheel}
-        className="block h-full w-full cursor-grab touch-none active:cursor-grabbing"
+        className={cn('block h-full w-full touch-none active:cursor-grabbing', hoveredNode || hoveredEdge ? 'cursor-pointer' : 'cursor-grab')}
         aria-label={`Interactive cognitive memory graph. ${graphData.nodes.length} records loaded. ${modeLabel}.`}
       />
       <span className="sr-only" aria-live="polite">
