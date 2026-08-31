@@ -25,6 +25,7 @@ import type { CognitiveNode, CognitiveEdge } from '../types/openz';
 import { cn } from '../lib/utils';
 import type { GraphMode } from './graphLayout';
 import { buildGraphSemantics, edgeKey, formatConfidence, formatProvenance, type EdgeSemantics } from './graphSemantics';
+import { formatGraphStats, type GraphStats } from './graphStats';
 
 export const GraphVisualizer: React.FC<{ nodes: CognitiveNode[]; edges: CognitiveEdge[] }> = ({
   nodes,
@@ -162,7 +163,7 @@ export const KnowledgeView: React.FC = () => {
   const [communityFilter, setCommunityFilter] = useState('all');
   const [relationTypeFilter, setRelationTypeFilter] = useState('all');
   const [mostConnectedOnly, setMostConnectedOnly] = useState(false);
-  const [visibleGraphStats, setVisibleGraphStats] = useState({
+  const [visibleGraphStats, setVisibleGraphStats] = useState<GraphStats>({
     loaded: 0,
     visible: 0,
     edges: 0,
@@ -275,6 +276,13 @@ export const KnowledgeView: React.FC = () => {
     relationsCount: cognitiveStats.relationsCount || 0,
     factsCount: cognitiveStats.factsCount || 0,
   };
+  const graphCoverageLabel = formatGraphStats({
+    loaded: totalStats.entitiesCount,
+    visible: visibleGraphStats.visible,
+    edges: totalStats.relationsCount,
+    renderedNodes: visibleGraphStats.renderedNodes,
+    renderedEdges: visibleGraphStats.renderedEdges,
+  });
   const selectedNode = selectedNodeName
     ? allNodes.find((node) => node.name === selectedNodeName) || null
     : null;
@@ -707,8 +715,9 @@ export const KnowledgeView: React.FC = () => {
                 <span>Provenance: {formatProvenance(graphSemantics.edgeMetrics.get(selectedEdgeKey || '')?.provenance ?? 'not_recorded')}</span>
               </div>
             )}
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground px-1 select-none">
-              <span>Overview groups records for readability. Search, zoom, or select a cluster to reveal individual entities.</span>
+            <div className="flex flex-col gap-2 px-1 text-[11px] text-muted-foreground select-none sm:flex-row sm:items-center sm:justify-between">
+              <span>Overview shows every loaded entity; zoom reveals labels and relation detail.</span>
+              <span className="break-words font-mono text-[10px] text-slate-500 sm:text-right">{graphCoverageLabel}</span>
               <span className="font-mono text-emerald-400 flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" /> Live Realtime Sync Active
               </span>

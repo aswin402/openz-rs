@@ -1162,7 +1162,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
             <button
               type="button"
               onClick={() => setShowSettings((visible) => !visible)}
-              className={cn('flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-slate-950/88 text-slate-500 shadow-lg backdrop-blur-md transition hover:text-slate-200', showSettings && 'border-amber-500/40 bg-amber-500/10 text-amber-300')}
+              className={cn('flex min-h-11 min-w-11 items-center justify-center rounded-xl border border-white/10 bg-slate-950/88 text-slate-500 shadow-lg backdrop-blur-md transition hover:text-slate-200 sm:h-9 sm:w-9 sm:min-h-0 sm:min-w-0', showSettings && 'border-amber-500/40 bg-amber-500/10 text-amber-300')}
               aria-label="Graph display settings"
               aria-pressed={showSettings}
             >
@@ -1171,7 +1171,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
           </div>
 
           <div className="absolute right-3 top-3 z-10 flex items-start gap-2">
-            <div className="hidden rounded-xl border border-white/10 bg-slate-950/88 px-3 py-2 text-[10px] shadow-lg backdrop-blur-md sm:block">
+            <div className="hidden rounded-xl border border-white/10 bg-slate-950/88 px-3 py-2 text-[10px] shadow-lg backdrop-blur-md lg:block">
               <div className="flex items-center gap-2 font-semibold text-slate-300">
                 <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]" />
                 {graphData.nodes.length} records loaded
@@ -1179,10 +1179,10 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
               <div className="mt-1 text-right font-mono text-[9px] text-slate-600">{modeLabel} · {graphData.edges.length} relations</div>
             </div>
             <div className="flex flex-col gap-1 rounded-xl border border-white/10 bg-slate-950/88 p-1 shadow-lg backdrop-blur-md">
-              <button type="button" onClick={() => zoomAroundCenter(1.2)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/5 hover:text-slate-200" title="Zoom in" aria-label="Zoom in"><ZoomIn className="h-3.5 w-3.5" /></button>
-              <button type="button" onClick={() => zoomAroundCenter(0.83)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/5 hover:text-slate-200" title="Zoom out" aria-label="Zoom out"><ZoomOut className="h-3.5 w-3.5" /></button>
-              <button type="button" onClick={fitToView} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/5 hover:text-slate-200" title="Fit graph" aria-label="Fit graph"><Maximize2 className="h-3.5 w-3.5" /></button>
-              <button type="button" onClick={resetLayout} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/5 hover:text-slate-200" title="Reset layout" aria-label="Reset layout"><RotateCcw className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => zoomAroundCenter(1.2)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/5 hover:text-slate-200 sm:h-8 sm:w-8 sm:min-h-0 sm:min-w-0" title="Zoom in" aria-label="Zoom in"><ZoomIn className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => zoomAroundCenter(0.83)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/5 hover:text-slate-200 sm:h-8 sm:w-8 sm:min-h-0 sm:min-w-0" title="Zoom out" aria-label="Zoom out"><ZoomOut className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={fitToView} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/5 hover:text-slate-200 sm:h-8 sm:w-8 sm:min-h-0 sm:min-w-0" title="Fit graph" aria-label="Fit graph"><Maximize2 className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={resetLayout} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/5 hover:text-slate-200 sm:h-8 sm:w-8 sm:min-h-0 sm:min-w-0" title="Reset layout" aria-label="Reset layout"><RotateCcw className="h-3.5 w-3.5" /></button>
             </div>
           </div>
 
@@ -1214,13 +1214,13 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
                 ))}
               </div>
               <div className="mt-3 border-t border-white/10 pt-3 text-[10px] leading-relaxed text-slate-600">
-                Overview groups connected records. Choose All nodes or zoom in to inspect individual entities.
+                Overview shows every loaded entity. Zoom in to reveal labels and relation detail.
               </div>
             </div>
           )}
 
           {graphTypes.length > 0 && (
-            <div className="absolute bottom-3 right-3 z-10 hidden max-h-32 max-w-64 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/88 p-2.5 text-[10px] shadow-lg backdrop-blur-md sm:block">
+            <div className="absolute bottom-3 right-3 z-10 hidden max-h-32 max-w-64 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/88 p-2.5 text-[10px] shadow-lg backdrop-blur-md lg:block">
               <div className="mb-1.5 border-b border-white/10 pb-1 font-semibold text-slate-300">Entity types</div>
               <div className="grid grid-cols-2 gap-x-3 gap-y-1">
                 {graphTypes.map((type) => (
