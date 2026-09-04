@@ -1,6 +1,7 @@
 import React from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
-import { X, Brain, Key } from 'lucide-react';
+import { X, Brain, Database, GitBranch, Key } from 'lucide-react';
+import { MetricCard } from '../shared/ui/MetricCard';
 
 export const CognitiveMemoryModal: React.FC = () => {
   const isMemoryOpen = useOpenZStore((s) => s.isMemoryOpen);
@@ -26,19 +27,10 @@ export const CognitiveMemoryModal: React.FC = () => {
 
         <div className="mt-4 space-y-4 text-xs">
           {/* Quick Metrics */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="rounded-xl border border-border/60 bg-muted/30 p-3 text-center">
-              <div className="text-xl font-bold text-amber-500">{stats.entitiesCount}</div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">Entities</div>
-            </div>
-            <div className="rounded-xl border border-border/60 bg-muted/30 p-3 text-center">
-              <div className="text-xl font-bold text-purple-400">{stats.relationsCount}</div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">Relations</div>
-            </div>
-            <div className="rounded-xl border border-border/60 bg-muted/30 p-3 text-center">
-              <div className="text-xl font-bold text-emerald-400">{stats.factsCount}</div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">Stored Facts</div>
-            </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <MetricCard label="Entities" value={String(stats.entitiesCount)} icon={Brain} />
+            <MetricCard label="Relations" value={String(stats.relationsCount)} icon={GitBranch} accent="text-purple-400" />
+            <MetricCard label="Stored Facts" value={String(stats.factsCount)} icon={Database} accent="text-emerald-400" />
           </div>
 
           {/* Active Working Memory Keys */}

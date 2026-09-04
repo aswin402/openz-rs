@@ -4,7 +4,13 @@ export type JsonObject = { [key: string]: JsonValue };
 
 export interface ActivityNotice {
   id: string;
-  kind: 'workflow' | 'memory' | 'research' | 'self_improvement' | 'source' | 'system';
+  kind:
+    | "workflow"
+    | "memory"
+    | "research"
+    | "self_improvement"
+    | "source"
+    | "system";
   title: string;
   detail?: string;
   timestamp: number;
@@ -12,7 +18,7 @@ export interface ActivityNotice {
 
 export interface OpenZMessage {
   id: string;
-  role: 'user' | 'assistant' | 'system' | 'tool';
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
   timestamp: number;
   /** Real time tool executions attached to this message. */
@@ -30,11 +36,12 @@ export interface OpenZMessage {
   attachments?: ChatAttachment[];
 }
 
-export type WorkspaceNoticeScope = 'skills' | 'agents' | 'settings' | 'knowledge' | 'inventory' | 'global';
+export type WorkspaceNoticeScope =
+  "skills" | "agents" | "settings" | "knowledge" | "inventory" | "global";
 
 export interface WorkspaceNotice {
   scope: WorkspaceNoticeScope;
-  type: 'success' | 'error' | 'info';
+  type: "success" | "error" | "info";
   message: string;
   timestamp: number;
 }
@@ -53,7 +60,7 @@ export interface ToolExecution {
   id: string;
   name: string;
   args?: Record<string, unknown> | string;
-  status: 'running' | 'success' | 'error' | 'awaiting_approval';
+  status: "running" | "success" | "error" | "awaiting_approval";
   output?: string;
   error?: string;
   durationMs?: number;
@@ -67,13 +74,19 @@ export interface SecurityPromptInfo {
   toolName: string;
   description: string;
   arguments?: Record<string, unknown> | string;
-  status: 'pending' | 'approved' | 'denied';
+  status: "pending" | "approved" | "denied";
 }
 
 export interface OrchestrationStepState {
   id: string;
   agent: string;
-  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped' | 'awaiting_review';
+  status:
+    | "pending"
+    | "running"
+    | "success"
+    | "failed"
+    | "skipped"
+    | "awaiting_review";
   output?: string;
   error?: string;
   startedAt?: number;
@@ -84,7 +97,7 @@ export interface OrchestrationRunState {
   id: string;
   goal: string;
   mode: string;
-  status: 'running' | 'success' | 'failed' | 'cancelled' | 'awaiting_review';
+  status: "running" | "success" | "failed" | "cancelled" | "awaiting_review";
   steps: OrchestrationStepState[];
   startedAt: number;
   endedAt?: number;
@@ -132,12 +145,16 @@ export interface CognitiveMemoryStats {
   nodes?: CognitiveNode[];
   edges?: CognitiveEdge[];
   facts?: CognitiveFact[];
+  paths?: {
+    memoryDb: string;
+    graphDb: string;
+  };
 }
 
 export interface McpServerInfo {
   name: string;
   command: string;
-  status: 'connected' | 'error' | 'disabled' | 'starting';
+  status: "connected" | "error" | "disabled" | "starting";
   enabled?: boolean;
   args?: string[];
   toolsCount: number;
@@ -152,7 +169,7 @@ export interface McpStats {
 export interface LogEntry {
   id: string;
   timestamp: string;
-  level: 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+  level: "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR";
   target: string;
   message: string;
 }
@@ -177,6 +194,7 @@ export interface ProviderCapability {
   display: string;
   available: boolean;
   apiBaseEditable: boolean;
+  apiBase?: string;
 }
 
 export type CapabilityFieldKind = "boolean" | "secret" | "number" | "text";
@@ -203,11 +221,17 @@ export interface AttachmentCapabilities {
   allowedMimeTypes: string[];
 }
 
+export interface BrowserCapabilities {
+  firefoxWebdriverPort: number;
+  firefoxAttachPort: number;
+}
+
 export interface WebUiCapabilities {
   version: number;
   providers: ProviderCapability[];
   securityModes: Array<{ value: string; label: string }>;
   channels: ChannelCapability[];
+  browser: BrowserCapabilities;
   attachments: AttachmentCapabilities;
 }
 
@@ -229,12 +253,14 @@ const CAPABILITY_FIELD_KINDS: CapabilityFieldKind[] = ['boolean', 'secret', 'num
 
 export function normalizeWebUiCapabilities(value: unknown): WebUiCapabilities {
   const source = capabilityRecord(value);
+  const browserSource = capabilityRecord(source?.browser);
   const providers = Array.isArray(source?.providers)
     ? source.providers.flatMap((value) => {
         const row = capabilityRecord(value);
         const name = capabilityString(row?.name);
         const configKey = capabilityString(row?.configKey);
         const display = capabilityString(row?.display);
+        const apiBase = capabilityString(row?.apiBase);
         if (!name || !configKey || !display) return [];
         return [{
           name,
@@ -242,6 +268,7 @@ export function normalizeWebUiCapabilities(value: unknown): WebUiCapabilities {
           display,
           available: row?.available === true,
           apiBaseEditable: row?.apiBaseEditable === true,
+          ...(apiBase ? { apiBase } : {}),
         }];
       })
     : [];
@@ -300,6 +327,10 @@ export function normalizeWebUiCapabilities(value: unknown): WebUiCapabilities {
     providers,
     securityModes,
     channels,
+    browser: {
+      firefoxWebdriverPort: capabilityNumber(browserSource?.firefoxWebdriverPort),
+      firefoxAttachPort: capabilityNumber(browserSource?.firefoxAttachPort),
+    },
     attachments: {
       maxCount: capabilityNumber(attachmentSource?.maxCount),
       maxFileBytes: capabilityNumber(attachmentSource?.maxFileBytes),
@@ -330,6 +361,8 @@ export interface AgentDefaultsConfig {
   tool_output_limit?: number | null;
   show_auto_capture_notices?: boolean;
   tui_thought_display?: string;
+  firefox_webdriver_port: number;
+  firefox_attach_port: number;
 }
 
 /** Full config response from the `get_config` WS command. */
@@ -381,6 +414,7 @@ export interface RuntimeInventory {
     subagentsFile: string;
     skillsDir: string;
     workspaceSkillsDir: string;
+    sessionsDir: string;
   };
   defaults: {
     model: string;
@@ -401,14 +435,50 @@ export interface RuntimeInventory {
     tools: number;
     cronJobs: number;
     activeCronJobs: number;
+    runningCronJobs: number;
+    sessions: number;
+    activeUiSessions: number;
   };
   channels: Array<{ name: string; enabled: boolean; configured: boolean }>;
+  sessions: {
+    sessionsDir: string;
+    webuiControlCenter: { connectedClients: number; attachedChats: string[] };
+    activeUiSessions: Array<{
+      sessionKey: string;
+      channel: string;
+      pid: number;
+      cwd: string;
+      startedAt: string;
+      lastSeenAt: string;
+      model: string;
+      provider: string;
+      preview: string;
+    }>;
+    recentSessions: Array<{
+      key: string;
+      channel: string;
+      title: string;
+      updatedAt: string;
+      messageCount: number;
+      filePath: string;
+      active: boolean;
+    }>;
+    channelCounts: Array<{ channel: string; count: number }>;
+  };
   subagents: Array<{
     name: string;
     description: string;
     model: string;
     provider: string;
+    fallbacks: string[];
     fallbackCount: number;
+    effectiveModel: string;
+    effectiveProvider: string;
+    capabilities: string[];
+    supportsVision: boolean;
+    lastSuccessfulModel?: string | null;
+    lastError?: string | null;
+    failureCount: number;
     isCore: boolean;
     isProtected: boolean;
     source: string;
@@ -436,6 +506,7 @@ export interface RuntimeInventory {
     jobs: Array<{
       id: string;
       schedule: string;
+      prompt: string;
       enabled: boolean;
       runOnce: boolean;
       status: string;
@@ -449,16 +520,14 @@ export interface RuntimeInventory {
       lastLogPath?: string | null;
       runCount: number;
       failureCount: number;
+      createdAt?: string | null;
+      updatedAt?: string | null;
     }>;
   };
 }
 
 export type ConnectionStatus =
-  | 'disconnected'
-  | 'connecting'
-  | 'connected'
-  | 'unauthorized'
-  | 'error';
+  "disconnected" | "connecting" | "connected" | "unauthorized" | "error";
 
 export interface BackgroundServerInfo {
   id: string;
@@ -491,7 +560,7 @@ export interface SubagentInfo {
   fallbacks?: string[];
   isCore?: boolean;
   isProtected?: boolean;
-  source?: 'core' | 'user' | string;
+  source?: "core" | "user" | string;
   fallbackLimit?: number;
 }
 

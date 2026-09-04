@@ -26,7 +26,7 @@ pub trait Channel: Send + Sync {
 ## 2. Supported Channels
 
 * **`cli`** ([src/channels/cli/mod.rs](../src/channels/cli/mod.rs)): Interactive TUI terminal prompt support with clipboard image pasting (`Ctrl+V`) and agent slash commands.
-* **`websocket`** ([src/channels/websocket.rs](../src/channels/websocket.rs)): Axum-based WebSocket gateway that serves WebUI static bundles and accepts real-time message events.
+* **`websocket`** ([src/channels/websocket/mod.rs](../src/channels/websocket/mod.rs)): Axum-based WebSocket gateway organized into typed protocol, auth, attachment, approval, event, and command modules. It serves WebUI static bundles and accepts real-time message events.
 * **`telegram`** ([src/channels/telegram.rs](../src/channels/telegram.rs)): Standard long-polling bot polling messenger messages.
 * **`discord`** ([src/channels/discord.rs](../src/channels/discord.rs)): Active bot gateway client using WebSocket (`tokio-tungstenite`) to connect and listen for message events, execute them, and reply.
 * **`whatsapp`** ([src/channels/whatsapp.rs](../src/channels/whatsapp.rs)): Active Axum-based HTTP webhook receiver server that handles Meta webhook verification GET challenge and parses POST message streams.
@@ -121,4 +121,3 @@ To ensure users always have access to the latest models from their configured pr
 * **API-Driven Listing**: When selecting a provider via the `/model` command in the CLI TUI, or when choosing models for subagents, OpenZ queries the provider's active REST endpoint (`GET /v1/models` or native equivalents) dynamically using the configured API credentials.
 * **OpenAI-Compatible & Native Endpoints**: The discovery engine supports standard OpenAI format outputs (`data: [{"id": ...}]`) used by OpenAI, OpenRouter, DeepSeek, Groq, Ollama, Mistral, Nvidia, and Cerebras, alongside custom formats like Anthropic's Models API and Google Gemini's native pagination structure.
 * **Graceful Fallbacks**: If a provider is not yet configured, is offline, or doesn't support the models list endpoint, the selection menus gracefully fall back to a curated list of popular hardcoded models.
-

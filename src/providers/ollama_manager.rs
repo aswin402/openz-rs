@@ -1,5 +1,5 @@
 use crate::agent::style::colors::{AURA_GOLD, AURA_SLATE, COLOR_RESET, EMERALD_GREEN, ERROR_RED};
-use crate::config::schema::Config;
+use crate::config::{provider_catalog::default_api_base_for_provider, schema::Config};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -49,7 +49,7 @@ pub fn ensure_local_ollama(config: &Config) {
         .ollama
         .as_ref()
         .and_then(|x| x.api_base.clone())
-        .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
+        .unwrap_or_else(|| default_api_base_for_provider("ollama").to_string());
 
     let addr = parse_addr(&api_base);
 
@@ -174,7 +174,7 @@ pub async fn unload_ollama_model(config: &Config, model: &str) {
         .ollama
         .as_ref()
         .and_then(|x| x.api_base.clone())
-        .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
+        .unwrap_or_else(|| default_api_base_for_provider("ollama").to_string());
 
     // Send keep_alive: 0 to /api/generate or /api/chat. Ollama's native port for generate is usually localhost:11434
     // If it's http://localhost:11434/v1, native generate endpoint is http://localhost:11434/api/generate

@@ -1,7 +1,7 @@
 use crate::config::schema::Config;
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
-use serde_json::{Value, json};
+use anyhow::{anyhow, Result};
+use serde_json::{json, Value};
 
 pub struct TriggerSopTool {
     pub config: Config,

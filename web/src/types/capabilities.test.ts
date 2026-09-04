@@ -32,6 +32,10 @@ test('normalizes missing or malformed capability payloads to safe defaults', () 
   }]);
   expect(capabilities.securityModes).toEqual([{ value: 'normal', label: 'Normal' }]);
   expect(capabilities.channels[0]?.defaults.webhook_port).toBe(8090);
+  expect(capabilities.browser).toEqual({
+    firefoxWebdriverPort: 0,
+    firefoxAttachPort: 0,
+  });
   expect(capabilities.attachments.maxCount).toBe(4);
   expect(capabilities.attachments.maxFileBytes).toBe(0);
   expect(capabilities.attachments.allowedMimeTypes).toEqual(['application/pdf']);
@@ -44,6 +48,10 @@ test('normalizes absent capabilities without leaving undefined nested fields', (
   expect(capabilities.providers).toEqual([]);
   expect(capabilities.securityModes).toEqual([]);
   expect(capabilities.channels).toEqual([]);
+  expect(capabilities.browser).toEqual({
+    firefoxWebdriverPort: 0,
+    firefoxAttachPort: 0,
+  });
   expect(capabilities.attachments).toEqual({
     maxCount: 0,
     maxFileBytes: 0,

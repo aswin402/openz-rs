@@ -35,54 +35,7 @@ pub static LOG_TX: OnceLock<tokio::sync::mpsc::UnboundedSender<LogEntry>> = Once
 
 static LOG_SECRETS: OnceLock<Arc<Vec<String>>> = OnceLock::new();
 
-fn normalized_secret_key(key: &str) -> String {
-    key.chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .flat_map(|c| c.to_lowercase())
-        .collect()
-}
-
-fn is_secret_key(key: &str) -> bool {
-    matches!(
-        normalized_secret_key(key).as_str(),
-        "apikey"
-            | "apitoken"
-            | "accesstoken"
-            | "authtoken"
-            | "bottoken"
-            | "clientsecret"
-            | "password"
-            | "secret"
-            | "verifytoken"
-            | "webhooksecret"
-            | "privatekey"
-            | "token"
-    )
-}
-
-fn collect_secret_values(value: &serde_json::Value, secrets: &mut Vec<String>) {
-    match value {
-        serde_json::Value::Object(map) => {
-            for (key, child) in map {
-                if is_secret_key(key) {
-                    if let Some(secret) = child.as_str() {
-                        let secret = secret.trim();
-                        if secret.len() >= 8 {
-                            secrets.push(secret.to_string());
-                        }
-                    }
-                }
-                collect_secret_values(child, secrets);
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for item in items {
-                collect_secret_values(item, secrets);
-            }
-        }
-        _ => {}
-    }
-}
+use crate::core::secrets::{collect_secret_values, is_secret_key};
 
 /// Load configured and environment-backed credentials into the log scrubber.
 /// Values are retained only in memory and are never emitted to logs.

@@ -1,12 +1,12 @@
-use super::CancellationToken;
 use super::delegate_profile::DelegateProfileTool;
+use super::CancellationToken;
 use crate::agent::style::*;
 use crate::config::schema::Config;
 use crate::orchestrator::spec::CapabilityPolicy;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::sync::Arc;
 

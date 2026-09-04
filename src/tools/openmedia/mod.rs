@@ -1,8 +1,8 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use openmedia_core::Config;
 use openmedia_mcp::{McpObject, OpenMediaServer};
 use rmcp::handler::server::wrapper::{Json, Parameters};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 pub async fn get_server() -> Result<&'static OpenMediaServer> {
     static SERVER: std::sync::OnceLock<OpenMediaServer> = std::sync::OnceLock::new();
@@ -827,11 +827,9 @@ mod tests {
     fn test_openmedia_create_svg_schema_includes_examples_and_output_path() {
         let tool = OpenMediaCreateSvgTool;
         let schema = tool.parameters();
-        assert!(
-            schema["properties"]["elements"]["examples"]
-                .as_array()
-                .is_some()
-        );
+        assert!(schema["properties"]["elements"]["examples"]
+            .as_array()
+            .is_some());
         assert_eq!(
             schema["properties"]["elements"]["examples"][0][0]["type"],
             "rect"

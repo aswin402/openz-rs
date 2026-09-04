@@ -2,6 +2,9 @@
 
 > Audit based on full codebase analysis at `v0.0.50`.
 > Covers architectural debt, correctness bugs, test gaps, and enhancement opportunities.
+>
+> Historical audit snapshot. Progress notes may describe older layouts or
+> versions; use the current project map and architecture docs as the source of truth.
 
 ---
 
@@ -116,7 +119,7 @@ Progress now done: provider message sanitation no longer unwraps optional tool n
 
 ### 1.5 `execute_approved_tool()` Pipeline Refactor (Resolved locally)
 
-**File:** `src/agent/agent_loop/run.rs`
+**File:** `src/agent/agent_loop/run/mod.rs`
 
 **Status:** Implemented in the local working tree. `execute_approved_tool()` is now a thin wrapper around `ToolExecutionPipeline`. The pipeline separates process-slot acquisition, timeout resolution, cancellation-aware execution, spinner wrapping, success rendering, failure rendering, and error bookkeeping. A focused regression test covers process resource guard behavior used by the pipeline.
 

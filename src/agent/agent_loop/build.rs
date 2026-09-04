@@ -1,3 +1,4 @@
+use crate::memory::{with_graph_db, with_shared_db};
 use super::{AgentLoop, TurnContext, TurnState};
 use anyhow::Result;
 use std::collections::HashSet;
@@ -718,7 +719,7 @@ async fn retrieve_pinned_identity_memories() -> String {
     let mut entries: Vec<String> = Vec::new();
 
     let _lock = crate::tools::shared_memory::get_db_mutex().lock().await;
-    let cognitive_rows = crate::tools::shared_memory::with_db(|conn| {
+    let cognitive_rows = with_shared_db(|conn| {
         let mut stmt = conn.prepare(
             "SELECT text FROM cognitive_memory WHERE importance >= 0.75 ORDER BY importance DESC, last_accessed DESC LIMIT 24",
         )?;
@@ -737,7 +738,7 @@ async fn retrieve_pinned_identity_memories() -> String {
     }
     drop(_lock);
 
-    let semantic_rows = crate::tools::graph_memory::with_db(|conn| {
+    let semantic_rows = with_graph_db(|conn| {
         let mut stmt = conn.prepare(
             "SELECT raw_text FROM semantic_metadata WHERE valid_until IS NULL AND importance >= 0.75 ORDER BY timestamp DESC LIMIT 48",
         )?;
@@ -812,7 +813,7 @@ async fn retrieve_cross_session_memories(user_content: &str) -> String {
 
     // 1. Query cognitive_memory (from store_memory tool) — top by importance × recency
     let _lock = crate::tools::shared_memory::get_db_mutex().lock().await;
-    let cognitive_rows = crate::tools::shared_memory::with_db(|conn| {
+    let cognitive_rows = with_shared_db(|conn| {
         let mut stmt = conn.prepare(
             "SELECT text, importance, last_accessed, decay_rate FROM cognitive_memory ORDER BY importance DESC, last_accessed DESC LIMIT 8"
         )?;
@@ -854,7 +855,7 @@ async fn retrieve_cross_session_memories(user_content: &str) -> String {
     drop(_lock);
 
     // 2. Query semantic_metadata (curator facts)
-    let semantic_facts = crate::tools::graph_memory::with_db(|conn| {
+    let semantic_facts = with_graph_db(|conn| {
         let mut stmt = conn
             .prepare(
                 "SELECT raw_text FROM semantic_metadata
@@ -888,7 +889,7 @@ async fn retrieve_cross_session_memories(user_content: &str) -> String {
     }
 
     // 3. Query graph_nodes (entity observations)
-    let graph_nodes = crate::tools::graph_memory::with_db(|conn| {
+    let graph_nodes = with_graph_db(|conn| {
         let mut stmt = conn
             .prepare(
                 "SELECT name, observations FROM graph_nodes

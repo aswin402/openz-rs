@@ -3,7 +3,7 @@ use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::subagents::SubagentProfile;
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -117,6 +117,127 @@ impl Tool for OptimizeSubagentTool {
     }
 }
 
+pub(crate) fn parse_subagent_settings(arguments: &Value) -> Result<Vec<String>> {
+    let Some(value) = arguments.get("fallbacks") else {
+        return Ok(Vec::new());
+    };
+    if value.is_null() {
+        return Ok(Vec::new());
+    }
+    let array = value
+        .as_array()
+        .ok_or_else(|| anyhow!("fallbacks must be an array of model names"))?;
+    if array.len() > crate::subagents::MAX_SUBAGENT_FALLBACKS {
+        return Err(anyhow!(
+            "a subagent may have at most {} fallback models",
+            crate::subagents::MAX_SUBAGENT_FALLBACKS
+        ));
+    }
+    let mut result = Vec::new();
+    for value in array {
+        let model = value
+            .as_str()
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .ok_or_else(|| anyhow!("fallbacks must contain only non-empty model names"))?;
+        if !result
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(model))
+        {
+            result.push(model.to_string());
+        }
+    }
+    Ok(result)
+}
+
+pub(crate) fn validate_subagent_models(
+    config: &Config,
+    model: Option<&str>,
+    fallbacks: &[String],
+) -> Result<()> {
+    let mut candidates = Vec::new();
+    if let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) {
+        candidates.push(model);
+    }
+    candidates.extend(fallbacks.iter().map(String::as_str));
+    for candidate in candidates {
+        crate::tools::subagent::build_provider_for_model(config, candidate)
+            .map_err(|error| anyhow!("model {} is not resolvable: {}", candidate, error))?;
+    }
+    Ok(())
+}
+
+pub struct UpdateSubagentSettingsTool {
+    pub config: Config,
+}
+
+#[async_trait::async_trait]
+impl Tool for UpdateSubagentSettingsTool {
+    fn name(&self) -> &str {
+        "update_subagent_settings"
+    }
+
+    fn description(&self) -> &str {
+        "Update the model and fallback models for an existing subagent profile, including protected core profiles."
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "Existing subagent profile name." },
+                "model": { "type": ["string", "null"], "description": "Primary model; null or empty resets to the OpenZ default." },
+                "fallbacks": { "type": ["array", "null"], "items": { "type": "string" }, "description": "Fallback models, maximum three; null or [] clears them." }
+            },
+            "required": ["name"]
+        })
+    }
+
+    async fn call(&self, arguments: &Value) -> Result<Value> {
+        let name = arguments
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| anyhow!("Missing name argument"))?;
+        let mut profiles = crate::subagents::load_profiles()?;
+        let requested_model = arguments.get("model").and_then(Value::as_str);
+        let requested_fallbacks = if arguments.get("fallbacks").is_some() {
+            parse_subagent_settings(arguments)?
+        } else {
+            Vec::new()
+        };
+        validate_subagent_models(&self.config, requested_model, &requested_fallbacks)?;
+        let (model, fallbacks) = {
+            let profile = profiles
+                .iter_mut()
+                .find(|profile| profile.name == name)
+                .ok_or_else(|| anyhow!("Subagent profile {} not found", name))?;
+
+            if let Some(model) = arguments.get("model") {
+                profile.model = model
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                    .map(ToOwned::to_owned);
+            }
+            if arguments.get("fallbacks").is_some() {
+                let fallbacks = parse_subagent_settings(arguments)?;
+                profile.fallbacks = (!fallbacks.is_empty()).then_some(fallbacks);
+            }
+            (profile.model.clone(), profile.fallbacks.clone())
+        };
+        crate::subagents::save_profiles(&profiles)?;
+        Ok(serde_json::json!({
+            "status": "success",
+            "name": name,
+            "model": model,
+            "fallbacks": fallbacks,
+            "message": format!("Updated model settings for subagent {}", name)
+        }))
+    }
+}
+
 pub struct CreateSubagentTool {
     pub config: Config,
 }
@@ -149,7 +270,7 @@ impl Tool for CreateSubagentTool {
                 },
                 "model": {
                     "type": "string",
-                    "description": "Optional: The primary model to run (e.g. 'gpt-4o-mini', 'claude-3-5-sonnet', 'gpt-4o'). Default is 'gpt-4o-mini'."
+                    "description": "Optional: The primary model to run (e.g. 'anthropic/claude-3-5-sonnet', 'openai/gpt-4o', 'deepseek/deepseek-chat'). Defaults to the agent's configured default model."
                 },
                 "fallbacks": {
                     "type": "array",

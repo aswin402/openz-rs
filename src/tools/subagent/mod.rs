@@ -1,5 +1,6 @@
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
+use crate::tools::Tool;
 use std::sync::Arc;
 
 tokio::task_local! {
@@ -22,13 +23,15 @@ mod tests;
 
 pub use cancellation_token::CancellationToken;
 pub use delegate_profile::DelegateProfileTool;
-pub use delegate_task::{DelegateTaskTool, cleanup_registered_worktrees, cleanup_stale_resources};
+pub use delegate_task::{cleanup_registered_worktrees, cleanup_stale_resources, DelegateTaskTool};
 pub use evaluator_optimizer::EvaluatorOptimizerLoopTool;
 pub use lifecycle::{
-    SubagentRunStatus, cancellation_result_json, classify_subagent_error, compact_lifecycle_line,
-    status_json,
+    cancellation_result_json, classify_subagent_error, compact_lifecycle_line, status_json,
+    SubagentRunStatus,
 };
-pub use optimize_profile::{CreateSubagentTool, DeleteSubagentTool, OptimizeSubagentTool};
+pub use optimize_profile::{
+    CreateSubagentTool, DeleteSubagentTool, OptimizeSubagentTool, UpdateSubagentSettingsTool,
+};
 pub use parallel_research::ParallelResearchTool;
 
 pub fn can_spawn_nested_subagents(profile_name: &str) -> bool {
@@ -73,6 +76,7 @@ impl Drop for CancelOnDrop {
 pub(crate) struct WorkspaceIsolation {
     pub(crate) dir: std::path::PathBuf,
     /// "isolated_worktree" | "scratch_workspace" | "fallback_active_workspace"
+    /// | "policy_no_filesystem_write" | "not_required"
     pub(crate) label: String,
     pub(crate) reason: Option<String>,
 }
@@ -149,6 +153,94 @@ pub(crate) async fn create_workspace_isolation(parent_dir: &std::path::Path) -> 
     }
 }
 
+/// Resolve the workspace policy shared by all subagent entry points. The
+/// caller decides whether a profile needs isolation; this helper owns the
+/// policy/fallback labels and keeps their result shape consistent.
+pub(crate) async fn prepare_workspace(
+    parent_dir: &std::path::Path,
+    filesystem_write_denied: bool,
+    needs_workspace: bool,
+) -> WorkspaceIsolation {
+    if filesystem_write_denied {
+        return WorkspaceIsolation {
+            dir: parent_dir.to_path_buf(),
+            label: "policy_no_filesystem_write".to_string(),
+            reason: Some(
+                "Capability policy denies filesystem writes; running without workspace isolation, graph branches, or sync-back."
+                    .to_string(),
+            ),
+        };
+    }
+
+    if !needs_workspace {
+        return WorkspaceIsolation {
+            dir: parent_dir.to_path_buf(),
+            label: "not_required".to_string(),
+            reason: None,
+        };
+    }
+
+    create_workspace_isolation(parent_dir).await
+}
+
+/// Create the temporary database branch used by subagent runs when writes are
+/// allowed. Returning the ID keeps branch ownership with the caller while
+/// centralizing generation and native-tool invocation.
+pub(crate) async fn create_simulation_branch(
+    enabled: bool,
+) -> anyhow::Result<Option<String>> {
+    if !enabled {
+        return Ok(None);
+    }
+
+    let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+    crate::tools::graph_memory::CreateDatabaseBranchTool
+        .call(&serde_json::json!({ "branchId": branch_id }))
+        .await?;
+    Ok(Some(branch_id))
+}
+
+/// Finalize a temporary database branch and optionally preserve the task-level
+/// simulation-space announcement. Profile fallback attempts intentionally use
+/// `announce = false` to retain their quieter existing output.
+pub(crate) async fn finish_simulation_branch(
+    branch_id: &str,
+    run_success: bool,
+    scratch_workspace: bool,
+    announce: bool,
+) -> anyhow::Result<()> {
+    if run_success {
+        crate::tools::graph_memory::CommitDatabaseBranchTool
+            .call(&serde_json::json!({}))
+            .await?;
+    } else {
+        crate::tools::graph_memory::RollbackDatabaseBranchTool
+            .call(&serde_json::json!({}))
+            .await?;
+    }
+
+    if announce {
+        let message = delegate_task::simulation_space_teardown_message(
+            run_success,
+            branch_id,
+            scratch_workspace,
+        );
+        let color = if run_success {
+            crate::agent::style::EMERALD_GREEN
+        } else {
+            crate::agent::style::AURA_GOLD
+        };
+        crate::tui_println!(
+            "{}  ✓ {}{}",
+            color,
+            message,
+            crate::agent::style::COLOR_RESET
+        );
+    }
+
+    Ok(())
+}
+
 /// Attach the workspace-isolation outcome fields to a cancellation result.
 pub(crate) fn attach_workspace_fields(
     mut json: serde_json::Value,
@@ -208,7 +300,7 @@ pub fn should_skip_evolution_capture(goal: &str, output: &str) -> bool {
     .iter()
     .any(|needle| goal_lower.contains(needle));
 
-    smoke_goal || output_words < 24
+    smoke_goal || output_words < 18
 }
 
 pub fn step_allows_nested_delegation(goal: &str) -> bool {
@@ -302,7 +394,7 @@ pub fn scan_for_images(goal: &str, context: &str) -> Vec<String> {
     }
     // Fallback to default clipboard image if no specific path was found but task mentions an image
     if image_paths.is_empty() {
-        let default_clip = crate::config::resolve_path("~/.openz/clipboard_image_0.png");
+        let default_clip = crate::config::runtime_data_dir().join("clipboard_image_0.png");
         if default_clip.exists() && default_clip.is_file() {
             let text_lower = format!("{} {}", goal, context).to_lowercase();
             if text_lower.contains("image")

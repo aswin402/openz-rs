@@ -31,17 +31,7 @@ pub async fn handle_onboard() -> Result<()> {
         }
     }
 
-    let default_base = match provider_name {
-        "anthropic" => "https://api.anthropic.com",
-        "openai" => "https://api.openai.com/v1",
-        "mivi" => "http://127.0.0.1:8000/v1",
-        "openrouter" => "https://openrouter.ai/api/v1",
-        "deepseek" => "https://api.deepseek.com/v1",
-        "groq" => "https://api.groq.com/openai/v1",
-        "ollama" => "http://localhost:11434/v1",
-        "minimax" => "https://api.minimax.io/v1",
-        _ => "",
-    };
+    let default_base = crate::config::provider_catalog::default_api_base_for_provider(provider_name);
 
     let api_base_input =
         Text::new(&format!("Enter API Base URL [default: {}]:", default_base)).prompt()?;

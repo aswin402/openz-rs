@@ -1,6 +1,5 @@
 use openmedia_core::Config;
 use openmedia_mcp::OpenMediaServer;
-use rmcp::{transport::stdio, ServiceExt};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]

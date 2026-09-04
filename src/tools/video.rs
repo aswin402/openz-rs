@@ -1,11 +1,11 @@
 use crate::tools::Tool;
-use anyhow::{Context, Result, anyhow};
-use serde_json::{Value, json};
+use anyhow::{anyhow, Context, Result};
+use serde_json::{json, Value};
 use std::fs;
 
 use wavyte::{
-    BackendKind, Composition, FrameIndex, FrameRange, RenderSettings, RenderToMp4Opts,
-    create_backend, render_to_mp4,
+    create_backend, render_to_mp4, BackendKind, Composition, FrameIndex, FrameRange,
+    RenderSettings, RenderToMp4Opts,
 };
 
 pub struct VideoGeneratorTool;

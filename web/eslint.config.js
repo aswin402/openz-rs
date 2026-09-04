@@ -20,4 +20,20 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    files: ['src/features/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['../agents/*', '../chat/*', '../inventory/*', '../knowledge/*', '../settings/*', '../skills/*'],
+              message: 'Feature modules must not import another feature directly; compose at the app boundary or move the shared behavior to shared/.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ])

@@ -1,4 +1,4 @@
-use crate::config::loader::{resolve_path, runtime_data_dir};
+use crate::config::loader::{activity_file, runtime_data_dir};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -124,7 +124,7 @@ fn update_activity_at_path(path: PathBuf, activity: AgentActivity) {
 }
 
 pub fn update_activity(session_id: &str, status: &str, current_tool: Option<&str>) {
-    let path = resolve_path("~/.openz/activity.json");
+    let path = activity_file();
     let activity = AgentActivity {
         session_id: session_id.to_string(),
         status: status.to_string(),
@@ -135,7 +135,7 @@ pub fn update_activity(session_id: &str, status: &str, current_tool: Option<&str
 }
 
 pub fn get_activity() -> Option<AgentActivity> {
-    let path = resolve_path("~/.openz/activity.json");
+    let path = activity_file();
     if !path.exists() {
         return None;
     }
@@ -161,7 +161,7 @@ fn inbox_prefix(session_id: &str) -> String {
 }
 
 fn inbox_legacy_path(session_id: &str) -> PathBuf {
-    resolve_path(&format!("~/.openz/inbox_{}.json", inbox_slug(session_id)))
+    runtime_data_dir().join(format!("inbox_{}.json", inbox_slug(session_id)))
 }
 
 fn inbox_message_is_expired(message: &InboxMessage) -> bool {

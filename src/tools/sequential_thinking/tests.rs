@@ -1,6 +1,6 @@
 use super::*;
 use crate::tools::Tool;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::sync::OnceLock;
 
 /// Serialize tests that touch the shared ENGINE static.
@@ -347,12 +347,10 @@ async fn test_export_markdown() {
         .call(&json!({"format": "markdown", "sessionId": "test-session"}))
         .await
         .unwrap();
-    assert!(
-        res["data"]
-            .as_str()
-            .unwrap()
-            .contains("# Reasoning Session History")
-    );
+    assert!(res["data"]
+        .as_str()
+        .unwrap()
+        .contains("# Reasoning Session History"));
 }
 
 #[tokio::test]

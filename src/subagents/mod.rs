@@ -1,10 +1,10 @@
-use crate::config::resolve_path;
 use crate::config::schema::Config;
 use crate::providers::GenerationSettings;
 use crate::session::Message;
 use anyhow::{Context, Result, anyhow};
 use inquire::{Confirm, Text};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -22,6 +22,85 @@ pub struct SubagentProfile {
 }
 
 pub const MAX_SUBAGENT_FALLBACKS: usize = 3;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubagentHealthRecord {
+    pub last_successful_model: Option<String>,
+    pub last_error: Option<String>,
+    pub failure_count: u64,
+    pub updated_at: Option<String>,
+}
+
+impl SubagentHealthRecord {
+    pub fn mark_success(&mut self, model: &str) {
+        self.last_successful_model = Some(model.to_string());
+        self.last_error = None;
+        self.updated_at = Some(chrono::Utc::now().to_rfc3339());
+    }
+
+    pub fn mark_failure(&mut self, error: &str) {
+        self.failure_count = self.failure_count.saturating_add(1);
+        self.last_error = Some(error.chars().take(500).collect());
+        self.updated_at = Some(chrono::Utc::now().to_rfc3339());
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SubagentHealthRegistry {
+    pub profiles: BTreeMap<String, SubagentHealthRecord>,
+}
+
+impl SubagentHealthRegistry {
+    pub fn path() -> PathBuf {
+        crate::config::loader::config_dir().join("subagent_health.json")
+    }
+
+    pub fn load() -> Self {
+        fs::read_to_string(Self::path())
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save(&self) -> Result<()> {
+        let path = Self::path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, serde_json::to_string_pretty(self)?)?;
+        Ok(())
+    }
+
+    pub fn get(&self, profile: &str) -> Option<&SubagentHealthRecord> {
+        self.profiles.get(profile)
+    }
+
+    pub fn record_success(&mut self, profile: &str, model: &str) {
+        self.profiles
+            .entry(profile.to_string())
+            .or_default()
+            .mark_success(model);
+    }
+
+    pub fn record_failure(&mut self, profile: &str, error: &str) {
+        self.profiles
+            .entry(profile.to_string())
+            .or_default()
+            .mark_failure(error);
+    }
+}
+
+pub fn record_subagent_success(profile: &str, model: &str) -> Result<()> {
+    let mut registry = SubagentHealthRegistry::load();
+    registry.record_success(profile, model);
+    registry.save()
+}
+
+pub fn record_subagent_failure(profile: &str, error: &str) -> Result<()> {
+    let mut registry = SubagentHealthRegistry::load();
+    registry.record_failure(profile, error);
+    registry.save()
+}
 
 pub const DEFAULT_SUBAGENT_NAMES: &[&str] = &[
     "orchestrator",
@@ -70,7 +149,7 @@ pub fn is_default_subagent(name: &str) -> bool {
 }
 
 pub fn subagents_file_path() -> PathBuf {
-    resolve_path("~/.openz/subagents.json")
+    crate::config::subagents_file()
 }
 
 struct ProfilesCache {
@@ -878,170 +957,13 @@ async fn prompt_choose_model(
     current_model: &str,
     config: &Config,
 ) -> Result<Option<String>> {
-    #[allow(dead_code)]
-    struct ProviderModels {
-        name: &'static str,
-        display: &'static str,
-        models: &'static [&'static str],
-    }
-
-    let all_providers = &[
-        ProviderModels {
-            name: "openai",
-            display: "OpenAI (5)",
-            models: &["gpt-4o", "gpt-4o-mini", "o1", "o1-mini", "o3-mini"],
-        },
-        ProviderModels {
-            name: "anthropic",
-            display: "Anthropic (3)",
-            models: &[
-                "claude-3-5-sonnet-20241022",
-                "claude-3-5-haiku-20241022",
-                "claude-3-opus-20240229",
-            ],
-        },
-        ProviderModels {
-            name: "openrouter",
-            display: "OpenRouter (5)",
-            models: &[
-                "google/gemini-2.5-pro",
-                "google/gemini-2.5-flash",
-                "anthropic/claude-3.5-sonnet",
-                "meta-llama/llama-3.3-70b-instruct",
-                "deepseek/deepseek-r1",
-            ],
-        },
-        ProviderModels {
-            name: "deepseek",
-            display: "DeepSeek (2)",
-            models: &["deepseek-chat", "deepseek-reasoner"],
-        },
-        ProviderModels {
-            name: "groq",
-            display: "Groq (5)",
-            models: &[
-                "deepseek-r1-distill-llama-70b",
-                "llama-3.3-70b-versatile",
-                "llama-3.1-8b-instant",
-                "mixtral-8x7b-32768",
-                "gemma2-9b-it",
-            ],
-        },
-        ProviderModels {
-            name: "ollama",
-            display: "Ollama (5)",
-            models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"],
-        },
-        ProviderModels {
-            name: "minimax",
-            display: "minimax.io (6)",
-            models: &[
-                "MiniMax-M3",
-                "MiniMax-M2.7",
-                "MiniMax-M2.5",
-                "MiniMax-M2.1",
-                "MiniMax-M2",
-                "MiniMax-M1",
-            ],
-        },
-        ProviderModels {
-            name: "mistral",
-            display: "Mistral AI (5)",
-            models: &[
-                "mistral-large-latest",
-                "pixtral-large-latest",
-                "mistral-moderation-latest",
-                "codestral-latest",
-                "mistral-small-latest",
-            ],
-        },
-        ProviderModels {
-            name: "z.ai",
-            display: "z.ai (Zhipu GLM) (5)",
-            models: &[
-                "glm-5.1",
-                "glm-5",
-                "glm-5v-turbo",
-                "glm-4.7",
-                "glm-4.7-flash",
-            ],
-        },
-        ProviderModels {
-            name: "nvidia",
-            display: "NVIDIA NIM (5)",
-            models: &[
-                "meta/llama3-70b-instruct",
-                "nvidia/llama-3.1-nemotron-70b-instruct",
-                "meta/llama-3.1-70b-instruct",
-                "mistralai/mixtral-8x22b-instruct-v0.1",
-                "google/gemma-2-27b-it",
-            ],
-        },
-        ProviderModels {
-            name: "opencode_zen",
-            display: "OpenCode Zen (4)",
-            models: &[
-                "deepseek-v4-flash-free",
-                "mimo-v2.5-free",
-                "north-mini-code-free",
-                "nemotron-3-ultra-free",
-            ],
-        },
-        ProviderModels {
-            name: "cerebras",
-            display: "Cerebras (3)",
-            models: &["llama-3.3-70b", "llama3.1-8b", "llama3.1-70b"],
-        },
-        ProviderModels {
-            name: "google_ai_studio",
-            display: "Google AI Studio (Gemini) (4)",
-            models: &[
-                "gemini-2.5-pro",
-                "gemini-2.5-flash",
-                "gemini-2.0-flash",
-                "gemini-1.5-pro",
-            ],
-        },
-        ProviderModels {
-            name: "cohere",
-            display: "Cohere (3)",
-            models: &[
-                "command-r7-12-2025",
-                "command-r-plus-08-2024",
-                "command-r-08-2024",
-            ],
-        },
-        ProviderModels {
-            name: "llm7",
-            display: "LLM7 (3)",
-            models: &["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"],
-        },
-        ProviderModels {
-            name: "sambanova",
-            display: "SambaNova (3)",
-            models: &[
-                "Meta-Llama-3.3-70B-Instruct",
-                "Qwen2.5-72B-Instruct",
-                "QwQ-32B",
-            ],
-        },
-        ProviderModels {
-            name: "huggingface",
-            display: "Hugging Face Inference (3)",
-            models: &[
-                "meta-llama/Llama-3.3-70B-Instruct",
-                "Qwen/QwQ-32B",
-                "deepseek-ai/DeepSeek-R1",
-            ],
-        },
-    ];
-
-    let mut provider_list = Vec::new();
-    for p in all_providers {
-        if config.is_provider_configured(p.name) {
-            provider_list.push(p);
-        }
-    }
+    // Keep subagent model selection aligned with the canonical catalog while
+    // preserving its existing exclusion of custom Mivi and auto-start Ollama.
+    let provider_list = crate::channels::provider_model_catalog()
+        .iter()
+        .filter(|provider| !matches!(provider.name, "mivi" | "ollama_local"))
+        .filter(|provider| config.is_provider_configured(provider.name))
+        .collect::<Vec<_>>();
 
     if provider_list.is_empty() {
         println!(
@@ -1054,7 +976,7 @@ async fn prompt_choose_model(
 
     let mut provider_options: Vec<String> = provider_list
         .iter()
-        .map(|p| p.display.to_string())
+        .map(|p| format!("{} ({})", p.display, p.models.len()))
         .collect();
     provider_options.push("Exit".to_string());
 
@@ -1080,7 +1002,7 @@ async fn prompt_choose_model(
             model_options.push("Exit".to_string());
 
             match crate::agent::style::select_menu_custom(
-                &format!("Choose a model from {}:", prov_info.display),
+                &format!("Choose a model from {} ({}):", prov_info.display, prov_info.models.len()),
                 &model_options,
                 current_model,
                 None,
@@ -1102,21 +1024,18 @@ async fn prompt_choose_model(
                         model_options[model_idx].clone()
                     };
 
-                    let prefix = format!("{}/", prov_info.name);
-                    let prefix_alt = if prov_info.name == "google_ai_studio" {
-                        "google-ai-studio/".to_string()
-                    } else if prov_info.name == "z.ai" {
-                        "z_ai/".to_string()
-                    } else if prov_info.name == "opencode_zen" {
-                        "opencode-zen/".to_string()
-                    } else {
-                        "".to_string()
-                    };
+                    let descriptor = crate::config::provider_catalog::find_provider(prov_info.name);
+                    let has_provider_prefix = descriptor
+                        .map(|descriptor| {
+                            descriptor
+                                .model_prefixes
+                                .iter()
+                                .any(|prefix| final_model.starts_with(prefix))
+                        })
+                        .unwrap_or(false);
 
-                    if !final_model.starts_with(&prefix)
-                        && (prefix_alt.is_empty() || !final_model.starts_with(&prefix_alt))
-                    {
-                        final_model = format!("{}{}", prefix, final_model);
+                    if !has_provider_prefix {
+                        final_model = format!("{}/{}", prov_info.name, final_model);
                     }
 
                     Ok(Some(final_model))
@@ -1131,6 +1050,32 @@ async fn prompt_choose_model(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subagent_health_tracks_fallback_success_and_failure() {
+        let mut health = SubagentHealthRecord::default();
+        health.mark_failure("primary unavailable");
+        health.mark_success("fallback/model");
+        assert_eq!(
+            health.last_successful_model.as_deref(),
+            Some("fallback/model")
+        );
+        assert_eq!(health.failure_count, 1);
+        assert!(health.last_error.is_none());
+    }
+
+    #[test]
+    fn subagent_health_registry_is_keyed_by_profile_name() {
+        let mut registry = SubagentHealthRegistry::default();
+        registry.record_failure("vision_agent", "no vision provider");
+        registry.record_success("vision_agent", "google_ai_studio/gemini-2.5-flash");
+        let record = registry.get("vision_agent").expect("health record");
+        assert_eq!(record.failure_count, 1);
+        assert_eq!(
+            record.last_successful_model.as_deref(),
+            Some("google_ai_studio/gemini-2.5-flash")
+        );
+    }
 
     #[test]
     fn default_subagent_policy_includes_orchestrator() {

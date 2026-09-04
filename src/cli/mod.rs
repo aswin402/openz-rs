@@ -10,6 +10,7 @@ pub mod onboard;
 pub mod sop;
 pub mod streaming;
 pub mod tools;
+pub(crate) mod tool_registration;
 
 use crate::print;
 pub use agent::{archive_current_session, load_session_history};

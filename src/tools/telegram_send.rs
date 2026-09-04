@@ -1,6 +1,7 @@
+use crate::channels::notifications::telegram_api_url;
 use crate::tools::{Tool, ToolMetadata, ToolRisk};
-use anyhow::{Result, anyhow};
-use serde_json::{Value, json};
+use anyhow::{anyhow, Result};
+use serde_json::{json, Value};
 use std::path::Path;
 
 const MAX_TELEGRAM_DOCUMENT_BYTES: u64 = 50 * 1024 * 1024;
@@ -12,8 +13,7 @@ fn valid_telegram_target(target: &str) -> bool {
         return false;
     }
 
-    if target.starts_with('@') {
-        let username = &target[1..];
+    if let Some(username) = target.strip_prefix('@') {
         return (5..=32).contains(&username.len())
             && username
                 .chars()
@@ -64,6 +64,7 @@ impl Tool for TelegramSendDocumentTool {
 
     fn metadata(&self) -> ToolMetadata {
         ToolMetadata {
+            presentation_name: crate::tools::presentation_name(self.name()),
             domain: "communication",
             risk: ToolRisk::High,
             uses_network: true,
@@ -138,7 +139,7 @@ impl Tool for TelegramSendDocumentTool {
             form = form.text("caption", caption.to_string());
         }
 
-        let url = format!("https://api.telegram.org/bot{token}/sendDocument");
+        let url = telegram_api_url(&token, "sendDocument");
         let response = client
             .post(url)
             .multipart(form)
@@ -208,6 +209,7 @@ impl Tool for TelegramSendMessageTool {
 
     fn metadata(&self) -> ToolMetadata {
         ToolMetadata {
+            presentation_name: crate::tools::presentation_name(self.name()),
             domain: "communication",
             risk: ToolRisk::High,
             uses_network: true,

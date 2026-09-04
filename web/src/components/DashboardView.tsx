@@ -1,6 +1,8 @@
 import React from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
 import { wsService } from '../services/websocket';
+import { resolveProviderDescriptors } from '../config/providers';
+import { MetricCard } from '../shared/ui/MetricCard';
 import type { JsonObject, JsonValue } from '../types';
 import {
   Activity,
@@ -33,37 +35,6 @@ function jsonBool(value: JsonValue | undefined): boolean {
 function jsonNumber(value: JsonValue | undefined): number | undefined {
   return typeof value === 'number' ? value : undefined;
 }
-
-interface StatCardProps {
-  label: string;
-  value: string;
-  sub?: string;
-  icon: React.ComponentType<{ className?: string }>;
-  accent?: string;
-  onClick?: () => void;
-}
-
-const StatCard: React.FC<StatCardProps> = ({ label, value, sub, icon: Icon, accent = 'text-amber-500', onClick }) => (
-  <button
-    onClick={onClick}
-    disabled={!onClick}
-    className={cnCard(onClick)}
-    title={onClick ? `Open ${label}` : undefined}
-  >
-    <div className="flex items-center justify-between">
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
-      <Icon className={`h-4 w-4 ${accent}`} />
-    </div>
-    <div className="mt-1.5 truncate text-xl font-extrabold tracking-tight text-foreground">{value}</div>
-    {sub && <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{sub}</div>}
-  </button>
-);
-
-const cnCard = (onClick?: () => void) =>
-  [
-    'rounded-xl border border-border/60 bg-card/60 p-4 text-left shadow-sm transition',
-    onClick ? 'cursor-pointer hover:border-amber-500/40 hover:bg-card' : 'cursor-default',
-  ].join(' ');
 
 interface LauncherCardProps {
   label: string;
@@ -119,6 +90,7 @@ export const DashboardView: React.FC = () => {
   const providersConfig = useOpenZStore((s) => s.providersConfig) || {};
   const channelsConfig = useOpenZStore((s) => s.channelsConfig) || {};
   const capabilities = useOpenZStore((s) => s.capabilities);
+  const providerDescriptors = resolveProviderDescriptors(capabilities, providersConfig);
 
   const setActiveView = useOpenZStore((s) => s.setActiveView);
   const setIsMemoryOpen = useOpenZStore((s) => s.setIsMemoryOpen);
@@ -154,32 +126,32 @@ export const DashboardView: React.FC = () => {
 
       {/* Stat grid */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <StatCard
+        <MetricCard
           label="Connection"
           value={connectionStatus}
-          sub={wsUrl}
+          detail={wsUrl}
           icon={Network}
           accent={connectionStatus === 'connected' ? 'text-emerald-500' : connectionStatus === 'connecting' ? 'text-amber-500' : 'text-red-500'}
           onClick={() => setIsSettingsOpen(true)}
         />
-        <StatCard
+        <MetricCard
           label="Active Model"
           value={activeModel || '—'}
-          sub={settings?.provider || 'provider unknown'}
+          detail={settings?.provider || 'provider unknown'}
           icon={Zap}
           onClick={() => setIsSettingsOpen(true)}
         />
-        <StatCard
+        <MetricCard
           label="Sessions"
           value={String(sessions.length)}
-          sub={activeSession?.title ? `Active: ${activeSession.title}` : 'No active session'}
+          detail={activeSession?.title ? `Active: ${activeSession.title}` : 'No active session'}
           icon={MessageSquare}
           onClick={() => setActiveView('chats')}
         />
-        <StatCard
+        <MetricCard
           label="Core Inventory"
           value={runtimeInventory ? `${runtimeInventory.counts.subagents} agents / ${runtimeInventory.counts.tools} tools` : 'Loading'}
-          sub={runtimeInventory ? `${runtimeInventory.counts.skills} skills · ${runtimeInventory.counts.activeCronJobs}/${runtimeInventory.counts.cronJobs} cron active` : 'Waiting for gateway inventory'}
+          detail={runtimeInventory ? `${runtimeInventory.counts.skills} skills · ${runtimeInventory.counts.activeCronJobs}/${runtimeInventory.counts.cronJobs} cron active` : 'Waiting for gateway inventory'}
           icon={Database}
           onClick={() => setActiveView('inventory')}
         />
@@ -306,17 +278,17 @@ export const DashboardView: React.FC = () => {
             <h2 className="text-sm font-bold text-foreground">LLM Provider Integrations</h2>
           </div>
           <div className="space-y-3.5 max-h-[260px] overflow-y-auto pr-1">
-            {['openai', 'anthropic', 'openrouter', 'deepseek', 'groq', 'ollama', 'minimax', 'mistral', 'z_ai', 'nvidia', 'opencode_zen', 'cerebras', 'google_ai_studio'].map((provKey) => {
-              const cfg = isJsonObject(providersConfig[provKey]) ? providersConfig[provKey] : {};
-              const apiBase = jsonString(cfg.api_base);
-              const isConfigured = Boolean(jsonString(cfg.api_key));
-              const displayName = provKey === 'google_ai_studio' ? 'Google AI Studio' : provKey === 'z_ai' ? 'z.ai' : provKey === 'opencode_zen' ? 'OpenCode Zen' : provKey.toUpperCase();
+            {providerDescriptors.map((provider) => {
+              const rawCfg = providersConfig[provider.key];
+              const cfg = isJsonObject(rawCfg) ? rawCfg : undefined;
+              const apiBase = cfg ? jsonString(cfg['api_base']) : undefined;
+              const isConfigured = Boolean(cfg && jsonString(cfg['api_key']));
               return (
-                <div key={provKey} className="flex items-center justify-between py-1 border-b border-border/10 last:border-0 text-xs">
+                <div key={provider.key} className="flex items-center justify-between py-1 border-b border-border/10 last:border-0 text-xs">
                   <div className="flex flex-col">
-                    <span className="font-semibold text-foreground capitalize">{displayName}</span>
+                    <span className="font-semibold text-foreground">{provider.display}</span>
                     <span className="text-[10px] text-muted-foreground font-mono truncate max-w-[200px]">
-                      {apiBase || 'Default endpoint'}
+                      {apiBase || provider.apiBase || 'Default endpoint'}
                     </span>
                   </div>
                   <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider select-none ${

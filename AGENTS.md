@@ -55,7 +55,12 @@ openz/
 ├── onpkg.json              # ONPKG meta: scripts, agent instructions
 ├── src/
 │   ├── main.rs             # dotenv init, tokio runtime, dispatches to cli::run_cli
-│   ├── cli.rs              # Clap CLI parsing, AgentLoop construction, tool registration, channel auto-start
+│   ├── cli/
+│   │   ├── mod.rs          # CLI module entry point and command dispatch
+│   │   ├── args.rs         # Clap argument definitions
+│   │   ├── builder.rs      # AgentLoop/provider construction
+│   │   ├── tools.rs        # Native tool registration and capability grouping
+│   │   └── agent.rs        # Agent command/TUI orchestration
 │   ├── session.rs          # Session/Msg types, JSON persistence ~/.openz/sessions/
 │   │
 │   ├── config/
@@ -69,7 +74,10 @@ openz/
 │   │   # Both implement the same trait; no other provider files needed
 │   │
 │   ├── agent/
-│   │   ├── agent_loop.rs   # Core TurnState state machine (Restore → Compact → Command → Build → Run → Save → Respond → Done)
+│   │   ├── agent_loop/
+│   │   │   ├── mod.rs      # Core TurnState state machine and turn context
+│   │   │   ├── run/        # Tool pipeline, events, artifacts, research, and responses
+│   │   │   └── *.rs         # Restore, compact, build, command, save, and support phases
 │   │   ├── skills.rs       # Load/save/delete skills from ~/.openz/skills/*.md
 │   │   ├── activity.rs     # Global activity tracking (~/.openz/activity.json)
 │   │   ├── security.rs     # SecurityGuard: intercepts destructive/privileged/network commands
@@ -78,8 +86,8 @@ openz/
 │   │
 │   ├── channels/           # Channel trait implementations
 │   │   ├── mod.rs          # Channel trait, shutdown logic, fetch_provider_models()
-│   │   ├── cli.rs          # TUI terminal with crossterm raw-mode, slash commands, clipboard paste
-│   │   ├── websocket.rs    # Axum WS + static file WebUI server
+│   │   ├── cli/            # TUI input, rendering, MCP integration, and slash commands
+│   │   ├── websocket/      # Axum WS gateway, typed protocol, commands, auth, approvals, and events
 │   │   ├── telegram.rs     # Polling loop + inline callback approval buttons
 │   │   ├── discord.rs      # WebSocket gateway client
 │   │   └── whatsapp.rs     # Axum webhook receiver for WhatsApp Business API
@@ -120,15 +128,18 @@ openz/
 │   │   ├── network.rs      # check_port
 │   │   ├── onpkg.rs        # onpkg package/template manager
 │   │   ├── sequential_thinking.rs  # 5 tools: sequentialthinking, analyze_graph, export_session, summarize_reasoning, reasoning_templates
-│   │   ├── headroom.rs     # 19 tools: scope_context, compress_content, retrieve_original, compress_schema, compress_file, compress_diff, etc.
-│   │   ├── graph_memory.rs # 12 tools: create_entities, create_relations, add_observations, read_graph, search_nodes, open_nodes, etc.
-│   │   ├── memory_extra.rs # 31 tools: set_working_memory, smart_store, extract_and_store_facts, proactive_recall, query_fact_history, etc.
+│   │   ├── headroom/       # Context scoping, CCR compression, retrieval, cache, and document helpers
+│   │   ├── graph_memory/   # Entity/relation/observation graph tools and database branches
+│   │   ├── memory_extra/   # Working memory, smart storage, fact extraction, recall, and research tools
+│   │   ├── self_management/ # Configuration, diagnostics, inventory, sessions, backups, skills, and scope tools
 │   │
 │   ├── cron/               # Scheduler loop (cron syntax + duration)
 │   ├── orchestrator/       # Typed multi-agent workflow specs, runtime, validation, and events
 │   ├── sop/                # Stateful SOP workflow engine (persisted JSON instances)
 │   └── subagents/          # SubagentProfile definitions (~/.openz/subagents.json)
 │       └── mod.rs          # 15+ default profiles (planner, researcher, reviewer, etc.)
+│   ├── memory/              # Shared memory domain model, scope, repository facade, and embedding boundary
+│   └── tools/openmedia/mcp/ # Composed OpenMedia MCP routers and media handler families
 ```
 
 ---
@@ -144,7 +155,7 @@ CLI → clap parse → channel (cli/ws/tg/dc/wa) → AgentLoop::run()
   ├─ Build: construct system prompt (base + summary + memory + skills + activity + caveman mode)
   ├─ Run: LLM chat loop with tool execution (max 200 iterations)
   │   ├─ Auto-continuation: if finish_reason="length", re-prompt to continue (up to 3 retries)
-  │   ├─ SecurityGuard: intercept sensitive exec_command/write_file calls → TUI or Telegram approval
+  │   ├─ SecurityGuard: inspect argument-sensitive commands/paths and ToolRisk metadata → TUI or Telegram approval
   │   └─ Tool output >4000 chars → saved to ~/.openz/tool_outputs/ + compressed inline
   ├─ Save: persist session to disk
   ├─ Respond: return content to channel
@@ -157,7 +168,7 @@ CLI → clap parse → channel (cli/ws/tg/dc/wa) → AgentLoop::run()
 - **`Tool`** (`tools/mod.rs:9`): `name() -> &str`, `description() -> &str`, `parameters() -> Value`, `call(&self, args) -> Result<Value>`.
 - **`Channel`** (`channels/mod.rs:3`): `name() -> &'static str`, `start() -> Result<()>`.
 
-### TurnState machine (`agent/agent_loop.rs:13`)
+### TurnState machine (`agent/agent_loop/mod.rs:29`)
 
 ```
 Restore → Compact → Command → Build → Run → Save → Respond → Done
@@ -170,7 +181,7 @@ Each state is a branch in a `while state != TurnState::Done` loop inside `run_in
 ## Critical Gotchas & Non-Obvious Patterns
 
 ### Provider routing is keyword-based, not config-based
-The `build_agent_loop` function in `cli.rs:270-337` uses **model name prefixes** to route providers, not the `provider` field. A model named `anthropic/claude-3-5-sonnet` routes to Anthropic, while `gpt-4o` routes to OpenAI. The `provider` field is only used when auto-detection fails. Subagent model selection follows the same pattern with `provider/` prefixes.
+The `build_agent_loop` function in `cli/builder.rs` uses **model name prefixes** to route providers, not the `provider` field. A model named `anthropic/claude-3-5-sonnet` routes to Anthropic, while `gpt-4o` routes to OpenAI. The `provider` field is only used when auto-detection fails. Subagent model selection follows the same pattern with `provider/` prefixes.
 
 ### 13 providers, only 2 provider files
 All OpenAI-compatible providers (DeepSeek, Groq, Ollama, OpenRouter, MiniMax, Mistral, z.ai, NVIDIA, OpenCode Zen, Cerebras, Google AI Studio) share `OpenAIProvider` in `openai.rs`. Only Anthropic has a separate implementation in `anthropic.rs`.
@@ -182,13 +193,13 @@ When `provider = "auto"`, the system checks model prefix keywords first, then pe
 `caveman_mode` defaults to `true` in `config/schema.rs:78-80`. This injects a terseness instruction into the system prompt that strips articles, filler, pleasantries. Turn it off in config if you want verbose responses.
 
 ### Tool argument naming is inconsistent
-Tool call arguments have **no single naming convention**. Some tools use `serde` rename (e.g., `command_line` → `CommandLine`), others direct field names, `snake_case`, `camelCase`. The `format_tool_args` function in `agent_loop.rs:998` handles ~20 specific tool names with multiple alias support. When adding a new tool, check both conventions.
+Tool call arguments have **no single naming convention**. Some tools use `serde` rename (e.g., `command_line` → `CommandLine`), others direct field names, `snake_case`, `camelCase`. The `format_tool_args` function in `agent/agent_loop/tool_execution.rs` handles ~20 specific tool names with multiple alias support. When adding a new tool, check both conventions.
 
 ### Console output must use tui_println! macro
 In the CLI channel, raw mode (crossterm) is active. Use the `tui_println!` macro from `agent/style/mod.rs` which translates `\n` to `\r\n`. Direct `println!` causes diagonal alignment issues.
 
 ### Sub-agent CancellationToken lifecycle
-All sub-agent tools (`DelegateTaskTool`, `DelegateProfileTool`, `ParallelResearchTool`, `EvaluatorOptimizerLoopTool`) hold a `cancellation_token: CancellationToken` field. The token is defined in `src/tools/subagent.rs` using `Arc<AtomicBool>` + `Arc<tokio::sync::Notify>`. Each `call()` method wraps sub-agent `run()` with `tokio::select! { biased; _ = cancellation_token.wait_for_cancellation() => { error } }` so cancellation terminates sub-agents immediately rather than waiting for timeout. Nested sub-agents inherit the parent's token via `.clone()`. Top-level tools in `cli.rs` and `ToolRegistry::get()` create fresh tokens with `CancellationToken::new()`.
+All sub-agent tools (`DelegateTaskTool`, `DelegateProfileTool`, `ParallelResearchTool`, `EvaluatorOptimizerLoopTool`) hold a `cancellation_token: CancellationToken` field. The token is defined in `src/tools/subagent/cancellation_token.rs` using `Arc<AtomicBool>` + `Arc<tokio::sync::Notify>`. Each `call()` method wraps sub-agent `run()` with `tokio::select! { biased; _ = cancellation_token.wait_for_cancellation() => { error } }` so cancellation terminates sub-agents immediately rather than waiting for timeout. Nested sub-agents inherit the parent's token via `.clone()`. Top-level tools in `cli/tools.rs` and `ToolRegistry::get()` create fresh tokens with `CancellationToken::new()`.
 
 ### seccomp BPF sandbox for exec_command
 The `ExecCommandTool` in `src/tools/shell.rs` applies a BPF seccomp filter before executing shell commands. The sandbox runs inside `pre_exec` (after fork, before exec) and is Linux-only. Key components:
@@ -204,16 +215,16 @@ The `ExecCommandTool` in `src/tools/shell.rs` applies a BPF seccomp filter befor
 After every non-slash-command turn, `tokio::spawn` runs a background curator that calls the LLM to review the conversation, update session memory, and create/update skills in `~/.openz/skills/`. This can cause race conditions if multiple channels hit the same session simultaneously — the curator reloads the session from disk to mitigate this.
 
 ### SecurityGuard intercepts before tool execution
-The guard intercepts in `agent_loop.rs:635` inside the Run state, **after** the LLM has already consumed tokens to produce the tool call. There's no pre-flight check that prevents the LLM from generating the tool call. Denial just returns `{"error": "Execution denied by user."}` to the LLM.
+The guard intercepts in `agent/agent_loop/run/` inside the Run state, **after** the LLM has already consumed tokens to produce the tool call. There's no pre-flight check that prevents the LLM from generating the tool call. Denial just returns `{"error": "Execution denied by user."}` to the LLM.
 
 ### Tool output truncation is aggressive
-Tool outputs >4000 characters are: (1) written to `~/.openz/tool_outputs/<name>_<uuid>.json`, (2) passed through the context compactor (Headroom port / Z-Context), and (3) only the compressed version + file reference is injected into the message list. You can also use the native headroom tool `retrieve_original` with a CCR ID or `file://` path to retrieve the full original content.
+Tool outputs >4000 characters are: (1) written to `~/.openz/tool_outputs/<name>_<uuid>.json`, (2) passed through the context compactor (Headroom port / Z-Context), and (3) only the compressed version + file reference is injected into the message list. You can also use the native headroom tool `retrieve_original` with a CCR ID or `file://` path to retrieve the full original content. It is explicitly classified as a high-risk context tool, remains approval-gated, and still applies Headroom sensitive-path validation to file retrieval.
 
 ### Session consolidation ensures no orphaned messages
-When truncating session history (Compact state at `agent_loop.rs:107-217`), the code scans backward from the truncation point to find the nearest "user" message. This prevents orphaned "tool" or "assistant" messages from causing API errors.
+When truncating session history (Compact state in `agent/agent_loop/compact.rs`), the code scans backward from the truncation point to find the nearest "user" message. This prevents orphaned "tool" or "assistant" messages from causing API errors.
 
 ### Sequential thinking, headroom, memory are native tools (not MCP servers)
-The systems for structured reasoning (`sequential_thinking.rs`), context compression (`headroom.rs`), knowledge graph memory (`graph_memory.rs`), and extended memory (`memory_extra.rs`) were ported from MCP servers to native Rust tools. They are registered directly in `cli.rs::build_agent_loop()` and require no MCP server config. The MCP server entries for `sequential-thinking`, `headroom-mcp`, and `memory` are intentionally omitted from `Config::default()`.
+The systems for structured reasoning (`sequential_thinking.rs`), context compression (`headroom.rs`), knowledge graph memory (`graph_memory.rs`), and extended memory (`memory_extra.rs`) were ported from MCP servers to native Rust tools. They are registered directly through `cli/tools.rs` and require no MCP server config. The MCP server entries for `sequential-thinking`, `headroom-mcp`, and `memory` are intentionally omitted from `Config::default()`.
 
 ### MCP defaults are user-managed
 `Config::default()` starts with an empty `mcp_servers` map. MCP servers are added and managed through `openz configure` or the native `manage_mcp` tool, and loaded from `~/.openz/config.json`. The removed native-equivalent MCP defaults (`sequential-thinking`, `memory`, `headroom`, `database`, and `context-bus`) are pruned during config loading in `config/loader.rs`.
@@ -222,7 +233,7 @@ The systems for structured reasoning (`sequential_thinking.rs`), context compres
 The native `orchestrate_workflow` tool accepts typed workflow specs and executes existing subagent profiles through `src/orchestrator/`. It supports sequential, parallel, review-loop, selector, manager-worker, and graph modes; validates step dependencies before execution; applies workflow capability policies to child tools; and publishes WebUI orchestration lifecycle events for the Agent Activity run tree. SOP remains the durable user-defined workflow engine.
 
 ### Subagents = tools at the LLM level
-Custom subagent profiles from `~/.openz/subagents.json` are dynamically registered as tools in `ToolRegistry::to_openai_format()` (`tools/mod.rs:100-129`). When the LLM "calls" a subagent name as a tool, `ToolRegistry::get()` (`tools/mod.rs:63-82`) matches it and returns a `DelegateProfileTool`.
+Custom subagent profiles from `~/.openz/subagents.json` are dynamically registered as tools in `ToolRegistry::to_openai_format()`. When the LLM "calls" a subagent name as a tool, `ToolRegistry::get()` resolves it and returns a `DelegateProfileTool`.
 
 ### Database tools run in-process
 The `DbInspectorTool` and `DbWriteTool` (`src/tools/db_inspector.rs`) execute SQL queries directly against the SQLite database using the `rusqlite` crate, completely eliminating shell/argument spawning of the `sqlite3` CLI process for safety.
@@ -231,7 +242,7 @@ The `DbInspectorTool` and `DbWriteTool` (`src/tools/db_inspector.rs`) execute SQ
 
 ## Testing Patterns
 
-- 29 test modules across the source tree (including `cli.rs::tests::test_native_tool_registration_names`)
+- 29 test modules across the source tree (including `cli/tools.rs::tests::test_native_tool_registration_names`)
 - Tests use `#[cfg(test)]` and `#[test]` (standard Rust)
 - Tool tests typically construct inputs as `serde_json::json!({...})` and call the tool's `.call()` method
 - Provider tests mock `reqwest` responses or test `model_supports_vision()` helper
@@ -253,7 +264,7 @@ Located at `~/.openz/config.json` (or `$OPENZ_CONFIG_DIR/config.json`). Structur
 | `channels` | websocket {port: 8765, host: 127.0.0.1}, telegram, discord, whatsapp |
 | `mcp_servers` | Map of name → `{command, args, enabled}` |
 
-Key resolution order: config.providers.X.api_key → `PROVIDER_API_KEY` env var. API keys from environment variables override config values at resolution time (`cli.rs:342-457`).
+Key resolution order: config.providers.X.api_key → `PROVIDER_API_KEY` env var. API keys from environment variables override config values at resolution time (`cli/builder.rs`).
 
 ---
 

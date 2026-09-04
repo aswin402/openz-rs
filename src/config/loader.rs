@@ -69,56 +69,9 @@ pub fn set_tokio_command_cwd(cmd: &mut tokio::process::Command) {
 }
 
 pub fn verify_safe_path(path: &Path) -> Result<()> {
-    let mut check_path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        let workspace = ACTIVE_WORKSPACE
-            .try_with(|w| w.clone())
-            .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
-        workspace.join(path)
-    };
-
-    loop {
-        if let Ok(canon) = check_path.canonicalize() {
-            check_path = canon;
-            break;
-        }
-        if let Some(parent) = check_path.parent() {
-            check_path = parent.to_path_buf();
-        } else {
-            break;
-        }
-    }
-
-    let workspace = ACTIVE_WORKSPACE
-        .try_with(|w| w.clone())
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
-    if let Ok(w_canon) = workspace.canonicalize() {
-        if check_path.starts_with(&w_canon) {
-            return Ok(());
-        }
-    }
-
-    if let Some(home) = dirs::home_dir() {
-        let openz_dir = home.join(".openz");
-        if let Ok(o_canon) = openz_dir.canonicalize() {
-            if check_path.starts_with(&o_canon) {
-                return Ok(());
-            }
-        }
-    }
-
-    let temp = std::env::temp_dir();
-    if let Ok(t_canon) = temp.canonicalize() {
-        if check_path.starts_with(&t_canon) {
-            return Ok(());
-        }
-    }
-
-    Err(anyhow::anyhow!(
-        "Path traversal prevention: Path {:?} is not allowed (must be inside workspace, ~/.openz, or temp)",
-        path
-    ))
+    crate::config::path_policy::PathPolicy::workspace()
+        .validate(path)
+        .map(|_| ())
 }
 
 pub fn config_dir() -> PathBuf {
@@ -169,6 +122,41 @@ pub fn runtime_data_dir() -> PathBuf {
 /// (memory, graph memory, thoughts, CCR cache, embeddings cache).
 pub fn runtime_db_path(filename: &str) -> PathBuf {
     runtime_data_dir().join(filename)
+}
+
+/// Directory where saved chat sessions are stored (`~/.openz/sessions`).
+pub fn sessions_dir() -> PathBuf {
+    runtime_data_dir().join("sessions")
+}
+
+/// Directory where user and system skills are stored (`~/.openz/skills`).
+pub fn skills_dir() -> PathBuf {
+    runtime_data_dir().join("skills")
+}
+
+/// Directory where execution traces are stored (`~/.openz/traces`).
+pub fn traces_dir() -> PathBuf {
+    runtime_data_dir().join("traces")
+}
+
+/// Directory where truncated tool outputs are persisted (`~/.openz/tool_outputs`).
+pub fn tool_outputs_dir() -> PathBuf {
+    runtime_data_dir().join("tool_outputs")
+}
+
+/// Directory where cron job execution logs are persisted (`~/.openz/cron_logs`).
+pub fn cron_logs_dir() -> PathBuf {
+    runtime_data_dir().join("cron_logs")
+}
+
+/// Path to the custom subagent profiles file (`~/.openz/subagents.json`).
+pub fn subagents_file() -> PathBuf {
+    runtime_data_dir().join("subagents.json")
+}
+
+/// Path to the global activity log file (`~/.openz/activity.json`).
+pub fn activity_file() -> PathBuf {
+    runtime_data_dir().join("activity.json")
 }
 
 /// Find runtime DB artifacts (e.g. `memory.db`, `*.db`, `*.db-wal`,
@@ -895,5 +883,17 @@ mod tests {
         assert_eq!(config3.agents.defaults.tool_timeout_secs, 42);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_runtime_data_path_helpers() {
+        let base = super::runtime_data_dir();
+        assert_eq!(super::sessions_dir(), base.join("sessions"));
+        assert_eq!(super::skills_dir(), base.join("skills"));
+        assert_eq!(super::traces_dir(), base.join("traces"));
+        assert_eq!(super::tool_outputs_dir(), base.join("tool_outputs"));
+        assert_eq!(super::cron_logs_dir(), base.join("cron_logs"));
+        assert_eq!(super::subagents_file(), base.join("subagents.json"));
+        assert_eq!(super::activity_file(), base.join("activity.json"));
     }
 }

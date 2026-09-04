@@ -1,5 +1,6 @@
-use crate::agent::AgentLoop;
 use crate::agent::style::*;
+use crate::agent::AgentLoop;
+use crate::channels::ProviderModels;
 use crate::config::schema::AgentDefaults;
 use anyhow::Result;
 use std::io::{self, Write};
@@ -774,194 +775,7 @@ impl CliChannel {
                         }
                     };
 
-                    struct ProviderModels {
-                        name: &'static str,
-                        display: &'static str,
-                        models: &'static [&'static str],
-                    }
-
-                    let provider_list = &[
-                        ProviderModels {
-                            name: "mivi",
-                            display: "Mivi Local (custom)",
-                            models: &["mivi llm", "mivi-llm", "mivi"],
-                        },
-                        ProviderModels {
-                            name: "openai",
-                            display: "OpenAI (8)",
-                            models: &[
-                                "gpt-4.5",
-                                "gpt-4o",
-                                "gpt-4o-mini",
-                                "o1",
-                                "o1-mini",
-                                "o3",
-                                "o3-mini",
-                                "o4-mini",
-                            ],
-                        },
-                        ProviderModels {
-                            name: "anthropic",
-                            display: "Anthropic (5)",
-                            models: &[
-                                "claude-3-5-sonnet-20241022",
-                                "claude-3-5-sonnet",
-                                "claude-3-5-haiku-20241022",
-                                "claude-3-5-haiku",
-                                "claude-3-opus-20240229",
-                                "claude-3-opus",
-                            ],
-                        },
-                        ProviderModels {
-                            name: "openrouter",
-                            display: "OpenRouter (5)",
-                            models: &[
-                                "google/gemini-2.5-pro",
-                                "google/gemini-2.5-flash",
-                                "anthropic/claude-3.5-sonnet",
-                                "meta-llama/llama-3.3-70b-instruct",
-                                "deepseek/deepseek-r1",
-                            ],
-                        },
-                        ProviderModels {
-                            name: "deepseek",
-                            display: "DeepSeek (2)",
-                            models: &["deepseek-chat", "deepseek-reasoner"],
-                        },
-                        ProviderModels {
-                            name: "groq",
-                            display: "Groq (5)",
-                            models: &[
-                                "deepseek-r1-distill-llama-70b",
-                                "llama-3.3-70b-versatile",
-                                "llama-3.1-8b-instant",
-                                "mixtral-8x7b-32768",
-                                "gemma2-9b-it",
-                            ],
-                        },
-                        ProviderModels {
-                            name: "ollama_local",
-                            display: "Ollama Local (Auto-Start)",
-                            models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"],
-                        },
-                        ProviderModels {
-                            name: "ollama",
-                            display: "Ollama (5)",
-                            models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"],
-                        },
-                        ProviderModels {
-                            name: "minimax",
-                            display: "minimax.io (6)",
-                            models: &[
-                                "MiniMax-M3",
-                                "MiniMax-M2.7",
-                                "MiniMax-M2.5",
-                                "MiniMax-M2.1",
-                                "MiniMax-M2",
-                                "MiniMax-M1",
-                            ],
-                        },
-                        ProviderModels {
-                            name: "mistral",
-                            display: "Mistral AI (7)",
-                            models: &[
-                                "mistral-large-latest",
-                                "pixtral-large-latest",
-                                "mistral-moderation-latest",
-                                "codestral-latest",
-                                "mistral-small-latest",
-                                "ministral-8b-latest",
-                                "ministral-14b-latest",
-                            ],
-                        },
-                        ProviderModels {
-                            name: "z.ai",
-                            display: "z.ai (Zhipu GLM) (6)",
-                            models: &[
-                                "glm-5.1",
-                                "glm-5",
-                                "glm-5v-turbo",
-                                "glm-4.7",
-                                "glm-4.7-flash",
-                                "glm-4-flash",
-                            ],
-                        },
-                        ProviderModels {
-                            name: "nvidia",
-                            display: "NVIDIA NIM (5)",
-                            models: &[
-                                "meta/llama3-70b-instruct",
-                                "nvidia/llama-3.1-nemotron-70b-instruct",
-                                "meta/llama-3.1-70b-instruct",
-                                "mistralai/mixtral-8x22b-instruct-v0.1",
-                                "google/gemma-2-27b-it",
-                            ],
-                        },
-                        ProviderModels {
-                            name: "opencode_zen",
-                            display: "OpenCode Zen (4)",
-                            models: &[
-                                "deepseek-v4-flash-free",
-                                "mimo-v2.5-free",
-                                "north-mini-code-free",
-                                "nemotron-3-ultra-free",
-                            ],
-                        },
-                        ProviderModels {
-                            name: "cerebras",
-                            display: "Cerebras (3)",
-                            models: &["llama-3.3-70b", "llama3.1-8b", "llama3.1-70b"],
-                        },
-                        ProviderModels {
-                            name: "google_ai_studio",
-                            display: "Google AI Studio (Gemini) (7)",
-                            models: &[
-                                "gemini-3.5-flash",
-                                "gemini-3.1-pro-preview",
-                                "gemini-3.1-flash-lite",
-                                "gemini-2.5-pro",
-                                "gemini-2.5-flash",
-                                "gemini-2.0-flash",
-                                "gemini-1.5-pro",
-                            ],
-                        },
-                        ProviderModels {
-                            name: "cohere",
-                            display: "Cohere (5)",
-                            models: &[
-                                "command-a-plus-05-2026",
-                                "command-r7b-12-2024",
-                                "command-r7-12-2025",
-                                "command-r-plus-08-2024",
-                                "command-r-08-2024",
-                            ],
-                        },
-                        ProviderModels {
-                            name: "llm7",
-                            display: "LLM7 (3)",
-                            models: &["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"],
-                        },
-                        ProviderModels {
-                            name: "sambanova",
-                            display: "SambaNova (5)",
-                            models: &[
-                                "DeepSeek-V3.2",
-                                "Meta-Llama-3.3-70B-Instruct",
-                                "Qwen2.5-72B-Instruct",
-                                "QwQ-32B",
-                                "gemma-4-31B-it",
-                            ],
-                        },
-                        ProviderModels {
-                            name: "huggingface",
-                            display: "Hugging Face Inference (3)",
-                            models: &[
-                                "meta-llama/Llama-3.3-70B-Instruct",
-                                "Qwen/QwQ-32B",
-                                "deepseek-ai/DeepSeek-R1",
-                            ],
-                        },
-                    ];
+                    let provider_list = crate::channels::provider_model_catalog();
 
                     let filtered_providers: Vec<&ProviderModels> = provider_list
                         .iter()
@@ -999,7 +813,7 @@ impl CliChannel {
 
                     let mut provider_options: Vec<String> = filtered_providers
                         .iter()
-                        .map(|p| p.display.to_string())
+                        .map(|p| format!("{} ({})", p.display, p.models.len()))
                         .collect();
                     provider_options.extend(
                         custom_provider_options
@@ -1054,7 +868,7 @@ impl CliChannel {
                                     }
                                     (
                                         prov_info.name.to_string(),
-                                        prov_info.display.to_string(),
+                                        format!("{} ({})", prov_info.display, prov_info.models.len()),
                                         models,
                                     )
                                 } else {

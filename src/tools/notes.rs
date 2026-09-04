@@ -1,10 +1,9 @@
+use crate::memory::MemoryService;
+use crate::tools::shared_memory::{get_db_mutex, CognitiveMemoryEntry};
 use crate::tools::Tool;
-use crate::tools::shared_memory::{
-    CognitiveMemoryEntry, get_current_workspace, get_db_mutex, get_embedding, with_db,
-};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use rusqlite::params;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -88,6 +87,7 @@ impl Tool for IndexNotesTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
+        let memory = MemoryService::current();
         let path_str = arguments
             .get("path")
             .and_then(|v| v.as_str())
@@ -111,9 +111,9 @@ impl Tool for IndexNotesTool {
 
                 for (header, text) in blocks {
                     let formatted_text = format!("[Note Segment] {}: {}", header, text);
-                    if let Ok(embedding) = get_embedding(&formatted_text, false).await {
+                    if let Ok(embedding) = memory.embed(&formatted_text, false).await {
                         let id = uuid::Uuid::new_v4().to_string();
-                        let workspace = get_current_workspace();
+                        let workspace = memory.scope().workspace.clone();
                         let timestamp = chrono::Utc::now().to_rfc3339();
 
                         entries_to_add.push(CognitiveMemoryEntry {
@@ -136,7 +136,7 @@ impl Tool for IndexNotesTool {
 
         if !entries_to_add.is_empty() {
             let _lock = get_db_mutex().lock().await;
-            with_db(|conn| {
+            memory.with_shared_db(|conn| {
                 // Use a transaction for batch insert performance
                 conn.execute_batch("BEGIN TRANSACTION")?;
                 for entry in entries_to_add {

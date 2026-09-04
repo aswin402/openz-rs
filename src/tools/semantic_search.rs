@@ -1,7 +1,8 @@
+use crate::memory::{MemoryDatabase, MemoryService};
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -55,27 +56,8 @@ fn get_files_recursively(path: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
-    if v1.len() != v2.len() || v1.is_empty() {
-        return 0.0;
-    }
-    let mut dot_product = 0.0;
-    let mut norm_a = 0.0;
-    let mut norm_b = 0.0;
-    for i in 0..v1.len() {
-        dot_product += v1[i] * v2[i];
-        norm_a += v1[i] * v1[i];
-        norm_b += v2[i] * v2[i];
-    }
-    if norm_a == 0.0 || norm_b == 0.0 {
-        0.0
-    } else {
-        dot_product / (norm_a.sqrt() * norm_b.sqrt())
-    }
-}
-
 fn get_db_conn() -> Result<rusqlite::Connection> {
-    let db_path = crate::config::loader::runtime_db_path("embeddings_cache.db");
+    let db_path = MemoryService::current().database_path(MemoryDatabase::EmbeddingCache);
     if let Some(parent) = db_path.parent() {
         let _ = fs::create_dir_all(parent);
     }
@@ -111,11 +93,9 @@ fn prune_deleted_files(conn: &rusqlite::Connection) -> Result<()> {
     let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
 
     let mut to_delete = Vec::new();
-    for row in rows {
-        if let Ok(path_str) = row {
-            if !Path::new(&path_str).exists() {
-                to_delete.push(path_str);
-            }
+    for path_str in rows.flatten() {
+        if !Path::new(&path_str).exists() {
+            to_delete.push(path_str);
         }
     }
 
@@ -163,6 +143,7 @@ impl Tool for SemanticSearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
+        let memory = MemoryService::current();
         let query = arguments
             .get("query")
             .and_then(|v| v.as_str())
@@ -240,10 +221,8 @@ impl Tool for SemanticSearchTool {
                             embedding,
                         })
                     }) {
-                        for chunk_res in rows {
-                            if let Ok(chunk) = chunk_res {
-                                final_chunks.push(chunk);
-                            }
+                        for chunk in rows.flatten() {
+                            final_chunks.push(chunk);
                         }
                     }
                 } else {
@@ -270,9 +249,10 @@ impl Tool for SemanticSearchTool {
             }
         }
 
+        let embedding_service = memory.clone();
         let (query_vec, new_embeds) =
             tokio::task::spawn_blocking(move || -> Result<(Vec<f32>, Vec<Vec<f32>>)> {
-                crate::tools::shared_memory::with_model(|model| {
+                embedding_service.with_local_model(|model| {
                     // Embed Query
                     let query_embeds = model.embed(vec![&query_prefixed], None)?;
                     let q_vec = query_embeds[0].clone();
@@ -337,7 +317,7 @@ impl Tool for SemanticSearchTool {
         // 4. Calculate similarity scores and sort
         let mut results = Vec::new();
         for chunk in &final_chunks {
-            let similarity = cosine_similarity(&query_vec, &chunk.embedding);
+            let similarity = memory.cosine_similarity(&query_vec, &chunk.embedding);
             results.push((similarity, chunk));
         }
 

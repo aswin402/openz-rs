@@ -1,70 +1,31 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
-use serde::Deserialize;
 
-use crate::agent::style::{HistoryItem, select_menu_with_history};
+use crate::agent::style::{select_menu_with_history, HistoryItem};
 use crate::channels::{
     Channel, CliChannel, DiscordChannel, EmailChannel, TelegramChannel, WhatsAppChannel, WsGateway,
 };
 use crate::cli::builder::build_agent_loop;
-use crate::config::loader::{load_config, resolve_path};
+use crate::config::loader::{load_config, sessions_dir};
 use crate::cron::scheduler::start_scheduler;
 use crate::session::SessionManager;
 use crate::{eprintln, println};
 
-#[derive(Deserialize)]
-struct SessionMetadataOnly {
-    key: String,
-    updated_at: DateTime<Utc>,
-    messages: Vec<MessageMetadataOnly>,
-}
-
-#[derive(Deserialize)]
-struct MessageMetadataOnly {
-    role: String,
-    content: String,
-}
-
 pub fn load_session_history() -> Result<Vec<HistoryItem>> {
-    let sessions_dir = resolve_path("~/.openz/sessions");
-    if !sessions_dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut items = Vec::new();
-    for entry in std::fs::read_dir(sessions_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("json") {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(session) = serde_json::from_str::<SessionMetadataOnly>(&content) {
-                    if !session.messages.is_empty() {
-                        let preview = session
-                            .messages
-                            .iter()
-                            .find(|m| m.role == "user")
-                            .map(|m| {
-                                let mut text = m.content.clone();
-                                if text.len() > 50 {
-                                    text.truncate(47);
-                                    text.push_str("...");
-                                }
-                                text
-                            })
-                            .unwrap_or_else(|| "Empty session".to_string());
-
-                        items.push(HistoryItem {
-                            key: session.key.clone(),
-                            display_title: preview,
-                            updated_at: session.updated_at,
-                        });
-                    }
-                }
+    let sessions_dir = sessions_dir();
+    let manager = SessionManager::new(sessions_dir);
+    let items = manager
+        .list_summaries()
+        .into_iter()
+        .filter(|s| s.message_count > 0)
+        .map(|s| {
+            let display_title = s.preview_title(50, "Empty session");
+            HistoryItem {
+                key: s.key,
+                display_title,
+                updated_at: s.updated_at,
             }
-        }
-    }
-
-    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        })
+        .collect();
     Ok(items)
 }
 
@@ -92,7 +53,7 @@ pub async fn handle_agent() -> Result<()> {
     let session_key = crate::config::loader::get_cli_session_key();
     start_scheduler(config.clone());
 
-    let sessions_dir = resolve_path("~/.openz/sessions");
+    let sessions_dir = sessions_dir();
     let session_manager = SessionManager::new(sessions_dir);
 
     let history = load_session_history()?;

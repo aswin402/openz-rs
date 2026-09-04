@@ -1,9 +1,10 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use rusqlite::params;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use super::db::{get_db_mutex, with_db};
+use crate::memory::with_shared_db as with_db;
+use super::db::get_db_mutex;
 use super::embeddings::{cosine_similarity, get_cloud_embeddings_batch, get_embedding, with_model};
 
 pub fn chunk_content_by_headings(query: &str, content: &str) -> Vec<(String, String)> {

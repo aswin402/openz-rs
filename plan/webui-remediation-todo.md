@@ -7,6 +7,7 @@
 - [x] Bind security approvals to the requesting client and chat; add rejection tests.
 - [x] Replace global WebUI stop with per-turn/session cancellation.
 - [x] Queue/retry configuration writes after reconnect; surface acknowledgements/errors.
+- [x] Keep archive/delete sessions visible until gateway confirmation and refresh rejected mutations.
 - [x] Reconcile attachment limits, add aggregate quota and TTL cleanup, and validate content server-side.
 - [x] Replace provider/security/channel policy literals with backend capabilities.
 - [x] Align REST CORS origins with the configured gateway and supported Vite development origins.

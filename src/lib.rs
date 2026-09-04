@@ -6,6 +6,7 @@ pub mod core;
 pub mod cron;
 pub mod grounding;
 pub mod logs;
+pub mod memory;
 pub mod model_registry;
 pub mod orchestrator;
 pub mod providers;

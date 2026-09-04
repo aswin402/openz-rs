@@ -1,6 +1,6 @@
-use crate::cron::{CronJob, CronJobStatus, CronNotifyPolicy, load_cron_run_records, load_jobs};
+use crate::cron::{load_cron_run_records, load_jobs, CronJob, CronJobStatus, CronNotifyPolicy};
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 
 fn parse_notify_policy(arguments: &Value) -> Result<CronNotifyPolicy> {
@@ -448,7 +448,7 @@ mod tests {
     use super::*;
     use crate::config::loader::CONFIG_DIR_OVERRIDE;
     use crate::cron::{
-        CronJob, CronJobStatus, CronNotifyPolicy, CronRunRecord, load_jobs_raw, save_jobs_raw,
+        load_jobs_raw, save_jobs_raw, CronJob, CronJobStatus, CronNotifyPolicy, CronRunRecord,
     };
 
     fn sample_job(id: &str) -> CronJob {

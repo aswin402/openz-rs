@@ -1,51 +1,52 @@
 import type { ConnectionStatus } from '../types';
+import { resolveWebSocketUrl, WS_STORAGE_KEYS } from '../config/runtime';
 import {
-  buildCommandEnvelope,
-  createRequestId,
-  isCommandAckEvent,
-  isRetryableWebSocketCommand,
-  parseWebSocketEvent,
-  type WebSocketCommand,
-  type WebSocketCommandAckEvent,
+  createWebSocketCommands,
+  type SaveSubagentData,
+  type UpdateSubagentSettingsData,
+  type WebSocketCommandMethods,
+  type WebSocketConfigData,
+} from './websocket/commands';
+import { WebSocketTransport } from './websocket/transport';
+import {
   type WebSocketAttachment,
-} from '../types/websocket';
+  type WebSocketCommandAckEvent,
+  type WebSocketEventMap,
+} from './websocket/protocol';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type EventListener = (data: any) => void;
-type QueuedCommand = { command: WebSocketCommand; requestId: string | null };
 
 export function defaultWebSocketUrl(): string {
   if (typeof window === 'undefined') return '';
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/ws`;
+  return resolveWebSocketUrl(window.location, localStorage.getItem(WS_STORAGE_KEYS.url) || undefined);
 }
 
 export class OpenZWebSocketService {
-  private ws: WebSocket | null = null;
-  private url: string = defaultWebSocketUrl();
-  private token: string = '';
   private listeners: Map<string, Set<EventListener>> = new Map();
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private status: ConnectionStatus = 'disconnected';
   private onStatusChange: ((status: ConnectionStatus) => void) | null = null;
-  private requestSequence = 0;
-  private pendingCommands = new Map<string, WebSocketCommand['type']>();
-  private queuedCommands: QueuedCommand[] = [];
-  private replayableCommands = new Map<string, QueuedCommand>();
+  private transport: WebSocketTransport;
+  private commands: WebSocketCommandMethods;
 
   constructor() {
-    const savedUrl = localStorage.getItem('openz_ws_url');
-    const savedToken = localStorage.getItem('openz_ws_token');
-    if (savedUrl) this.url = savedUrl;
-    if (savedToken) this.token = savedToken;
+    const savedToken = localStorage.getItem(WS_STORAGE_KEYS.token);
+    this.transport = new WebSocketTransport({
+      url: defaultWebSocketUrl(),
+      token: savedToken || '',
+      onEvent: (payload) => {
+        this.emit(payload.event, payload);
+        this.emit('*', payload);
+      },
+      onStatusChange: (status) => this.updateStatus(status),
+    });
+    this.commands = createWebSocketCommands((command, options) => this.transport.send(command, options));
   }
 
   public setConfig(url: string, token: string) {
-    this.url = url;
-    this.token = token;
-    localStorage.setItem('openz_ws_url', url);
-    localStorage.setItem('openz_ws_token', token);
+    this.transport.setConfig(url, token);
+    localStorage.setItem(WS_STORAGE_KEYS.url, url);
+    localStorage.setItem(WS_STORAGE_KEYS.token, token);
     this.connect();
   }
 
@@ -64,197 +65,12 @@ export class OpenZWebSocketService {
     return this.status;
   }
 
-  private get socketOpen(): boolean {
-    return !!this.ws && this.ws.readyState === WebSocket.OPEN;
-  }
-
-  /** Send a typed command and attach a request ID unless acknowledgements are disabled. */
-  private send(
-    command: WebSocketCommand,
-    options: { acknowledge?: boolean; requireConnected?: boolean; queueIfDisconnected?: boolean } = {},
-  ): string | null {
-    const requestId = options.acknowledge === false ? null : createRequestId(++this.requestSequence);
-    if (!this.socketOpen) {
-      if (options.requireConnected) {
-        throw new Error('WebSocket is not connected');
-      }
-      if (options.queueIfDisconnected && isRetryableWebSocketCommand(command)) {
-        const queued = { command, requestId };
-        this.queuedCommands.push(queued);
-        if (requestId) {
-          this.pendingCommands.set(requestId, command.type);
-          this.replayableCommands.set(requestId, queued);
-        }
-        this.emit('command_queued', {
-          event: 'command_queued',
-          request_id: requestId,
-          command: command.type,
-        });
-        return requestId;
-      }
-      console.warn('[ws] Dropped command, socket not connected:', command.type);
-      if (requestId) {
-        this.emit('command_ack', {
-          event: 'command_ack',
-          request_id: requestId,
-          command: command.type,
-          status: 'rejected',
-          detail: 'WebSocket is not connected',
-        } satisfies WebSocketCommandAckEvent);
-      }
-      return requestId;
-    }
-
-    const envelope = requestId ? buildCommandEnvelope(command, requestId) : command;
-    if (requestId) {
-      this.pendingCommands.set(requestId, command.type);
-      if (isRetryableWebSocketCommand(command)) {
-        this.replayableCommands.set(requestId, { command, requestId });
-      }
-    }
-    this.ws!.send(JSON.stringify(envelope));
-    return requestId;
-  }
-
-  private flushQueuedCommands() {
-    if (!this.socketOpen || this.queuedCommands.length === 0) return;
-    const queued = this.queuedCommands.splice(0);
-    for (let index = 0; index < queued.length; index += 1) {
-      if (!this.socketOpen) {
-        this.queuedCommands.unshift(...queued.slice(index));
-        return;
-      }
-      const entry = queued[index];
-      const envelope = entry.requestId
-        ? buildCommandEnvelope(entry.command, entry.requestId)
-        : entry.command;
-      try {
-        this.ws!.send(JSON.stringify(envelope));
-      } catch {
-        this.queuedCommands.unshift(...queued.slice(index));
-        return;
-      }
-    }
-  }
-
-  private requeueUnacknowledgedConfigWrites() {
-    for (const entry of this.replayableCommands.values()) {
-      if (!this.queuedCommands.some((queued) => queued.requestId === entry.requestId)) {
-        this.queuedCommands.push(entry);
-      }
-    }
-  }
-
   public connect() {
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-
-    if (!this.url.trim()) {
-      this.updateStatus('error');
-      return;
-    }
-
-    this.updateStatus('connecting');
-
-    try {
-      let fullUrl = this.url;
-      if (this.token) {
-        const separator = fullUrl.includes('?') ? '&' : '?';
-        fullUrl += `${separator}token=${encodeURIComponent(this.token)}`;
-      }
-
-      this.ws = new WebSocket(fullUrl);
-
-      this.ws.onopen = () => {
-        this.updateStatus('connected');
-        if (this.reconnectTimer) {
-          clearTimeout(this.reconnectTimer);
-          this.reconnectTimer = null;
-        }
-        this.startHeartbeat();
-        this.flushQueuedCommands();
-      };
-
-      this.ws.onmessage = (event) => {
-        try {
-          const payload = parseWebSocketEvent(JSON.parse(event.data) as unknown);
-          if (!payload) {
-            console.error('Invalid WebSocket event envelope:', event.data);
-            return;
-          }
-          if (isCommandAckEvent(payload)) {
-            this.pendingCommands.delete(payload.request_id);
-            this.replayableCommands.delete(payload.request_id);
-          }
-          this.emit(payload.event, payload);
-          this.emit('*', payload);
-        } catch (err) {
-          console.error('Failed to parse WebSocket message:', err, event.data);
-        }
-      };
-
-      this.ws.onerror = (err) => {
-        console.error('WebSocket error:', err);
-        if (this.status !== 'unauthorized') {
-          this.updateStatus('error');
-        }
-      };
-
-      this.ws.onclose = (event) => {
-        this.stopHeartbeat();
-        this.requeueUnacknowledgedConfigWrites();
-        if (event.code === 4001 || event.reason === 'Unauthorized') {
-          this.updateStatus('unauthorized');
-        } else {
-          this.updateStatus('disconnected');
-          this.scheduleReconnect();
-        }
-      };
-    } catch (err) {
-      console.error('Failed to initiate WebSocket connection:', err);
-      this.updateStatus('error');
-      this.scheduleReconnect();
-    }
-  }
-
-  private startHeartbeat() {
-    this.stopHeartbeat();
-    this.heartbeatTimer = setInterval(() => {
-      if (this.socketOpen) {
-        this.send({ type: 'ping' }, { acknowledge: false });
-      }
-    }, 15000);
-  }
-
-  private stopHeartbeat() {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
-  }
-
-  private scheduleReconnect() {
-    if (!this.reconnectTimer) {
-      this.reconnectTimer = setTimeout(() => {
-        this.reconnectTimer = null;
-        this.connect();
-      }, 3000);
-    }
+    this.transport.connect();
   }
 
   public disconnect() {
-    this.stopHeartbeat();
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-    this.updateStatus('disconnected');
+    this.transport.disconnect();
   }
 
   // ---- Chat / session actions ----
@@ -266,159 +82,144 @@ export class OpenZWebSocketService {
     provider?: string,
     attachments?: WebSocketAttachment[],
   ) {
-    const payload: Extract<WebSocketCommand, { type: 'message' }> = { type: 'message', chat_id: chatId, content };
-    if (model) payload.model = model;
-    if (provider) payload.provider = provider;
-    if (attachments?.length) payload.attachments = attachments;
-    return this.send(payload, { requireConnected: true });
+    return this.commands.sendMessage(chatId, content, model, provider, attachments);
   }
 
   public createNewChat() {
-    this.send({ type: 'new_chat' });
+    this.commands.createNewChat();
   }
 
   public attachChat(chatId: string) {
-    this.send({ type: 'attach', chat_id: chatId });
+    this.commands.attachChat(chatId);
   }
 
   public sendStop(chatId: string, turnId?: string) {
-    const payload: Extract<WebSocketCommand, { type: 'message' }> = {
-      type: 'message',
-      chat_id: chatId,
-      content: '/stop',
-    };
-    if (turnId) payload.turn_id = turnId;
-    return this.send(payload, { requireConnected: true });
+    return this.commands.sendStop(chatId, turnId);
   }
 
-  public requestSessions() {
-    this.send({ type: 'list_sessions' });
+  public requestSessions(offset?: number, limit?: number) {
+    this.commands.requestSessions(offset, limit);
   }
 
   public requestHistory(chatId: string) {
-    this.send({ type: 'load_history', chat_id: chatId });
+    this.commands.requestHistory(chatId);
   }
 
   public archiveSession(chatId: string) {
-    this.send({ type: 'archive_session', chat_id: chatId });
+    this.commands.archiveSession(chatId);
   }
 
   public deleteSession(chatId: string) {
-    this.send({ type: 'delete_session', chat_id: chatId });
+    this.commands.deleteSession(chatId);
   }
 
   public requestCognitiveMemory() {
-    this.send({ type: 'get_cognitive_memory' });
+    this.commands.requestCognitiveMemory();
   }
 
   public requestMcpServers() {
-    this.send({ type: 'get_mcp_servers' });
+    this.commands.requestMcpServers();
   }
 
   public requestLogs() {
-    this.send({ type: 'get_logs' });
+    this.commands.requestLogs();
   }
 
   public requestServers() {
-    this.send({ type: 'get_servers' });
+    this.commands.requestServers();
   }
 
   public stopServer(target: string) {
-    this.send({ type: 'stop_server', target });
+    this.commands.stopServer(target);
   }
 
   // ---- Realtime data commands (replaces hardcoded frontend values) ----
 
   /** Fetch configured providers with a small model preview. */
   public requestModels() {
-    this.send({ type: 'get_models' });
+    this.commands.requestModels();
   }
 
   /** Fetch the full model list for one configured provider. */
   public requestProviderModels(provider: string) {
-    this.send({ type: 'get_models', provider });
+    this.commands.requestProviderModels(provider);
   }
 
   public toggleFavoriteModel(provider: string, model: string) {
-    this.send({ type: 'toggle_favorite_model', provider, model });
+    this.commands.toggleFavoriteModel(provider, model);
   }
 
   /** Fetch editable agent defaults, skills, mcp servers and version. */
   public requestConfig() {
-    this.send({ type: 'get_config' });
+    this.commands.requestConfig();
   }
 
   public updateConfig(patch: Record<string, unknown>) {
-    return this.send(
-      { type: 'set_config', defaults: patch },
-      { queueIfDisconnected: true },
-    );
+    return this.commands.updateConfig(patch);
   }
 
-  public sendSetConfig(data: { defaults?: Record<string, unknown>; providers?: Record<string, unknown>; channels?: Record<string, unknown> }) {
-    return this.send(
-      { type: 'set_config', ...data },
-      { queueIfDisconnected: true },
-    );
+  public sendSetConfig(data: WebSocketConfigData) {
+    return this.commands.sendSetConfig(data);
   }
 
   public saveSkill(name: string, content: string) {
-    this.send({ type: 'save_skill', name, content });
+    this.commands.saveSkill(name, content);
   }
 
   public deleteSkill(name: string) {
-    this.send({ type: 'delete_skill', name });
+    this.commands.deleteSkill(name);
   }
 
-  public saveSubagent(data: { name: string; description: string; systemPrompt: string; model?: string; fallbacks?: string[] }) {
-    this.send({ type: 'save_subagent', ...data });
+  public saveSubagent(data: SaveSubagentData) {
+    this.commands.saveSubagent(data);
   }
 
-  public updateSubagentSettings(data: { name: string; model?: string | null; fallbacks?: string[] | null }) {
-    this.send({ type: 'update_subagent_settings', ...data });
+  public updateSubagentSettings(data: UpdateSubagentSettingsData) {
+    this.commands.updateSubagentSettings(data);
   }
 
   public deleteSubagent(name: string) {
-    this.send({ type: 'delete_subagent', name });
+    this.commands.deleteSubagent(name);
   }
 
   /** Fetch the real slash command list from the backend. */
   public requestSlashCommands() {
-    this.send({ type: 'get_slash_commands' });
+    this.commands.requestSlashCommands();
   }
 
   /** Fetch gateway/agent status (version + MCP counts). */
   public requestStatus() {
-    this.send({ type: 'get_status' });
+    this.commands.requestStatus();
   }
 
   public requestRuntimeInventory() {
-    this.send({ type: 'get_runtime_inventory' });
+    this.commands.requestRuntimeInventory();
   }
   public pauseCronJob(id: string) {
-    this.send({ type: 'pause_cron_job', id });
+    this.commands.pauseCronJob(id);
   }
 
   public resumeCronJob(id: string) {
-    this.send({ type: 'resume_cron_job', id });
+    this.commands.resumeCronJob(id);
   }
 
   public deleteCronJob(id: string) {
-    this.send({ type: 'delete_cron_job', id });
+    this.commands.deleteCronJob(id);
   }
 
   public requestCronLogs(id?: string, limit = 20) {
-    this.send({ type: 'get_cron_logs', id, limit });
+    this.commands.requestCronLogs(id, limit);
   }
 
 
   /** Resolve a pending security-approval request. */
   public sendSecurityResponse(reqId: string, approved: boolean) {
-    this.send({ type: 'security_response', req_id: reqId, approved });
+    this.commands.sendSecurityResponse(reqId, approved);
   }
 
   // ---- Event bus ----
 
+  public on<K extends keyof WebSocketEventMap>(event: K, fn: (data: WebSocketEventMap[K]) => void): void;
   public on(event: 'command_ack', fn: (data: WebSocketCommandAckEvent) => void): void;
   public on(event: string, fn: EventListener): void;
   public on(event: string, fn: EventListener) {

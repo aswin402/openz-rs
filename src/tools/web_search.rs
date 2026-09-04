@@ -1,8 +1,8 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use reqwest::Client;
 use scraper::{Html, Selector};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WebSearchPolicy {
@@ -954,11 +954,9 @@ mod tests {
     fn native_rescue_returns_docs_for_tokio_rust_query() {
         let results = native_rescue_results("rust tokio async runtime");
         assert!(results.iter().any(|r| r["url"] == "https://docs.rs/tokio"));
-        assert!(
-            results
-                .iter()
-                .any(|r| r["url"] == "https://crates.io/crates/tokio")
-        );
+        assert!(results
+            .iter()
+            .any(|r| r["url"] == "https://crates.io/crates/tokio"));
     }
 
     #[test]

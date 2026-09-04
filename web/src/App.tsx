@@ -3,20 +3,20 @@ import { useOpenZStore } from './store/useOpenZStore';
 import type { WorkspaceView } from './store/useOpenZStore';
 import { useThemeStore } from './store/useThemeStore';
 import { Sidebar } from './components/Sidebar';
-import { ChatMessage } from './components/ChatMessage';
-import { ChatInput } from './components/ChatInput';
+import { ChatMessage } from './features/chat/ChatMessage';
+import { ChatInput } from './features/chat/ChatInput';
 import { HeroWelcome } from './components/HeroWelcome';
 import { DashboardView } from './components/DashboardView';
-import { KnowledgeView } from './components/KnowledgeView';
-import { SkillsView } from './components/SkillsView';
-import { AgentsView } from './components/AgentsView';
-import { InventoryView } from './components/InventoryView';
+import { KnowledgeView } from './features/knowledge/KnowledgeView';
+import { SkillsView } from './features/skills/SkillsView';
+import { AgentsView } from './features/agents/AgentsView';
+import { InventoryView } from './features/inventory/InventoryView';
 import { CognitiveMemoryModal } from './components/CognitiveMemoryModal';
 import { LogsDrawer } from './components/LogsDrawer';
 import { McpServersModal } from './components/McpServersModal';
-import { SettingsModal } from './components/SettingsModal';
+import { SettingsModal } from './features/settings/SettingsModal';
 import { ServersModal } from './components/ServersModal';
-import { AgentActivityPanel } from './components/AgentActivityPanel';
+import { AgentActivityPanel } from './features/chat/AgentActivityPanel';
 import {
   Bot,
   BookOpen,
@@ -31,6 +31,7 @@ import {
   Moon,
 } from 'lucide-react';
 import { cn } from './lib/utils';
+import { useResolvedTheme } from './shared/lib/theme';
 
 export const App: React.FC = () => {
   const init = useOpenZStore((s) => s.init);
@@ -50,12 +51,7 @@ export const App: React.FC = () => {
 
   const activeMessages = useMemo(() => messages[activeChatId] || [], [messages, activeChatId]);
   const activeOrchestrationRuns = useMemo(() => orchestrationRuns[activeChatId] || [], [orchestrationRuns, activeChatId]);
-  const resolvedTheme =
-    theme === 'system'
-      ? window.matchMedia('(prefers-color-scheme: dark)').matches
-        ? 'dark'
-        : 'light'
-      : theme;
+  const resolvedTheme = useResolvedTheme(theme);
 
   useEffect(() => {
     init();

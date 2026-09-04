@@ -138,7 +138,7 @@ pub fn canonical_research_topic(raw: &str) -> String {
         .collect::<Vec<_>>();
     if words.is_empty() {
         raw.trim().chars().take(160).collect()
-    } else if words.iter().any(|word| *word == "rust") {
+    } else if words.contains(&"rust") {
         const KNOWN_RUST_CRATES: &[&str] = &[
             "tokio",
             "axum",

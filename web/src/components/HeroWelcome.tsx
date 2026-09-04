@@ -10,8 +10,9 @@ export const HeroWelcome: React.FC = () => {
   const promptCards = [
     {
       title: 'Analyze Codebase',
-      desc: 'AST structural search + cargo check on your project',
-      prompt: 'Use ast_grep and cargo check to analyze the codebase architecture and report findings.',
+      desc: 'AST structural search + focused package check on your project',
+      prompt:
+        'Use ast_grep and just check openz to analyze the codebase architecture and report focused findings. Do not run full cargo check, build, or test commands.',
       icon: Code2,
     },
     {

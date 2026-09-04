@@ -19,6 +19,7 @@ Ensure WebUI `set_config` changes are not silently lost while the gateway is dis
 3. Make `updateConfig` and `sendSetConfig` use the queueable path.
 4. Handle queued, accepted, rejected, and backend `config_update_rejected` events in Zustand with scoped Settings notices.
 5. Add focused tests for retryable command classification and verify the WebUI build/lint gates.
+6. Keep `archive/delete` session rows visible until the gateway confirms the mutation; refresh authoritative sessions and inventory after rejection.
 
 ## Completion checklist
 
@@ -27,3 +28,4 @@ Ensure WebUI `set_config` changes are not silently lost while the gateway is dis
 - [x] Non-config commands are not silently replayed.
 - [x] Settings exposes queued, accepted, rejected, and confirmed states.
 - [x] Focused WebUI verification passes.
+- [x] Session archive/delete mutations are confirmed before local removal and refresh on rejection.

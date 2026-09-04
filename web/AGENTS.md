@@ -5,18 +5,28 @@
 ## Project
 - **Runtime:** bun
 - **Package Manager:** bun
-- **Technologies:** react, vite
+- **Technologies:** react, vite, zustand, native WebSocket
 
 ## Commands
 - **build:** `tsc -b && vite build`
 - **dev:** `vite`
 - **lint:** `eslint .`
+- **test:** `bun test`
 - **preview:** `vite preview`
 
 ## Architecture
-- **components:** `src/components`
+- **app shell:** `src/App.tsx`
 - **entrypoint:** `src/main.tsx`
-- **routing:** `src/pages`
+- **feature views:** `src/features`
+- **shared UI/components:** `src/shared/ui`
+- **runtime/config:** `src/config`
+- **shared code:** `src/shared`
+- **gateway facade:** `src/services/websocket.ts`
+- **gateway transport/commands:** `src/services/websocket/`
+- **state facade:** `src/store/useOpenZStore.ts`
+- **state slices:** `src/store/slices`
+- **state event reducers:** `src/store/events`
+- **protocol/domain types:** `src/types`
 - **styles:** `src/index.css`
 
 ## Coding Guidelines

@@ -1,5 +1,5 @@
 use crate::agent::AgentLoop;
-use crate::config::loader::resolve_path;
+use crate::config::loader::sessions_dir;
 use crate::config::schema::Config;
 use crate::session::SessionManager;
 use crate::tools::ToolRegistry;
@@ -7,7 +7,11 @@ use anyhow::Result;
 
 pub fn get_provider_api_key(config: &Config, provider_name: &str) -> Option<String> {
     let (key, _) = config.resolve_provider_config(provider_name);
-    if key.is_empty() { None } else { Some(key) }
+    if key.is_empty() {
+        None
+    } else {
+        Some(key)
+    }
 }
 
 pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
@@ -15,7 +19,7 @@ pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
         crate::providers::resolver::resolve_provider_full(&config, &config.agents.defaults.model)?;
     let provider = resolved.instance;
 
-    let sessions_dir = resolve_path("~/.openz/sessions");
+    let sessions_dir = sessions_dir();
     let session_manager = SessionManager::new(sessions_dir);
 
     let registry =
@@ -271,12 +275,10 @@ mod tests {
             crate::tools::orchestrator::OrchestrateWorkflowTool::default(),
         ));
 
-        // Collect all registered tool names
-        let tools = registry.to_openai_format();
-        let names: Vec<&str> = tools
-            .iter()
-            .filter_map(|t| t["function"]["name"].as_str())
-            .collect();
+        // Collect all registered tool names. The prompt-routed OpenAI payload
+        // intentionally exposes only the active scope, so it is not suitable
+        // for validating the complete registration set.
+        let names = registry.tool_names();
 
         // Verify no duplicate names
         let mut sorted_names = names.clone();
@@ -381,11 +383,11 @@ mod tests {
             "workflow_memory",
         ];
 
-        let seq_count = names.iter().filter(|n| seq_names.contains(n)).count();
-        let headroom_count = names.iter().filter(|n| headroom_names.contains(n)).count();
-        let graph_mem_count = names.iter().filter(|n| graph_mem_names.contains(n)).count();
-        let mem_extra_count = names.iter().filter(|n| mem_extra_names.contains(n)).count();
-        let shared_count = names.iter().filter(|n| shared_names.contains(n)).count();
+        let seq_count = names.iter().filter(|n| seq_names.contains(&n.as_str())).count();
+        let headroom_count = names.iter().filter(|n| headroom_names.contains(&n.as_str())).count();
+        let graph_mem_count = names.iter().filter(|n| graph_mem_names.contains(&n.as_str())).count();
+        let mem_extra_count = names.iter().filter(|n| mem_extra_names.contains(&n.as_str())).count();
+        let shared_count = names.iter().filter(|n| shared_names.contains(&n.as_str())).count();
 
         assert_eq!(
             seq_count,
@@ -393,7 +395,7 @@ mod tests {
             "Expected 5 sequential thinking tools, got {seq_count}: {:?}",
             names
                 .iter()
-                .filter(|n| seq_names.contains(n))
+                .filter(|n| seq_names.contains(&n.as_str()))
                 .collect::<Vec<_>>()
         );
         assert_eq!(
@@ -412,7 +414,7 @@ mod tests {
             shared_count, 10,
             "Expected 10 shared memory tools, got {shared_count}"
         );
-        assert!(names.contains(&"orchestrate_workflow"));
+        assert!(names.contains(&"orchestrate_workflow".to_string()));
         assert_eq!(
             names.len(),
             5 + 21 + 12 + 32 + 10 + 1,

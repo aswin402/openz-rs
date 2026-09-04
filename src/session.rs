@@ -420,6 +420,59 @@ mod lock_tests {
 }
 
 #[derive(Clone)]
+pub struct ArchivedSession {
+    pub session: Session,
+    pub path: PathBuf,
+}
+
+/// Lightweight summary of a stored session without reading full message history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub key: String,
+    pub updated_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub message_count: usize,
+    pub first_user_message: Option<String>,
+}
+
+impl SessionSummary {
+    /// Return a preview title truncated to `max_len` characters, falling back to `fallback`.
+    pub fn preview_title(&self, max_len: usize, fallback: &str) -> String {
+        match &self.first_user_message {
+            Some(msg) => {
+                let cleaned = msg.split_whitespace().collect::<Vec<_>>().join(" ");
+                if cleaned.chars().count() > max_len {
+                    let mut s: String = cleaned.chars().take(max_len.saturating_sub(3)).collect();
+                    s.push_str("...");
+                    s
+                } else if cleaned.is_empty() {
+                    fallback.to_string()
+                } else {
+                    cleaned
+                }
+            }
+            None => fallback.to_string(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct SessionSummaryParser {
+    key: String,
+    updated_at: DateTime<Utc>,
+    #[serde(default)]
+    created_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    messages: Vec<SessionSummaryMessageParser>,
+}
+
+#[derive(Deserialize)]
+struct SessionSummaryMessageParser {
+    role: String,
+    content: String,
+}
+
+#[derive(Clone)]
 pub struct SessionManager {
     pub dir: PathBuf,
 }
@@ -429,14 +482,16 @@ impl SessionManager {
         SessionManager { dir }
     }
 
-    fn file_path(&self, key: &str) -> PathBuf {
-        let safe_key = key.replace(":", "_").replace("/", "_").replace("\\", "_");
-        self.dir.join(format!("{}.json", safe_key))
+    pub fn safe_key(key: &str) -> String {
+        key.replace(":", "_").replace("/", "_").replace("\\", "_")
+    }
+
+    pub fn file_path(&self, key: &str) -> PathBuf {
+        self.dir.join(format!("{}.json", Self::safe_key(key)))
     }
 
     fn lock_path(&self, key: &str) -> PathBuf {
-        let safe_key = key.replace(":", "_").replace("/", "_").replace("\\", "_");
-        self.dir.join(format!("{}.lock", safe_key))
+        self.dir.join(format!("{}.lock", Self::safe_key(key)))
     }
 
     pub fn acquire_lock(&self, key: &str) -> Result<File> {
@@ -506,6 +561,58 @@ impl SessionManager {
         .await?
     }
 
+    pub fn delete(&self, key: &str) -> Result<bool> {
+        let path = self.file_path(key);
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(true),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(err) => {
+                Err(err).with_context(|| format!("Failed to delete session file {:?}", path))
+            }
+        }
+    }
+
+    pub async fn delete_async(&self, key: &str) -> Result<bool> {
+        let manager = self.clone();
+        let key = key.to_string();
+        tokio::task::spawn_blocking(move || manager.delete(&key)).await?
+    }
+
+    pub fn archive(&self, key: &str) -> Result<Option<ArchivedSession>> {
+        let source_path = self.file_path(key);
+        if !source_path.exists() {
+            return Ok(None);
+        }
+
+        let session = self.load(key)?;
+        let archive_dir = self.dir.join("archive");
+        fs::create_dir_all(&archive_dir)?;
+        let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ");
+        let archive_path = archive_dir.join(format!(
+            "{}_{}_{}.json",
+            timestamp,
+            uuid::Uuid::new_v4(),
+            Self::safe_key(key)
+        ));
+        fs::rename(&source_path, &archive_path).with_context(|| {
+            format!(
+                "Failed to archive session file {:?} to {:?}",
+                source_path, archive_path
+            )
+        })?;
+
+        Ok(Some(ArchivedSession {
+            session,
+            path: archive_path,
+        }))
+    }
+
+    pub async fn archive_async(&self, key: &str) -> Result<Option<ArchivedSession>> {
+        let manager = self.clone();
+        let key = key.to_string();
+        tokio::task::spawn_blocking(move || manager.archive(&key)).await?
+    }
+
     pub async fn save(&self, session: &Session) -> Result<()> {
         if tokio::fs::metadata(&self.dir).await.is_err() {
             tokio::fs::create_dir_all(&self.dir)
@@ -530,6 +637,197 @@ impl SessionManager {
                     temp_path, path
                 )
             })?;
+        Ok(())
+    }
+
+    /// List lightweight summaries for all saved sessions, sorted newest first.
+    pub fn list_summaries(&self) -> Vec<SessionSummary> {
+        let mut summaries = Vec::new();
+        let Ok(entries) = fs::read_dir(&self.dir) else {
+            return summaries;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    if let Ok(session) = serde_json::from_str::<SessionSummaryParser>(&content) {
+                        let first_user = session
+                            .messages
+                            .iter()
+                            .find(|m| m.role == "user")
+                            .map(|m| m.content.clone());
+                        summaries.push(SessionSummary {
+                            key: session.key,
+                            updated_at: session.updated_at,
+                            created_at: session.created_at.unwrap_or(session.updated_at),
+                            message_count: session.messages.len(),
+                            first_user_message: first_user,
+                        });
+                    }
+                }
+            }
+        }
+        summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        summaries
+    }
+
+    /// Asynchronously list lightweight summaries for all saved sessions.
+    pub async fn list_summaries_async(&self) -> Vec<SessionSummary> {
+        let manager = self.clone();
+        tokio::task::spawn_blocking(move || manager.list_summaries())
+            .await
+            .unwrap_or_default()
+    }
+
+    /// List lightweight summaries for saved sessions with offset and limit, sorted newest first.
+    /// Returns `(items, total_count)`.
+    pub fn list_summaries_paginated(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> (Vec<SessionSummary>, usize) {
+        let all = self.list_summaries();
+        let total = all.len();
+        let page = all.into_iter().skip(offset).take(limit).collect();
+        (page, total)
+    }
+
+    /// Asynchronously list lightweight summaries with pagination.
+    /// Returns `(items, total_count)`.
+    pub async fn list_summaries_paginated_async(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> (Vec<SessionSummary>, usize) {
+        let manager = self.clone();
+        tokio::task::spawn_blocking(move || manager.list_summaries_paginated(offset, limit))
+            .await
+            .unwrap_or_else(|_| (Vec::new(), 0))
+    }
+}
+
+#[cfg(test)]
+mod delete_tests {
+    use super::*;
+
+    #[test]
+    fn delete_removes_sanitized_session_file() -> Result<()> {
+        let dir =
+            std::env::temp_dir().join(format!("openz_delete_session_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir)?;
+        let manager = SessionManager::new(dir.clone());
+        let mut session = Session::new("ws:control");
+        session.add_message("user", "hello");
+        session.populate_hashes();
+        let path = manager.file_path(&session.key);
+        fs::write(&path, serde_json::to_string_pretty(&session)?)?;
+
+        assert!(path.exists());
+        assert!(manager.delete("ws:control")?);
+        assert!(!path.exists());
+        assert!(!manager.delete("ws:control")?);
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn archive_moves_sanitized_session_file_to_archive_dir() -> Result<()> {
+        let dir =
+            std::env::temp_dir().join(format!("openz_archive_session_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir)?;
+        let manager = SessionManager::new(dir.clone());
+        let mut session = Session::new("telegram:42");
+        session.add_message("user", "archive me");
+        session.populate_hashes();
+        let path = manager.file_path(&session.key);
+        fs::write(&path, serde_json::to_string_pretty(&session)?)?;
+
+        let archived = manager.archive("telegram:42")?.expect("session archived");
+
+        assert!(!path.exists());
+        assert!(archived.path.exists());
+        assert!(archived.path.starts_with(dir.join("archive")));
+        assert_eq!(archived.session.key, "telegram:42");
+        assert_eq!(archived.session.messages.len(), 1);
+        assert!(manager.archive("telegram:42")?.is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+
+    #[test]
+    fn list_summaries_extracts_and_sorts() -> Result<()> {
+        let dir =
+            std::env::temp_dir().join(format!("openz_summary_test_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir)?;
+        let manager = SessionManager::new(dir.clone());
+
+        let mut s1 = Session::new("chat:1");
+        s1.add_message("user", "Hello world from chat 1");
+        let path1 = manager.file_path(&s1.key);
+        fs::write(&path1, serde_json::to_string(&s1)?)?;
+
+        let mut s2 = Session::new("chat:2");
+        s2.add_message("user", "Second message here");
+        s2.add_message("assistant", "Response");
+        let path2 = manager.file_path(&s2.key);
+        fs::write(&path2, serde_json::to_string(&s2)?)?;
+
+        let summaries = manager.list_summaries();
+        assert_eq!(summaries.len(), 2);
+        assert!(summaries
+            .iter()
+            .any(|s| s.key == "chat:1" && s.first_user_message == Some("Hello world from chat 1".into())));
+        assert!(summaries
+            .iter()
+            .any(|s| s.key == "chat:2" && s.message_count == 2));
+
+        let summary1 = summaries.iter().find(|s| s.key == "chat:1").unwrap();
+        assert_eq!(summary1.preview_title(10, "fallback"), "Hello w...");
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn list_summaries_paginated_returns_slice_and_total() -> Result<()> {
+        let dir =
+            std::env::temp_dir().join(format!("openz_page_summary_test_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir)?;
+        let manager = SessionManager::new(dir.clone());
+
+        for i in 1..=5 {
+            let mut s = Session::new(&format!("session:{}", i));
+            s.add_message("user", &format!("hello from {}", i));
+            s.updated_at = Utc::now() + chrono::Duration::seconds(i);
+            let path = manager.file_path(&s.key);
+            fs::write(&path, serde_json::to_string(&s)?)?;
+        }
+
+        let (page1, total1) = manager.list_summaries_paginated(0, 2);
+        assert_eq!(total1, 5);
+        assert_eq!(page1.len(), 2);
+        assert_eq!(page1[0].key, "session:5");
+        assert_eq!(page1[1].key, "session:4");
+
+        let (page2, total2) = manager.list_summaries_paginated(2, 2);
+        assert_eq!(total2, 5);
+        assert_eq!(page2.len(), 2);
+        assert_eq!(page2[0].key, "session:3");
+        assert_eq!(page2[1].key, "session:2");
+
+        let (page3, total3) = manager.list_summaries_paginated(4, 2);
+        assert_eq!(total3, 5);
+        assert_eq!(page3.len(), 1);
+        assert_eq!(page3[0].key, "session:1");
+
+        let _ = fs::remove_dir_all(&dir);
         Ok(())
     }
 }

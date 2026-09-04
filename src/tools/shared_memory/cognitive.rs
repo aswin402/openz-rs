@@ -1,9 +1,10 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
-use rusqlite::{Connection, params};
-use serde_json::{Value, json};
+use anyhow::{anyhow, Result};
+use rusqlite::{params, Connection};
+use serde_json::{json, Value};
 
-use super::db::{get_current_workspace, get_db_mutex, with_db};
+use crate::memory::with_shared_db as with_db;
+use super::db::{get_current_workspace, get_db_mutex};
 use super::embeddings::{cosine_similarity, get_embedding};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -2,7 +2,7 @@ use anyhow::Result;
 use opendoc_mcp::server::OpendocServer;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 pub fn get_server() -> &'static OpendocServer {
     static SERVER: std::sync::OnceLock<OpendocServer> = std::sync::OnceLock::new();

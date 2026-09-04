@@ -11,7 +11,7 @@ This skill describes the core turn execution loop, the state machine, and sessio
 
 ## 1. The `TurnState` State Machine
 
-The core executor of OpenZ is `AgentLoop` in `src/agent/agent_loop.rs`. Each turn runs through a series of states in a loop until it reaches `TurnState::Done`:
+The core executor of OpenZ is `AgentLoop` in `src/agent/agent_loop/mod.rs`. Each turn runs through a series of states in a loop until it reaches `TurnState::Done`:
 
 ```mermaid
 graph TD

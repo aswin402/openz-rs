@@ -6,7 +6,7 @@ use searchxyz::tools::{
     ClearIndexRequest, DeleteSourceRequest, ExportResearchRequest, ImportResearchRequest,
     IndexContentRequest, ListSourcesRequest, RecallRequest,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 // ── 4. Recall ─────────────────────────────────────────────────
 pub struct SearchXyzRecallTool;

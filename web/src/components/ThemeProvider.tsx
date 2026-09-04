@@ -1,5 +1,6 @@
 import React, { useLayoutEffect, useRef } from 'react';
 import { useThemeStore } from '../store/useThemeStore';
+import { useResolvedTheme } from '../shared/lib/theme';
 
 interface ThemeProviderProps {
   children: React.ReactNode;
@@ -10,7 +11,8 @@ export function ThemeProvider({
   children,
   inlineTheme,
 }: ThemeProviderProps) {
-  const { theme } = useThemeStore();
+  const theme = useThemeStore((state) => state.theme);
+  const resolvedTheme = useResolvedTheme(theme);
   const isFirstMount = useRef(true);
   const transitionTimerRef = useRef<number | null>(null);
 
@@ -20,19 +22,8 @@ export function ThemeProvider({
 
     const updateTheme = () => {
       root.classList.remove('light', 'dark');
-
-      if (theme === 'system') {
-        const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches
-          ? 'dark'
-          : 'light';
-
-        root.classList.add(systemTheme);
-        root.style.colorScheme = systemTheme;
-        return;
-      }
-
-      root.classList.add(theme);
-      root.style.colorScheme = theme;
+      root.classList.add(resolvedTheme);
+      root.style.colorScheme = resolvedTheme;
     };
 
     if (isFirstMount.current) {
@@ -75,7 +66,7 @@ export function ThemeProvider({
       }
       root.classList.remove('theme-transitioning');
     };
-  }, [theme]);
+  }, [resolvedTheme]);
 
   return (
     <div style={inlineTheme as React.CSSProperties}>

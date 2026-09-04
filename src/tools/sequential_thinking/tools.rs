@@ -1,13 +1,13 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use chrono::Utc;
 use rusqlite::Connection;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 use super::engine::{analyze_quality, generate_mermaid};
 use super::store::{
-    MemoryThoughtStore, SqliteThoughtStore, ThoughtData, ThoughtStore, ToolResult, get_db_path,
+    get_db_path, MemoryThoughtStore, SqliteThoughtStore, ThoughtData, ThoughtStore, ToolResult,
 };
 use crate::tools::Tool;
 
@@ -293,12 +293,10 @@ impl Tool for AnalyzeGraphTool {
                         }
                     }
                 }
-                Ok(json!(
-                    assumed
-                        .into_iter()
-                        .filter(|a| !verified.contains(a))
-                        .collect::<Vec<String>>()
-                ))
+                Ok(json!(assumed
+                    .into_iter()
+                    .filter(|a| !verified.contains(a))
+                    .collect::<Vec<String>>()))
             }
             "dead_branches" => {
                 if guard.thought_history.is_empty() {
@@ -739,7 +737,7 @@ impl Tool for TemplatesTool {
             "divide-and-conquer" => Ok(divide_and_conquer),
             "hypothesis-test" => Ok(hypothesis_test),
             "devils-advocate" => Ok(devils_advocate),
-            "all" | _ => {
+            _ => {
                 Ok(json!({ "templates": [divide_and_conquer, hypothesis_test, devils_advocate] }))
             }
         }

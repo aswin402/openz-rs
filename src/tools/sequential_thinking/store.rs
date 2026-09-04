@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;

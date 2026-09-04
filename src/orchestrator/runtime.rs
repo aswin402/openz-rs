@@ -623,8 +623,8 @@ mod tests {
     use crate::orchestrator::spec::{AgentRef, WorkflowMode, WorkflowSpec, WorkflowStep};
     use async_trait::async_trait;
     use std::sync::{
-        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
     };
     use std::time::Duration;
 
@@ -907,9 +907,7 @@ mod tests {
         let prompt = build_step_prompt(&step, "Run smoke test workflow", &[]);
 
         assert!(prompt.contains("Complete the step directly when possible."));
-        assert!(
-            prompt.contains("Do not delegate or research for trivial/general-knowledge tasks.")
-        );
+        assert!(prompt.contains("Do not delegate or research for trivial/general-knowledge tasks."));
         assert!(prompt.contains("Use web only if required by the step."));
     }
 
@@ -996,13 +994,11 @@ mod tests {
             result.status,
             crate::orchestrator::result::WorkflowStatus::Success
         ));
-        assert!(
-            events
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|event| matches!(event, WorkflowEvent::RunStarted { .. }))
-        );
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, WorkflowEvent::RunStarted { .. })));
     }
     #[tokio::test]
     async fn sequential_runtime_executes_reversed_declarations_in_dependency_order() {
@@ -1050,10 +1046,9 @@ mod tests {
             .await
             .expect_err("cyclic dependencies fail before run starts");
 
-        assert!(
-            err.to_string()
-                .contains("workflow contains unresolved step dependencies")
-        );
+        assert!(err
+            .to_string()
+            .contains("workflow contains unresolved step dependencies"));
         assert!(events.lock().unwrap().is_empty());
         assert!(calls.lock().unwrap().is_empty());
     }
@@ -1179,10 +1174,9 @@ mod tests {
             .await
             .expect_err("configured reviewer must match a workflow step");
 
-        assert!(
-            err.to_string()
-                .contains("review loop reviewer 'reviewer' has no matching workflow step")
-        );
+        assert!(err
+            .to_string()
+            .contains("review loop reviewer 'reviewer' has no matching workflow step"));
     }
 
     #[test]

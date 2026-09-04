@@ -1,7 +1,7 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use rusqlite::Connection;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn normalize_sql(sql: &str) -> String {
     let sql_upper = sql.to_uppercase();
@@ -315,11 +315,10 @@ mod tests {
             }))
             .await;
 
-        assert!(
-            res.unwrap_err()
-                .to_string()
-                .contains("Path traversal prevention")
-        );
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("Path traversal prevention"));
     }
 
     #[tokio::test]
@@ -332,11 +331,10 @@ mod tests {
             }))
             .await;
 
-        assert!(
-            res.unwrap_err()
-                .to_string()
-                .contains("Path traversal prevention")
-        );
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("Path traversal prevention"));
     }
 
     #[tokio::test]
@@ -368,12 +366,10 @@ mod tests {
             }))
             .await?;
         assert_eq!(res["status"], "success");
-        assert!(
-            res["stdout"]
-                .as_str()
-                .unwrap()
-                .contains("CREATE TABLE users")
-        );
+        assert!(res["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("CREATE TABLE users"));
 
         // Test action: query
         let res = tool

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use std::fs;
 use std::path::PathBuf;
 
@@ -52,7 +52,7 @@ pub fn validate_skill_metadata(name: &str, content: &str) -> Vec<String> {
 }
 
 pub fn get_skills_dir() -> PathBuf {
-    crate::config::resolve_path("~/.openz/skills")
+    crate::config::skills_dir()
 }
 
 pub fn get_db_path() -> PathBuf {
@@ -669,7 +669,7 @@ pub fn load_skills_with_profile(profile_name: Option<&str>) -> Result<Vec<Skill>
 }
 
 pub fn archive_stale_skills() -> Result<()> {
-    let check_path = crate::config::resolve_path("~/.openz/last_stale_skills_check.json");
+    let check_path = crate::config::runtime_data_dir().join("last_stale_skills_check.json");
     if check_path.exists() {
         if let Ok(content) = fs::read_to_string(&check_path) {
             if let Ok(timestamp_str) = serde_json::from_str::<String>(&content) {
@@ -1080,11 +1080,9 @@ This skill is scoped to this workspace.",
         std::env::set_current_dir(original).unwrap();
         let _ = std::fs::remove_dir_all(&temp_dir);
 
-        assert!(
-            skills
-                .iter()
-                .any(|skill| skill.name == "workspace_override")
-        );
+        assert!(skills
+            .iter()
+            .any(|skill| skill.name == "workspace_override"));
     }
 
     #[test]

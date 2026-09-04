@@ -1,7 +1,7 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use regex::Regex;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 

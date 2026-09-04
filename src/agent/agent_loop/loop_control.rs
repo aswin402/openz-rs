@@ -1,4 +1,5 @@
 use crate::session::Message;
+use crate::tools::arguments::{PATH_KEYS, QUERY_KEYS};
 use sha2::{Digest, Sha256};
 
 fn read_scene_file_fingerprint(path: &str) -> Option<String> {
@@ -46,71 +47,11 @@ pub(crate) fn tool_arg_fingerprint(args: &serde_json::Value) -> Option<String> {
 }
 
 pub(crate) fn tool_repetition_block_threshold(tool_name: &str, args: &serde_json::Value) -> usize {
-    if is_progress_sensitive_repeat(tool_name, args) {
-        1
-    } else {
-        2
-    }
+    crate::tools::metadata::tool_repetition_block_threshold(tool_name, args)
 }
 
 fn is_progress_sensitive_repeat(tool_name: &str, args: &serde_json::Value) -> bool {
-    if matches!(
-        tool_name,
-        "web_fetch"
-            | "web_search"
-            | "crawl"
-            | "crawl_site"
-            | "social_search"
-            | "searchxyz_search_web"
-            | "searchxyz_read_url"
-            | "searchxyz_search_and_read"
-            | "searchxyz_deep_research"
-            | "searchxyz_site_map"
-            | "searchxyz_read_github_repo"
-            | "read_file"
-            | "list_dir"
-            | "find_files"
-            | "grep_search"
-            | "ast_grep"
-            | "code_outline"
-            | "doc_reader"
-            | "system_info"
-            | "check_port"
-            | "browser_status"
-            | "git_manager"
-            | "open_path"
-            | "device_inventory"
-            | "retrieve_original"
-            | "scope_context"
-            | "compress_content"
-            | "search_nodes"
-            | "open_nodes"
-            | "read_graph"
-            | "recall_memory"
-            | "proactive_recall"
-            | "semantic_search"
-            | "rust_docs"
-            | "get_working_memory"
-            | "list_jobs"
-    ) {
-        return true;
-    }
-
-    if tool_name == "gsd_browser" {
-        return matches!(
-            args.get("action").and_then(|v| v.as_str()),
-            Some("snapshot" | "page_source" | "accessibility_tree" | "screenshot" | "eval")
-        );
-    }
-
-    if tool_name == "obscura_browser" || tool_name == "firefox_browser" {
-        return matches!(
-            args.get("action").and_then(|v| v.as_str()),
-            Some("render" | "screenshot" | "eval" | "page_source" | "accessibility_tree")
-        );
-    }
-
-    false
+    crate::tools::metadata::is_progress_sensitive_repeat(tool_name, args)
 }
 
 fn tool_call_id(call: &serde_json::Value) -> Option<&str> {
@@ -120,7 +61,7 @@ fn tool_call_id(call: &serde_json::Value) -> Option<&str> {
 }
 
 fn exact_arg_repeat_counts_without_result_signature(tool_name: &str) -> bool {
-    matches!(tool_name, "grep_search" | "read_file" | "view_file")
+    crate::tools::metadata::exact_arg_repeat_counts_without_result_signature(tool_name)
 }
 
 fn object_arg_value<'a>(
@@ -142,7 +83,7 @@ fn canonical_tool_args_key(tool_name: &str, args: &serde_json::Value) -> Option<
 
     match tool_name {
         "grep_search" => {
-            let query = object_arg_value(map, &["query", "Query"])
+            let query = object_arg_value(map, QUERY_KEYS)
                 .and_then(|v| v.as_str())?
                 .trim();
             let dir = object_arg_value(map, &["dir", "directory", "root", "path"])
@@ -159,14 +100,7 @@ fn canonical_tool_args_key(tool_name: &str, args: &serde_json::Value) -> Option<
         "read_file" | "view_file" => {
             let path = object_arg_value(
                 map,
-                &[
-                    "path",
-                    "file_path",
-                    "filePath",
-                    "TargetFile",
-                    "filepath",
-                    "file",
-                ],
+                PATH_KEYS,
             )
             .and_then(|v| v.as_str())?
             .trim();
@@ -208,20 +142,7 @@ fn tool_args_match(
 }
 
 fn is_state_changing_tool(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "write_file"
-            | "write_to_file"
-            | "replace_file_content"
-            | "multi_replace_file_content"
-            | "patch_file"
-            | "replace_lines"
-            | "exec_command"
-            | "run_command"
-            | "cargo_manager"
-            | "git_manager"
-            | "db_write"
-    )
+    crate::tools::metadata::is_state_changing_tool(tool_name)
 }
 
 fn tool_result_signature(

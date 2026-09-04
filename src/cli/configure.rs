@@ -2,34 +2,8 @@ use crate::agent::style::*;
 use crate::config::loader::{load_config, save_config};
 use crate::config::schema::{Config, ProviderConfig};
 use crate::println;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use inquire::{Confirm, Password, PasswordDisplayMode, Text};
-
-fn default_base_for_provider(provider_name: &str) -> &'static str {
-    match provider_name {
-        "anthropic" => "https://api.anthropic.com",
-        "openai" => "https://api.openai.com/v1",
-        "mivi" => "http://127.0.0.1:8000/v1",
-        "openrouter" => "https://openrouter.ai/api/v1",
-        "deepseek" => "https://api.deepseek.com/v1",
-        "groq" => "https://api.groq.com/openai/v1",
-        "ollama" => "http://localhost:11434/v1",
-        "minimax" => "https://api.minimax.io/v1",
-        "mistral" => "https://api.mistral.ai/v1",
-        "z.ai" | "z_ai" => "https://api.z.ai/api/paas/v4/",
-        "nvidia" => "https://integrate.api.nvidia.com/v1",
-        "opencode_zen" | "opencode zen" | "opencode-zen" => "https://opencode.ai/zen/v1",
-        "cerebras" => "https://api.cerebras.ai/v1",
-        "google_ai_studio" | "google ai studio" | "google-ai-studio" => {
-            "https://generativelanguage.googleapis.com/v1beta/openai/"
-        }
-        "cohere" => "https://api.cohere.com/v1",
-        "llm7" => "https://token.llm7.io/v1",
-        "sambanova" => "https://api.sambanova.ai/v1",
-        "huggingface" => "https://api-inference.huggingface.co/v1",
-        _ => "https://api.openai.com/v1",
-    }
-}
 
 pub fn update_provider_key(config: &mut Config, provider_name: &str, api_key: String) {
     let mut p_config = config
@@ -46,7 +20,10 @@ pub fn update_provider_key(config: &mut Config, provider_name: &str, api_key: St
     p_config.api_key = Some(api_key);
 
     if p_config.api_base.is_none() {
-        p_config.api_base = Some(default_base_for_provider(provider_name).to_string());
+        p_config.api_base = Some(
+            crate::config::provider_catalog::default_api_base_for_provider(provider_name)
+                .to_string(),
+        );
     }
 
     config.set_provider_config(provider_name, p_config);
@@ -254,6 +231,7 @@ pub async fn handle_configure() -> Result<()> {
             configure_options.push("Sandbox (seccomp) (disabled)".to_string());
         }
 
+        configure_options.push("Browser (Firefox)".to_string());
         configure_options.push("Exit".to_string());
 
         let choice_idx = match select_menu_custom(
@@ -299,6 +277,9 @@ pub async fn handle_configure() -> Result<()> {
             }
             7 => {
                 handle_sandbox_submenu(&mut config).await?;
+            }
+            8 => {
+                handle_browser_submenu(&mut config).await?;
             }
             _ => {
                 break;
@@ -891,6 +872,43 @@ async fn handle_tui_submenu(config: &mut Config) -> Result<()> {
         LIGHT_WHITE, COLOR_RESET
     );
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    Ok(())
+}
+
+async fn handle_browser_submenu(config: &mut Config) -> Result<()> {
+    println!(
+        "\n{}--- Firefox Browser Configuration ---{}",
+        COLOR_BOLD, COLOR_RESET
+    );
+    println!("Configure the WebDriver ports used by headless, visible, and attach modes.");
+
+    let webdriver_default = config.browser.firefox_webdriver_port.to_string();
+    let webdriver_input = Text::new("Firefox WebDriver port:")
+        .with_default(&webdriver_default)
+        .prompt()?;
+    let attach_default = config.browser.firefox_attach_port.to_string();
+    let attach_input = Text::new("Firefox attach port:")
+        .with_default(&attach_default)
+        .prompt()?;
+
+    let parse_port = |value: &str, name: &str| -> Result<u16> {
+        let port = value
+            .trim()
+            .parse::<u16>()
+            .map_err(|_| anyhow!("{} must be a valid integer port", name))?;
+        if !(1024..=65535).contains(&port) {
+            return Err(anyhow!("{} must be between 1024 and 65535", name));
+        }
+        Ok(port)
+    };
+
+    config.browser.firefox_webdriver_port = parse_port(&webdriver_input, "Firefox WebDriver port")?;
+    config.browser.firefox_attach_port = parse_port(&attach_input, "Firefox attach port")?;
+    save_config(config)?;
+    println!(
+        "{}✓ Firefox browser ports saved.{}",
+        EMERALD_GREEN, COLOR_RESET
+    );
     Ok(())
 }
 

@@ -1,8 +1,9 @@
 use anyhow::Result;
 use rusqlite::params;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use super::db::{get_db_mutex, with_db};
+use crate::memory::with_shared_db as with_db;
+use super::db::get_db_mutex;
 
 pub async fn log_interaction(session_key: &str, query: &str) -> Result<String> {
     let id = uuid::Uuid::new_v4().to_string();

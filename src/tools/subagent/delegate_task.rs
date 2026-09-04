@@ -1,21 +1,21 @@
 use super::{
-    CancellationToken, DELEGATION_DEPTH, SubagentRunStatus, build_provider_for_model,
-    cancellation_result_json, classify_subagent_error, compact_lifecycle_line,
-    execute_subagent_run, scan_for_images, status_json,
+    build_provider_for_model, cancellation_result_json, classify_subagent_error,
+    compact_lifecycle_line, execute_subagent_run, scan_for_images, status_json, CancellationToken,
+    SubagentRunStatus, DELEGATION_DEPTH,
 };
-use crate::agent::AgentLoop;
 use crate::agent::style::*;
+use crate::agent::AgentLoop;
 use crate::config::schema::Config;
 use crate::orchestrator::spec::CapabilityPolicy;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
 use crate::tools::Tool;
 use crate::tools::ToolRegistry;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::sync::{
-    Arc, Mutex, OnceLock,
     atomic::{AtomicU64, Ordering},
+    Arc, Mutex, OnceLock,
 };
 
 pub struct DelegateTaskTool {
@@ -91,39 +91,33 @@ impl Tool for DelegateTaskTool {
         let has_images = crate::providers::parse_multimodal_content(&clean_goal).await.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }))
             || crate::providers::parse_multimodal_content(&clean_context).await.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
 
+        let models_to_try = delegate_task_models_to_try(&self.config, model_override, has_images);
         let mut selected_model = self.config.agents.defaults.model.clone();
         let mut selected_fallback_models: Vec<String> = Vec::new();
-        let provider = if let Some(m) = model_override {
-            match build_provider_for_model(&self.config, m) {
-                Ok(p) => {
-                    selected_model = m.to_string();
-                    p
-                }
-                Err(e) => {
-                    crate::tui_println!("{}⚠️ Failed to configure subagent model '{}' ({}). Falling back to parent model.{}", AURA_GOLD, m, e, COLOR_RESET);
-                    self.parent_provider.clone()
-                }
-            }
-        } else if has_images && !crate::providers::model_supports_vision(&self.config.agents.defaults.model) {
-            let mut resolved_provider = None;
-            let dynamic_fallbacks: Vec<String> = self
-                .config
-                .get_dynamic_fallbacks("vision_agent")
-                .into_iter()
-                .filter(|model| crate::providers::model_supports_vision(model))
-                .collect();
-            for (idx, fallback_model) in dynamic_fallbacks.iter().enumerate() {
-                if let Ok(p) = build_provider_for_model(&self.config, fallback_model) {
-                    crate::tui_println!("{}  ✓ Auto-routed vision task to subagent model '{}'{}", EMERALD_GREEN, fallback_model, COLOR_RESET);
-                    selected_model = fallback_model.clone();
-                    selected_fallback_models = dynamic_fallbacks[idx + 1..].to_vec();
-                    resolved_provider = Some(p);
-                    break;
-                }
-            }
-            resolved_provider.unwrap_or_else(|| self.parent_provider.clone())
-        } else {
+        let provider = if std::env::var("OPENZ_USE_MOCK_PROVIDER").is_ok() {
             self.parent_provider.clone()
+        } else {
+            let mut selected_provider = None;
+            for (idx, model) in models_to_try.iter().enumerate() {
+                match build_provider_for_model(&self.config, model) {
+                    Ok(provider) => {
+                        selected_model = model.clone();
+                        selected_fallback_models = models_to_try[idx + 1..].to_vec();
+                        if has_images && crate::providers::model_supports_vision(model) {
+                            crate::tui_println!("{}  ✓ Auto-routed vision task to subagent model '{}'{}", EMERALD_GREEN, model, COLOR_RESET);
+                        }
+                        selected_provider = Some(provider);
+                        break;
+                    }
+                    Err(e) => {
+                        crate::tui_println!("{}⚠️ Failed to configure subagent model '{}' ({}). Trying next fallback.{}", AURA_GOLD, model, e, COLOR_RESET);
+                    }
+                }
+            }
+            selected_provider.unwrap_or_else(|| {
+                selected_fallback_models.clear();
+                self.parent_provider.clone()
+            })
         };
 
         let mut child_config = self.config.clone();
@@ -176,40 +170,27 @@ impl Tool for DelegateTaskTool {
 
         let filesystem_write_denied = super::filesystem_write_denied_by_policy(&self.capability_policy);
 
-        let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
-        let mut has_branch = false;
-        if !filesystem_write_denied {
-            let tool = crate::tools::graph_memory::CreateDatabaseBranchTool;
-            match tool.call(&serde_json::json!({ "branchId": branch_id })).await {
-                Ok(_) => {
+        let branch_id = if !filesystem_write_denied {
+            match super::create_simulation_branch(true).await {
+                Ok(Some(branch_id)) => {
                     crate::tui_println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
-                    has_branch = true;
+                    Some(branch_id)
                 }
+                Ok(None) => None,
                 Err(e) => {
                     tracing::warn!("Failed to create database branch: {:?}", e);
+                    None
                 }
             }
-        }
-
-        let parent_dir = current_workspace_root();
-        let mut workspace_isolation = if filesystem_write_denied {
-            "policy_no_filesystem_write".to_string()
-        } else {
-            "isolated_worktree".to_string()
-        };
-        let mut workspace_isolation_reason: Option<String> = if filesystem_write_denied {
-            Some("Capability policy denies filesystem writes; running without workspace isolation, graph branches, or sync-back.".to_string())
         } else {
             None
         };
-        let workspace_dir = if filesystem_write_denied {
-            parent_dir.clone()
-        } else {
-            let iso = super::create_workspace_isolation(&parent_dir).await;
-            workspace_isolation = iso.label;
-            workspace_isolation_reason = iso.reason;
-            iso.dir
-        };
+
+        let parent_dir = current_workspace_root();
+        let workspace = super::prepare_workspace(&parent_dir, filesystem_write_denied, true).await;
+        let workspace_dir = workspace.dir;
+        let workspace_isolation = workspace.label;
+        let workspace_isolation_reason = workspace.reason;
 
         let _worktree_guard = WorktreeGuard::new(parent_dir.clone(), workspace_dir.clone());
 
@@ -275,35 +256,16 @@ impl Tool for DelegateTaskTool {
             .await;
         }
 
-        if has_branch {
-            if run_res.is_ok() {
-                match crate::tools::graph_memory::CommitDatabaseBranchTool.call(&serde_json::json!({})).await {
-                    Ok(_) => crate::tui_println!(
-                        "{}  ✓ {}{}",
-                        EMERALD_GREEN,
-                        simulation_space_teardown_message(
-                            true,
-                            &branch_id,
-                            is_scratch_workspace(&workspace_dir),
-                        ),
-                        COLOR_RESET
-                    ),
-                    Err(e) => tracing::warn!("Failed to commit database branch: {:?}", e),
-                }
-            } else {
-                match crate::tools::graph_memory::RollbackDatabaseBranchTool.call(&serde_json::json!({})).await {
-                    Ok(_) => crate::tui_println!(
-                        "{}  ✓ {}{}",
-                        AURA_GOLD,
-                        simulation_space_teardown_message(
-                            false,
-                            &branch_id,
-                            is_scratch_workspace(&workspace_dir),
-                        ),
-                        COLOR_RESET
-                    ),
-                    Err(e) => tracing::warn!("Failed to rollback database branch: {:?}", e),
-                }
+        if let Some(branch_id) = branch_id.as_deref() {
+            if let Err(e) = super::finish_simulation_branch(
+                branch_id,
+                run_res.is_ok(),
+                is_scratch_workspace(&workspace_dir),
+                true,
+            )
+            .await
+            {
+                tracing::warn!("Failed to finalize database branch: {:?}", e);
             }
         }
 
@@ -411,6 +373,78 @@ impl Tool for DelegateTaskTool {
         }
         }).await
     }
+}
+
+pub(crate) fn delegate_task_models_to_try(
+    config: &Config,
+    model_override: Option<&str>,
+    has_images: bool,
+) -> Vec<String> {
+    fn add_candidate(models: &mut Vec<String>, model: &str) {
+        let trimmed = model.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        if !models
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(trimmed))
+        {
+            models.push(trimmed.to_string());
+        }
+    }
+
+    let default_model = config.agents.defaults.model.trim();
+    let mut models = Vec::new();
+
+    if let Some(model) = model_override
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        add_candidate(&mut models, model);
+    } else if has_images && !crate::providers::model_supports_vision(default_model) {
+        for fallback in config
+            .get_dynamic_fallbacks("vision_agent")
+            .into_iter()
+            .filter(|model| crate::providers::model_supports_vision(model))
+        {
+            add_candidate(&mut models, &fallback);
+        }
+    } else {
+        add_candidate(&mut models, default_model);
+    }
+
+    for fallback in &config.agents.defaults.fallback_models {
+        let Some(model) = fallback
+            .as_str()
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        else {
+            continue;
+        };
+        if has_images && !crate::providers::model_supports_vision(model) {
+            continue;
+        }
+        add_candidate(&mut models, model);
+    }
+
+    add_candidate(&mut models, default_model);
+    super::limit_subagent_models_to_try(&mut models);
+
+    if !default_model.is_empty()
+        && !models
+            .iter()
+            .any(|model| model.eq_ignore_ascii_case(default_model))
+    {
+        if models.len() >= super::max_subagent_model_attempts() {
+            if let Some(last) = models.last_mut() {
+                *last = default_model.to_string();
+            }
+        } else {
+            models.push(default_model.to_string());
+        }
+    }
+
+    models
 }
 
 pub fn ensure_markdown_images(text: &str) -> String {
@@ -1015,24 +1049,24 @@ fn should_skip_workspace_copy_dir(name: &str) -> bool {
     )
 }
 
-fn canonical_or_original(path: &std::path::Path) -> std::path::PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-}
-
 fn is_dangerous_fallback_copy_root(path: &std::path::Path) -> bool {
-    let canonical = canonical_or_original(path);
+    let canonical = crate::config::path_policy::canonicalize_with_missing_leaf(path);
     if canonical.parent().is_none() {
         return true;
     }
 
     if dirs::home_dir()
-        .map(|home| canonical == canonical_or_original(&home))
+        .map(|home| {
+            canonical == crate::config::path_policy::canonicalize_with_missing_leaf(&home)
+        })
         .unwrap_or(false)
     {
         return true;
     }
 
-    let runtime_dir = canonical_or_original(&crate::config::loader::runtime_data_dir());
+    let runtime_dir = crate::config::path_policy::canonicalize_with_missing_leaf(
+        &crate::config::loader::runtime_data_dir(),
+    );
     canonical == runtime_dir || canonical.starts_with(runtime_dir.join("worktrees"))
 }
 

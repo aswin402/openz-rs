@@ -1,4 +1,5 @@
 use super::{AgentLoop, TurnContext, TurnState, get_session_lock};
+use crate::memory::with_graph_db;
 use crate::agent::style::*;
 use anyhow::Result;
 use serde::Deserialize;
@@ -89,7 +90,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     }
     tracing::info!(session = %ctx.session_key, "Session saved successfully. Turn complete.");
 
-    let traces_dir = crate::config::resolve_path("~/.openz/traces");
+    let traces_dir = crate::config::traces_dir();
     if let Err(e) = std::fs::create_dir_all(&traces_dir) {
         tracing::error!(
             "{}▲ Failed to create traces directory: {}{}",
@@ -160,7 +161,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     skills_saved: Vec<String>,
                     error_message: Option<String>,
                 }
-                let log_path = crate::config::resolve_path("~/.openz/curator_status.json");
+                let log_path = crate::config::runtime_data_dir().join("curator_status.json");
                 let record = CuratorStatus {
                     last_run_timestamp: chrono::Utc::now().to_rfc3339(),
                     status: status.to_string(),
@@ -546,7 +547,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                         &uuid::Uuid::new_v4().to_string()[..8]
                                                     );
                                                     let timestamp = chrono::Utc::now().to_rfc3339();
-                                                    let _ = crate::tools::graph_memory::with_db(
+                                                    let _ = with_graph_db(
                                                         |conn| {
                                                             let mut check_stmt = conn.prepare(
                                                             "SELECT 1 FROM semantic_metadata WHERE raw_text = ?1 AND valid_until IS NULL"

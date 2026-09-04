@@ -33,12 +33,13 @@
     "typescript-eslint": "^8.57.2",
     "vite": "^8.0.2"
   },
-  "name": "onpkg-vite-react",
+  "name": "openz-webui",
   "private": true,
   "scripts": {
     "build": "tsc -b && vite build",
     "dev": "vite",
     "lint": "eslint .",
+    "test": "bun test",
     "preview": "vite preview"
   },
   "type": "module",

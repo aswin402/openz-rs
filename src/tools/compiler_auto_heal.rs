@@ -2,7 +2,7 @@ use crate::agent::style::colors::{AURA_GOLD, AURA_PURPLE, COLOR_RESET, EMERALD_G
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::sync::Arc;
 

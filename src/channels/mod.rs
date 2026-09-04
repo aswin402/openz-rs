@@ -1,6 +1,12 @@
 use async_trait::async_trait;
+use crate::config::provider_catalog;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+
+use self::notifications::{
+    build_external_notification_requests,
+};
+use self::transport::send_external_notification;
 
 #[async_trait]
 pub trait Channel: Send + Sync {
@@ -32,21 +38,6 @@ pub fn is_stop_command(text: &str) -> bool {
         text.split_whitespace().next(),
         Some("/stop" | "/cancel" | "/tui-esc" | "/tui-cancel")
     )
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct ProviderModels {
-    pub name: &'static str,
-    pub display: &'static str,
-    pub models: &'static [&'static str],
-}
-
-#[derive(Debug, Clone)]
-pub struct ProviderModelsOption {
-    pub name: String,
-    pub display: String,
-    pub models: Vec<String>,
-    pub available: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -297,283 +288,6 @@ pub fn parse_model_switch_command(text: &str) -> ModelSwitchCommand {
     }
 }
 
-pub fn provider_model_catalog() -> &'static [ProviderModels] {
-    &[
-        ProviderModels {
-            name: "openai",
-            display: "OpenAI",
-            models: &[
-                "gpt-4.5",
-                "gpt-4o",
-                "gpt-4o-mini",
-                "o1",
-                "o1-mini",
-                "o3",
-                "o3-mini",
-                "o4-mini",
-            ],
-        },
-        ProviderModels {
-            name: "anthropic",
-            display: "Anthropic",
-            models: &[
-                "claude-3-5-sonnet-20241022",
-                "claude-3-5-sonnet",
-                "claude-3-5-haiku-20241022",
-                "claude-3-5-haiku",
-                "claude-3-opus-20240229",
-                "claude-3-opus",
-            ],
-        },
-        ProviderModels {
-            name: "openrouter",
-            display: "OpenRouter",
-            models: &[
-                "google/gemini-2.5-pro",
-                "google/gemini-2.5-flash",
-                "anthropic/claude-3.5-sonnet",
-                "meta-llama/llama-3.3-70b-instruct",
-                "deepseek/deepseek-r1",
-            ],
-        },
-        ProviderModels {
-            name: "deepseek",
-            display: "DeepSeek",
-            models: &["deepseek-chat", "deepseek-reasoner"],
-        },
-        ProviderModels {
-            name: "groq",
-            display: "Groq",
-            models: &[
-                "deepseek-r1-distill-llama-70b",
-                "llama-3.3-70b-versatile",
-                "llama-3.1-8b-instant",
-                "mixtral-8x7b-32768",
-                "gemma2-9b-it",
-            ],
-        },
-        ProviderModels {
-            name: "ollama_local",
-            display: "Ollama Local",
-            models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"],
-        },
-        ProviderModels {
-            name: "ollama",
-            display: "Ollama",
-            models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"],
-        },
-        ProviderModels {
-            name: "minimax",
-            display: "minimax.io",
-            models: &[
-                "MiniMax-M3",
-                "MiniMax-M2.7",
-                "MiniMax-M2.5",
-                "MiniMax-M2.1",
-                "MiniMax-M2",
-                "MiniMax-M1",
-            ],
-        },
-        ProviderModels {
-            name: "mistral",
-            display: "Mistral AI",
-            models: &[
-                "mistral-large-latest",
-                "pixtral-large-latest",
-                "mistral-moderation-latest",
-                "codestral-latest",
-                "mistral-small-latest",
-                "ministral-8b-latest",
-                "ministral-14b-latest",
-            ],
-        },
-        ProviderModels {
-            name: "z.ai",
-            display: "z.ai (Zhipu GLM)",
-            models: &[
-                "glm-5.1",
-                "glm-5",
-                "glm-5v-turbo",
-                "glm-4.7",
-                "glm-4.7-flash",
-                "glm-4-flash",
-            ],
-        },
-        ProviderModels {
-            name: "nvidia",
-            display: "NVIDIA NIM",
-            models: &[
-                "meta/llama3-70b-instruct",
-                "nvidia/llama-3.1-nemotron-70b-instruct",
-                "meta/llama-3.1-70b-instruct",
-                "mistralai/mixtral-8x22b-instruct-v0.1",
-                "google/gemma-2-27b-it",
-            ],
-        },
-        ProviderModels {
-            name: "opencode_zen",
-            display: "OpenCode Zen",
-            models: &[
-                "deepseek-v4-flash-free",
-                "mimo-v2.5-free",
-                "north-mini-code-free",
-                "nemotron-3-ultra-free",
-            ],
-        },
-        ProviderModels {
-            name: "cerebras",
-            display: "Cerebras",
-            models: &["llama-3.3-70b", "llama3.1-8b", "llama3.1-70b"],
-        },
-        ProviderModels {
-            name: "google_ai_studio",
-            display: "Google AI Studio",
-            models: &[
-                "gemini-3.5-flash",
-                "gemini-3.1-pro-preview",
-                "gemini-3.1-flash-lite",
-                "gemini-2.5-pro",
-                "gemini-2.5-flash",
-                "gemini-2.0-flash",
-                "gemini-1.5-pro",
-            ],
-        },
-        ProviderModels {
-            name: "cohere",
-            display: "Cohere",
-            models: &[
-                "command-a-plus-05-2026",
-                "command-r7b-12-2024",
-                "command-r7-12-2025",
-                "command-r-plus-08-2024",
-                "command-r-08-2024",
-            ],
-        },
-        ProviderModels {
-            name: "llm7",
-            display: "LLM7",
-            models: &["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"],
-        },
-        ProviderModels {
-            name: "sambanova",
-            display: "SambaNova",
-            models: &[
-                "DeepSeek-V3.2",
-                "Meta-Llama-3.3-70B-Instruct",
-                "Qwen2.5-72B-Instruct",
-                "QwQ-32B",
-                "gemma-4-31B-it",
-            ],
-        },
-        ProviderModels {
-            name: "huggingface",
-            display: "Hugging Face Inference",
-            models: &[
-                "meta-llama/Llama-3.3-70B-Instruct",
-                "Qwen/QwQ-32B",
-                "deepseek-ai/DeepSeek-R1",
-            ],
-        },
-    ]
-}
-
-pub fn configured_provider_models(
-    config: &crate::config::schema::Config,
-) -> Vec<&'static ProviderModels> {
-    provider_model_catalog()
-        .iter()
-        .filter(|provider| config.is_provider_available(provider.name))
-        .collect()
-}
-
-pub fn configured_provider_model_options(
-    config: &crate::config::schema::Config,
-) -> Vec<ProviderModelsOption> {
-    provider_model_catalog_options(config, true)
-}
-
-pub fn provider_model_catalog_options(
-    config: &crate::config::schema::Config,
-    configured_only: bool,
-) -> Vec<ProviderModelsOption> {
-    let mut providers = provider_model_catalog()
-        .iter()
-        .filter_map(|provider| {
-            let available = config.is_provider_available(provider.name);
-            if configured_only && !available {
-                return None;
-            }
-            Some(ProviderModelsOption {
-                name: provider.name.to_string(),
-                display: provider.display.to_string(),
-                models: provider
-                    .models
-                    .iter()
-                    .map(|model| model.to_string())
-                    .collect(),
-                available,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    for name in config.custom_provider_names() {
-        let available = config.is_provider_available(&name);
-        if configured_only && !available {
-            continue;
-        }
-        let default_model = config.custom_provider_default_model(&name);
-        let models = default_model.clone().into_iter().collect::<Vec<_>>();
-        let display_model = default_model.unwrap_or_else(|| "custom model".to_string());
-        providers.push(ProviderModelsOption {
-            name: name.clone(),
-            display: format!("Custom: {} ({})", name, display_model),
-            models,
-            available,
-        });
-    }
-
-    providers
-}
-
-pub fn provider_model_option_by_name(
-    config: &crate::config::schema::Config,
-    name: &str,
-) -> Option<ProviderModelsOption> {
-    provider_models_by_name(name)
-        .map(|provider| ProviderModelsOption {
-            name: provider.name.to_string(),
-            display: provider.display.to_string(),
-            models: provider
-                .models
-                .iter()
-                .map(|model| model.to_string())
-                .collect(),
-            available: config.is_provider_available(provider.name),
-        })
-        .or_else(|| {
-            if !config.is_custom_provider(name) {
-                return None;
-            }
-            let default_model = config.custom_provider_default_model(name);
-            Some(ProviderModelsOption {
-                name: name.to_string(),
-                display: format!(
-                    "Custom: {} ({})",
-                    name,
-                    default_model.as_deref().unwrap_or("custom model")
-                ),
-                models: default_model.into_iter().collect(),
-                available: config.is_provider_available(name),
-            })
-        })
-}
-
-pub fn provider_models_by_name(name: &str) -> Option<&'static ProviderModels> {
-    provider_model_catalog()
-        .iter()
-        .find(|provider| provider.name == name)
-}
-
 pub fn model_switch_text_response(text: &str) -> Option<String> {
     let command = parse_model_switch_command(text);
     if command == ModelSwitchCommand::None {
@@ -797,65 +511,26 @@ pub struct ChannelSessionItem {
     pub message_count: usize,
 }
 
-#[derive(serde::Deserialize)]
-struct ChannelSessionMetadataOnly {
-    key: String,
-    updated_at: chrono::DateTime<chrono::Utc>,
-    messages: Vec<ChannelMessageMetadataOnly>,
-}
-
-#[derive(serde::Deserialize)]
-struct ChannelMessageMetadataOnly {
-    role: String,
-    content: String,
-}
-
-fn channel_session_preview(messages: &[ChannelMessageMetadataOnly]) -> String {
-    messages
-        .iter()
-        .find(|m| m.role == "user")
-        .map(|m| {
-            let mut text = m.content.split_whitespace().collect::<Vec<_>>().join(" ");
-            if text.chars().count() > 70 {
-                text = text.chars().take(67).collect::<String>();
-                text.push_str("...");
-            }
-            text
-        })
-        .unwrap_or_else(|| "Empty session".to_string())
-}
-
 pub fn list_channel_sessions(
     session_dir: &std::path::Path,
     prefix: &str,
     limit: usize,
 ) -> Vec<ChannelSessionItem> {
-    let mut items = Vec::new();
-    let Ok(entries) = std::fs::read_dir(session_dir) else {
-        return items;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("json") {
-            continue;
-        }
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(session) = serde_json::from_str::<ChannelSessionMetadataOnly>(&content) else {
-            continue;
-        };
-        if !session.key.starts_with(prefix) || session.messages.is_empty() {
-            continue;
-        }
-        items.push(ChannelSessionItem {
-            key: session.key,
-            display_title: channel_session_preview(&session.messages),
-            updated_at: session.updated_at,
-            message_count: session.messages.len(),
-        });
-    }
-    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    let manager = crate::session::SessionManager::new(session_dir.to_path_buf());
+    let mut items: Vec<ChannelSessionItem> = manager
+        .list_summaries()
+        .into_iter()
+        .filter(|s| s.key.starts_with(prefix) && s.message_count > 0)
+        .map(|s| {
+            let display_title = s.preview_title(70, "Empty session");
+            ChannelSessionItem {
+                key: s.key,
+                display_title,
+                updated_at: s.updated_at,
+                message_count: s.message_count,
+            }
+        })
+        .collect();
     items.truncate(limit);
     items
 }
@@ -992,199 +667,6 @@ pub fn get_active_session_targets(session_dir: &std::path::Path, prefix: &str) -
     targets
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum NotificationAuth {
-    None,
-    Bearer(String),
-    Header { name: &'static str, value: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct NotificationRequest {
-    channel: &'static str,
-    target: String,
-    url: String,
-    payload: serde_json::Value,
-    auth: NotificationAuth,
-}
-
-fn configured_or_env(config_value: &str, env_var: &str) -> Option<String> {
-    if config_value.trim().is_empty() {
-        std::env::var(env_var).ok().filter(|v| !v.trim().is_empty())
-    } else {
-        Some(config_value.to_string())
-    }
-}
-
-fn build_telegram_notification_requests(
-    token: String,
-    targets: Vec<String>,
-    msg: &str,
-) -> Vec<NotificationRequest> {
-    targets
-        .into_iter()
-        .filter_map(|target| {
-            let chat_id = match target.parse::<i64>() {
-                Ok(chat_id) => chat_id,
-                Err(_) => {
-                    tracing::warn!(target = %target, "Skipping invalid Telegram notification target");
-                    return None;
-                }
-            };
-            Some(NotificationRequest {
-                channel: "Telegram",
-                target,
-                url: format!("https://api.telegram.org/bot{token}/sendMessage"),
-                payload: serde_json::json!({
-                    "chat_id": chat_id,
-                    "text": msg,
-                    "parse_mode": "Markdown"
-                }),
-                auth: NotificationAuth::None,
-            })
-        })
-        .collect()
-}
-
-fn build_discord_notification_requests(
-    token: String,
-    targets: Vec<String>,
-    msg: &str,
-) -> Vec<NotificationRequest> {
-    targets
-        .into_iter()
-        .map(|target| NotificationRequest {
-            channel: "Discord",
-            url: format!("https://discord.com/api/v10/channels/{target}/messages"),
-            target,
-            payload: serde_json::json!({ "content": msg }),
-            auth: NotificationAuth::Header {
-                name: "Authorization",
-                value: format!("Bot {token}"),
-            },
-        })
-        .collect()
-}
-
-fn build_whatsapp_notification_requests(
-    api_key: String,
-    phone_number_id: &str,
-    targets: Vec<String>,
-    msg: &str,
-) -> Vec<NotificationRequest> {
-    if phone_number_id.trim().is_empty() || api_key.trim().is_empty() {
-        tracing::warn!(
-            "Skipping WhatsApp notifications because api_key or phone_number_id is empty"
-        );
-        return Vec::new();
-    }
-
-    targets
-        .into_iter()
-        .map(|target| NotificationRequest {
-            channel: "WhatsApp",
-            target: target.clone(),
-            url: format!("https://graph.facebook.com/v18.0/{phone_number_id}/messages"),
-            payload: serde_json::json!({
-                "messaging_product": "whatsapp",
-                "recipient_type": "individual",
-                "to": target,
-                "type": "text",
-                "text": { "body": msg }
-            }),
-            auth: NotificationAuth::Bearer(api_key.clone()),
-        })
-        .collect()
-}
-
-fn build_external_notification_requests(
-    config: &crate::config::schema::Config,
-    sessions_dir: &std::path::Path,
-    msg: &str,
-) -> Vec<NotificationRequest> {
-    let mut requests = Vec::new();
-
-    if let Some(tg_config) = &config.channels.telegram {
-        if tg_config.enabled {
-            if let Some(token) = configured_or_env(&tg_config.bot_token, "TELEGRAM_BOT_TOKEN") {
-                requests.extend(build_telegram_notification_requests(
-                    token,
-                    get_active_session_targets(sessions_dir, "telegram_"),
-                    msg,
-                ));
-            } else {
-                tracing::warn!(
-                    "Skipping Telegram notifications because no bot token is configured"
-                );
-            }
-        }
-    }
-
-    if let Some(dc_config) = &config.channels.discord {
-        if dc_config.enabled {
-            if let Some(token) = configured_or_env(&dc_config.bot_token, "DISCORD_BOT_TOKEN") {
-                requests.extend(build_discord_notification_requests(
-                    token,
-                    get_active_session_targets(sessions_dir, "discord_"),
-                    msg,
-                ));
-            } else {
-                tracing::warn!("Skipping Discord notifications because no bot token is configured");
-            }
-        }
-    }
-
-    if let Some(wa_config) = &config.channels.whatsapp {
-        if wa_config.enabled {
-            requests.extend(build_whatsapp_notification_requests(
-                wa_config.api_key.clone(),
-                &wa_config.phone_number_id,
-                get_active_session_targets(sessions_dir, "whatsapp_"),
-                msg,
-            ));
-        }
-    }
-
-    requests
-}
-
-async fn send_external_notification(client: &reqwest::Client, request: &NotificationRequest) {
-    let mut builder = client.post(&request.url).json(&request.payload);
-    match &request.auth {
-        NotificationAuth::None => {}
-        NotificationAuth::Bearer(token) => {
-            builder = builder.bearer_auth(token);
-        }
-        NotificationAuth::Header { name, value } => {
-            builder = builder.header(*name, value);
-        }
-    }
-
-    match builder.send().await {
-        Ok(resp) => {
-            let status = resp.status();
-            if !status.is_success() {
-                let body = resp.text().await.unwrap_or_default();
-                tracing::warn!(
-                    channel = request.channel,
-                    target = %request.target,
-                    status = %status,
-                    response = %body,
-                    "Failed to send external notification"
-                );
-            }
-        }
-        Err(err) => {
-            tracing::warn!(
-                channel = request.channel,
-                target = %request.target,
-                error = %err,
-                "Error sending external notification"
-            );
-        }
-    }
-}
-
 pub fn select_random_message(messages: &[&str]) -> String {
     if messages.is_empty() {
         return String::new();
@@ -1200,7 +682,7 @@ pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
         crate::tui_println!("Shutting down gateways...");
     }
 
-    let sessions_dir = crate::config::loader::resolve_path("~/.openz/sessions");
+    let sessions_dir = crate::config::loader::sessions_dir();
     let client = reqwest::Client::builder()
         .use_rustls_tls()
         .connect_timeout(SHUTDOWN_HTTP_TIMEOUT)
@@ -1208,150 +690,9 @@ pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
         .build()
         .unwrap_or_default();
 
-    // Telegram
-    if let Some(tg_config) = &config.channels.telegram {
-        if tg_config.enabled {
-            let token = if tg_config.bot_token.is_empty() {
-                std::env::var("TELEGRAM_BOT_TOKEN").ok()
-            } else {
-                Some(tg_config.bot_token.clone())
-            };
-            if let Some(token) = token {
-                let chats = get_active_session_targets(&sessions_dir, "telegram_");
-                let msg = select_random_message(OFFLINE_MESSAGES);
-                for chat_str in chats {
-                    if let Ok(chat_id) = chat_str.parse::<i64>() {
-                        let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-                        let payload = serde_json::json!({
-                            "chat_id": chat_id,
-                            "text": msg
-                        });
-                        match client.post(&send_url).json(&payload).send().await {
-                            Ok(resp) => {
-                                let status = resp.status();
-                                if !status.is_success() {
-                                    if let Ok(body) = resp.text().await {
-                                        eprintln!(
-                                            "Failed to send Telegram offline message: status {}, response: {}",
-                                            status, body
-                                        );
-                                    } else {
-                                        eprintln!(
-                                            "Failed to send Telegram offline message: status {}",
-                                            status
-                                        );
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Error sending Telegram offline message: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Discord
-    if let Some(dc_config) = &config.channels.discord {
-        if dc_config.enabled {
-            let token = if dc_config.bot_token.is_empty() {
-                std::env::var("DISCORD_BOT_TOKEN").ok()
-            } else {
-                Some(dc_config.bot_token.clone())
-            };
-            if let Some(token) = token {
-                let channels = get_active_session_targets(&sessions_dir, "discord_");
-                let msg = select_random_message(OFFLINE_MESSAGES);
-                for channel_id in channels {
-                    let send_url = format!(
-                        "https://discord.com/api/v10/channels/{}/messages",
-                        channel_id
-                    );
-                    let payload = serde_json::json!({
-                        "content": msg
-                    });
-                    match client
-                        .post(&send_url)
-                        .header("Authorization", format!("Bot {}", token))
-                        .json(&payload)
-                        .send()
-                        .await
-                    {
-                        Ok(resp) => {
-                            let status = resp.status();
-                            if !status.is_success() {
-                                if let Ok(body) = resp.text().await {
-                                    eprintln!(
-                                        "Failed to send Discord offline message: status {}, response: {}",
-                                        status, body
-                                    );
-                                } else {
-                                    eprintln!(
-                                        "Failed to send Discord offline message: status {}",
-                                        status
-                                    );
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Error sending Discord offline message: {}", e);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // WhatsApp
-    if let Some(wa_config) = &config.channels.whatsapp {
-        if wa_config.enabled {
-            let targets = get_active_session_targets(&sessions_dir, "whatsapp_");
-            let msg = select_random_message(OFFLINE_MESSAGES);
-            for phone_number in targets {
-                let send_url = format!(
-                    "https://graph.facebook.com/v18.0/{}/messages",
-                    wa_config.phone_number_id
-                );
-                let payload = serde_json::json!({
-                    "messaging_product": "whatsapp",
-                    "recipient_type": "individual",
-                    "to": phone_number,
-                    "type": "text",
-                    "text": {
-                        "body": msg
-                    }
-                });
-                match client
-                    .post(&send_url)
-                    .bearer_auth(&wa_config.api_key)
-                    .json(&payload)
-                    .send()
-                    .await
-                {
-                    Ok(resp) => {
-                        let status = resp.status();
-                        if !status.is_success() {
-                            if let Ok(body) = resp.text().await {
-                                eprintln!(
-                                    "Failed to send WhatsApp offline message: status {}, response: {}",
-                                    status, body
-                                );
-                            } else {
-                                eprintln!(
-                                    "Failed to send WhatsApp offline message: status {}",
-                                    status
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Error sending WhatsApp offline message: {}", e);
-                    }
-                }
-            }
-        }
+    let offline_message = select_random_message(OFFLINE_MESSAGES);
+    for request in build_external_notification_requests(config, &sessions_dir, &offline_message) {
+        send_external_notification(&client, &request).await;
     }
 
     // Unload the active Ollama model and stop the local service if spawned by us
@@ -1371,190 +712,21 @@ pub async fn shutdown_gateways_bounded(config: &crate::config::schema::Config) {
     }
 }
 
-pub static PROVIDER_REGISTRY: &[ProviderModels] = &[
-    ProviderModels {
-        name: "mivi",
-        display: "Mivi Local (custom)",
-        models: &["mivi llm", "mivi-llm", "mivi"],
-    },
-    ProviderModels {
-        name: "openai",
-        display: "OpenAI",
-        models: &[
-            "gpt-4.5",
-            "gpt-4o",
-            "gpt-4o-mini",
-            "o1",
-            "o1-mini",
-            "o3",
-            "o3-mini",
-            "o4-mini",
-        ],
-    },
-    ProviderModels {
-        name: "anthropic",
-        display: "Anthropic",
-        models: &[
-            "claude-3-5-sonnet-20241022",
-            "claude-3-5-sonnet",
-            "claude-3-5-haiku-20241022",
-            "claude-3-5-haiku",
-            "claude-3-opus-20240229",
-            "claude-3-opus",
-        ],
-    },
-    ProviderModels {
-        name: "openrouter",
-        display: "OpenRouter",
-        models: &[
-            "google/gemini-2.5-pro",
-            "google/gemini-2.5-flash",
-            "anthropic/claude-3.5-sonnet",
-            "meta-llama/llama-3.3-70b-instruct",
-            "deepseek/deepseek-r1",
-        ],
-    },
-    ProviderModels {
-        name: "deepseek",
-        display: "DeepSeek",
-        models: &["deepseek-chat", "deepseek-reasoner"],
-    },
-    ProviderModels {
-        name: "groq",
-        display: "Groq",
-        models: &[
-            "deepseek-r1-distill-llama-70b",
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768",
-            "gemma2-9b-it",
-        ],
-    },
-    ProviderModels {
-        name: "ollama_local",
-        display: "Ollama Local (Auto-Start)",
-        models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"],
-    },
-    ProviderModels {
-        name: "ollama",
-        display: "Ollama",
-        models: &["llama3", "mistral", "phi3", "qwen2.5", "deepseek-r1"],
-    },
-    ProviderModels {
-        name: "minimax",
-        display: "minimax.io",
-        models: &[
-            "MiniMax-M3",
-            "MiniMax-M2.7",
-            "MiniMax-M2.5",
-            "MiniMax-M2.1",
-            "MiniMax-M2",
-            "MiniMax-M1",
-        ],
-    },
-    ProviderModels {
-        name: "mistral",
-        display: "Mistral AI",
-        models: &[
-            "mistral-large-latest",
-            "pixtral-large-latest",
-            "codestral-latest",
-            "mistral-small-latest",
-        ],
-    },
-    ProviderModels {
-        name: "z.ai",
-        display: "z.ai (Zhipu GLM)",
-        models: &[
-            "glm-5.1",
-            "glm-5",
-            "glm-5v-turbo",
-            "glm-4.7",
-            "glm-4.7-flash",
-            "glm-4-flash",
-        ],
-    },
-    ProviderModels {
-        name: "nvidia",
-        display: "NVIDIA NIM",
-        models: &[
-            "meta/llama3-70b-instruct",
-            "nvidia/llama-3.1-nemotron-70b-instruct",
-            "meta/llama-3.1-70b-instruct",
-        ],
-    },
-    ProviderModels {
-        name: "opencode_zen",
-        display: "OpenCode Zen",
-        models: &[
-            "deepseek-v4-flash-free",
-            "mimo-v2.5-free",
-            "north-mini-code-free",
-            "nemotron-3-ultra-free",
-        ],
-    },
-    ProviderModels {
-        name: "cerebras",
-        display: "Cerebras",
-        models: &["llama-3.3-70b", "llama3.1-8b", "llama3.1-70b"],
-    },
-    ProviderModels {
-        name: "google_ai_studio",
-        display: "Google AI Studio (Gemini)",
-        models: &[
-            "gemini-3.5-flash",
-            "gemini-3.1-pro-preview",
-            "gemini-3.1-flash-lite",
-            "gemini-2.5-pro",
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-pro",
-        ],
-    },
-    ProviderModels {
-        name: "cohere",
-        display: "Cohere",
-        models: &[
-            "command-a-plus-05-2026",
-            "command-r7b-12-2024",
-            "command-r7-12-2025",
-            "command-r-plus-08-2024",
-            "command-r-08-2024",
-        ],
-    },
-    ProviderModels {
-        name: "sambanova",
-        display: "SambaNova",
-        models: &[
-            "DeepSeek-V3.2",
-            "Meta-Llama-3.3-70B-Instruct",
-            "Qwen2.5-72B-Instruct",
-            "QwQ-32B",
-            "gemma-4-31B-it",
-        ],
-    },
-    ProviderModels {
-        name: "huggingface",
-        display: "Hugging Face Inference",
-        models: &[
-            "meta-llama/Llama-3.3-70B-Instruct",
-            "Qwen/QwQ-32B",
-            "deepseek-ai/DeepSeek-R1",
-        ],
-    },
-    ProviderModels {
-        name: "llm7",
-        display: "LLM7",
-        models: &["gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet"],
-    },
-];
-
 /// Build provider list from real config — only configured/available providers + custom providers.
 pub fn build_configured_providers(config: &crate::config::schema::Config) -> Vec<(String, String)> {
     let mut configured: Vec<(String, String)> = PROVIDER_REGISTRY
         .iter()
-        .filter(|p| config.is_provider_configured(p.name))
-        .map(|p| (p.name.to_string(), p.display.to_string()))
+        .filter_map(|p| {
+            let descriptor = provider_catalog::find_provider(p.name)?;
+            config
+                .is_provider_configured(descriptor.canonical_name)
+                .then(|| {
+                    (
+                        descriptor.canonical_name.to_string(),
+                        p.display.to_string(),
+                    )
+                })
+        })
         .collect();
 
     for name in config.custom_provider_names() {
@@ -1570,142 +742,6 @@ pub fn build_configured_providers(config: &crate::config::schema::Config) -> Vec
     }
 
     configured
-}
-
-/// Get curated fallback models for a provider.
-pub fn curated_models_for(provider_name: &str) -> Vec<String> {
-    if let Some(p) = PROVIDER_REGISTRY.iter().find(|p| p.name == provider_name) {
-        p.models.iter().map(|s| s.to_string()).collect()
-    } else {
-        vec!["default".to_string()]
-    }
-}
-
-pub fn preview_models_for_provider(
-    provider: &ProviderModelsOption,
-    config: &crate::config::schema::Config,
-    limit: usize,
-) -> Vec<String> {
-    let mut models = provider.models.clone();
-    if let Some(default_model) = config
-        .get_provider_config(&provider.name)
-        .and_then(|provider| provider.default_model.clone())
-        .or_else(|| config.custom_provider_default_model(&provider.name))
-        .filter(|model| !model.trim().is_empty())
-    {
-        if !models
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(&default_model))
-        {
-            models.insert(0, default_model);
-        }
-    }
-    models.truncate(limit);
-    models
-}
-
-pub async fn resolved_provider_models_for_webui(
-    provider: &ProviderModelsOption,
-    config: &crate::config::schema::Config,
-) -> Vec<String> {
-    let mut models = fetch_provider_models(&provider.name, config)
-        .await
-        .unwrap_or_default();
-
-    for model in &provider.models {
-        if !models
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(model))
-        {
-            models.push(model.clone());
-        }
-    }
-
-    if let Some(default_model) = config
-        .get_provider_config(&provider.name)
-        .and_then(|provider| provider.default_model.clone())
-        .or_else(|| config.custom_provider_default_model(&provider.name))
-        .filter(|model| !model.trim().is_empty())
-    {
-        if !models
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(&default_model))
-        {
-            models.push(default_model);
-        }
-    }
-
-    models.sort();
-    models
-}
-
-pub async fn fetch_provider_models(
-    provider_name: &str,
-    config: &crate::config::schema::Config,
-) -> Option<Vec<String>> {
-    static HTTP: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    let client = HTTP.get_or_init(|| {
-        reqwest::Client::builder()
-            .use_rustls_tls()
-            .timeout(std::time::Duration::from_secs(5))
-            .build()
-            .unwrap_or_default()
-    });
-
-    let (api_key, api_base) = config.resolve_provider_config(provider_name);
-
-    if provider_name != "ollama"
-        && provider_name != "ollama_local"
-        && api_key.is_empty()
-        && !config.custom_provider_allows_empty_key(provider_name)
-    {
-        return None;
-    }
-
-    let url = if api_base.ends_with('/') {
-        format!("{}models", api_base)
-    } else {
-        format!("{}/models", api_base)
-    };
-
-    let mut req = client.get(&url);
-    if provider_name == "anthropic" {
-        req = req
-            .header("x-api-key", &api_key)
-            .header("anthropic-version", "2023-06-01");
-    } else if !api_key.is_empty() {
-        req = req.bearer_auth(&api_key);
-    }
-
-    let resp = req.send().await.ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-
-    let json: serde_json::Value = resp.json().await.ok()?;
-    let mut models = Vec::new();
-
-    if let Some(data_arr) = json.get("data").and_then(|d| d.as_array()) {
-        for m in data_arr {
-            if let Some(id) = m.get("id").and_then(|id| id.as_str()) {
-                models.push(id.to_string());
-            }
-        }
-    } else if let Some(models_arr) = json.get("models").and_then(|m| m.as_array()) {
-        for m in models_arr {
-            if let Some(name) = m.get("name").and_then(|n| n.as_str()) {
-                let name_cleaned = name.strip_prefix("models/").unwrap_or(name);
-                models.push(name_cleaned.to_string());
-            }
-        }
-    }
-
-    if models.is_empty() {
-        None
-    } else {
-        models.sort();
-        Some(models)
-    }
 }
 
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
@@ -1729,14 +765,24 @@ pub fn secure_compare(a: &str, b: &str) -> bool {
 pub mod cli;
 pub mod discord;
 pub mod email;
+pub mod model_catalog;
+pub mod notifications;
 pub mod ratatui;
 pub mod telegram;
+pub mod transport;
 pub mod websocket;
 pub mod whatsapp;
 
 pub use cli::CliChannel;
 pub use discord::DiscordChannel;
 pub use email::EmailChannel;
+pub use model_catalog::{
+    configured_provider_model_options, configured_provider_models, curated_models_for,
+    fetch_provider_models, preview_models_for_provider, provider_model_catalog,
+    provider_model_catalog_options, provider_model_option_by_name, provider_models_by_name,
+    resolved_provider_models_for_webui, ProviderModels, ProviderModelsOption,
+    PROVIDER_REGISTRY,
+};
 pub use ratatui::handle_ratatui_tui;
 pub use telegram::TelegramChannel;
 pub use websocket::WsGateway;
@@ -1778,10 +824,7 @@ pub fn send_notification(msg: &str) {
             Vec::new()
         };
 
-        let evt = serde_json::json!({
-            "event": "notification",
-            "message": msg_str
-        });
+        let evt = crate::channels::websocket::protocol::notification(msg_str.clone());
         if let Ok(evt_str) = serde_json::to_string(&evt) {
             for (id, tx) in ws_senders {
                 if tx.send(Message::Text(evt_str.clone())).await.is_err() {
@@ -1794,7 +837,7 @@ pub fn send_notification(msg: &str) {
 
         // Load config to check if external channels (Telegram, Discord, WhatsApp) are enabled.
         if let Ok(config) = crate::config::loader::load_config() {
-            let sessions_dir = crate::config::loader::resolve_path("~/.openz/sessions");
+            let sessions_dir = crate::config::loader::sessions_dir();
             let client = reqwest::Client::builder()
                 .use_rustls_tls()
                 .connect_timeout(SHUTDOWN_HTTP_TIMEOUT)
@@ -1811,6 +854,8 @@ pub fn send_notification(msg: &str) {
 
 #[cfg(test)]
 mod tests {
+    use super::notifications::{build_whatsapp_notification_requests, NotificationAuth};
+
     #[test]
     fn test_shutdown_timeout_is_short_enough_for_interactive_exit() {
         assert!(super::SHUTDOWN_HTTP_TIMEOUT.as_secs() <= 3);
@@ -1820,7 +865,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_build_external_notification_requests_for_enabled_channels() {
+    fn notification_payloads_preserve_channel_contracts() {
         let dir = std::env::temp_dir().join(format!(
             "openz_notification_targets_{}",
             uuid::Uuid::new_v4()
@@ -1852,18 +897,18 @@ mod tests {
         assert_eq!(requests.len(), 3);
         let telegram = requests
             .iter()
-            .find(|request| request.channel == "Telegram")
+            .find(|request| request.target.channel_name() == "Telegram")
             .unwrap();
-        assert_eq!(telegram.target, "12345");
+        assert_eq!(telegram.target.display_id(), "12345");
         assert!(telegram.url.contains("tg-token"));
         assert_eq!(telegram.payload["chat_id"], 12345);
         assert_eq!(telegram.auth, NotificationAuth::None);
 
         let discord = requests
             .iter()
-            .find(|request| request.channel == "Discord")
+            .find(|request| request.target.channel_name() == "Discord")
             .unwrap();
-        assert_eq!(discord.target, "98765");
+        assert_eq!(discord.target.display_id(), "98765");
         assert_eq!(discord.payload["content"], "hello");
         assert_eq!(
             discord.auth,
@@ -1875,9 +920,9 @@ mod tests {
 
         let whatsapp = requests
             .iter()
-            .find(|request| request.channel == "WhatsApp")
+            .find(|request| request.target.channel_name() == "WhatsApp")
             .unwrap();
-        assert_eq!(whatsapp.target, "15551234567");
+        assert_eq!(whatsapp.target.display_id(), "15551234567");
         assert_eq!(whatsapp.payload["text"]["body"], "hello");
         assert_eq!(
             whatsapp.auth,
@@ -1997,11 +1042,10 @@ mod model_switch_tests {
     fn model_risk_marks_unknown_free_models() {
         let risk = classify_model_risk("opencode_zen", "big-pickle");
         assert!(risk.risky);
-        assert!(
-            risk.reasons
-                .iter()
-                .any(|reason| reason.contains("not in OpenZ curated"))
-        );
+        assert!(risk
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("not in OpenZ curated")));
     }
 
     #[test]
@@ -2015,11 +1059,10 @@ mod model_switch_tests {
     fn model_risk_warns_for_small_models() {
         let risk = classify_model_risk("groq", "llama-3.1-8b-instant");
         assert!(risk.risky);
-        assert!(
-            risk.reasons
-                .iter()
-                .any(|reason| reason.contains("small/weak"))
-        );
+        assert!(risk
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("small/weak")));
     }
 
     #[test]
@@ -2074,11 +1117,9 @@ mod model_switch_tests {
 
         assert!(configured.iter().all(|provider| provider.available));
         assert!(!configured.iter().any(|provider| provider.name == "openai"));
-        assert!(
-            configured
-                .iter()
-                .any(|provider| provider.name == "ollama_local")
-        );
+        assert!(configured
+            .iter()
+            .any(|provider| provider.name == "ollama_local"));
     }
 
     #[test]

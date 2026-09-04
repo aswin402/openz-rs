@@ -3,16 +3,12 @@ import { useOpenZStore } from '../store/useOpenZStore';
 import { wsService } from '../services/websocket';
 import { Brain, ScrollText, Cpu, Settings, Menu, Sun, Moon } from 'lucide-react';
 import { useThemeStore } from '../store/useThemeStore';
+import { useResolvedTheme } from '../shared/lib/theme';
 
 export const Header: React.FC = () => {
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
-  const resolvedTheme =
-    theme === 'system'
-      ? window.matchMedia('(prefers-color-scheme: dark)').matches
-        ? 'dark'
-        : 'light'
-      : theme;
+  const resolvedTheme = useResolvedTheme(theme);
   const activeChatId = useOpenZStore((s) => s.activeChatId);
   const sessions = useOpenZStore((s) => s.sessions);
   const activeModel = useOpenZStore((s) => s.activeModel);

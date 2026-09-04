@@ -1,9 +1,9 @@
+use crate::memory::MemoryService;
 use crate::tools::Tool;
-use crate::tools::graph_memory::{scope_from_args, with_db};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use chrono::Utc;
 use rusqlite::params;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
@@ -48,6 +48,23 @@ pub(crate) fn active_working_memory_count(user_id: &str, session_id: &str, agent
         .count() as i64
 }
 
+/// Return the currently live working-memory keys for display in the WebUI.
+/// Values remain private; only non-expired key names are exposed.
+pub(crate) fn active_working_memory_keys() -> Vec<String> {
+    let Ok(map) = working_memory_static().lock() else {
+        return Vec::new();
+    };
+    let now = std::time::Instant::now();
+    let mut keys = map
+        .iter()
+        .filter(|(_, entry)| now.duration_since(entry.created_at).as_secs() < entry.ttl_seconds)
+        .filter_map(|(scoped, _)| scoped.splitn(4, ':').nth(3).map(str::to_string))
+        .collect::<Vec<_>>();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
 // ─── Tool: SetWorkingMemoryTool ──────────────────────────────────
 
 pub struct SetWorkingMemoryTool;
@@ -85,8 +102,9 @@ impl Tool for SetWorkingMemoryTool {
             .as_str()
             .ok_or_else(|| anyhow!("Missing 'value'"))?;
         let ttl = arguments.get("ttl").and_then(|v| v.as_u64()).unwrap_or(300);
-        let (uid, sid, aid) = scope_from_args(arguments);
-        let scoped = working_scoped_key(key, &uid, &sid, &aid);
+        let memory = MemoryService::from_tool_args(arguments);
+        let scope = memory.scope();
+        let scoped = working_scoped_key(key, &scope.user_id, &scope.session_id, &scope.agent_id);
 
         let mut map = working_memory_static()
             .lock()
@@ -148,8 +166,9 @@ impl Tool for GetWorkingMemoryTool {
         let key = arguments["key"]
             .as_str()
             .ok_or_else(|| anyhow!("Missing 'key'"))?;
-        let (uid, sid, aid) = scope_from_args(arguments);
-        let scoped = working_scoped_key(key, &uid, &sid, &aid);
+        let memory = MemoryService::from_tool_args(arguments);
+        let scope = memory.scope();
+        let scoped = working_scoped_key(key, &scope.user_id, &scope.session_id, &scope.agent_id);
 
         let mut map = working_memory_static()
             .lock()
@@ -199,7 +218,8 @@ impl Tool for EvictExpiredWorkingMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let (uid, sid, aid) = scope_from_args(arguments);
+        let memory = MemoryService::from_tool_args(arguments);
+        let scope = memory.scope();
         let mut map = working_memory_static()
             .lock()
             .map_err(|e| anyhow!("Working memory lock error: {}", e))?;
@@ -219,7 +239,14 @@ impl Tool for EvictExpiredWorkingMemoryTool {
                     let fact_id = format!("working-promoted-{}", uuid::Uuid::new_v4());
                     let raw_text =
                         format!("Ephemeral working memory was promoted: {}", entry.value);
-                    let _ = store_semantic_fact(&fact_id, &raw_text, 0.8, &uid, &sid, &aid);
+                    let _ = store_semantic_fact(
+                        &fact_id,
+                        &raw_text,
+                        0.8,
+                        &scope.user_id,
+                        &scope.session_id,
+                        &scope.agent_id,
+                    );
                 }
             }
         }
@@ -259,8 +286,9 @@ impl Tool for PromoteWorkingMemoryTool {
         let key = arguments["key"]
             .as_str()
             .ok_or_else(|| anyhow!("Missing 'key'"))?;
-        let (uid, sid, aid) = scope_from_args(arguments);
-        let scoped = working_scoped_key(key, &uid, &sid, &aid);
+        let memory = MemoryService::from_tool_args(arguments);
+        let scope = memory.scope();
+        let scoped = working_scoped_key(key, &scope.user_id, &scope.session_id, &scope.agent_id);
 
         let mut map = working_memory_static()
             .lock()
@@ -271,7 +299,14 @@ impl Tool for PromoteWorkingMemoryTool {
                 "Ephemeral working memory under key '{}' was promoted: {}",
                 key, entry.value
             );
-            store_semantic_fact(&fact_id, &raw_text, 0.8, &uid, &sid, &aid)?;
+            store_semantic_fact(
+                &fact_id,
+                &raw_text,
+                0.8,
+                &scope.user_id,
+                &scope.session_id,
+                &scope.agent_id,
+            )?;
             Ok(json!({ "status": format!("Promoted '{}' to semantic memory", key) }))
         } else {
             Ok(json!({ "status": format!("Key '{}' not found", key) }))
@@ -281,7 +316,7 @@ impl Tool for PromoteWorkingMemoryTool {
 
 // ─── Semantic fact helper ────────────────────────────────────────
 
-const SEMANTIC_EMBEDDING_DIMS: usize = 384;
+pub(crate) const SEMANTIC_EMBEDDING_DIMS: usize = 384;
 
 pub(crate) fn semantic_embedding_for_text(text: &str) -> Vec<f32> {
     let mut vector = vec![0.0f32; SEMANTIC_EMBEDDING_DIMS];
@@ -326,8 +361,9 @@ pub(crate) fn store_semantic_fact(
     agent_id: &str,
 ) -> Result<()> {
     let timestamp = Utc::now().to_rfc3339();
-    let embedding = semantic_embedding_blob(text);
-    with_db(|conn| {
+    let memory = MemoryService::current().with_identity(user_id, session_id, agent_id);
+    let embedding = memory.hashed_semantic_embedding_blob(text);
+    memory.with_graph_db(|conn| {
         conn.execute(
             "INSERT INTO semantic_metadata (node_id, raw_text, embedding, timestamp, importance, user_id, session_id, agent_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",

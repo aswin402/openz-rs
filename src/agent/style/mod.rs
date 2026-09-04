@@ -164,26 +164,7 @@ pub fn get_tree_prefix(is_leaf: bool) -> String {
 
 /// Converts a tool name into a clean, visual title.
 pub fn get_tool_clean_name(name: &str) -> String {
-    match name {
-        "exec_command" => "Bash".to_string(),
-        "write_file" => "Write".to_string(),
-        "patch_file" | "replace_lines" => "Edit".to_string(),
-        "read_file" => "Read".to_string(),
-        _ => {
-            let mut result = Vec::new();
-            for word in name.split('_') {
-                if word.is_empty() {
-                    continue;
-                }
-                let mut chars = word.chars();
-                if let Some(first) = chars.next() {
-                    let capitalized = first.to_uppercase().to_string() + chars.as_str();
-                    result.push(capitalized);
-                }
-            }
-            result.join(" ")
-        }
-    }
+    crate::tools::presentation_name(name)
 }
 
 /// Generates a styled spinner message indicating a tool is running under the tree bullet.

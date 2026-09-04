@@ -1,5 +1,10 @@
 use crate::agent::style::*;
 use crate::providers::ToolCallRequest;
+use crate::channels::notifications::{
+    discord_message_url, send_external_notification, telegram_api_url, whatsapp_message_url,
+    NotificationAuth, NotificationRequest, NotificationTarget,
+};
+use crate::tools::arguments::{COMMAND_KEYS, OUTPUT_KEYS, PATH_KEYS, QUERY_KEYS, URL_KEYS};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -28,22 +33,6 @@ fn filename_arg(map: &serde_json::Map<String, serde_json::Value>, keys: &[&str])
     })
 }
 
-// Canonical argument alias sets for display formatting. New tools should use
-// the first entry (snake_case) as their primary argument name; the remaining
-// entries are legacy aliases kept for compatibility with existing prompts.
-const PATH_KEYS: &[&str] = &[
-    "path",
-    "file_path",
-    "filePath",
-    "TargetFile",
-    "filepath",
-    "file",
-];
-const COMMAND_KEYS: &[&str] = &["command", "Command", "CommandLine", "command_line"];
-const OUTPUT_KEYS: &[&str] = &["output_path", "outputPath", "OutputPath"];
-const QUERY_KEYS: &[&str] = &["query", "Query"];
-const URL_KEYS: &[&str] = &["url", "Url", "UrlContent"];
-
 /// Truncate to at most `max` characters with a trailing ellipsis.
 fn clip(s: &str, max: usize) -> String {
     if s.chars().count() > max {
@@ -65,38 +54,7 @@ fn file_name_of(path: &str) -> String {
 
 pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> String {
     let args = raw_args.clone();
-    let friendly_name = match name {
-        "grep_search" => "Search",
-        "read_file" | "view_file" => "Read",
-        "write_file" | "write_to_file" | "replace_file_content" | "multi_replace_file_content" => {
-            "Edit"
-        }
-        "run_command" | "exec_command" => "Bash",
-        "list_dir" => "ListDir",
-        "code_outline" => "Outline",
-        "ast_grep" => "AstGrep",
-        "git_manager" => "Git",
-        "cargo_manager" => "Cargo",
-        "web_search" => "WebSearch",
-        "gsd_browser" => "Browser",
-        "clipboard" => "Clipboard",
-        "open_path" | "open" => "Open",
-        "web_fetch" | "read_url_content" | "read_url" => "Fetch",
-        "generate_image" => "Image",
-        "generate_video" => "Video",
-        "html_to_video" => "HtmlVideo",
-        "create_animated_svg" | "svg_animator" => "SvgAnim",
-        "obscura_browser" => "Obscura",
-        "db_inspector" => "DbInspect",
-        "db_write" => "DbWrite",
-        "read_doc" => "DocRead",
-        "crawl" => "Crawl",
-        "semantic_search" => "SemanticSearch",
-        "wasm_sandbox" => "Wasm",
-        "cron" => "Cron",
-        "watcher" => "Watcher",
-        other => other,
-    };
+    let friendly_name = crate::tools::compact_presentation_name(name);
 
     let details = if let serde_json::Value::Object(map) = &args {
         match name {
@@ -302,32 +260,37 @@ pub(crate) async fn send_progress_update(session_key: &str, text: &str) {
                 if let Some((bot_token, client)) =
                     crate::channels::telegram::get_telegram_bot_info()
                 {
-                    let send_url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
-                    let payload = serde_json::json!({
-                        "chat_id": chat_id,
-                        "text": text,
-                        "parse_mode": "Markdown"
-                    });
-                    let _ = client.post(&send_url).json(&payload).send().await;
+                    let request = NotificationRequest {
+                        target: NotificationTarget::Telegram {
+                            chat_id: chat_id.to_string(),
+                        },
+                        url: telegram_api_url(&bot_token, "sendMessage"),
+                        payload: serde_json::json!({
+                            "chat_id": chat_id,
+                            "text": text,
+                            "parse_mode": "Markdown"
+                        }),
+                        auth: NotificationAuth::None,
+                    };
+                    send_external_notification(&client, &request).await;
                 }
             }
         }
     } else if actual_session.starts_with("discord:") {
         if let Some(channel_id) = actual_session.strip_prefix("discord:") {
             if let Some((bot_token, client)) = crate::channels::discord::get_discord_bot_info() {
-                let send_url = format!(
-                    "https://discord.com/api/v10/channels/{}/messages",
-                    channel_id
-                );
-                let payload = serde_json::json!({
-                    "content": text
-                });
-                let _ = client
-                    .post(&send_url)
-                    .header("Authorization", format!("Bot {}", bot_token))
-                    .json(&payload)
-                    .send()
-                    .await;
+                let request = NotificationRequest {
+                    target: NotificationTarget::Discord {
+                        channel_id: channel_id.to_string(),
+                    },
+                    url: discord_message_url(channel_id),
+                    payload: serde_json::json!({ "content": text }),
+                    auth: NotificationAuth::Header {
+                        name: "Authorization",
+                        value: format!("Bot {bot_token}"),
+                    },
+                };
+                send_external_notification(&client, &request).await;
             }
         }
     } else if actual_session.starts_with("whatsapp:") {
@@ -335,25 +298,21 @@ pub(crate) async fn send_progress_update(session_key: &str, text: &str) {
             if let Some((api_key, phone_number_id, client)) =
                 crate::channels::whatsapp::get_whatsapp_bot_info()
             {
-                let send_url = format!(
-                    "https://graph.facebook.com/v18.0/{}/messages",
-                    phone_number_id
-                );
-                let payload = serde_json::json!({
-                    "messaging_product": "whatsapp",
-                    "recipient_type": "individual",
-                    "to": phone_number,
-                    "type": "text",
-                    "text": {
-                        "body": text
-                    }
-                });
-                let _ = client
-                    .post(&send_url)
-                    .bearer_auth(api_key)
-                    .json(&payload)
-                    .send()
-                    .await;
+                let request = NotificationRequest {
+                    target: NotificationTarget::WhatsApp {
+                        recipient: phone_number.to_string(),
+                    },
+                    url: whatsapp_message_url(&phone_number_id),
+                    payload: serde_json::json!({
+                        "messaging_product": "whatsapp",
+                        "recipient_type": "individual",
+                        "to": phone_number,
+                        "type": "text",
+                        "text": { "body": text }
+                    }),
+                    auth: NotificationAuth::Bearer(api_key),
+                };
+                send_external_notification(&client, &request).await;
             }
         }
     }

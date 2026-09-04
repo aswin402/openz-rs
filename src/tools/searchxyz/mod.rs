@@ -7,8 +7,8 @@ use searchxyz::{
     graph::KnowledgeGraph,
     index::SearchIndex,
     search::{
-        SearchBackend, SearchDispatcher, bing::BingBackend, brave::BraveBackend,
-        duckduckgo::DuckDuckGoBackend, google::GoogleBackend, searxng::SearXngBackend,
+        bing::BingBackend, brave::BraveBackend, duckduckgo::DuckDuckGoBackend,
+        google::GoogleBackend, searxng::SearXngBackend, SearchBackend, SearchDispatcher,
     },
     tools::SearchXyzServer,
 };

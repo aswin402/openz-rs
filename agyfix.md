@@ -1,5 +1,8 @@
 # OpenZ — Session Enhancements Summary
 
+> Historical implementation summary. It records an earlier workspace session;
+> current behavior is documented in `README.md`, `AGENTS.md`, and `docs/`.
+
 This document captures all the architectural upgrades, performance optimizations, and security features implemented during this workspace session.
 
 ---
@@ -23,7 +26,7 @@ This document captures all the architectural upgrades, performance optimizations
 ## 3. Tool Call Retry with Exponential Backoff
 * **Objective**: Prevent tool executions from failing due to transient network anomalies, DNS drops, or HTTP 429 rate limits.
 * **Changes**:
-  - Implemented `is_transient_error` helper in `src/agent/agent_loop/run.rs` to detect rate-limit (HTTP 429), gateway (502/503/504), network connection, and DNS errors.
+  - Implemented `is_transient_error` helper in the `src/agent/agent_loop/run/` execution pipeline to detect rate-limit (HTTP 429), gateway (502/503/504), network connection, and DNS errors.
   - Modified `ToolExecutionPipeline::execute()` to retry transient errors up to 3 times, sleeping with exponential backoff (starting at 1s, doubling to 2s, 4s).
 
 ## 4. SQLite Vector Embeddings Cache (`embeddings_cache.db`)
@@ -79,4 +82,3 @@ This document captures all the architectural upgrades, performance optimizations
   - Added `search` argument (`--search` / `-s`) to Clap subcommand definition `Logs` inside `src/cli/args.rs`.
   - Propagated keyword search parameter into all internal query loops (`print_tail_sqlite`, `follow_sqlite`, `print_tail`, `follow`).
   - Added keyword filters within print layers (`print_row`, `print_line_filtered`) to filter both historical dumps and real-time incoming streaming lines.
-

@@ -1,10 +1,10 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use calamine::Reader;
 use docx_rs::{
-    DocumentChild, ParagraphChild, RunChild, TableCellContent, TableChild, TableRowChild, read_docx,
+    read_docx, DocumentChild, ParagraphChild, RunChild, TableCellContent, TableChild, TableRowChild,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::fs::File;
 use std::io::Read;
 

@@ -319,7 +319,7 @@ impl AgentLoop {
         let now = SystemTime::now();
 
         for dir_name in &["traces", "tool_outputs"] {
-            let dir = crate::config::resolve_path(&format!("~/.openz/{}", dir_name));
+            let dir = crate::config::runtime_data_dir().join(dir_name);
             if !dir.exists() {
                 continue;
             }
@@ -593,6 +593,7 @@ impl AgentLoop {
             Self::cleanup_old_files();
         });
 
+        self.tools.begin_turn();
         crate::agent::activity::update_activity(session_key, "Processing user prompt", None);
         let _guard = ActivityGuard { session_key };
 

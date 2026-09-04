@@ -1,8 +1,8 @@
-use super::db::*;
+use crate::memory::{scope_from_args, with_graph_db as with_db};
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use rusqlite::params;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 // ─── Tool 1: CreateEntitiesTool ─────────────────────────────────
 

@@ -42,6 +42,8 @@ OpenZ distinguishes between factual awareness and procedural capability:
 | **Tier 1** | **Memory** | `session.metadata["memory"]` & SQLite database (`~/.openz/memory.db`) | Captures "who the user is" (desires, preferences, persona) and specific project setup/context details persistently across all sessions. | Markdown list inside session JSON and SQLite database. |
 | **Tier 2** | **Skills** | SQLite Database (`~/.openz/memory.db`) & local `skills/` | Captures "how to perform a class of task" (coding styles, command conventions, workarounds, API usage rules, troubleshooting recipes). For subagents, skills are isolated by profile (e.g. `profile = 'planner'`). | Structured SQLite rows with workspace file overrides. |
 
+Memory storage remains split by responsibility: `memory.db` stores shared cognitive, research, interaction, knowledge, workflow, and cache records; `graph_memory.db` stores graph, semantic-fact, episodic, reflective, codebase, and agent-memory records; `embeddings_cache.db` stores semantic-search cache data. The `src/memory/` facade documents these existing stores and their scope rules without changing their schemas.
+
 ---
 
 ## 3. Dynamic Prompt Injection

@@ -2,7 +2,7 @@ use crate::agent::style::*;
 use crate::print;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use std::io::{Write, stdout};
+use std::io::{stdout, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -46,7 +46,7 @@ pub(super) fn handle_clipboard_paste(index: usize) -> Result<PathBuf> {
     let mut clipboard = Clipboard::new()?;
     let image = clipboard.get_image()?;
 
-    let path = crate::config::resolve_path(&format!("~/.openz/clipboard_image_{}.png", index));
+    let path = crate::config::runtime_data_dir().join(format!("clipboard_image_{}.png", index));
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

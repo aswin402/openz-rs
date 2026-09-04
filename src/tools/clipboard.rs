@@ -1,7 +1,7 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use arboard::Clipboard;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 pub struct ClipboardTool;
 

@@ -5,7 +5,10 @@ pub mod graph;
 #[cfg(test)]
 pub mod tests;
 
-pub(crate) use db::{scope_from_args, with_db};
+pub(crate) use db::with_db;
+
+#[cfg(test)]
+pub(crate) use db::scope_from_args;
 
 pub use graph::{
     AddObservationsTool, CreateEntitiesTool, CreateRelationsTool, DeleteEntitiesTool,

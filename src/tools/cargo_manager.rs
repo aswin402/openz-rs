@@ -1,8 +1,8 @@
 use crate::agent::style::colors::{AURA_GOLD, COLOR_RESET, EMERALD_GREEN};
 use crate::providers::{GenerationSettings, LLMProvider};
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
-use serde_json::{Value, json};
+use anyhow::{anyhow, Result};
+use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub struct CargoManagerTool {

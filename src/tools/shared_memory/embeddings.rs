@@ -1,5 +1,5 @@
 use super::db::get_shared_client;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};

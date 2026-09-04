@@ -1,10 +1,10 @@
 use crate::config::loader::config_dir;
 use crate::config::schema::Config;
 use crate::cron::{
-    CronJob, CronJobStatus, CronNotifyPolicy, CronRunRecord, append_cron_run_record,
-    calculate_next_run,
+    append_cron_run_record, calculate_next_run, CronJob, CronJobStatus, CronNotifyPolicy,
+    CronRunRecord,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use chrono::Utc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -402,7 +402,7 @@ Executed At: {}
 mod tests {
     use super::*;
     use crate::config::loader::CONFIG_DIR_OVERRIDE;
-    use crate::cron::{CronJob, CronJobStatus, CronNotifyPolicy, load_jobs_raw, save_jobs_raw};
+    use crate::cron::{load_jobs_raw, save_jobs_raw, CronJob, CronJobStatus, CronNotifyPolicy};
     use chrono::Utc;
 
     #[test]

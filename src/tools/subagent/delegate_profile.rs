@@ -1,15 +1,15 @@
 use super::delegate_task::{
-    WorktreeGuard, current_workspace_root, ensure_markdown_images, run_evolution_review,
-    should_sync_changes_back, sync_changes_back,
+    current_workspace_root, ensure_markdown_images, run_evolution_review, should_sync_changes_back,
+    sync_changes_back, WorktreeGuard,
 };
 use super::parallel_research::get_status_from_goal;
 use super::{
-    CancellationToken, DELEGATION_DEPTH, SubagentRunStatus, build_provider_for_model,
-    cancellation_result_json, classify_subagent_error, compact_lifecycle_line,
-    execute_subagent_run, scan_for_images, status_json,
+    build_provider_for_model, cancellation_result_json, classify_subagent_error,
+    compact_lifecycle_line, execute_subagent_run, scan_for_images, status_json, CancellationToken,
+    SubagentRunStatus, DELEGATION_DEPTH,
 };
-use crate::agent::AgentLoop;
 use crate::agent::style::*;
+use crate::agent::AgentLoop;
 use crate::config::schema::Config;
 use crate::orchestrator::spec::CapabilityPolicy;
 use crate::providers::LLMProvider;
@@ -17,7 +17,7 @@ use crate::session::SessionManager;
 use crate::subagents::SubagentProfile;
 use crate::tools::Tool;
 use crate::tools::ToolRegistry;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -176,26 +176,11 @@ impl Tool for DelegateProfileTool {
         };
 
         let parent_dir = current_workspace_root();
-        let mut workspace_isolation = if filesystem_write_denied {
-            "policy_no_filesystem_write".to_string()
-        } else if needs_workspace {
-            "isolated_worktree".to_string()
-        } else {
-            "not_required".to_string()
-        };
-        let mut workspace_isolation_reason: Option<String> = if filesystem_write_denied {
-            Some("Capability policy denies filesystem writes; running without workspace isolation, graph branches, or sync-back.".to_string())
-        } else {
-            None
-        };
-        let workspace_dir = if !needs_workspace {
-            parent_dir.clone()
-        } else {
-            let iso = super::create_workspace_isolation(&parent_dir).await;
-            workspace_isolation = iso.label;
-            workspace_isolation_reason = iso.reason;
-            iso.dir
-        };
+        let workspace =
+            super::prepare_workspace(&parent_dir, filesystem_write_denied, needs_workspace).await;
+        let workspace_dir = workspace.dir;
+        let workspace_isolation = workspace.label;
+        let workspace_isolation_reason = workspace.reason;
 
         let _worktree_guard = WorktreeGuard::new(parent_dir.clone(), workspace_dir.clone());
 
@@ -236,6 +221,8 @@ impl Tool for DelegateProfileTool {
                 match build_provider_for_model(&self.config, model_name) {
                     Ok(p) => p,
                     Err(e) => {
+                        let error_text = e.to_string();
+                        let _ = crate::subagents::record_subagent_failure(&self.profile.name, &error_text);
                         last_error = Some(e);
                         continue;
                     }
@@ -306,13 +293,11 @@ impl Tool for DelegateProfileTool {
 
             let spinner_msg = format!("{}{}{}Running...{}", AURA_SLATE, crate::agent::style::get_tree_prefix(true), AURA_SLATE, COLOR_RESET);
 
-            let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
-            let mut has_branch = false;
-            if !filesystem_write_denied {
-                if let Ok(_) = crate::tools::graph_memory::CreateDatabaseBranchTool.call(&serde_json::json!({ "branchId": branch_id })).await {
-                    has_branch = true;
-                }
-            }
+            let branch_id = if !filesystem_write_denied {
+                super::create_simulation_branch(true).await.ok().flatten()
+            } else {
+                None
+            };
 
             let mut final_prompt = subagent_prompt.clone();
             if let Some(ref schema) = json_schema {
@@ -376,15 +361,22 @@ impl Tool for DelegateProfileTool {
 
             match run_res {
                 Ok(run_res) => {
-                    if has_branch {
-                        let _ = crate::tools::graph_memory::CommitDatabaseBranchTool.call(&serde_json::json!({})).await;
+                    let _ = crate::subagents::record_subagent_success(&self.profile.name, model_name);
+                    if let Some(branch_id) = branch_id.as_deref() {
+                        let _ = super::finish_simulation_branch(
+                            branch_id,
+                            true,
+                            super::delegate_task::is_scratch_workspace(&workspace_dir),
+                            false,
+                        )
+                        .await;
                     }
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                         let summary = crate::agent::style::format_subagent_summary(&run_res.content);
                         let line = compact_lifecycle_line(
                             &self.profile.name,
-                            &model_name,
+                            model_name,
                             &SubagentRunStatus::Completed,
                         );
                         crate::tui_println!(
@@ -422,15 +414,21 @@ impl Tool for DelegateProfileTool {
                     }));
                 }
                 Err(e) => {
-                    if has_branch {
-                        let _ = crate::tools::graph_memory::RollbackDatabaseBranchTool.call(&serde_json::json!({})).await;
+                    if let Some(branch_id) = branch_id.as_deref() {
+                        let _ = super::finish_simulation_branch(
+                            branch_id,
+                            false,
+                            super::delegate_task::is_scratch_workspace(&workspace_dir),
+                            false,
+                        )
+                        .await;
                     }
                     let error_text = e.to_string();
                     let lifecycle = classify_subagent_error(&error_text, &self.cancellation_token);
                     if matches!(lifecycle, SubagentRunStatus::Cancelled) {
                         if !crate::agent::style::is_silent() {
                             let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                            let line = compact_lifecycle_line(&self.profile.name, &model_name, &lifecycle);
+                            let line = compact_lifecycle_line(&self.profile.name, model_name, &lifecycle);
                             crate::tui_println!(
                                 "{}{}{}▲ {}{}",
                                 AURA_SLATE,
@@ -445,7 +443,7 @@ impl Tool for DelegateProfileTool {
                                 "delegate_profile",
                                 Some(&self.profile.name),
                                 &child_session_id,
-                                &model_name,
+                                model_name,
                                 &error_text,
                             ),
                             &workspace_isolation,
@@ -455,7 +453,7 @@ impl Tool for DelegateProfileTool {
                     }
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                        let line = compact_lifecycle_line(&self.profile.name, &model_name, &lifecycle);
+                        let line = compact_lifecycle_line(&self.profile.name, model_name, &lifecycle);
                         crate::tui_println!(
                             "{}{}{}✕ {}{}",
                             AURA_SLATE,
@@ -465,12 +463,15 @@ impl Tool for DelegateProfileTool {
                             COLOR_RESET
                         );
                     }
+                    let error_text = e.to_string();
+                    let _ = crate::subagents::record_subagent_failure(&self.profile.name, &error_text);
                     last_error = Some(e);
                 }
             }
         }
 
         let err_msg = format!("All configured models/fallbacks failed for subagent '{}'. Last error: {:?}", self.profile.name, last_error);
+        let _ = crate::subagents::record_subagent_failure(&self.profile.name, &err_msg);
         let lifecycle = SubagentRunStatus::Failed {
             error: err_msg.clone(),
         };
@@ -486,46 +487,7 @@ impl Tool for DelegateProfileTool {
 }
 
 pub fn format_subagent_name(name: &str) -> String {
-    match name {
-        "vision_agent" => "Vision Agent".to_string(),
-        "documentation_agent" => "Documentation Agent".to_string(),
-        "self_improvement" => "Self Improvement".to_string(),
-        "skill_improvement" => "Skill Improvement".to_string(),
-        "openz_maintainer" => "OpenZ Maintainer".to_string(),
-        "mcps_manager" => "MCPs Manager".to_string(),
-        "memory_manager" => "Memory Manager".to_string(),
-        "code_auditor" => "Code Auditor".to_string(),
-        "test_engineer" => "Test Engineer".to_string(),
-        "devops_agent" => "Devops Agent".to_string(),
-        "refactor_agent" => "Refactor Agent".to_string(),
-        "skill_creator" => "Skill Creator".to_string(),
-        "git_ops_agent" => "Git Operations Agent".to_string(),
-        "ast_searcher" => "AST Searcher".to_string(),
-        "database_specialist" => "Database Specialist".to_string(),
-        "browser_operator" => "Browser Operator".to_string(),
-        "dependency_manager" => "Dependency Manager".to_string(),
-        "frontend_architect" => "Frontend Architect".to_string(),
-        "docs_lookup_agent" => "Docs Lookup Agent".to_string(),
-        "document_compiler" => "Document Compiler".to_string(),
-        "presentation_designer" => "Presentation Designer".to_string(),
-        "code_synthesizer" => "Code Synthesizer".to_string(),
-        "summarizer_agent" => "Summarizer Agent".to_string(),
-        "media_designer" => "Media Designer".to_string(),
-        "openz_coordinator" => "OpenZ Coordinator".to_string(),
-        "sop_designer" => "SOP Designer".to_string(),
-        "api_integrator" => "API Integrator".to_string(),
-        "performance_tuner" => "Performance Tuner".to_string(),
-        "communication_manager" => "Communication Manager".to_string(),
-        "automation_agent" => "Automation Agent".to_string(),
-        "coding_agent" => "Coding Agent".to_string(),
-        _ => {
-            let mut chars = name.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
-            }
-        }
-    }
+    crate::tools::presentation_name(name)
 }
 
 fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'static str]> {
@@ -744,45 +706,8 @@ fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'stat
 
 #[cfg(test)]
 pub(crate) fn all_static_subagent_allowlist_tools() -> Vec<&'static str> {
-    let profiles: &[&str] = &[
-        "planner",
-        "researcher",
-        "architect",
-        "git_ops_agent",
-        "ast_searcher",
-        "database_specialist",
-        "browser_operator",
-        "dependency_manager",
-        "frontend_architect",
-        "docs_lookup_agent",
-        "media_designer",
-        "sop_designer",
-        "api_integrator",
-        "performance_tuner",
-        "communication_manager",
-        "document_compiler",
-        "presentation_designer",
-        "code_synthesizer",
-        "summarizer_agent",
-        "automation_agent",
-        "coding_agent",
-        "reviewer",
-        "debugger",
-        "test_engineer",
-        "devops_agent",
-        "refactor_agent",
-        "memory_manager",
-        "openz_maintainer",
-        "mcps_manager",
-        "vision_agent",
-        "skill_creator",
-        "documentation_agent",
-        "diagram_designer",
-        "video_animator",
-    ];
-
     let mut out = Vec::new();
-    for profile in profiles {
+    for profile in crate::subagents::DEFAULT_SUBAGENT_NAMES {
         if let Some(tools) = static_allowlist_for_subagent(profile) {
             out.extend_from_slice(tools);
         }
@@ -801,7 +726,11 @@ pub fn filter_tools_for_subagent(
     let mut filtered: Vec<Arc<dyn Tool>> = if let Some(allowed) = allowed_names {
         all_tools
             .iter()
-            .filter(|t| allowed.contains(&t.name()))
+            .filter(|tool| {
+                allowed
+                    .iter()
+                    .any(|allowed_name| crate::tools::tool_names_match(allowed_name, tool.name()))
+            })
             .cloned()
             .collect()
     } else {

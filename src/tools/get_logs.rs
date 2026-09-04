@@ -1,6 +1,6 @@
 use crate::tools::Tool;
 use anyhow::Result;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 pub struct GetLogsTool;
 

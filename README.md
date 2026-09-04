@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.142-orange.svg" alt="Version 0.0.142"/></a>
+  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.143-orange.svg" alt="Version 0.0.143"/></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.82%2B-blue.svg" alt="Rust 1.82+"/></a>
   <a href="https://tokio.rs/"><img src="https://img.shields.io/badge/runtime-tokio-purple.svg" alt="Tokio Async"/></a>
   <a href="https://github.com/aswin402/openz-rs/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-green.svg" alt="License"/></a>
@@ -157,6 +157,13 @@ graph TD
     Respond --> Curator[Async Self-Improvement Curator Task]
     Curator --> Database[(SQLite Memory ~/.openz/memory.db)]
 ```
+
+The implementation is split by responsibility: `src/agent/agent_loop/` contains
+turn-state phases, `src/channels/websocket/` contains the typed WebSocket
+protocol and handlers, and `src/memory/` provides the shared facade over the
+separate memory, graph, and embedding-cache databases. Native tool registration
+lives under `src/cli/tool_registration/`, while the OpenMedia MCP server
+composes focused handler modules under `tools/openmedia/mcp/src/`.
 
 ---
 

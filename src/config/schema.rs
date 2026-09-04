@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use super::provider_catalog;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +91,24 @@ impl Default for ToolRoutingConfig {
                 "tool_catalog".to_string(),
                 "openz_inventory".to_string(),
             ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BrowserConfig {
+    #[serde(alias = "firefox_webdriver_port")]
+    pub firefox_webdriver_port: u16,
+    #[serde(alias = "firefox_attach_port")]
+    pub firefox_attach_port: u16,
+}
+
+impl Default for BrowserConfig {
+    fn default() -> Self {
+        Self {
+            firefox_webdriver_port: 4444,
+            firefox_attach_port: 4445,
         }
     }
 }
@@ -549,6 +568,8 @@ pub struct Config {
     #[serde(default)]
     pub channels: ChannelsConfig,
     #[serde(default)]
+    pub browser: BrowserConfig,
+    #[serde(default)]
     pub mcp_servers: HashMap<String, McpServerConfig>,
     #[serde(default)]
     pub embeddings: Option<EmbeddingsConfig>,
@@ -606,6 +627,7 @@ impl Default for Config {
             providers: ProvidersConfig::default(),
             agents: AgentsConfig::default(),
             channels: ChannelsConfig::default(),
+            browser: BrowserConfig::default(),
             mcp_servers: HashMap::new(),
             embeddings: Some(EmbeddingsConfig::default()),
             skills: SkillsConfig::default(),
@@ -616,11 +638,8 @@ impl Default for Config {
 }
 
 struct ProviderDef {
-    names: &'static [&'static str],
-    env_keys: &'static [&'static str],
-    default_base: &'static str,
+    canonical_name: &'static str,
     config: fn(&ProvidersConfig) -> Option<&ProviderConfig>,
-    local: bool,
 }
 
 fn provider_openai(providers: &ProvidersConfig) -> Option<&ProviderConfig> {
@@ -683,144 +702,88 @@ fn provider_none(_providers: &ProvidersConfig) -> Option<&ProviderConfig> {
 
 const PROVIDER_DEFS: &[ProviderDef] = &[
     ProviderDef {
-        names: &["anthropic"],
-        env_keys: &["ANTHROPIC_API_KEY"],
-        default_base: "https://api.anthropic.com",
+        canonical_name: "anthropic",
         config: provider_anthropic,
-        local: false,
     },
     ProviderDef {
-        names: &["openai"],
-        env_keys: &["OPENAI_API_KEY"],
-        default_base: "https://api.openai.com/v1",
+        canonical_name: "openai",
         config: provider_openai,
-        local: false,
     },
     ProviderDef {
-        names: &["mivi"],
-        env_keys: &["MIVI_API_KEY"],
-        default_base: "http://127.0.0.1:8000/v1",
+        canonical_name: "mivi",
         config: provider_mivi,
-        local: true,
     },
     ProviderDef {
-        names: &["openrouter"],
-        env_keys: &["OPENROUTER_API_KEY"],
-        default_base: "https://openrouter.ai/api/v1",
+        canonical_name: "openrouter",
         config: provider_openrouter,
-        local: false,
     },
     ProviderDef {
-        names: &["deepseek"],
-        env_keys: &["DEEPSEEK_API_KEY"],
-        default_base: "https://api.deepseek.com/v1",
+        canonical_name: "deepseek",
         config: provider_deepseek,
-        local: false,
     },
     ProviderDef {
-        names: &["groq"],
-        env_keys: &["GROQ_API_KEY"],
-        default_base: "https://api.groq.com/openai/v1",
+        canonical_name: "groq",
         config: provider_groq,
-        local: false,
     },
     ProviderDef {
-        names: &["ollama_local"],
-        env_keys: &[],
-        default_base: "http://localhost:11434/v1",
+        canonical_name: "ollama_local",
         config: provider_none,
-        local: true,
     },
     ProviderDef {
-        names: &["ollama"],
-        env_keys: &[],
-        default_base: "http://localhost:11434/v1",
+        canonical_name: "ollama",
         config: provider_ollama,
-        local: true,
     },
     ProviderDef {
-        names: &["minimax"],
-        env_keys: &["MINIMAX_API_KEY"],
-        default_base: "https://api.minimax.io/v1",
+        canonical_name: "minimax",
         config: provider_minimax,
-        local: false,
     },
     ProviderDef {
-        names: &["mistral"],
-        env_keys: &["MISTRAL_API_KEY"],
-        default_base: "https://api.mistral.ai/v1",
+        canonical_name: "mistral",
         config: provider_mistral,
-        local: false,
     },
     ProviderDef {
-        names: &["z.ai", "z_ai"],
-        env_keys: &["Z_AI_API_KEY"],
-        default_base: "https://api.z.ai/api/paas/v4/",
+        canonical_name: "z.ai",
         config: provider_z_ai,
-        local: false,
     },
     ProviderDef {
-        names: &["nvidia"],
-        env_keys: &["NVIDIA_API_KEY"],
-        default_base: "https://integrate.api.nvidia.com/v1",
+        canonical_name: "nvidia",
         config: provider_nvidia,
-        local: false,
     },
     ProviderDef {
-        names: &["opencode_zen", "opencode zen", "opencode-zen"],
-        env_keys: &["OPENCODE_ZEN_API_KEY"],
-        default_base: "https://opencode.ai/zen/v1",
+        canonical_name: "opencode_zen",
         config: provider_opencode_zen,
-        local: false,
     },
     ProviderDef {
-        names: &["cerebras"],
-        env_keys: &["CEREBRAS_API_KEY", "CEREBRES_API_KEY", "CEBRAS_API_KEY"],
-        default_base: "https://api.cerebras.ai/v1",
+        canonical_name: "cerebras",
         config: provider_cerebras,
-        local: false,
     },
     ProviderDef {
-        names: &["google_ai_studio", "google ai studio", "google-ai-studio"],
-        env_keys: &["GOOGLE_AI_STUDIO_API_KEY"],
-        default_base: "https://generativelanguage.googleapis.com/v1beta/openai/",
+        canonical_name: "google_ai_studio",
         config: provider_google_ai_studio,
-        local: false,
     },
     ProviderDef {
-        names: &["cohere"],
-        env_keys: &["COHERE_API_KEY"],
-        default_base: "https://api.cohere.com/v1",
+        canonical_name: "cohere",
         config: provider_cohere,
-        local: false,
     },
     ProviderDef {
-        names: &["llm7"],
-        env_keys: &["LLM7_API_KEY"],
-        default_base: "https://token.llm7.io/v1",
+        canonical_name: "llm7",
         config: provider_llm7,
-        local: false,
     },
     ProviderDef {
-        names: &["sambanova"],
-        env_keys: &["SAMBANOVA_API_KEY"],
-        default_base: "https://api.sambanova.ai/v1",
+        canonical_name: "sambanova",
         config: provider_sambanova,
-        local: false,
     },
     ProviderDef {
-        names: &["huggingface"],
-        env_keys: &["HUGGINGFACE_API_KEY"],
-        default_base: "https://api-inference.huggingface.co/v1",
+        canonical_name: "huggingface",
         config: provider_huggingface,
-        local: false,
     },
 ];
 
 fn provider_def(provider_name: &str) -> Option<&'static ProviderDef> {
+    let canonical_name = provider_catalog::find_provider(provider_name)?.canonical_name;
     PROVIDER_DEFS
         .iter()
-        .find(|def| def.names.iter().any(|name| *name == provider_name))
+        .find(|def| def.canonical_name == canonical_name)
 }
 
 fn read_secret_file(path: &str) -> Option<String> {
@@ -877,17 +840,19 @@ impl Config {
     /// Returns `(api_key, api_base)` — local providers may return an empty key.
     pub fn resolve_provider_config(&self, provider_name: &str) -> (String, String) {
         if let Some(def) = provider_def(provider_name) {
+            let descriptor = provider_catalog::find_provider(provider_name)
+                .expect("every built-in provider definition must have catalog metadata");
             let provider = (def.config)(&self.providers);
-            let key = if def.local {
+            let key = if descriptor.local {
                 String::new()
             } else {
-                env_key(def.env_keys)
+                env_key(descriptor.environment_keys)
                     .or_else(|| configured_key(provider))
                     .unwrap_or_default()
             };
             let base = provider
                 .and_then(|p| p.api_base.clone())
-                .unwrap_or_else(|| def.default_base.to_string());
+                .unwrap_or_else(|| descriptor.default_api_base.to_string());
             return (key, base);
         }
 
@@ -944,7 +909,10 @@ impl Config {
     }
 
     pub fn set_provider_config(&mut self, provider_name: &str, provider_config: ProviderConfig) {
-        match provider_name {
+        let canonical_name = provider_catalog::find_provider(provider_name)
+            .map(|descriptor| descriptor.canonical_name)
+            .unwrap_or(provider_name);
+        match canonical_name {
             "anthropic" => self.providers.anthropic = Some(provider_config),
             "openai" => self.providers.openai = Some(provider_config),
             "mivi" => self.providers.mivi = Some(provider_config),
@@ -954,15 +922,11 @@ impl Config {
             "ollama" => self.providers.ollama = Some(provider_config),
             "minimax" => self.providers.minimax = Some(provider_config),
             "mistral" => self.providers.mistral = Some(provider_config),
-            "z.ai" | "z_ai" => self.providers.z_ai = Some(provider_config),
+            "z.ai" => self.providers.z_ai = Some(provider_config),
             "nvidia" => self.providers.nvidia = Some(provider_config),
-            "opencode_zen" | "opencode zen" | "opencode-zen" => {
-                self.providers.opencode_zen = Some(provider_config)
-            }
+            "opencode_zen" => self.providers.opencode_zen = Some(provider_config),
             "cerebras" => self.providers.cerebras = Some(provider_config),
-            "google_ai_studio" | "google ai studio" | "google-ai-studio" => {
-                self.providers.google_ai_studio = Some(provider_config)
-            }
+            "google_ai_studio" => self.providers.google_ai_studio = Some(provider_config),
             "cohere" => self.providers.cohere = Some(provider_config),
             "llm7" => self.providers.llm7 = Some(provider_config),
             "sambanova" => self.providers.sambanova = Some(provider_config),
@@ -985,11 +949,13 @@ impl Config {
 
     pub fn is_provider_configured(&self, provider_name: &str) -> bool {
         if let Some(def) = provider_def(provider_name) {
+            let descriptor = provider_catalog::find_provider(provider_name)
+                .expect("every built-in provider definition must have catalog metadata");
             if provider_name == "ollama_local" || provider_name == "mivi" {
                 return true;
             }
             let provider = (def.config)(&self.providers);
-            if def.local {
+            if descriptor.local {
                 provider.is_some()
             } else {
                 configured_key(provider).is_some()
@@ -1007,8 +973,11 @@ impl Config {
     }
 
     pub fn is_provider_available(&self, provider_name: &str) -> bool {
-        if let Some(def) = provider_def(provider_name) {
-            self.is_provider_configured(provider_name) || env_key(def.env_keys).is_some()
+        if provider_def(provider_name).is_some() {
+            let descriptor = provider_catalog::find_provider(provider_name)
+                .expect("every built-in provider definition must have catalog metadata");
+            self.is_provider_configured(provider_name)
+                || env_key(descriptor.environment_keys).is_some()
         } else {
             self.is_provider_configured(provider_name)
                 || std::env::var(custom_provider_env_key(provider_name))
@@ -1134,6 +1103,7 @@ mod provider_resolution_tests {
             skills: SkillsConfig::default(),
             research: ResearchConfig::default(),
             integrations: IntegrationsConfig::default(),
+            browser: BrowserConfig::default(),
         }
     }
 
@@ -1459,13 +1429,11 @@ mod layered_tool_routing_tests {
                 .max_visible_tools,
             20
         );
-        assert!(
-            config
-                .agents
-                .defaults
-                .layered_tool_routing
-                .always_visible_tools
-                .contains(&"request_tool_scope".to_string())
-        );
+        assert!(config
+            .agents
+            .defaults
+            .layered_tool_routing
+            .always_visible_tools
+            .contains(&"request_tool_scope".to_string()));
     }
 }

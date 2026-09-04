@@ -1,16 +1,19 @@
 use crate::agent::AgentLoop;
+use crate::channels::notifications::{chunk_message, whatsapp_message_url};
 use axum::{
-    Router,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::get,
+    Router,
 };
 use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use tokio::net::TcpListener;
+
+const WHATSAPP_MAX_MESSAGE_BYTES: usize = 65536;
 
 static WHATSAPP_BOT_INFO: OnceLock<(String, String, Client)> = OnceLock::new();
 
@@ -81,10 +84,7 @@ impl super::Channel for WhatsAppChannel {
         let targets = crate::channels::get_active_session_targets(&session_dir, "whatsapp_");
         let active_msg = crate::channels::select_random_message(crate::channels::ACTIVE_MESSAGES);
         for phone_number in &targets {
-            let send_url = format!(
-                "https://graph.facebook.com/v18.0/{}/messages",
-                self.phone_number_id
-            );
+            let send_url = whatsapp_message_url(&self.phone_number_id);
             let payload = serde_json::json!({
                 "messaging_product": "whatsapp",
                 "recipient_type": "individual",
@@ -258,10 +258,7 @@ async fn receive_webhook(
 
                                 if crate::channels::is_stop_command(&text) {
                                     crate::shutdown::trigger_cli_cancel();
-                                    let send_url = format!(
-                                        "https://graph.facebook.com/v18.0/{}/messages",
-                                        phone_number_id
-                                    );
+                                    let send_url = whatsapp_message_url(&phone_number_id);
                                     let reply_payload = serde_json::json!({
                                         "messaging_product": "whatsapp",
                                         "recipient_type": "individual",
@@ -289,11 +286,8 @@ async fn receive_webhook(
                                     )
                                     .await
                                 {
-                                    let send_url = format!(
-                                        "https://graph.facebook.com/v18.0/{}/messages",
-                                        phone_number_id
-                                    );
-                                    for chunk in chunk_message(&response_text, 65536) {
+                                    let send_url = whatsapp_message_url(&phone_number_id);
+                                    for chunk in chunk_message(&response_text, WHATSAPP_MAX_MESSAGE_BYTES) {
                                         let reply_payload = serde_json::json!({
                                             "messaging_product": "whatsapp",
                                             "recipient_type": "individual",
@@ -314,11 +308,8 @@ async fn receive_webhook(
                                 if let Some(response_text) =
                                     crate::channels::model_switch_text_response(&text)
                                 {
-                                    let send_url = format!(
-                                        "https://graph.facebook.com/v18.0/{}/messages",
-                                        phone_number_id
-                                    );
-                                    for chunk in chunk_message(&response_text, 65536) {
+                                    let send_url = whatsapp_message_url(&phone_number_id);
+                                    for chunk in chunk_message(&response_text, WHATSAPP_MAX_MESSAGE_BYTES) {
                                         let reply_payload = serde_json::json!({
                                             "messaging_product": "whatsapp",
                                             "recipient_type": "individual",
@@ -349,11 +340,8 @@ async fn receive_webhook(
                                         Err(e) => format!("Error processing request: {}", e),
                                     };
 
-                                    let send_url = format!(
-                                        "https://graph.facebook.com/v18.0/{}/messages",
-                                        phone_number_id
-                                    );
-                                    for chunk in chunk_message(&body_text, 65536) {
+                                    let send_url = whatsapp_message_url(&phone_number_id);
+                                    for chunk in chunk_message(&body_text, WHATSAPP_MAX_MESSAGE_BYTES) {
                                         let reply_payload = serde_json::json!({
                                             "messaging_product": "whatsapp",
                                             "recipient_type": "individual",
@@ -453,40 +441,4 @@ mod tests {
             .into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
-}
-
-fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
-    if text.len() <= max_len {
-        return vec![text.to_string()];
-    }
-    let mut chunks = Vec::new();
-    let mut remaining = text;
-    while !remaining.is_empty() {
-        if remaining.len() <= max_len {
-            chunks.push(remaining.to_string());
-            break;
-        }
-
-        let mut split_at = max_len;
-        while split_at > 0 && !remaining.is_char_boundary(split_at) {
-            split_at -= 1;
-        }
-        if split_at == 0 {
-            split_at = 1;
-            while split_at < remaining.len() && !remaining.is_char_boundary(split_at) {
-                split_at += 1;
-            }
-        }
-
-        let candidate = &remaining[..split_at];
-        let final_split = if let Some(idx) = candidate.rfind('\n') {
-            if idx > 0 { idx } else { split_at }
-        } else {
-            split_at
-        };
-
-        chunks.push(remaining[..final_split].to_string());
-        remaining = remaining[final_split..].trim_start_matches('\n');
-    }
-    chunks
 }

@@ -1,11 +1,12 @@
+use crate::memory::MemoryService;
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use futures_util::StreamExt;
 use regex::Regex;
-use reqwest::{Client, header};
+use reqwest::{header, Client};
 use rusqlite::OptionalExtension;
-use scraper::Html;
 use scraper::node::Node;
+use scraper::Html;
 use std::time::Duration;
 
 const WEB_CONNECT_TIMEOUT_SECS: u64 = 10;
@@ -238,7 +239,7 @@ fn header_to_string(headers: &header::HeaderMap, name: header::HeaderName) -> Op
 }
 
 fn load_cached_web_fetch(url: &str) -> Result<Option<CachedWebFetch>> {
-    crate::tools::shared_memory::with_db(|conn| {
+    MemoryService::current().with_shared_db(|conn| {
         let mut stmt = conn.prepare(
             "SELECT body_text, etag, last_modified, expires_at FROM web_fetch_cache WHERE url = ?1",
         )?;
@@ -273,7 +274,7 @@ fn save_cached_web_fetch(
     ) else {
         return Ok(());
     };
-    crate::tools::shared_memory::with_db(|conn| {
+    MemoryService::current().with_shared_db(|conn| {
         conn.execute(
             "INSERT INTO web_fetch_cache (url, body_text, etag, last_modified, cache_control, fetched_at, expires_at, status_code, use_count)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)
@@ -305,7 +306,7 @@ fn refresh_cached_web_fetch_validators(url: &str, headers: &header::HeaderMap) -
     ) else {
         return Ok(());
     };
-    crate::tools::shared_memory::with_db(|conn| {
+    MemoryService::current().with_shared_db(|conn| {
         conn.execute(
             "UPDATE web_fetch_cache
              SET etag = COALESCE(?2, etag),
@@ -329,7 +330,7 @@ fn refresh_cached_web_fetch_validators(url: &str, headers: &header::HeaderMap) -
 }
 
 fn mark_cached_web_fetch_used(url: &str) -> Result<()> {
-    crate::tools::shared_memory::with_db(|conn| {
+    MemoryService::current().with_shared_db(|conn| {
         conn.execute(
             "UPDATE web_fetch_cache SET use_count = use_count + 1 WHERE url = ?1",
             rusqlite::params![url],
@@ -925,11 +926,9 @@ mod tests {
     #[tokio::test]
     async fn test_validate_url() {
         assert!(validate_url("http://example.com").await.is_ok());
-        assert!(
-            validate_url("https://google.com/search?q=rust")
-                .await
-                .is_ok()
-        );
+        assert!(validate_url("https://google.com/search?q=rust")
+            .await
+            .is_ok());
 
         assert!(validate_url("ftp://example.com").await.is_err());
         assert!(validate_url("http://127.0.0.1").await.is_err());

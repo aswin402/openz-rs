@@ -1,5 +1,5 @@
 use crate::config::schema::AgentDefaults;
-use crate::tools::{ToolMetadata, ToolRisk};
+use crate::tools::ToolMetadata;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static ACTIVE_PROCESS_TOOLS: AtomicUsize = AtomicUsize::new(0);
@@ -181,7 +181,13 @@ impl ToolResourcePolicy {
             };
         }
 
-        if matches!(metadata.risk, ToolRisk::High) || metadata.requires_approval {
+        if metadata.requires_conservative_approval() {
+            return ToolResourceDecision::RequireApproval {
+                reason: "unclassified tool requires approval".to_string(),
+            };
+        }
+
+        if metadata.requires_risk_approval() {
             return ToolResourceDecision::RequireApproval {
                 reason: "high risk tool requires approval".to_string(),
             };
@@ -202,6 +208,7 @@ impl ToolResourcePolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tools::ToolRisk;
     use std::sync::Mutex;
 
     static PROCESS_GUARD_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -213,6 +220,7 @@ mod tests {
         spawns_process: bool,
     ) -> ToolMetadata {
         ToolMetadata {
+            presentation_name: "Test Tool".to_string(),
             domain: "test",
             risk,
             uses_network,

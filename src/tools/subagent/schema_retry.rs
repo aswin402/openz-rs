@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 
 use super::evaluator_optimizer::validate_schema;

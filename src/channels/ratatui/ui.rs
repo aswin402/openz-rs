@@ -1,11 +1,11 @@
 use super::app::{ModalState, RatatuiApp};
 use super::theme::{self, Theme};
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    Frame,
 };
 use std::sync::OnceLock;
 

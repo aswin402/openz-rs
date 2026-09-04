@@ -1,4 +1,13 @@
-### v0.0.142 (Latest Release)
+### v0.0.143 (Latest Release)
+**Architecture Modularization & Code Polish:**
+- **Refactor (WebSocket Gateway):** Decomposed `src/channels/websocket/mod.rs` from 1,916 lines down to 1,168 lines by extracting turn cancellation registry and guards into `turns.rs` and unit tests into `tests.rs`.
+- **Refactor (Browser Subsystem):** Organized flat browser automation tools into a dedicated `src/tools/browser/` sub-namespace (`broker.rs`, `common.rs`, `firefox.rs`, `gsd.rs`, `obscura.rs`, and `status.rs`) while maintaining 100% backward-compatible aliases in `src/tools/mod.rs`.
+- **Fix & Polish (Clippy & Safety):** Fixed clippy lints across the workspace (`manual_strip` in `telegram_send.rs`, `rows.flatten()` in `semantic_search.rs`, needless borrows in `subagent/delegate_profile.rs`, and match pattern cleanups in `sequential_thinking/tools.rs`).
+- **Fix (Subagents):** Added `OPENZ_USE_MOCK_PROVIDER` support to `delegate_task.rs` to avoid real outbound network calls during mock testing, and aligned the subagent evolution capture word threshold with guidance expectations.
+- **Verification:** Verified 100% test pass rate across WebSocket (28 tests), browser tools (20 tests), subagents (53 tests), telegram send (2 tests), and semantic search (1 test), maintaining the exact 128 registered native tools and 0 frontend TypeScript errors.
+- **Chore:** Bumped version to `v0.0.143`.
+
+### v0.0.142
 **OpenZ Core Inventory & WebUI Cron Control:**
 - **Feature:** Added a WebUI Core Inventory control-center page backed by the gateway runtime inventory, covering core defaults, tools, cron jobs, runtime paths, and channels.
 - **Feature:** Added WebSocket cron control commands for pause, resume, delete, and structured run-log retrieval, returning refreshed inventory after mutations.

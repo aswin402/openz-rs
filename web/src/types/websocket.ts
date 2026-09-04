@@ -10,7 +10,8 @@ export type WebSocketCommand =
   | { type: 'message'; chat_id: string; content: string; model?: string; provider?: string; turn_id?: string; attachments?: WebSocketAttachment[] }
   | { type: 'new_chat' }
   | { type: 'attach' | 'load_history' | 'archive_session' | 'delete_session'; chat_id: string }
-  | { type: 'list_sessions' | 'get_cognitive_memory' | 'get_mcp_servers' | 'get_logs' | 'get_servers' | 'get_config' | 'get_slash_commands' | 'get_status' | 'get_runtime_inventory' }
+  | { type: 'list_sessions'; offset?: number; limit?: number }
+  | { type: 'get_cognitive_memory' | 'get_mcp_servers' | 'get_logs' | 'get_servers' | 'get_config' | 'get_slash_commands' | 'get_status' | 'get_runtime_inventory' }
   | { type: 'stop_server'; target: string }
   | { type: 'get_models'; provider?: string }
   | { type: 'toggle_favorite_model'; provider: string; model: string }
@@ -33,7 +34,7 @@ export interface WebSocketCommandEnvelope {
 
 export interface WebSocketEventEnvelope {
   event: string;
-  request_id?: string;
+  request_id?: string | null;
   [key: string]: unknown;
 }
 

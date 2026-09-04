@@ -3,17 +3,17 @@ pub mod theme;
 pub mod ui;
 
 use anyhow::Result;
-use app::{ChatMessage, IS_RATATUI_ACTIVE, ModalState, RatatuiApp};
-use crossterm::ExecutableCommand;
+use app::{ChatMessage, ModalState, RatatuiApp, IS_RATATUI_ACTIVE};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use ratatui::Terminal;
+use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
+use ratatui::Terminal;
 use std::io::stdout;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub enum TurnEvent {
@@ -208,7 +208,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     let session_key = Arc::new(tokio::sync::RwLock::new(base_session_key.clone()));
     let workspace = crate::config::loader::active_workspace_or_current_dir();
 
-    let sessions_dir = crate::config::loader::resolve_path("~/.openz/sessions");
+    let sessions_dir = crate::config::loader::sessions_dir();
     let session_manager = Arc::new(crate::session::SessionManager::new(sessions_dir));
 
     // Build AgentLoop instance wrapped in a Mutex so it can be updated dynamically

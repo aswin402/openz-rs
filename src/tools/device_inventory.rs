@@ -1,7 +1,7 @@
 use crate::tools::{Tool, ToolMetadata, ToolRisk};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -100,6 +100,54 @@ impl DeviceCapability {
 pub(crate) fn record_successful_default_open(target: &str) -> Result<Option<String>> {
     let path = crate::config::config_dir().join("device_inventory.json");
     record_successful_default_open_at(path, target)
+}
+
+pub(crate) fn record_successful_desktop_notification() -> Result<Option<String>> {
+    let path = crate::config::config_dir().join("device_inventory.json");
+    let tool = DeviceInventoryTool { path };
+    let mut inventory = tool.load_inventory()?;
+    let id = "desktop-notification-notify-send".to_string();
+    let now = now_timestamp();
+    if let Some(entry) = inventory
+        .capabilities
+        .iter_mut()
+        .find(|entry| entry.id == id)
+    {
+        entry.success_count = entry.success_count.saturating_add(1);
+        entry.last_success = Some(now.clone());
+        entry.updated_at = now;
+        entry.confidence = confidence(entry.success_count, entry.failure_count);
+    } else {
+        inventory.capabilities.push(DeviceCapability {
+            id: id.clone(),
+            category: "notification".to_string(),
+            name: "Desktop notifications".to_string(),
+            command: "notify-send".to_string(),
+            args: vec![
+                "--app-name".to_string(),
+                "OpenZ".to_string(),
+                "{title}".to_string(),
+                "{message}".to_string(),
+            ],
+            works_for: vec!["desktop".to_string(), "notification".to_string()],
+            paths: Vec::new(),
+            notes: Some(
+                "Recorded after notify-send delivered successfully in the current desktop session."
+                    .to_string(),
+            ),
+            source: "successful_notification".to_string(),
+            enabled: true,
+            success_count: 1,
+            failure_count: 0,
+            confidence: confidence(1, 0),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            last_success: Some(now),
+            last_failure: None,
+        });
+    }
+    tool.save_inventory(&inventory)?;
+    Ok(Some(id))
 }
 
 fn record_successful_default_open_at(path: PathBuf, target: &str) -> Result<Option<String>> {
@@ -255,6 +303,7 @@ impl Tool for DeviceInventoryTool {
 
     fn metadata(&self) -> ToolMetadata {
         ToolMetadata {
+            presentation_name: crate::tools::presentation_name(self.name()),
             domain: "self_management",
             risk: ToolRisk::Medium,
             uses_network: false,

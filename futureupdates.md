@@ -1,5 +1,9 @@
 # OpenZ Future Updates Roadmap
 
+> Historical roadmap snapshot. This document records earlier `v0.0.x` planning
+> assumptions; current behavior and structure are documented in `README.md`,
+> `AGENTS.md`, and `docs/architecture.md`.
+
 This roadmap defines the path from the current `v0.0.x` line to `v0.1.0`.
 The main rule is simple: stabilize the core runtime before adding large surface
 areas like a desktop app or full RAG UI.
@@ -251,4 +255,3 @@ Recommended next work for `v0.0.63+`:
 6. Add cancellation regression tests for nested subagents and long-running tools.
 7. Add self-improvement skill/workflow validation before saving new skills.
 8. Add docs-health checks for README/docs/onpkg consistency.
-

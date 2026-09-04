@@ -1,5 +1,6 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use rusqlite::Connection;
+#[cfg(test)]
 use serde_json::Value;
 use std::sync::{Mutex, OnceLock};
 
@@ -222,6 +223,7 @@ where
 
 // ─── Scope helpers ──────────────────────────────────────────────
 
+#[cfg(test)]
 pub(crate) fn scope_from_args(args: &Value) -> (String, String, String) {
     fn scoped_arg(args: &Value, camel: &str, snake: &str) -> String {
         args.get(camel)

@@ -1,7 +1,7 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};

@@ -2,7 +2,8 @@ use anyhow::Result;
 use rusqlite::params;
 
 use super::cognitive::CognitiveMemoryEntry;
-use super::db::{get_db_mutex, with_db};
+use crate::memory::with_shared_db as with_db;
+use super::db::get_db_mutex;
 use super::embeddings::{cosine_similarity, get_embedding};
 
 pub async fn consolidate_shared_memory(

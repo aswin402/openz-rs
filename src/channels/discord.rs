@@ -1,11 +1,14 @@
 use crate::agent::AgentLoop;
+use crate::channels::notifications::{chunk_message, discord_message_url};
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde::Deserialize;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use tokio::time::{Duration, sleep};
+use tokio::time::{sleep, Duration};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+
+const DISCORD_MAX_MESSAGE_BYTES: usize = 2000;
 
 static DISCORD_BOT_INFO: OnceLock<(String, Client)> = OnceLock::new();
 
@@ -81,10 +84,7 @@ impl super::Channel for DiscordChannel {
         let channels = crate::channels::get_active_session_targets(&session_dir, "discord_");
         let active_msg = crate::channels::select_random_message(crate::channels::ACTIVE_MESSAGES);
         for channel_id in &channels {
-            let send_url = format!(
-                "https://discord.com/api/v10/channels/{}/messages",
-                channel_id
-            );
+            let send_url = discord_message_url(channel_id);
             let payload = serde_json::json!({
                 "content": active_msg
             });
@@ -302,10 +302,7 @@ async fn connect_and_listen(
                                 }
                                 if crate::channels::is_stop_command(&payload.content) {
                                     crate::shutdown::trigger_cli_cancel();
-                                    let send_url = format!(
-                                        "https://discord.com/api/v10/channels/{}/messages",
-                                        payload.channel_id
-                                    );
+                                    let send_url = discord_message_url(&payload.channel_id);
                                     let reply_payload = serde_json::json!({
                                         "content": "▲ Stop requested. Active OpenZ turn interrupted."
                                     });
@@ -326,11 +323,8 @@ async fn connect_and_listen(
                                     )
                                     .await
                                 {
-                                    let send_url = format!(
-                                        "https://discord.com/api/v10/channels/{}/messages",
-                                        payload.channel_id
-                                    );
-                                    for chunk in chunk_message(&response_text, 2000) {
+                                    let send_url = discord_message_url(&payload.channel_id);
+                                    for chunk in chunk_message(&response_text, DISCORD_MAX_MESSAGE_BYTES) {
                                         let reply_payload = serde_json::json!({ "content": chunk });
                                         let _ = client
                                             .post(&send_url)
@@ -345,11 +339,8 @@ async fn connect_and_listen(
                                 if let Some(response_text) =
                                     crate::channels::model_switch_text_response(&payload.content)
                                 {
-                                    let send_url = format!(
-                                        "https://discord.com/api/v10/channels/{}/messages",
-                                        payload.channel_id
-                                    );
-                                    for chunk in chunk_message(&response_text, 2000) {
+                                    let send_url = discord_message_url(&payload.channel_id);
+                                    for chunk in chunk_message(&response_text, DISCORD_MAX_MESSAGE_BYTES) {
                                         let reply_payload = serde_json::json!({ "content": chunk });
                                         let _ = client
                                             .post(&send_url)
@@ -377,11 +368,8 @@ async fn connect_and_listen(
                                         Err(e) => format!("Error processing request: {}", e),
                                     };
 
-                                    let send_url = format!(
-                                        "https://discord.com/api/v10/channels/{}/messages",
-                                        payload.channel_id
-                                    );
-                                    for chunk in chunk_message(&response_text, 2000) {
+                                    let send_url = discord_message_url(&payload.channel_id);
+                                    for chunk in chunk_message(&response_text, DISCORD_MAX_MESSAGE_BYTES) {
                                         let reply_payload = serde_json::json!({
                                             "content": chunk
                                         });
@@ -409,42 +397,6 @@ async fn connect_and_listen(
     writer_handle.abort();
 
     Ok(())
-}
-
-fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
-    if text.len() <= max_len {
-        return vec![text.to_string()];
-    }
-    let mut chunks = Vec::new();
-    let mut remaining = text;
-    while !remaining.is_empty() {
-        if remaining.len() <= max_len {
-            chunks.push(remaining.to_string());
-            break;
-        }
-
-        let mut split_at = max_len;
-        while split_at > 0 && !remaining.is_char_boundary(split_at) {
-            split_at -= 1;
-        }
-        if split_at == 0 {
-            split_at = 1;
-            while split_at < remaining.len() && !remaining.is_char_boundary(split_at) {
-                split_at += 1;
-            }
-        }
-
-        let candidate = &remaining[..split_at];
-        let final_split = if let Some(idx) = candidate.rfind('\n') {
-            if idx > 0 { idx } else { split_at }
-        } else {
-            split_at
-        };
-
-        chunks.push(remaining[..final_split].to_string());
-        remaining = remaining[final_split..].trim_start_matches('\n');
-    }
-    chunks
 }
 
 #[cfg(test)]

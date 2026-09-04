@@ -1,7 +1,7 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use scraper::{Html, Selector};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use spider::website::Website;
 use std::sync::Arc;
 use std::time::Duration;

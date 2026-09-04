@@ -1,10 +1,11 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
-use rusqlite::{OptionalExtension, params};
+use anyhow::{anyhow, Result};
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use super::db::{get_db_mutex, with_db};
+use crate::memory::with_shared_db as with_db;
+use super::db::get_db_mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowCard {

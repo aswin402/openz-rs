@@ -1,10 +1,10 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use oxc_allocator::Allocator;
 use oxc_codegen::{CodeGenerator, CodegenOptions};
 use oxc_parser::Parser;
 use oxc_span::SourceType;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::Path;
 
 pub struct JsFormatTool;

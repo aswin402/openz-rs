@@ -1,5 +1,9 @@
 # ZeroClaw Research & OpenZ Improvement Roadmap 🦀🔍
 
+> Historical research snapshot. The comparison reflects an earlier OpenZ state
+> and is retained for context; current architecture and security behavior live
+> in `docs/architecture.md` and `docs/security.md`.
+
 This document presents a detailed architectural analysis of [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw), compares its capabilities with `openz`, and outlines a roadmap of enhancements to elevate `openz` to a production-grade, secure, and highly integrated agent runtime.
 
 ---

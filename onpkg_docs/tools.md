@@ -38,7 +38,7 @@ pub trait Tool: Send + Sync {
 
 ## 2. Registering a Tool
 
-Register new tools in `ToolRegistry` (constructed in `src/cli/builder.rs` or `src/tools/mod.rs`):
+Register new tools through the responsibility-specific modules in `src/cli/tool_registration/`; the registry itself remains in `src/tools/mod.rs`:
 - Use `registry.register(Arc::new(MyNewTool::new()))`.
 - Custom subagents (from `~/.openz/subagents.json`) are dynamically loaded as tools (`DelegateProfileTool`) at LLM runtime via the registry's `.get()` method.
 
@@ -49,7 +49,7 @@ Register new tools in `ToolRegistry` (constructed in `src/cli/builder.rs` or `sr
 ### Argument Naming and Aliases
 Tool arguments do not follow a single unified convention. Some models supply `camelCase` while others supply `snake_case`.
 - Handle casing differences gracefully in your `call()` implementation.
-- Check `format_tool_args` in `src/agent/agent_loop.rs` to map your tool arguments to friendly display names and formatting strings for the user's progress spinner.
+- Check `format_tool_args` in `src/agent/agent_loop/tool_execution.rs` to map your tool arguments to friendly display names and formatting strings for the user's progress spinner.
 
 ### Handling Large Outputs (>4,000 Characters)
 If a tool returns output larger than 4,000 characters:
@@ -168,6 +168,4 @@ OpenZ natively integrates tools that allow the agent to test, debug, and optimiz
 - `diagnose_system`: Retrieve comprehensive OpenZ system diagnostics including directory file sizes (sessions, traces, outputs) and SQLite database health checks.
 - `manage_sessions`: List active session files, archive session histories, delete sessions, or prune temporary tool outputs to prevent disk space exhaustion.
 - `manage_backups`: Create, list, restore, or delete backups of the agent configurations, custom subagent profiles, and database markdown skills.
-
-
 

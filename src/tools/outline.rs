@@ -1,7 +1,7 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use regex::Regex;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
 
@@ -352,21 +352,15 @@ mod tests {
         let symbols = res["symbols"].as_array().unwrap();
 
         // Should find interface User, class UserService, and function logUser
-        assert!(
-            symbols
-                .iter()
-                .any(|s| s["kind"] == "interface" && s["name"] == "User")
-        );
-        assert!(
-            symbols
-                .iter()
-                .any(|s| s["kind"] == "class" && s["name"] == "UserService")
-        );
-        assert!(
-            symbols
-                .iter()
-                .any(|s| s["kind"] == "function" && s["name"] == "logUser")
-        );
+        assert!(symbols
+            .iter()
+            .any(|s| s["kind"] == "interface" && s["name"] == "User"));
+        assert!(symbols
+            .iter()
+            .any(|s| s["kind"] == "class" && s["name"] == "UserService"));
+        assert!(symbols
+            .iter()
+            .any(|s| s["kind"] == "function" && s["name"] == "logUser"));
 
         // Clean up
         let _ = std::fs::remove_dir_all(&temp_dir);

@@ -1,14 +1,13 @@
-use crate::providers::circuit_breaker::{CircuitBreaker, retry_with_backoff};
+use crate::providers::circuit_breaker::CircuitBreaker;
 use crate::providers::{GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest};
+use crate::providers::transport::{
+    anthropic_messages_endpoint, build_provider_client, post_json_with_retry, ProviderAuth,
+};
 use crate::session::Message;
 use anyhow::Result;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-
-const PROVIDER_CONNECT_TIMEOUT_SECS: u64 = 15;
-const PROVIDER_READ_TIMEOUT_SECS: u64 = 120;
-const PROVIDER_TOTAL_TIMEOUT_SECS: u64 = 300;
 
 pub struct AnthropicProvider {
     pub client: Client,
@@ -57,13 +56,7 @@ enum ContentBlock {
 impl AnthropicProvider {
     pub fn new(api_key: String, api_base: String, model: String) -> Self {
         AnthropicProvider {
-            client: Client::builder()
-                .use_rustls_tls()
-                .connect_timeout(Duration::from_secs(PROVIDER_CONNECT_TIMEOUT_SECS))
-                .read_timeout(Duration::from_secs(PROVIDER_READ_TIMEOUT_SECS))
-                .timeout(Duration::from_secs(PROVIDER_TOTAL_TIMEOUT_SECS))
-                .build()
-                .unwrap_or_default(),
+            client: build_provider_client(),
             api_key,
             api_base,
             model,
@@ -321,43 +314,17 @@ impl LLMProvider for AnthropicProvider {
             tools: anthropic_tools,
         };
 
-        let client = self.client.clone();
-        let api_key = self.api_key.clone();
-        let api_base = self.api_base.clone();
+        let url = anthropic_messages_endpoint(&self.api_base);
         let body_for_retry =
             serde_json::to_value(&body).map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
-
-        let response = retry_with_backoff(
+        let response = post_json_with_retry(
+            &self.client,
             &self.breaker,
-            3,
-            Duration::from_secs(1),
-            Duration::from_secs(30),
             "anthropic",
-            || {
-                let client = client.clone();
-                let api_key = api_key.clone();
-                let clean_base = api_base.trim_end_matches('/').trim_end_matches("/v1");
-                let url = format!("{}/v1/messages", clean_base);
-                let json_body = body_for_retry.clone();
-                async move {
-                    let res = client
-                        .post(&url)
-                        .header("x-api-key", &api_key)
-                        .header("anthropic-version", "2023-06-01")
-                        .header("anthropic-beta", "prompt-caching-2024-07-31")
-                        .json(&json_body)
-                        .send()
-                        .await
-                        .map_err(|e| (0u16, format!("Network error: {e}")))?;
-                    if !res.status().is_success() {
-                        let status = res.status().as_u16();
-                        let error_text = res.text().await.unwrap_or_default();
-                        Err((status, error_text))
-                    } else {
-                        Ok(res)
-                    }
-                }
-            },
+            &url,
+            &self.api_key,
+            body_for_retry,
+            ProviderAuth::Anthropic,
         )
         .await?;
 

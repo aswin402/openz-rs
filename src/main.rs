@@ -407,15 +407,15 @@ where
                         .to_string()
                 };
 
-                write!(
+                writeln!(
                     writer,
-                    "  \x1b[1;32m-->\x1b[0m \x1b[1;36mWS_MSG\x1b[0m chat_id=\x1b[35m{}\x1b[0m model=\x1b[1;33m{}\x1b[0m \x1b[1;30m({})\x1b[0m\n",
+                    "  \x1b[1;32m-->\x1b[0m \x1b[1;36mWS_MSG\x1b[0m chat_id=\x1b[35m{}\x1b[0m model=\x1b[1;33m{}\x1b[0m \x1b[1;30m({})\x1b[0m",
                     short_id, model, provider
                 )?;
             } else {
-                write!(
+                writeln!(
                     writer,
-                    "  \x1b[1;30m...\x1b[0m \x1b[1;36mWS\x1b[0m  {}\n",
+                    "  \x1b[1;30m...\x1b[0m \x1b[1;36mWS\x1b[0m  {}",
                     msg
                 )?;
             }
@@ -423,17 +423,17 @@ where
             if msg.starts_with("Sending completion request to LLM") {
                 let model = extract_value(&msg, "(model: ", ")").unwrap_or("unknown");
                 let iteration = extract_value(&msg, "iteration=", "").unwrap_or("0");
-                write!(
+                writeln!(
                     writer,
-                    "  \x1b[1;33m⚡\x1b[0m \x1b[1;35mLLM_REQ\x1b[0m model=\x1b[1;33m{}\x1b[0m \x1b[1;30m[iter: {}]\x1b[0m\n",
+                    "  \x1b[1;33m⚡\x1b[0m \x1b[1;35mLLM_REQ\x1b[0m model=\x1b[1;33m{}\x1b[0m \x1b[1;30m[iter: {}]\x1b[0m",
                     model, iteration
                 )?;
             } else if msg.starts_with("Received LLM response") {
                 let reason = extract_value(&msg, "(finish_reason: ", ")").unwrap_or("stop");
                 let duration = visitor.duration_ms.unwrap_or(0);
-                write!(
+                writeln!(
                     writer,
-                    "  \x1b[1;32m⚡\x1b[0m \x1b[1;36mLLM_RESP\x1b[0m status=\x1b[1;32m{}\x1b[0m \x1b[1;30m({}ms)\x1b[0m\n",
+                    "  \x1b[1;32m⚡\x1b[0m \x1b[1;36mLLM_RESP\x1b[0m status=\x1b[1;32m{}\x1b[0m \x1b[1;30m({}ms)\x1b[0m",
                     reason, duration
                 )?;
             } else if msg.starts_with("Executing tool call") {
@@ -444,15 +444,15 @@ where
                         .unwrap_or("unknown")
                         .to_string()
                 };
-                write!(
+                writeln!(
                     writer,
-                    "  \x1b[1;33m⚙️\x1b[0m \x1b[1;33mTOOL_CALL\x1b[0m tool=\x1b[1;34m{}\x1b[0m\n",
+                    "  \x1b[1;33m⚙️\x1b[0m \x1b[1;33mTOOL_CALL\x1b[0m tool=\x1b[1;34m{}\x1b[0m",
                     tool
                 )?;
             } else {
-                write!(
+                writeln!(
                     writer,
-                    "  \x1b[1;30m...\x1b[0m \x1b[1;33mLOOP\x1b[0m {}\n",
+                    "  \x1b[1;30m...\x1b[0m \x1b[1;33mLOOP\x1b[0m {}",
                     msg
                 )?;
             }
@@ -477,15 +477,15 @@ where
                 } else {
                     "\x1b[1;31mFAILED\x1b[0m"
                 };
-                write!(
+                writeln!(
                     writer,
-                    "  \x1b[1;32m✓\x1b[0m \x1b[1;32mTOOL_RES\x1b[0m tool=\x1b[1;34m{}\x1b[0m status={}\n",
+                    "  \x1b[1;32m✓\x1b[0m \x1b[1;32mTOOL_RES\x1b[0m tool=\x1b[1;34m{}\x1b[0m status={}",
                     tool, status_colored
                 )?;
             } else {
-                write!(
+                writeln!(
                     writer,
-                    "  \x1b[1;30m...\x1b[0m \x1b[1;33mTOOL\x1b[0m {}\n",
+                    "  \x1b[1;30m...\x1b[0m \x1b[1;33mTOOL\x1b[0m {}",
                     msg
                 )?;
             }
@@ -494,28 +494,28 @@ where
                 let count =
                     extract_value(&msg, "Restored session history (", " messages)").unwrap_or("0");
                 let prompt = extract_value(&msg, "User prompt: \"", "\"").unwrap_or("");
-                write!(
+                writeln!(
                     writer,
-                    "  \x1b[1;34m◇\x1b[0m \x1b[1;32mRESTORED\x1b[0m ({} messages) \x1b[1;30mPrompt:\x1b[0m \"{}\"\n",
+                    "  \x1b[1;34m◇\x1b[0m \x1b[1;32mRESTORED\x1b[0m ({} messages) \x1b[1;30mPrompt:\x1b[0m \"{}\"",
                     count, prompt
                 )?;
             } else {
-                write!(
+                writeln!(
                     writer,
-                    "  \x1b[1;30m...\x1b[0m \x1b[1;32mREST\x1b[0m {}\n",
+                    "  \x1b[1;30m...\x1b[0m \x1b[1;32mREST\x1b[0m {}",
                     msg
                 )?;
             }
         } else if target.starts_with("openz::agent::agent_loop::save") {
             if msg.starts_with("Session saved successfully") {
-                write!(
+                writeln!(
                     writer,
-                    "  \x1b[1;32m✓\x1b[0m \x1b[1;32mTURN_COMPLETE\x1b[0m\n"
+                    "  \x1b[1;32m✓\x1b[0m \x1b[1;32mTURN_COMPLETE\x1b[0m"
                 )?;
             } else {
-                write!(
+                writeln!(
                     writer,
-                    "  \x1b[1;30m...\x1b[0m \x1b[1;35mSAVE\x1b[0m {}\n",
+                    "  \x1b[1;30m...\x1b[0m \x1b[1;35mSAVE\x1b[0m {}",
                     msg
                 )?;
             }
@@ -523,15 +523,15 @@ where
             && msg.contains("No API key configured")
         {
             let provider = extract_value(&msg, "provider '", "'").unwrap_or("unknown");
-            write!(
+            writeln!(
                 writer,
-                "  \x1b[1;33m⚠️\x1b[0m \x1b[1;31mNO_KEY\x1b[0m provider=\x1b[1;31m{}\x1b[0m\n",
+                "  \x1b[1;33m⚠️\x1b[0m \x1b[1;31mNO_KEY\x1b[0m provider=\x1b[1;31m{}\x1b[0m",
                 provider
             )?;
         } else if target.starts_with("openz::cron") || target.starts_with("openz::config") {
             // Silence startup setup warning logs to keep output clean and minimalist
         } else {
-            write!(writer, "  {} {}\n", level_str, msg)?;
+            writeln!(writer, "  {} {}", level_str, msg)?;
         }
         Ok(())
     }

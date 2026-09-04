@@ -1,4 +1,5 @@
 use crate::config::schema::Config;
+use crate::providers::ToolCallRequest;
 use crate::session::Message;
 
 #[derive(Debug, Clone)]
@@ -6,6 +7,29 @@ pub struct ToolTranscriptResult {
     pub id: String,
     pub name: String,
     pub result: serde_json::Value,
+}
+
+pub(crate) fn append_auto_tool_result(
+    tool_results: &mut Vec<ToolTranscriptResult>,
+    assistant_tool_calls_json: &mut Vec<serde_json::Value>,
+    call: &ToolCallRequest,
+    result: serde_json::Value,
+) {
+    tool_results.push(ToolTranscriptResult {
+        id: call.id.clone(),
+        name: call.name.clone(),
+        result,
+    });
+
+    assistant_tool_calls_json.push(serde_json::json!({
+        "id": call.id,
+        "type": "function",
+        "function": {
+            "name": call.name,
+            "arguments": call.arguments.to_string()
+        },
+        "_openz_auto_tool": true
+    }));
 }
 
 pub(crate) fn append_assistant_tool_calls(

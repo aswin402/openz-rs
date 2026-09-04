@@ -1,7 +1,8 @@
+use crate::memory::{scope_from_args, with_graph_db};
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
-use rusqlite::{Connection, params};
-use serde_json::{Value, json};
+use anyhow::{anyhow, Result};
+use rusqlite::{params, Connection};
+use serde_json::{json, Value};
 use tokio::process::Command;
 
 pub struct AstGrepTool;
@@ -300,13 +301,12 @@ impl Tool for AstGrepIndexCodebaseTool {
             _ => vec!["class $NAME { $$$ }", "function $NAME($$$) { $$$ }"],
         };
 
-        let (user_id, session_id, agent_id) =
-            crate::tools::graph_memory::scope_from_args(arguments);
+        let (user_id, session_id, agent_id) = scope_from_args(arguments);
         let mut indexed_count = 0;
         let mut code_graph_count = 0;
         let mut entries_to_archive = Vec::new();
 
-        crate::tools::graph_memory::with_db(|conn| {
+        with_graph_db(|conn| {
             conn.execute(
                 "DELETE FROM code_calls WHERE caller_id IN (SELECT element_id FROM code_elements WHERE (user_id = ?1 OR user_id = '*') AND (session_id = ?2 OR session_id = '*') AND (agent_id = ?3 OR agent_id = '*'))",
                 params![user_id, session_id, agent_id],
@@ -345,7 +345,7 @@ impl Tool for AstGrepIndexCodebaseTool {
                         let start_line = element.start_line;
                         let symbol_name = element.name.clone();
 
-                        crate::tools::graph_memory::with_db(|conn| {
+                        with_graph_db(|conn| {
                             insert_ast_grep_code_element(
                                 conn,
                                 &element,

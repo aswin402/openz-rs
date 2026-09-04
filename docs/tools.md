@@ -16,9 +16,27 @@ pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
     fn description(&self) -> &str;
     fn parameters(&self) -> serde_json::Value;
+    fn metadata(&self) -> ToolMetadata {
+        ToolMetadata::infer(self.name())
+    }
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value>;
 }
 ```
+
+### Shared metadata and routing
+
+Cross-cutting tool policy is centralized in `src/tools/metadata.rs`. Curated
+tools are described by `ToolSpec` records in `src/tools/mod.rs`; each record
+owns its canonical name, aliases, presentation label, risk, routing packs,
+network/disk capabilities, and timeout hint. Dynamic integrations use
+`ToolMetadata::infer` and retain the same presentation and policy fields.
+
+`ToolRegistry` uses canonical names for registration and alias resolution.
+Intent scoping consumes the explicit packs (`core`, `repo_read`,
+`repo_write`, `local_exec`, `web_research`, `memory`, `cron`, `subagent`,
+`orchestrator`, and `media`) instead of maintaining a second per-tool scope
+list. Resource and security checks consume the same metadata before a tool is
+executed.
 
 ---
 
@@ -48,7 +66,7 @@ OpenZ packages a comprehensive suite of local tools for file manipulation, syste
 ### Shell & Execution Tools
 *   **`exec_command`** (`src/tools/shell.rs`): Runs commands in `/bin/sh` (or `cmd.exe` on Windows) sandboxed using Linux BPF seccomp filters.
 *   **`python_sandbox`** (`src/tools/shell.rs`): Executes Python scripts in an isolated subprocess with resource limits.
-*   **`wasm_execute`** (`src/tools/wasm_sandbox.rs`): Automatically executes WebAssembly (`.wasm`) files within an in-process, sandboxed `wasmtime` runtime.
+*   **`wasm_sandbox`** (`src/tools/wasm_sandbox.rs`): Automatically executes WebAssembly (`.wasm`) files within an in-process, sandboxed `wasmtime` runtime.
 *   **`cargo_manager`** (`src/tools/cargo_manager.rs`): Executes cargo toolchain commands (build, test, clippy, fmt) in a workspace.
 *   **`js_format`** (`src/tools/js_format.rs`): High-performance JS/TS outlining and formatting utility using the Oxc parser.
 *   **`compiler_auto_heal`** (`src/tools/compiler_auto_heal.rs`): Automatically diagnoses and fixes compilation errors.
@@ -72,12 +90,12 @@ OpenZ packages a comprehensive suite of local tools for file manipulation, syste
 
 ### Subagent & Workflow Tools
 For details on subagent execution modes, workspace optimizations, and fallback resolution, see the [Subagents Documentation](subagents.md).
-*   **`delegate_task`** (`src/tools/subagent.rs`): Spawns a child agent thread with isolated context to execute a specific subtask, and returns a summary.
-*   **`parallel_research`** (`src/tools/subagent.rs`): Runs multiple research subtasks in parallel across subagents and merges results.
-*   **`evaluator_optimizer_loop`** (`src/tools/subagent.rs`): Iteratively generates and evaluates responses until quality criteria are met.
-*   **`optimize_subagent`** (`src/tools/subagent.rs`): Refines a subagent's system prompt using AI based on feedback logs or execution errors.
-*   **`create_subagent`** (`src/tools/subagent.rs`): Dynamically creates and saves a new custom specialized subagent profile.
-*   **`delete_subagent`** (`src/tools/subagent.rs`): Deletes a custom subagent profile (default subagents are protected).
+*   **`delegate_task`** (`src/tools/subagent/delegate_task.rs`): Spawns a child agent thread with isolated context to execute a specific subtask, and returns a summary.
+*   **`parallel_research`** (`src/tools/subagent/parallel_research.rs`): Runs multiple research subtasks in parallel across subagents and merges results.
+*   **`evaluator_optimizer_loop`** (`src/tools/subagent/evaluator_optimizer.rs`): Iteratively generates and evaluates responses until quality criteria are met.
+*   **`optimize_subagent`** (`src/tools/subagent/optimize_profile.rs`): Refines a subagent's system prompt using AI based on feedback logs or execution errors.
+*   **`create_subagent`** (`src/tools/subagent/optimize_profile.rs`): Dynamically creates and saves a new custom specialized subagent profile.
+*   **`delete_subagent`** (`src/tools/subagent/optimize_profile.rs`): Deletes a custom subagent profile (default subagents are protected).
 *   **`trigger_sop`** (`src/tools/sop.rs`): Triggers a stateful closed-loop SOP workflow loop definition (such as 'ship-pr-until-green' or 'pre-commit-guard') dynamically with an optional payload.
 
 ### Memory & Knowledge Tools
@@ -89,6 +107,11 @@ For details on subagent execution modes, workspace optimizations, and fallback r
 *   **`archive_research`** (`src/tools/shared_memory/research.rs`): Archives research findings into persistent storage.
 *   **`search_research`** (`src/tools/shared_memory/research.rs`): Searches archived research content.
 *   **`index_notes`** (`src/tools/notes.rs`): Indexes and searches local markdown notes.
+
+The shared memory domain boundary in `src/memory/` owns memory models,
+repository orchestration, scope handling, and embedding boundaries used by
+production consumers; the native tool implementations remain under
+`src/tools/shared_memory/`.
 
 ### Integrated SearchXyz Tools
 *   **`searchxyz_search_web`** (`src/tools/searchxyz/web.rs`): Federated web search dispatcher querying DuckDuckGo, Google, Bing, Brave, and SearXng.
@@ -108,6 +131,7 @@ For details on subagent execution modes, workspace optimizations, and fallback r
 *   **`searchxyz_clear_index`** (`src/tools/searchxyz/index.rs`): Wipes all indexed document text and Graph databases.
 
 ### Integrated OpenMedia Tools
+The native OpenMedia wrapper remains at `src/tools/openmedia/mod.rs`; the underlying MCP server is now organized under `tools/openmedia/mcp/src/` with separate render, image, animation, improvement, SVG, template, and video handler modules composed into one router.
 *   **`openmedia_ping`** (`src/tools/openmedia/mod.rs`): Pings the media generation server to check status and health.
 *   **`openmedia_model_download`** (`src/tools/openmedia/mod.rs`): Downloads a specified model file (CLIP text/vision or Aesthetic predictor) from Hugging Face Hub with progress tracking.
 *   **`openmedia_rasterize_svg`** (`src/tools/openmedia/mod.rs`): Rasterizes an SVG string or file path into a PNG, JPEG, or WebP image.
@@ -148,7 +172,7 @@ For details on subagent execution modes, workspace optimizations, and fallback r
 
 ### Ported Native Reasoning & Context Tools (Mega Ports)
 *   **Sequential Thinking Reasoning Loop** (`src/tools/sequential_thinking/`): Includes `sequentialthinking` (reasoning chain loop), `analyze_graph` (thought query and quality statistics), `export_session` (mermaid/markdown exporter), `summarize_reasoning` (structural timeline summary), and `reasoning_templates` (reasoning design frameworks).
-*   **Context Scoping & Headroom Compression** (`src/tools/headroom/`): Includes `scope_context` (YAGNI contextual filtering), `compress_content` (token-reduction compression), `retrieve_original` (retrieve full output from cached IDs), `compress_file` / `compress_diff` / `compress_url` (specialized format filters), `cache_stats` / `clear_cache` (caching metrics), `summarize_codebase` (code hierarchy summary), and `count_tokens` (FastBPE tokens count).
+*   **Context Scoping & Headroom Compression** (`src/tools/headroom/`): Includes `scope_context` (YAGNI contextual filtering), `compress_content` (token-reduction compression), `retrieve_original` (retrieve full output from cached IDs or a validated file path), `compress_file` / `compress_diff` / `compress_url` (specialized format filters), `cache_stats` / `clear_cache` (caching metrics), `summarize_codebase` (code hierarchy summary), and `count_tokens` (FastBPE tokens count). `retrieve_original` remains high-risk because it can expose full uncompressed content and therefore keeps the approval gate.
 *   **Knowledge Graph Memory** (`src/tools/graph_memory/`): Includes `create_entities` (graph node insertion), `create_relations` (node relationship links), `add_observations` (append node facts), `read_graph` (retrieve entity scopes), `search_nodes` (entity search), `open_nodes` (open graph nodes), and `create_database_branch` / `commit_database_branch` / `rollback_database_branch` (SQL database transaction branching).
 *   **Extended Developer Memory (Memory Extra)** (`src/tools/memory_extra/`): Includes `set_working_memory` / `get_working_memory` (short-term cache memory), `log_execution_episode` / `log_reflection` (reflexive action logs), `record_tool_performance` (latency tracking), `hybrid_search` (BM25 + vector search), `extract_and_store_facts` / `proactive_recall` (background fact curators), and `log_repository_evolution` / `traverse_graph` (codebase architecture community maps).
 

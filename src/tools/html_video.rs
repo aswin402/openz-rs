@@ -1,11 +1,11 @@
 use crate::config::resolve_path;
-use crate::tools::Tool;
 use crate::tools::browser_common::{
     connect_to_tab, ensure_browser_running, kill_browser_on_port_9222, send_cdp_cmd,
 };
-use anyhow::{Result, anyhow};
+use crate::tools::Tool;
+use anyhow::{anyhow, Result};
 use base64::prelude::*;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::fs;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -233,7 +233,7 @@ impl Tool for HtmlToVideoTool {
 
         ensure_browser_running().await?;
 
-        let client = reqwest::Client::new();
+        let client = crate::core::http::default_http_client();
         let mut res = client.put("http://127.0.0.1:9222/json/new").send().await;
 
         if !matches!(&res, Ok(r) if r.status().is_success()) {

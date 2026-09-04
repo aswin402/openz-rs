@@ -1,6 +1,9 @@
 use crate::config::schema::Config;
-use crate::providers::{LLMProvider, anthropic::AnthropicProvider, openai::OpenAIProvider};
-use anyhow::{Result, anyhow};
+use crate::config::provider_catalog::{
+    environment_keys_for_provider, keyword_provider_candidates, provider_prefix_for_model,
+};
+use crate::providers::{anthropic::AnthropicProvider, openai::OpenAIProvider, LLMProvider};
+use anyhow::{anyhow, Result};
 use std::sync::Arc;
 
 /// Result of the full provider resolution pipeline.
@@ -30,28 +33,11 @@ pub fn resolve_api_config(config: &Config, provider_name: &str) -> (String, Stri
 }
 
 fn provider_api_key_env_var(provider_name: &str) -> String {
-    match provider_name {
-        "anthropic" => "ANTHROPIC_API_KEY".to_string(),
-        "openai" => "OPENAI_API_KEY".to_string(),
-        "mivi" => "MIVI_API_KEY".to_string(),
-        "openrouter" => "OPENROUTER_API_KEY".to_string(),
-        "deepseek" => "DEEPSEEK_API_KEY".to_string(),
-        "groq" => "GROQ_API_KEY".to_string(),
-        "minimax" => "MINIMAX_API_KEY".to_string(),
-        "mistral" => "MISTRAL_API_KEY".to_string(),
-        "z.ai" | "z_ai" => "Z_AI_API_KEY".to_string(),
-        "nvidia" => "NVIDIA_API_KEY".to_string(),
-        "opencode_zen" | "opencode zen" | "opencode-zen" => "OPENCODE_ZEN_API_KEY".to_string(),
-        "google_ai_studio" | "google ai studio" | "google-ai-studio" => {
-            "GOOGLE_AI_STUDIO_API_KEY".to_string()
-        }
-        "cerebras" => "CEREBRAS_API_KEY".to_string(),
-        "cohere" => "COHERE_API_KEY".to_string(),
-        "llm7" => "LLM7_API_KEY".to_string(),
-        "sambanova" => "SAMBANOVA_API_KEY".to_string(),
-        "huggingface" => "HUGGINGFACE_API_KEY".to_string(),
-        _ => Config::custom_provider_env_var(provider_name),
-    }
+    environment_keys_for_provider(provider_name)
+        .first()
+        .copied()
+        .map(str::to_string)
+        .unwrap_or_else(|| Config::custom_provider_env_var(provider_name))
 }
 
 pub fn resolve_fallback_model(target_provider: &str, original_model: &str) -> String {
@@ -106,214 +92,53 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
             }
         }
     }
-    if prefix_matched {
-        // custom provider prefix matched above
-    } else if provider_is_auto && (model_lower == "mivi" || model_lower.starts_with("mivi/")) {
-        provider_name = "mivi".to_string();
-        clean_model = model.strip_prefix("mivi/").unwrap_or(model);
-    } else if provider_is_auto && model_lower.starts_with("openrouter/") {
+    if provider_is_auto && !prefix_matched {
+        if model_lower == "mivi" {
+            provider_name = "mivi".to_string();
+            clean_model = model;
+            prefix_matched = true;
+        } else if model_lower.starts_with("mivi/") {
+            provider_name = "mivi".to_string();
+            clean_model = &model["mivi/".len()..];
+            prefix_matched = true;
+        }
+    }
+    if provider_is_auto && !prefix_matched && model_lower.starts_with("openrouter/") {
         provider_name = "openrouter".to_string();
         clean_model = &model["openrouter/".len()..];
-    } else if provider_is_auto
+        prefix_matched = true;
+    }
+    if provider_is_auto
+        && !prefix_matched
         && model_lower.ends_with(":free")
         && has_openrouter_key
         && !(model_lower.starts_with("nvidia/") && has_nvidia_key)
     {
         provider_name = "openrouter".to_string();
         clean_model = model;
-    } else if provider_is_auto && model_lower.starts_with("ollama_local/") {
-        provider_name = "ollama_local".to_string();
-        clean_model = &model["ollama_local/".len()..];
-    } else if provider_is_auto && model_lower.starts_with("ollama/") {
-        provider_name = "ollama".to_string();
-        clean_model = &model["ollama/".len()..];
-    } else if provider_is_auto && model_lower.starts_with("anthropic/") {
-        provider_name = "anthropic".to_string();
-        clean_model = &model["anthropic/".len()..];
-    } else if provider_is_auto && model_lower.starts_with("openai/") {
-        provider_name = "openai".to_string();
-        clean_model = &model["openai/".len()..];
-    } else if provider_is_auto && model_lower.starts_with("deepseek/") {
-        provider_name = "deepseek".to_string();
-        clean_model = &model["deepseek/".len()..];
-    } else if provider_is_auto && model_lower.starts_with("groq/") {
-        provider_name = "groq".to_string();
-        clean_model = &model["groq/".len()..];
-    } else if provider_is_auto
-        && (model_lower.starts_with("google_ai_studio/")
-            || model_lower.starts_with("google-ai-studio/"))
-    {
-        provider_name = "google_ai_studio".to_string();
-        let prefix_len = if model_lower.starts_with("google_ai_studio/") {
-            "google_ai_studio/".len()
-        } else {
-            "google-ai-studio/".len()
-        };
-        clean_model = &model[prefix_len..];
-    } else if provider_is_auto
-        && (model_lower.starts_with("opencode_zen/") || model_lower.starts_with("opencode-zen/"))
-    {
-        provider_name = "opencode_zen".to_string();
-        let prefix_len = if model_lower.starts_with("opencode_zen/") {
-            "opencode_zen/".len()
-        } else {
-            "opencode-zen/".len()
-        };
-        clean_model = &model[prefix_len..];
-    } else if provider_is_auto
-        && (model_lower.starts_with("z.ai/") || model_lower.starts_with("z_ai/"))
-    {
-        provider_name = "z.ai".to_string();
-        let prefix_len = if model_lower.starts_with("z.ai/") {
-            "z.ai/".len()
-        } else {
-            "z_ai/".len()
-        };
-        clean_model = &model[prefix_len..];
-    } else if provider_is_auto && model_lower.starts_with("nvidia/") {
-        provider_name = "nvidia".to_string();
-        clean_model = &model["nvidia/".len()..];
-    } else if provider_is_auto && model_lower.starts_with("minimax/") {
-        provider_name = "minimax".to_string();
-        clean_model = &model["minimax/".len()..];
-    } else if provider_is_auto && model_lower.starts_with("mistral/") {
-        provider_name = "mistral".to_string();
-        clean_model = &model["mistral/".len()..];
-    } else if provider_is_auto
-        && (model_lower.starts_with("cerebras/") || model_lower.starts_with("cerebres/"))
-    {
-        provider_name = "cerebras".to_string();
-        let prefix_len = if model_lower.starts_with("cerebras/") {
-            "cerebras/".len()
-        } else {
-            "cerebres/".len()
-        };
-        clean_model = &model[prefix_len..];
-    } else if provider_is_auto && model_lower.starts_with("cohere/") {
-        provider_name = "cohere".to_string();
-        clean_model = &model["cohere/".len()..];
-    } else if provider_is_auto && model_lower.starts_with("llm7/") {
-        provider_name = "llm7".to_string();
-        clean_model = &model["llm7/".len()..];
-    } else if provider_is_auto && model_lower.starts_with("sambanova/") {
-        provider_name = "sambanova".to_string();
-        clean_model = &model["sambanova/".len()..];
-    } else if provider_is_auto && model_lower.starts_with("huggingface/") {
-        provider_name = "huggingface".to_string();
-        clean_model = &model["huggingface/".len()..];
-    } else if provider_name == "auto" {
-        // 2. Auto-detect from keywords
-        let has_key = |prov: &str| -> bool { config.is_provider_available(prov) };
+        prefix_matched = true;
+    }
+    if provider_is_auto && !prefix_matched {
+        if let Some((descriptor, prefix)) = provider_prefix_for_model(model) {
+            provider_name = descriptor.canonical_name.to_string();
+            clean_model = &model[prefix.len()..];
+            prefix_matched = true;
+        }
+    }
 
-        if model_lower.contains("claude") {
-            if has_key("anthropic") {
-                provider_name = "anthropic".to_string();
-            } else if has_key("opencode_zen") {
-                provider_name = "opencode_zen".to_string();
-            } else if has_key("openrouter") {
-                provider_name = "openrouter".to_string();
-            } else {
-                provider_name = "anthropic".to_string();
-            }
-        } else if model_lower.contains("gpt") {
-            if has_key("openai") {
-                provider_name = "openai".to_string();
-            } else if has_key("opencode_zen") {
-                provider_name = "opencode_zen".to_string();
-            } else if has_key("openrouter") {
-                provider_name = "openrouter".to_string();
-            } else {
-                provider_name = "openai".to_string();
-            }
-        } else if model_lower.contains("deepseek") {
-            if has_key("deepseek") {
-                provider_name = "deepseek".to_string();
-            } else if has_key("opencode_zen") {
-                provider_name = "opencode_zen".to_string();
-            } else if has_key("openrouter") {
-                provider_name = "openrouter".to_string();
-            } else {
-                provider_name = "deepseek".to_string();
-            }
-        } else if model_lower.contains("gemini") {
-            if has_key("google_ai_studio") {
-                provider_name = "google_ai_studio".to_string();
-            } else if has_key("opencode_zen") {
-                provider_name = "opencode_zen".to_string();
-            } else if has_key("openrouter") {
-                provider_name = "openrouter".to_string();
-            } else {
-                provider_name = "google_ai_studio".to_string();
-            }
-        } else if model_lower.contains("gemma") {
-            if has_key("google_ai_studio") {
-                provider_name = "google_ai_studio".to_string();
-            } else if has_key("openrouter") {
-                provider_name = "openrouter".to_string();
-            } else if has_key("opencode_zen") {
-                provider_name = "opencode_zen".to_string();
-            } else {
-                provider_name = "google_ai_studio".to_string();
-            }
-        } else if model_lower.contains("mistral") || model_lower.contains("codestral") {
-            if has_key("mistral") {
-                provider_name = "mistral".to_string();
-            } else if has_key("openrouter") {
-                provider_name = "openrouter".to_string();
-            } else if has_key("opencode_zen") {
-                provider_name = "opencode_zen".to_string();
-            } else {
-                provider_name = "mistral".to_string();
-            }
-        } else if model_lower.contains("command-r") || model_lower.contains("command-r7") {
-            if has_key("cohere") {
-                provider_name = "cohere".to_string();
-            } else if has_key("openrouter") {
-                provider_name = "openrouter".to_string();
-            } else {
-                provider_name = "cohere".to_string();
-            }
-        } else if model_lower.contains("sambanova") {
-            provider_name = "sambanova".to_string();
-        } else if model_lower.ends_with("-hf") || model_lower.starts_with("meta-") {
-            if has_key("huggingface") {
-                provider_name = "huggingface".to_string();
-            } else if has_key("openrouter") {
-                provider_name = "openrouter".to_string();
-            } else {
-                provider_name = "huggingface".to_string();
-            }
-        } else if model_lower.contains("ollama_local") {
-            provider_name = "ollama_local".to_string();
-        } else if model_lower.contains("ollama") {
-            provider_name = "ollama".to_string();
+    // 2. Auto-detect from model keywords using the same fallback order as
+    // before, now expressed by the provider catalog.
+    if provider_is_auto && !prefix_matched {
+        let candidates = keyword_provider_candidates(model);
+        if let Some(provider) = candidates
+            .iter()
+            .find(|candidate| config.is_provider_available(candidate))
+        {
+            provider_name = (*provider).to_string();
+        } else if let Some(provider) = candidates.first() {
+            provider_name = (*provider).to_string();
         } else {
-            let mut found = false;
-            for prov in &[
-                "opencode_zen",
-                "google_ai_studio",
-                "anthropic",
-                "openai",
-                "deepseek",
-                "openrouter",
-                "groq",
-                "mistral",
-                "nvidia",
-                "z.ai",
-                "cohere",
-                "llm7",
-                "sambanova",
-                "huggingface",
-            ] {
-                if has_key(prov) {
-                    provider_name = prov.to_string();
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                provider_name = "openai".to_string();
-            }
+            provider_name = "openai".to_string();
         }
     }
 

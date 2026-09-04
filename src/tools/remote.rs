@@ -1,5 +1,5 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde_json::json;
 
 pub struct SendRemoteInputTool;

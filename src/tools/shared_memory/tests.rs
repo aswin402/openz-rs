@@ -100,12 +100,10 @@ async fn test_shared_memory_workflow() -> Result<()> {
     assert_eq!(res["status"], "success");
     let matches = res["matches"].as_array().unwrap();
     assert_eq!(matches.len(), 1);
-    assert!(
-        matches[0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("Docker builds")
-    );
+    assert!(matches[0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Docker builds"));
 
     // Test decay pruning directly
     {
@@ -261,12 +259,10 @@ async fn test_research_archive_workflow() -> Result<()> {
     assert_eq!(res["status"], "success");
     let matches = res["matches"].as_array().unwrap();
     assert_eq!(matches.len(), 1);
-    assert!(
-        matches[0]["content"]
-            .as_str()
-            .unwrap()
-            .contains("To set up actix-web")
-    );
+    assert!(matches[0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("To set up actix-web"));
     assert!(matches[0]["source"].as_str().unwrap().contains("actix.rs"));
 
     // Cleanup

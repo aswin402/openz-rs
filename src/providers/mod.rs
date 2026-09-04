@@ -156,7 +156,7 @@ pub async fn parse_multimodal_content(text: &str) -> Vec<ContentPart> {
         }
 
         if let Some(data) = image_data {
-            use base64::{Engine as _, engine::general_purpose};
+            use base64::{engine::general_purpose, Engine as _};
             let base64_data = general_purpose::STANDARD.encode(data);
             parts.push(ContentPart::Image {
                 mime_type: resolved_mime_type,
@@ -279,6 +279,7 @@ pub mod circuit_breaker;
 pub mod ollama_manager;
 pub mod openai;
 pub mod resolver;
+pub(crate) mod transport;
 
 #[cfg(test)]
 pub mod mock;

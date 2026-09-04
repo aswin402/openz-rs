@@ -1,51 +1,16 @@
-use crate::tools::graph_memory::with_db;
+use crate::memory::{with_graph_db as with_db, with_shared_db};
+use crate::memory::MemoryService;
 use crate::tools::memory_extra::facts::{forget_session_metadata_memories, forget_skills};
 use crate::tools::memory_extra::search::query_fts5;
 use crate::tools::memory_extra::working::{
-    active_working_memory_count, semantic_embedding_for_text, semantic_embedding_from_blob,
-    store_semantic_fact,
+    active_working_memory_count, store_semantic_fact,
 };
-use crate::tools::shared_memory::cosine_similarity;
 use anyhow::Result;
 use rusqlite::params;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MemoryLayer {
-    Semantic,
-    Graph,
-    Shared,
-    Cognitive,
-    Research,
-    SessionMetadata,
-    Skills,
-}
-
-#[derive(Debug, Clone)]
-pub struct MemoryScope {
-    pub user_id: String,
-    pub session_id: String,
-    pub agent_id: String,
-}
-
-impl MemoryScope {
-    pub fn new(
-        user_id: impl Into<String>,
-        session_id: impl Into<String>,
-        agent_id: impl Into<String>,
-    ) -> Self {
-        Self {
-            user_id: user_id.into(),
-            session_id: session_id.into(),
-            agent_id: agent_id.into(),
-        }
-    }
-
-    pub fn session(session_id: impl Into<String>) -> Self {
-        Self::new("*", session_id, "*")
-    }
-}
+pub use crate::memory::{MemoryLayer, MemoryRecallItem, MemoryScope};
 
 #[derive(Debug, Clone)]
 pub struct MemoryWriteResult {
@@ -58,15 +23,6 @@ pub struct GraphWriteResult {
     pub layer: MemoryLayer,
     pub created: bool,
     pub conflicts_resolved: i64,
-}
-
-#[derive(Debug, Clone)]
-pub struct MemoryRecallItem {
-    pub id: String,
-    pub text: String,
-    pub layer: MemoryLayer,
-    pub score: f64,
-    pub raw: Value,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -255,8 +211,9 @@ fn resolve_semantic_similarity_conflicts(
     importance: f64,
     scope: &MemoryScope,
 ) -> Result<i64> {
-    let new_embedding = semantic_embedding_for_text(text);
-    with_db(|conn| {
+    let memory = MemoryService::new(scope.clone());
+    let new_embedding = memory.hashed_semantic_embedding(text);
+    memory.with_graph_db(|conn| {
         let mut stmt = conn.prepare(
             "SELECT node_id, raw_text, importance, embedding
              FROM semantic_metadata
@@ -284,8 +241,8 @@ fn resolve_semantic_similarity_conflicts(
             if existing_text == text || existing_importance > importance {
                 continue;
             }
-            let existing_embedding = semantic_embedding_from_blob(&blob);
-            let similarity = cosine_similarity(&new_embedding, &existing_embedding) as f64;
+            let existing_embedding = memory.hashed_semantic_embedding_from_blob(&blob);
+            let similarity = memory.cosine_similarity(&new_embedding, &existing_embedding) as f64;
             if similarity < 0.90 {
                 continue;
             }
@@ -453,7 +410,8 @@ impl MemoryCoordinator {
         limit: usize,
         scope: &MemoryScope,
     ) -> Result<Vec<Value>> {
-        let fts_results = with_db(|conn| {
+        let memory = MemoryService::new(scope.clone());
+        let fts_results = memory.with_graph_db(|conn| {
             query_fts5(
                 conn,
                 query,
@@ -464,8 +422,8 @@ impl MemoryCoordinator {
             )
         })?;
 
-        let query_embedding = semantic_embedding_for_text(query);
-        let vector_results = with_db(|conn| {
+        let query_embedding = memory.hashed_semantic_embedding(query);
+        let vector_results = memory.with_graph_db(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT node_id, raw_text, timestamp, importance, embedding
                  FROM semantic_metadata
@@ -479,8 +437,8 @@ impl MemoryCoordinator {
             let mut scored = Vec::new();
             while let Some(row) = rows.next()? {
                 let blob: Vec<u8> = row.get(4)?;
-                let embedding = semantic_embedding_from_blob(&blob);
-                let similarity = cosine_similarity(&query_embedding, &embedding) as f64;
+                let embedding = memory.hashed_semantic_embedding_from_blob(&blob);
+                let similarity = memory.cosine_similarity(&query_embedding, &embedding) as f64;
                 if similarity <= 0.0 {
                     continue;
                 }
@@ -680,7 +638,7 @@ impl MemoryCoordinator {
         })?;
 
         let (cognitive_memories_deleted, research_entries_deleted) =
-            crate::tools::shared_memory::with_db(|conn| {
+            with_shared_db(|conn| {
                 // Cognitive memory is workspace-scoped, unlike the graph database's
                 // explicit user/session/agent scope. Never erase matching records
                 // belonging to another active workspace.
@@ -773,7 +731,7 @@ impl MemoryCoordinator {
         })?;
 
         let (cognitive_memories, research_entries) =
-            crate::tools::shared_memory::with_db(|conn| {
+            with_shared_db(|conn| {
                 let current_workspace = crate::tools::shared_memory::get_current_workspace();
                 let cognitive_memories = conn.query_row(
                     "SELECT COUNT(*) FROM cognitive_memory WHERE workspace = ?1",

@@ -6,6 +6,16 @@ use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+pub mod arguments;
+pub mod metadata;
+pub(crate) mod registry;
+pub(crate) mod routing;
+
+pub use metadata::{
+    canonical_tool_name, compact_presentation_name, normalize_tool_name, presentation_name,
+    tool_names_match, ToolMetadata, ToolRisk, ToolSpec,
+};
+
 pub const MIN_TOOL_TIMEOUT_SECS: u64 = 5;
 pub const MAX_TOOL_TIMEOUT_SECS: u64 = 1_800;
 
@@ -14,52 +24,11 @@ pub fn clamp_tool_timeout_secs(timeout_secs: u64) -> u64 {
 }
 
 pub fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c.is_uppercase() {
-            if !result.is_empty() && !result.ends_with('_') {
-                result.push('_');
-            }
-            result.extend(c.to_lowercase());
-        } else {
-            result.push(c);
-        }
-    }
-    result
+    arguments::to_snake_case(s)
 }
 
 pub fn normalize_tool_args(args: &serde_json::Value) -> serde_json::Value {
-    match args {
-        serde_json::Value::Object(map) => {
-            let mut new_map = serde_json::Map::new();
-            for (k, v) in map {
-                let alias = match k.as_str() {
-                    "Path" => "path".to_string(),
-                    "CommandLine" | "Command" | "command_line" => "command".to_string(),
-                    "Query" => "query".to_string(),
-                    "Url" | "UrlContent" => "url".to_string(),
-                    "Action" => "action".to_string(),
-                    "text" | "content_str" => "content".to_string(),
-                    "diff" => "patch".to_string(),
-                    "ImageName" | "OutputPath" => "output_path".to_string(),
-                    other => to_snake_case(other),
-                };
-                // Preserve schema-native keys while adding compatibility aliases.
-                // Native tools use both camelCase and snake_case contracts.
-                let normalized_value = normalize_tool_args(v);
-                new_map.insert(k.clone(), normalized_value.clone());
-                if alias != *k && !new_map.contains_key(&alias) {
-                    new_map.insert(alias, normalized_value);
-                }
-            }
-            serde_json::Value::Object(new_map)
-        }
-        serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(normalize_tool_args).collect())
-        }
-        other => other.clone(),
-    }
+    arguments::normalize_tool_args(args)
 }
 
 #[async_trait::async_trait]
@@ -73,820 +42,8 @@ pub trait Tool: Send + Sync {
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolMetadata {
-    pub domain: &'static str,
-    pub risk: ToolRisk,
-    pub uses_network: bool,
-    pub writes_disk: bool,
-    pub spawns_process: bool,
-    pub requires_approval: bool,
-    pub priority: u8,
-    pub aliases: &'static [&'static str],
-    pub examples: &'static [&'static str],
-    pub when_to_use: &'static str,
-    pub when_not_to_use: &'static str,
-    /// Recommended timeout in seconds for this tool.
-    /// None = use config default. Used when the LLM doesn't explicitly pass _timeout_secs.
-    pub recommended_timeout_secs: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolRisk {
-    Low,
-    Medium,
-    High,
-}
-
-impl ToolRisk {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-        }
-    }
-}
-
-impl ToolMetadata {
-    pub fn infer(name: &str) -> Self {
-        let domain = infer_tool_domain(name);
-        let writes_disk = tool_writes_disk(name);
-        let spawns_process = matches!(name, "exec_command" | "python_sandbox")
-            || name.contains("browser")
-            || name.starts_with("cargo_")
-            || name.starts_with("openmedia_video_")
-            || name.starts_with("opendoc_convert")
-            || name.starts_with("mcp_");
-        let uses_network = tool_uses_network(name);
-        let risk = if matches!(name, "exec_command" | "db_write")
-            || writes_disk
-            || name.contains("delete")
-            || name.contains("remove")
-            || name.contains("restore")
-            || name.contains("clear")
-        {
-            ToolRisk::High
-        } else if uses_network
-            || spawns_process
-            || name.contains("create")
-            || name.contains("update")
-        {
-            ToolRisk::Medium
-        } else {
-            ToolRisk::Low
-        };
-        let requires_approval = matches!(risk, ToolRisk::High);
-        let priority = match domain {
-            "subagent" => 100,
-            "filesystem" | "shell" | "code" => 90,
-            "self_management" => 85,
-            "search" | "web" | "git" => 75,
-            "cron" => 85,
-            "memory" | "reasoning" | "context" => 65,
-            "media" | "document" => 55,
-            _ => 40,
-        };
-        let (when_to_use, when_not_to_use) = tool_usage_hints(name, domain);
-
-        Self {
-            domain,
-            risk,
-            uses_network,
-            writes_disk,
-            spawns_process,
-            requires_approval,
-            priority,
-            aliases: tool_aliases(name, domain),
-            examples: tool_examples(name, domain),
-            when_to_use,
-            when_not_to_use,
-            recommended_timeout_secs: tool_recommended_timeout(name),
-        }
-    }
-
-    pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "domain": self.domain,
-            "risk": self.risk.as_str(),
-            "uses_network": self.uses_network,
-            "writes_disk": self.writes_disk,
-            "spawns_process": self.spawns_process,
-            "requires_approval": self.requires_approval,
-            "priority": self.priority,
-            "aliases": self.aliases,
-            "examples": self.examples,
-            "when_to_use": self.when_to_use,
-            "when_not_to_use": self.when_not_to_use,
-            "recommended_timeout_secs": self.recommended_timeout_secs,
-        })
-    }
-}
-
-struct StaticToolDef {
-    name: &'static str,
-    domain: &'static str,
-    writes_disk: bool,
-    uses_network: bool,
-    recommended_timeout_secs: Option<u64>,
-    aliases: &'static [&'static str],
-    examples: &'static [&'static str],
-    when_to_use: &'static str,
-    when_not_to_use: &'static str,
-}
-
-static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
-    StaticToolDef {
-        name: "cargo_manager",
-        domain: "code",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &[
-            "cargo test",
-            "cargo check",
-            "cargo build",
-            "clippy",
-            "rust tests",
-        ],
-        examples: &["Run cargo test --lib", "Run cargo check after Rust edits"],
-        when_to_use: "Use for Rust cargo build, check, test, clippy, and compiler-fix workflows.",
-        when_not_to_use: "Avoid when only reading files or searching source text.",
-    },
-    StaticToolDef {
-        name: "exec_command",
-        domain: "shell",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: Some(180),
-        aliases: &["shell command", "terminal", "bash", "run command"],
-        examples: &[
-            "Run ls to inspect generated files",
-            "Run a safe project-local command",
-        ],
-        when_to_use: "Use for shell commands that cannot be handled by a safer native tool.",
-        when_not_to_use: "Avoid for file reads, code search, or destructive commands without approval.",
-    },
-    StaticToolDef {
-        name: "read_file",
-        domain: "filesystem",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &["open file", "inspect file", "view file"],
-        examples: &["Read src/main.rs before editing", "Inspect a config file"],
-        when_to_use: "Use to inspect known text files before editing or explaining code.",
-        when_not_to_use: "Avoid for broad searches; use grep or find tools instead.",
-    },
-    StaticToolDef {
-        name: "grep_search",
-        domain: "code",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &["search code", "find text", "ripgrep"],
-        examples: &["Find all uses of a function", "Search for a symbol in src"],
-        when_to_use: "Use to find symbols, text, TODOs, and call sites across a project.",
-        when_not_to_use: "Avoid when the exact file is already known and only needs reading.",
-    },
-    StaticToolDef {
-        name: "web_fetch",
-        domain: "web",
-        writes_disk: false,
-        uses_network: true,
-        recommended_timeout_secs: None,
-        aliases: &["fetch url", "read webpage", "download page"],
-        examples: &["Fetch a documentation URL", "Read one webpage"],
-        when_to_use: "Use to read a specific URL supplied by the user or found by search.",
-        when_not_to_use: "Avoid for open-ended research; search first.",
-    },
-    StaticToolDef {
-        name: "web_search",
-        domain: "web",
-        writes_disk: false,
-        uses_network: true,
-        recommended_timeout_secs: None,
-        aliases: &["internet search", "search web", "lookup online"],
-        examples: &[
-            "Search current public documentation",
-            "Look up recent release info",
-        ],
-        when_to_use: "Use when current or external web information is required.",
-        when_not_to_use: "Avoid when the answer is fully available from local project files.",
-    },
-    StaticToolDef {
-        name: "delegate_task",
-        domain: "subagent",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: Some(600),
-        aliases: &["subagent", "delegate", "specialist agent"],
-        examples: &[
-            "Ask a reviewer subagent to inspect changes",
-            "Route image analysis to a vision subagent",
-        ],
-        when_to_use: "Use for independent specialist work, reviews, research, or multimodal routing.",
-        when_not_to_use: "Avoid for simple direct actions the orchestrator can complete itself.",
-    },
-    StaticToolDef {
-        name: "git_manager",
-        domain: "git",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &["git status", "git diff", "git commit", "git log"],
-        examples: &["Check git status", "Review a diff before commit"],
-        when_to_use: "Use for git status, diffs, commit history, and repository state checks.",
-        when_not_to_use: "Avoid for GitHub API operations; use GitHub tools for remote provider actions.",
-    },
-    StaticToolDef {
-        name: "request_tool_scope",
-        domain: "self_management",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &["need more tools", "missing tool", "expand tool scope"],
-        examples: &[
-            "Ask for grep_search when the current turn only has core tools",
-            "Request web tools when the user clarifies they need live research",
-        ],
-        when_to_use: "Use when the current scoped tool set is missing the exact tool or domain required to complete the request.",
-        when_not_to_use: "Avoid when the required tool is already visible or the answer can be completed directly.",
-    },
-    StaticToolDef {
-        name: "tool_catalog",
-        domain: "self_management",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &["list tools", "tool help", "available tools"],
-        examples: &[
-            "List tools for a website research task",
-            "Explain why tools were hidden",
-        ],
-        when_to_use: "Use to inspect available tools, routing decisions, and hidden tool reasons.",
-        when_not_to_use: "Avoid when the correct tool is already obvious and exposed.",
-    },
-    StaticToolDef {
-        name: "openz_inventory",
-        domain: "self_management",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &["features", "capabilities", "what can you do", "inventory"],
-        examples: &[
-            "Answer exactly what OpenZ features and tools are currently registered",
-            "Compare claimed features against live tool inventory",
-        ],
-        when_to_use: "Use before answering questions about OpenZ's exact features, commands, channels, subagents, and registered tools.",
-        when_not_to_use: "Avoid guessing feature counts from memory when live registry data is available.",
-    },
-    StaticToolDef {
-        name: "manage_servers",
-        domain: "self_management",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &[
-            "stop server",
-            "list servers",
-            "dev server",
-            "background process",
-        ],
-        examples: &[
-            "List active dev servers after launching npm run dev",
-            "Stop all OpenZ-launched servers when the task is done",
-        ],
-        when_to_use: "Use to inspect or stop dev servers/background processes launched by OpenZ; call it automatically when cleanup is needed.",
-        when_not_to_use: "Avoid shell pkill guesses for servers OpenZ registered itself.",
-    },
-    StaticToolDef {
-        name: "device_inventory",
-        domain: "self_management",
-        writes_disk: true,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &[
-            "device apps",
-            "app inventory",
-            "local capability registry",
-            "known viewers",
-        ],
-        examples: &[
-            "Suggest an image viewer for a generated PNG",
-            "Record that Firefox successfully opened an image",
-        ],
-        when_to_use: "Use before opening/showing/playing local files so OpenZ reuses known apps, viewers, editors, file paths, and device capabilities for this computer.",
-        when_not_to_use: "Avoid storing secrets, API keys, arbitrary shell pipelines, or information unrelated to local device capability.",
-    },
-    StaticToolDef {
-        name: "schedule_job",
-        domain: "self_management",
-        writes_disk: true,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &[
-            "cron",
-            "cron job",
-            "schedule job",
-            "timer",
-            "run later",
-            "automated task",
-        ],
-        examples: &[
-            "Schedule a prompt to run every 5 minutes",
-            "Create a timer for an automated reminder or action",
-        ],
-        when_to_use: "Use to schedule automated prompts, reminders, timers, and cron-style future tasks from chat.",
-        when_not_to_use: "Avoid shell cron, systemd-run, or sleep loops unless the native scheduler cannot express the request.",
-    },
-    StaticToolDef {
-        name: "list_jobs",
-        domain: "self_management",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &["list cron jobs", "scheduled jobs", "timers", "cron status"],
-        examples: &["List active scheduled cron jobs", "Check timer status"],
-        when_to_use: "Use to inspect OpenZ-managed scheduled jobs before reporting cron/timer status.",
-        when_not_to_use: "Avoid shell crontab or systemctl listing for jobs created by OpenZ.",
-    },
-    StaticToolDef {
-        name: "remove_job",
-        domain: "self_management",
-        writes_disk: true,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &[
-            "remove cron job",
-            "delete scheduled job",
-            "cancel timer",
-            "stop scheduled job",
-        ],
-        examples: &[
-            "Cancel a scheduled job by id",
-            "Remove a timer after it has fired",
-        ],
-        when_to_use: "Use to cancel or delete OpenZ-managed scheduled jobs by id when cleanup is requested.",
-        when_not_to_use: "Avoid shell systemctl, crontab editing, or pkill guesses for OpenZ scheduler cleanup.",
-    },
-    StaticToolDef {
-        name: "pause_job",
-        domain: "cron",
-        writes_disk: true,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &["pause cron job", "disable scheduled job", "stop timer"],
-        examples: &["Pause a recurring cron job without deleting it"],
-        when_to_use: "Use to pause or disable an OpenZ-managed scheduled job without deleting its inventory or run logs.",
-        when_not_to_use: "Avoid shell crontab, systemctl, or filesystem guessing for OpenZ-managed cron jobs.",
-    },
-    StaticToolDef {
-        name: "resume_job",
-        domain: "cron",
-        writes_disk: true,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &["resume cron job", "enable scheduled job", "restart timer"],
-        examples: &["Resume a paused OpenZ cron job"],
-        when_to_use: "Use to resume or enable a paused OpenZ-managed scheduled job and let the scheduler recalculate its next run.",
-        when_not_to_use: "Avoid shell crontab, systemctl, or filesystem guessing for OpenZ-managed cron jobs.",
-    },
-    StaticToolDef {
-        name: "get_job",
-        domain: "cron",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &["get cron job", "cron job details", "scheduled job details"],
-        examples: &["Show the inventory record for cron job daily"],
-        when_to_use: "Use to inspect one OpenZ-managed scheduled job inventory record before reporting automation status.",
-        when_not_to_use: "Avoid shell crontab, systemctl, or filesystem guessing for OpenZ-managed cron jobs.",
-    },
-    StaticToolDef {
-        name: "get_job_logs",
-        domain: "cron",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &[
-            "cron logs",
-            "job logs",
-            "scheduled job history",
-            "cron run history",
-        ],
-        examples: &["Show recent structured logs for cron job daily"],
-        when_to_use: "Use to inspect structured run history for OpenZ-managed scheduled jobs before reporting cron automation status.",
-        when_not_to_use: "Avoid shell crontab, systemctl, or filesystem guessing for OpenZ-managed cron jobs.",
-    },
-    StaticToolDef {
-        name: "run_job_now",
-        domain: "cron",
-        writes_disk: true,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &[
-            "run cron job now",
-            "trigger scheduled job",
-            "manual cron run",
-        ],
-        examples: &["Run cron job daily immediately"],
-        when_to_use: "Use to manually trigger an existing OpenZ-managed scheduled job immediately from its inventory id.",
-        when_not_to_use: "Avoid shell crontab, systemctl, or filesystem guessing for OpenZ-managed cron jobs.",
-    },
-    StaticToolDef {
-        name: "workflow_memory",
-        domain: "self_management",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: None,
-        aliases: &[
-            "save workflow",
-            "reuse workflow",
-            "record run",
-            "procedure memory",
-        ],
-        examples: &[
-            "Save a repeated website/video generation procedure",
-            "Record whether a reused workflow succeeded",
-        ],
-        when_to_use: "Use to save, search, or record reusable procedures after repeated successful tasks or tool-workaround discoveries.",
-        when_not_to_use: "Avoid leaving repeated multi-step workflows only in chat history.",
-    },
-    StaticToolDef {
-        name: "orchestrate_workflow",
-        domain: "subagent",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: Some(600),
-        aliases: &[
-            "multi-agent workflow",
-            "orchestrator",
-            "workflow runtime",
-            "agent workflow",
-        ],
-        examples: &[
-            "Plan a sequential research and review workflow",
-            "Run a typed workflow across declared agents",
-        ],
-        when_to_use: "Use to run typed, observable multi-agent workflow specs through the native OpenZ orchestrator runtime.",
-        when_not_to_use: "Avoid when a single direct tool call or one delegate_task invocation is enough.",
-    },
-    StaticToolDef {
-        name: "html_to_video",
-        domain: "media",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: Some(900),
-        aliases: &["render video", "html video", "animation to mp4"],
-        examples: &[
-            "Render an HTML animation timeline to MP4",
-            "Convert a page animation into a video file",
-        ],
-        when_to_use: "Use to render HTML/CSS animation timelines into video files via CDP.",
-        when_not_to_use: "Avoid for programmatic video without HTML; use generate_video instead.",
-    },
-    StaticToolDef {
-        name: "generate_video",
-        domain: "media",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: Some(900),
-        aliases: &["make video", "programmatic video", "wavyte video"],
-        examples: &[
-            "Generate a programmatic MP4 via the Wavyte API",
-            "Produce a video artifact from code",
-        ],
-        when_to_use: "Use to generate videos from programmatic scene descriptions.",
-        when_not_to_use: "Avoid when an HTML timeline already exists; html_to_video is cheaper.",
-    },
-    StaticToolDef {
-        name: "crawl_website",
-        domain: "web",
-        writes_disk: false,
-        uses_network: true,
-        recommended_timeout_secs: Some(600),
-        aliases: &["crawl site", "spider website", "multi-page scrape"],
-        examples: &[
-            "Crawl a documentation site for all pages",
-            "Spider a domain and summarize its pages",
-        ],
-        when_to_use: "Use to fetch and analyze many pages of one website.",
-        when_not_to_use: "Avoid for a single known URL; use web_fetch instead.",
-    },
-    StaticToolDef {
-        name: "create_animated_svg",
-        domain: "media",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: Some(300),
-        aliases: &["animated svg", "svg animation"],
-        examples: &[
-            "Compile an animation timeline into an animated SVG",
-            "Create an animated diagram",
-        ],
-        when_to_use: "Use to compile element/animation specs into a self-contained animated SVG.",
-        when_not_to_use: "Avoid for static SVGs or raster image output.",
-    },
-    StaticToolDef {
-        name: "generate_image",
-        domain: "media",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: Some(300),
-        aliases: &["make image", "render png", "html to image"],
-        examples: &[
-            "Render an HTML/CSS layout to PNG",
-            "Generate a diagram image",
-        ],
-        when_to_use: "Use to render HTML/CSS/SVG specs into raster images.",
-        when_not_to_use: "Avoid for vector output; use create_animated_svg or SVG tools.",
-    },
-    StaticToolDef {
-        name: "render_mermaid",
-        domain: "media",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: Some(300),
-        aliases: &["mermaid diagram", "flowchart"],
-        examples: &[
-            "Render a Mermaid flowchart to an image",
-            "Draw an architecture diagram",
-        ],
-        when_to_use: "Use to render Mermaid diagram definitions into visual artifacts.",
-        when_not_to_use: "Avoid for hand-authored SVG; use SVG tools directly.",
-    },
-    StaticToolDef {
-        name: "semantic_search",
-        domain: "code",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: Some(300),
-        aliases: &["vector search", "semantic code search", "embeddings search"],
-        examples: &[
-            "Find code by meaning across the repo",
-            "Locate implementation similar to a description",
-        ],
-        when_to_use: "Use to search a repository by semantic similarity, including first-time indexing.",
-        when_not_to_use: "Avoid for exact-text lookups; grep_search is faster and cheaper.",
-    },
-    StaticToolDef {
-        name: "python_sandbox",
-        domain: "shell",
-        writes_disk: false,
-        uses_network: false,
-        recommended_timeout_secs: Some(180),
-        aliases: &["run python", "python repl", "python script"],
-        examples: &[
-            "Run a short Python computation",
-            "Process data with a Python snippet",
-        ],
-        when_to_use: "Use to execute isolated Python code for computation or data wrangling.",
-        when_not_to_use: "Avoid for shell-native tasks; exec_command covers most workflows.",
-    },
-];
-
-fn get_static_tool_def(name: &str) -> Option<&'static StaticToolDef> {
-    STATIC_TOOL_DEFS.iter().find(|def| def.name == name)
-}
-
-/// Names covered by the curated static tool definitions. Consumed by the
-/// full-registry registration test to catch drift between the table and the
-/// actual tool implementations (misnamed entries silently never apply).
-pub fn static_tool_def_names() -> Vec<&'static str> {
-    STATIC_TOOL_DEFS.iter().map(|def| def.name).collect()
-}
-
-fn infer_tool_domain(name: &str) -> &'static str {
-    if let Some(def) = get_static_tool_def(name) {
-        return def.domain;
-    }
-    if matches!(
-        name,
-        "manage_servers"
-            | "openz_inventory"
-            | "workflow_memory"
-            | "curate_skill"
-            | "schedule_job"
-            | "list_jobs"
-            | "remove_job"
-            | "pause_job"
-            | "resume_job"
-            | "get_job"
-            | "get_job_logs"
-            | "run_job_now"
-    ) {
-        "self_management"
-    } else if matches!(
-        name,
-        "delegate_task" | "parallel_research" | "evaluator_optimizer_loop"
-    ) || name.contains("subagent")
-    {
-        "subagent"
-    } else if matches!(
-        name,
-        "read_file"
-            | "write_file"
-            | "patch_file"
-            | "replace_lines"
-            | "list_dir"
-            | "find_files"
-            | "zenflow_edit"
-    ) {
-        "filesystem"
-    } else if matches!(name, "exec_command" | "python_sandbox" | "wasm_sandbox") {
-        "shell"
-    } else if name.starts_with("git") || name.starts_with("github") {
-        "git"
-    } else if name.starts_with("cargo")
-        || name.contains("compiler")
-        || name.contains("grep")
-        || name.contains("outline")
-        || name.contains("ast_grep")
-        || name.contains("rust_docs")
-    {
-        "code"
-    } else if name.starts_with("web")
-        || name.contains("browser")
-        || name.contains("crawl")
-        || name.starts_with("searchxyz")
-        || name.contains("social_search")
-    {
-        "web"
-    } else if name.contains("memory")
-        || name.contains("entities")
-        || name.contains("relations")
-        || name.contains("observations")
-        || name.contains("graph")
-        || name.contains("recall")
-    {
-        "memory"
-    } else if name.contains("headroom")
-        || name.contains("compress")
-        || name.contains("cache")
-        || name.contains("scope_context")
-    {
-        "context"
-    } else if name.contains("thinking") || name.contains("reasoning") {
-        "reasoning"
-    } else if name.starts_with("opendoc") || name.starts_with("docs_") || name.contains("document")
-    {
-        "document"
-    } else if name.starts_with("openmedia")
-        || name.contains("image")
-        || name.contains("video")
-        || name.contains("svg")
-        || name.contains("mermaid")
-    {
-        "media"
-    } else if name.contains("config")
-        || name.contains("diagnose")
-        || name.contains("session")
-        || name.contains("backup")
-        || name.contains("tool_catalog")
-        || name.contains("tool_scope")
-    {
-        "self_management"
-    } else if name.starts_with("mcp") || name.contains("mcp") {
-        "mcp"
-    } else {
-        "general"
-    }
-}
-
-fn tool_writes_disk(name: &str) -> bool {
-    if let Some(def) = get_static_tool_def(name) {
-        return def.writes_disk;
-    }
-    matches!(
-        name,
-        "write_file"
-            | "patch_file"
-            | "replace_lines"
-            | "zenflow_edit"
-            | "db_write"
-            | "manage_config"
-            | "manage_sessions"
-            | "manage_backups"
-            | "curate_skill"
-            | "schedule_job"
-            | "create_subagent"
-            | "delete_subagent"
-            | "optimize_subagent"
-    ) || name.contains("create")
-        || name.contains("update")
-        || name.contains("delete")
-        || name.contains("remove")
-        || name.contains("clear")
-        || name.contains("import")
-        || name.contains("download")
-}
-
-fn tool_uses_network(name: &str) -> bool {
-    if let Some(def) = get_static_tool_def(name) {
-        return def.uses_network;
-    }
-    matches!(
-        name,
-        "web_fetch" | "web_search" | "social_search" | "check_port"
-    ) || name.starts_with("searchxyz")
-        || name.starts_with("github")
-        || name.starts_with("docs_install")
-        || name.contains("browser")
-        || name.contains("download")
-        || name.contains("mcp")
-}
-
-fn tool_recommended_timeout(name: &str) -> Option<u64> {
-    if let Some(def) = get_static_tool_def(name) {
-        return def.recommended_timeout_secs;
-    }
-    // Dynamic tool families only — named tools belong in STATIC_TOOL_DEFS so
-    // name drift is caught by the registration drift test.
-    if name.contains("browser") || name.contains("obscura") {
-        // Browser automation — CDP sessions with page load + interaction
-        Some(600)
-    } else if name.starts_with("opendoc_") {
-        // Document conversion
-        Some(300)
-    } else if name.starts_with("mcp_") {
-        // MCP tools — external process communication
-        Some(180)
-    } else {
-        None
-    }
-}
-
-fn tool_aliases(name: &str, domain: &str) -> &'static [&'static str] {
-    if let Some(def) = get_static_tool_def(name) {
-        return def.aliases;
-    }
-    match domain {
-        "code" => &["code search", "compile", "test", "refactor"],
-        "filesystem" => &["file", "directory", "edit file"],
-        "web" => &["website", "browser", "research online"],
-        "media" => &["image", "video", "svg", "diagram"],
-        "document" => &["pdf", "docx", "xlsx", "document"],
-        "memory" => &["remember", "recall", "knowledge graph"],
-        "subagent" => &["delegate", "worker", "specialist"],
-        _ => &[],
-    }
-}
-
-fn tool_examples(name: &str, domain: &str) -> &'static [&'static str] {
-    if let Some(def) = get_static_tool_def(name) {
-        return def.examples;
-    }
-    match domain {
-        "code" => &["Analyze or modify source code"],
-        "web" => &["Research a website or URL"],
-        "media" => &["Create or transform visual media"],
-        "document" => &["Read, convert, or edit documents"],
-        "memory" => &["Store or retrieve durable facts"],
-        _ => &[],
-    }
-}
-
-fn tool_usage_hints(name: &str, domain: &str) -> (&'static str, &'static str) {
-    if let Some(def) = get_static_tool_def(name) {
-        return (def.when_to_use, def.when_not_to_use);
-    }
-    match domain {
-        "code" => (
-            "Use for source-code analysis, build, test, or refactor tasks.",
-            "Avoid for non-code document or media tasks.",
-        ),
-        "filesystem" => (
-            "Use for project-local file and directory operations.",
-            "Avoid for web or provider operations.",
-        ),
-        "web" => (
-            "Use for URLs, browsers, crawling, and online research.",
-            "Avoid for local-only codebase questions.",
-        ),
-        "media" => (
-            "Use for image, video, SVG, Mermaid, and rendering tasks.",
-            "Avoid for plain text or source-code edits.",
-        ),
-        "document" => (
-            "Use for PDF, DOCX, XLSX, PPTX, and document conversion tasks.",
-            "Avoid for source-code builds or shell commands.",
-        ),
-        "memory" => (
-            "Use for durable facts, recall, graph memory, and knowledge retrieval.",
-            "Avoid for transient one-turn calculations.",
-        ),
-        "subagent" => (
-            "Use for delegated specialist tasks and parallel work.",
-            "Avoid for simple single-step local tool calls.",
-        ),
-        "self_management" => (
-            "Use for OpenZ diagnostics, config, sessions, and tool routing introspection.",
-            "Avoid for user project modifications.",
-        ),
-        _ => ("", ""),
-    }
-}
+pub mod defs;
+pub use defs::{all_tool_specs, static_tool_def_names, tool_spec, StaticToolDef, STATIC_TOOL_DEFS};
 
 fn format_tool_description(description: &str, metadata: &ToolMetadata) -> String {
     let mut parts = vec![description.to_string()];
@@ -903,198 +60,6 @@ fn format_tool_description(description: &str, metadata: &ToolMetadata) -> String
         parts.push(format!("Example: {}.", example));
     }
     parts.join(" ")
-}
-
-fn is_core_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "tool_catalog"
-            | "openz_inventory"
-            | "manage_servers"
-            | "schedule_job"
-            | "list_jobs"
-            | "remove_job"
-            | "pause_job"
-            | "resume_job"
-            | "get_job"
-            | "get_job_logs"
-            | "run_job_now"
-            | "workflow_memory"
-            | "curate_skill"
-            | "optimize_tool_scope"
-            | "diagnose_tool"
-            | "delegate_task"
-            | "send_remote_input"
-            | "read_file"
-            | "find_files"
-            | "grep_search"
-    )
-}
-
-fn tool_allowed_by_filter(name: &str, filter: Option<&Vec<String>>) -> bool {
-    if let Some(prefixes) = filter {
-        is_core_tool(name) || prefixes.iter().any(|prefix| name.starts_with(prefix))
-    } else {
-        true
-    }
-}
-
-fn select_domains_for_prompt(prompt: &str) -> std::collections::BTreeSet<&'static str> {
-    let lower = prompt.to_lowercase();
-    let mut domains = std::collections::BTreeSet::new();
-    domains.insert("self_management");
-    domains.insert("filesystem");
-    domains.insert("subagent");
-
-    if contains_any(
-        &lower,
-        &[
-            "cargo", "rust", "test", "build", "compile", "compiler", "error", "code", "function",
-            "module", "refactor", "lint", "clippy",
-        ],
-    ) {
-        domains.insert("code");
-        domains.insert("shell");
-        domains.insert("git");
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "cron",
-            "cronjob",
-            "scheduled job",
-            "schedule job",
-            "timer",
-            "job logs",
-            "run job",
-            "pause job",
-            "resume job",
-        ],
-    ) {
-        domains.insert("cron");
-    }
-    if contains_any(
-        &lower,
-        &[
-            "website", "web", "url", "browser", "page", "crawl", "fetch", "search", "internet",
-            "research", "http", "https",
-        ],
-    ) {
-        domains.insert("web");
-    }
-    if contains_any(
-        &lower,
-        &[
-            "image",
-            "photo",
-            "picture",
-            "screenshot",
-            "svg",
-            "video",
-            "media",
-            "mermaid",
-            "diagram",
-            "render",
-        ],
-    ) {
-        domains.insert("media");
-        domains.insert("document");
-    }
-    if contains_any(
-        &lower,
-        &[
-            "pdf",
-            "docx",
-            "xlsx",
-            "pptx",
-            "document",
-            "spreadsheet",
-            "archive",
-        ],
-    ) {
-        domains.insert("document");
-    }
-    if contains_any(
-        &lower,
-        &[
-            "git", "commit", "push", "pull", "pr", "github", "branch", "diff",
-        ],
-    ) {
-        domains.insert("git");
-        domains.insert("code");
-    }
-    if contains_any(
-        &lower,
-        &["memory", "remember", "recall", "fact", "knowledge", "graph"],
-    ) {
-        domains.insert("memory");
-    }
-    if contains_any(&lower, &["think", "reason", "plan", "analyze", "breakdown"]) {
-        domains.insert("reasoning");
-        domains.insert("context");
-    }
-    if contains_any(
-        &lower,
-        &["terminal", "shell", "command", "bash", "process", "port"],
-    ) {
-        domains.insert("shell");
-    }
-    if contains_any(&lower, &["mcp", "server", "gateway", "bridge"]) {
-        domains.insert("mcp");
-    }
-
-    domains
-}
-
-fn contains_any(haystack: &str, needles: &[&str]) -> bool {
-    needles.iter().any(|needle| haystack.contains(needle))
-}
-
-fn tool_selection_score(
-    name: &str,
-    metadata: &ToolMetadata,
-    selected_domains: &std::collections::BTreeSet<&'static str>,
-) -> i32 {
-    let mut score = metadata.priority as i32;
-    if is_core_tool(name) {
-        score += 1_000;
-    }
-    if selected_domains.contains(metadata.domain) {
-        score += 500;
-    }
-    score -= match metadata.risk {
-        ToolRisk::Low => 0,
-        ToolRisk::Medium => 10,
-        ToolRisk::High => 25,
-    };
-    if metadata.requires_approval {
-        score -= 10;
-    }
-    score
-}
-
-fn tool_selection_reasons(
-    name: &str,
-    metadata: &ToolMetadata,
-    selected_domains: &std::collections::BTreeSet<&'static str>,
-) -> Vec<&'static str> {
-    let mut reasons = Vec::new();
-    if is_core_tool(name) {
-        reasons.push("core_tool");
-    }
-    if selected_domains.contains(metadata.domain) {
-        reasons.push("prompt_domain");
-    }
-    match metadata.risk {
-        ToolRisk::Low => reasons.push("low_risk"),
-        ToolRisk::Medium => reasons.push("medium_risk_penalty"),
-        ToolRisk::High => reasons.push("high_risk_penalty"),
-    }
-    if metadata.requires_approval {
-        reasons.push("requires_approval");
-    }
-    reasons
 }
 
 #[derive(Debug, Clone)]
@@ -1118,6 +83,12 @@ pub struct ToolRouteAnalysis {
     pub entries: Vec<ToolRouteEntry>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct PendingToolScope {
+    tools: HashSet<String>,
+    domains: HashSet<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ToolRouteCacheKey {
     prompt: String,
@@ -1132,6 +103,7 @@ pub struct ToolRegistry {
     pub filter_scope: Arc<std::sync::Mutex<Option<Vec<String>>>>,
     capability_policy: Arc<std::sync::Mutex<Option<crate::orchestrator::spec::CapabilityPolicy>>>,
     route_cache: Arc<std::sync::Mutex<Option<(ToolRouteCacheKey, ToolRouteAnalysis)>>>,
+    pending_scope: Arc<std::sync::Mutex<PendingToolScope>>,
 }
 
 impl Default for ToolRegistry {
@@ -1148,6 +120,7 @@ impl ToolRegistry {
             filter_scope: Arc::new(std::sync::Mutex::new(None)),
             capability_policy: Arc::new(std::sync::Mutex::new(None)),
             route_cache: Arc::new(std::sync::Mutex::new(None)),
+            pending_scope: Arc::new(std::sync::Mutex::new(PendingToolScope::default())),
         }
     }
 
@@ -1162,6 +135,36 @@ impl ToolRegistry {
             filter_scope: Arc::new(std::sync::Mutex::new(None)),
             capability_policy: Arc::new(std::sync::Mutex::new(None)),
             route_cache: Arc::new(std::sync::Mutex::new(None)),
+            pending_scope: Arc::new(std::sync::Mutex::new(PendingToolScope::default())),
+        }
+    }
+
+    pub fn begin_turn(&self) {
+        if let Ok(mut pending) = self.pending_scope.lock() {
+            *pending = PendingToolScope::default();
+        }
+        if let Ok(mut cache) = self.route_cache.lock() {
+            *cache = None;
+        }
+    }
+
+    pub fn request_tool_scope<I, J>(&self, tools: I, domains: J)
+    where
+        I: IntoIterator<Item = String>,
+        J: IntoIterator<Item = String>,
+    {
+        if let Ok(mut pending) = self.pending_scope.lock() {
+            pending
+                .tools
+                .extend(tools.into_iter().map(|name| name.to_ascii_lowercase()));
+            pending.domains.extend(
+                domains
+                    .into_iter()
+                    .map(|domain| domain.to_ascii_lowercase()),
+            );
+        }
+        if let Ok(mut cache) = self.route_cache.lock() {
+            *cache = None;
         }
     }
 
@@ -1236,7 +239,10 @@ impl ToolRegistry {
     }
 
     pub fn register(&self, tool: Arc<dyn Tool>) {
-        self.write_tools().insert(tool.name().to_string(), tool);
+        let mut tools = self.write_tools();
+        if !registry::insert_unique_tool(&mut tools, tool) {
+            return;
+        }
         self.clear_route_cache();
     }
 
@@ -1248,6 +254,17 @@ impl ToolRegistry {
 
     pub fn tool_count(&self) -> usize {
         self.read_tools().len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn static_tool_drift(&self) -> registry::StaticToolDriftReport {
+        let tools = self.read_tools();
+        registry::static_tool_drift(&tools)
+    }
+
+    fn resolve_static_name(&self, requested: &str) -> Option<String> {
+        let tools = self.read_tools();
+        registry::resolve_static_name(&tools, requested)
     }
 
     pub fn tool_inventory_snapshot(&self) -> Vec<(String, String, ToolMetadata)> {
@@ -1267,6 +284,8 @@ impl ToolRegistry {
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        let resolved_name = self.resolve_static_name(name);
+        let name = resolved_name.as_deref().unwrap_or(name);
         let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
         if let Some(ref prefixes) = filter {
             if name != "delegate_task"
@@ -1460,7 +479,7 @@ impl ToolRegistry {
     }
 
     pub fn selected_domains_for_prompt(&self, prompt: &str) -> Vec<String> {
-        select_domains_for_prompt(prompt)
+        routing::select_domains_for_prompt(prompt)
             .into_iter()
             .map(str::to_string)
             .collect()
@@ -1540,7 +559,14 @@ impl ToolRegistry {
 
         let intent = crate::agent::agent_loop::intent::classify_turn_intent(prompt);
         let scope = crate::tools::scope::ToolScopeEngine::default().decide(&intent, 20);
-        let selected_domains_set = select_domains_for_prompt(prompt);
+        let pending_scope = self
+            .pending_scope
+            .lock()
+            .map(|pending| pending.clone())
+            .unwrap_or_default();
+        let mut explicit_names = routing::explicitly_requested_tool_names(prompt, &static_tools);
+        explicit_names.extend(pending_scope.tools.iter().cloned());
+        let selected_domains_set = routing::select_domains_for_prompt(prompt);
         let mut selected_domain_labels: std::collections::BTreeSet<String> = selected_domains_set
             .iter()
             .map(|domain| (*domain).to_string())
@@ -1554,26 +580,33 @@ impl ToolRegistry {
 
         let mut entries: Vec<ToolRouteEntry> = static_tools
             .values()
-            .filter(|tool| tool_allowed_by_filter(tool.name(), filter.as_ref()))
+            .filter(|tool| routing::tool_allowed_by_filter(tool.name(), filter.as_ref()))
             .map(|tool| {
                 let metadata = tool.metadata();
                 let in_scope = scope.allowed_names.contains(tool.name())
                     || crate::tools::scope::tool_matches_pack(tool.name(), &metadata, &scope.packs);
                 let base_score =
-                    tool_selection_score(tool.name(), &metadata, &selected_domains_set);
-                let selected_score = if in_scope {
+                    routing::tool_selection_score(tool.name(), &metadata, &selected_domains_set);
+                let explicitly_requested = explicit_names.contains(tool.name())
+                    || pending_scope.domains.contains(tool.metadata().domain);
+                let selected_score = if explicitly_requested {
+                    base_score.saturating_add(10_000)
+                } else if in_scope {
                     base_score.saturating_add(100)
                 } else {
                     base_score
                 };
                 let matched_prompt_domain = selected_domains_set.contains(metadata.domain);
                 let mut selection_reason =
-                    tool_selection_reasons(tool.name(), &metadata, &selected_domains_set)
+                    routing::tool_selection_reasons(tool.name(), &metadata, &selected_domains_set)
                         .into_iter()
                         .map(str::to_string)
                         .collect::<Vec<_>>();
                 if in_scope {
                     selection_reason.push("intent_scope".to_string());
+                }
+                if explicitly_requested {
+                    selection_reason.push("explicit_tool_request".to_string());
                 }
                 ToolRouteEntry {
                     name: tool.name().to_string(),
@@ -1604,7 +637,9 @@ impl ToolRegistry {
                     &entry.metadata,
                     &scope.packs,
                 );
-            if in_scope && selected_count < static_limit {
+            let explicitly_requested = explicit_names.contains(entry.name.as_str())
+                || pending_scope.domains.contains(entry.metadata.domain);
+            if (in_scope || explicitly_requested) && selected_count < static_limit {
                 entry.exposed_to_model = true;
                 selected_count += 1;
             } else {
@@ -1671,13 +706,23 @@ impl ToolRegistry {
         drop(static_tools);
         let intent = crate::agent::agent_loop::intent::classify_turn_intent(prompt);
         let scope = crate::tools::scope::ToolScopeEngine::default().decide(&intent, 20);
+        let pending_scope = self
+            .pending_scope
+            .lock()
+            .map(|pending| pending.clone())
+            .unwrap_or_default();
         let mut subagent_tools = if scope.packs.iter().any(|pack| {
             matches!(
                 pack,
                 crate::tools::scope::ToolPack::Subagent
                     | crate::tools::scope::ToolPack::Orchestrator
             )
-        }) {
+        }) || prompt_explicitly_requests_profile(prompt, "vision_agent")
+            || prompt_contains_image_reference(prompt)
+            || pending_scope.domains.contains("subagent")
+            || pending_scope.domains.contains("orchestrator")
+            || pending_scope.tools.contains("vision_agent")
+        {
             self.dynamic_subagent_tools(filter.as_ref(), &static_names)
         } else {
             Vec::new()
@@ -1808,6 +853,21 @@ impl ToolRegistry {
     }
 }
 
+fn prompt_explicitly_requests_profile(prompt: &str, profile_name: &str) -> bool {
+    let lower = prompt.to_ascii_lowercase();
+    let name = profile_name.to_ascii_lowercase();
+    lower.contains(&name) || (profile_name == "vision_agent" && lower.contains("vision agent"))
+}
+
+fn prompt_contains_image_reference(prompt: &str) -> bool {
+    let lower = prompt.to_ascii_lowercase();
+    lower.contains("![](")
+        || lower.contains("clipboard_image_")
+        || lower.contains("[image")
+        || lower.contains("image]")
+        || lower.contains("attached image")
+}
+
 #[cfg(test)]
 mod route_cache_tests {
     use super::*;
@@ -1834,6 +894,7 @@ mod route_cache_tests {
 
         fn metadata(&self) -> ToolMetadata {
             ToolMetadata {
+                presentation_name: crate::tools::presentation_name(&self.name),
                 domain: self.domain,
                 risk: ToolRisk::Low,
                 uses_network: false,
@@ -1922,6 +983,36 @@ mod route_cache_tests {
     }
 
     #[test]
+    fn registry_resolves_unambiguous_aliases_and_canonical_case() {
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(crate::tools::filesystem::ReadFileTool));
+
+        assert_eq!(registry.get("READ_FILE").unwrap().name(), "read_file");
+        assert_eq!(registry.get("open file").unwrap().name(), "read_file");
+    }
+
+    #[test]
+    fn registry_ignores_duplicate_canonical_registration() {
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(CacheTestTool {
+            name: "read_file",
+            domain: "filesystem",
+            priority: 90,
+        }));
+        registry.register(Arc::new(CacheTestTool {
+            name: "read_file",
+            domain: "code",
+            priority: 40,
+        }));
+
+        assert_eq!(registry.tool_count(), 1);
+        assert_eq!(
+            registry.get("read_file").unwrap().metadata().domain,
+            "filesystem"
+        );
+    }
+
+    #[test]
     fn route_for_prompt_caches_same_prompt_filter_and_tools() {
         let registry = ToolRegistry::new();
         registry.register(Arc::new(CacheTestTool {
@@ -1988,11 +1079,9 @@ mod route_cache_tests {
                     .into_iter()
                     .filter_map(|tool| tool["function"]["name"].as_str().map(str::to_string))
                     .collect::<Vec<_>>();
-                assert!(
-                    !exposed_names
-                        .iter()
-                        .any(|name| name == "orchestrate_workflow")
-                );
+                assert!(!exposed_names
+                    .iter()
+                    .any(|name| name == "orchestrate_workflow"));
             })
             .await;
     }
@@ -2170,6 +1259,53 @@ mod route_cache_tests {
     }
 
     #[test]
+    fn pending_tool_scope_is_applied_for_current_turn_only() {
+        let registry = registry_with_named_tools(&[("open_path", "general")]);
+        registry.request_tool_scope(["open_path".to_string()], Vec::new());
+        let names = exposed_tool_names(&registry, "summarize hello");
+        assert!(names.contains(&"open_path".to_string()));
+        registry.begin_turn();
+        let names = exposed_tool_names(&registry, "summarize hello");
+        assert!(!names.contains(&"open_path".to_string()));
+    }
+
+    #[test]
+    fn explicit_vision_agent_request_is_recognized() {
+        assert!(prompt_explicitly_requests_profile(
+            "Use the vision agent for this image",
+            "vision_agent"
+        ));
+    }
+
+    #[test]
+    fn image_reference_is_recognized_for_vision_routing() {
+        assert!(prompt_contains_image_reference(
+            "Describe ![](file:///tmp/clipboard_image_0.png)"
+        ));
+        assert!(prompt_contains_image_reference("[image] what is this?"));
+        assert!(!prompt_contains_image_reference(
+            "Tell me about image processing in Rust"
+        ));
+    }
+
+    #[test]
+    fn explicit_open_path_request_overrides_prompt_scope() {
+        let registry = registry_with_named_tools(&[("open_path", "general")]);
+        let names =
+            exposed_tool_names(&registry, "Open this screenshot in the system image viewer");
+        assert!(names.contains(&"open_path".to_string()));
+    }
+
+    #[test]
+    fn explicit_browser_request_exposes_browser_tools() {
+        let registry =
+            registry_with_named_tools(&[("firefox_browser", "web"), ("inspect_browsers", "web")]);
+        let names = exposed_tool_names(&registry, "open Firefox and play a song on YouTube");
+        assert!(names.contains(&"firefox_browser".to_string()));
+        assert!(names.contains(&"inspect_browsers".to_string()));
+    }
+
+    #[test]
     fn tool_router_status_line_reports_scope() {
         let registry = ToolRegistry::new();
         registry.register(Arc::new(CacheTestTool {
@@ -2209,27 +1345,32 @@ mod route_cache_tests {
 }
 
 pub mod ast_grep;
-pub mod browser_broker;
-pub mod browser_common;
-pub mod browser_status;
+pub mod browser;
+pub use browser::{
+    broker as browser_broker,
+    common as browser_common,
+    firefox,
+    gsd as gsd_browser,
+    obscura,
+    status as browser_status,
+};
 pub mod cargo_manager;
 pub mod clipboard;
 pub mod compiler_auto_heal;
 pub mod crawl;
 pub mod cron;
 pub mod db_inspector;
+pub mod desktop_notify;
 pub mod device_inventory;
 pub mod doc_reader;
 pub mod docs_mcp;
 pub mod filesystem;
-pub mod firefox;
 pub mod get_logs;
 pub mod git_manager;
 pub mod github;
 pub mod github_mcp;
 pub mod graph_memory;
 pub mod grep;
-pub mod gsd_browser;
 pub mod headroom;
 pub mod html_video;
 pub mod image_generator;
@@ -2241,7 +1382,6 @@ pub mod memory_extra;
 pub mod mermaid;
 pub mod network;
 pub mod notes;
-pub mod obscura;
 pub mod onpkg;
 pub mod open;
 pub mod opendoc;
@@ -2251,7 +1391,8 @@ pub mod outline;
 pub mod remote;
 pub mod resource_policy;
 pub mod rust_docs;
-pub mod scope;
+pub mod scope_engine;
+pub use scope_engine as scope;
 #[path = "searchxyz/mod.rs"]
 pub mod searchxyz;
 pub mod self_management;

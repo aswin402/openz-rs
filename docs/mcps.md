@@ -37,6 +37,7 @@ OpenZ now ships many former MCP capabilities as native Rust tools registered dir
 *   **Headroom/context compression**: `scope_context`, `compress_content`, `retrieve_original`, `compress_file`, `compress_diff`, `compress_url`, and related CCR/cache tools are native.
 *   **Sequential thinking**: `sequentialthinking`, `analyze_graph`, `export_session`, `summarize_reasoning`, and `reasoning_templates` are native.
 *   **Memory graph and extended memory**: graph nodes/relations, working memory, semantic facts, fact history, workflow memory, research briefs, and knowledge sources are native SQLite-backed tools.
+*   **Memory boundary**: `src/memory/` provides the shared scope/domain model and repository facade over `memory.db`, `graph_memory.db`, and `embeddings_cache.db`; it does not create a second schema or duplicate the native stores.
 
 MCP remains supported for external servers. Default MCP entries focus on tools that are still external or optional, while native replacements should not be duplicated as default MCP servers.
 

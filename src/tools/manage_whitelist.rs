@@ -1,6 +1,6 @@
 use crate::tools::Tool;
-use anyhow::{Result, anyhow};
-use serde_json::{Value, json};
+use anyhow::{anyhow, Result};
+use serde_json::{json, Value};
 
 pub struct ManageWhitelistTool;
 
@@ -189,11 +189,9 @@ mod tests {
                 });
                 let res = tool.call(&add_path_args).await.unwrap();
                 let paths = res.get("whitelisted_paths").unwrap().as_array().unwrap();
-                assert!(
-                    paths
-                        .iter()
-                        .any(|v| v.as_str().unwrap().contains("test_whitelist_path"))
-                );
+                assert!(paths
+                    .iter()
+                    .any(|v| v.as_str().unwrap().contains("test_whitelist_path")));
 
                 let list_args = json!({
                     "action": "list"
@@ -220,11 +218,9 @@ mod tests {
                 });
                 let res = tool.call(&remove_path_args).await.unwrap();
                 let paths = res.get("whitelisted_paths").unwrap().as_array().unwrap();
-                assert!(
-                    !paths
-                        .iter()
-                        .any(|v| v.as_str().unwrap().contains("test_whitelist_path"))
-                );
+                assert!(!paths
+                    .iter()
+                    .any(|v| v.as_str().unwrap().contains("test_whitelist_path")));
             })
             .await;
 
