@@ -272,20 +272,16 @@ The `format_tool_args()` function in `run.rs` has ~20 explicit mappings to handl
 
 ## 5. Testing Gaps
 
-### 5.1 No Integration Tests
+### 5.1 Integration Tests (In Progress / Partially Resolved)
 
-**Current coverage:** 323 unit tests, **zero integration tests**. All tests use `#[cfg(test)]` inline modules.
+**Status (v0.0.143):** Added `tests/agent_loop.rs` providing full end-to-end integration test harnesses with a mock provider:
+- `test_agent_loop_tool_execution_pipeline`: Validates the complete multi-turn flow (user input → LLM tool call request → tool execution pipeline → tool output formatting → final assistant answer).
+- `test_agent_loop_session_overrides_pipeline`: Validates per-session configuration overrides loaded from disk metadata through the execution loop.
+- `test_tool_retry_on_transient_error`: Validates `ToolExecutionPipeline` transient error retry with exponential backoff on HTTP 429 rate limit.
 
-**Gaps:**
-- No tests that spin up a real AgentLoop with mock provider
-- No tests for MCP client spawn/handshake
-- No tests for channel startup/shutdown sequences
-- No tests for the full tool call → security approval → execution → response pipeline
-
-**Recommended:** Add a `tests/` directory with:
-- `tests/agent_loop.rs` — full turn state machine with mock provider
-- `tests/tools/` — each tool's `call()` with realistic inputs
-- `tests/channels/` — WS connect/send/receive/disconnect
+Remaining integration test targets:
+- MCP stdio/gRPC handshake sequence
+- Channel startup/shutdown sequence tests
 
 ---
 

@@ -94,6 +94,12 @@ impl Tool for CalculatorTool {
             Ok(json!({ "error": "unsupported expression" }))
         }
     }
+
+    fn metadata(&self) -> openz::tools::ToolMetadata {
+        let mut meta = openz::tools::ToolMetadata::infer(self.name());
+        meta.domain = "code";
+        meta
+    }
 }
 
 #[tokio::test]
@@ -227,6 +233,7 @@ async fn test_agent_loop_session_overrides_pipeline() -> anyhow::Result<()> {
                     config.agents.defaults.model = "default-model".to_string();
                     config.agents.defaults.provider = "default-provider".to_string();
                     config.agents.defaults.temperature = 0.1; // Default low temp
+                    config.research.require_sources_for_current_claims = false;
 
                     // Set up ToolRegistry
                     let registry = ToolRegistry::new_with_context(
@@ -240,7 +247,7 @@ async fn test_agent_loop_session_overrides_pipeline() -> anyhow::Result<()> {
 
                     // We'll capture the actual settings passed to the mock provider by implementing the test
                     // right here in the run invocation.
-                    let run_res = agent.run("Verify settings", "session-override").await?;
+                    let run_res = agent.run("Show settings", "session-override").await?;
 
                     // 4. Verify results
                     assert_eq!(
@@ -298,6 +305,12 @@ impl Tool for TransientFailureTool {
         } else {
             Ok(json!({ "result": "recovered" }))
         }
+    }
+
+    fn metadata(&self) -> openz::tools::ToolMetadata {
+        let mut meta = openz::tools::ToolMetadata::infer(self.name());
+        meta.domain = "code";
+        meta
     }
 }
 
