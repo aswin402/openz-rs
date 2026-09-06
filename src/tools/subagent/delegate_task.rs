@@ -1,6 +1,6 @@
 use super::{
-    build_provider_for_model, classify_subagent_error, compact_lifecycle_line,
-    execute_subagent_run, scan_for_images, status_json, CancellationToken, DELEGATION_DEPTH,
+    build_provider_for_model, build_subagent_prompt, run_subagent_attempt, CancellationToken,
+    SubagentRunAttempt, SubagentRunOutcome, DELEGATION_DEPTH,
 };
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
@@ -146,44 +146,14 @@ impl Tool for DelegateTaskTool {
             self.session_manager.clone(),
         );
 
-        let mut subagent_prompt = format!(
-            "You are a focused subagent. Complete the following task using the tools available.\n\n\
-            TASK:\n{}\n\n\
-            CONTEXT:\n{}\n\n\
-            When finished, provide a clear, concise summary of what you did and found.",
-            clean_goal, clean_context
+        let subagent_prompt = build_subagent_prompt(
+            "You are a focused subagent. Complete the following task using the tools available.",
+            &clean_goal,
+            &clean_context,
+            json_schema.as_ref(),
         );
 
-        // Automatically scan goal and context for image paths and append markdown image links
-        let image_paths = scan_for_images(&clean_goal, &clean_context);
-        for img in image_paths {
-            subagent_prompt.push_str(&format!(" ![](file://{})", img));
-        }
-
-        if let Some(ref schema) = json_schema {
-            subagent_prompt.push_str(&format!(
-                "\n\nCRITICAL REQUIREMENT: Your final response MUST be a raw JSON object strictly conforming to this JSON Schema:\n{}\nDo not wrap it in markdown code blocks, do not add any conversational text. Return only the raw valid JSON.",
-                serde_json::to_string_pretty(schema).unwrap_or_default()
-            ));
-        }
-
         let filesystem_write_denied = super::filesystem_write_denied_by_policy(&self.capability_policy);
-
-        let branch_id = if !filesystem_write_denied {
-            match super::create_simulation_branch(true).await {
-                Ok(Some(branch_id)) => {
-                    crate::tui_println!("{}  ✓ Isolated simulation space branch '{}' created{}", EMERALD_GREEN, branch_id, COLOR_RESET);
-                    Some(branch_id)
-                }
-                Ok(None) => None,
-                Err(e) => {
-                    tracing::warn!("Failed to create database branch: {:?}", e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
 
         let parent_dir = current_workspace_root();
         let workspace = super::prepare_workspace(&parent_dir, filesystem_write_denied, true).await;
@@ -204,122 +174,39 @@ impl Tool for DelegateTaskTool {
         }
         let spinner_msg = crate::agent::style::get_tree_spinner_msg("subagent", "");
 
-        let mut cancel_guard = super::CancelOnDrop {
-            token: self.cancellation_token.clone(),
-            completed: false,
+        let attempt = SubagentRunAttempt {
+            tool_name: "delegate_task",
+            profile_name: None,
+            subagent_name: "delegate_task",
+            model_name: &selected_model,
+            child_session_id: &child_session_id,
+            prompt: &subagent_prompt,
+            clean_goal: &clean_goal,
+            clean_context: &clean_context,
+            current_depth,
+            timeout_secs,
+            default_timeout_secs: self.config.agents.defaults.tool_timeout_secs,
+            spinner_msg: &spinner_msg,
+            json_schema: json_schema.as_ref(),
+            parent_dir: &parent_dir,
+            workspace_dir: workspace_dir.clone(),
+            filesystem_write_denied,
+            workspace_isolation: &workspace_isolation,
+            workspace_isolation_reason: &workspace_isolation_reason,
+            announce_branch: true,
         };
 
-        let mut run_res = execute_subagent_run(
+        match run_subagent_attempt(
             &child_agent,
-            &subagent_prompt,
-            &child_session_id,
-            "delegate_task",
-            &selected_model,
-            workspace_dir.clone(),
-            current_depth,
+            &self.parent_provider,
             &self.cancellation_token,
-            timeout_secs,
-            self.config.agents.defaults.tool_timeout_secs,
-            &spinner_msg,
-        ).await;
-        cancel_guard.completed = true;
-
-        if let Some(ref schema) = json_schema {
-            run_res = super::schema_retry::execute_with_schema_retries(
-                run_res,
-                schema,
-                |prompt| {
-                    let agent = &child_agent;
-                    let session = &child_session_id;
-                    let model = &selected_model;
-                    let workspace = &workspace_dir;
-                    let token = &self.cancellation_token;
-                    let spinner = &spinner_msg;
-                    async move {
-                        execute_subagent_run(
-                            agent,
-                            &prompt,
-                            session,
-                            "delegate_task",
-                            model,
-                            workspace.clone(),
-                            current_depth,
-                            token,
-                            timeout_secs,
-                            self.config.agents.defaults.tool_timeout_secs,
-                            spinner,
-                        ).await
-                    }
-                },
-            )
-            .await;
-        }
-
-        super::finalize_simulation_branch(
-            branch_id.as_deref(),
-            run_res.is_ok(),
-            &workspace_dir,
-            true,
+            attempt,
         )
-        .await;
-
-        if run_res.is_ok() {
-            super::sync_workspace_changes_back(&parent_dir, &workspace_dir, filesystem_write_denied);
-        }
-
-        match run_res {
-            Ok(res) => {
-                let result = super::handle_subagent_success(
-                    &self.parent_provider,
-                    "delegate_task",
-                    &selected_model,
-                    &child_session_id,
-                    &res.content,
-                    &clean_goal,
-                    &clean_context,
-                    filesystem_write_denied,
-                    &workspace_isolation,
-                    &workspace_isolation_reason,
-                )
-                .await;
-                Ok(result)
-            }
-            Err(e) => {
-                let error_text = e.to_string();
-                if let Some(cancelled) = super::handle_subagent_cancellation(
-                    "delegate_task",
-                    None,
-                    &selected_model,
-                    &child_session_id,
-                    &error_text,
-                    &self.cancellation_token,
-                    &workspace_isolation,
-                    &workspace_isolation_reason,
-                ) {
-                    return Ok(cancelled);
-                }
-                let lifecycle = classify_subagent_error(&error_text, &self.cancellation_token);
-                if !crate::agent::style::is_silent() {
-                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                    let line = compact_lifecycle_line("delegate_task", &selected_model, &lifecycle);
-                    crate::tui_println!(
-                        "{}{}{}✗{} {}{}",
-                        AURA_SLATE,
-                        leaf_prefix,
-                        COLOR_RESET,
-                        ERROR_RED,
-                        line,
-                        COLOR_RESET
-                    );
-                }
-                Ok(serde_json::json!({
-                    "status": "error",
-                    "lifecycle": status_json(&lifecycle),
-                    "workspaceIsolation": workspace_isolation,
-                    "workspaceIsolationReason": workspace_isolation_reason,
-                    "error": format!("Subagent execution failed: {:?}", e)
-                }))
-            }
+        .await
+        {
+            SubagentRunOutcome::Success(val) => Ok(val),
+            SubagentRunOutcome::Cancelled(val) => Ok(val),
+            SubagentRunOutcome::Failed { response_json, .. } => Ok(response_json),
         }
         }).await
     }
@@ -397,38 +284,7 @@ pub(crate) fn delegate_task_models_to_try(
     models
 }
 
-pub fn ensure_markdown_images(text: &str) -> String {
-    let re = match regex::Regex::new(
-        r"(?i)(file://[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif)|https?://[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif)|/[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif))",
-    ) {
-        Ok(r) => r,
-        Err(_) => return text.to_string(),
-    };
-
-    let mut result = text.to_string();
-    let mut matches: Vec<_> = re.find_iter(text).collect();
-    matches.reverse();
-
-    for mat in matches {
-        let start = mat.start();
-        let end = mat.end();
-        let matched_str = mat.as_str();
-
-        let mut already_formatted = false;
-        if start > 0 {
-            let before = &text[..start];
-            if before.ends_with('(') || before.ends_with("](") {
-                already_formatted = true;
-            }
-        }
-
-        if !already_formatted {
-            let replacement = format!("![]({})", matched_str);
-            result.replace_range(start..end, &replacement);
-        }
-    }
-    result
-}
+pub use super::ensure_markdown_images;
 
 pub struct WorktreeGuard {
     pub parent_dir: std::path::PathBuf,

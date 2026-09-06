@@ -1647,3 +1647,96 @@ fn fake_run_result(content: &str) -> crate::agent::agent_loop::RunResult {
         streamed: false,
     }
 }
+
+#[test]
+fn test_ensure_markdown_images_wraps_paths_and_urls() {
+    let input = "Check this file: /tmp/screenshot.png and url https://example.com/image.jpg";
+    let formatted = super::ensure_markdown_images(input);
+    assert!(formatted.contains("![](file:///tmp/screenshot.png)") || formatted.contains("![](/tmp/screenshot.png)"));
+    assert!(formatted.contains("![](https://example.com/image.jpg)"));
+
+    // Already formatted markdown image should not be double-wrapped
+    let already = "Here is ![label](https://example.com/pic.png)";
+    let formatted_already = super::ensure_markdown_images(already);
+    assert_eq!(already, formatted_already);
+}
+
+#[test]
+fn test_build_subagent_prompt_includes_sections_and_schema() {
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "result": {"type": "string"}
+        },
+        "required": ["result"]
+    });
+
+    let prompt = super::build_subagent_prompt(
+        "You are a test agent.",
+        "Solve equation 2+2",
+        "Use arithmetic rules",
+        Some(&schema),
+    );
+
+    assert!(prompt.contains("You are a test agent."));
+    assert!(prompt.contains("TASK:\nSolve equation 2+2"));
+    assert!(prompt.contains("CONTEXT:\nUse arithmetic rules"));
+    assert!(prompt.contains("CRITICAL REQUIREMENT: Your final response MUST be a raw JSON object strictly conforming to this JSON Schema:"));
+    assert!(prompt.contains("\"result\""));
+}
+
+#[tokio::test]
+async fn test_run_subagent_attempt_returns_cancelled_when_token_pre_cancelled() {
+    use crate::agent::AgentLoop;
+    use crate::providers::mock::MockProvider;
+    use crate::tools::ToolRegistry;
+
+    let token = CancellationToken::new();
+    token.cancel();
+
+    let parent_provider: Arc<dyn LLMProvider> = Arc::new(MockProvider::new());
+    let temp_dir = std::env::temp_dir().join(format!("test_subagent_pre_cancel_{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::create_dir_all(&temp_dir);
+    let session_mgr = SessionManager::new(temp_dir.clone());
+    let child_agent = AgentLoop::new(
+        Config::default(),
+        parent_provider.clone(),
+        ToolRegistry::new(),
+        session_mgr,
+    );
+
+    let attempt = super::SubagentRunAttempt {
+        tool_name: "delegate_task",
+        profile_name: None,
+        subagent_name: "delegate_task",
+        model_name: "test-model",
+        child_session_id: "subagent:test1",
+        prompt: "do something",
+        clean_goal: "goal",
+        clean_context: "context",
+        current_depth: 0,
+        timeout_secs: Some(10),
+        default_timeout_secs: 30,
+        spinner_msg: "running...",
+        json_schema: None,
+        parent_dir: &temp_dir,
+        workspace_dir: temp_dir.clone(),
+        filesystem_write_denied: true,
+        workspace_isolation: "not_required",
+        workspace_isolation_reason: &None,
+        announce_branch: false,
+    };
+
+    let outcome = super::run_subagent_attempt(&child_agent, &parent_provider, &token, attempt).await;
+    match outcome {
+        super::SubagentRunOutcome::Cancelled(val) => {
+            assert_eq!(val["status"], "cancelled");
+            assert_eq!(val["lifecycle"]["code"], "cancelled");
+            assert_eq!(val["tool"], "delegate_task");
+        }
+        other => panic!("Expected Cancelled outcome, got: {other:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+

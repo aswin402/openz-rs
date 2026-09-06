@@ -1,6 +1,7 @@
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::tools::Tool;
+use serde_json::Value;
 use std::sync::Arc;
 
 tokio::task_local! {
@@ -619,3 +620,298 @@ pub async fn execute_subagent_run(
         )),
     }
 }
+
+pub fn ensure_markdown_images(text: &str) -> String {
+    let re = match regex::Regex::new(
+        r"(?i)(file://[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif)|https?://[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif)|/[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif))",
+    ) {
+        Ok(r) => r,
+        Err(_) => return text.to_string(),
+    };
+
+    let mut result = text.to_string();
+    let mut matches: Vec<_> = re.find_iter(text).collect();
+    matches.reverse();
+
+    for mat in matches {
+        let start = mat.start();
+        let end = mat.end();
+        let matched_str = mat.as_str();
+
+        let mut already_formatted = false;
+        if start > 0 {
+            let before = &text[..start];
+            if before.ends_with('(') || before.ends_with("](") {
+                already_formatted = true;
+            }
+        }
+
+        if !already_formatted {
+            let replacement = format!("![]({})", matched_str);
+            result.replace_range(start..end, &replacement);
+        }
+    }
+    result
+}
+
+pub fn build_subagent_prompt(
+    base_instructions: &str,
+    clean_goal: &str,
+    clean_context: &str,
+    json_schema: Option<&Value>,
+) -> String {
+    let mut prompt = format!(
+        "{base_instructions}\n\n\
+        TASK:\n{clean_goal}\n\n\
+        CONTEXT:\n{clean_context}\n\n\
+        When finished, provide a clear, concise summary of what you did and found."
+    );
+
+    let image_paths = scan_for_images(clean_goal, clean_context);
+    for img in image_paths {
+        prompt.push_str(&format!(" ![](file://{img})"));
+    }
+
+    if let Some(schema) = json_schema {
+        prompt.push_str(&format!(
+            "\n\nCRITICAL REQUIREMENT: Your final response MUST be a raw JSON object strictly conforming to this JSON Schema:\n{}\nDo not wrap it in markdown code blocks, do not add any conversational text. Return only the raw valid JSON.",
+            serde_json::to_string_pretty(schema).unwrap_or_default()
+        ));
+    }
+
+    prompt
+}
+
+pub struct SubagentRunAttempt<'a> {
+    pub tool_name: &'a str,
+    pub profile_name: Option<&'a str>,
+    pub subagent_name: &'a str,
+    pub model_name: &'a str,
+    pub child_session_id: &'a str,
+    pub prompt: &'a str,
+    pub clean_goal: &'a str,
+    pub clean_context: &'a str,
+    pub current_depth: usize,
+    pub timeout_secs: Option<u64>,
+    pub default_timeout_secs: u64,
+    pub spinner_msg: &'a str,
+    pub json_schema: Option<&'a Value>,
+    pub parent_dir: &'a std::path::Path,
+    pub workspace_dir: std::path::PathBuf,
+    pub filesystem_write_denied: bool,
+    pub workspace_isolation: &'a str,
+    pub workspace_isolation_reason: &'a Option<String>,
+    pub announce_branch: bool,
+}
+
+#[derive(Debug)]
+pub enum SubagentRunOutcome {
+    Success(Value),
+    Cancelled(Value),
+    Failed {
+        error: anyhow::Error,
+        response_json: Value,
+    },
+}
+
+pub async fn run_subagent_attempt(
+    child_agent: &crate::agent::AgentLoop,
+    parent_provider: &Arc<dyn LLMProvider>,
+    cancellation_token: &CancellationToken,
+    attempt: SubagentRunAttempt<'_>,
+) -> SubagentRunOutcome {
+    if cancellation_token.is_cancelled() {
+        let cancelled = cancellation_result_json(
+            attempt.tool_name,
+            attempt.profile_name,
+            attempt.child_session_id,
+            attempt.model_name,
+            "Subagent task cancelled",
+        );
+        let cancelled = attach_workspace_fields(
+            cancelled,
+            attempt.workspace_isolation,
+            attempt.workspace_isolation_reason,
+        );
+        return SubagentRunOutcome::Cancelled(cancelled);
+    }
+
+    let branch_id = if !attempt.filesystem_write_denied {
+        match create_simulation_branch(true).await {
+            Ok(Some(bid)) => {
+                if attempt.announce_branch {
+                    crate::tui_println!(
+                        "{}  ✓ Isolated simulation space branch '{}' created{}",
+                        crate::agent::style::EMERALD_GREEN,
+                        bid,
+                        crate::agent::style::COLOR_RESET
+                    );
+                }
+                Some(bid)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!("Failed to create database branch: {:?}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut cancel_guard = CancelOnDrop {
+        token: cancellation_token.clone(),
+        completed: false,
+    };
+
+    let mut run_res = execute_subagent_run(
+        child_agent,
+        attempt.prompt,
+        attempt.child_session_id,
+        attempt.subagent_name,
+        attempt.model_name,
+        attempt.workspace_dir.clone(),
+        attempt.current_depth,
+        cancellation_token,
+        attempt.timeout_secs,
+        attempt.default_timeout_secs,
+        attempt.spinner_msg,
+    )
+    .await;
+    cancel_guard.completed = true;
+
+    if let Some(schema) = attempt.json_schema {
+        let child_agent = child_agent;
+        let session_id = attempt.child_session_id;
+        let subagent_name = attempt.subagent_name;
+        let model_name = attempt.model_name;
+        let workspace_dir = attempt.workspace_dir.clone();
+        let current_depth = attempt.current_depth;
+        let token = cancellation_token;
+        let timeout_secs = attempt.timeout_secs;
+        let default_timeout = attempt.default_timeout_secs;
+        let spinner = attempt.spinner_msg;
+
+        run_res = schema_retry::execute_with_schema_retries(
+            run_res,
+            schema,
+            |retry_prompt| {
+                let workspace = workspace_dir.clone();
+                async move {
+                    execute_subagent_run(
+                        child_agent,
+                        &retry_prompt,
+                        session_id,
+                        subagent_name,
+                        model_name,
+                        workspace,
+                        current_depth,
+                        token,
+                        timeout_secs,
+                        default_timeout,
+                        spinner,
+                    )
+                    .await
+                }
+            },
+        )
+        .await;
+    }
+
+    finalize_simulation_branch(
+        branch_id.as_deref(),
+        run_res.is_ok(),
+        &attempt.workspace_dir,
+        attempt.announce_branch,
+    )
+    .await;
+
+    match run_res {
+        Ok(res) => {
+            if let Some(profile) = attempt.profile_name {
+                let _ = crate::subagents::record_subagent_success(profile, attempt.model_name);
+            }
+
+            sync_workspace_changes_back(
+                attempt.parent_dir,
+                &attempt.workspace_dir,
+                attempt.filesystem_write_denied,
+            );
+
+            let success_val = handle_subagent_success(
+                parent_provider,
+                attempt.subagent_name,
+                attempt.model_name,
+                attempt.child_session_id,
+                &res.content,
+                attempt.clean_goal,
+                attempt.clean_context,
+                attempt.filesystem_write_denied,
+                attempt.workspace_isolation,
+                attempt.workspace_isolation_reason,
+            )
+            .await;
+
+            SubagentRunOutcome::Success(success_val)
+        }
+        Err(e) => {
+            let error_text = e.to_string();
+            if let Some(cancelled) = handle_subagent_cancellation(
+                attempt.tool_name,
+                attempt.profile_name,
+                attempt.model_name,
+                attempt.child_session_id,
+                &error_text,
+                cancellation_token,
+                attempt.workspace_isolation,
+                attempt.workspace_isolation_reason,
+            ) {
+                return SubagentRunOutcome::Cancelled(cancelled);
+            }
+
+            let lifecycle = classify_subagent_error(&error_text, cancellation_token);
+            if !crate::agent::style::is_silent() {
+                let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                let line = compact_lifecycle_line(attempt.subagent_name, attempt.model_name, &lifecycle);
+                if attempt.profile_name.is_some() {
+                    crate::tui_println!(
+                        "{}{}{}✕ {}{}",
+                        crate::agent::style::AURA_SLATE,
+                        leaf_prefix,
+                        crate::agent::style::AURA_ROSE,
+                        line,
+                        crate::agent::style::COLOR_RESET
+                    );
+                } else {
+                    crate::tui_println!(
+                        "{}{}{}✗{} {}{}",
+                        crate::agent::style::AURA_SLATE,
+                        leaf_prefix,
+                        crate::agent::style::COLOR_RESET,
+                        crate::agent::style::ERROR_RED,
+                        line,
+                        crate::agent::style::COLOR_RESET
+                    );
+                }
+            }
+
+            if let Some(profile) = attempt.profile_name {
+                let _ = crate::subagents::record_subagent_failure(profile, &error_text);
+            }
+
+            let response_json = serde_json::json!({
+                "status": "error",
+                "lifecycle": status_json(&lifecycle),
+                "workspaceIsolation": attempt.workspace_isolation,
+                "workspaceIsolationReason": attempt.workspace_isolation_reason,
+                "error": format!("Subagent execution failed: {:?}", e)
+            });
+
+            SubagentRunOutcome::Failed {
+                error: e,
+                response_json,
+            }
+        }
+    }
+}
+
