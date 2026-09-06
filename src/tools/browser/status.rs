@@ -207,7 +207,12 @@ impl Tool for InspectBrowsersTool {
         };
 
         // 2. Check Chrome (Obscura CDP)
-        let obscura_status = match client.get("http://127.0.0.1:9222/json/list").send().await {
+        let cdp_port = super::common::browser_cdp_port();
+        let obscura_status = match client
+            .get(format!("http://127.0.0.1:{cdp_port}/json/list"))
+            .send()
+            .await
+        {
             Ok(res) => {
                 if let Ok(val) = res.json::<Value>().await {
                     json!({
@@ -219,11 +224,11 @@ impl Tool for InspectBrowsersTool {
                 }
             }
             Err(_) => {
-                if tokio::net::TcpStream::connect("127.0.0.1:9222")
+                if tokio::net::TcpStream::connect(format!("127.0.0.1:{cdp_port}"))
                     .await
                     .is_ok()
                 {
-                    json!({ "status": "running", "message": "Port 9222 open, Chrome list endpoint unresponsive" })
+                    json!({ "status": "running", "message": format!("Port {cdp_port} open, Chrome list endpoint unresponsive") })
                 } else {
                     json!({ "status": "stopped" })
                 }

@@ -1,5 +1,6 @@
 use crate::tools::browser_common::{
-    connect_to_tab, ensure_browser_running, kill_browser_on_port_9222, send_cdp_cmd,
+    browser_cdp_port, connect_to_tab, ensure_browser_running, kill_browser_on_port_9222,
+    send_cdp_cmd,
 };
 use crate::tools::web::is_safe_ip;
 use crate::tools::Tool;
@@ -204,13 +205,15 @@ impl Tool for ObscuraBrowserTool {
             return Err(anyhow!(payload.to_string()));
         }
 
+        let cdp_port = browser_cdp_port();
         let client = crate::core::http::default_http_client();
+        let new_tab_url = format!("http://127.0.0.1:{cdp_port}/json/new");
 
         // Open a new tab
-        let mut res = client.put("http://127.0.0.1:9222/json/new").send().await;
+        let mut res = client.put(&new_tab_url).send().await;
 
         if !matches!(&res, Ok(r) if r.status().is_success()) {
-            res = client.get("http://127.0.0.1:9222/json/new").send().await;
+            res = client.get(&new_tab_url).send().await;
         }
 
         if !matches!(&res, Ok(r) if r.status().is_success()) {
@@ -218,9 +221,9 @@ impl Tool for ObscuraBrowserTool {
             kill_browser_on_port_9222();
             sleep(Duration::from_millis(500)).await;
             ensure_browser_running().await?;
-            res = client.put("http://127.0.0.1:9222/json/new").send().await;
+            res = client.put(&new_tab_url).send().await;
             if !matches!(&res, Ok(r) if r.status().is_success()) {
-                res = client.get("http://127.0.0.1:9222/json/new").send().await;
+                res = client.get(&new_tab_url).send().await;
             }
         }
 
@@ -255,7 +258,7 @@ impl Tool for ObscuraBrowserTool {
             .await;
 
         // Always close the tab, even on error
-        let close_url = format!("http://127.0.0.1:9222/json/close/{}", tab_id);
+        let close_url = format!("http://127.0.0.1:{cdp_port}/json/close/{}", tab_id);
         let _ = client.get(&close_url).send().await;
 
         let output = result?;

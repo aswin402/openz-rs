@@ -102,6 +102,8 @@ pub struct BrowserConfig {
     pub firefox_webdriver_port: u16,
     #[serde(alias = "firefox_attach_port")]
     pub firefox_attach_port: u16,
+    #[serde(alias = "cdp_port", alias = "chrome_cdp_port")]
+    pub cdp_port: u16,
 }
 
 impl Default for BrowserConfig {
@@ -109,6 +111,7 @@ impl Default for BrowserConfig {
         Self {
             firefox_webdriver_port: 4444,
             firefox_attach_port: 4445,
+            cdp_port: 9222,
         }
     }
 }
@@ -1410,6 +1413,36 @@ mod tests {
     fn auto_capture_notices_are_shown_by_default() {
         let defaults = AgentDefaults::default();
         assert!(defaults.show_auto_capture_notices);
+    }
+
+    #[test]
+    fn browser_config_includes_configurable_cdp_port() {
+        let cfg = Config::default();
+        assert_eq!(cfg.browser.cdp_port, 9222);
+
+        let json = serde_json::json!({
+            "browser": {
+                "cdpPort": 9225
+            }
+        });
+        let parsed: Config = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.browser.cdp_port, 9225);
+
+        let json_snake = serde_json::json!({
+            "browser": {
+                "cdp_port": 9226
+            }
+        });
+        let parsed_snake: Config = serde_json::from_value(json_snake).unwrap();
+        assert_eq!(parsed_snake.browser.cdp_port, 9226);
+
+        let json_legacy = serde_json::json!({
+            "browser": {
+                "chrome_cdp_port": 9227
+            }
+        });
+        let parsed_legacy: Config = serde_json::from_value(json_legacy).unwrap();
+        assert_eq!(parsed_legacy.browser.cdp_port, 9227);
     }
 }
 

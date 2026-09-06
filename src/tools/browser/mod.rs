@@ -12,8 +12,8 @@ pub use broker::{
     BrowserBackendChoice, BrowserBrokerResult,
 };
 pub use common::{
-    connect_to_tab, ensure_browser_running, kill_browser_on_port_9222, send_cdp_cmd, WsSink,
-    WsStream,
+    browser_cdp_port, connect_to_tab, ensure_browser_running, kill_browser_on_port,
+    kill_browser_on_port_9222, send_cdp_cmd, WsSink, WsStream,
 };
 pub use firefox::FirefoxBrowserTool;
 pub use gsd::{stop_gsd_browser_daemon, GsdBrowserTool};

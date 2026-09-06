@@ -1,6 +1,7 @@
 use crate::config::resolve_path;
 use crate::tools::browser_common::{
-    connect_to_tab, ensure_browser_running, kill_browser_on_port_9222, send_cdp_cmd,
+    browser_cdp_port, connect_to_tab, ensure_browser_running, kill_browser_on_port_9222,
+    send_cdp_cmd,
 };
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
@@ -335,20 +336,22 @@ impl Tool for GenerateImageTool {
         // Ensure browser is running
         ensure_browser_running().await?;
 
+        let cdp_port = browser_cdp_port();
         let client = crate::core::http::default_http_client();
-        let mut res = client.put("http://127.0.0.1:9222/json/new").send().await;
+        let new_tab_url = format!("http://127.0.0.1:{cdp_port}/json/new");
+        let mut res = client.put(&new_tab_url).send().await;
 
         if !matches!(&res, Ok(r) if r.status().is_success()) {
-            res = client.get("http://127.0.0.1:9222/json/new").send().await;
+            res = client.get(&new_tab_url).send().await;
         }
 
         if !matches!(&res, Ok(r) if r.status().is_success()) {
             kill_browser_on_port_9222();
             sleep(Duration::from_millis(500)).await;
             ensure_browser_running().await?;
-            res = client.put("http://127.0.0.1:9222/json/new").send().await;
+            res = client.put(&new_tab_url).send().await;
             if !matches!(&res, Ok(r) if r.status().is_success()) {
-                res = client.get("http://127.0.0.1:9222/json/new").send().await;
+                res = client.get(&new_tab_url).send().await;
             }
         }
 
@@ -559,7 +562,7 @@ impl Tool for GenerateImageTool {
         fs::write(&output_path, image_bytes)?;
 
         // Close the tab
-        let close_url = format!("http://127.0.0.1:9222/json/close/{}", tab_id);
+        let close_url = format!("http://127.0.0.1:{cdp_port}/json/close/{}", tab_id);
         let _ = client.get(&close_url).send().await;
 
         // Clean up temp file if created
