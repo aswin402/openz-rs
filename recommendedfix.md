@@ -255,7 +255,7 @@ struct WebFetchTool;
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)
 
-**Status (v0.0.143):** Added `tests/agent_loop.rs` providing full end-to-end integration test harnesses with a mock provider:
+**Status (v0.0.147):** Migrated standalone `tests/agent_loop.rs` to in-crate module `src/agent/agent_loop/integration_tests.rs` behind `#[cfg(test)]` (eliminating duplicate binary linking against all ~55 crates while preserving all end-to-end integration tests with a mock provider):
 - `test_agent_loop_tool_execution_pipeline`: Validates the complete multi-turn flow (user input → LLM tool call request → tool execution pipeline → tool output formatting → final assistant answer).
 - `test_agent_loop_session_overrides_pipeline`: Validates per-session configuration overrides loaded from disk metadata through the execution loop.
 - `test_tool_retry_on_transient_error`: Validates `ToolExecutionPipeline` transient error retry with exponential backoff on HTTP 429 rate limit.

@@ -1,9 +1,9 @@
-use openz::agent::AgentLoop;
-use openz::config::schema::Config;
-use openz::providers::{GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest};
-use openz::session::Message;
-use openz::session::SessionManager;
-use openz::tools::{Tool, ToolRegistry};
+use crate::agent::AgentLoop;
+use crate::config::schema::Config;
+use crate::providers::{GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest};
+use crate::session::Message;
+use crate::session::SessionManager;
+use crate::tools::{Tool, ToolRegistry};
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -95,8 +95,8 @@ impl Tool for CalculatorTool {
         }
     }
 
-    fn metadata(&self) -> openz::tools::ToolMetadata {
-        let mut meta = openz::tools::ToolMetadata::infer(self.name());
+    fn metadata(&self) -> crate::tools::ToolMetadata {
+        let mut meta = crate::tools::ToolMetadata::infer(self.name());
         meta.domain = "code";
         meta
     }
@@ -116,9 +116,9 @@ async fn test_agent_loop_tool_execution_pipeline() -> anyhow::Result<()> {
     std::fs::create_dir_all(&sessions_dir)?;
 
     // Use task-local scopes to isolate configuration and workspace paths
-    let res = openz::config::loader::CONFIG_DIR_OVERRIDE
+    let res = crate::config::loader::CONFIG_DIR_OVERRIDE
         .scope(temp_dir.clone(), async {
-            openz::config::loader::ACTIVE_WORKSPACE
+            crate::config::loader::ACTIVE_WORKSPACE
                 .scope(temp_dir.clone(), async {
                     // 2. Build mock provider response sequence:
                     // First turn: requests a tool call to 'calculator' with argument '2 + 2'
@@ -212,9 +212,9 @@ async fn test_agent_loop_session_overrides_pipeline() -> anyhow::Result<()> {
     std::fs::write(&session_file_path, serde_json::to_string(&session_json)?)?;
 
     // Use task-local scopes to isolate configuration and workspace paths
-    let res = openz::config::loader::CONFIG_DIR_OVERRIDE
+    let res = crate::config::loader::CONFIG_DIR_OVERRIDE
         .scope(temp_dir.clone(), async {
-            openz::config::loader::ACTIVE_WORKSPACE
+            crate::config::loader::ACTIVE_WORKSPACE
                 .scope(temp_dir.clone(), async {
                     // Build mock provider expecting overrides
                     let mock_responses = vec![MockResponse {
@@ -307,8 +307,8 @@ impl Tool for TransientFailureTool {
         }
     }
 
-    fn metadata(&self) -> openz::tools::ToolMetadata {
-        let mut meta = openz::tools::ToolMetadata::infer(self.name());
+    fn metadata(&self) -> crate::tools::ToolMetadata {
+        let mut meta = crate::tools::ToolMetadata::infer(self.name());
         meta.domain = "code";
         meta
     }
@@ -325,9 +325,9 @@ async fn test_tool_retry_on_transient_error() -> anyhow::Result<()> {
     let sessions_dir = temp_dir.join("sessions");
     std::fs::create_dir_all(&sessions_dir)?;
 
-    let res = openz::config::loader::CONFIG_DIR_OVERRIDE
+    let res = crate::config::loader::CONFIG_DIR_OVERRIDE
         .scope(temp_dir.clone(), async {
-            openz::config::loader::ACTIVE_WORKSPACE
+            crate::config::loader::ACTIVE_WORKSPACE
                 .scope(temp_dir.clone(), async {
                     let mock_responses = vec![
                         MockResponse {

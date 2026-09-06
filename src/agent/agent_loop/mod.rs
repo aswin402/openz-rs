@@ -25,6 +25,9 @@ pub mod streaming;
 pub mod tool_execution;
 pub mod transcript;
 
+#[cfg(test)]
+mod integration_tests;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnState {
     Restore,
