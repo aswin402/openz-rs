@@ -421,8 +421,10 @@ impl FrameRenderer for SvgFrameRenderer {
             }
         };
 
-        let mut opt = resvg::usvg::Options::default();
-        opt.fontdb = fontdb_arc;
+        let opt = resvg::usvg::Options {
+            fontdb: fontdb_arc,
+            ..Default::default()
+        };
         let tree = resvg::usvg::Tree::from_str(&svg_str, &opt)
             .map_err(|e| OpenMediaError::InvalidSvgInput(e.to_string()))?;
 
@@ -1678,11 +1680,7 @@ fn box_blur(img: &image::RgbaImage, radius: usize) -> image::RgbaImage {
             let mut a_sum = 0u32;
             let mut count = 0u32;
 
-            let start = if x as usize >= radius {
-                x as usize - radius
-            } else {
-                0
-            };
+            let start = (x as usize).saturating_sub(radius);
             let end = std::cmp::min(x as usize + radius, w as usize - 1);
 
             for k in start..=end {
@@ -1715,11 +1713,7 @@ fn box_blur(img: &image::RgbaImage, radius: usize) -> image::RgbaImage {
             let mut a_sum = 0u32;
             let mut count = 0u32;
 
-            let start = if y as usize >= radius {
-                y as usize - radius
-            } else {
-                0
-            };
+            let start = (y as usize).saturating_sub(radius);
             let end = std::cmp::min(y as usize + radius, h as usize - 1);
 
             for k in start..=end {
@@ -1887,7 +1881,7 @@ pub fn blend_frames(
 
             for y in 0..h {
                 // scanline row displacement
-                let mut seed = y as u32 + (progress * 1000.0) as u32;
+                let mut seed = y + (progress * 1000.0) as u32;
                 seed ^= seed << 13;
                 seed ^= seed >> 17;
                 seed ^= seed << 5;
@@ -1926,9 +1920,9 @@ pub fn blend_frames(
                     // Add a touch of noise/static
                     if intensity > 0.1 && (seed % 97) == 0 {
                         let noise = ((seed % 51) as i32 - 25) * (intensity * 2.0) as i32;
-                        r = std::cmp::max(0, std::cmp::min(255, r + noise));
-                        g = std::cmp::max(0, std::cmp::min(255, g + noise));
-                        b = std::cmp::max(0, std::cmp::min(255, b + noise));
+                        r = (r + noise).clamp(0, 255);
+                        g = (g + noise).clamp(0, 255);
+                        b = (b + noise).clamp(0, 255);
                     }
 
                     out.put_pixel(x, y, image::Rgba([r as u8, g as u8, b as u8, a]));
@@ -2042,10 +2036,10 @@ pub async fn resolve_custom_fonts(
                         let bytes_vec = bytes.to_vec();
                         let temp_file_name = format!("{}.tmp", uuid::Uuid::new_v4());
                         let temp_path = cache_dir.join(temp_file_name);
-                        if tokio::fs::write(&temp_path, &bytes_vec).await.is_ok() {
-                            if tokio::fs::rename(&temp_path, &cached_path).await.is_err() {
-                                let _ = tokio::fs::remove_file(&temp_path).await;
-                            }
+                        if tokio::fs::write(&temp_path, &bytes_vec).await.is_ok()
+                            && tokio::fs::rename(&temp_path, &cached_path).await.is_err()
+                        {
+                            let _ = tokio::fs::remove_file(&temp_path).await;
                         }
                         Some(bytes_vec)
                     } else {

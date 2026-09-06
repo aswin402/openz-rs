@@ -62,10 +62,10 @@ impl LinkSpider {
                         for link in parsed_links {
                             if let Ok(parsed_url) = url::Url::parse(&link) {
                                 if let Some(ref host) = allowed_host {
-                                    if parsed_url.host_str() == Some(host) {
-                                        if discovered.insert(link.clone()) {
-                                            next_batch_links.insert(link);
-                                        }
+                                    if parsed_url.host_str() == Some(host)
+                                        && discovered.insert(link.clone())
+                                    {
+                                        next_batch_links.insert(link);
                                     }
                                 }
                             }

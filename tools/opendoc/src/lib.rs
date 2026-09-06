@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 /// Internal Document Representation — universal format-agnostic model
 pub mod ir;
 

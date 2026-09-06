@@ -138,6 +138,7 @@ pub trait DiffusionPipeline: Send + Sync {
     fn is_loaded(&self) -> bool;
 }
 
+#[derive(Default)]
 pub struct DummyDiffusionPipeline;
 
 impl DummyDiffusionPipeline {

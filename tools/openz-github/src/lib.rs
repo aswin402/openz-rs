@@ -103,7 +103,7 @@ impl GithubMcpServer {
             output.push_str(&format!(
                 "--- Comment by {} at {} ---\n{}\n\n",
                 comment.user.login,
-                comment.created_at.to_string(),
+                comment.created_at,
                 comment.body.unwrap_or_default()
             ));
         }

@@ -25,7 +25,7 @@ pub fn validate_pdf_a(path: &Path) -> Result<PdfAValidationResult, lopdf::Error>
     let mut has_metadata = false;
     let mut has_output_intent = false;
 
-    for (_, object) in &doc.objects {
+    for object in doc.objects.values() {
         if let Object::Dictionary(ref dict) = object {
             // Check for /Type
             if let Ok(type_name) = dict.get(b"Type") {
@@ -86,9 +86,8 @@ pub fn validate_pdf_a(path: &Path) -> Result<PdfAValidationResult, lopdf::Error>
             }
 
             // Check for forbidden actions (/JS, /JavaScript, /Sound, /Movie, /Launch)
-            if let Ok(action_type) = dict.get(b"S") {
-                if let Object::Name(ref name) = action_type {
-                    if name == b"JavaScript" || name == b"JS" {
+            if let Ok(Object::Name(ref name)) = dict.get(b"S") {
+                if name == b"JavaScript" || name == b"JS" {
                         errors.push(
                             "JavaScript action detected. JavaScript is forbidden in PDF/A."
                                 .to_string(),
@@ -109,7 +108,6 @@ pub fn validate_pdf_a(path: &Path) -> Result<PdfAValidationResult, lopdf::Error>
                 }
             }
         }
-    }
 
     if !has_metadata {
         errors.push(
@@ -123,7 +121,7 @@ pub fn validate_pdf_a(path: &Path) -> Result<PdfAValidationResult, lopdf::Error>
     }
 
     // Detect level claimed in XMP metadata
-    for (_, object) in &doc.objects {
+    for object in doc.objects.values() {
         if let Object::Stream(ref stream) = object {
             if let Ok(type_name) = stream.dict.get(b"Type") {
                 if type_name.as_name().ok() == Some(b"Metadata") {

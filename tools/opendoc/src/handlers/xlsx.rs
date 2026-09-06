@@ -255,10 +255,10 @@ pub fn edit_xlsx(request: &XlsxEditRequest) -> Result<String, String> {
         let (row_count, col_count) = range.get_size();
         let mut grid = vec![vec![String::new(); col_count]; row_count];
 
-        for r in 0..row_count {
-            for c in 0..col_count {
+        for (r, row) in grid.iter_mut().enumerate().take(row_count) {
+            for (c, cell) in row.iter_mut().enumerate().take(col_count) {
                 if let Some(val) = range.get_value((r as u32, c as u32)) {
-                    grid[r][c] = cell_to_string(val);
+                    *cell = cell_to_string(val);
                 }
             }
         }

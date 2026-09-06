@@ -264,7 +264,7 @@ pub fn render_diff_visual(a: &Document, b: &Document, is_html: bool) -> String {
 
         for line in rendered_lines {
             html.push_str(&line);
-            html.push_str("\n");
+            html.push('\n');
         }
 
         html.push_str("</div>\n</body>\n</html>");

@@ -649,7 +649,7 @@ impl AnimationTimeline {
         for entry in &self.animations {
             svg.push_str("  ");
             svg.push_str(&entry.animation.to_xml(Some(&entry.element_selector)));
-            svg.push_str("\n");
+            svg.push('\n');
         }
         svg
     }
@@ -689,10 +689,7 @@ pub fn parse_path_commands(d: &str) -> Vec<PathCommand> {
             let mut num_str = String::new();
             let mut dot_seen = false;
             while let Some(&next_ch) = chars.peek() {
-                if next_ch == '-' && num_str.is_empty() {
-                    num_str.push(next_ch);
-                    chars.next();
-                } else if next_ch.is_numeric() {
+                if (next_ch == '-' && num_str.is_empty()) || next_ch.is_numeric() {
                     num_str.push(next_ch);
                     chars.next();
                 } else if next_ch == '.' && !dot_seen {
@@ -1147,7 +1144,7 @@ pub fn lottie_to_svg(lottie_json: &str) -> Result<String> {
                     };
                     g_element.push_str("    ");
                     g_element.push_str(&anim.to_xml(None));
-                    g_element.push_str("\n");
+                    g_element.push('\n');
                 }
             }
 

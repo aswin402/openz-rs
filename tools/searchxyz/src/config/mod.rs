@@ -8,7 +8,7 @@ use crate::error::SearchXyzError;
 // overrides layered on top.
 // ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 #[serde(default)]
 pub struct Config {
     pub server: ServerConfig,
@@ -128,23 +128,6 @@ pub struct CacheConfig {
 }
 
 // ── Defaults ─────────────────────────────────────────────────
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            search: SearchConfig::default(),
-            brave: BraveConfig::default(),
-            crawler: CrawlerConfig::default(),
-            extractor: ExtractorConfig::default(),
-            index: IndexConfig::default(),
-            cache: CacheConfig::default(),
-            searxng: SearXngConfig::default(),
-            headless: HeadlessConfig::default(),
-            proxy: ProxyConfig::default(),
-        }
-    }
-}
 
 impl Default for ServerConfig {
     fn default() -> Self {
@@ -493,20 +476,11 @@ impl Default for HeadlessConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 #[serde(default)]
 pub struct ProxyConfig {
     pub enabled: bool,
     pub urls: Vec<String>,
-}
-
-impl Default for ProxyConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            urls: Vec::new(),
-        }
-    }
 }
 
 #[cfg(test)]

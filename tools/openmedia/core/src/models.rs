@@ -3,7 +3,7 @@ use crate::hardware::HardwareInfo;
 use crate::progress::ProgressReporter;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Information about a single model file
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,7 +65,7 @@ impl ModelRegistry {
     }
 
     /// Scan model directory and build registry
-    pub async fn scan(model_dir: &PathBuf) -> Result<Self> {
+    pub async fn scan(model_dir: &Path) -> Result<Self> {
         let mut models = vec![
             ModelInfo {
                 id: "clip-vit-b32-text".to_string(),
@@ -118,7 +118,7 @@ impl ModelRegistry {
 
         Ok(Self {
             models,
-            model_dir: model_dir.clone(),
+            model_dir: model_dir.to_path_buf(),
         })
     }
 

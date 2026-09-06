@@ -230,15 +230,12 @@ impl SearchBackend for GoogleBackend {
         {
             Ok(resp) => {
                 if resp.status().is_success() {
-                    match resp.text().await {
-                        Ok(html_body) => {
-                            results = Self::parse_results(&html_body, query.max_results);
-                        }
-                        Err(_) => {
-                            #[cfg(feature = "js-rendering")]
-                            {
-                                http_failed = true;
-                            }
+                    if let Ok(html_body) = resp.text().await {
+                        results = Self::parse_results(&html_body, query.max_results);
+                    } else {
+                        #[cfg(feature = "js-rendering")]
+                        {
+                            http_failed = true;
                         }
                     }
                 } else {

@@ -37,7 +37,7 @@ fn get_effective_paragraphs(doc: &Document) -> Vec<Paragraph> {
         if let Some(ref raw) = doc.text {
             raw.lines()
                 .filter(|line| !line.trim().is_empty())
-                .map(|line| Paragraph::new(line))
+                .map(Paragraph::new)
                 .collect()
         } else {
             vec![]
@@ -62,6 +62,11 @@ pub fn extract_legal(doc: &Document) -> LegalTemplate {
         r"(?i)(courts of|jurisdiction in|venue in|courts located in)\s+([A-Z][a-zA-Z\s,]{2,30})",
     )
     .ok();
+    let re_between = Regex::new(
+        r"(?i)between\s+([A-Z][A-Za-z0-9\s\.\-]{2,40}?)\s+and\s+([A-Z][A-Za-z0-9\s\.\-]{2,40})",
+    )
+    .ok();
+    let re_party = Regex::new(r#"\b([A-Z][A-Z0-9a-z\s,\.\-]{2,50})\s+(?:having|located|a\s+corporation|individual|("Party"))"#).ok();
 
     // Scan paragraphs
     for p in get_effective_paragraphs(doc) {
@@ -97,9 +102,7 @@ pub fn extract_legal(doc: &Document) -> LegalTemplate {
         // 4. Parties (between X and Y)
         if text.contains("between") || text.contains("among") || text.contains("by and between") {
             // Look for 'between X and Y'
-            if let Ok(re_between) = Regex::new(
-                r"(?i)between\s+([A-Z][A-Za-z0-9\s\.\-]{2,40}?)\s+and\s+([A-Z][A-Za-z0-9\s\.\-]{2,40})",
-            ) {
+            if let Some(ref re_between) = re_between {
                 if let Some(cap) = re_between.captures(text) {
                     let p1 = cap.get(1).unwrap().as_str().trim().to_string();
                     let p2 = cap.get(2).unwrap().as_str().trim().to_string();
@@ -113,7 +116,6 @@ pub fn extract_legal(doc: &Document) -> LegalTemplate {
             }
 
             // Find capitalized entities followed by descriptions
-            let re_party = Regex::new(r#"\b([A-Z][A-Z0-9a-z\s,\.\-]{2,50})\s+(?:having|located|a\s+corporation|individual|("Party"))"#).ok();
             if let Some(ref re) = re_party {
                 for cap in re.captures_iter(text) {
                     let party_name = cap.get(1).unwrap().as_str().trim().to_string();
@@ -249,10 +251,10 @@ pub fn extract_financial(doc: &Document) -> FinancialTemplate {
                 if total_assets.is_none() {
                     total_assets = parse_number(val_str);
                 }
-            } else if label.contains("total liabilities") || label.contains("liabilities") {
-                if total_liabilities.is_none() {
-                    total_liabilities = parse_number(val_str);
-                }
+            } else if (label.contains("total liabilities") || label.contains("liabilities"))
+                && total_liabilities.is_none()
+            {
+                total_liabilities = parse_number(val_str);
             }
         }
     }

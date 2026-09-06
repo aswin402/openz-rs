@@ -64,10 +64,8 @@ impl DocsMcpServer {
             .map_err(mcp_error)?;
 
         let mut result = Vec::new();
-        for row in rows {
-            if let Ok(info) = row {
-                result.push(info);
-            }
+        for info in rows.flatten() {
+            result.push(info);
         }
 
         if result.is_empty() {
@@ -222,10 +220,8 @@ impl DocsMcpServer {
             .map_err(mcp_error)?;
 
         let mut result = Vec::new();
-        for row in rows {
-            if let Ok(res) = row {
-                result.push(res);
-            }
+        for res in rows.flatten() {
+            result.push(res);
         }
 
         if result.is_empty() {

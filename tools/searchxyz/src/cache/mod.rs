@@ -166,7 +166,7 @@ impl Cache {
             self.inner.pop(url);
             return None;
         }
-        self.inner.get(url).map(|e| &*e)
+        self.inner.get(url)
     }
 
     /// Insert or update a cache entry.

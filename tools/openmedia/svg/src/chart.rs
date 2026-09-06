@@ -40,7 +40,7 @@ pub fn create_chart(
             .finish();
     }
 
-    let palette = vec![
+    let palette = [
         "#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c", "#0891b2", "#4f46e5",
     ];
 
@@ -157,8 +157,7 @@ pub fn create_chart(
             let mut path_d = String::new();
 
             // First pass: generate the path line
-            for i in 0..n {
-                let p = &data[i];
+            for (i, p) in data.iter().enumerate() {
                 let x = if n > 1 {
                     margin_left + (i as f64 / (n - 1) as f64) * plot_width
                 } else {
@@ -181,8 +180,7 @@ pub fn create_chart(
                 .finish();
 
             // Second pass: draw marker circles and labels
-            for i in 0..n {
-                let p = &data[i];
+            for (i, p) in data.iter().enumerate() {
                 let x = if n > 1 {
                     margin_left + (i as f64 / (n - 1) as f64) * plot_width
                 } else {
@@ -331,8 +329,7 @@ pub fn create_chart(
 
             // 1. Build area polygon path
             let mut poly_points = format!("M {} {}", margin_left, y_base);
-            for i in 0..n {
-                let p = &data[i];
+            for (i, p) in data.iter().enumerate() {
                 let x = if n > 1 {
                     margin_left + (i as f64 / (n - 1) as f64) * plot_width
                 } else {
@@ -356,8 +353,7 @@ pub fn create_chart(
 
             // 2. Draw line and markers
             let mut line_path = String::new();
-            for i in 0..n {
-                let p = &data[i];
+            for (i, p) in data.iter().enumerate() {
                 let x = if n > 1 {
                     margin_left + (i as f64 / (n - 1) as f64) * plot_width
                 } else {
@@ -508,7 +504,7 @@ pub fn create_chart(
 
             // Draw spokes (lines from center to outer ring vertices)
             let mut data_path = String::new();
-            for j in 0..n {
+            for (j, item) in data.iter().enumerate() {
                 let angle = j as f64 * (2.0 * std::f64::consts::PI / n as f64)
                     - std::f64::consts::FRAC_PI_2;
                 let outer_x = cx + r * angle.cos();
@@ -523,17 +519,17 @@ pub fn create_chart(
 
                 // Labels
                 let label_dist = r + 20.0;
-                let label_x = cx + label_dist * angle.cos() - (data[j].label.len() as f64 * 3.0);
+                let label_x = cx + label_dist * angle.cos() - (item.label.len() as f64 * 3.0);
                 let label_y = cy + label_dist * angle.sin() + 4.0;
                 builder
-                    .text(label_x, label_y, &data[j].label)
+                    .text(label_x, label_y, &item.label)
                     .fill("#94a3b8")
                     .font_size(11.0)
                     .font_family("sans-serif")
                     .finish();
 
                 // Data point coord
-                let val_r = r * (data[j].value / max_val);
+                let val_r = r * (item.value / max_val);
                 let val_x = cx + val_r * angle.cos();
                 let val_y = cy + val_r * angle.sin();
 
@@ -559,10 +555,10 @@ pub fn create_chart(
                 .finish();
 
             // Draw circles on data vertices
-            for j in 0..n {
+            for (j, item) in data.iter().enumerate() {
                 let angle = j as f64 * (2.0 * std::f64::consts::PI / n as f64)
                     - std::f64::consts::FRAC_PI_2;
-                let val_r = r * (data[j].value / max_val);
+                let val_r = r * (item.value / max_val);
                 let val_x = cx + val_r * angle.cos();
                 let val_y = cy + val_r * angle.sin();
 

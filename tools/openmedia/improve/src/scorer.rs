@@ -106,6 +106,7 @@ impl ClipScorer {
         let rgb = resized.to_rgb8();
 
         let mean = [0.48145466, 0.4578275, 0.40821073];
+        #[allow(clippy::excessive_precision)]
         let std = [0.26862954, 0.26130258, 0.27577711];
 
         let mut pixel_values = Vec::with_capacity(3 * 224 * 224);

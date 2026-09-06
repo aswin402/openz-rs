@@ -14,6 +14,12 @@ pub struct PromptRefiner {
     pub negative_defaults: Vec<String>,
 }
 
+impl Default for PromptRefiner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PromptRefiner {
     pub fn new() -> Self {
         Self {
