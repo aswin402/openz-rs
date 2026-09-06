@@ -217,25 +217,8 @@ impl WsGateway {
             agent_loop: Arc::new(agent_loop),
         }
     }
-}
 
-#[async_trait::async_trait]
-impl super::Channel for WsGateway {
-    fn name(&self) -> &'static str {
-        "websocket"
-    }
-
-    async fn start(&self) -> anyhow::Result<()> {
-        let addr_str = format!("{}:{}", self.config.host, self.config.port);
-        let addr: SocketAddr = addr_str.parse()?;
-
-        if gateway_token_required_for_host(&self.config.host) && !gateway_token_configured() {
-            return Err(anyhow::anyhow!(
-                "OPENZ_GATEWAY_TOKEN is required when binding gateway to non-loopback host '{}'",
-                self.config.host
-            ));
-        }
-
+    pub fn build_app(&self) -> Router {
         let live_config = Arc::new(std::sync::RwLock::new(self.agent_loop.config.clone()));
         let config_watcher = match crate::config::watcher::spawn_default_config_watcher(
             live_config.clone(),
@@ -289,6 +272,7 @@ impl super::Channel for WsGateway {
             .with_state(state);
 
         let silent = std::env::var("OPENZ_SILENT").is_ok();
+        let addr_str = format!("{}:{}", self.config.host, self.config.port);
         if let Some(dist_path) = find_web_dist() {
             if !silent {
                 println!("🌐 Serving WebUI static files from {:?}", dist_path);
@@ -297,17 +281,23 @@ impl super::Channel for WsGateway {
             let serve_dir = ServeDir::new(&dist_path)
                 .fallback(tower_http::services::ServeFile::new(index_file));
             app = app.fallback_service(serve_dir);
-        } else {
-            if !silent {
-                println!(
-                    "⚠️ WebUI static directory not found. Serving WebSocket API only at ws://{}/ws",
-                    addr_str
-                );
-            }
+        } else if !silent {
+            println!(
+                "⚠️ WebUI static directory not found. Serving WebSocket API only at ws://{}/ws",
+                addr_str
+            );
         }
 
+        app
+    }
+
+    pub async fn start_with_listener(&self, listener: TcpListener) -> anyhow::Result<()> {
+        let app = self.build_app();
+        let silent = std::env::var("OPENZ_SILENT").is_ok();
+        let local_addr = listener.local_addr()?;
+
         if !silent {
-            println!("⚡ OpenZ Gateway running on http://{}", addr);
+            println!("⚡ OpenZ Gateway running on http://{}", local_addr);
             if std::env::var("OPENZ_GATEWAY_TOKEN")
                 .map(|t| t.is_empty())
                 .unwrap_or(true)
@@ -318,25 +308,43 @@ impl super::Channel for WsGateway {
                 );
             }
         }
-        let mut shutdown_rx = match crate::shutdown::receiver() {
-            Some(rx) => rx,
-            None => {
-                let (_, rx) = tokio::sync::watch::channel(false);
-                rx
-            }
-        };
 
-        let listener = TcpListener::bind(addr).await?;
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                if *shutdown_rx.borrow() {
-                    return;
-                }
-                let _ = shutdown_rx.changed().await;
-            })
-            .await?;
+        if let Some(mut shutdown_rx) = crate::shutdown::receiver() {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    if *shutdown_rx.borrow() {
+                        return;
+                    }
+                    let _ = shutdown_rx.changed().await;
+                })
+                .await?;
+        } else {
+            axum::serve(listener, app).await?;
+        }
 
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl super::Channel for WsGateway {
+    fn name(&self) -> &'static str {
+        "websocket"
+    }
+
+    async fn start(&self) -> anyhow::Result<()> {
+        let addr_str = format!("{}:{}", self.config.host, self.config.port);
+        let addr: SocketAddr = addr_str.parse()?;
+
+        if gateway_token_required_for_host(&self.config.host) && !gateway_token_configured() {
+            return Err(anyhow::anyhow!(
+                "OPENZ_GATEWAY_TOKEN is required when binding gateway to non-loopback host '{}'",
+                self.config.host
+            ));
+        }
+
+        let listener = TcpListener::bind(addr).await?;
+        self.start_with_listener(listener).await
     }
 }
 
