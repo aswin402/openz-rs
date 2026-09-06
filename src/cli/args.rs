@@ -37,6 +37,8 @@ pub enum Command {
     Doctor {
         #[arg(long)]
         scrub_secrets: bool,
+        #[arg(long)]
+        clean_target: bool,
     },
     McpBridge {
         #[arg(long)]

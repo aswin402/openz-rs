@@ -128,8 +128,11 @@ pub async fn run_cli() -> Result<()> {
             let config = crate::config::loader::load_config()?;
             crate::subagents::run_subagent_manager(config).await?;
         }
-        Some(Command::Doctor { scrub_secrets }) => {
-            doctor::handle_doctor(scrub_secrets).await?;
+        Some(Command::Doctor {
+            scrub_secrets,
+            clean_target,
+        }) => {
+            doctor::handle_doctor(scrub_secrets, clean_target).await?;
         }
         Some(Command::McpBridge { port, command_args }) => {
             if command_args.is_empty() {

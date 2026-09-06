@@ -263,7 +263,7 @@ fn print_disk_report(data_dir: &Path) {
             cwd.join("target"),
             20,
             50,
-            Some("Run: ./localupdate.sh --clean-target  (or cargo clean)"),
+            Some("Run: openz doctor --clean-target  (or cargo clean)"),
         ),
         DiskItem::new(
             "OpenZ runtime data ~/.openz",
@@ -397,10 +397,24 @@ fn archive_stale_graph_branches(data_dir: &Path) -> usize {
     count
 }
 
+/// Purges the target build cache at `target_path` and returns reclaimed bytes.
+pub fn clean_target_cache_at(target_path: &Path) -> Result<u64> {
+    if !target_path.exists() {
+        return Ok(0);
+    }
+    let size = path_size_bytes(target_path).unwrap_or(0);
+    if target_path.is_file() {
+        std::fs::remove_file(target_path)?;
+    } else {
+        std::fs::remove_dir_all(target_path)?;
+    }
+    Ok(size)
+}
+
 /// `openz doctor` — verify runtime databases live under the global data dir
 /// (~/.openz), relocate any stray artifacts found in the working directory,
 /// and prune stale graph-memory branch databases. No data is ever deleted.
-pub async fn handle_doctor(scrub_secrets: bool) -> Result<()> {
+pub async fn handle_doctor(scrub_secrets: bool, clean_target: bool) -> Result<()> {
     println!("🩺 OpenZ doctor — runtime database placement check");
     println!("────────────────────────────────────────────");
 
@@ -489,7 +503,25 @@ pub async fn handle_doctor(scrub_secrets: bool) -> Result<()> {
         println!();
     }
 
-    // ── Step 5: Disk/cache pressure report ──
+    // ── Step 5: Optional target build cache cleanup ──
+    if clean_target {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+        let target_dir = cwd.join("target");
+        println!("🧹 Cleaning build cache at {}...", target_dir.display());
+        match clean_target_cache_at(&target_dir) {
+            Ok(reclaimed) if reclaimed > 0 => {
+                println!(
+                    "✅ Cleaned target build cache: reclaimed {}.",
+                    format_bytes(reclaimed)
+                );
+            }
+            Ok(_) => println!("ℹ️  No build cache found to clean."),
+            Err(err) => println!("⚠️  Failed to clean build cache: {err}"),
+        }
+        println!();
+    }
+
+    // ── Step 6: Disk/cache pressure report ──
     print_disk_report(&data_dir);
     println!();
 
@@ -565,5 +597,25 @@ mod tests {
         let mut critical = base;
         critical.size_bytes = Some(gib(50));
         assert_eq!(critical.status(), DiskStatus::Critical);
+    }
+
+    #[test]
+    fn test_clean_target_directory() -> Result<()> {
+        let temp_dir =
+            std::env::temp_dir().join(format!("openz_clean_test_{}", uuid::Uuid::new_v4()));
+        let target = temp_dir.join("target");
+        std::fs::create_dir_all(&target)?;
+        std::fs::write(target.join("dummy.bin"), vec![0u8; 1024 * 1024])?;
+
+        assert!(target.exists());
+        let reclaimed = clean_target_cache_at(&target)?;
+        assert!(reclaimed >= 1024 * 1024);
+        assert!(!target.exists());
+
+        let reclaimed_again = clean_target_cache_at(&target)?;
+        assert_eq!(reclaimed_again, 0);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(())
     }
 }
