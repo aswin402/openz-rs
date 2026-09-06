@@ -683,12 +683,8 @@ pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
     }
 
     let sessions_dir = crate::config::loader::sessions_dir();
-    let client = reqwest::Client::builder()
-        .use_rustls_tls()
-        .connect_timeout(SHUTDOWN_HTTP_TIMEOUT)
-        .timeout(SHUTDOWN_HTTP_TIMEOUT)
-        .build()
-        .unwrap_or_default();
+    let client =
+        crate::core::http::custom_http_client(SHUTDOWN_HTTP_TIMEOUT, SHUTDOWN_HTTP_TIMEOUT);
 
     let offline_message = select_random_message(OFFLINE_MESSAGES);
     for request in build_external_notification_requests(config, &sessions_dir, &offline_message) {
@@ -838,12 +834,10 @@ pub fn send_notification(msg: &str) {
         // Load config to check if external channels (Telegram, Discord, WhatsApp) are enabled.
         if let Ok(config) = crate::config::loader::load_config() {
             let sessions_dir = crate::config::loader::sessions_dir();
-            let client = reqwest::Client::builder()
-                .use_rustls_tls()
-                .connect_timeout(SHUTDOWN_HTTP_TIMEOUT)
-                .timeout(SHUTDOWN_HTTP_TIMEOUT)
-                .build()
-                .unwrap_or_default();
+            let client = crate::core::http::custom_http_client(
+                SHUTDOWN_HTTP_TIMEOUT,
+                SHUTDOWN_HTTP_TIMEOUT,
+            );
 
             for request in build_external_notification_requests(&config, &sessions_dir, &msg_str) {
                 send_external_notification(&client, &request).await;

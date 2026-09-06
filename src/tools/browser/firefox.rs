@@ -39,9 +39,10 @@ fn geckodriver_missing_preflight_error() -> serde_json::Value {
 }
 
 async fn ensure_geckodriver_running(port: u16, connect_existing: bool) -> Result<()> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(500))
-        .build()?;
+    let client = crate::core::http::custom_http_client(
+        Duration::from_secs(2),
+        Duration::from_secs(3),
+    );
 
     if client
         .get(format!("http://127.0.0.1:{}/status", port))

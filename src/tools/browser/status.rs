@@ -178,9 +178,10 @@ impl Tool for InspectBrowsersTool {
     }
 
     async fn call(&self, _arguments: &Value) -> Result<Value> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_millis(800))
-            .build()?;
+        let client = crate::core::http::custom_http_client(
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+        );
 
         // 1. Check Firefox (GeckoDriver)
         let firefox_status = match client.get("http://127.0.0.1:4444/status").send().await {

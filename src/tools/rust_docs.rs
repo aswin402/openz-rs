@@ -13,13 +13,14 @@ impl Default for RustDocsTool {
     }
 }
 
+const USER_AGENT: &str = "OpenZ-Agent (openz-dev@openz.ai)";
+
 impl RustDocsTool {
     pub fn new() -> Self {
-        // Crates.io requires a User-Agent header, otherwise it returns 403 Forbidden.
-        let client = reqwest::Client::builder()
-            .user_agent("OpenZ-Agent (openz-dev@openz.ai)")
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = crate::core::http::custom_http_client(
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(10),
+        );
         Self { client }
     }
 }
@@ -80,7 +81,12 @@ impl Tool for RustDocsTool {
                         percent_encoding::NON_ALPHANUMERIC
                     )
                 );
-                let resp = self.client.get(&url).send().await?;
+                let resp = self
+                    .client
+                    .get(&url)
+                    .header("User-Agent", USER_AGENT)
+                    .send()
+                    .await?;
 
                 if !resp.status().is_success() {
                     return Err(anyhow!(
@@ -140,12 +146,22 @@ impl Tool for RustDocsTool {
                     )
                 };
 
-                let resp = self.client.get(&url).send().await?;
+                let resp = self
+                    .client
+                    .get(&url)
+                    .header("User-Agent", USER_AGENT)
+                    .send()
+                    .await?;
                 if !resp.status().is_success() {
                     // Fallback to simpler URL if normalized structure failed
                     let fallback_url =
                         format!("https://docs.rs/{}/latest/{}/", crate_name, module_name);
-                    let fallback_resp = self.client.get(&fallback_url).send().await?;
+                    let fallback_resp = self
+                        .client
+                        .get(&fallback_url)
+                        .header("User-Agent", USER_AGENT)
+                        .send()
+                        .await?;
                     if !fallback_resp.status().is_success() {
                         return Err(anyhow!(
                             "Failed to fetch docs.rs page for {} (HTTP {})",

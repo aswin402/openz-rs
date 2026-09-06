@@ -46,11 +46,10 @@ impl WhatsAppChannel {
             api_key,
             phone_number_id,
             agent_loop: Arc::new(agent_loop),
-            client: Client::builder()
-                .use_rustls_tls()
-                .timeout(std::time::Duration::from_secs(15))
-                .build()
-                .unwrap_or_default(),
+            client: crate::core::http::custom_http_client(
+                std::time::Duration::from_secs(5),
+                std::time::Duration::from_secs(15),
+            ),
             concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
         }
     }
@@ -398,7 +397,7 @@ mod tests {
             phone_number_id: "phone".to_string(),
             verify_token: "my_test_token".to_string(),
             app_secret: String::new(),
-            client: reqwest::Client::new(),
+            client: crate::core::http::default_http_client(),
             concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
         };
 
@@ -432,7 +431,7 @@ mod tests {
             phone_number_id: "phone".to_string(),
             verify_token: "my_test_token".to_string(),
             app_secret: String::new(),
-            client: reqwest::Client::new(),
+            client: crate::core::http::default_http_client(),
             concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
         };
 

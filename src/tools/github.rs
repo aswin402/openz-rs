@@ -129,6 +129,9 @@ impl Tool for GitProviderTool {
         });
 
         let client = reqwest::Client::builder()
+            .use_rustls_tls()
+            .connect_timeout(crate::core::http::DEFAULT_CONNECT_TIMEOUT)
+            .timeout(crate::core::http::DEFAULT_REQUEST_TIMEOUT)
             .redirect(redirect_policy)
             .build()?;
 
