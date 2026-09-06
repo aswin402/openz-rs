@@ -40,7 +40,7 @@ pub fn kill_browser_on_port(port: u16) {
     #[cfg(windows)]
     {
         let cmd = format!(
-            "for /f \"tokens=5\" %a in ('netstat -aon ^| findstr {port}') do taskkill /F /PID %a"
+            "powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue | ForEach-Object {{ Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue }} | Where-Object {{ $_.ProcessName -match 'chrome|chromium|obscura' }} | Stop-Process -Force\""
         );
         let _ = Command::new("cmd")
             .arg("/C")
@@ -52,8 +52,12 @@ pub fn kill_browser_on_port(port: u16) {
     }
 }
 
-pub fn kill_browser_on_port_9222() {
+pub fn kill_browser_on_cdp_port() {
     kill_browser_on_port(browser_cdp_port());
+}
+
+pub fn kill_browser_on_port_9222() {
+    kill_browser_on_cdp_port();
 }
 
 pub async fn ensure_browser_running() -> Result<()> {

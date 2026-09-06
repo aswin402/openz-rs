@@ -1,6 +1,6 @@
 use crate::config::resolve_path;
 use crate::tools::browser_common::{
-    browser_cdp_port, connect_to_tab, ensure_browser_running, kill_browser_on_port_9222,
+    browser_cdp_port, connect_to_tab, ensure_browser_running, kill_browser_on_cdp_port,
     send_cdp_cmd,
 };
 use crate::tools::Tool;
@@ -346,7 +346,7 @@ impl Tool for GenerateImageTool {
         }
 
         if !matches!(&res, Ok(r) if r.status().is_success()) {
-            kill_browser_on_port_9222();
+            kill_browser_on_cdp_port();
             sleep(Duration::from_millis(500)).await;
             ensure_browser_running().await?;
             res = client.put(&new_tab_url).send().await;
