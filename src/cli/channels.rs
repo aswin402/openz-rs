@@ -14,15 +14,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
 
 pub async fn handle_gateway() -> Result<()> {
     let config = load_config()?;
-    let ws_config = config.channels.websocket.clone().unwrap_or_else(|| {
-        crate::config::schema::WebSocketChannelConfig {
-            enabled: true,
-            port: 8765,
-            host: "127.0.0.1".to_string(),
-            start_on_boot: false,
-            start_on_tui: false,
-        }
-    });
+    let ws_config = config.channels.websocket.clone().unwrap_or_default();
 
     start_scheduler(config.clone());
     let agent_loop = build_agent_loop(config).await?;

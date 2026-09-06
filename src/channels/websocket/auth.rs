@@ -27,34 +27,32 @@ pub(crate) fn websocket_origin_allowed(
         return gateway_token_is_configured;
     };
 
+    is_allowed_origin(origin, config)
+}
+
+pub(crate) fn is_allowed_origin(origin: &str, config: &WebSocketChannelConfig) -> bool {
     let port = config.port.to_string();
     let configured_http = ["http://", &config.host, ":", &port].concat();
     let configured_https = ["https://", &config.host, ":", &port].concat();
-    let local_origins = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:8765",
-        "http://127.0.0.1:8765",
-    ];
 
     origin == configured_http
         || origin == configured_https
-        || local_origins.contains(&origin)
+        || config.cors_origins.iter().any(|allowed| allowed == origin)
 }
 
 pub(crate) fn websocket_cors_origins(config: &WebSocketChannelConfig) -> Vec<HeaderValue> {
     let mut origins = vec![
         HeaderValue::from_static("http://localhost"),
         HeaderValue::from_static("http://127.0.0.1"),
-        HeaderValue::from_static("http://localhost:3000"),
-        HeaderValue::from_static("http://127.0.0.1:3000"),
-        HeaderValue::from_static("http://localhost:5173"),
-        HeaderValue::from_static("http://127.0.0.1:5173"),
-        HeaderValue::from_static("http://localhost:8765"),
-        HeaderValue::from_static("http://127.0.0.1:8765"),
     ];
+
+    for custom in &config.cors_origins {
+        if let Ok(hv) = HeaderValue::from_str(custom) {
+            if !origins.contains(&hv) {
+                origins.push(hv);
+            }
+        }
+    }
 
     for scheme in ["http", "https"] {
         let origin = format!("{scheme}://{}:{}", config.host, config.port);
@@ -96,4 +94,19 @@ pub(crate) fn is_authorized(headers: &HeaderMap, query_token: Option<&str>) -> b
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_allowed_origin_with_custom_configured_origins() {
+        let mut config = WebSocketChannelConfig::default();
+        config.cors_origins.push("https://custom.app.domain".to_string());
+
+        assert!(is_allowed_origin("https://custom.app.domain", &config));
+        assert!(is_allowed_origin("http://localhost:3000", &config));
+        assert!(!is_allowed_origin("https://evil.site.com", &config));
+    }
 }

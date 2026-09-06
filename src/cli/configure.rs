@@ -558,15 +558,7 @@ async fn handle_gateway_submenu(config: &mut Config) -> Result<()> {
         COLOR_BOLD, COLOR_RESET
     );
 
-    let mut ws = config.channels.websocket.clone().unwrap_or_else(|| {
-        crate::config::schema::WebSocketChannelConfig {
-            enabled: true,
-            port: 8765,
-            host: "127.0.0.1".to_string(),
-            start_on_boot: false,
-            start_on_tui: false,
-        }
-    });
+    let mut ws = config.channels.websocket.clone().unwrap_or_default();
 
     let enabled = Confirm::new("Enable WebSocket gateway?")
         .with_default(ws.enabled)

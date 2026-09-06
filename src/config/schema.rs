@@ -323,6 +323,32 @@ pub struct WebSocketChannelConfig {
     pub start_on_boot: bool,
     #[serde(default)]
     pub start_on_tui: bool,
+    #[serde(default = "default_ws_cors_origins", alias = "cors_origins")]
+    pub cors_origins: Vec<String>,
+}
+
+pub fn default_ws_cors_origins() -> Vec<String> {
+    vec![
+        "http://localhost:3000".to_string(),
+        "http://127.0.0.1:3000".to_string(),
+        "http://localhost:5173".to_string(),
+        "http://127.0.0.1:5173".to_string(),
+        "http://localhost:8765".to_string(),
+        "http://127.0.0.1:8765".to_string(),
+    ]
+}
+
+impl Default for WebSocketChannelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            port: default_ws_port(),
+            host: default_ws_host(),
+            start_on_boot: false,
+            start_on_tui: false,
+            cors_origins: default_ws_cors_origins(),
+        }
+    }
 }
 
 fn default_ws_port() -> u16 {
@@ -587,13 +613,7 @@ pub struct Config {
 impl Default for ChannelsConfig {
     fn default() -> Self {
         ChannelsConfig {
-            websocket: Some(WebSocketChannelConfig {
-                enabled: true,
-                port: default_ws_port(),
-                host: default_ws_host(),
-                start_on_boot: false,
-                start_on_tui: false,
-            }),
+            websocket: Some(WebSocketChannelConfig::default()),
             telegram: Some(TelegramChannelConfig {
                 enabled: false,
                 bot_token: String::new(),

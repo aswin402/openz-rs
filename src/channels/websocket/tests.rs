@@ -549,6 +549,7 @@ fn websocket_origin_validation_rejects_untrusted_browser_origins() {
         port: 8765,
         start_on_boot: false,
         start_on_tui: false,
+        ..Default::default()
     };
 
     assert!(websocket_origin_allowed(Some("http://127.0.0.1:8765"), &config, false));
@@ -566,6 +567,7 @@ fn websocket_cors_origins_include_configured_and_vite_origins() {
         port: 9000,
         start_on_boot: false,
         start_on_tui: false,
+        ..Default::default()
     };
 
     let origins = websocket_cors_origins(&config);
@@ -663,13 +665,7 @@ async fn websocket_set_config_updates_live_config_and_broadcasts() {
             });
             let live_config = std::sync::Arc::new(std::sync::RwLock::new(config.clone()));
             let state = super::WsState {
-                config: config.channels.websocket.clone().unwrap_or(WebSocketChannelConfig {
-                    enabled: true,
-                    host: "127.0.0.1".to_string(),
-                    port: 8765,
-                    start_on_boot: false,
-                    start_on_tui: false,
-                }),
+                config: config.channels.websocket.clone().unwrap_or_default(),
                 agent_loop: dummy_agent_loop,
                 live_config: live_config.clone(),
                 _config_watcher: std::sync::Arc::new(None),
