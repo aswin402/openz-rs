@@ -143,6 +143,8 @@ pub struct AgentDefaults {
     pub caveman_mode: bool,
     #[serde(default, alias = "context_limit")]
     pub context_limit: Option<usize>,
+    #[serde(default, alias = "prompt_budget_limit")]
+    pub prompt_budget_limit: Option<usize>,
     #[serde(default = "default_security_mode", alias = "security_mode")]
     pub security_mode: String,
     #[serde(default, alias = "tool_output_limit")]
@@ -286,6 +288,7 @@ impl Default for AgentDefaults {
             fallback_models: default_fallback_models(),
             caveman_mode: true,
             context_limit: None,
+            prompt_budget_limit: None,
             security_mode: default_security_mode(),
             tool_output_limit: None,
             enable_sandbox: default_enable_sandbox(),

@@ -128,7 +128,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         ""
     };
 
-    let pinned_memory = retrieve_pinned_identity_memories().await;
+    let pinned_memory =
+        retrieve_pinned_identity_memories(&config.agents.defaults.bot_name).await;
     let persona_priority_part = identity_answer_priority_context(ctx.user_content, &pinned_memory);
     let recent_session_part = recent_session_context(&ctx.session.messages, 2000);
     let brief_context = retrieve_research_brief_context(ctx.session_key, ctx.user_content).await;
@@ -142,10 +143,14 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     .await;
     let weak_model_rules = weak_model_operating_rules(&config.agents.defaults.model);
     let grounding_rules = crate::grounding::main_agent_grounding_rules();
-    let mut cross_session_memory = retrieve_cross_session_memories(ctx.user_content).await;
+    let mut cross_session_memory =
+        retrieve_cross_session_memories(ctx.user_content, &config.agents.defaults.bot_name).await;
 
     // Calculate total character limit and base length
-    let budget_limit = 32000;
+    let budget_limit = resolve_prompt_budget(
+        config.agents.defaults.prompt_budget_limit,
+        config.agents.defaults.context_limit.unwrap_or(32000),
+    );
 
     let header = format!(
         "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.",
@@ -283,21 +288,33 @@ fn is_identity_or_persona_query(text: &str) -> bool {
     .any(|needle| normalized.contains(needle))
 }
 
+pub fn resolve_prompt_budget(configured_budget: Option<usize>, context_window: usize) -> usize {
+    if let Some(explicit) = configured_budget {
+        return explicit;
+    }
+    // Allocate up to 3/8 of total context window for prompt overhead, clamped between 8k and 64k chars
+    let computed = (context_window * 3) / 8;
+    computed.clamp(8000, 64000)
+}
+
 fn identity_answer_priority_context(user_content: &str, pinned_memory: &str) -> &'static str {
     if is_identity_or_persona_query(user_content) && !pinned_memory.trim().is_empty() {
-        "\n\n[Identity Answer Priority]\nThe active persona and user preference facts in [Pinned Memory] outrank the generic OpenZ product identity for identity/persona questions. If asked who you are, answer as the active persona first, then mention OpenZ only as underlying system/context if useful. Do not ignore Mivi/persona memory because the generic header says OpenZ.\n"
+        "\n\n[Identity Answer Priority]\nThe active persona and user preference facts in [Pinned Memory] outrank the generic system product identity for identity/persona questions. If asked who you are, answer as the active persona first, then mention OpenZ only as underlying system/context if useful. Do not ignore custom persona memory because the generic header says OpenZ.\n"
     } else {
         ""
     }
 }
 
-fn identity_memory_candidate(text: &str) -> bool {
+fn identity_memory_candidate(text: &str, bot_name: &str) -> bool {
     let normalized = text.to_lowercase();
+    let bot_norm = bot_name.trim().to_lowercase();
+    if !bot_norm.is_empty() && normalized.contains(&bot_norm) {
+        return true;
+    }
     [
         "name",
+        "call",
         "called",
-        "aswin",
-        "mivi",
         "persona",
         "personality",
         "friend",
@@ -305,6 +322,8 @@ fn identity_memory_candidate(text: &str) -> bool {
         "prefers",
         "wants",
         "likes",
+        "creator",
+        "developer",
     ]
     .iter()
     .any(|needle| normalized.contains(needle))
@@ -715,7 +734,7 @@ async fn retrieve_workflow_context(
     }
 }
 
-async fn retrieve_pinned_identity_memories() -> String {
+async fn retrieve_pinned_identity_memories(bot_name: &str) -> String {
     let mut entries: Vec<String> = Vec::new();
 
     let _lock = crate::tools::shared_memory::get_db_mutex().lock().await;
@@ -733,7 +752,7 @@ async fn retrieve_pinned_identity_memories() -> String {
     if let Ok(rows) = cognitive_rows {
         entries.extend(
             rows.into_iter()
-                .filter(|text| identity_memory_candidate(text)),
+                .filter(|text| identity_memory_candidate(text, bot_name)),
         );
     }
     drop(_lock);
@@ -753,7 +772,7 @@ async fn retrieve_pinned_identity_memories() -> String {
     entries.extend(
         semantic_rows
             .into_iter()
-            .filter(|text| identity_memory_candidate(text)),
+            .filter(|text| identity_memory_candidate(text, bot_name)),
     );
 
     let mut seen = std::collections::HashSet::new();
@@ -804,7 +823,7 @@ fn memory_relevance_score(query_terms: &std::collections::HashSet<String>, text:
     }
 }
 
-async fn retrieve_cross_session_memories(user_content: &str) -> String {
+async fn retrieve_cross_session_memories(user_content: &str, bot_name: &str) -> String {
     let query_terms = memory_query_terms(user_content);
     let wants_identity = is_identity_or_persona_query(user_content);
     let mut all_entries: Vec<(f32, String)> = Vec::new();
@@ -843,7 +862,7 @@ async fn retrieve_cross_session_memories(user_content: &str) -> String {
                 .num_seconds() as f32
                 / 86400.0;
             let mut relevance = memory_relevance_score(&query_terms, &text);
-            if relevance == 0.0 && wants_identity && identity_memory_candidate(&text) {
+            if relevance == 0.0 && wants_identity && identity_memory_candidate(&text, bot_name) {
                 relevance = 1.0;
             }
             if relevance > 0.0 {
@@ -880,7 +899,7 @@ async fn retrieve_cross_session_memories(user_content: &str) -> String {
     // Score semantic facts just below cognitive ones, gated by current query relevance.
     for fact in &semantic_facts {
         let mut relevance = memory_relevance_score(&query_terms, fact);
-        if relevance == 0.0 && wants_identity && identity_memory_candidate(fact) {
+        if relevance == 0.0 && wants_identity && identity_memory_candidate(fact, bot_name) {
             relevance = 1.0;
         }
         if relevance > 0.0 {
@@ -1135,6 +1154,22 @@ mod tests {
         assert!(prompt.contains("answer as the active persona first"));
         assert!(identity_answer_priority_context("fix cargo", "Mivi persona active").is_empty());
         assert!(identity_answer_priority_context("who are you", "").is_empty());
+    }
+
+    #[test]
+    fn test_identity_memory_candidate_matches_bot_name_and_custom_hints() {
+        assert!(identity_memory_candidate("user prefers python", "openz"));
+        assert!(identity_memory_candidate("bot persona is friendly", "openz"));
+        assert!(identity_memory_candidate("call me Alice", "openz"));
+        assert!(!identity_memory_candidate("compile the rust binary", "openz"));
+    }
+
+    #[test]
+    fn test_prompt_budget_resolution() {
+        assert_eq!(resolve_prompt_budget(Some(64000), 128000), 64000);
+        assert_eq!(resolve_prompt_budget(None, 128000), 48000);
+        assert_eq!(resolve_prompt_budget(None, 32000), 12000);
+        assert_eq!(resolve_prompt_budget(None, 16000), 8000);
     }
 
     #[test]
@@ -1395,7 +1430,7 @@ mod tests {
         })
         .unwrap();
 
-        let memory = retrieve_cross_session_memories("Rust current obsolete rule").await;
+        let memory = retrieve_cross_session_memories("Rust current obsolete rule", "openz").await;
         assert!(memory.contains(&active_fact));
         assert!(!memory.contains(&stale_fact));
     }
@@ -1423,7 +1458,7 @@ mod tests {
             .unwrap();
         }
 
-        let memory = retrieve_cross_session_memories("Rust memory budget marker").await;
+        let memory = retrieve_cross_session_memories("Rust memory budget marker", "openz").await;
         let fact_lines = memory
             .lines()
             .filter(|line| line.starts_with("- budget-marker-"))
@@ -1470,7 +1505,7 @@ mod tests {
         .unwrap();
 
         let memory =
-            retrieve_cross_session_memories("help with Rust lifetime borrow checker").await;
+            retrieve_cross_session_memories("help with Rust lifetime borrow checker", "openz").await;
 
         assert!(memory.contains(&rust_fact));
         assert!(
