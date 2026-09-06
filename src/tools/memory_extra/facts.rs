@@ -303,7 +303,7 @@ impl Tool for ForgetMemoryTool {
 
         let (uid, sid, aid) = scope_from_args(arguments);
         let scope = crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
-        let result = crate::tools::memory_extra::coordinator::MemoryCoordinator::default()
+        let result = crate::tools::memory_extra::coordinator::MemoryCoordinator
             .forget(query, &scope)
             .await?;
         Ok(result.raw)
@@ -628,7 +628,7 @@ impl Tool for SmartStoreTool {
             }
 
             let scope = crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
-            let result = crate::tools::memory_extra::coordinator::MemoryCoordinator::default()
+            let result = crate::tools::memory_extra::coordinator::MemoryCoordinator
                 .write_graph_relation(from, rel_type, to, &scope)
                 .await?;
 
@@ -693,7 +693,7 @@ impl Tool for SmartStoreTool {
             }
 
             let scope = crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
-            let written = crate::tools::memory_extra::coordinator::MemoryCoordinator::default()
+            let written = crate::tools::memory_extra::coordinator::MemoryCoordinator
                 .write_semantic(t, -1.0, &scope)
                 .await?;
 
@@ -749,7 +749,7 @@ impl Tool for ExtractAndStoreFactsTool {
         let mut relations_created = 0;
 
         let scope = crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
-        let coordinator = crate::tools::memory_extra::coordinator::MemoryCoordinator::default();
+        let coordinator = crate::tools::memory_extra::coordinator::MemoryCoordinator;
         for fact in facts {
             let before_nodes = with_db(|conn| {
                 let count = conn.query_row(
@@ -841,7 +841,7 @@ pub(crate) fn extract_facts(text: &str) -> Vec<ExtractedFact> {
 }
 
 fn split_fact_clauses(sentence: &str) -> Vec<String> {
-    let normalized = sentence.replace(';', ".").replace(',', ".");
+    let normalized = sentence.replace([';', ','], ".");
     let Some(and_split) = regex::Regex::new(r"\s+and\s+").ok() else {
         return normalized
             .split('.')

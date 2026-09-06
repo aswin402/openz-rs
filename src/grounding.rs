@@ -29,7 +29,7 @@ fn contains_any(text: &str, needles: &[&str]) -> bool {
 
 fn contains_any_word(text: &str, needles: &[&str]) -> bool {
     text.split(|c: char| !c.is_ascii_alphanumeric())
-        .any(|word| needles.iter().any(|needle| word == *needle))
+        .any(|word| needles.contains(&word))
 }
 
 fn looks_like_url_or_path(text: &str) -> bool {

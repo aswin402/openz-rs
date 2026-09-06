@@ -358,6 +358,7 @@ struct WsNotificationEvent {
     message: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn capabilities(
     providers: Vec<Value>,
     security_modes: Vec<Value>,
@@ -779,6 +780,7 @@ pub(crate) fn config_updated(defaults: Value, capabilities: Value) -> Value {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn cognitive_memory(
     entities_count: i64,
     relations_count: i64,

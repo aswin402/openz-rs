@@ -25,12 +25,10 @@ pub struct ToolScopeDecision {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ToolScopeEngine {
 }
 
-impl Default for ToolScopeEngine {
-    fn default() -> Self { Self {} }
-}
 
 impl ToolScopeEngine {
     pub fn decide(&self, decision: &IntentDecision, max_visible_tools: usize) -> ToolScopeDecision {

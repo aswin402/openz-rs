@@ -1335,7 +1335,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         super::transcript::append_tool_results(&mut ctx.messages, &config, tool_results).await;
 
         ctx.session.messages = ctx.messages.clone();
-        if run.iterations % 5 == 0 {
+        if run.iterations.is_multiple_of(5) {
             if let Err(e) = loop_ref.session_manager.save(&ctx.session).await {
                 tracing::warn!("Failed to save session incrementally in Run loop: {}", e);
             }

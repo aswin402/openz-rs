@@ -56,17 +56,17 @@ pub(crate) fn resolve_session_key(
         }
         return chat_id.to_string();
     }
-    if chat_id.starts_with("cli_") {
-        return format!("cli:{}", &chat_id[4..]);
+    if let Some(rest) = chat_id.strip_prefix("cli_") {
+        return format!("cli:{}", rest);
     }
-    if chat_id.starts_with("subagent_") {
-        return format!("subagent:{}", &chat_id[9..]);
+    if let Some(rest) = chat_id.strip_prefix("subagent_") {
+        return format!("subagent:{}", rest);
     }
-    if chat_id.starts_with("telegram_") {
-        return format!("telegram:{}", &chat_id[9..]);
+    if let Some(rest) = chat_id.strip_prefix("telegram_") {
+        return format!("telegram:{}", rest);
     }
-    if chat_id.starts_with("ws_") {
-        return format!("ws:{}", &chat_id[3..]);
+    if let Some(rest) = chat_id.strip_prefix("ws_") {
+        return format!("ws:{}", rest);
     }
     format!("ws:{}", chat_id)
 }

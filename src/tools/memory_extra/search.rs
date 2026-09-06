@@ -300,7 +300,7 @@ impl Tool for HybridSearchTool {
             .unwrap_or(10) as usize;
         let (uid, sid, aid) = scope_from_args(arguments);
         let scope = crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
-        let results = crate::tools::memory_extra::coordinator::MemoryCoordinator::default()
+        let results = crate::tools::memory_extra::coordinator::MemoryCoordinator
             .recall_raw(query, limit, &scope)
             .await?;
         Ok(json!(results))

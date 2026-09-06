@@ -41,7 +41,7 @@ impl RunContext {
             direct_page_fetched: false,
             turn_cancel: super::super::current_turn_cancellation_context()
                 .map(|context| context.token)
-                .unwrap_or_else(crate::tools::subagent::CancellationToken::new),
+                .unwrap_or_default(),
         }
     }
 }
@@ -56,9 +56,7 @@ pub(super) fn provider_turn_lock_key_for_mode(
     model: &str,
     mode: Option<&str>,
 ) -> Option<String> {
-    let Some(mode) = mode.map(str::trim).filter(|value| !value.is_empty()) else {
-        return None;
-    };
+    let mode = mode.map(str::trim).filter(|value| !value.is_empty())?;
     let mode = mode.to_lowercase();
     if mode == "off" || mode == "false" || mode == "0" {
         return None;
@@ -110,6 +108,7 @@ pub(super) async fn acquire_provider_turn_lock(
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(&path)?;
         let mut delay = std::time::Duration::from_millis(100);
         let started = std::time::Instant::now();

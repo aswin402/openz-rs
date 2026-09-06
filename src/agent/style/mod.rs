@@ -329,9 +329,7 @@ pub fn format_subagent_summary(content: &str) -> String {
             continue;
         }
         let mut final_line = trimmed;
-        if final_line.starts_with("- ") {
-            final_line = &final_line[2..];
-        } else if final_line.starts_with("* ") {
+        if final_line.starts_with("- ") || final_line.starts_with("* ") {
             final_line = &final_line[2..];
         } else if let Some(pos) = final_line.find(". ") {
             if final_line[..pos].chars().all(|c| c.is_ascii_digit()) {
@@ -358,9 +356,7 @@ pub fn format_reasoning_summary(reasoning: &str) -> String {
             continue;
         }
         let mut cleaned = trimmed;
-        if cleaned.starts_with("- ") {
-            cleaned = &cleaned[2..];
-        } else if cleaned.starts_with("* ") {
+        if cleaned.starts_with("- ") || cleaned.starts_with("* ") {
             cleaned = &cleaned[2..];
         }
         let cleaned = cleaned.trim_matches('*').trim();

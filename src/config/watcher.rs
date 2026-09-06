@@ -78,7 +78,7 @@ where
             if let Ok(event) = res {
                 let is_relevant = if let Some(ref target) = target_name {
                     event.paths.iter().any(|p| {
-                        p.file_name().map_or(false, |name| name == target)
+                        p.file_name().is_some_and(|name| name == target)
                     })
                 } else {
                     true

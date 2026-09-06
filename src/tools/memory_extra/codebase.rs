@@ -274,7 +274,7 @@ impl Tool for MemoryStatsTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let (uid, sid, aid) = scope_from_args(arguments);
         let scope = crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
-        let snapshot = crate::tools::memory_extra::coordinator::MemoryCoordinator::default()
+        let snapshot = crate::tools::memory_extra::coordinator::MemoryCoordinator
             .stats(&scope)
             .await?;
 
@@ -503,10 +503,9 @@ fn scan_and_index(
                     | "h"
                     | "cpp"
                     | "hpp"
-            ) {
-                if let Ok(_) = index_file(&path, user_id, session_id, agent_id, conn) {
-                    count += 1;
-                }
+            ) && index_file(&path, user_id, session_id, agent_id, conn).is_ok()
+            {
+                count += 1;
             }
         }
     }
@@ -678,9 +677,7 @@ fn index_file(
                     // Find nearest caller (the enclosing function/element on this line)
                     let line_num = (idx + 1) as i64;
                     if let Some(caller) = elements
-                        .iter()
-                        .filter(|e| e.4 <= line_num && line_num <= e.5)
-                        .next_back()
+                        .iter().rfind(|e| e.4 <= line_num && line_num <= e.5)
                     {
                         conn.execute(
                             "INSERT OR IGNORE INTO code_calls (caller_id, callee_id, call_site) VALUES (?1, ?2, ?3)",

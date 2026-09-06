@@ -416,7 +416,7 @@ impl ToolRegistry {
         let profiles = crate::subagents::load_profiles().ok()?;
         let profile = profiles.into_iter().find(|p| p.name == name)?;
         let profile_metadata = crate::tools::subagent::subagent_tool_metadata(&profile.name);
-        if self
+        if !self
             .active_capability_policy()
             .as_ref()
             .map(|policy| {
@@ -427,7 +427,6 @@ impl ToolRegistry {
                 )
             })
             .unwrap_or(true)
-            == false
         {
             return None;
         }
@@ -804,7 +803,7 @@ impl ToolRegistry {
                     let profile_metadata =
                         crate::tools::subagent::subagent_tool_metadata(&profile.name);
                     let policy = self.active_capability_policy();
-                    if policy
+                    if !policy
                         .as_ref()
                         .map(|policy| {
                             crate::tools::orchestrator::tool_allowed_by_policy_with_metadata(
@@ -814,7 +813,6 @@ impl ToolRegistry {
                             )
                         })
                         .unwrap_or(true)
-                        == false
                     {
                         continue;
                     }

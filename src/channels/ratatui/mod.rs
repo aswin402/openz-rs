@@ -79,7 +79,7 @@ fn process_is_alive(pid: u32) -> bool {
             return false;
         }
         let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-        return result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
     #[cfg(not(unix))]
     {
@@ -166,10 +166,7 @@ async fn apply_session_model_selection(
     let resolved = crate::providers::resolver::resolve_provider_full(&cfg, model)?;
     save_session_model_override(session_manager, session_key, provider, model).await?;
     write_tui_marker_in_dir(marker_dir, std::process::id(), session_key, model, provider)?;
-    match agent_loop.try_lock() {
-        Ok(mut loop_lock) => loop_lock.update_model_and_provider(cfg, resolved.instance),
-        Err(_) => {}
-    }
+    if let Ok(mut loop_lock) = agent_loop.try_lock() { loop_lock.update_model_and_provider(cfg, resolved.instance) }
     Ok(())
 }
 

@@ -175,7 +175,7 @@ where
 
         let session = visitor
             .session
-            .or_else(|| crate::agent::style::spinner::get_current_session_key());
+            .or_else(crate::agent::style::spinner::get_current_session_key);
         let timestamp = chrono::Utc::now().to_rfc3339();
 
         if let Some(tx) = LOG_TX.get() {
@@ -241,7 +241,7 @@ impl SessionFilter {
         match s {
             None => SessionFilter::All,
             Some("auto") => SessionFilter::Auto(detect_active_session()),
-            Some(k) if k.is_empty() => SessionFilter::All,
+            Some("") => SessionFilter::All,
             Some(k) => SessionFilter::Only(k.to_string()),
         }
     }
@@ -313,7 +313,7 @@ fn extract_all_sessions_from_line(line: &str) -> Vec<String> {
         let start = abs_pos + "session=".len();
         let val_slice = &line[start..];
         let end = val_slice
-            .find(|c: char| c == ' ' || c == ',' || c == '}' || c == ']' || c == '\n' || c == ')')
+            .find([' ', ',', '}', ']', '\n', ')'])
             .unwrap_or(val_slice.len());
         let val = val_slice[..end].trim().to_string();
         if !val.is_empty() && !sessions.contains(&val) {
@@ -1153,6 +1153,7 @@ pub fn detect_active_session() -> Option<String> {
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn print_row(
     timestamp: &str,
     level: &str,
@@ -1300,10 +1301,8 @@ fn print_tail_sqlite(
     })?;
 
     let mut rows: Vec<DbRow> = Vec::new();
-    for row in rows_iter {
-        if let Ok(r) = row {
-            rows.push(r);
-        }
+    for r in rows_iter.flatten() {
+        rows.push(r);
     }
 
     rows.reverse();
@@ -1363,11 +1362,9 @@ async fn follow_sqlite(
                                 row.get::<_, Option<String>>(5)?,
                             ))
                         }) {
-                            for row in rows_iter {
-                                if let Ok((id, timestamp, level, target, message, session)) = row {
-                                    print_row(&timestamp, &level, &target, &message, session.as_deref(), &filter, &level_filter, search);
-                                    last_id = id;
-                                }
+                            for (id, timestamp, level, target, message, session) in rows_iter.flatten() {
+                                print_row(&timestamp, &level, &target, &message, session.as_deref(), &filter, &level_filter, search);
+                                last_id = id;
                             }
                         }
                     }
@@ -1393,7 +1390,7 @@ pub async fn run_logs_viewer(
 ) -> Result<()> {
     let path = log_path.unwrap_or_else(default_db_path);
 
-    let is_sqlite = path.extension().map_or(false, |ext| ext == "db");
+    let is_sqlite = path.extension().is_some_and(|ext| ext == "db");
 
     let effective_filter = match &filter {
         SessionFilter::Only(_) => filter.clone(),
@@ -1451,7 +1448,7 @@ pub fn print_session_recent_logs(
     level: Option<String>,
 ) -> Result<()> {
     let path = default_db_path();
-    let is_sqlite = path.extension().map_or(false, |ext| ext == "db");
+    let is_sqlite = path.extension().is_some_and(|ext| ext == "db");
 
     let filter = match session {
         Some(s) if s.to_lowercase() == "all" => SessionFilter::All,
@@ -1512,47 +1509,45 @@ pub fn get_running_sessions() -> Result<Vec<RunningSession>> {
     })?;
 
     let mut sessions = Vec::new();
-    for row in rows_iter {
-        if let Ok(meta) = row {
-            let mut type_stmt = conn.prepare(
-                "SELECT target, message FROM logs WHERE session = ?1 ORDER BY id DESC LIMIT 5",
-            )?;
+    for meta in rows_iter.flatten() {
+        let mut type_stmt = conn.prepare(
+            "SELECT target, message FROM logs WHERE session = ?1 ORDER BY id DESC LIMIT 5",
+        )?;
 
-            let mut target_type = "Agent".to_string();
-            let mut last_msg = String::new();
+        let mut target_type = "Agent".to_string();
+        let mut last_msg = String::new();
 
-            if let Ok(mut type_rows) = type_stmt.query([&meta.session_id]) {
-                while let Ok(Some(r)) = type_rows.next() {
-                    let target: String = r.get(0)?;
-                    let message: String = r.get(1)?;
+        if let Ok(mut type_rows) = type_stmt.query([&meta.session_id]) {
+            while let Ok(Some(r)) = type_rows.next() {
+                let target: String = r.get(0)?;
+                let message: String = r.get(1)?;
 
-                    if last_msg.is_empty() {
-                        last_msg = message.clone();
-                    }
+                if last_msg.is_empty() {
+                    last_msg = message.clone();
+                }
 
-                    if target.contains("websocket") || target.contains("gateway") {
-                        target_type = "Gateway".to_string();
-                    } else if target.contains("telegram") {
-                        target_type = "Telegram Bot".to_string();
-                    } else if target.contains("discord") {
-                        target_type = "Discord Bot".to_string();
-                    } else if target.contains("whatsapp") {
-                        target_type = "WhatsApp Bot".to_string();
-                    } else if target.contains("email") {
-                        target_type = "Email Handler".to_string();
-                    } else if target.contains("cli") {
-                        target_type = "CLI Agent".to_string();
-                    }
+                if target.contains("websocket") || target.contains("gateway") {
+                    target_type = "Gateway".to_string();
+                } else if target.contains("telegram") {
+                    target_type = "Telegram Bot".to_string();
+                } else if target.contains("discord") {
+                    target_type = "Discord Bot".to_string();
+                } else if target.contains("whatsapp") {
+                    target_type = "WhatsApp Bot".to_string();
+                } else if target.contains("email") {
+                    target_type = "Email Handler".to_string();
+                } else if target.contains("cli") {
+                    target_type = "CLI Agent".to_string();
                 }
             }
-
-            sessions.push(RunningSession {
-                session_id: meta.session_id,
-                session_type: target_type,
-                last_log_message: last_msg,
-                last_seen: meta.last_seen,
-            });
         }
+
+        sessions.push(RunningSession {
+            session_id: meta.session_id,
+            session_type: target_type,
+            last_log_message: last_msg,
+            last_seen: meta.last_seen,
+        });
     }
 
     Ok(sessions)

@@ -353,7 +353,7 @@ impl SecurityGuard {
 
                 if let Some(idx) = exec_idx {
                     let exec_name = command[idx].to_lowercase();
-                    let bin_name = exec_name.split('/').last().unwrap_or(&exec_name);
+                    let bin_name = exec_name.split('/').next_back().unwrap_or(&exec_name);
 
                     if matches!(
                         bin_name,

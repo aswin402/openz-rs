@@ -109,8 +109,7 @@ pub fn normalize_tool_args(args: &serde_json::Value) -> serde_json::Value {
 
 pub fn to_snake_case(value: &str) -> String {
     let mut result = String::new();
-    let mut chars = value.chars().peekable();
-    while let Some(character) = chars.next() {
+    for character in value.chars() {
         if character.is_uppercase() {
             if !result.is_empty() && !result.ends_with('_') {
                 result.push('_');

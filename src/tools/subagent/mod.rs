@@ -319,6 +319,7 @@ pub(crate) fn sync_workspace_changes_back(
 }
 
 /// Classifies an error and formats cancellation JSON if the subagent was cancelled.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_subagent_cancellation(
     tool_name: &str,
     profile_name: Option<&str>,
@@ -362,6 +363,7 @@ pub(crate) fn handle_subagent_cancellation(
 }
 
 /// Formats the success response, renders lifecycle completion line, and runs evolution review.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_subagent_success(
     parent_provider: &std::sync::Arc<dyn crate::providers::LLMProvider>,
     tool_or_profile_name: &str,
@@ -559,6 +561,7 @@ pub fn scan_for_images(goal: &str, context: &str) -> Vec<String> {
     image_paths
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_subagent_run(
     agent: &crate::agent::AgentLoop,
     prompt: &str,
@@ -781,7 +784,6 @@ pub async fn run_subagent_attempt(
     cancel_guard.completed = true;
 
     if let Some(schema) = attempt.json_schema {
-        let child_agent = child_agent;
         let session_id = attempt.child_session_id;
         let subagent_name = attempt.subagent_name;
         let model_name = attempt.model_name;

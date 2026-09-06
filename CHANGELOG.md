@@ -1,4 +1,13 @@
-### v0.0.145 (Latest Release)
+### v0.0.146 (Latest Release)
+**Zero-Warning Clippy Cleanup & Core Code Health:**
+- **Code Health (Zero Clippy Warnings):** Resolved all 66 compiler and clippy warnings across the `openz` core library crate, achieving a 100% warning-free build.
+- **Hardening (File Lock Semantics):** Explicitly added `.truncate(false)` on `OpenOptions` in `src/agent/agent_loop/run/turn.rs` and `src/channels/telegram/lock.rs` to satisfy `suspicious_open_options` and protect advisory file locks against destructive file truncation.
+- **Refactor (Control Flow & Pattern Simplifications):** Streamlined bullet and prefix trimming in `src/agent/style/mod.rs` and `src/channels/cli/render.rs`, collapsed redundant conditional branches in `src/agent/agent_loop/tool_execution.rs` and `src/tools/memory_extra/codebase.rs`, simplified slice indexing to `strip_prefix` in `src/channels/websocket/commands/sessions.rs`, and converted nested loops to `.flatten()` and `.clamp()`.
+- **Refactor (Type Aliases & Functions):** Factored deep nested channel map types into `BranchCache` in `src/channels/ratatui/app.rs`, and scoped function signatures across logging, rendering, protocol, and subagent modules.
+- **Tests & Verification:** Confirmed `cargo clippy -p openz --lib` emits 0 warnings; verified invariant of 128 registered native tools in `test_native_tool_registration_names`; verified all 30 WebSocket protocol tests pass; full `just check openz` verified.
+- **Chore:** Bumped version to `v0.0.146`.
+
+### v0.0.145
 **Panic Hardening, Safe WebSocket Serialization & Robust Search Backend:**
 - **Hardening (Safe WebSocket Serialization):** Replaced 30 `.expect("WebSocket ... must serialize")` panics across `src/channels/websocket/protocol.rs` with `to_value_safe()` helper returning an error payload rather than crashing active axum client connections. Added unit tests for safe wire protocol event serialization in `src/channels/websocket/tests.rs`.
 - **Hardening (SearchXyz Initialization & Concurrency):** Protected `reqwest::Client` builder with a graceful fallback to `reqwest::Client::new()` in `src/tools/searchxyz/mod.rs`. Added fallback temp directory index creation if `SearchIndex::open` encounters permission or file locks. Replaced poisoned mutex expectations with `.unwrap_or_else(|poisoned| poisoned.into_inner())` in `src/tools/searchxyz/web.rs`.

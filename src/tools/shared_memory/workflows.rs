@@ -170,6 +170,7 @@ fn workflow_from_row(row: &rusqlite::Row<'_>, score: f64) -> rusqlite::Result<Wo
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn add_workflow_card(
     name: &str,
     triggers: Vec<String>,

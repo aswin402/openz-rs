@@ -128,6 +128,7 @@ pub fn record_model_risk(
     registry.save()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn record_model_success(
     provider: &str,
     model: &str,

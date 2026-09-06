@@ -79,12 +79,9 @@ impl Tool for GetLogsTool {
         let mut where_clauses = Vec::new();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        match &filter {
-            crate::logs::SessionFilter::Only(s) => {
-                where_clauses.push("session = ?".to_string());
-                params.push(Box::new(s.clone()));
-            }
-            _ => {}
+        if let crate::logs::SessionFilter::Only(s) = &filter {
+            where_clauses.push("session = ?".to_string());
+            params.push(Box::new(s.clone()));
         }
 
         // Add level filters
@@ -138,17 +135,15 @@ impl Tool for GetLogsTool {
         })?;
 
         let mut logs = Vec::new();
-        for r in rows_iter {
-            if let Ok(row) = r {
-                logs.push(json!({
-                    "id": row.id,
-                    "timestamp": row.timestamp,
-                    "level": row.level,
-                    "target": row.target,
-                    "message": row.message,
-                    "session": row.session
-                }));
-            }
+        for row in rows_iter.flatten() {
+            logs.push(json!({
+                "id": row.id,
+                "timestamp": row.timestamp,
+                "level": row.level,
+                "target": row.target,
+                "message": row.message,
+                "session": row.session
+            }));
         }
 
         logs.reverse();

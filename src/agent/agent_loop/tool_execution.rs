@@ -334,9 +334,12 @@ pub(crate) async fn render_tool_success(
         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
         let summary =
             crate::agent::style::format_tool_outcome_summary(&call.name, &call.arguments, &result);
-        if call.name == "write_file" || call.name == "patch_file" || call.name == "replace_lines" {
-            crate::tui_println!("{}{}{}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, summary);
-        } else if summary.contains('\u{2713}') || summary.contains('\u{2715}') {
+        if call.name == "write_file"
+            || call.name == "patch_file"
+            || call.name == "replace_lines"
+            || summary.contains('\u{2713}')
+            || summary.contains('\u{2715}')
+        {
             crate::tui_println!("{}{}{}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, summary);
         } else {
             crate::tui_println!(

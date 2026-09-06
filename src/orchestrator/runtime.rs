@@ -444,7 +444,7 @@ where
             WorkflowMode::Parallel => {
                 let executor = &self.executor;
                 let spec_ref = &spec;
-                let concurrency_limit = spec.steps.len().min(4).max(1);
+                let concurrency_limit = spec.steps.len().clamp(1, 4);
                 let indexed_steps = spec.steps.iter().enumerate().collect::<Vec<_>>();
                 let mut completed = Vec::with_capacity(spec.steps.len());
                 for chunk in indexed_steps.chunks(concurrency_limit) {

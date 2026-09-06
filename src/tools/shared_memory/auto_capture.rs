@@ -503,7 +503,7 @@ fn signal_score(text: &str) -> i32 {
 
 fn signal_excerpt(text: &str, max_chars: usize) -> String {
     let mut chunks = sentence_chunks(text);
-    chunks.sort_by(|a, b| signal_score(b).cmp(&signal_score(a)));
+    chunks.sort_by_key(|b| std::cmp::Reverse(signal_score(b)));
     let mut out = Vec::new();
     for chunk in chunks.into_iter().filter(|c| signal_score(c) > 0) {
         if out.iter().any(|existing: &String| existing == &chunk) {
@@ -732,7 +732,7 @@ pub async fn auto_capture_research_memory(
     )
     .map(is_research_worthy_user_content)
     .unwrap_or(false);
-    if !user_research_worthy && !(user_content.trim().is_empty() && has_research_target_arg) {
+    if !(user_research_worthy || (user_content.trim().is_empty() && has_research_target_arg)) {
         return Ok(None);
     }
     if is_refresh_only_user_content(user_content) {

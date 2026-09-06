@@ -8,7 +8,8 @@ use super::theme::Theme;
 
 pub static IS_RATATUI_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-static BRANCH_CACHE: LazyLock<Mutex<HashMap<PathBuf, (Instant, Option<String>)>>> =
+type BranchCache = HashMap<PathBuf, (Instant, Option<String>)>;
+static BRANCH_CACHE: LazyLock<Mutex<BranchCache>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static IS_FETCHING_GIT: AtomicBool = AtomicBool::new(false);
 

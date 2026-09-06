@@ -621,9 +621,8 @@ pub fn print_session_history(session: &crate::session::Session) {
 
                     let has_symbol = summary.contains('\u{2713}') || summary.contains('\u{2715}');
 
-                    if has_symbol {
-                        println!("{}{}{}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, summary);
-                    } else if name == "write_file"
+                    if has_symbol
+                        || name == "write_file"
                         || name == "patch_file"
                         || name == "replace_lines"
                     {
@@ -728,6 +727,7 @@ pub fn clear_input_rendering(lines_printed: usize) {
     print!("\r\x1b[2K");
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_box(
     model: &str,
     provider: &str,

@@ -91,7 +91,7 @@ impl PathPolicy {
                 ];
                 if !allowed
                     .iter()
-                    .any(|root| canonical.starts_with(&canonicalize_with_missing_leaf(root)))
+                    .any(|root| canonical.starts_with(canonicalize_with_missing_leaf(root)))
                 {
                     return Err(anyhow!(
                         "Path traversal prevention: Path {:?} is not allowed (must be inside workspace, ~/.openz, or temp)",
@@ -123,7 +123,7 @@ impl PathPolicy {
 
                 if let Ok(root) = std::env::var("HEADROOM_WORKSPACE") {
                     if !root.trim().is_empty()
-                        && !canonical.starts_with(&canonicalize_with_missing_leaf(Path::new(&root)))
+                        && !canonical.starts_with(canonicalize_with_missing_leaf(Path::new(&root)))
                     {
                         return Err(anyhow!(
                             "path '{}' is outside workspace root '{}'",

@@ -384,9 +384,9 @@ async fn hono_log_middleware(
     let duration = start.elapsed();
     let status = response.status().as_u16();
 
-    let status_colored = if status >= 200 && status < 300 {
+    let status_colored = if (200..300).contains(&status) {
         format!("\x1b[1;32m{}\x1b[0m", status) // Green
-    } else if status >= 300 && status < 400 {
+    } else if (300..400).contains(&status) {
         format!("\x1b[1;33m{}\x1b[0m", status) // Yellow
     } else {
         format!("\x1b[1;31m{}\x1b[0m", status) // Red

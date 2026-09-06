@@ -11,6 +11,7 @@ use anyhow::Result;
 use futures_util::StreamExt;
 use std::io::Write;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn normalize_response(
     loop_ref: &AgentLoop,
     ctx: &mut TurnContext<'_>,

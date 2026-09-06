@@ -44,7 +44,7 @@ async fn ensure_geckodriver_running(port: u16, connect_existing: bool) -> Result
         .build()?;
 
     if client
-        .get(&format!("http://127.0.0.1:{}/status", port))
+        .get(format!("http://127.0.0.1:{}/status", port))
         .send()
         .await
         .is_ok()
@@ -77,7 +77,7 @@ async fn ensure_geckodriver_running(port: u16, connect_existing: bool) -> Result
         for _ in 0..15 {
             sleep(Duration::from_millis(200)).await;
             if client
-                .get(&format!("http://127.0.0.1:{}/status", port))
+                .get(format!("http://127.0.0.1:{}/status", port))
                 .send()
                 .await
                 .is_ok()

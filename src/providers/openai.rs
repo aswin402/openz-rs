@@ -477,8 +477,8 @@ impl LLMProvider for OpenAIProvider {
                     if let Some(pos) = buffer.find('\n') {
                         let line = buffer[..pos].trim().to_string();
                         buffer = buffer[pos + 1..].to_string();
-                        if line.starts_with("data: ") {
-                            let data = line["data: ".len()..].trim();
+                        if let Some(stripped) = line.strip_prefix("data: ") {
+                            let data = stripped.trim();
                             if data == "[DONE]" {
                                 done = true;
                                 return Some((
@@ -582,8 +582,8 @@ impl LLMProvider for OpenAIProvider {
                             } else {
                                 let line = buffer.trim().to_string();
                                 buffer.clear();
-                                if line.starts_with("data: ") {
-                                    let data = line["data: ".len()..].trim();
+                                if let Some(stripped) = line.strip_prefix("data: ") {
+                                    let data = stripped.trim();
                                     if data == "[DONE]" {
                                         done = true;
                                         return Some((

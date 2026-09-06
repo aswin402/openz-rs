@@ -263,6 +263,7 @@ fn try_open_and_lock_session_file(path: &Path, key: &str) -> Result<File> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(path)
         .with_context(|| format!("Failed to create lock file {:?}", path))?;
     file.try_lock_exclusive().with_context(|| {

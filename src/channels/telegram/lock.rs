@@ -24,6 +24,7 @@ pub(crate) fn acquire_telegram_poll_lock_at(
         .create(true)
         .read(true)
         .write(true)
+        .truncate(false)
         .open(&lock_path)?;
     match file.try_lock_exclusive() {
         Ok(()) => Ok(Some(file)),

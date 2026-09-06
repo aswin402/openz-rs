@@ -497,17 +497,17 @@ pub fn select_menu_horizontal(options: &[String]) -> Result<Option<usize>> {
         let prefix = "  L ";
         print!("{}{}", AURA_SLATE, prefix);
 
-        for i in 0..num_options {
+        for (i, option) in options.iter().enumerate().take(num_options) {
             if i > 0 {
                 print!("{}  ·  {}", AURA_SLATE, COLOR_RESET);
             }
             if i == selected_idx {
                 print!(
                     "{}{}{}▸ {}{}",
-                    RED_ORANGE, COLOR_BOLD, COLOR_RESET, COLOR_BOLD, options[i]
+                    RED_ORANGE, COLOR_BOLD, COLOR_RESET, COLOR_BOLD, option
                 );
             } else {
-                print!("{}{}", LIGHT_WHITE, options[i]);
+                print!("{}{}", LIGHT_WHITE, option);
             }
             print!("{}", COLOR_RESET);
         }
