@@ -26,6 +26,8 @@
 
 **Problem:** These files still share significant orchestration logic:
 
+**Progress (v0.0.143):** Completed full orchestration deduplication between `delegate_task.rs` and `delegate_profile.rs`. Extracted shared helpers into `src/tools/subagent/mod.rs`: `finalize_simulation_branch()`, `sync_workspace_changes_back()`, `handle_subagent_cancellation()`, and `handle_subagent_success()`. Both tools now share identical branch commit/discard mechanics, worktree teardown logging, workspace sync-back logic with evolution gate reviews, and standardized JSON result wrappers, shrinking both files and preventing divergence.
+
 **Progress (v0.0.138):** Extracted the shared orchestration pieces into `subagent/mod.rs` and `schema_retry.rs`: `execute_with_schema_retries()` (the 42-line ×2 schema retry loop, now with unit tests pinning accept/retry/attempt-limit behavior), `create_workspace_isolation()` (the worktree/scratch/fallback setup block, returning a `WorkspaceIsolation` struct), `CancelOnDrop` (was defined verbatim in both files), `filesystem_write_denied_by_policy()` (single copy + one shared test), and `attach_workspace_fields()` (the cancellation JSON merge). Deleted the never-compiled dead `subagent/context.rs` (stale verbatim copy of `run_evolution_review`). Also fixed three tests made stale by b787471's in-process `spawns_process = false` change: the two metadata assertions and `capability_policy_blocks_static_subagent_wrappers_with_deny_shell` (now pins the intended semantics — deny_shell blocks shell tools while delegation stays available because children inherit the policy). Remaining duplication (workspace setup for image-path scanning, lifecycle display wiring, and the eventual `SubagentRunContext` + `run_subagent()` unification) is still open; the model-cascade vs single-model resolution difference is intentional and stays.
 - Workspace isolation (git worktree / recursive copy)
 - Image path scanning from goal/context
@@ -105,6 +107,8 @@ struct WebFetchTool;
 | `PathBuf::to_str().unwrap()` | ~10 | Panics on non-Unicode paths |
 
 **Example (real crash path):** `src/tools/subagent/delegate_task.rs` uses `lock().unwrap()` inside `WorktreeGuard::drop()`. If a subagent panics during workspace operations, the poisoned lock causes a double-panic on cleanup.
+
+**Progress (v0.0.143):** Hardened production call sites across tools and agent runtime: regex capture unwraps in `src/tools/outline.rs` replaced with safe tuple pattern matching, JSON type unwrap assertions in `src/tools/subagent/evaluator_optimizer.rs` replaced with safe `let Some else` error returns, subagent name character unwrap in `src/tools/subagent/optimize_profile.rs` replaced with safe `starts_with` character predicates, inbox temp file name unwrap in `src/agent/activity.rs` eliminated by directly reusing the generated UUID filename, loop tag unwrap in `src/tools/template_compiler.rs` replaced with `let Some else` break, loopback IP parsing unwrap in `src/tools/network.rs` simplified to native `ip.is_loopback()`, YouTube search regex compilation in `src/tools/social_search.rs` lifted into static `OnceLock` instances with safe `filter_map` indexing, gRPC channel and client unwraps in `src/tools/mcp.rs` converted to graceful error results, template substitution in `src/sop/mod.rs` converted to static `OnceLock` regex with safe capture resolution, and HTML selector unwraps in `src/tools/crawl.rs` converted to safe `ok()` and `as_ref()` lookups.
 
 Progress now done: provider message sanitation no longer unwraps optional tool names in `src/providers/openai.rs` or `src/providers/anthropic.rs`, multimodal markdown capture parsing in `src/providers/mod.rs` now skips malformed captures instead of unwrapping, spinner/output mutexes in `src/agent/style/spinner.rs` recover poisoned locks instead of panicking, `src/main.rs` no longer panics when log-file fallback or Unix signal registration fails, subagent worktree create/remove paths in `src/tools/subagent/delegate_task.rs` now pass native `Path` arguments instead of unwrapping UTF-8 strings, and `src/tools/docs_mcp.rs` now resolves `docs.db` through the runtime data path helper instead of panicking when the home directory is unavailable, and `src/tools/openmedia/mod.rs` now returns initialization errors from `get_server()` instead of panicking on OpenMedia server startup or OnceLock races, and subagent evolution-review fenced JSON cleanup in `src/tools/subagent/delegate_task.rs` no longer unwraps known prefixes, and graph-memory branch/database initialization in `src/tools/graph_memory/branch.rs` and `src/tools/graph_memory/db.rs` now reports errors instead of panicking on missing branch IDs or SQLite fallback failures, and `src/tools/memory_extra/facts.rs` now skips invalid regex/capture cases instead of unwrapping during fact extraction, and `src/tools/memory_extra/codebase.rs` now returns regex construction errors and skips missing call captures instead of panicking during codebase indexing.
 
@@ -234,23 +238,15 @@ The `format_tool_args()` function in `run.rs` has ~20 explicit mappings to handl
 
 ---
 
-### 4.2 Per-Session Memory Override
+### 4.2 Per-Session Config & Memory Override (Resolved)
 
-**Current behavior:** All settings are global via `~/.openz/config.json`. Different conversations (Telegram vs CLI) share the same model, timeout, and provider settings.
-
-**Enhancement:** Allow per-session config overrides stored in session metadata. A CLI session could use `claude-3-5-sonnet` with 600s timeout, while a Telegram session uses `gpt-4o-mini` with 120s timeout.
-
-**Complexity:** Low — session metadata already has a `serde_json::Map` field. Add a merge step in `build.rs`.
+**Status:** Implemented in the local working tree. `apply_session_overrides()` in `src/agent/agent_loop/mod.rs` applies session-level configuration from session metadata (supporting both root keys and nested `config_override` / `config` dictionaries). Overridable fields include `model`, `provider`, `temperature`, `max_tokens`, `max_messages`, `max_tool_iterations`, `caveman_mode`, `tool_timeout_secs`, and `streaming`. Unit tests cover both root-level and nested override mappings.
 
 ---
 
-### 4.3 Tool Call Retry with Backoff
+### 4.3 Tool Call Retry with Backoff (Resolved)
 
-**Current behavior:** When a tool call times out, the error is returned to the LLM, which may or may not retry. Network flakiness (DNS failure, connection reset) causes immediate failure.
-
-**Enhancement:** Add automatic retry with exponential backoff for transient errors (network timeouts, HTTP 429/503, MCP server restarts). Only report to LLM after all retries are exhausted.
-
-**Complexity:** Medium — needs error classification (transient vs permanent).
+**Status:** Implemented in the local working tree. `ToolExecutionPipeline` in `src/agent/agent_loop/run/tool_pipeline.rs` detects transient failures via `is_transient_error()` (rate limits, HTTP 429, HTTP 502/503/504, connection drops, network errors, temporary DNS failures) and retries up to 3 attempts with exponential backoff (starting at 1s, doubling per attempt) before reporting errors to the LLM. Non-transient errors and explicit user cancellations fail immediately without unnecessary delay.
 
 ---
 
