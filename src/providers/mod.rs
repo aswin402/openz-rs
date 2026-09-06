@@ -276,9 +276,11 @@ pub trait LLMProvider: Send + Sync {
 
 pub mod anthropic;
 pub mod circuit_breaker;
+pub mod model_prefs;
 pub mod ollama_manager;
 pub mod openai;
 pub mod resolver;
+pub mod risk;
 pub(crate) mod transport;
 
 #[cfg(test)]

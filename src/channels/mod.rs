@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use crate::config::provider_catalog;
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use self::notifications::{
@@ -40,87 +39,10 @@ pub fn is_stop_command(text: &str) -> bool {
     )
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ModelRef {
-    pub provider: String,
-    pub model: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ModelPrefs {
-    #[serde(default)]
-    pub recent: Vec<ModelRef>,
-    #[serde(default)]
-    pub favorites: Vec<ModelRef>,
-}
-
-fn model_prefs_path() -> std::path::PathBuf {
-    crate::config::loader::config_dir().join("model_prefs.json")
-}
-
-pub fn load_model_prefs() -> ModelPrefs {
-    std::fs::read_to_string(model_prefs_path())
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
-}
-
-pub fn save_model_prefs(prefs: &ModelPrefs) -> anyhow::Result<()> {
-    let path = model_prefs_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, serde_json::to_string_pretty(prefs)?)?;
-    Ok(())
-}
-
-pub fn record_recent_model(provider: &str, model: &str) {
-    let provider = provider.trim();
-    let model = model.trim();
-    if provider.is_empty() || model.is_empty() {
-        return;
-    }
-    let mut prefs = load_model_prefs();
-    prefs
-        .recent
-        .retain(|entry| !(entry.provider == provider && entry.model == model));
-    prefs.recent.insert(
-        0,
-        ModelRef {
-            provider: provider.to_string(),
-            model: model.to_string(),
-        },
-    );
-    prefs.recent.truncate(12);
-    let _ = save_model_prefs(&prefs);
-}
-
-pub fn toggle_favorite_model(provider: &str, model: &str) -> ModelPrefs {
-    let provider = provider.trim();
-    let model = model.trim();
-    let mut prefs = load_model_prefs();
-    if provider.is_empty() || model.is_empty() {
-        return prefs;
-    }
-    if let Some(idx) = prefs
-        .favorites
-        .iter()
-        .position(|entry| entry.provider == provider && entry.model == model)
-    {
-        prefs.favorites.remove(idx);
-    } else {
-        prefs.favorites.insert(
-            0,
-            ModelRef {
-                provider: provider.to_string(),
-                model: model.to_string(),
-            },
-        );
-        prefs.favorites.truncate(24);
-    }
-    let _ = save_model_prefs(&prefs);
-    prefs
-}
+pub use crate::providers::model_prefs::{
+    load_model_prefs, record_recent_model, save_model_prefs, toggle_favorite_model, ModelPrefs,
+    ModelRef,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelSwitchCommand {
@@ -130,68 +52,7 @@ pub enum ModelSwitchCommand {
     Set { provider: String, model: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelRisk {
-    pub risky: bool,
-    pub tier: &'static str,
-    pub reasons: Vec<&'static str>,
-}
-
-fn model_name_suggests_strong(model_lc: &str) -> bool {
-    model_lc.contains("70b")
-        || model_lc.contains("deepseek-v4")
-        || model_lc.contains("claude")
-        || model_lc.contains("gpt-4")
-        || (model_lc.contains("nemotron") && model_lc.contains("ultra"))
-}
-
-pub fn classify_model_risk(provider: &str, model: &str) -> ModelRisk {
-    let model_lc = model.trim().to_lowercase();
-    let known = provider_models_by_name(provider)
-        .map(|p| {
-            p.models
-                .iter()
-                .any(|m| m.eq_ignore_ascii_case(model.trim()))
-        })
-        .unwrap_or(false);
-
-    let mut reasons = Vec::new();
-    if !known {
-        reasons.push("not in OpenZ curated model catalog");
-    }
-    if model_lc.contains("free") && !model_name_suggests_strong(&model_lc) {
-        reasons.push("free-tier model may be rate-limited or unstable");
-    }
-    if [
-        "1b", "2b", "3b", "4b", "6b", "7b", "8b", "9b", "small", "mini", "lite",
-    ]
-    .iter()
-    .any(|needle| model_lc.contains(needle))
-    {
-        reasons.push("small/weak model may ignore context or tool instructions");
-    }
-    if ["preview", "experimental", "beta", "pickle", "mimo", "hy3"]
-        .iter()
-        .any(|needle| model_lc.contains(needle))
-    {
-        reasons.push("model name suggests experimental or unknown behavior");
-    }
-
-    let risky = !reasons.is_empty();
-    let tier = if risky {
-        "risky"
-    } else if model_name_suggests_strong(&model_lc) {
-        "strong"
-    } else {
-        "standard"
-    };
-
-    ModelRisk {
-        risky,
-        tier,
-        reasons,
-    }
-}
+pub use crate::providers::risk::{classify_model_risk, ModelRisk};
 
 pub fn render_model_risk_warning(provider: &str, model: &str) -> String {
     let risk = classify_model_risk(provider, model);
