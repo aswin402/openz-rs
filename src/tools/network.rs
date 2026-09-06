@@ -57,11 +57,7 @@ impl Tool for CheckPortTool {
                 format!("{}:0", host_clone)
                     .to_socket_addrs()
                     .map(|mut iter| {
-                        iter.any(|addr| {
-                            let ip = addr.ip();
-                            ip.is_loopback()
-                                || ip == "127.0.0.1".parse::<std::net::IpAddr>().unwrap()
-                        })
+                        iter.any(|addr| addr.ip().is_loopback())
                     })
                     .unwrap_or(false)
             })

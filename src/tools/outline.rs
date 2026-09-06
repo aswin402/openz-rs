@@ -107,32 +107,38 @@ impl Tool for CodeOutlineTool {
                 match ext.as_str() {
                     "rs" => {
                         if let Some(cap) = re_rust.captures(line) {
-                            symbols.push(Symbol {
-                                line: line_num,
-                                kind: cap.get(2).unwrap().as_str().to_string(),
-                                name: cap.get(3).unwrap().as_str().to_string(),
-                                definition: trimmed.to_string(),
-                            });
+                            if let (Some(kind), Some(name)) = (cap.get(2), cap.get(3)) {
+                                symbols.push(Symbol {
+                                    line: line_num,
+                                    kind: kind.as_str().to_string(),
+                                    name: name.as_str().to_string(),
+                                    definition: trimmed.to_string(),
+                                });
+                            }
                         }
                     }
                     "py" => {
                         if let Some(cap) = re_python.captures(line) {
-                            symbols.push(Symbol {
-                                line: line_num,
-                                kind: cap.get(1).unwrap().as_str().to_string(),
-                                name: cap.get(2).unwrap().as_str().to_string(),
-                                definition: trimmed.to_string(),
-                            });
+                            if let (Some(kind), Some(name)) = (cap.get(1), cap.get(2)) {
+                                symbols.push(Symbol {
+                                    line: line_num,
+                                    kind: kind.as_str().to_string(),
+                                    name: name.as_str().to_string(),
+                                    definition: trimmed.to_string(),
+                                });
+                            }
                         }
                     }
                     "go" => {
                         if let Some(cap) = re_go.captures(line) {
-                            symbols.push(Symbol {
-                                line: line_num,
-                                kind: cap.get(1).unwrap().as_str().to_string(),
-                                name: cap.get(3).unwrap().as_str().to_string(),
-                                definition: trimmed.to_string(),
-                            });
+                            if let (Some(kind), Some(name)) = (cap.get(1), cap.get(3)) {
+                                symbols.push(Symbol {
+                                    line: line_num,
+                                    kind: kind.as_str().to_string(),
+                                    name: name.as_str().to_string(),
+                                    definition: trimmed.to_string(),
+                                });
+                            }
                         }
                     }
                     _ => {

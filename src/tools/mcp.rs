@@ -170,7 +170,9 @@ impl McpClient {
                         }
                     }
                 }
-                let channel = channel.unwrap();
+                let channel = channel.ok_or_else(|| {
+                    anyhow!("Failed to connect to gRPC MCP server at 127.0.0.1:{}", port)
+                })?;
 
                 let mut grpc_client = mcp_grpc::mcp_service_client::McpServiceClient::new(channel);
 
@@ -261,7 +263,9 @@ impl McpClient {
                     }
                 }
             }
-            let mut grpc_client = client.unwrap();
+            let mut grpc_client = client.ok_or_else(|| {
+                anyhow!("Failed to connect to local gRPC bridge for {} after 3s", cmd)
+            })?;
 
             let init_params = serde_json::json!({
                 "protocolVersion": "2024-11-05",

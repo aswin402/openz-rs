@@ -2,6 +2,10 @@ use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::sync::OnceLock;
+
+static YT_RE_ID: OnceLock<regex::Regex> = OnceLock::new();
+static YT_RE_TITLE: OnceLock<regex::Regex> = OnceLock::new();
 
 pub struct SocialSearchTool {
     client: Client,
@@ -125,21 +129,27 @@ impl SocialSearchTool {
         if let Ok(resp) = self.client.get(&scrape_url).send().await {
             if resp.status().is_success() {
                 if let Ok(text) = resp.text().await {
-                    let re_id = regex::Regex::new(r#"/watch\?v=([a-zA-Z0-9_-]{11})"#).unwrap();
-                    let re_title =
-                        regex::Regex::new(r#""title":\{"runs":\[\{"text":"([^"]+)"\}"#).unwrap();
+                    let re_id = YT_RE_ID.get_or_init(|| {
+                        regex::Regex::new(r#"/watch\?v=([a-zA-Z0-9_-]{11})"#)
+                            .expect("static youtube id regex must compile")
+                    });
+                    let re_title = YT_RE_TITLE.get_or_init(|| {
+                        regex::Regex::new(r#""title":\{"runs":\[\{"text":"([^"]+)"\}"#)
+                            .expect("static youtube title regex must compile")
+                    });
                     let mut video_ids = Vec::new();
                     for cap in re_id.captures_iter(&text).take(15) {
-                        let vid = cap[1].to_string();
-                        if !video_ids.contains(&vid) {
-                            video_ids.push(vid);
+                        if let Some(vid) = cap.get(1).map(|m| m.as_str().to_string()) {
+                            if !video_ids.contains(&vid) {
+                                video_ids.push(vid);
+                            }
                         }
                     }
 
                     let titles: Vec<String> = re_title
                         .captures_iter(&text)
                         .take(10)
-                        .map(|cap| cap[1].to_string())
+                        .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
                         .collect();
 
                     for (i, vid) in video_ids.iter().take(5).enumerate() {

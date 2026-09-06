@@ -251,10 +251,9 @@ pub fn validate_schema(value: &Value, schema: &Value) -> Result<(), String> {
 
     match type_str {
         "object" => {
-            if !value.is_object() {
+            let Some(obj) = value.as_object() else {
                 return Err("Value is not an object".to_string());
-            }
-            let obj = value.as_object().unwrap();
+            };
 
             // Check required fields
             if let Some(req_val) = schema.get("required") {
@@ -280,10 +279,9 @@ pub fn validate_schema(value: &Value, schema: &Value) -> Result<(), String> {
             }
         }
         "array" => {
-            if !value.is_array() {
+            let Some(arr) = value.as_array() else {
                 return Err("Value is not an array".to_string());
-            }
-            let arr = value.as_array().unwrap();
+            };
 
             if let Some(items_schema) = schema.get("items") {
                 for (idx, item) in arr.iter().enumerate() {
@@ -293,12 +291,11 @@ pub fn validate_schema(value: &Value, schema: &Value) -> Result<(), String> {
             }
         }
         "string" => {
-            if !value.is_string() {
+            let Some(val_str) = value.as_str() else {
                 return Err("Value is not a string".to_string());
-            }
+            };
             // Check enum constraint
             if let Some(enum_val) = schema.get("enum").and_then(|v| v.as_array()) {
-                let val_str = value.as_str().unwrap();
                 let matches = enum_val
                     .iter()
                     .any(|allowed| allowed.as_str() == Some(val_str));

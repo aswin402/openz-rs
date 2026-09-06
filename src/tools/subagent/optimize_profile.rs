@@ -326,8 +326,7 @@ impl Tool for CreateSubagentTool {
         };
 
         // Validate name format: starts with a letter, lowercase alphanumeric and underscore only
-        if name.is_empty()
-            || !name.chars().next().unwrap().is_ascii_alphabetic()
+        if !name.starts_with(|c: char| c.is_ascii_alphabetic())
             || name
                 .chars()
                 .any(|c| !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '_')

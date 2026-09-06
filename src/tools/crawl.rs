@@ -195,8 +195,8 @@ impl Tool for CrawlSiteTool {
         let pages_clone = pages.clone();
 
         let handle = tokio::spawn(async move {
-            let title_selector = Selector::parse("title").unwrap();
-            let body_selector = Selector::parse("body").unwrap();
+            let title_selector = Selector::parse("title").ok();
+            let body_selector = Selector::parse("body").ok();
             let mut count = 0u32;
             while let Ok(page) = rx.recv().await {
                 if count >= limit {
@@ -206,17 +206,17 @@ impl Tool for CrawlSiteTool {
                 let (title, snippet) = {
                     let doc = Html::parse_document(&html_str);
 
-                    let title = doc
-                        .select(&title_selector)
-                        .next()
+                    let title = title_selector
+                        .as_ref()
+                        .and_then(|sel| doc.select(sel).next())
                         .map(|el| el.text().collect::<Vec<_>>().join(" "))
                         .unwrap_or_default()
                         .trim()
                         .to_string();
 
-                    let body_text = doc
-                        .select(&body_selector)
-                        .next()
+                    let body_text = body_selector
+                        .as_ref()
+                        .and_then(|sel| doc.select(sel).next())
                         .map(|el| el.text().collect::<Vec<_>>().join(" "))
                         .unwrap_or_else(|| html_str.clone());
 

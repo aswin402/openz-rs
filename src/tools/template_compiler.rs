@@ -28,11 +28,10 @@ fn render_template_string_inner(template: &str, data: &Value, depth: usize) -> S
         let loop_end_tag = "<!-- endloop -->";
 
         if let Some(start_idx) = result.find(loop_start_tag) {
-            let start_tag_end = result[start_idx..].find("-->");
-            if start_tag_end.is_none() {
+            let Some(start_tag_end) = result[start_idx..].find("-->") else {
                 break;
-            }
-            let start_tag_end_idx = start_idx + start_tag_end.unwrap() + 3;
+            };
+            let start_tag_end_idx = start_idx + start_tag_end + 3;
 
             // Extract the key name from <!-- loop: key -->
             let key_str = result[start_idx + loop_start_tag.len()..start_tag_end_idx - 3].trim();

@@ -227,12 +227,9 @@ pub fn send_inbox_message(session_id: &str, message: &str, sender: &str) -> anyh
     };
     let content = serde_json::to_string_pretty(&msg)?;
     let slug = inbox_slug(session_id);
-    let path = dir.join(format!("inbox_{}_{}.json", slug, uuid::Uuid::new_v4()));
-    let temp_path = dir.join(format!(
-        "{}.tmp.{}",
-        path.file_name().unwrap().to_string_lossy(),
-        uuid::Uuid::new_v4()
-    ));
+    let filename = format!("inbox_{}_{}.json", slug, uuid::Uuid::new_v4());
+    let path = dir.join(&filename);
+    let temp_path = dir.join(format!("{}.tmp.{}", filename, uuid::Uuid::new_v4()));
 
     fs::write(&temp_path, content)?;
     fs::rename(temp_path, path)?;

@@ -377,10 +377,14 @@ fn get_default_sop_definitions() -> Vec<SopDefinition> {
     ]
 }
 
+static SOP_TEMPLATE_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+
 pub fn substitute_template(template: &str, context: &serde_json::Value) -> String {
-    let re = regex::Regex::new(r"\{\{([^}]+)\}\}").unwrap();
+    let re = SOP_TEMPLATE_RE.get_or_init(|| {
+        regex::Regex::new(r"\{\{([^}]+)\}\}").expect("static template regex must compile")
+    });
     re.replace_all(template, |caps: &regex::Captures| {
-        let path = caps.get(1).unwrap().as_str().trim();
+        let path = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
         resolve_path_value(context, path)
     })
     .into_owned()
