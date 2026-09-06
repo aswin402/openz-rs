@@ -763,3 +763,77 @@ fn websocket_protocol_events_serialize_safely() {
     assert_eq!(progress_val["message"], "Fetching https://example.com...");
 }
 
+#[test]
+fn test_tool_progress_and_activity_notice_payload_validity() {
+    let chat_id = "test-chat-123";
+    let turn_id = "turn-456";
+    let tool_call_id = "call-789";
+    let tool_name = "test_tool";
+    let progress_text = "Processing chunk 1/3...";
+
+    let tp = crate::channels::websocket::protocol::tool_progress(
+        chat_id,
+        Some(turn_id.to_string()),
+        tool_call_id,
+        tool_name,
+        progress_text,
+    );
+    let an = crate::channels::websocket::protocol::activity_notice(
+        chat_id,
+        "progress",
+        "Tool Progress",
+        progress_text,
+        1700000000,
+    );
+
+    assert_eq!(tp["event"], "tool_progress");
+    assert_eq!(tp["chat_id"], chat_id);
+    assert_eq!(tp["turn_id"], turn_id);
+    assert_eq!(tp["tool_call_id"], tool_call_id);
+    assert_eq!(tp["name"], tool_name);
+    assert_eq!(tp["message"], progress_text);
+
+    assert_eq!(an["event"], "activity_notice");
+    assert_eq!(an["chat_id"], chat_id);
+    assert_eq!(an["kind"], "progress");
+    assert_eq!(an["title"], "Tool Progress");
+    assert_eq!(an["detail"], progress_text);
+    assert_eq!(an["timestamp"], 1700000000);
+}
+
+#[tokio::test]
+async fn test_send_progress_update_dual_dispatches_events() {
+    let client_id = format!("client-progress-{}", uuid::Uuid::new_v4());
+    let chat_id = format!("ws-chat-{}", uuid::Uuid::new_v4());
+    let session_key = format!("ws:{}", chat_id);
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+    crate::channels::get_active_ws_senders()
+        .lock()
+        .unwrap()
+        .insert(client_id.clone(), tx);
+
+    crate::agent::agent_loop::tool_execution::send_progress_update(&session_key, "Processing chunk 1/3...").await;
+
+    let mut events = Vec::new();
+    while let Ok(msg) = rx.try_recv() {
+        if let axum::extract::ws::Message::Text(text) = msg {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(event_name) = v.get("event").and_then(|s| s.as_str()) {
+                    events.push((event_name.to_string(), v));
+                }
+            }
+        }
+    }
+
+    crate::channels::get_active_ws_senders()
+        .lock()
+        .unwrap()
+        .remove(&client_id);
+
+    let expected_chat_id = crate::channels::websocket::ws_chat_id(&session_key).unwrap();
+    assert!(events.iter().any(|(ev, p)| ev == "tool_progress" && p["chat_id"] == expected_chat_id && p["message"] == "Processing chunk 1/3..."));
+    assert!(events.iter().any(|(ev, p)| ev == "activity_notice" && p["chat_id"] == expected_chat_id && p["kind"] == "progress" && p["detail"] == "Processing chunk 1/3..."));
+}
+
+

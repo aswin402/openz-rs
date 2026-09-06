@@ -257,6 +257,7 @@ pub(crate) async fn send_progress_update(session_key: &str, text: &str) {
     if let Some(chat_id) = crate::channels::websocket::ws_chat_id(&actual_session)
         .or_else(|| crate::channels::websocket::ws_chat_id(session_key))
     {
+        // 1. Emit typed tool_progress event for modern WebUI clients
         crate::channels::websocket::publish_ws_event(
             crate::channels::websocket::protocol::tool_progress(
                 chat_id,
@@ -265,6 +266,13 @@ pub(crate) async fn send_progress_update(session_key: &str, text: &str) {
                 "",
                 text,
             ),
+        );
+        // 2. Dual-dispatch activity_notice so all WebUI clients immediately display progress
+        crate::channels::websocket::publish_activity_notice(
+            &actual_session,
+            "progress",
+            "Progress",
+            text,
         );
     }
     if actual_session.starts_with("telegram:") {
