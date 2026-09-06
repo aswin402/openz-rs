@@ -219,11 +219,11 @@ struct WebFetchTool;
 
 ## 4. Enhancements & New Features
 
-### 4.1 Streaming Tool Output & Progress Events (Partially Resolved)
+### 4.1 Streaming Tool Output & Progress Events (Resolved)
 
 **Files:** `src/channels/websocket/protocol.rs`, `src/agent/agent_loop/tool_execution.rs`, `src/channels/websocket/tests.rs`
 
-**Status:** Intermediate progress streaming is now supported across WebSocket and messaging channels. Added typed `WsEvent::ToolProgress` to WebSocket wire protocol and wired `send_progress_update()` to automatically emit `tool_progress` events to connected WebUI clients with chat and turn correlation alongside external channel progress messages. Serialization verified via unit tests. Full intermediate tool token streaming remains a future extension for async generators.
+**Status:** Intermediate progress streaming is now supported across WebSocket and messaging channels. Added typed `WsEvent::ToolProgress` to WebSocket wire protocol and wired `send_progress_update()` to automatically emit `tool_progress` events alongside dual-dispatching `activity_notice` (`kind: "progress"`) for complete backward and forward WebUI compatibility. Serialization and live delivery verified via unit tests. Full intermediate tool token streaming remains a future extension for async generators.
 
 ---
 
