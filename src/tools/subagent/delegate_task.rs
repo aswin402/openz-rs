@@ -1,7 +1,6 @@
 use super::{
-    build_provider_for_model, cancellation_result_json, classify_subagent_error,
-    compact_lifecycle_line, execute_subagent_run, scan_for_images, status_json, CancellationToken,
-    SubagentRunStatus, DELEGATION_DEPTH,
+    build_provider_for_model, classify_subagent_error, compact_lifecycle_line,
+    execute_subagent_run, scan_for_images, status_json, CancellationToken, DELEGATION_DEPTH,
 };
 use crate::agent::style::*;
 use crate::agent::AgentLoop;
@@ -256,99 +255,50 @@ impl Tool for DelegateTaskTool {
             .await;
         }
 
-        if let Some(branch_id) = branch_id.as_deref() {
-            if let Err(e) = super::finish_simulation_branch(
-                branch_id,
-                run_res.is_ok(),
-                is_scratch_workspace(&workspace_dir),
-                true,
-            )
-            .await
-            {
-                tracing::warn!("Failed to finalize database branch: {:?}", e);
-            }
-        }
+        super::finalize_simulation_branch(
+            branch_id.as_deref(),
+            run_res.is_ok(),
+            &workspace_dir,
+            true,
+        )
+        .await;
 
-        if run_res.is_ok() && !filesystem_write_denied && should_sync_changes_back(&parent_dir, &workspace_dir) {
-            if let Err(e) = sync_changes_back(&workspace_dir, &parent_dir) {
-                if !crate::agent::style::is_silent() {
-                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                    crate::tui_println!("{}{}{}↶ Failed to sync changes back to active workspace: {}{}", AURA_SLATE, leaf_prefix, AURA_GOLD, e, COLOR_RESET);
-                }
-            } else {
-                if !crate::agent::style::is_silent() {
-                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                    crate::tui_println!("{}{}{}✓ Synchronized changes back to active workspace{}", AURA_SLATE, leaf_prefix, AURA_GREEN, COLOR_RESET);
-                }
-            }
+        if run_res.is_ok() {
+            super::sync_workspace_changes_back(&parent_dir, &workspace_dir, filesystem_write_denied);
         }
 
         match run_res {
             Ok(res) => {
-                if !crate::agent::style::is_silent() {
-                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                    let line = compact_lifecycle_line(
-                        "delegate_task",
-                        &selected_model,
-                        &SubagentRunStatus::Completed,
-                    );
-                    crate::tui_println!(
-                        "{}{}{}✓ {}{}",
-                        AURA_SLATE,
-                        leaf_prefix,
-                        AURA_GREEN,
-                        line,
-                        COLOR_RESET
-                    );
-                }
-
-                if super::should_run_evolution_review(
+                let result = super::handle_subagent_success(
+                    &self.parent_provider,
+                    "delegate_task",
+                    &selected_model,
+                    &child_session_id,
+                    &res.content,
                     &clean_goal,
                     &clean_context,
-                    &res.content,
                     filesystem_write_denied,
-                ) {
-                    let _ = run_evolution_review(&self.parent_provider, "subagent", &clean_goal, &clean_context, &res.content).await;
-                }
-
-                Ok(serde_json::json!({
-                    "status": "success",
-                    "lifecycle": status_json(&SubagentRunStatus::Completed),
-                    "session_id": child_session_id,
-                    "workspaceIsolation": workspace_isolation,
-                    "workspaceIsolationReason": workspace_isolation_reason,
-                    "summary": res.content
-                }))
+                    &workspace_isolation,
+                    &workspace_isolation_reason,
+                )
+                .await;
+                Ok(result)
             }
             Err(e) => {
                 let error_text = e.to_string();
-                let lifecycle = classify_subagent_error(&error_text, &self.cancellation_token);
-                if matches!(lifecycle, SubagentRunStatus::Cancelled) {
-                    if !crate::agent::style::is_silent() {
-                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                        let line = compact_lifecycle_line("delegate_task", &selected_model, &lifecycle);
-                        crate::tui_println!(
-                            "{}{}{}▲ {}{}",
-                            AURA_SLATE,
-                            leaf_prefix,
-                            AURA_GOLD,
-                            line,
-                            COLOR_RESET
-                        );
-                    }
-                    let cancelled = super::attach_workspace_fields(
-                        cancellation_result_json(
-                            "delegate_task",
-                            None,
-                            &child_session_id,
-                            &selected_model,
-                            &error_text,
-                        ),
-                        &workspace_isolation,
-                        &workspace_isolation_reason,
-                    );
+                if let Some(cancelled) = super::handle_subagent_cancellation(
+                    "delegate_task",
+                    None,
+                    &selected_model,
+                    &child_session_id,
+                    &error_text,
+                    &self.cancellation_token,
+                    &workspace_isolation,
+                    &workspace_isolation_reason,
+                ) {
                     return Ok(cancelled);
                 }
+                let lifecycle = classify_subagent_error(&error_text, &self.cancellation_token);
                 if !crate::agent::style::is_silent() {
                     let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                     let line = compact_lifecycle_line("delegate_task", &selected_model, &lifecycle);

@@ -263,6 +263,156 @@ pub(crate) fn attach_workspace_fields(
     json
 }
 
+/// Finalize a temporary database branch, handling errors safely and optionally
+/// announcing the teardown.
+pub(crate) async fn finalize_simulation_branch(
+    branch_id: Option<&str>,
+    run_success: bool,
+    workspace_dir: &std::path::Path,
+    announce: bool,
+) {
+    if let Some(branch_id) = branch_id {
+        if let Err(e) = finish_simulation_branch(
+            branch_id,
+            run_success,
+            delegate_task::is_scratch_workspace(workspace_dir),
+            announce,
+        )
+        .await
+        {
+            tracing::warn!("Failed to finalize database branch: {:?}", e);
+        }
+    }
+}
+
+/// Synchronize modified files from the temporary subagent workspace back to the active parent workspace.
+pub(crate) fn sync_workspace_changes_back(
+    parent_dir: &std::path::Path,
+    workspace_dir: &std::path::Path,
+    filesystem_write_denied: bool,
+) {
+    if !filesystem_write_denied && delegate_task::should_sync_changes_back(parent_dir, workspace_dir) {
+        if let Err(e) = delegate_task::sync_changes_back(workspace_dir, parent_dir) {
+            if !crate::agent::style::is_silent() {
+                let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                crate::tui_println!(
+                    "{}{}{}↶ Failed to sync changes back to active workspace: {}{}",
+                    crate::agent::style::AURA_SLATE,
+                    leaf_prefix,
+                    crate::agent::style::AURA_GOLD,
+                    e,
+                    crate::agent::style::COLOR_RESET
+                );
+            }
+        } else if !crate::agent::style::is_silent() {
+            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+            crate::tui_println!(
+                "{}{}{}✓ Synchronized changes back to active workspace{}",
+                crate::agent::style::AURA_SLATE,
+                leaf_prefix,
+                crate::agent::style::AURA_GREEN,
+                crate::agent::style::COLOR_RESET
+            );
+        }
+    }
+}
+
+/// Classifies an error and formats cancellation JSON if the subagent was cancelled.
+pub(crate) fn handle_subagent_cancellation(
+    tool_name: &str,
+    profile_name: Option<&str>,
+    model_name: &str,
+    session_id: &str,
+    error_text: &str,
+    token: &CancellationToken,
+    workspace_isolation: &str,
+    workspace_isolation_reason: &Option<String>,
+) -> Option<serde_json::Value> {
+    let lifecycle = classify_subagent_error(error_text, token);
+    if matches!(lifecycle, SubagentRunStatus::Cancelled) {
+        if !crate::agent::style::is_silent() {
+            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+            let target_name = profile_name.unwrap_or(tool_name);
+            let line = compact_lifecycle_line(target_name, model_name, &lifecycle);
+            crate::tui_println!(
+                "{}{}{}▲ {}{}",
+                crate::agent::style::AURA_SLATE,
+                leaf_prefix,
+                crate::agent::style::AURA_GOLD,
+                line,
+                crate::agent::style::COLOR_RESET
+            );
+        }
+        let cancelled = attach_workspace_fields(
+            cancellation_result_json(
+                tool_name,
+                profile_name,
+                session_id,
+                model_name,
+                error_text,
+            ),
+            workspace_isolation,
+            workspace_isolation_reason,
+        );
+        Some(cancelled)
+    } else {
+        None
+    }
+}
+
+/// Formats the success response, renders lifecycle completion line, and runs evolution review.
+pub(crate) async fn handle_subagent_success(
+    parent_provider: &std::sync::Arc<dyn crate::providers::LLMProvider>,
+    tool_or_profile_name: &str,
+    model_name: &str,
+    session_id: &str,
+    content: &str,
+    goal: &str,
+    context: &str,
+    filesystem_write_denied: bool,
+    workspace_isolation: &str,
+    workspace_isolation_reason: &Option<String>,
+) -> serde_json::Value {
+    if !crate::agent::style::is_silent() {
+        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+        let summary = crate::agent::style::format_subagent_summary(content);
+        let line = compact_lifecycle_line(
+            tool_or_profile_name,
+            model_name,
+            &SubagentRunStatus::Completed,
+        );
+        crate::tui_println!(
+            "{}{}{}✓ {} - {}{}",
+            crate::agent::style::AURA_SLATE,
+            leaf_prefix,
+            crate::agent::style::AURA_GREEN,
+            line,
+            summary,
+            crate::agent::style::COLOR_RESET
+        );
+    }
+
+    if should_run_evolution_review(goal, context, content, filesystem_write_denied) {
+        let _ = delegate_task::run_evolution_review(
+            parent_provider,
+            tool_or_profile_name,
+            goal,
+            context,
+            content,
+        )
+        .await;
+    }
+
+    let result = serde_json::json!({
+        "status": "success",
+        "lifecycle": status_json(&SubagentRunStatus::Completed),
+        "session_id": session_id,
+        "model_used": model_name,
+        "summary": content
+    });
+    attach_workspace_fields(result, workspace_isolation, workspace_isolation_reason)
+}
+
 pub fn subagent_tool_metadata(name: &str) -> crate::tools::ToolMetadata {
     let mut metadata = crate::tools::ToolMetadata::infer(name);
     metadata.domain = "subagent";

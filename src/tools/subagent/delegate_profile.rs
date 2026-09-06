@@ -1,7 +1,4 @@
-use super::delegate_task::{
-    current_workspace_root, ensure_markdown_images, run_evolution_review, should_sync_changes_back,
-    sync_changes_back, WorktreeGuard,
-};
+use super::delegate_task::{current_workspace_root, ensure_markdown_images, WorktreeGuard};
 use super::parallel_research::get_status_from_goal;
 use super::{
     build_provider_for_model, cancellation_result_json, classify_subagent_error,
@@ -362,97 +359,57 @@ impl Tool for DelegateProfileTool {
             match run_res {
                 Ok(run_res) => {
                     let _ = crate::subagents::record_subagent_success(&self.profile.name, model_name);
-                    if let Some(branch_id) = branch_id.as_deref() {
-                        let _ = super::finish_simulation_branch(
-                            branch_id,
-                            true,
-                            super::delegate_task::is_scratch_workspace(&workspace_dir),
-                            false,
-                        )
-                        .await;
-                    }
-                    if !crate::agent::style::is_silent() {
-                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                        let summary = crate::agent::style::format_subagent_summary(&run_res.content);
-                        let line = compact_lifecycle_line(
-                            &self.profile.name,
-                            model_name,
-                            &SubagentRunStatus::Completed,
-                        );
-                        crate::tui_println!(
-                            "{}{}{}✓ {} - {}{}",
-                            AURA_SLATE,
-                            leaf_prefix,
-                            AURA_GREEN,
-                            line,
-                            summary,
-                            COLOR_RESET
-                        );
-                    }
+                    super::finalize_simulation_branch(
+                        branch_id.as_deref(),
+                        true,
+                        &workspace_dir,
+                        false,
+                    )
+                    .await;
 
-                    if !filesystem_write_denied && should_sync_changes_back(&parent_dir, &workspace_dir) {
-                        let _ = sync_changes_back(&workspace_dir, &parent_dir);
-                    }
+                    super::sync_workspace_changes_back(&parent_dir, &workspace_dir, filesystem_write_denied);
 
-                    if super::should_run_evolution_review(
+                    let result = super::handle_subagent_success(
+                        &self.parent_provider,
+                        &self.profile.name,
+                        model_name,
+                        &child_session_id,
+                        &run_res.content,
                         &clean_goal,
                         &clean_context,
-                        &run_res.content,
                         filesystem_write_denied,
-                    ) {
-                        let _ = run_evolution_review(&self.parent_provider, &self.profile.name, &clean_goal, &clean_context, &run_res.content).await;
-                    }
+                        &workspace_isolation,
+                        &workspace_isolation_reason,
+                    )
+                    .await;
 
-                    return Ok(serde_json::json!({
-                        "status": "success",
-                        "lifecycle": status_json(&SubagentRunStatus::Completed),
-                        "session_id": child_session_id,
-                        "model_used": model_name,
-                        "workspaceIsolation": workspace_isolation,
-                        "workspaceIsolationReason": workspace_isolation_reason,
-                        "summary": run_res.content
-                    }));
+                    return Ok(result);
                 }
                 Err(e) => {
-                    if let Some(branch_id) = branch_id.as_deref() {
-                        let _ = super::finish_simulation_branch(
-                            branch_id,
-                            false,
-                            super::delegate_task::is_scratch_workspace(&workspace_dir),
-                            false,
-                        )
-                        .await;
-                    }
+                    super::finalize_simulation_branch(
+                        branch_id.as_deref(),
+                        false,
+                        &workspace_dir,
+                        false,
+                    )
+                    .await;
+
                     let error_text = e.to_string();
-                    let lifecycle = classify_subagent_error(&error_text, &self.cancellation_token);
-                    if matches!(lifecycle, SubagentRunStatus::Cancelled) {
-                        if !crate::agent::style::is_silent() {
-                            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                            let line = compact_lifecycle_line(&self.profile.name, model_name, &lifecycle);
-                            crate::tui_println!(
-                                "{}{}{}▲ {}{}",
-                                AURA_SLATE,
-                                leaf_prefix,
-                                AURA_GOLD,
-                                line,
-                                COLOR_RESET
-                            );
-                        }
-                        let cancelled = super::attach_workspace_fields(
-                            cancellation_result_json(
-                                "delegate_profile",
-                                Some(&self.profile.name),
-                                &child_session_id,
-                                model_name,
-                                &error_text,
-                            ),
-                            &workspace_isolation,
-                            &workspace_isolation_reason,
-                        );
+                    if let Some(cancelled) = super::handle_subagent_cancellation(
+                        "delegate_profile",
+                        Some(&self.profile.name),
+                        model_name,
+                        &child_session_id,
+                        &error_text,
+                        &self.cancellation_token,
+                        &workspace_isolation,
+                        &workspace_isolation_reason,
+                    ) {
                         return Ok(cancelled);
                     }
                     if !crate::agent::style::is_silent() {
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                        let lifecycle = classify_subagent_error(&error_text, &self.cancellation_token);
                         let line = compact_lifecycle_line(&self.profile.name, model_name, &lifecycle);
                         crate::tui_println!(
                             "{}{}{}✕ {}{}",
@@ -463,7 +420,6 @@ impl Tool for DelegateProfileTool {
                             COLOR_RESET
                         );
                     }
-                    let error_text = e.to_string();
                     let _ = crate::subagents::record_subagent_failure(&self.profile.name, &error_text);
                     last_error = Some(e);
                 }
