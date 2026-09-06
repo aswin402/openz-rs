@@ -181,18 +181,11 @@ struct WebFetchTool;
 
 ## 3. Low Priority / Polish
 
-### 3.1 Argument Naming Inconsistency
+### 3.1 Argument Naming Inconsistency (Resolved)
 
-**File:** Various tool files
+**Files:** `src/tools/arguments.rs`, `src/agent/agent_loop/tool_execution.rs`, `src/agent/agent_loop/run/tool_pipeline.rs`
 
-**Problem:** Tool call arguments have no single naming convention:
-- Some tools use `serde` rename (e.g., `command_line` → `CommandLine`)
-- Others use direct field names
-- Mix of `snake_case`, `camelCase`
-
-The `format_tool_args()` function in `run.rs` has ~20 explicit mappings to handle this. Every new tool requires a new entry here.
-
-**Recommended fix:** Standardize all tool argument JSON to `snake_case` and remove `format_tool_args` overrides.
+**Status:** Resolved. Centralized argument alias definitions in `src/tools/arguments.rs` (`PATH_KEYS`, `COMMAND_KEYS`, `OUTPUT_KEYS`, `QUERY_KEYS`, `URL_KEYS`, `SESSION_KEYS`, `TARGET_KEYS`) and implemented recursive `normalize_tool_args()` that translates camelCase and PascalCase tool arguments to snake_case equivalents while preserving native schemas. `ToolExecutionPipeline` applies `normalize_tool_args()` prior to tool invocation, and `format_tool_args()` uses generic fallback formatting with canonical key extractors. Tests cover recursive alias expansion and preserving explicit arguments.
 
 ---
 
@@ -226,13 +219,11 @@ The `format_tool_args()` function in `run.rs` has ~20 explicit mappings to handl
 
 ## 4. Enhancements & New Features
 
-### 4.1 Streaming Tool Output
+### 4.1 Streaming Tool Output & Progress Events (Partially Resolved)
 
-**Current behavior:** Tool calls are synchronous — the LLM waits for the entire tool output before continuing. For long-running tools (crawl, video generation), the user sees a spinner for minutes.
+**Files:** `src/channels/websocket/protocol.rs`, `src/agent/agent_loop/tool_execution.rs`, `src/channels/websocket/tests.rs`
 
-**Enhancement:** Allow tools to return streaming intermediate results. The agent loop would display partial output to the user while the tool is still running, and feed intermediate results back to the LLM for early decision-making.
-
-**Complexity:** High — requires changes to `Tool` trait, `execute_approved_tool()`, and message transcript format.
+**Status:** Intermediate progress streaming is now supported across WebSocket and messaging channels. Added typed `WsEvent::ToolProgress` to WebSocket wire protocol and wired `send_progress_update()` to automatically emit `tool_progress` events to connected WebUI clients with chat and turn correlation alongside external channel progress messages. Serialization verified via unit tests. Full intermediate tool token streaming remains a future extension for async generators.
 
 ---
 

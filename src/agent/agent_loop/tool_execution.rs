@@ -254,6 +254,19 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
 pub(crate) async fn send_progress_update(session_key: &str, text: &str) {
     let actual_session = crate::agent::style::spinner::get_current_session_key()
         .unwrap_or_else(|| session_key.to_string());
+    if let Some(chat_id) = crate::channels::websocket::ws_chat_id(&actual_session)
+        .or_else(|| crate::channels::websocket::ws_chat_id(session_key))
+    {
+        crate::channels::websocket::publish_ws_event(
+            crate::channels::websocket::protocol::tool_progress(
+                chat_id,
+                crate::agent::agent_loop::current_turn_id(),
+                "",
+                "",
+                text,
+            ),
+        );
+    }
     if actual_session.starts_with("telegram:") {
         if let Some(chat_id_str) = actual_session.strip_prefix("telegram:") {
             if let Ok(chat_id) = chat_id_str.parse::<i64>() {

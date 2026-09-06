@@ -852,6 +852,17 @@ pub(crate) enum WsEvent {
         status: String,
         output: String,
     },
+    #[serde(rename = "tool_progress")]
+    ToolProgress {
+        chat_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        turn_id: Option<String>,
+        #[serde(skip_serializing_if = "String::is_empty")]
+        tool_call_id: String,
+        #[serde(skip_serializing_if = "String::is_empty")]
+        name: String,
+        message: String,
+    },
     #[serde(rename = "turn_started")]
     TurnStarted { chat_id: String, turn_id: String },
     #[serde(rename = "turn_end")]
@@ -978,6 +989,23 @@ pub(crate) fn tool_end(
         name: name.into(),
         status: status.into(),
         output: output.into(),
+    }
+    .into_json()
+}
+
+pub(crate) fn tool_progress(
+    chat_id: impl Into<String>,
+    turn_id: Option<String>,
+    tool_call_id: impl Into<String>,
+    name: impl Into<String>,
+    message: impl Into<String>,
+) -> Value {
+    WsEvent::ToolProgress {
+        chat_id: chat_id.into(),
+        turn_id,
+        tool_call_id: tool_call_id.into(),
+        name: name.into(),
+        message: message.into(),
     }
     .into_json()
 }

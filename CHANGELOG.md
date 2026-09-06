@@ -1,4 +1,12 @@
-### v0.0.146 (Latest Release)
+### v0.0.147 (Latest Release)
+**Workspace-Wide Zero-Warning Clippy Cleanliness & WebSocket Tool Progress Streaming:**
+- **Feature (WebSocket Tool Progress Streaming):** Added typed `WsEvent::ToolProgress` to WebSocket protocol in `src/channels/websocket/protocol.rs`, allowing real-time progress emissions (`tool_progress`) correlated with chat ID, turn ID, and tool call ID. Wired `send_progress_update()` in `src/agent/agent_loop/tool_execution.rs` to automatically publish progress events to connected WebUI clients whenever a turn is in progress. Added unit test validation in `src/channels/websocket/tests.rs`.
+- **Code Health (Workspace-Wide Clippy Cleanliness):** Achieved 100% zero compiler and clippy warnings across every crate in the workspace (`cargo clippy --workspace --lib -j 2`), resolving lints in `opendoc-mcp`, `searchxyz`, `openmedia-video`, `openmedia-animate`, `openmedia-svg`, `openmedia-core`, `openmedia-image`, `openmedia-improve`, `openz-docs-mcp`, and `openz-github-mcp`.
+- **Optimization & Reliability:** Replaced manual pattern matching with `if let` in `searchxyz` DuckDuckGo and Google engines; hoisted regex compilations out of paragraph loops in `opendoc`; modernized XLSX cell iterations with `iter_mut().enumerate()`; derived `Default` on config structs and diffusion pipelines; used `.saturating_sub()` in image filters; and freed 63 GB of disk space from runaway build cache accumulation.
+- **Tests & Verification:** Verified all 128 registered native tools in `test_native_tool_registration_names`; all 30 WebSocket protocol tests pass; full `just check openz` verified.
+- **Chore:** Bumped version to `v0.0.147`.
+
+### v0.0.146
 **Zero-Warning Clippy Cleanup & Core Code Health:**
 - **Code Health (Zero Clippy Warnings):** Resolved all 66 compiler and clippy warnings across the `openz` core library crate, achieving a 100% warning-free build.
 - **Hardening (File Lock Semantics):** Explicitly added `.truncate(false)` on `OpenOptions` in `src/agent/agent_loop/run/turn.rs` and `src/channels/telegram/lock.rs` to satisfy `suspicious_open_options` and protect advisory file locks against destructive file truncation.

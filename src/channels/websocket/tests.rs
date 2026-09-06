@@ -753,5 +753,13 @@ fn websocket_protocol_events_serialize_safely() {
     let notif_val = protocol::notification("system alert");
     assert_eq!(notif_val["event"], "notification");
     assert_eq!(notif_val["message"], "system alert");
+
+    let progress_val = protocol::tool_progress("chat-1", Some("turn-1".to_string()), "call-1", "web_fetch", "Fetching https://example.com...");
+    assert_eq!(progress_val["event"], "tool_progress");
+    assert_eq!(progress_val["chat_id"], "chat-1");
+    assert_eq!(progress_val["turn_id"], "turn-1");
+    assert_eq!(progress_val["tool_call_id"], "call-1");
+    assert_eq!(progress_val["name"], "web_fetch");
+    assert_eq!(progress_val["message"], "Fetching https://example.com...");
 }
 
