@@ -190,16 +190,7 @@ impl Tool for CompilerAutoHealTool {
             file_content = updated_content_str;
 
             // Run compile check command
-            let mut cmd = if cfg!(target_os = "windows") {
-                let mut c = tokio::process::Command::new("cmd");
-                c.args(["/C", compile_command]);
-                c
-            } else {
-                let mut c = tokio::process::Command::new("sh");
-                c.args(["-c", compile_command]);
-                c
-            };
-            crate::config::loader::set_tokio_command_cwd(&mut cmd);
+            let mut cmd = crate::core::process::host_tokio_shell_command(compile_command);
             let output = cmd.output().await?;
 
             let stdout = String::from_utf8_lossy(&output.stdout);

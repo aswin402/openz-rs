@@ -524,9 +524,7 @@ impl Tool for ZenflowEditTool {
         crate::config::loader::verify_safe_path(&path)?;
 
         let run_cmd = |cmd: String| async move {
-            let mut command = tokio::process::Command::new("sh");
-            crate::config::loader::set_tokio_command_cwd(&mut command);
-            command.arg("-c").arg(&cmd);
+            let mut command = crate::core::process::host_tokio_shell_command(&cmd);
             let output = command.output().await?;
             let status = output.status.code().unwrap_or(-1);
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();

@@ -416,16 +416,7 @@ impl Tool for ExecCommandTool {
         }
 
         // 2. Fallback to standard raw host shell execution
-        let mut std_cmd = if cfg!(target_os = "windows") {
-            let mut c = std::process::Command::new("cmd");
-            c.args(["/C", command_str]);
-            c
-        } else {
-            let mut c = std::process::Command::new("sh");
-            c.args(["-c", command_str]);
-            c
-        };
-        crate::config::loader::set_command_cwd(&mut std_cmd);
+        let mut std_cmd = crate::core::process::host_shell_command(command_str);
         let enable_sandbox = crate::config::loader::load_config()
             .map(|c| c.agents.defaults.enable_sandbox)
             .unwrap_or(false);
