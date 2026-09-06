@@ -89,7 +89,7 @@ pub fn record_search_backend_failure(backends: &[String], kind: SearchFailureKin
     let until = Instant::now() + std::time::Duration::from_secs(search_failure_cooldown_secs(kind));
     let mut cooldowns = search_backend_cooldowns()
         .lock()
-        .expect("search backend cooldown lock poisoned");
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     for backend in backends {
         if backend.trim().is_empty() {
             continue;
@@ -102,7 +102,7 @@ pub fn active_search_backend_cooldowns() -> Vec<Value> {
     let now = Instant::now();
     let mut cooldowns = search_backend_cooldowns()
         .lock()
-        .expect("search backend cooldown lock poisoned");
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     cooldowns.retain(|_, cooldown| cooldown.until > now);
 
     let mut active = cooldowns
@@ -128,7 +128,7 @@ pub fn active_search_backend_cooldowns() -> Vec<Value> {
 fn clear_search_backend_cooldowns_for_tests() {
     search_backend_cooldowns()
         .lock()
-        .expect("search backend cooldown lock poisoned")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clear();
 }
 

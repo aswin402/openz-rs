@@ -23,7 +23,9 @@ struct SourceCandidate {
 
 fn url_regex() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r#"https?://[^\s\]\)>'\"}]+"#).unwrap())
+    RE.get_or_init(|| {
+        Regex::new(r#"https?://[^\s\]\)>'\"}]+"#).expect("static url regex must compile")
+    })
 }
 
 fn is_research_tool(tool_name: &str) -> bool {

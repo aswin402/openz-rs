@@ -5,7 +5,18 @@
 //! explicit at the producer boundary while preserving the current JSON names.
 
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
+
+#[inline]
+fn to_value_safe<T: Serialize>(value: T) -> Value {
+    serde_json::to_value(value).unwrap_or_else(|err| {
+        tracing::error!("WebSocket payload failed to serialize: {err}");
+        json!({
+            "event": "error",
+            "error": format!("Serialization error: {err}")
+        })
+    })
+}
 
 #[derive(Debug, Serialize)]
 pub(crate) struct WsCapabilities {
@@ -44,7 +55,7 @@ struct WsAttachmentCapabilities {
 
 impl WsCapabilities {
     pub(crate) fn into_json(self) -> Value {
-        serde_json::to_value(self).expect("WebSocket capabilities must serialize")
+        to_value_safe(self)
     }
 }
 
@@ -382,24 +393,21 @@ pub(crate) fn capabilities(
 }
 
 pub(crate) fn runtime_inventory(inventory: impl Serialize) -> Value {
-    let inventory = serde_json::to_value(inventory)
-        .expect("WebSocket runtime inventory payload must serialize");
-    serde_json::to_value(WsRuntimeInventoryEvent {
+    let inventory = to_value_safe(inventory);
+    to_value_safe(WsRuntimeInventoryEvent {
         event: "runtime_inventory",
         inventory,
     })
-    .expect("WebSocket runtime inventory must serialize")
 }
 
 pub(crate) fn sessions_list(sessions: Vec<Value>) -> Value {
-    serde_json::to_value(WsSessionsListEvent {
+    to_value_safe(WsSessionsListEvent {
         event: "sessions_list",
         sessions,
         total: None,
         offset: None,
         limit: None,
     })
-    .expect("WebSocket session list must serialize")
 }
 
 pub(crate) fn sessions_list_paginated(
@@ -408,40 +416,36 @@ pub(crate) fn sessions_list_paginated(
     offset: usize,
     limit: usize,
 ) -> Value {
-    serde_json::to_value(WsSessionsListEvent {
+    to_value_safe(WsSessionsListEvent {
         event: "sessions_list",
         sessions,
         total: Some(total),
         offset: Some(offset),
         limit: Some(limit),
     })
-    .expect("WebSocket paginated session list must serialize")
 }
 
 pub(crate) fn session_history(chat_id: impl Into<String>, messages: Vec<Value>) -> Value {
-    serde_json::to_value(WsSessionHistoryEvent {
+    to_value_safe(WsSessionHistoryEvent {
         event: "session_history",
         chat_id: chat_id.into(),
         messages,
     })
-    .expect("WebSocket session history must serialize")
 }
 
 pub(crate) fn ready(chat_id: impl Into<String>, client_id: impl Into<String>) -> Value {
-    serde_json::to_value(WsReadyEvent {
+    to_value_safe(WsReadyEvent {
         event: "ready",
         chat_id: chat_id.into(),
         client_id: client_id.into(),
     })
-    .expect("WebSocket ready event must serialize")
 }
 
 pub(crate) fn attached(chat_id: impl Into<String>) -> Value {
-    serde_json::to_value(WsAttachedEvent {
+    to_value_safe(WsAttachedEvent {
         event: "attached",
         chat_id: chat_id.into(),
     })
-    .expect("WebSocket attached event must serialize")
 }
 
 pub(crate) fn activity_notice(
@@ -451,7 +455,7 @@ pub(crate) fn activity_notice(
     detail: impl Into<String>,
     timestamp: i64,
 ) -> Value {
-    serde_json::to_value(WsActivityNoticeEvent {
+    to_value_safe(WsActivityNoticeEvent {
         event: "activity_notice",
         chat_id: chat_id.into(),
         kind: kind.into(),
@@ -459,7 +463,6 @@ pub(crate) fn activity_notice(
         detail: detail.into(),
         timestamp,
     })
-    .expect("WebSocket activity notice must serialize")
 }
 
 pub(crate) fn orchestration_event(chat_id: impl Into<String>, payload: Value) -> Value {
@@ -467,13 +470,12 @@ pub(crate) fn orchestration_event(chat_id: impl Into<String>, payload: Value) ->
         .get("run_id")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    serde_json::to_value(WsOrchestrationEvent {
+    to_value_safe(WsOrchestrationEvent {
         event: "orchestration_event",
         chat_id: chat_id.into(),
         run_id,
         payload,
     })
-    .expect("WebSocket orchestration event must serialize")
 }
 
 pub(crate) fn model_provider(
@@ -499,7 +501,7 @@ pub(crate) fn models_list(
     active_provider: impl Into<String>,
     active_model: impl Into<String>,
 ) -> Value {
-    serde_json::to_value(WsModelsListEvent {
+    to_value_safe(WsModelsListEvent {
         event: "models_list",
         providers,
         partial,
@@ -508,16 +510,14 @@ pub(crate) fn models_list(
         active_provider: active_provider.into(),
         active_model: active_model.into(),
     })
-    .expect("WebSocket models list must serialize")
 }
 
 pub(crate) fn model_prefs(prefs: crate::channels::ModelPrefs) -> Value {
-    serde_json::to_value(WsModelPrefsEvent {
+    to_value_safe(WsModelPrefsEvent {
         event: "model_prefs",
         recent_models: prefs.recent,
         favorite_models: prefs.favorites,
     })
-    .expect("WebSocket model preferences must serialize")
 }
 
 pub(crate) fn slash_command(cmd: impl Into<String>, desc: impl Into<String>) -> WsSlashCommand {
@@ -528,15 +528,14 @@ pub(crate) fn slash_command(cmd: impl Into<String>, desc: impl Into<String>) -> 
 }
 
 pub(crate) fn slash_commands(commands: Vec<WsSlashCommand>) -> Value {
-    serde_json::to_value(WsSlashCommandsEvent {
+    to_value_safe(WsSlashCommandsEvent {
         event: "slash_commands",
         commands,
     })
-    .expect("WebSocket slash command list must serialize")
 }
 
 pub(crate) fn gateway_status(loaded: u32, failed: u32, total: u32) -> Value {
-    serde_json::to_value(WsStatusEvent {
+    to_value_safe(WsStatusEvent {
         event: "status",
         version: env!("CARGO_PKG_VERSION"),
         mcp: WsMcpStatus {
@@ -545,7 +544,6 @@ pub(crate) fn gateway_status(loaded: u32, failed: u32, total: u32) -> Value {
             total,
         },
     })
-    .expect("WebSocket gateway status must serialize")
 }
 
 pub(crate) fn managed_server(
@@ -579,21 +577,19 @@ pub(crate) fn servers_list(
     servers: Vec<WsManagedServer>,
     channels: Vec<WsChannelStatus>,
 ) -> Value {
-    serde_json::to_value(WsServersListEvent {
+    to_value_safe(WsServersListEvent {
         event: "servers_list",
         servers,
         channels,
     })
-    .expect("WebSocket server list must serialize")
 }
 
 pub(crate) fn server_stopped(target: impl Into<String>, result: impl Into<String>) -> Value {
-    serde_json::to_value(WsServerStoppedEvent {
+    to_value_safe(WsServerStoppedEvent {
         event: "server_stopped",
         target: target.into(),
         result: result.into(),
     })
-    .expect("WebSocket stopped-server event must serialize")
 }
 
 pub(crate) fn session_archived(
@@ -604,7 +600,7 @@ pub(crate) fn session_archived(
     archive_path: Option<String>,
     detail: Option<String>,
 ) -> Value {
-    serde_json::to_value(WsSessionArchivedEvent {
+    to_value_safe(WsSessionArchivedEvent {
         event: "session_archived",
         status,
         chat_id,
@@ -613,7 +609,6 @@ pub(crate) fn session_archived(
         archive_path,
         detail,
     })
-    .expect("WebSocket archived-session event must serialize")
 }
 
 pub(crate) fn session_deleted(
@@ -623,7 +618,7 @@ pub(crate) fn session_deleted(
     deleted: Option<bool>,
     detail: Option<String>,
 ) -> Value {
-    serde_json::to_value(WsSessionDeletedEvent {
+    to_value_safe(WsSessionDeletedEvent {
         event: "session_deleted",
         status,
         chat_id,
@@ -631,7 +626,6 @@ pub(crate) fn session_deleted(
         deleted,
         detail,
     })
-    .expect("WebSocket deleted-session event must serialize")
 }
 
 pub(crate) fn skills_updated<T: Serialize>(
@@ -639,13 +633,12 @@ pub(crate) fn skills_updated<T: Serialize>(
     status: &'static str,
     name: Option<String>,
 ) -> Value {
-    serde_json::to_value(WsSkillsUpdatedEvent {
+    to_value_safe(WsSkillsUpdatedEvent {
         event: "skills_updated",
         skills,
         status,
         name,
     })
-    .expect("WebSocket skills update must serialize")
 }
 
 pub(crate) fn subagents_updated(
@@ -653,13 +646,12 @@ pub(crate) fn subagents_updated(
     status: &'static str,
     name: Option<String>,
 ) -> Value {
-    serde_json::to_value(WsSubagentsUpdatedEvent {
+    to_value_safe(WsSubagentsUpdatedEvent {
         event: "subagents_updated",
         subagents,
         status,
         name,
     })
-    .expect("WebSocket subagent update must serialize")
 }
 
 pub(crate) fn mcp_server(
@@ -686,7 +678,7 @@ pub(crate) fn mcp_servers(
     failed: u32,
     total: u32,
 ) -> Value {
-    serde_json::to_value(WsMcpServersEvent {
+    to_value_safe(WsMcpServersEvent {
         event: "mcp_servers",
         servers,
         stats: WsMcpStatus {
@@ -695,7 +687,6 @@ pub(crate) fn mcp_servers(
             total,
         },
     })
-    .expect("WebSocket MCP server list must serialize")
 }
 
 pub(crate) fn log_entry(
@@ -715,11 +706,10 @@ pub(crate) fn log_entry(
 }
 
 pub(crate) fn logs_data(logs: Vec<WsLogEntry>) -> Value {
-    serde_json::to_value(WsLogsDataEvent {
+    to_value_safe(WsLogsDataEvent {
         event: "logs_data",
         logs,
     })
-    .expect("WebSocket log data must serialize")
 }
 
 pub(crate) fn cron_jobs_updated(
@@ -728,38 +718,35 @@ pub(crate) fn cron_jobs_updated(
     result: Value,
     inventory: crate::core::inventory::RuntimeInventory,
 ) -> Value {
-    serde_json::to_value(WsCronJobsUpdatedEvent {
+    to_value_safe(WsCronJobsUpdatedEvent {
         event: "cron_jobs_updated",
         status: status.into(),
         id: id.into(),
         result,
         inventory,
     })
-    .expect("WebSocket cron update must serialize")
 }
 
 pub(crate) fn cron_logs(
     id: Option<String>,
     runs: Vec<crate::cron::CronRunRecord>,
 ) -> Value {
-    serde_json::to_value(WsCronLogsEvent {
+    to_value_safe(WsCronLogsEvent {
         event: "cron_logs",
         id,
         runs,
     })
-    .expect("WebSocket cron logs must serialize")
 }
 
 pub(crate) fn config_update_rejected(
     reason: impl Into<String>,
     requires_gateway_token: bool,
 ) -> Value {
-    serde_json::to_value(WsConfigUpdateRejectedEvent {
+    to_value_safe(WsConfigUpdateRejectedEvent {
         event: "config_update_rejected",
         reason: reason.into(),
         requires_gateway_token,
     })
-    .expect("WebSocket config rejection must serialize")
 }
 
 pub(crate) fn config_data(
@@ -771,7 +758,7 @@ pub(crate) fn config_data(
     channels: Value,
     capabilities: Value,
 ) -> Value {
-    serde_json::to_value(WsConfigDataEvent {
+    to_value_safe(WsConfigDataEvent {
         event: "config_data",
         defaults,
         skills,
@@ -782,16 +769,14 @@ pub(crate) fn config_data(
         capabilities,
         version: env!("CARGO_PKG_VERSION"),
     })
-    .expect("WebSocket config data must serialize")
 }
 
 pub(crate) fn config_updated(defaults: Value, capabilities: Value) -> Value {
-    serde_json::to_value(WsConfigUpdatedEvent {
+    to_value_safe(WsConfigUpdatedEvent {
         event: "config_updated",
         defaults,
         capabilities,
     })
-    .expect("WebSocket config update must serialize")
 }
 
 pub(crate) fn cognitive_memory(
@@ -805,7 +790,7 @@ pub(crate) fn cognitive_memory(
     edges: Vec<Value>,
     facts: Vec<Value>,
 ) -> Value {
-    serde_json::to_value(WsCognitiveMemoryEvent {
+    to_value_safe(WsCognitiveMemoryEvent {
         event: "cognitive_memory",
         stats: WsCognitiveMemoryStats {
             entities_count,
@@ -821,15 +806,13 @@ pub(crate) fn cognitive_memory(
         edges,
         facts,
     })
-    .expect("WebSocket cognitive memory event must serialize")
 }
 
 pub(crate) fn notification(message: impl Into<String>) -> Value {
-    serde_json::to_value(WsNotificationEvent {
+    to_value_safe(WsNotificationEvent {
         event: "notification",
         message: message.into(),
     })
-    .expect("WebSocket notification must serialize")
 }
 
 #[derive(Debug, Serialize)]
@@ -919,7 +902,7 @@ pub(crate) enum WsEvent {
 
 impl WsEvent {
     fn into_json(self) -> Value {
-        serde_json::to_value(self).expect("WebSocket turn event must serialize")
+        to_value_safe(self)
     }
 }
 

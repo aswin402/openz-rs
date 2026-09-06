@@ -733,3 +733,25 @@ async fn websocket_set_config_updates_live_config_and_broadcasts() {
     let _ = std::fs::remove_dir_all(temp_dir);
 }
 
+#[test]
+fn websocket_protocol_events_serialize_safely() {
+    let ready_val = protocol::ready("chat-1", "client-1");
+    assert_eq!(ready_val["event"], "ready");
+    assert_eq!(ready_val["chat_id"], "chat-1");
+    assert_eq!(ready_val["client_id"], "client-1");
+
+    let delta_val = protocol::delta("chat-1", Some("turn-1".to_string()), "hello world");
+    assert_eq!(delta_val["event"], "delta");
+    assert_eq!(delta_val["chat_id"], "chat-1");
+    assert_eq!(delta_val["turn_id"], "turn-1");
+    assert_eq!(delta_val["content"], "hello world");
+
+    let status_val = protocol::gateway_status(5, 1, 6);
+    assert_eq!(status_val["event"], "status");
+    assert_eq!(status_val["mcp"]["loaded"], 5);
+
+    let notif_val = protocol::notification("system alert");
+    assert_eq!(notif_val["event"], "notification");
+    assert_eq!(notif_val["message"], "system alert");
+}
+

@@ -350,8 +350,9 @@ impl AgentLoop {
     ) -> Result<crate::providers::LLMResponse> {
         // Helper: check if CLI cancel was fired since we started
         let cwf_cancel_tx = crate::shutdown::cli_cancel_tx();
-        let cwf_cancel_initial = *cwf_cancel_tx.subscribe().borrow();
-        let is_cancelled = || -> bool { *cwf_cancel_tx.subscribe().borrow() != cwf_cancel_initial };
+        let cwf_cancel_rx = cwf_cancel_tx.subscribe();
+        let cwf_cancel_initial = *cwf_cancel_rx.borrow();
+        let is_cancelled = || -> bool { *cwf_cancel_rx.borrow() != cwf_cancel_initial };
         let provider_timeout_secs = self.provider_attempt_timeout_secs();
 
         let chat_fut = active_provider.chat(system_prompt, messages, tools, settings);
@@ -463,8 +464,9 @@ impl AgentLoop {
         >,
     > {
         let csf_cancel_tx = crate::shutdown::cli_cancel_tx();
-        let csf_cancel_initial = *csf_cancel_tx.subscribe().borrow();
-        let is_cancelled = || -> bool { *csf_cancel_tx.subscribe().borrow() != csf_cancel_initial };
+        let csf_cancel_rx = csf_cancel_tx.subscribe();
+        let csf_cancel_initial = *csf_cancel_rx.borrow();
+        let is_cancelled = || -> bool { *csf_cancel_rx.borrow() != csf_cancel_initial };
         let provider_timeout_secs = self.provider_attempt_timeout_secs();
 
         let chat_fut = active_provider.chat_stream(system_prompt, messages, tools, settings);

@@ -79,7 +79,10 @@ pub fn get_server() -> &'static SearchXyzServer {
             .timeout(std::time::Duration::from_secs(config.crawler.timeout_secs))
             .user_agent(&config.crawler.user_agent)
             .build()
-            .unwrap();
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to build custom reqwest::Client for searchxyz: {e}, falling back to default");
+                reqwest::Client::new()
+            });
 
         let crawler = Crawler::new(
             config.crawler.clone(),
@@ -124,7 +127,18 @@ pub fn get_server() -> &'static SearchXyzServer {
 
         let dispatcher = SearchDispatcher::new(backends);
         let extractor = ExtractionPipeline::new(config.extractor.clone());
-        let index = SearchIndex::open(&config.index).unwrap();
+        let index = SearchIndex::open(&config.index).unwrap_or_else(|e| {
+            tracing::warn!(
+                "Failed to open searchxyz index at {:?}: {e}; falling back to temp index directory",
+                config.index.path
+            );
+            let mut fallback_config = config.index.clone();
+            let temp_dir =
+                std::env::temp_dir().join(format!("searchxyz_index_{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&temp_dir);
+            fallback_config.path = temp_dir;
+            SearchIndex::open(&fallback_config).expect("failed to open fallback searchxyz index")
+        });
 
         let graph_path = std::path::Path::new(&config.index.path).join("graph.json");
         let graph = Arc::new(tokio::sync::Mutex::new(

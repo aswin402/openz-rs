@@ -96,7 +96,8 @@ impl Tool for DbInspectorTool {
                 static INSPECTOR_BLOCKLIST_RE: std::sync::OnceLock<regex::Regex> =
                     std::sync::OnceLock::new();
                 let re = INSPECTOR_BLOCKLIST_RE.get_or_init(|| {
-                    regex::Regex::new(r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|ATTACH|DETACH|PRAGMA|REINDEX|REPLACE|VACUUM|ANALYZE|INTO|UNION|EXCEPT|INTERSECT|LOAD|OVERWRITE|CALL|EXECUTE)\b").unwrap()
+                    regex::Regex::new(r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|ATTACH|DETACH|PRAGMA|REINDEX|REPLACE|VACUUM|ANALYZE|INTO|UNION|EXCEPT|INTERSECT|LOAD|OVERWRITE|CALL|EXECUTE)\b")
+                        .expect("static db inspector blocklist regex must compile")
                 });
 
                 // Also block semicolons (stacked queries) and comment sequences.
@@ -239,7 +240,7 @@ impl Tool for DbWriteTool {
         let normalized = normalize_sql(sql);
         static WRITE_BLOCKLIST_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
         let re = WRITE_BLOCKLIST_RE
-            .get_or_init(|| regex::Regex::new(r"\b(ATTACH|DETACH|LOAD)\b").unwrap());
+            .get_or_init(|| regex::Regex::new(r"\b(ATTACH|DETACH|LOAD)\b").expect("static write blocklist regex must compile"));
         if let Some(mat) = re.find(&normalized) {
             return Err(anyhow!("Blocked SQL keyword for safety: {}", mat.as_str()));
         }

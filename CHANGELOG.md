@@ -1,4 +1,14 @@
-### v0.0.144 (Latest Release)
+### v0.0.145 (Latest Release)
+**Panic Hardening, Safe WebSocket Serialization & Robust Search Backend:**
+- **Hardening (Safe WebSocket Serialization):** Replaced 30 `.expect("WebSocket ... must serialize")` panics across `src/channels/websocket/protocol.rs` with `to_value_safe()` helper returning an error payload rather than crashing active axum client connections. Added unit tests for safe wire protocol event serialization in `src/channels/websocket/tests.rs`.
+- **Hardening (SearchXyz Initialization & Concurrency):** Protected `reqwest::Client` builder with a graceful fallback to `reqwest::Client::new()` in `src/tools/searchxyz/mod.rs`. Added fallback temp directory index creation if `SearchIndex::open` encounters permission or file locks. Replaced poisoned mutex expectations with `.unwrap_or_else(|poisoned| poisoned.into_inner())` in `src/tools/searchxyz/web.rs`.
+- **Hardening (Static Regex Invariants):** Replaced runtime `.unwrap()` calls on static regex initializations in `src/tools/db_inspector.rs`, `src/tools/web.rs`, and `src/tools/shared_memory/auto_capture.rs` with descriptive `.expect(...)`.
+- **Optimization (Cancellation Watch Allocation):** Eliminated repeated watch channel `.subscribe()` heap and atomic allocations inside `is_cancelled` closures in `src/agent/agent_loop/mod.rs` by pre-subscribing receivers.
+- **Refactor (Subagent Orchestration):** Unified subagent execution into `run_subagent_attempt()` and prompt generation into `build_subagent_prompt()` in `src/tools/subagent/mod.rs`, eliminating ~400 lines of duplicated lifecycle and error handling code across `delegate_task.rs` and `delegate_profile.rs`.
+- **Tests & Verification:** Verified full unit test pass across websocket protocol (30 tests), db_inspector (4 tests), searchxyz (2 tests), web (11 tests), shared_memory (34 tests), and 100% preservation of all 128 registered native tools.
+- **Chore:** Bumped version to `v0.0.145`.
+
+### v0.0.144
 **Config Live Reload, Subagent Deduplication & Integration Testing:**
 - **Feature (Config Live Reload):** Added background configuration watcher `ConfigWatcher` in `src/config/watcher.rs` using `notify` with debouncing, non-destructive file reads (`load_config_from_path`), and atomic change comparison. Synchronized `state.live_config` in `src/channels/websocket/mod.rs` and broadcasts `config_updated` events to all connected WebUI clients in real time when `config.json` changes on disk.
 - **Feature (WebSocket Broadcast):** Enhanced WebSocket `set_config` command to immediately broadcast configuration updates to all other connected clients (`publish_ws_event_except`).

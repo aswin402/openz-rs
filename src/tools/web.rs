@@ -15,12 +15,12 @@ const WEB_TOTAL_TIMEOUT_SECS: u64 = 45;
 
 fn web_re_whitespace() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r" +").unwrap())
+    RE.get_or_init(|| Regex::new(r" +").expect("static whitespace regex must compile"))
 }
 
 fn web_re_newlines() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\n\s*\n").unwrap())
+    RE.get_or_init(|| Regex::new(r"\n\s*\n").expect("static newline regex must compile"))
 }
 
 /// Validate that an IP address is safe (not private, loopback, or reserved).

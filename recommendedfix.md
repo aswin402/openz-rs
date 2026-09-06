@@ -96,9 +96,9 @@ struct WebFetchTool;
 
 ---
 
-### 1.4 `.unwrap()` / `.expect()` Panic Risk (P1)
+### 1.4 `.unwrap()` / `.expect()` Panic Risk (Resolved locally)
 
-**Problem:** ~150+ calls across the codebase that will panic on error. High-risk patterns:
+**Problem:** ~150+ calls across the codebase that could panic on error. High-risk patterns:
 
 | Pattern | Count | Risk |
 |---|---|---|
@@ -110,16 +110,12 @@ struct WebFetchTool;
 
 **Example (real crash path):** `src/tools/subagent/delegate_task.rs` uses `lock().unwrap()` inside `WorktreeGuard::drop()`. If a subagent panics during workspace operations, the poisoned lock causes a double-panic on cleanup.
 
-**Progress (v0.0.143):** Hardened production call sites across tools and agent runtime: regex capture unwraps in `src/tools/outline.rs` replaced with safe tuple pattern matching, JSON type unwrap assertions in `src/tools/subagent/evaluator_optimizer.rs` replaced with safe `let Some else` error returns, subagent name character unwrap in `src/tools/subagent/optimize_profile.rs` replaced with safe `starts_with` character predicates, inbox temp file name unwrap in `src/agent/activity.rs` eliminated by directly reusing the generated UUID filename, loop tag unwrap in `src/tools/template_compiler.rs` replaced with `let Some else` break, loopback IP parsing unwrap in `src/tools/network.rs` simplified to native `ip.is_loopback()`, YouTube search regex compilation in `src/tools/social_search.rs` lifted into static `OnceLock` instances with safe `filter_map` indexing, gRPC channel and client unwraps in `src/tools/mcp.rs` converted to graceful error results, template substitution in `src/sop/mod.rs` converted to static `OnceLock` regex with safe capture resolution, and HTML selector unwraps in `src/tools/crawl.rs` converted to safe `ok()` and `as_ref()` lookups.
-
-Progress now done: provider message sanitation no longer unwraps optional tool names in `src/providers/openai.rs` or `src/providers/anthropic.rs`, multimodal markdown capture parsing in `src/providers/mod.rs` now skips malformed captures instead of unwrapping, spinner/output mutexes in `src/agent/style/spinner.rs` recover poisoned locks instead of panicking, `src/main.rs` no longer panics when log-file fallback or Unix signal registration fails, subagent worktree create/remove paths in `src/tools/subagent/delegate_task.rs` now pass native `Path` arguments instead of unwrapping UTF-8 strings, and `src/tools/docs_mcp.rs` now resolves `docs.db` through the runtime data path helper instead of panicking when the home directory is unavailable, and `src/tools/openmedia/mod.rs` now returns initialization errors from `get_server()` instead of panicking on OpenMedia server startup or OnceLock races, and subagent evolution-review fenced JSON cleanup in `src/tools/subagent/delegate_task.rs` no longer unwraps known prefixes, and graph-memory branch/database initialization in `src/tools/graph_memory/branch.rs` and `src/tools/graph_memory/db.rs` now reports errors instead of panicking on missing branch IDs or SQLite fallback failures, and `src/tools/memory_extra/facts.rs` now skips invalid regex/capture cases instead of unwrapping during fact extraction, and `src/tools/memory_extra/codebase.rs` now returns regex construction errors and skips missing call captures instead of panicking during codebase indexing.
-
-**Recommended fix:**
-- Use `?` operator or `.unwrap_or_else(|e| ...)` for all lock acquisitions
-- Replace `to_string_pretty` unwraps with `.unwrap_or_else(|_| "{}".to_string())`
-- Use `.to_string_lossy()` instead of `.to_str().unwrap()`
-- Audit all `watch::Receiver::borrow()` usage
-- Continue removing runtime `unwrap()` / `expect()` sites outside tests, especially in shutdown, spinner/output locks, graph-memory branch args, docs path resolution, and parser capture handling.
+**Progress (v0.0.144):** Hardened production call sites across tools, channels, and agent runtime:
+- **WebSocket Protocol Serialization:** Replaced 30 `.expect("WebSocket ... must serialize")` calls in `src/channels/websocket/protocol.rs` with `to_value_safe()` helper returning an error payload rather than crashing axum connection tasks. Added unit test `websocket_protocol_events_serialize_safely` in `src/channels/websocket/tests.rs`.
+- **SearchXyz Initialization & Concurrency:** Hardened `reqwest::Client` builder with a fallback to `reqwest::Client::new()` in `src/tools/searchxyz/mod.rs`. Added fallback temp directory index creation if `SearchIndex::open` encounters errors. Replaced poisoned mutex expectations with `.unwrap_or_else(|poisoned| poisoned.into_inner())` in `src/tools/searchxyz/web.rs`.
+- **Static Regex Invariants:** Replaced `.unwrap()` calls on static regex initializations in `src/tools/db_inspector.rs`, `src/tools/web.rs`, and `src/tools/shared_memory/auto_capture.rs` with descriptive `.expect(...)`.
+- **Cancellation Polling Optimization:** Replaced repetitive `.subscribe()` channel allocations inside `is_cancelled` closures in `src/agent/agent_loop/mod.rs` with single pre-subscribed watch receivers.
+- **Previous hardening passes:** Regex captures in `src/tools/outline.rs`, JSON assertions in `src/tools/subagent/evaluator_optimizer.rs`, name character checks in `src/tools/subagent/optimize_profile.rs`, temp file names in `src/agent/activity.rs`, loop tags in `src/tools/template_compiler.rs`, IP checking in `src/tools/network.rs`, gRPC client in `src/tools/mcp.rs`, HTML selectors in `src/tools/crawl.rs`, provider message sanitation in `src/providers/openai.rs` and `src/providers/anthropic.rs`, multimodal markdown in `src/providers/mod.rs`, spinner mutexes in `src/agent/style/spinner.rs`, log fallbacks in `src/main.rs`, worktree paths in `src/tools/subagent/delegate_task.rs`, SQLite fallback in `src/tools/graph_memory/`, and fact extraction regex in `src/tools/memory_extra/`.
 
 ---
 
