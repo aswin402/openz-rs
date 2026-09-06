@@ -1,4 +1,13 @@
-### v0.0.143 (Latest Release)
+### v0.0.144 (Latest Release)
+**Config Live Reload, Subagent Deduplication & Integration Testing:**
+- **Feature (Config Live Reload):** Added background configuration watcher `ConfigWatcher` in `src/config/watcher.rs` using `notify` with debouncing, non-destructive file reads (`load_config_from_path`), and atomic change comparison. Synchronized `state.live_config` in `src/channels/websocket/mod.rs` and broadcasts `config_updated` events to all connected WebUI clients in real time when `config.json` changes on disk.
+- **Feature (WebSocket Broadcast):** Enhanced WebSocket `set_config` command to immediately broadcast configuration updates to all other connected clients (`publish_ws_event_except`).
+- **Refactor (Subagent Orchestration):** Fully deduplicated subagent lifecycle management between `delegate_task.rs` and `delegate_profile.rs` by extracting shared helpers into `src/tools/subagent/mod.rs` (`finalize_simulation_branch`, `sync_workspace_changes_back`, `handle_subagent_cancellation`, `handle_subagent_success`).
+- **Fix & Hardening (Runtime Safety):** Replaced `.unwrap()` and `.expect()` panic risks across outline parsing, subagent evaluation/optimization, activity temp files, template compiler loops, loopback IP resolution, YouTube search patterns, MCP channels, SOP template replacement, and HTML crawler selectors.
+- **Tests & Verification:** Added end-to-end integration tests in `tests/agent_loop.rs` for multi-turn tool execution pipelines, per-session configuration overrides, and transient error retry backoff; verified native tool registration invariant (128 native tools); verified 100% test pass rate across WebSocket (29 tests) and watcher (3 tests).
+- **Chore:** Bumped version to `v0.0.144`.
+
+### v0.0.143
 **Architecture Modularization & Code Polish:**
 - **Refactor (WebSocket Gateway):** Decomposed `src/channels/websocket/mod.rs` from 1,916 lines down to 1,168 lines by extracting turn cancellation registry and guards into `turns.rs` and unit tests into `tests.rs`.
 - **Refactor (Browser Subsystem):** Organized flat browser automation tools into a dedicated `src/tools/browser/` sub-namespace (`broker.rs`, `common.rs`, `firefox.rs`, `gsd.rs`, `obscura.rs`, and `status.rs`) while maintaining 100% backward-compatible aliases in `src/tools/mod.rs`.

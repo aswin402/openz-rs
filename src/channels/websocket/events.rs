@@ -20,6 +20,20 @@ pub fn publish_ws_event(event: Value) {
     }
 }
 
+/// Broadcast a JSON event to every connected WebSocket client except the specified client ID.
+pub fn publish_ws_event_except(except_client_id: &str, event: Value) {
+    if let Ok(senders) = crate::channels::get_active_ws_senders().lock() {
+        if let Ok(evt_str) = serde_json::to_string(&event) {
+            for (id, sender) in senders.iter() {
+                if id != except_client_id {
+                    let _ = sender.try_send(Message::Text(evt_str.clone()));
+                }
+            }
+        }
+    }
+}
+
+
 pub(crate) fn active_ws_sender_snapshot_for_chat(
     chat_id: Option<&str>,
 ) -> Vec<(String, mpsc::Sender<Message>)> {

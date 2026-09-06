@@ -86,6 +86,7 @@ struct WsState {
     config: WebSocketChannelConfig,
     agent_loop: Arc<AgentLoop>,
     live_config: Arc<std::sync::RwLock<crate::config::schema::Config>>,
+    _config_watcher: Arc<Option<crate::config::watcher::ConfigWatcherGuard>>,
 }
 
 impl WsState {
@@ -235,10 +236,29 @@ impl super::Channel for WsGateway {
             ));
         }
 
+        let live_config = Arc::new(std::sync::RwLock::new(self.agent_loop.config.clone()));
+        let config_watcher = match crate::config::watcher::spawn_default_config_watcher(
+            live_config.clone(),
+            move |updated_config| {
+                let event = commands::config::config_updated_event(updated_config);
+                events::publish_ws_event(event);
+            },
+        ) {
+            Ok(guard) => Some(guard),
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to initialize configuration file watcher: {:#}. Live config reload disabled.",
+                    e
+                );
+                None
+            }
+        };
+
         let state = WsState {
             config: self.config.clone(),
-            live_config: Arc::new(std::sync::RwLock::new(self.agent_loop.config.clone())),
+            live_config,
             agent_loop: self.agent_loop.clone(),
+            _config_watcher: Arc::new(config_watcher),
         };
         // Keep REST CORS aligned with the WebSocket origin policy and local dev ports.
         let cors = CorsLayer::new()

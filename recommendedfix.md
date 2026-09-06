@@ -250,23 +250,15 @@ The `format_tool_args()` function in `run.rs` has ~20 explicit mappings to handl
 
 ---
 
-### 4.4 Config Live Reload
+### 4.4 Config Live Reload (Resolved)
 
-**Current behavior:** Config is loaded once at startup. Changing `~/.openz/config.json` requires restarting OpenZ.
-
-**Enhancement:** Use `notify` (already a dependency) to watch `config.json` for changes and hot-reload. Only apply safe changes (tool timeouts, model selection) without restarting channels.
-
-**Complexity:** Medium — must avoid races with in-flight agent loops.
+**Status:** Implemented in the local working tree. Background configuration watcher `ConfigWatcher` in `src/config/watcher.rs` monitors `config.json` via `notify` with debouncing, non-destructive file reads (`load_config_from_path`), and atomic change comparison. In the WebSocket gateway (`src/channels/websocket/mod.rs`), the watcher keeps `state.live_config` synchronized with external updates and broadcasts `config_updated` events to connected WebUI clients. WebSocket `set_config` also immediately broadcasts changes to all other connected clients (`publish_ws_event_except`). In-flight turn execution in `AgentLoop` continues reading fresh disk configuration per-turn, ensuring complete end-to-end consistency without gateway restart. Tests cover reload on file change, redundant write suppression, corrupt JSON resilience, and WebSocket broadcast delivery.
 
 ---
 
-### 4.5 Structured Logging to SQLite
+### 4.5 Structured Logging to SQLite (Resolved)
 
-**Current behavior:** Logs are plain text files rotated at 10MB. Filtering by session, level, or tool requires `grep`.
-
-**Enhancement:** Write structured logs to SQLite (`~/.openz/logs.db`) with columns: timestamp, level, session_key, module, message, tool_name, duration_ms. The `openz logs` command can then run SQL queries like `WHERE session = 'telegram_123' AND level = 'error'`.
-
-**Complexity:** Low — tracing-subscriber already supports custom writers.
+**Status:** Implemented in the local working tree. `src/logs.rs` provides `SqliteLogLayer` tracing subscriber integration that writes structured log records directly into SQLite (`~/.openz/logs.db`), with indexed `session` and `timestamp` fields and automatic 7-day log retention purging. The `openz logs` command queries and tails `logs.db` directly with structured filtering by level, session, and search patterns. Unit tests in `src/logs.rs::tests::test_sqlite_logging_workflow` verify database record insertion and query filtering.
 
 ---
 

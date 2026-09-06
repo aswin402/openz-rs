@@ -79,7 +79,8 @@ pub(super) async fn handle_post_message_command(
                 *live = config.clone();
             }
             let event = config::config_updated_event(&config);
-            super::send_event(tx, event).await;
+            super::send_event(tx, event.clone()).await;
+            super::events::publish_ws_event_except(client_id, event);
         }
         "save_skill" => {
             let event = profiles::save_skill_event(envelope);

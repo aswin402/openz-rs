@@ -476,18 +476,46 @@ pub fn load_config() -> Result<Config> {
     Ok(config)
 }
 
+pub fn read_config_from_path(path: &Path) -> Result<Config> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read config file at {:?}", path))?;
+
+    let raw_json: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse config file at {:?}", path))?;
+
+    let mut config: Config = serde_json::from_value(raw_json)
+        .with_context(|| format!("Failed to deserialize config file at {:?}", path))?;
+
+    let _ = migrate_config(&mut config);
+    Ok(config)
+}
+
+pub fn load_config_from_path(path: &Path) -> Result<Config> {
+    read_config_from_path(path)
+}
+
 pub fn save_config(config: &Config) -> Result<()> {
-    let dir = config_dir();
+    save_config_to_path(&config_path(), config)
+}
+
+pub fn save_config_to_path(path: &Path, config: &Config) -> Result<()> {
+    let dir = path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(config_dir);
     if !dir.exists() {
         fs::create_dir_all(&dir)
             .with_context(|| format!("Failed to create config directory at {:?}", dir))?;
     }
 
-    let path = config_path();
     let content = serde_json::to_string_pretty(config)?;
 
     // Write atomically: write to a temporary file first, then rename it
-    let temp_name = format!("config.json.tmp.{}", uuid::Uuid::new_v4());
+    let temp_name = format!(
+        "{}.tmp.{}",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("config.json"),
+        uuid::Uuid::new_v4()
+    );
     let temp_path = dir.join(temp_name);
     #[cfg(unix)]
     {
@@ -515,7 +543,7 @@ pub fn save_config(config: &Config) -> Result<()> {
             .with_context(|| format!("Failed to write temporary config file to {:?}", temp_path))?;
     }
 
-    if let Err(e) = fs::rename(&temp_path, &path) {
+    if let Err(e) = fs::rename(&temp_path, path) {
         let _ = fs::remove_file(&temp_path);
         return Err(e).context(format!(
             "Failed to rename temporary config file to {:?}",
@@ -526,7 +554,7 @@ pub fn save_config(config: &Config) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        let _ = fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     }
 
     // Invalidate the cache so the next load gets the newly saved file
