@@ -1,4 +1,11 @@
-### v0.0.149 (Latest Release)
+### v0.0.150 (Latest Release)
+- **Modularized Logging Architecture**: Decomposed the 1,636-line `src/logs.rs` god-file into `src/logs/` submodules (`storage.rs`, `subscriber.rs`, `query.rs`, `tui.rs`, `mod.rs`) while strictly maintaining 100% backward compatibility for all callers.
+- **Centralized Secret Scrubbing**: Consolidated token regex pattern matching (Telegram, OpenAI `sk-...`, partial tokens) and string redaction into [`src/core/secrets.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/secrets.rs), eliminating duplication in `doctor` and logging.
+- **Cross-Platform Shell Quoting**: Introduced `quote_shell_arg` in [`src/core/process.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/process.rs) with proper Windows double-quote escaping and Unix single-quote escaping, resolving Windows git-add quoting failures.
+- **Hardened Model Preferences Persistence**: Enhanced `save_model_prefs_at` with file `sync_all` and automatic `.tmp` file cleanup upon any write/rename error.
+- **Tool Taxonomy Documentation**: Formalized native tool subsystem taxonomy in `src/tools/README.md`.
+
+### v0.0.149
 **Codebase Decoupling, Cross-Platform Shell Centralization & Provider Domain Architecture:**
 - **Refactor (Cross-Platform Shell Centralization & Windows Patch Fix):** Centralized host shell command construction in `src/core/process.rs` (`host_shell_command` and `host_tokio_shell_command`), utilizing `cmd.exe /C` on Windows and `sh -c` on Unix with automatic repository CWD resolution. Replaced fragmented `sh -c` calls across `src/tools/filesystem.rs`, `src/tools/compiler_auto_heal.rs`, and `src/tools/shell.rs`. Fixed a Windows bug in `ApplyPatchTool` (`git apply --check`) which previously failed by invoking `sh` on Windows platforms without bash in PATH.
 - **Refactor (HTTP Client Standardization):** Standardized disparate HTTP client initializations across `src/channels/whatsapp.rs`, `src/tools/rust_docs.rs`, `src/tools/github.rs`, `src/tools/browser/firefox.rs`, `src/tools/browser/status.rs`, and `src/channels/mod.rs` onto `crate::core::http::default_client()` and `custom_client()`, guaranteeing safe connection (10s), read (30s), and request (60s) timeouts and eliminating unbounded network hanging.

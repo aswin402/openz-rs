@@ -39,7 +39,7 @@
   - `pub fn quote_shell_arg(arg: &str) -> String` in [`src/core/process.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/process.rs)
   - Atomic persistence with `.tmp` purge on error in [`src/providers/model_prefs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/model_prefs.rs)
 
-- [ ] **Step 1: Write failing unit tests in `src/core/process.rs` and `src/providers/model_prefs.rs`**
+- [x] **Step 1: Write failing unit tests in `src/core/process.rs` and `src/providers/model_prefs.rs`**
 
 In [`src/core/process.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/process.rs):
 ```rust
@@ -78,12 +78,12 @@ In [`src/providers/model_prefs.rs`](file:///home/aswin/programming/vscode/myProj
     }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run: `cargo test -p openz --lib test_quote_shell_arg -j 2`
 Expected: FAIL (unresolved `quote_shell_arg`)
 
-- [ ] **Step 3: Implement `quote_shell_arg`, update shell and filesystem tools, and harden `model_prefs` saving**
+- [x] **Step 3: Implement `quote_shell_arg`, update shell and filesystem tools, and harden `model_prefs` saving**
 
 In [`src/core/process.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/process.rs):
 ```rust
@@ -168,7 +168,7 @@ pub fn save_model_prefs_at(dir: &std::path::Path, prefs: &ModelPrefs) -> anyhow:
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run:
 ```bash
@@ -178,7 +178,7 @@ cargo test -p openz --lib test_native_tool_registration_names -j 2
 ```
 Expected: PASS (all tests pass)
 
-- [ ] **Step 5: Run clippy and commit**
+- [x] **Step 5: Run clippy and commit**
 
 Run: `cargo clippy -p openz --lib -j 2`
 Expected: 0 warnings
@@ -221,7 +221,7 @@ git commit -m "fix(core): add quote_shell_arg, deduplicate host shell spawning, 
   - `pub async fn run_logs_viewer(...)`
   - `pub fn print_session_recent_logs(...)`
 
-- [ ] **Step 1: Create `src/logs/storage.rs`**
+- [x] **Step 1: Create `src/logs/storage.rs`**
 
 Extract database migration, storage path resolution, and batch write loop from `src/logs.rs:93-154`:
 - `LogEntry` definition
@@ -229,7 +229,7 @@ Extract database migration, storage path resolution, and batch write loop from `
 - `init_db_writer(mut rx: tokio::sync::mpsc::UnboundedReceiver<LogEntry>)`
 - Table initialization: `CREATE TABLE IF NOT EXISTS logs (...)` and indexes.
 
-- [ ] **Step 2: Create `src/logs/subscriber.rs`**
+- [x] **Step 2: Create `src/logs/subscriber.rs`**
 
 Extract tracing layer and scrub writer from `src/logs.rs:25-92, 155-221`:
 - `LOG_TX: OnceLock<tokio::sync::mpsc::UnboundedSender<LogEntry>>`
@@ -238,7 +238,7 @@ Extract tracing layer and scrub writer from `src/logs.rs:25-92, 155-221`:
 - `SecretScrubWriter<W>` implementing `std::io::Write`
 - Redaction functions `initialize_secret_redaction` and `redact_sensitive_text`
 
-- [ ] **Step 3: Create `src/logs/query.rs`**
+- [x] **Step 3: Create `src/logs/query.rs`**
 
 Extract session querying and filtering from `src/logs.rs:222-290, 1479-1636`:
 - `SessionFilter` enum with parser methods
@@ -248,7 +248,7 @@ Extract session querying and filtering from `src/logs.rs:222-290, 1479-1636`:
 - `get_latest_session_id() -> Option<String>`
 - `detect_active_session() -> Option<String>`
 
-- [ ] **Step 4: Create `src/logs/tui.rs`**
+- [x] **Step 4: Create `src/logs/tui.rs`**
 
 Extract terminal formatting and ANSI rendering from `src/logs.rs:1140-1478`:
 - `print_row(...)`
@@ -256,7 +256,7 @@ Extract terminal formatting and ANSI rendering from `src/logs.rs:1140-1478`:
 - `print_session_recent_logs(...)`
 - ANSI styling constants and crossterm layout helpers
 
-- [ ] **Step 5: Create `src/logs/mod.rs` with re-exports and remove `src/logs.rs`**
+- [x] **Step 5: Create `src/logs/mod.rs` with re-exports and remove `src/logs.rs`**
 
 In `src/logs/mod.rs`:
 ```rust
@@ -293,7 +293,7 @@ mod tests {
 
 Remove `src/logs.rs`.
 
-- [ ] **Step 6: Run tests to verify modularized logs**
+- [x] **Step 6: Run tests to verify modularized logs**
 
 Run:
 ```bash
@@ -303,7 +303,7 @@ cargo test -p openz --lib test_native_tool_registration_names -j 2
 ```
 Expected: PASS
 
-- [ ] **Step 7: Run clippy and commit**
+- [x] **Step 7: Run clippy and commit**
 
 Run: `cargo clippy -p openz --lib -j 2`
 Expected: 0 warnings
@@ -333,7 +333,7 @@ git commit -m "refactor(logs): decompose 1600-line logs.rs into dedicated src/lo
   - `pub fn redact_text_with_secrets(text: &str, secrets: &[String]) -> String`
   - `pub fn collect_all_environment_and_config_secrets(config: &serde_json::Value) -> Vec<String>`
 
-- [ ] **Step 1: Write failing unit test in `src/core/secrets.rs`**
+- [x] **Step 1: Write failing unit test in `src/core/secrets.rs`**
 
 ```rust
     #[test]
@@ -354,12 +354,12 @@ git commit -m "refactor(logs): decompose 1600-line logs.rs into dedicated src/lo
     }
 ```
 
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
 
 Run: `cargo test -p openz --lib test_scrub_secret_text_patterns -j 2`
 Expected: FAIL (`scrub_secret_text` not found)
 
-- [ ] **Step 3: Implement centralized scrubbing in `src/core/secrets.rs`**
+- [x] **Step 3: Implement centralized scrubbing in `src/core/secrets.rs`**
 
 In [`src/core/secrets.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/secrets.rs):
 ```rust
@@ -419,7 +419,7 @@ pub fn collect_all_environment_and_config_secrets(config: &serde_json::Value) ->
 }
 ```
 
-- [ ] **Step 4: Update `src/cli/doctor.rs` and `src/logs/subscriber.rs` to consume `src/core/secrets.rs`**
+- [x] **Step 4: Update `src/cli/doctor.rs` and `src/logs/subscriber.rs` to consume `src/core/secrets.rs`**
 
 In [`src/cli/doctor.rs:92-118`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/doctor.rs#L92-L118):
 Replace local `secret_patterns()` and `scrub_secret_text()` with calls to `crate::core::secrets::scrub_secret_text`:
@@ -436,7 +436,7 @@ fn scrub_secret_text(text: &str) -> SecretScrubResult {
 In [`src/logs/subscriber.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/subscriber.rs):
 Update `initialize_secret_redaction` and `redact_text_with_secrets` to delegate to `crate::core::secrets`.
 
-- [ ] **Step 5: Run tests and clippy**
+- [x] **Step 5: Run tests and clippy**
 
 Run:
 ```bash
@@ -447,7 +447,7 @@ cargo clippy -p openz --lib -j 2
 ```
 Expected: PASS and 0 warnings
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/core/secrets.rs src/cli/doctor.rs src/logs/
@@ -467,7 +467,7 @@ git commit -m "refactor(secrets): centralize secret regex patterns and scrubbing
 - Consumes: Tool domain organization across registration layers
 - Produces: Architectural clarity documentation, invariant documentation
 
-- [ ] **Step 1: Create `src/tools/README.md` documenting the tool subsystem architecture**
+- [x] **Step 1: Create `src/tools/README.md` documenting the tool subsystem architecture**
 
 Document:
 1. Core Tool Subsystem Engine: `arguments.rs`, `metadata.rs`, `defs.rs`, `registry.rs`, `routing.rs`, `resource_policy.rs`, `scope_engine.rs`.
@@ -486,11 +486,11 @@ Document:
 3. Loose Native Tools: Filesystem, shell, code analysis, network, task management.
 4. Registration modules: `src/cli/tool_registration/{core, integrations, media, memory}.rs`.
 
-- [ ] **Step 2: Add architectural guard test in `src/cli/builder.rs`**
+- [x] **Step 2: Add architectural guard test in `src/cli/builder.rs`**
 
 Verify that all native tool registrations maintain exact category invariants and no orphan tools exist.
 
-- [ ] **Step 3: Run test and clippy**
+- [x] **Step 3: Run test and clippy**
 
 Run:
 ```bash
@@ -499,7 +499,7 @@ cargo clippy -p openz --lib -j 2
 ```
 Expected: PASS, 0 warnings
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/tools/README.md src/tools/mod.rs src/cli/builder.rs
@@ -518,7 +518,7 @@ git commit -m "docs(tools): document tool subsystem domain taxonomy and architec
 - Modify: [`recommendedfix.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/recommendedfix.md)
 - Test: [`src/lib.rs:version_sync_tests`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/lib.rs)
 
-- [ ] **Step 1: Bump version in `Cargo.toml`, `onpkg.json`, and `README.md`**
+- [x] **Step 1: Bump version in `Cargo.toml`, `onpkg.json`, and `README.md`**
 
 In [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml):
 ```toml
@@ -535,7 +535,7 @@ In [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tool
 In [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md):
 Update version badge to `0.0.150`.
 
-- [ ] **Step 2: Add release notes to `CHANGELOG.md`**
+- [x] **Step 2: Add release notes to `CHANGELOG.md`**
 
 Add top-level release block:
 ```markdown
@@ -547,11 +547,11 @@ Add top-level release block:
 - **Tool Taxonomy Documentation**: Formalized native tool subsystem taxonomy in `src/tools/README.md`.
 ```
 
-- [ ] **Step 3: Update `recommendedfix.md`**
+- [x] **Step 3: Update `recommendedfix.md`**
 
 Document all completed architectural hardening items.
 
-- [ ] **Step 4: Verify version synchronization and registration invariant**
+- [x] **Step 4: Verify version synchronization and registration invariant**
 
 Run:
 ```bash
@@ -561,7 +561,7 @@ cargo clippy -p openz --lib -j 2
 ```
 Expected: PASS across all checks with 0 warnings.
 
-- [ ] **Step 5: Commit release bump**
+- [x] **Step 5: Commit release bump**
 
 ```bash
 git add Cargo.toml README.md onpkg.json CHANGELOG.md recommendedfix.md docs/superpowers/plans/2026-09-07-codebase-modularization-and-hardening.md

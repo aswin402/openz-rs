@@ -249,7 +249,7 @@ struct WebFetchTool;
 
 ### 4.5 Structured Logging to SQLite (Resolved)
 
-**Status:** Implemented in the local working tree. `src/logs.rs` provides `SqliteLogLayer` tracing subscriber integration that writes structured log records directly into SQLite (`~/.openz/logs.db`), with indexed `session` and `timestamp` fields and automatic 7-day log retention purging. The `openz logs` command queries and tails `logs.db` directly with structured filtering by level, session, and search patterns. Unit tests in `src/logs.rs::tests::test_sqlite_logging_workflow` verify database record insertion and query filtering.
+**Status:** Implemented in the local working tree. `src/logs/` (`storage.rs`, `subscriber.rs`, `query.rs`, `tui.rs`, and `mod.rs`) provides `SqliteLogLayer` tracing subscriber integration that writes structured log records directly into SQLite (`~/.openz/logs.db`), with indexed `session` and `timestamp` fields and automatic 7-day log retention purging. The `openz logs` command queries and tails `logs.db` directly with structured filtering by level, session, and search patterns. Unit tests in `src/logs/storage.rs::tests::test_sqlite_logging_workflow` verify database record insertion and query filtering.
 
 ---
 
@@ -282,6 +282,43 @@ struct WebFetchTool;
 **Files:** `src/providers/model_prefs.rs`, `src/providers/risk.rs`, `src/providers/mod.rs`, `src/channels/mod.rs`
 
 **Status:** Implemented in the local working tree. Decoupled provider-specific domain logic from the channel layer. Moved `ModelPrefs`, `ModelRef`, and model preference persistence (`load_model_prefs`, `save_model_prefs`, `toggle_favorite_model`, `record_recent_model`) to `src/providers/model_prefs.rs`. Moved `ModelRisk` and `classify_model_risk` to `src/providers/risk.rs`. Exposed clean provider API surfaces with backward-compatible re-exports in `src/channels/mod.rs`.
+
+---
+
+### 4.10 Modularized Logging Architecture (Resolved in v0.0.150)
+
+**Files:** [`src/logs/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/mod.rs), [`src/logs/storage.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/storage.rs), [`src/logs/subscriber.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/subscriber.rs), [`src/logs/query.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/query.rs), [`src/logs/tui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/tui.rs)
+
+**Status:** Decomposed the 1,636-line `src/logs.rs` monolithic file into clean, single-responsibility submodules:
+- `storage.rs`: SQLite connection pool, schema migrations, batch log ingestion, and retention cleanup.
+- `subscriber.rs`: `SqliteLogLayer` tracing subscriber and live formatters.
+- `query.rs`: Structured query builder and log filtering by session, level, target, and time range.
+- `tui.rs`: Terminal TUI log viewer and live tail renderer.
+- `mod.rs`: Clean facade with 100% backward-compatible re-exports for `crate::logs::*` and `openz::logs::*`.
+
+---
+
+### 4.11 Centralized Secret Scrubbing & Token Masking (Resolved in v0.0.150)
+
+**Files:** [`src/core/secrets.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/secrets.rs), [`src/cli/doctor.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/doctor.rs), [`src/logs/subscriber.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/subscriber.rs)
+
+**Status:** Consolidated token regex pattern matching and string redaction into `src/core/secrets.rs`. Standardized scrubbing covers Telegram bot tokens, OpenAI `sk-...` keys, Anthropic/API tokens, and partial secret patterns. Both `doctor` diagnostics and tracing logging subscribers now consume unified redaction logic, eliminating regex drift and duplicated masking routines.
+
+---
+
+### 4.12 Cross-Platform Shell Quoting & Persistence Hardening (Resolved in v0.0.150)
+
+**Files:** [`src/core/process.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/process.rs), [`src/tools/shell.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shell.rs), [`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs), [`src/providers/model_prefs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/model_prefs.rs)
+
+**Status:** Added `quote_shell_arg` in `src/core/process.rs` providing Windows `cmd.exe` double-quote escaping (`""`) and Unix POSIX `sh` single-quote escaping (`'\''`). Replaced ad-hoc escaping in `src/tools/shell.rs` and `src/tools/filesystem.rs` to fix Windows command-line quoting bugs. Hardened `save_model_prefs_at` with explicit `sync_all` and automatic `.tmp` file cleanup upon write or rename failure.
+
+---
+
+### 4.13 Native Tool Subsystem Taxonomy Documentation (Resolved in v0.0.150)
+
+**Files:** [`src/tools/README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/README.md), [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs)
+
+**Status:** Formalized architectural documentation for the native tool subsystem in `src/tools/README.md`, detailing core domains, execution safety, registration requirements, and lifecycle contracts. Added automated category integrity tests in `src/cli/builder.rs` preserving the 128 registered native tools invariant.
 
 ---
 
@@ -325,5 +362,5 @@ No use of `proptest` or `quickcheck` for:
 | **P1** | 1.2-1.5 Match bloat, unwraps, monolith, provider config | ~500 lines across 5 files | Runtime panics, new provider friction |
 | **P2** | 2.1-2.6 Stale errors, locking, notifications, router caching, API key diagnostics, config drift | ~600 lines across 8 files | User confusion, silent failures |
 | **P3** | 3.1-3.5 Naming, activity I/O, HTTP timeouts, select bias, cleanup | ~200 lines | Tech debt, marginal reliability |
-| **Enhancements** | 4.1-4.9 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling | — | Feature gap |
+| **Enhancements** | 4.1-4.13 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy | — | Feature gap |
 | **Testing** | 5.1, 5.3 Integration tests and property tests | — | Coverage gap |
