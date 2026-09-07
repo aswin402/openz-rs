@@ -322,6 +322,24 @@ struct WebFetchTool;
 
 ---
 
+### 4.14 God-File Modularization (Resolved in v0.0.151)
+
+**Files:** [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs), [`src/agent/agent_loop/run/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/tests.rs), [`src/channels/websocket/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/mod.rs), [`src/channels/websocket/socket.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/socket.rs), [`src/channels/websocket/handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/handlers.rs)
+
+**Status:** Decomposed large monolithic files into clean domain components:
+- Extracted ~500 lines of embedded unit tests from `src/agent/agent_loop/run/mod.rs` into `src/agent/agent_loop/run/tests.rs`, reducing `mod.rs` from 1,662 lines to ~1,170 lines.
+- Decomposed `src/channels/websocket/mod.rs` from 1,204 lines down to ~380 lines (~70% reduction) by extracting frame processing into `socket.rs` and REST routes into `handlers.rs`.
+
+---
+
+### 4.15 Unified Self-Healing Reflection Engine (Resolved in v0.0.151)
+
+**Files:** [`src/core/heal.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/heal.rs), [`src/tools/compiler_auto_heal.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/compiler_auto_heal.rs), [`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs)
+
+**Status:** Unified duplicate reflection and compile-and-heal loops into `src/core/heal.rs`. Provides centralized validation against shell injection via `validate_compile_command`, robust markdown code fence stripping (`strip_code_fence`), safe `FileBackupGuard` with rollback-on-drop, `GitSnapshot` worktree preservation, and canonical reflection loop runners (`run_compiler_auto_heal` and `run_transactional_heal_edit`). Both `CompilerAutoHealTool` and `ZenflowEditTool` now delegate to this shared engine.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)

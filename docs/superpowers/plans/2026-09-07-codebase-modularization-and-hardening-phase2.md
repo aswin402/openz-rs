@@ -75,9 +75,9 @@
 - Modify: [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md)
 - Modify: [`recommendedfix.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/recommendedfix.md)
 
-- [ ] **Step 1:** Verify the 260 native tools invariant: `cargo test -p openz --lib test_native_tool_registration_names -j 2`.
-- [ ] **Step 2:** Bump version to `0.0.151` in `Cargo.toml`, `onpkg.json`, and `README.md`.
-- [ ] **Step 3:** Add release notes for `v0.0.151` in `CHANGELOG.md` and update `recommendedfix.md`.
-- [ ] **Step 4:** Run `cargo test -p openz --lib version_sync_tests -j 2`.
-- [ ] **Step 5:** Run `cargo clippy -p openz --lib -j 2`.
-- [ ] **Step 6:** Commit release bump: `git commit -am "chore(release): bump openz to v0.0.151 with god-file modularization and unified reflection loop"`.
+- [x] **Step 1:** Verify the 260 native tools invariant: `cargo test -p openz --lib test_native_tool_registration_names -j 2`.
+- [x] **Step 2:** Bump version to `0.0.151` in `Cargo.toml`, `onpkg.json`, and `README.md`.
+- [x] **Step 3:** Add release notes for `v0.0.151` in `CHANGELOG.md` and update `recommendedfix.md`.
+- [x] **Step 4:** Run `cargo test -p openz --lib version_sync_tests -j 2`.
+- [x] **Step 5:** Run `cargo clippy -p openz --lib -j 2`.
+- [x] **Step 6:** Commit release bump: `git commit -am "chore(release): bump openz to v0.0.151 with god-file modularization and unified reflection loop"`.

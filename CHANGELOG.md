@@ -1,4 +1,16 @@
-### v0.0.150 (Latest Release)
+### v0.0.151 (Latest Release)
+- **God-File Modularization (`run/mod.rs` & `websocket/mod.rs`)**:
+  - Decomposed [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs) by extracting ~500 lines of embedded unit tests into a dedicated submodule [`src/agent/agent_loop/run/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/tests.rs).
+  - Decomposed [`src/channels/websocket/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/mod.rs) (slashed from 1,204 lines down to ~380 lines) by extracting WebSocket connection frame handling into [`src/channels/websocket/socket.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/socket.rs) and HTTP REST endpoints (`openai_chat_completions`, `trigger_sop_handler`, `resume_sop_handler`, and `hono_log_middleware`) into [`src/channels/websocket/handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/handlers.rs).
+- **Unified Compiler Auto-Healing Reflection Engine**:
+  - Created [`src/core/heal.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/heal.rs) centralizing compile-check command validation, markdown code fence extraction, RAII pre-edit backups (`FileBackupGuard`), git snapshots (`GitSnapshot`), and transactional reflection loops.
+  - Refactored both [`CompilerAutoHealTool`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/compiler_auto_heal.rs) and [`ZenflowEditTool`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs) to delegate to `crate::core::heal`, eliminating ~150 lines of duplicate compilation, LLM prompting, and rollback logic.
+- **WebSocket Event Isolation Hardening**:
+  - Hardened chat-scoped client filtering in [`src/channels/websocket/events.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/events.rs) so unassociated senders no longer leak into targeted chat event broadcasts.
+  - Hardened unit tests in [`src/channels/websocket/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/tests.rs) against parallel broadcast noise.
+- **Verification**: Maintained zero clippy/compiler warnings and verified the 260 registered native tools invariant.
+
+### v0.0.150
 - **Modularized Logging Architecture**: Decomposed the 1,636-line `src/logs.rs` god-file into `src/logs/` submodules (`storage.rs`, `subscriber.rs`, `query.rs`, `tui.rs`, `mod.rs`) while strictly maintaining 100% backward compatibility for all callers.
 - **Centralized Secret Scrubbing**: Consolidated token regex pattern matching (Telegram, OpenAI `sk-...`, partial tokens) and string redaction into [`src/core/secrets.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/secrets.rs), eliminating duplication in `doctor` and logging.
 - **Cross-Platform Shell Quoting**: Introduced `quote_shell_arg` in [`src/core/process.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/process.rs) with proper Windows double-quote escaping and Unix single-quote escaping, resolving Windows git-add quoting failures.
