@@ -141,7 +141,7 @@ pub fn get_connection() -> Result<Connection> {
     }
 
     let mut conn = Connection::open(&path)?;
-    if let Err(err) = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-2000; PRAGMA mmap_size=0; PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000;") {
+    if let Err(err) = crate::core::sqlite::apply_standard_pragmas(&conn) {
         tracing::warn!(
             database = %path.display(),
             error = %err,
@@ -150,7 +150,7 @@ pub fn get_connection() -> Result<Connection> {
         drop(conn);
         quarantine_malformed_memory_db(&path);
         conn = Connection::open(&path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-2000; PRAGMA mmap_size=0; PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000;")?;
+        crate::core::sqlite::apply_standard_pragmas(&conn)?;
     }
     let integrity = conn.query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0));
     let integrity_failure = match integrity {
@@ -167,7 +167,7 @@ pub fn get_connection() -> Result<Connection> {
         drop(conn);
         quarantine_malformed_memory_db(&path);
         conn = Connection::open(&path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-2000; PRAGMA mmap_size=0; PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000;")?;
+        crate::core::sqlite::apply_standard_pragmas(&conn)?;
     }
 
     create_skills_schema(&conn)?;

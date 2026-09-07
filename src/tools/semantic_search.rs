@@ -62,7 +62,7 @@ fn get_db_conn() -> Result<rusqlite::Connection> {
         let _ = fs::create_dir_all(parent);
     }
     let conn = rusqlite::Connection::open(&db_path)?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-2000; PRAGMA mmap_size=0; PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000; PRAGMA foreign_keys=ON;")?;
+    crate::core::sqlite::apply_standard_pragmas_with_extra(&conn, "PRAGMA foreign_keys=ON;")?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS file_cache (
             file_path TEXT PRIMARY KEY,

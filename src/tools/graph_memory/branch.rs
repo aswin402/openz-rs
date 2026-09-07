@@ -81,10 +81,7 @@ impl Tool for CreateDatabaseBranchTool {
 
         // Reset the static DB connection to point to branch file
         let branch_conn = Connection::open(&dst)?;
-        branch_conn.execute_batch(&format!(
-            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-2000; PRAGMA mmap_size=0; PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000; {}",
-            SCHEMA_DDL
-        ))?;
+        crate::core::sqlite::apply_standard_pragmas_with_extra(&branch_conn, SCHEMA_DDL)?;
         *db_guard = branch_conn;
 
         *active = Some(branch_id.to_string());
@@ -143,7 +140,7 @@ impl Tool for CommitDatabaseBranchTool {
 
         // Restore connection to updated main
         let main_conn = Connection::open(&main_path)?;
-        main_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-2000; PRAGMA mmap_size=0; PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000;")?;
+        crate::core::sqlite::apply_standard_pragmas(&main_conn)?;
         *db_guard = main_conn;
 
         *active = None;
@@ -188,7 +185,7 @@ impl Tool for RollbackDatabaseBranchTool {
         // Restore connection back to main database
         let main_path = get_db_path();
         let main_conn = Connection::open(&main_path)?;
-        main_conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-2000; PRAGMA mmap_size=0; PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000;")?;
+        crate::core::sqlite::apply_standard_pragmas(&main_conn)?;
         *db_guard = main_conn;
 
         // Remove branch file

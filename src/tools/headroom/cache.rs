@@ -38,9 +38,15 @@ pub fn get_cache_connection() -> Result<std::sync::MutexGuard<'static, Connectio
             e
         )
     })?;
+    crate::core::sqlite::apply_standard_pragmas(&conn).map_err(|e| {
+        anyhow!(
+            "failed to configure headroom cache database '{}': {}",
+            path.display(),
+            e
+        )
+    })?;
     conn.execute_batch(
-        "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA cache_size=-2000; PRAGMA mmap_size=0; PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000;
-         CREATE TABLE IF NOT EXISTS cache_entries (
+        "CREATE TABLE IF NOT EXISTS cache_entries (
              ccr_id TEXT PRIMARY KEY,
              content TEXT NOT NULL,
              session TEXT,
