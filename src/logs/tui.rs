@@ -1,10 +1,13 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
+
+use super::query::{detect_active_session, session_matches, LogLevelFilter, SessionFilter};
+use super::storage::default_db_path;
 
 // ── AURA palette (raw ANSI — no crossterm needed) ──────────────────────────
 const RESET: &str = "\x1b[0m";
@@ -20,276 +23,6 @@ const SLATE: &str = "\x1b[38;2;107;122;153m"; // AURA_SLATE   — timestamp / di
 const WHITE: &str = "\x1b[38;2;220;220;220m"; // LIGHT_WHITE  — message body
 const ORANGE: &str = "\x1b[38;2;255;133;75m"; // warm accent  — DEBUG
 const CYAN: &str = "\x1b[38;2;137;221;255m"; // AURA_CYAN    — session tag
-
-use std::sync::{Arc, OnceLock};
-
-pub struct LogEntry {
-    pub timestamp: String,
-    pub level: String,
-    pub target: String,
-    pub message: String,
-    pub session: Option<String>,
-}
-
-pub static LOG_TX: OnceLock<tokio::sync::mpsc::UnboundedSender<LogEntry>> = OnceLock::new();
-
-static LOG_SECRETS: OnceLock<Arc<Vec<String>>> = OnceLock::new();
-
-use crate::core::secrets::{collect_secret_values, is_secret_key};
-
-/// Load configured and environment-backed credentials into the log scrubber.
-/// Values are retained only in memory and are never emitted to logs.
-pub fn initialize_secret_redaction(config: &serde_json::Value) -> Arc<Vec<String>> {
-    let mut secrets = Vec::new();
-    collect_secret_values(config, &mut secrets);
-    for (key, value) in std::env::vars() {
-        if is_secret_key(&key) && value.trim().len() >= 8 {
-            secrets.push(value.trim().to_string());
-        }
-    }
-    secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
-    secrets.dedup();
-    let shared = Arc::new(secrets);
-    let _ = LOG_SECRETS.set(shared.clone());
-    shared
-}
-
-fn redact_text_with_secrets(text: &str, secrets: &[String]) -> String {
-    secrets.iter().fold(text.to_string(), |result, secret| {
-        result.replace(secret, "[REDACTED_SECRET]")
-    })
-}
-
-pub fn redact_sensitive_text(text: &str) -> String {
-    LOG_SECRETS
-        .get()
-        .map(|secrets| redact_text_with_secrets(text, secrets))
-        .unwrap_or_else(|| text.to_string())
-}
-
-pub struct SecretScrubWriter<W> {
-    inner: W,
-    secrets: Arc<Vec<String>>,
-}
-
-impl<W> SecretScrubWriter<W> {
-    pub fn new(inner: W, secrets: Arc<Vec<String>>) -> Self {
-        Self { inner, secrets }
-    }
-}
-
-impl<W: std::io::Write> std::io::Write for SecretScrubWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let text = String::from_utf8_lossy(buf);
-        let redacted = redact_text_with_secrets(&text, &self.secrets);
-        self.inner.write_all(redacted.as_bytes())?;
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.flush()
-    }
-}
-
-pub fn default_db_path() -> PathBuf {
-    crate::config::config_dir().join("logs.db")
-}
-
-pub async fn init_db_writer(mut rx: tokio::sync::mpsc::UnboundedReceiver<LogEntry>) {
-    let db_path = default_db_path();
-    if let Some(parent) = db_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    tokio::task::spawn_blocking(move || {
-        let conn = match rusqlite::Connection::open(&db_path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Failed to open logs.db: {}", e);
-                return;
-            }
-        };
-
-        if let Err(e) = conn.execute(
-            "CREATE TABLE IF NOT EXISTS logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                level TEXT NOT NULL,
-                target TEXT NOT NULL,
-                message TEXT NOT NULL,
-                session TEXT
-            )",
-            [],
-        ) {
-            eprintln!("Failed to create logs table: {}", e);
-            return;
-        }
-
-        let _ = conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_logs_session ON logs (session)",
-            [],
-        );
-        let _ = conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs (timestamp)",
-            [],
-        );
-
-        // Purge logs older than 7 days on startup
-        let cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
-        let _ = conn.execute("DELETE FROM logs WHERE timestamp < ?1", [&cutoff]);
-
-        while let Some(entry) = rx.blocking_recv() {
-            let _ = conn.execute(
-                "INSERT INTO logs (timestamp, level, target, message, session) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![
-                    entry.timestamp,
-                    entry.level,
-                    entry.target,
-                    entry.message,
-                    entry.session,
-                ],
-            );
-        }
-    });
-}
-
-pub struct SqliteLogLayer;
-
-impl<S> tracing_subscriber::Layer<S> for SqliteLogLayer
-where
-    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
-{
-    fn on_event(
-        &self,
-        event: &tracing::Event<'_>,
-        _ctx: tracing_subscriber::layer::Context<'_, S>,
-    ) {
-        let metadata = event.metadata();
-        let level = metadata.level().to_string();
-        let target = metadata.target().to_string();
-
-        let mut visitor = EventFieldVisitor {
-            message: String::new(),
-            session: None,
-        };
-        event.record(&mut visitor);
-
-        let session = visitor
-            .session
-            .or_else(crate::agent::style::spinner::get_current_session_key);
-        let timestamp = chrono::Utc::now().to_rfc3339();
-
-        if let Some(tx) = LOG_TX.get() {
-            let _ = tx.send(LogEntry {
-                timestamp,
-                level,
-                target,
-                message: redact_sensitive_text(&visitor.message),
-                session: session.map(|value| redact_sensitive_text(&value)),
-            });
-        }
-    }
-}
-
-struct EventFieldVisitor {
-    message: String,
-    session: Option<String>,
-}
-
-impl tracing::field::Visit for EventFieldVisitor {
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        let val_str = format!("{:?}", value);
-        let cleaned = if val_str.starts_with('"') && val_str.ends_with('"') && val_str.len() >= 2 {
-            val_str[1..val_str.len() - 1].to_string()
-        } else {
-            val_str
-        };
-        if field.name() == "message" {
-            self.message = cleaned;
-        } else if field.name() == "session" {
-            self.session = Some(cleaned);
-        }
-    }
-
-    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        if field.name() == "message" {
-            self.message = value.to_string();
-        } else if field.name() == "session" {
-            self.session = Some(value.to_string());
-        }
-    }
-}
-
-/// Resolve the default log file path: ~/.openz/openz.log (or OPENZ_CONFIG_DIR/openz.log)
-pub fn default_log_path() -> PathBuf {
-    crate::config::config_dir().join("openz.log")
-}
-
-/// Which sessions to show.
-#[derive(Clone, Debug, PartialEq)]
-pub enum SessionFilter {
-    /// Show all sessions (no filter).
-    All,
-    /// Show only lines that match this session key (prefix match).
-    Only(String),
-    /// Automatically follow the most recently active session
-    Auto(Option<String>),
-}
-
-impl SessionFilter {
-    /// Build from an optional CLI `--session` string.
-    pub fn from_opt(s: Option<&str>) -> Self {
-        match s {
-            None => SessionFilter::All,
-            Some("auto") => SessionFilter::Auto(detect_active_session()),
-            Some("") => SessionFilter::All,
-            Some(k) => SessionFilter::Only(k.to_string()),
-        }
-    }
-
-    /// Return a short label for the header banner.
-    pub fn label(&self) -> String {
-        match self {
-            SessionFilter::All => "all sessions".to_string(),
-            SessionFilter::Only(k) => format!("session: {}", k),
-            SessionFilter::Auto(None) => "session: auto (detecting...)".to_string(),
-            SessionFilter::Auto(Some(k)) => format!("session: auto ({})", k),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LogLevelFilter {
-    Trace,
-    Debug,
-    Info,
-    Warn,
-    Error,
-}
-
-impl LogLevelFilter {
-    pub fn from_opt(s: Option<&str>) -> Self {
-        match s.map(|x| x.to_uppercase()).as_deref() {
-            Some("ERROR") => LogLevelFilter::Error,
-            Some("WARN") => LogLevelFilter::Warn,
-            Some("INFO") => LogLevelFilter::Info,
-            Some("DEBUG") => LogLevelFilter::Debug,
-            Some("TRACE") => LogLevelFilter::Trace,
-            _ => LogLevelFilter::Trace,
-        }
-    }
-
-    pub fn matches(&self, level_str: &str) -> bool {
-        let line_level = match level_str.to_uppercase().as_str() {
-            "ERROR" => LogLevelFilter::Error,
-            "WARN" => LogLevelFilter::Warn,
-            "INFO" => LogLevelFilter::Info,
-            "DEBUG" => LogLevelFilter::Debug,
-            "TRACE" => LogLevelFilter::Trace,
-            _ => return true,
-        };
-        line_level >= *self
-    }
-}
 
 // ── Line parser ─────────────────────────────────────────────────────────────
 
@@ -385,32 +118,6 @@ fn extract_session_field(raw: &str) -> (&str, Option<String>) {
         ("", Some(value))
     } else {
         (raw, None)
-    }
-}
-
-/// Returns true if any of the line's sessions match the filter.
-fn session_matches(line_sessions: &[String], filter: &SessionFilter) -> bool {
-    match filter {
-        SessionFilter::All => true,
-        SessionFilter::Only(wanted) => {
-            if line_sessions.is_empty() {
-                // Lines without a session tag predate the feature — always show them
-                // so old history is not silently dropped.
-                true
-            } else {
-                line_sessions.iter().any(|s| s.starts_with(wanted.as_str()))
-            }
-        }
-        SessionFilter::Auto(opt_wanted) => match opt_wanted {
-            None => true,
-            Some(wanted) => {
-                if line_sessions.is_empty() {
-                    true
-                } else {
-                    line_sessions.iter().any(|s| s.starts_with(wanted.as_str()))
-                }
-            }
-        },
     }
 }
 
@@ -876,7 +583,7 @@ fn print_line_filtered(
 // ── Header banner ───────────────────────────────────────────────────────────
 
 fn print_header(
-    path: &std::path::Path,
+    path: &Path,
     tail: usize,
     filter: &SessionFilter,
     level_filter: &LogLevelFilter,
@@ -1133,26 +840,6 @@ async fn follow(
     }
 }
 
-// ── Auto-detect the most recently active session ─────────────────────────────
-
-/// Read activity.json and return the session_id of the most recently active
-/// agent session (excluding idle ones that have been inactive > 60 s).
-pub fn detect_active_session() -> Option<String> {
-    let activity = crate::agent::activity::get_activity()?;
-    // If the agent is not idle and the activity timestamp is recent (< 60s), use it.
-    if activity.status != "Idle" {
-        return Some(activity.session_id);
-    }
-    // Even idle: if updated in last 60 s, still return it as the "active" one.
-    if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&activity.timestamp) {
-        let age = chrono::Utc::now().signed_duration_since(ts.with_timezone(&chrono::Utc));
-        if age.num_seconds() < 60 {
-            return Some(activity.session_id);
-        }
-    }
-    None
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn print_row(
     timestamp: &str,
@@ -1268,8 +955,8 @@ pub fn print_row(
     }
 }
 
-fn print_tail_sqlite(
-    db_path: &std::path::Path,
+pub(crate) fn print_tail_sqlite(
+    db_path: &Path,
     tail: usize,
     filter: &SessionFilter,
     level_filter: &LogLevelFilter,
@@ -1326,7 +1013,7 @@ fn print_tail_sqlite(
 }
 
 async fn follow_sqlite(
-    db_path: &std::path::Path,
+    db_path: &Path,
     mut last_id: i64,
     mut filter: SessionFilter,
     level_filter: LogLevelFilter,
@@ -1476,110 +1163,9 @@ pub fn print_session_recent_logs(
     Ok(())
 }
 
-pub struct RunningSession {
-    pub session_id: String,
-    pub session_type: String,
-    pub last_log_message: String,
-    pub last_seen: String,
-}
-
-pub fn get_running_sessions() -> Result<Vec<RunningSession>> {
-    let db_path = default_db_path();
-    let conn = rusqlite::Connection::open(&db_path)?;
-
-    let mut stmt = conn.prepare(
-        "SELECT session, MAX(timestamp) as last_seen, COUNT(*) as log_count 
-         FROM logs 
-         WHERE session IS NOT NULL 
-         GROUP BY session 
-         ORDER BY last_seen DESC 
-         LIMIT 15",
-    )?;
-
-    struct SessionMeta {
-        session_id: String,
-        last_seen: String,
-    }
-
-    let rows_iter = stmt.query_map([], |row| {
-        Ok(SessionMeta {
-            session_id: row.get(0)?,
-            last_seen: row.get(1)?,
-        })
-    })?;
-
-    let mut sessions = Vec::new();
-    for meta in rows_iter.flatten() {
-        let mut type_stmt = conn.prepare(
-            "SELECT target, message FROM logs WHERE session = ?1 ORDER BY id DESC LIMIT 5",
-        )?;
-
-        let mut target_type = "Agent".to_string();
-        let mut last_msg = String::new();
-
-        if let Ok(mut type_rows) = type_stmt.query([&meta.session_id]) {
-            while let Ok(Some(r)) = type_rows.next() {
-                let target: String = r.get(0)?;
-                let message: String = r.get(1)?;
-
-                if last_msg.is_empty() {
-                    last_msg = message.clone();
-                }
-
-                if target.contains("websocket") || target.contains("gateway") {
-                    target_type = "Gateway".to_string();
-                } else if target.contains("telegram") {
-                    target_type = "Telegram Bot".to_string();
-                } else if target.contains("discord") {
-                    target_type = "Discord Bot".to_string();
-                } else if target.contains("whatsapp") {
-                    target_type = "WhatsApp Bot".to_string();
-                } else if target.contains("email") {
-                    target_type = "Email Handler".to_string();
-                } else if target.contains("cli") {
-                    target_type = "CLI Agent".to_string();
-                }
-            }
-        }
-
-        sessions.push(RunningSession {
-            session_id: meta.session_id,
-            session_type: target_type,
-            last_log_message: last_msg,
-            last_seen: meta.last_seen,
-        });
-    }
-
-    Ok(sessions)
-}
-
-pub fn get_latest_session_id() -> Option<String> {
-    let db_path = default_db_path();
-    let conn = rusqlite::Connection::open(&db_path).ok()?;
-    let mut stmt = conn
-        .prepare("SELECT session FROM logs WHERE session IS NOT NULL ORDER BY id DESC LIMIT 1")
-        .ok()?;
-    stmt.query_row([], |row| row.get(0)).ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn secret_scrubber_masks_credentials_inside_log_text() {
-        let secrets = vec![
-            "bot123:token-value".to_string(),
-            "provider-secret".to_string(),
-        ];
-        let redacted = redact_text_with_secrets(
-            "curl https://api.telegram.org/bot123:token-value/sendMessage key=provider-secret",
-            &secrets,
-        );
-        assert!(!redacted.contains("bot123:token-value"));
-        assert!(!redacted.contains("provider-secret"));
-        assert_eq!(redacted.matches("[REDACTED_SECRET]").count(), 2);
-    }
 
     #[tokio::test]
     async fn test_sqlite_logging_workflow() {
