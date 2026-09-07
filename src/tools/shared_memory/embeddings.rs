@@ -84,6 +84,23 @@ where
     f(model)
 }
 
+pub(crate) fn resolve_cohere_embed_url(cohere_config: &crate::config::schema::ProviderConfig) -> String {
+    if let Some(ref base) = cohere_config.api_base {
+        let trimmed = base.trim();
+        if !trimmed.is_empty() {
+            let base_clean = trimmed.trim_end_matches('/');
+            if base_clean.ends_with("/embed") {
+                return base_clean.to_string();
+            } else if base_clean.ends_with("/v1") {
+                return format!("{base_clean}/embed");
+            } else {
+                return format!("{base_clean}/v1/embed");
+            }
+        }
+    }
+    "https://api.cohere.com/v1/embed".to_string()
+}
+
 async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
     let config = crate::config::loader::load_config()?;
     let preferred = config
@@ -159,7 +176,7 @@ async fn get_cloud_embedding(text: &str, is_query: bool) -> Result<Vec<f32>> {
                         .or_else(|| cohere_config.extra.get("apiKey").and_then(|v| v.as_str()));
                     if let Some(key) = key_opt {
                         if !key.trim().is_empty() {
-                            let url = "https://api.cohere.com/v1/embed";
+                            let url = resolve_cohere_embed_url(cohere_config);
                             let client = get_shared_client();
                             let input_type = if is_query {
                                 "search_query"
@@ -396,7 +413,7 @@ pub async fn get_cloud_embeddings_batch(
                         .or_else(|| cohere_config.extra.get("apiKey").and_then(|v| v.as_str()));
                     if let Some(key) = key_opt {
                         if !key.trim().is_empty() {
-                            let url = "https://api.cohere.com/v1/embed";
+                            let url = resolve_cohere_embed_url(cohere_config);
                             let client = get_shared_client();
                             let input_type = if is_query {
                                 "search_query"
@@ -594,5 +611,50 @@ pub fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
         0.0
     } else {
         dot_product / (norm_a.sqrt() * norm_b.sqrt())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::schema::ProviderConfig;
+
+    #[test]
+    fn test_resolve_cohere_embed_url() {
+        let mut config = ProviderConfig::default();
+        assert_eq!(
+            resolve_cohere_embed_url(&config),
+            "https://api.cohere.com/v1/embed"
+        );
+
+        config.api_base = Some("".to_string());
+        assert_eq!(
+            resolve_cohere_embed_url(&config),
+            "https://api.cohere.com/v1/embed"
+        );
+
+        config.api_base = Some("https://proxy.example.com".to_string());
+        assert_eq!(
+            resolve_cohere_embed_url(&config),
+            "https://proxy.example.com/v1/embed"
+        );
+
+        config.api_base = Some("https://proxy.example.com/".to_string());
+        assert_eq!(
+            resolve_cohere_embed_url(&config),
+            "https://proxy.example.com/v1/embed"
+        );
+
+        config.api_base = Some("https://proxy.example.com/v1".to_string());
+        assert_eq!(
+            resolve_cohere_embed_url(&config),
+            "https://proxy.example.com/v1/embed"
+        );
+
+        config.api_base = Some("https://proxy.example.com/v1/embed".to_string());
+        assert_eq!(
+            resolve_cohere_embed_url(&config),
+            "https://proxy.example.com/v1/embed"
+        );
     }
 }

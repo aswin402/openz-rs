@@ -4,6 +4,7 @@ use anyhow::Result;
 use std::collections::HashSet;
 
 pub const MIN_MATCH_SCORE: f64 = 6.0;
+pub const MAX_SOURCE_CONTEXT_CHARS: usize = 3000;
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
     let config = &ctx.config;
@@ -586,7 +587,7 @@ Use these ranked links, repos, docs, paths, or profiles before broad searching. 
             item.aliases.join(", "),
             item.summary
         );
-        if out.chars().count() + line.chars().count() > 3000 {
+        if out.chars().count() + line.chars().count() > MAX_SOURCE_CONTEXT_CHARS {
             break;
         }
         out.push_str(&line);
