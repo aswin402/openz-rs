@@ -244,8 +244,14 @@ impl WsGateway {
             _config_watcher: Arc::new(config_watcher),
         };
         // Keep REST CORS aligned with the WebSocket origin policy and local dev ports.
+        let has_wildcard = self.config.cors_origins.iter().any(|o| o == "*");
+        let allow_origin = if has_wildcard {
+            AllowOrigin::any()
+        } else {
+            AllowOrigin::list(websocket_cors_origins(&self.config))
+        };
         let cors = CorsLayer::new()
-            .allow_origin(AllowOrigin::list(websocket_cors_origins(&self.config)))
+            .allow_origin(allow_origin)
             .allow_methods([
                 axum::http::Method::GET,
                 axum::http::Method::POST,

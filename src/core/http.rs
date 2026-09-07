@@ -17,7 +17,10 @@ pub fn custom_http_client(connect_timeout: Duration, request_timeout: Duration) 
         .connect_timeout(connect_timeout)
         .timeout(request_timeout)
         .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+        .unwrap_or_else(|err| {
+            tracing::warn!(error = ?err, "failed to build custom reqwest client with rustls, falling back to default client");
+            reqwest::Client::new()
+        })
 }
 
 #[cfg(test)]
