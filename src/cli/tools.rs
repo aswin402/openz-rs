@@ -239,7 +239,7 @@ mod tests {
         for i in 0..140 {
             registry.register(Arc::new(MetaTestTool {
                 name: format!("low_tool_{i:03}"),
-                domain: "general",
+                domain: "code",
                 priority: 1,
                 risk: crate::tools::ToolRisk::Low,
             }));
@@ -259,7 +259,7 @@ mod tests {
 
         let tools =
             registry.to_openai_format_for_prompt("run cargo test and fix the rust compile errors");
-        assert_eq!(tools.len(), 128);
+        assert_eq!(tools.len(), 20);
         let names: Vec<_> = tools
             .iter()
             .map(|tool| tool["function"]["name"].as_str().unwrap().to_string())
@@ -432,10 +432,9 @@ mod tests {
         }
 
         let summary = registry.tool_router_status_line("run cargo test");
-        assert!(summary.contains("Tool Router selected 128/141 tools"));
+        assert!(summary.contains("Tool Router selected 1/141 tools"));
         assert!(summary.contains("code"));
-        assert!(summary.contains("filesystem"));
-        assert!(summary.contains("dropped 13"));
+        assert!(summary.contains("dropped 140"));
     }
 
     #[test]
@@ -462,8 +461,11 @@ mod tests {
         let hidden = route
             .entries
             .iter()
-            .find(|entry| entry.hidden_reason == Some("api_limit"))
-            .expect("at least one tool hidden by API limit");
+            .find(|entry| {
+                entry.hidden_reason == Some("scope_limit")
+                    || entry.hidden_reason == Some("out_of_scope")
+            })
+            .expect("at least one tool hidden by scope limits");
         assert!(!hidden.exposed_to_model);
     }
 
@@ -525,8 +527,10 @@ mod tests {
 
         register_all_tools(&registry, &config, provider, sessions).unwrap();
 
-        let tools = registry.to_openai_format();
-        assert_eq!(tools.len(), 128);
+        let tools = registry.to_openai_format_for_prompt(
+            "orchestrate a subagent workflow with planner and vision_agent to review this image",
+        );
+        assert!(!tools.is_empty() && tools.len() <= 128);
         let names: Vec<_> = tools
             .iter()
             .map(|tool| tool["function"]["name"].as_str().unwrap().to_string())

@@ -32,15 +32,6 @@ pub fn classify_turn_intent(user_content: &str) -> IntentDecision {
     let lower = user_content.to_lowercase();
     let mut reasons = Vec::new();
 
-    if has_live_research_intent(user_content) && !is_local_repo_query(&lower) {
-        reasons.push("live_research_intent");
-        return IntentDecision {
-            intent: TurnIntent::ExternalResearch,
-            knowledge_policy: KnowledgePolicy::RequireLiveResearch,
-            reasons,
-        };
-    }
-
     if is_local_repo_query(&lower) {
         reasons.push("local_repo_query");
         return IntentDecision {
@@ -64,6 +55,15 @@ pub fn classify_turn_intent(user_content: &str) -> IntentDecision {
         return IntentDecision {
             intent: TurnIntent::CronManagement,
             knowledge_policy: KnowledgePolicy::UseLocalContext,
+            reasons,
+        };
+    }
+
+    if has_live_research_intent(user_content) {
+        reasons.push("live_research_intent");
+        return IntentDecision {
+            intent: TurnIntent::ExternalResearch,
+            knowledge_policy: KnowledgePolicy::RequireLiveResearch,
             reasons,
         };
     }
