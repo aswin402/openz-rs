@@ -420,5 +420,194 @@ mod tests {
             5 + 21 + 12 + 32 + 10 + 1,
             "Total tool count mismatch"
         );
+
+        // Category invariant & orphan guard: ensure every registered tool belongs to a known category
+        let all_categorized: std::collections::HashSet<&str> = seq_names
+            .iter()
+            .chain(headroom_names.iter())
+            .chain(graph_mem_names.iter())
+            .chain(mem_extra_names.iter())
+            .chain(shared_names.iter())
+            .copied()
+            .chain(std::iter::once("orchestrate_workflow"))
+            .collect();
+
+        let orphans: Vec<&str> = names
+            .iter()
+            .map(|s| s.as_str())
+            .filter(|name| !all_categorized.contains(name))
+            .collect();
+        assert!(
+            orphans.is_empty(),
+            "Orphan tools found without category assignment: {:?}",
+            orphans
+        );
+    }
+
+    #[test]
+    fn test_native_tool_category_invariants() {
+        // Architectural guard ensuring category lists are mutually exclusive,
+        // correctly partition the registered suite, and have non-empty metadata.
+        let seq_names = [
+            "sequentialthinking",
+            "analyze_graph",
+            "export_session",
+            "summarize_reasoning",
+            "reasoning_templates",
+        ];
+        let headroom_names = [
+            "scope_context",
+            "compress_content",
+            "retrieve_original",
+            "ping",
+            "server_info",
+            "count_tokens",
+            "cache_stats",
+            "headroom_stats",
+            "headroom_usage",
+            "clear_cache",
+            "search_cache",
+            "cache_align",
+            "compress_schema",
+            "compress_file",
+            "compress_diff",
+            "export_cache",
+            "import_cache",
+            "compress_url",
+            "run_and_compress",
+            "compress_directory",
+            "summarize_codebase",
+        ];
+        let graph_mem_names = [
+            "create_entities",
+            "create_relations",
+            "add_observations",
+            "delete_entities",
+            "delete_observations",
+            "delete_relations",
+            "read_graph",
+            "search_nodes",
+            "open_nodes",
+            "create_database_branch",
+            "commit_database_branch",
+            "rollback_database_branch",
+        ];
+        let mem_extra_names = [
+            "set_working_memory",
+            "get_working_memory",
+            "evict_expired_working_memory",
+            "promote_working_memory",
+            "log_execution_episode",
+            "log_reflection",
+            "retrieve_episodic_reflections",
+            "record_tool_performance",
+            "query_tool_performance",
+            "store_shared_team_memory",
+            "retrieve_shared_team_memory",
+            "search_text",
+            "hybrid_search",
+            "invalidate_fact",
+            "forget_memory",
+            "query_fact_history",
+            "query_as_of",
+            "smart_store",
+            "extract_and_store_facts",
+            "proactive_recall",
+            "compress_context",
+            "memory_stats",
+            "log_repository_evolution",
+            "query_repository_evolution",
+            "traverse_graph",
+            "find_path",
+            "analyze_graph_communities",
+            "detect_and_resolve_conflicts",
+            "compact_memories",
+            "index_codebase",
+            "query_code_graph",
+            "analyze_code_impact",
+        ];
+        let shared_names = [
+            "store_memory",
+            "recall_memory",
+            "clear_memory",
+            "delete_memory",
+            "update_memory",
+            "archive_research",
+            "search_research",
+            "knowledge_source",
+            "research_brief",
+            "workflow_memory",
+        ];
+        let orchestrator_names = ["orchestrate_workflow"];
+
+        // 1. Ensure domain categories are mutually exclusive
+        let mut seen = std::collections::HashSet::new();
+        for category in &[
+            &seq_names[..],
+            &headroom_names[..],
+            &graph_mem_names[..],
+            &mem_extra_names[..],
+            &shared_names[..],
+            &orchestrator_names[..],
+        ] {
+            for name in *category {
+                assert!(
+                    seen.insert(*name),
+                    "Category overlap detected for tool '{name}': tools must belong to exactly one architectural domain"
+                );
+            }
+        }
+
+        // 2. Ensure each category has the exact expected cardinality
+        assert_eq!(seq_names.len(), 5);
+        assert_eq!(headroom_names.len(), 21);
+        assert_eq!(graph_mem_names.len(), 12);
+        assert_eq!(mem_extra_names.len(), 32);
+        assert_eq!(shared_names.len(), 10);
+        assert_eq!(orchestrator_names.len(), 1);
+        assert_eq!(seen.len(), 5 + 21 + 12 + 32 + 10 + 1);
+    }
+
+    #[tokio::test]
+    async fn test_full_native_tool_registration_integrity() {
+        let config = Config::default();
+        let provider = std::sync::Arc::new(crate::providers::mock::MockProvider::new());
+        let sessions = SessionManager::new(std::path::PathBuf::from("/tmp/openz-builder-test-sessions"));
+        let registry = ToolRegistry::new_with_context(
+            config.clone(),
+            provider.clone(),
+            sessions.clone(),
+        );
+
+        crate::cli::tools::register_all_tools(&registry, &config, provider, sessions)
+            .expect("register_all_tools must succeed");
+
+        let names = registry.tool_names();
+        let unique_names: std::collections::BTreeSet<_> = names.iter().collect();
+        assert_eq!(
+            names.len(),
+            unique_names.len(),
+            "Full registry contains duplicate tool names!"
+        );
+
+        // Every registered tool must have non-empty name, description, presentation name, and domain
+        for (name, desc, meta) in registry.tool_inventory_snapshot() {
+            assert!(!name.trim().is_empty(), "Registered tool has empty name");
+            assert!(!desc.trim().is_empty(), "Tool '{name}' has empty description");
+            assert!(!meta.domain.trim().is_empty(), "Tool '{name}' has empty domain");
+            assert!(
+                !meta.presentation_name.trim().is_empty(),
+                "Tool '{name}' has empty presentation name"
+            );
+        }
+
+        // Drift check on registered tools
+        let drift = registry.static_tool_drift();
+        assert!(
+            drift.is_clean(),
+            "Curated static tool drift detected in full registry: missing_registered={:?}, noncanonical_registered={:?}",
+            drift.missing_registered,
+            drift.noncanonical_registered
+        );
     }
 }
