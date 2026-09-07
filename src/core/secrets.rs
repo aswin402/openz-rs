@@ -135,9 +135,12 @@ pub fn scrub_secret_text(text: &str) -> (String, usize) {
 
 /// Redact occurrences of specific known secret values from a text string.
 pub fn redact_text_with_secrets(text: &str, secrets: &[String]) -> String {
-    secrets.iter().fold(text.to_string(), |result, secret| {
-        result.replace(secret, "[REDACTED_SECRET]")
-    })
+    secrets
+        .iter()
+        .filter(|s| !s.is_empty())
+        .fold(text.to_string(), |result, secret| {
+            result.replace(secret, "[REDACTED_SECRET]")
+        })
 }
 
 /// Collect credentials from both config and environment variables.
@@ -149,7 +152,7 @@ pub fn collect_all_environment_and_config_secrets(config: &serde_json::Value) ->
             secrets.push(value.trim().to_string());
         }
     }
-    secrets.sort_by_key(|v| std::cmp::Reverse(v.len()));
+    secrets.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
     secrets.dedup();
     secrets
 }
@@ -239,5 +242,34 @@ mod tests {
     #[test]
     fn test_secret_patterns_not_empty() {
         assert!(!secret_patterns().is_empty());
+    }
+
+    #[test]
+    fn test_collect_all_environment_and_config_secrets_dedup_interleaved_same_length() {
+        let config = serde_json::json!({
+            "keys": [
+                { "api_key": "secret_bbbbbb" },
+                { "api_key": "secret_aaaaaa" },
+                { "api_key": "secret_bbbbbb" }
+            ]
+        });
+        let secrets = collect_all_environment_and_config_secrets(&config);
+        let b_count = secrets.iter().filter(|s| *s == "secret_bbbbbb").count();
+        assert_eq!(
+            b_count, 1,
+            "identical secrets with same length must be deduplicated even when interleaved"
+        );
+        assert!(secrets.contains(&"secret_aaaaaa".to_string()));
+    }
+
+    #[test]
+    fn test_redact_text_with_secrets_defensive_empty_strings() {
+        let secrets = vec!["".to_string(), "target_secret_123".to_string()];
+        let text = "Text containing target_secret_123 and normal words.";
+        let redacted = redact_text_with_secrets(text, &secrets);
+        assert_eq!(
+            redacted,
+            "Text containing [REDACTED_SECRET] and normal words."
+        );
     }
 }
