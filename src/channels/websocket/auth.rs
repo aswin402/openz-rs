@@ -37,7 +37,10 @@ pub(crate) fn is_allowed_origin(origin: &str, config: &WebSocketChannelConfig) -
 
     origin == configured_http
         || origin == configured_https
-        || config.cors_origins.iter().any(|allowed| allowed == origin)
+        || config
+            .cors_origins
+            .iter()
+            .any(|allowed| allowed == "*" || allowed == origin)
 }
 
 pub(crate) fn websocket_cors_origins(config: &WebSocketChannelConfig) -> Vec<HeaderValue> {
@@ -108,5 +111,10 @@ mod tests {
         assert!(is_allowed_origin("https://custom.app.domain", &config));
         assert!(is_allowed_origin("http://localhost:3000", &config));
         assert!(!is_allowed_origin("https://evil.site.com", &config));
+
+        // Test wildcard support
+        let mut wildcard_config = WebSocketChannelConfig::default();
+        wildcard_config.cors_origins.push("*".to_string());
+        assert!(is_allowed_origin("https://any-domain.example.com", &wildcard_config));
     }
 }
