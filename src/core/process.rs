@@ -32,6 +32,37 @@ pub fn host_tokio_shell_command(cmd: &str) -> tokio::process::Command {
     command
 }
 
+/// Properly quote a shell argument for the host shell.
+/// Uses double-quotes with internal `"` escaped as `""` on Windows `cmd.exe`.
+/// Uses single-quotes with internal `'` escaped as `'\''` on Unix POSIX `sh`.
+pub fn quote_shell_arg(arg: &str) -> String {
+    if cfg!(target_os = "windows") {
+        let mut s = String::with_capacity(arg.len() + 2);
+        s.push('"');
+        for c in arg.chars() {
+            if c == '"' {
+                s.push_str("\"\"");
+            } else {
+                s.push(c);
+            }
+        }
+        s.push('"');
+        s
+    } else {
+        let mut s = String::with_capacity(arg.len() + 2);
+        s.push('\'');
+        for c in arg.chars() {
+            if c == '\'' {
+                s.push_str("'\\''");
+            } else {
+                s.push(c);
+            }
+        }
+        s.push('\'');
+        s
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,5 +85,18 @@ mod tests {
         assert!(output.status.success());
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(stdout.contains("hello_openz_process"));
+    }
+
+    #[test]
+    fn test_quote_shell_arg_handles_spaces_and_quotes() {
+        let arg = "hello world's \"test\"";
+        let quoted = quote_shell_arg(arg);
+        if cfg!(target_os = "windows") {
+            assert!(quoted.starts_with('"') && quoted.ends_with('"'));
+            assert!(quoted.contains("\"\"test\"\""));
+        } else {
+            assert!(quoted.starts_with('\'') && quoted.ends_with('\''));
+            assert!(quoted.contains("'\\''"));
+        }
     }
 }

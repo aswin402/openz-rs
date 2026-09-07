@@ -541,20 +541,7 @@ impl Tool for ZenflowEditTool {
         let original_content = fs::read_to_string(&path).ok();
 
         if in_git {
-            let escaped_path = {
-                let s = path.to_string_lossy();
-                let mut escaped = String::with_capacity(s.len() + 2);
-                escaped.push('\'');
-                for c in s.chars() {
-                    if c == '\'' {
-                        escaped.push_str("'\\''");
-                    } else {
-                        escaped.push(c);
-                    }
-                }
-                escaped.push('\'');
-                escaped
-            };
+            let escaped_path = crate::core::process::quote_shell_arg(&path.to_string_lossy());
             let _ = run_cmd(format!("git add -- {}", escaped_path)).await;
             if let Ok((code, _)) =
                 run_cmd("git commit -m \"Zenflow pre-edit backup\" --no-verify".to_string()).await

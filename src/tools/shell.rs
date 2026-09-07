@@ -589,16 +589,7 @@ fn is_long_running_dev_server(args: &[String]) -> bool {
 }
 
 fn spawn_detached_command(command_line: &str, kind: DetachedCommandKind) -> Result<()> {
-    let mut cmd = if cfg!(target_os = "windows") {
-        let mut c = Command::new("cmd");
-        c.args(["/C", command_line]);
-        c
-    } else {
-        let mut c = Command::new("sh");
-        c.args(["-c", command_line]);
-        c
-    };
-    crate::config::loader::set_command_cwd(&mut cmd);
+    let mut cmd = crate::core::process::host_shell_command(command_line);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

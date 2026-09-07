@@ -44,8 +44,25 @@ pub fn save_model_prefs_at(dir: &std::path::Path, prefs: &ModelPrefs) -> anyhow:
         std::fs::create_dir_all(parent)?;
     }
     let temp_file = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
-    std::fs::write(&temp_file, serde_json::to_string_pretty(prefs)?)?;
-    std::fs::rename(&temp_file, &path)?;
+    let write_res = (|| -> anyhow::Result<()> {
+        let mut file = std::fs::File::create(&temp_file)?;
+        let json = serde_json::to_string_pretty(prefs)?;
+        use std::io::Write;
+        file.write_all(json.as_bytes())?;
+        file.sync_all()?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_res {
+        let _ = std::fs::remove_file(&temp_file);
+        return Err(e);
+    }
+
+    if let Err(e) = std::fs::rename(&temp_file, &path) {
+        let _ = std::fs::remove_file(&temp_file);
+        return Err(e.into());
+    }
+
     Ok(())
 }
 
@@ -209,5 +226,36 @@ mod tests {
         }
         let prefs = load_model_prefs_at(temp_dir);
         assert_eq!(prefs.favorites.len(), 24);
+    }
+
+    #[test]
+    fn test_save_model_prefs_cleans_up_on_failure() {
+        let guard = TempDirGuard::new("model-prefs-err-test");
+        // Create an un-writable path to provoke an error or test invalid target
+        let file_as_dir = guard.path().join("file_blocking_dir");
+        std::fs::write(&file_as_dir, "blocking").unwrap();
+        // Trying to save into a path where directory creation fails
+        let invalid_dir = file_as_dir.join("sub");
+        let res = save_model_prefs_at(&invalid_dir, &ModelPrefs::default());
+        assert!(res.is_err());
+        // Verify no leftover .tmp files were created in parent
+        let entries = std::fs::read_dir(guard.path()).unwrap();
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            assert!(!name.contains(".tmp."), "leftover temp file found: {name}");
+        }
+
+        // Test failure during rename (target path is a directory, blocking rename)
+        let rename_dir = guard.path().join("rename_dir");
+        std::fs::create_dir_all(&rename_dir).unwrap();
+        let blocking_target = rename_dir.join("model_prefs.json");
+        std::fs::create_dir_all(&blocking_target).unwrap();
+        let res_rename = save_model_prefs_at(&rename_dir, &ModelPrefs::default());
+        assert!(res_rename.is_err());
+        let rename_entries = std::fs::read_dir(&rename_dir).unwrap();
+        for entry in rename_entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            assert!(!name.contains(".tmp."), "leftover temp file found: {name}");
+        }
     }
 }
