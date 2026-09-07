@@ -4,6 +4,18 @@ use regex::Regex;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::LazyLock;
+
+static RE_RUST: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*(pub\s+)?(fn|struct|enum|trait|impl|type)\s+([a-zA-Z0-9_<>]+)")
+        .expect("valid rust outline regex")
+});
+static RE_PYTHON: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*(def|class)\s+([a-zA-Z0-9_]+)").expect("valid python outline regex")
+});
+static RE_GO: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*(func|type)\s+(\([^\)]+\)\s+)?([a-zA-Z0-9_]+)").expect("valid go outline regex")
+});
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
@@ -78,12 +90,6 @@ impl Tool for CodeOutlineTool {
             visitor.visit_program(&parser_res.program);
             symbols = visitor.symbols;
         } else {
-            // Compile regexes for different languages
-            let re_rust =
-                Regex::new(r"^\s*(pub\s+)?(fn|struct|enum|trait|impl|type)\s+([a-zA-Z0-9_<>]+)")?;
-            let re_python = Regex::new(r"^\s*(def|class)\s+([a-zA-Z0-9_]+)")?;
-            let re_go = Regex::new(r"^\s*(func|type)\s+(\([^\)]+\)\s+)?([a-zA-Z0-9_]+)")?;
-
             for (idx, line) in content.lines().enumerate() {
                 let line_num = idx + 1;
                 let trimmed = line.trim();
@@ -106,7 +112,7 @@ impl Tool for CodeOutlineTool {
 
                 match ext.as_str() {
                     "rs" => {
-                        if let Some(cap) = re_rust.captures(line) {
+                        if let Some(cap) = RE_RUST.captures(line) {
                             if let (Some(kind), Some(name)) = (cap.get(2), cap.get(3)) {
                                 symbols.push(Symbol {
                                     line: line_num,
@@ -118,7 +124,7 @@ impl Tool for CodeOutlineTool {
                         }
                     }
                     "py" => {
-                        if let Some(cap) = re_python.captures(line) {
+                        if let Some(cap) = RE_PYTHON.captures(line) {
                             if let (Some(kind), Some(name)) = (cap.get(1), cap.get(2)) {
                                 symbols.push(Symbol {
                                     line: line_num,
@@ -130,7 +136,7 @@ impl Tool for CodeOutlineTool {
                         }
                     }
                     "go" => {
-                        if let Some(cap) = re_go.captures(line) {
+                        if let Some(cap) = RE_GO.captures(line) {
                             if let (Some(kind), Some(name)) = (cap.get(1), cap.get(3)) {
                                 symbols.push(Symbol {
                                     line: line_num,

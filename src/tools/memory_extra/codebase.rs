@@ -512,6 +512,39 @@ fn scan_and_index(
     Ok(count)
 }
 
+static FN_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"^\s*(public\s+|pub\s+)?(async\s+)?fn\s+([a-zA-Z_]\w*)")
+        .expect("valid fn_re regex")
+});
+static STRUCT_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"^\s*(public\s+|pub\s+)?struct\s+([a-zA-Z_]\w*)").expect("valid struct_re regex")
+});
+static ENUM_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"^\s*(public\s+|pub\s+)?enum\s+([a-zA-Z_]\w*)").expect("valid enum_re regex")
+});
+static IMPL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"^\s*(public\s+|pub\s+)?impl(?:\s+([a-zA-Z_]\w*)\s+for)?\s+([a-zA-Z_]\w*)")
+        .expect("valid impl_re regex")
+});
+static DEF_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"^\s*def\s+([a-zA-Z_]\w*)").expect("valid def_re regex")
+});
+static CLASS_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"^\s*class\s+([a-zA-Z_]\w*)").expect("valid class_re regex")
+});
+static FUNC_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"^\s*func\s+([a-zA-Z_]\w*)").expect("valid func_re regex")
+});
+static TYPE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"^\s*type\s+([a-zA-Z_]\w*)").expect("valid type_re regex")
+});
+static TRAIT_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"^\s*(public\s+|pub\s+)?trait\s+([a-zA-Z_]\w*)").expect("valid trait_re regex")
+});
+static INTERFACE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"^\s*interface\s+([a-zA-Z_]\w*)").expect("valid interface_re regex")
+});
+
 fn index_file(
     path: &Path,
     user_id: &str,
@@ -524,19 +557,6 @@ fn index_file(
     let lines: Vec<&str> = content.lines().collect();
     let mut elements: Vec<(String, String, String, String, i64, i64)> = Vec::new(); // id, type, name, signature, start, end
 
-    // Patterns for function/struct/enum/class definitions
-    let fn_re = Regex::new(r"^\s*(public\s+|pub\s+)?(async\s+)?fn\s+([a-zA-Z_]\w*)")?;
-    let struct_re = Regex::new(r"^\s*(public\s+|pub\s+)?struct\s+([a-zA-Z_]\w*)")?;
-    let enum_re = Regex::new(r"^\s*(public\s+|pub\s+)?enum\s+([a-zA-Z_]\w*)")?;
-    let impl_re =
-        Regex::new(r"^\s*(public\s+|pub\s+)?impl(?:\s+([a-zA-Z_]\w*)\s+for)?\s+([a-zA-Z_]\w*)")?;
-    let def_re = Regex::new(r"^\s*def\s+([a-zA-Z_]\w*)")?;
-    let class_re = Regex::new(r"^\s*class\s+([a-zA-Z_]\w*)")?;
-    let func_re = Regex::new(r"^\s*func\s+([a-zA-Z_]\w*)")?;
-    let type_re = Regex::new(r"^\s*type\s+([a-zA-Z_]\w*)")?;
-    let trait_re = Regex::new(r"^\s*(public\s+|pub\s+)?trait\s+([a-zA-Z_]\w*)")?;
-    let interface_re = Regex::new(r"^\s*interface\s+([a-zA-Z_]\w*)")?;
-
     for (idx, line) in lines.iter().enumerate() {
         let line_num = (idx + 1) as i64;
         let trimmed = line.trim();
@@ -544,70 +564,70 @@ fn index_file(
         let mut name: Option<String> = None;
         let mut signature = String::new();
 
-        if let Some(caps) = fn_re.captures(trimmed) {
+        if let Some(caps) = FN_RE.captures(trimmed) {
             element_type = Some("Function");
             name = caps.get(3).or(caps.get(2)).map(|m| m.as_str().to_string());
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string() + "(...)")
                 .unwrap_or_default();
-        } else if let Some(caps) = def_re.captures(trimmed) {
+        } else if let Some(caps) = DEF_RE.captures(trimmed) {
             element_type = Some("Function");
             name = caps.get(1).map(|m| m.as_str().to_string());
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string() + "(...)")
                 .unwrap_or_default();
-        } else if let Some(caps) = func_re.captures(trimmed) {
+        } else if let Some(caps) = FUNC_RE.captures(trimmed) {
             element_type = Some("Function");
             name = caps.get(1).map(|m| m.as_str().to_string());
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string() + "(...)")
                 .unwrap_or_default();
-        } else if let Some(caps) = struct_re.captures(trimmed) {
+        } else if let Some(caps) = STRUCT_RE.captures(trimmed) {
             element_type = Some("Struct");
             name = caps.get(2).map(|m| m.as_str().to_string());
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string())
                 .unwrap_or_default();
-        } else if let Some(caps) = enum_re.captures(trimmed) {
+        } else if let Some(caps) = ENUM_RE.captures(trimmed) {
             element_type = Some("Enum");
             name = caps.get(2).map(|m| m.as_str().to_string());
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string())
                 .unwrap_or_default();
-        } else if let Some(caps) = impl_re.captures(trimmed) {
+        } else if let Some(caps) = IMPL_RE.captures(trimmed) {
             element_type = Some("ImplBlock");
             name = caps.get(3).map(|m| format!("impl_{}", m.as_str()));
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string())
                 .unwrap_or_default();
-        } else if let Some(caps) = class_re.captures(trimmed) {
+        } else if let Some(caps) = CLASS_RE.captures(trimmed) {
             element_type = Some("Class");
             name = caps.get(1).map(|m| m.as_str().to_string());
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string())
                 .unwrap_or_default();
-        } else if let Some(caps) = trait_re.captures(trimmed) {
+        } else if let Some(caps) = TRAIT_RE.captures(trimmed) {
             element_type = Some("Trait");
             name = caps.get(2).map(|m| m.as_str().to_string());
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string())
                 .unwrap_or_default();
-        } else if let Some(caps) = interface_re.captures(trimmed) {
+        } else if let Some(caps) = INTERFACE_RE.captures(trimmed) {
             element_type = Some("Interface");
             name = caps.get(1).map(|m| m.as_str().to_string());
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string())
                 .unwrap_or_default();
-        } else if let Some(caps) = type_re.captures(trimmed) {
+        } else if let Some(caps) = TYPE_RE.captures(trimmed) {
             element_type = Some("TypeAlias");
             name = caps.get(1).map(|m| m.as_str().to_string());
             signature = caps
