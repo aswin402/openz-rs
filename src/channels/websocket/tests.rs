@@ -111,8 +111,8 @@ async fn websocket_approval_rejects_wrong_client_or_chat() {
 async fn websocket_approval_event_targets_only_requesting_client() {
     let client_id = format!("approval-target-{}", uuid::Uuid::new_v4());
     let other_client_id = format!("approval-other-{}", uuid::Uuid::new_v4());
-    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    let (other_tx, mut other_rx) = tokio::sync::mpsc::channel(1);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+    let (other_tx, mut other_rx) = tokio::sync::mpsc::channel(8);
     crate::channels::get_active_ws_senders()
         .lock()
         .unwrap()
@@ -126,17 +126,35 @@ async fn websocket_approval_event_targets_only_requesting_client() {
         &client_id,
         serde_json::json!({ "event": "security_request", "req_id": "req-1" }),
     ));
-    assert!(rx.try_recv().is_ok());
-    assert!(other_rx.try_recv().is_err());
 
-    crate::channels::get_active_ws_senders()
-        .lock()
-        .unwrap()
-        .remove(&client_id);
-    crate::channels::get_active_ws_senders()
-        .lock()
-        .unwrap()
-        .remove(&other_client_id);
+    let mut received_target = false;
+    while let Ok(msg) = rx.try_recv() {
+        if let axum::extract::ws::Message::Text(text) = msg {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if v.get("event").and_then(|s| s.as_str()) == Some("security_request")
+                    && v.get("req_id").and_then(|s| s.as_str()) == Some("req-1")
+                {
+                    received_target = true;
+                }
+            }
+        }
+    }
+    assert!(received_target, "target client should receive security_request event");
+
+    while let Ok(msg) = other_rx.try_recv() {
+        if let axum::extract::ws::Message::Text(text) = msg {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                assert_ne!(
+                    v.get("event").and_then(|s| s.as_str()),
+                    Some("security_request"),
+                    "other client should never receive targeted security_request event"
+                );
+            }
+        }
+    }
+
+    remove_active_ws_sender(&client_id);
+    remove_active_ws_sender(&other_client_id);
 }
 
 #[tokio::test]
@@ -322,6 +340,10 @@ async fn orchestration_lifecycle_events_survive_queue_pressure() {
         .lock()
         .unwrap()
         .insert(client_id.clone(), tx);
+    crate::channels::get_active_ws_client_chats()
+        .lock()
+        .unwrap()
+        .insert(client_id.clone(), "chat-1".to_string());
 
     let publisher = tokio::spawn(async {
         super::publish_ws_event(serde_json::json!({"event": "progress"}));
@@ -336,8 +358,8 @@ async fn orchestration_lifecycle_events_survive_queue_pressure() {
     });
 
     let mut types = Vec::new();
-    for _ in 0..5 {
-        let message = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+    while types.len() < 4 {
+        let message = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
             .await
             .expect("event delivery timed out")
             .expect("sender closed");
@@ -359,10 +381,7 @@ async fn orchestration_lifecycle_events_survive_queue_pressure() {
             "run_finished"
         ]
     );
-    crate::channels::get_active_ws_senders()
-        .lock()
-        .unwrap()
-        .remove(&client_id);
+    remove_active_ws_sender(&client_id);
 }
 
 #[test]

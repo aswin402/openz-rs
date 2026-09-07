@@ -26,12 +26,12 @@
 - Create: [`src/agent/agent_loop/run/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/tests.rs)
 - Modify: [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs)
 
-- [ ] **Step 1:** Extract `mod auto_tool_arg_tests` (lines 42–248) and `mod tests` (lines 1386–1662) from `src/agent/agent_loop/run/mod.rs` into `src/agent/agent_loop/run/tests.rs`.
-- [ ] **Step 2:** Ensure all required imports in `tests.rs` and any necessary `pub(crate)` / `pub(super)` visibilities in `run/` submodules are maintained.
-- [ ] **Step 3:** Register `#[cfg(test)] mod tests;` in `src/agent/agent_loop/run/mod.rs`.
-- [ ] **Step 4:** Run `cargo test -p openz --lib agent::agent_loop::run -j 2` and verify all tests pass.
-- [ ] **Step 5:** Run `cargo clippy -p openz --lib -j 2` to verify 0 warnings.
-- [ ] **Step 6:** Commit changes: `git commit -am "refactor(agent_loop): extract run tests into dedicated tests submodule"`.
+- [x] **Step 1:** Extract `mod auto_tool_arg_tests` (lines 42–248) and `mod tests` (lines 1386–1662) from `src/agent/agent_loop/run/mod.rs` into `src/agent/agent_loop/run/tests.rs`.
+- [x] **Step 2:** Ensure all required imports in `tests.rs` and any necessary `pub(crate)` / `pub(super)` visibilities in `run/` submodules are maintained.
+- [x] **Step 3:** Register `#[cfg(test)] mod tests;` in `src/agent/agent_loop/run/mod.rs`.
+- [x] **Step 4:** Run `cargo test -p openz --lib agent::agent_loop::run -j 2` and verify all tests pass.
+- [x] **Step 5:** Run `cargo clippy -p openz --lib -j 2` to verify 0 warnings.
+- [x] **Step 6:** Commit changes: `git commit -am "refactor(agent_loop): extract run tests into dedicated tests submodule"`.
 
 ---
 
@@ -41,12 +41,12 @@
 - Create: [`src/channels/websocket/handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/handlers.rs)
 - Modify: [`src/channels/websocket/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/mod.rs)
 
-- [ ] **Step 1:** Extract `handle_socket` (and helper routines for frame reception/transmission) from `src/channels/websocket/mod.rs` into `src/channels/websocket/socket.rs`.
-- [ ] **Step 2:** Extract `openai_chat_completions`, `trigger_sop_handler`, and `resume_sop_handler` (and `hono_log_middleware`) into `src/channels/websocket/handlers.rs`.
-- [ ] **Step 3:** Update `src/channels/websocket/mod.rs` to register the new submodules and mount the routes.
-- [ ] **Step 4:** Run `cargo test -p openz --lib channels::websocket -j 2`.
-- [ ] **Step 5:** Run `cargo clippy -p openz --lib -j 2` to verify 0 warnings.
-- [ ] **Step 6:** Commit changes: `git commit -am "refactor(websocket): extract socket frame handler and HTTP routes from mod.rs"`.
+- [x] **Step 1:** Extract `handle_socket` (and helper routines for frame reception/transmission) from `src/channels/websocket/mod.rs` into `src/channels/websocket/socket.rs`.
+- [x] **Step 2:** Extract `openai_chat_completions`, `trigger_sop_handler`, and `resume_sop_handler` (and `hono_log_middleware`) into `src/channels/websocket/handlers.rs`.
+- [x] **Step 3:** Update `src/channels/websocket/mod.rs` to register the new submodules and mount the routes.
+- [x] **Step 4:** Run `cargo test -p openz --lib channels::websocket -j 2`.
+- [x] **Step 5:** Run `cargo clippy -p openz --lib -j 2` to verify 0 warnings.
+- [x] **Step 6:** Commit changes: `git commit -am "refactor(websocket): extract socket frame handler and HTTP routes from mod.rs"`.
 
 ---
 

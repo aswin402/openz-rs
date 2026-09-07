@@ -48,15 +48,12 @@ pub(crate) fn active_ws_sender_snapshot_for_chat(
         .map(|senders| {
             senders
                 .iter()
-                .filter(|(id, _)| {
-                    normalized_chat_id
-                        .as_deref()
-                        .and_then(|chat_id| {
-                            client_chats
-                                .get(*id)
-                                .map(|client_chat| normalize_ws_chat_id(client_chat) == chat_id)
-                        })
-                        .unwrap_or(true)
+                .filter(|(id, _)| match normalized_chat_id.as_deref() {
+                    Some(target_chat) => client_chats
+                        .get(*id)
+                        .map(|client_chat| normalize_ws_chat_id(client_chat) == target_chat)
+                        .unwrap_or(false),
+                    None => true,
                 })
                 .map(|(id, sender)| (id.clone(), sender.clone()))
                 .collect()
