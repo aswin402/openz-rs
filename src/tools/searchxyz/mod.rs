@@ -81,7 +81,7 @@ pub fn get_server() -> &'static SearchXyzServer {
             .build()
             .unwrap_or_else(|e| {
                 tracing::warn!("Failed to build custom reqwest::Client for searchxyz: {e}, falling back to default");
-                reqwest::Client::new()
+                crate::core::http::default_http_client().clone()
             });
 
         let crawler = Crawler::new(

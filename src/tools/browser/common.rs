@@ -21,35 +21,22 @@ pub fn browser_cdp_port() -> u16 {
 
 pub fn kill_browser_on_port(port: u16) {
     #[cfg(unix)]
-    {
-        // Target only known headless browser binaries on the port to avoid killing unrelated developer tools
-        let cmd = format!(
-            "for pid in $(lsof -t -i:{port} 2>/dev/null); do \
-                cmd=$(ps -p $pid -o comm= 2>/dev/null); \
-                case \"$cmd\" in *chrome*|*chromium*|*obscura*) kill -9 $pid 2>/dev/null ;; esac; \
-            done"
-        );
-        let _ = Command::new("sh")
-            .arg("-c")
-            .arg(&cmd)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-    }
+    let cmd = format!(
+        "for pid in $(lsof -t -i:{port} 2>/dev/null); do \
+            cmd=$(ps -p $pid -o comm= 2>/dev/null); \
+            case \"$cmd\" in *chrome*|*chromium*|*obscura*) kill -9 $pid 2>/dev/null ;; esac; \
+        done"
+    );
     #[cfg(windows)]
-    {
-        let cmd = format!(
-            "powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue | ForEach-Object {{ Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue }} | Where-Object {{ $_.ProcessName -match 'chrome|chromium|obscura' }} | Stop-Process -Force\""
-        );
-        let _ = Command::new("cmd")
-            .arg("/C")
-            .arg(&cmd)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-    }
+    let cmd = format!(
+        "powershell -NoProfile -Command \"Get-NetTCPConnection -LocalPort {port} -ErrorAction SilentlyContinue | ForEach-Object {{ Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue }} | Where-Object {{ $_.ProcessName -match 'chrome|chromium|obscura' }} | Stop-Process -Force\""
+    );
+
+    let _ = crate::core::process::host_shell_command(&cmd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
 }
 
 pub fn kill_browser_on_cdp_port() {

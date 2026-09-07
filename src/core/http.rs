@@ -10,6 +10,12 @@ pub fn default_http_client() -> reqwest::Client {
     custom_http_client(DEFAULT_CONNECT_TIMEOUT, DEFAULT_REQUEST_TIMEOUT)
 }
 
+/// Return a lazily initialized static reference to the canonical default HTTP client.
+pub fn global_http_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(default_http_client)
+}
+
 /// Build an HTTP client with custom connect and request timeouts.
 pub fn custom_http_client(connect_timeout: Duration, request_timeout: Duration) -> reqwest::Client {
     reqwest::Client::builder()

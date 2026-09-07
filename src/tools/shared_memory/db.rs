@@ -10,14 +10,7 @@ pub fn get_db_mutex() -> &'static tokio::sync::Mutex<()> {
 }
 
 pub fn get_shared_client() -> &'static reqwest::Client {
-    static SHARED_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    SHARED_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .use_rustls_tls()
-            .timeout(std::time::Duration::from_secs(15))
-            .build()
-            .unwrap_or_default()
-    })
+    crate::core::http::global_http_client()
 }
 
 pub fn get_sqlite_db_path() -> PathBuf {
