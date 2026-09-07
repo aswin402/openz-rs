@@ -35,11 +35,11 @@
   - `pub fn apply_standard_pragmas(conn: &rusqlite::Connection) -> rusqlite::Result<()>`
   - `pub fn apply_standard_pragmas_with_extra(conn: &rusqlite::Connection, extra_sql: &str) -> rusqlite::Result<()>`
 
-- [ ] **Step 1:** Create `src/core/sqlite.rs` with tests and register `pub mod sqlite;` in `src/core/mod.rs`.
-- [ ] **Step 2:** Replace copy-pasted PRAGMA execution batches in `skills.rs`, `semantic_search.rs`, `graph_memory/branch.rs`, `graph_memory/db.rs`, `shared_memory/db.rs`, `sequential_thinking/store.rs`, and `headroom/cache.rs`.
-- [ ] **Step 3:** Run `cargo test -p openz --lib core::sqlite -j 2` and verify all touched tests pass.
-- [ ] **Step 4:** Run `cargo clippy -p openz --lib -j 2`.
-- [ ] **Step 5:** Commit changes.
+- [x] **Step 1:** Create `src/core/sqlite.rs` with tests and register `pub mod sqlite;` in `src/core/mod.rs`.
+- [x] **Step 2:** Replace copy-pasted PRAGMA execution batches in `skills.rs`, `semantic_search.rs`, `graph_memory/branch.rs`, `graph_memory/db.rs`, `shared_memory/db.rs`, `sequential_thinking/store.rs`, and `headroom/cache.rs`.
+- [x] **Step 3:** Run `cargo test -p openz --lib core::sqlite -j 2` and verify all touched tests pass.
+- [x] **Step 4:** Run `cargo clippy -p openz --lib -j 2`.
+- [x] **Step 5:** Commit changes.
 
 ---
 
@@ -54,12 +54,12 @@
   - `crate::core::process::host_shell_command`
   - `crate::core::http::default_http_client`
 
-- [ ] **Step 1:** In `kill_browser_on_port`, replace custom `Command::new("sh")` and `Command::new("cmd")` blocks with `crate::core::process::host_shell_command(&cmd)`.
-- [ ] **Step 2:** In `src/tools/shared_memory/db.rs`, route `pub fn get_shared_client()` to `crate::core::http::default_http_client()`.
-- [ ] **Step 3:** In `src/tools/searchxyz/mod.rs:84`, replace fallback with `crate::core::http::default_http_client().clone()`.
-- [ ] **Step 4:** Run `cargo test -p openz --lib tools::browser -j 2` and `cargo test -p openz --lib tools::shared_memory -j 2`.
-- [ ] **Step 5:** Run `cargo clippy -p openz --lib -j 2`.
-- [ ] **Step 6:** Commit changes.
+- [x] **Step 1:** In `kill_browser_on_port`, replace custom `Command::new("sh")` and `Command::new("cmd")` blocks with `crate::core::process::host_shell_command(&cmd)`.
+- [x] **Step 2:** In `src/tools/shared_memory/db.rs`, route `pub fn get_shared_client()` to `crate::core::http::default_http_client()`.
+- [x] **Step 3:** In `src/tools/searchxyz/mod.rs:84`, replace fallback with `crate::core::http::default_http_client().clone()`.
+- [x] **Step 4:** Run `cargo test -p openz --lib tools::browser -j 2` and `cargo test -p openz --lib tools::shared_memory -j 2`.
+- [x] **Step 5:** Run `cargo clippy -p openz --lib -j 2`.
+- [x] **Step 6:** Commit changes.
 
 ---
 
@@ -68,12 +68,12 @@
 - Modify: [`src/tools/shared_memory/embeddings.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/embeddings.rs)
 - Modify: [`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs)
 
-- [ ] **Step 1:** In `src/tools/shared_memory/embeddings.rs:162, 400`, respect `cohere_config.api_base`.
-- [ ] **Step 2:** In `src/agent/agent_loop/build.rs:589`, extract `3000` to `const MAX_SOURCE_CONTEXT_CHARS: usize = 3000;`.
-- [ ] **Step 3:** Add test in `embeddings.rs` validating custom Cohere URL derivation.
-- [ ] **Step 4:** Run `cargo test -p openz --lib agent::agent_loop -j 2` and `cargo test -p openz --lib tools::shared_memory -j 2`.
-- [ ] **Step 5:** Run `cargo clippy -p openz --lib -j 2`.
-- [ ] **Step 6:** Commit changes.
+- [x] **Step 1:** In `src/tools/shared_memory/embeddings.rs:162, 400`, respect `cohere_config.api_base`.
+- [x] **Step 2:** In `src/agent/agent_loop/build.rs:589`, extract `3000` to `const MAX_SOURCE_CONTEXT_CHARS: usize = 3000;`.
+- [x] **Step 3:** Add test in `embeddings.rs` validating custom Cohere URL derivation.
+- [x] **Step 4:** Run `cargo test -p openz --lib agent::agent_loop -j 2` and `cargo test -p openz --lib tools::shared_memory -j 2`.
+- [x] **Step 5:** Run `cargo clippy -p openz --lib -j 2`.
+- [x] **Step 6:** Commit changes.
 
 ---
 
@@ -82,11 +82,11 @@
 - Modify: [`src/tools/outline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/outline.rs)
 - Modify: [`src/tools/memory_extra/codebase.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/codebase.rs)
 
-- [ ] **Step 1:** In `src/tools/outline.rs`, hoist regexes into static `LazyLock<Regex>`.
-- [ ] **Step 2:** In `src/tools/memory_extra/codebase.rs`, hoist all 10 language syntax regexes into static `LazyLock<Regex>`.
-- [ ] **Step 3:** Run `cargo test -p openz --lib tools::outline -j 2` and `cargo test -p openz --lib tools::memory_extra::codebase -j 2`.
-- [ ] **Step 4:** Run `cargo clippy -p openz --lib -j 2`.
-- [ ] **Step 5:** Commit changes.
+- [x] **Step 1:** In `src/tools/outline.rs`, hoist regexes into static `LazyLock<Regex>`.
+- [x] **Step 2:** In `src/tools/memory_extra/codebase.rs`, hoist all 10 language syntax regexes into static `LazyLock<Regex>`.
+- [x] **Step 3:** Run `cargo test -p openz --lib tools::outline -j 2` and `cargo test -p openz --lib tools::memory_extra::codebase -j 2`.
+- [x] **Step 4:** Run `cargo clippy -p openz --lib -j 2`.
+- [x] **Step 5:** Commit changes.
 
 ---
 
@@ -96,7 +96,7 @@
 - Modify: [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs)
 - Modify: [`src/tools/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mod.rs)
 
-- [ ] **Step 1:** Replace static `/tmp/...` paths with unique UUID-based temp dirs under `std::env::temp_dir()`.
-- [ ] **Step 2:** Verify 128 registered native tools invariant: `cargo test -p openz --lib test_native_tool_registration_names -j 2`.
-- [ ] **Step 3:** Run `cargo clippy -p openz --lib -j 2`.
-- [ ] **Step 4:** Commit changes.
+- [x] **Step 1:** Replace static `/tmp/...` paths with unique UUID-based temp dirs under `std::env::temp_dir()`.
+- [x] **Step 2:** Verify 128 registered native tools invariant: `cargo test -p openz --lib test_native_tool_registration_names -j 2`.
+- [x] **Step 3:** Run `cargo clippy -p openz --lib -j 2`.
+- [x] **Step 4:** Commit changes.
