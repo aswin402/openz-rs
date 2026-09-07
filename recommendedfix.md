@@ -199,9 +199,11 @@ struct WebFetchTool;
 
 ### 3.3 HTTP Client Read Timeout Hardening (Resolved locally)
 
-**Files:** `src/tools/web.rs`, `src/providers/openai.rs`, `src/providers/anthropic.rs`
+**Files:** `src/core/http.rs`, `src/tools/web.rs`, `src/providers/openai.rs`, `src/providers/anthropic.rs`, `src/channels/whatsapp.rs`, `src/tools/rust_docs.rs`, `src/tools/github.rs`, `src/tools/browser/firefox.rs`, `src/tools/browser/status.rs`, `src/channels/mod.rs`
 
 **Status:** Implemented in the local working tree. Provider clients now set explicit connect, read, and total request timeouts (`15s` connect, `120s` read, `300s` total). Web fetch and multimodal remote-image fetches use shorter bounded phases (`10s` connect, `30s` read, bounded total request timeout), so slow URLs cannot hold the agent indefinitely.
+
+**Progress (v0.0.149):** Standardized disparate HTTP client initializations across `src/channels/whatsapp.rs`, `src/tools/rust_docs.rs`, `src/tools/github.rs`, `src/tools/browser/firefox.rs`, `src/tools/browser/status.rs`, and `src/channels/mod.rs` onto centralized builders `crate::core::http::default_client()` and `custom_client()`. Guaranteed connection (10s), read (30s), and request (60s) timeouts eliminate all instances of untimed `reqwest::Client::new()` calls.
 
 ---
 
@@ -251,6 +253,38 @@ struct WebFetchTool;
 
 ---
 
+### 4.6 Cross-Platform Host Shell Centralization & Windows Patch Hardening (Resolved)
+
+**Files:** `src/core/process.rs`, `src/tools/filesystem.rs`, `src/tools/compiler_auto_heal.rs`, `src/tools/shell.rs`
+
+**Status:** Implemented in the local working tree. Centralized host shell command spawning into `src/core/process.rs` (`host_shell_command` and `host_tokio_shell_command`), abstracting `cmd.exe /C` on Windows and `sh -c` on Unix alongside repository working directory synchronization (`set_command_cwd`). Replaced fragmented direct shell invocations and fixed a critical bug in `ApplyPatchTool` (`git apply --check`) which previously hardcoded `sh -c` and failed on Windows without bash installed.
+
+---
+
+### 4.7 Configurable WebSocket CORS Origins (Resolved)
+
+**Files:** `src/config/schema.rs`, `src/channels/websocket/auth.rs`
+
+**Status:** Implemented in the local working tree. Added `cors_origins: Vec<String>` to `WebSocketChannelConfig` with serde aliases (`corsOrigins`, `cors_origins`). Parameterized `is_allowed_origin` in `src/channels/websocket/auth.rs` so deployments can permit explicit domains (e.g. desktop web clients, remote dashboards) alongside default local loops (`http://localhost:*`, `http://127.0.0.1:*`, `tauri://localhost`).
+
+---
+
+### 4.8 Identity Heuristics & Dynamic Prompt Budget Scaling (Resolved)
+
+**Files:** `src/config/schema.rs`, `src/agent/agent_loop/build.rs`
+
+**Status:** Implemented in the local working tree. General persona identity detection in prompt building now checks generic creator inquiry patterns (`who created you`, `who made you`, `your creator`, `who programmed you`) and retrieves identity metadata dynamically. Decoupled hardcoded prompt context token budgets via `prompt_budget_limit` in `AgentDefaults`, enabling dynamic scaling proportional to provider model context windows.
+
+---
+
+### 4.9 Model Preferences & Risk Domain Relocation (Resolved)
+
+**Files:** `src/providers/model_prefs.rs`, `src/providers/risk.rs`, `src/providers/mod.rs`, `src/channels/mod.rs`
+
+**Status:** Implemented in the local working tree. Decoupled provider-specific domain logic from the channel layer. Moved `ModelPrefs`, `ModelRef`, and model preference persistence (`load_model_prefs`, `save_model_prefs`, `toggle_favorite_model`, `record_recent_model`) to `src/providers/model_prefs.rs`. Moved `ModelRisk` and `classify_model_risk` to `src/providers/risk.rs`. Exposed clean provider API surfaces with backward-compatible re-exports in `src/channels/mod.rs`.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)
@@ -291,5 +325,5 @@ No use of `proptest` or `quickcheck` for:
 | **P1** | 1.2-1.5 Match bloat, unwraps, monolith, provider config | ~500 lines across 5 files | Runtime panics, new provider friction |
 | **P2** | 2.1-2.6 Stale errors, locking, notifications, router caching, API key diagnostics, config drift | ~600 lines across 8 files | User confusion, silent failures |
 | **P3** | 3.1-3.5 Naming, activity I/O, HTTP timeouts, select bias, cleanup | ~200 lines | Tech debt, marginal reliability |
-| **Enhancements** | 4.1-4.5 Streaming, per-session config, retry, live reload, SQLite logs | — | Feature gap |
+| **Enhancements** | 4.1-4.9 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling | — | Feature gap |
 | **Testing** | 5.1, 5.3 Integration tests and property tests | — | Coverage gap |
