@@ -523,122 +523,13 @@ impl Tool for ZenflowEditTool {
         let path = resolve_path(path_str);
         crate::config::loader::verify_safe_path(&path)?;
 
-        let run_cmd = |cmd: String| async move {
-            let mut command = crate::core::process::host_tokio_shell_command(&cmd);
-            let output = command.output().await?;
-            let status = output.status.code().unwrap_or(-1);
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            Ok::<_, anyhow::Error>((status, format!("{}{}", stdout, stderr)))
-        };
-
-        let in_git = run_cmd("git rev-parse --is-inside-work-tree".to_string())
-            .await
-            .map(|(code, _)| code == 0)
-            .unwrap_or(false);
-
-        let mut committed = false;
-        let original_content = fs::read_to_string(&path).ok();
-
-        if in_git {
-            let escaped_path = crate::core::process::quote_shell_arg(&path.to_string_lossy());
-            let _ = run_cmd(format!("git add -- {}", escaped_path)).await;
-            if let Ok((code, _)) =
-                run_cmd("git commit -m \"Zenflow pre-edit backup\" --no-verify".to_string()).await
-            {
-                if code == 0 {
-                    committed = true;
-                }
-            }
-        }
-
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&path, content)?;
-
-        let (mut status, mut output_str) = run_cmd(compile_cmd.to_string()).await?;
-
-        if status != 0 {
-            let system_prompt = "You are a Self-Healing Code Assistant. Fix compile/test errors in the provided file.";
-            let user_prompt = format!(
-                "The following file edit was made at path '{}' but caused compile/test errors.\n\n\
-                 Proposed Content:\n\
-                 ```\n\
-                 {}\n\
-                 ```\n\n\
-                 Compilation Error:\n\
-                 ```\n\
-                 {}\n\
-                 ```\n\n\
-                 Please analyze the compilation error and return the corrected, complete file content. Output ONLY the complete corrected content, no markdown wrappers like ```rust, no explanations.",
-                path.to_string_lossy(),
-                content,
-                output_str
-            );
-
-            let messages = vec![crate::session::Message {
-                role: "user".to_string(),
-                content: user_prompt,
-                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                extra: serde_json::Map::new(),
-            }];
-
-            let settings = crate::providers::GenerationSettings {
-                temperature: 0.1,
-                max_tokens: 4096,
-                reasoning_effort: None,
-            };
-
-            if let Ok(resp) = self
-                .provider
-                .chat(system_prompt, &messages, &[], &settings)
-                .await
-            {
-                if let Some(healed_content) = resp.content {
-                    let mut cleaned = healed_content.trim();
-                    if cleaned.starts_with("```") {
-                        if let Some(pos) = cleaned.find('\n') {
-                            cleaned = &cleaned[pos + 1..];
-                        }
-                    }
-                    if cleaned.ends_with("```") {
-                        cleaned = cleaned[..cleaned.len() - 3].trim();
-                    }
-                    let cleaned_str = cleaned.trim().to_string();
-                    if !cleaned_str.is_empty() {
-                        fs::write(&path, &cleaned_str)?;
-                        if let Ok((h_status, h_output)) = run_cmd(compile_cmd.to_string()).await {
-                            status = h_status;
-                            output_str = h_output;
-                        }
-                    }
-                }
-            }
-        }
-
-        if status == 0 {
-            if committed {
-                let _ = run_cmd("git reset HEAD~1".to_string()).await;
-            }
-            Ok(serde_json::json!({
-                "status": "success",
-                "message": "File written and verified successfully."
-            }))
-        } else {
-            if let Some(orig) = original_content {
-                fs::write(&path, orig)?;
-            } else {
-                let _ = fs::remove_file(&path);
-            }
-            if committed {
-                let _ = run_cmd("git reset --mixed HEAD~1".to_string()).await;
-            }
-            Ok(serde_json::json!({
-                "status": "error",
-                "error": format!("Compilation failed, self-healing failed. Rolled back changes. Error output:\n{}", output_str)
-            }))
-        }
+        crate::core::heal::run_transactional_heal_edit(
+            self.provider.as_ref(),
+            &path,
+            content,
+            compile_cmd,
+        )
+        .await
     }
 }
 

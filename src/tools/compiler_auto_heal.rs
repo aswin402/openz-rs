@@ -1,4 +1,3 @@
-use crate::agent::style::colors::{AURA_GOLD, AURA_PURPLE, COLOR_RESET, EMERALD_GREEN};
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::tools::Tool;
@@ -65,169 +64,73 @@ impl Tool for CompilerAutoHealTool {
             .unwrap_or(3)
             .min(5) as usize;
 
-        // Validate compile command against allowlist to prevent shell injection
-        let allowed_prefixes = [
-            "cargo ", "rustc ", "gcc ", "g++ ", "clang ", "clang++ ", "make ", "cmake ", "ninja ",
-            "go ", "go build", "go test", "go run", "npm ", "npx ", "yarn ", "pnpm ", "node ",
-            "python ", "python3 ", "pip ", "pip3 ", "javac ", "java ", "mvn ", "gradle ", "swift ",
-            "swiftc ", "dotnet ", "msbuild ", "pytest ", "jest ", "vitest ", "tsc ",
-        ];
-        let cmd_lower = compile_command.trim().to_lowercase();
-        let is_allowed = allowed_prefixes.iter().any(|p| cmd_lower.starts_with(p));
-        if !is_allowed {
-            return Err(anyhow!(
-                "Compile command '{}' is not in the allowed list. \
-                 Allowed: cargo, rustc, gcc, g++, clang, make, cmake, ninja, go, npm, npx, yarn, node, python, javac, java, mvn, gradle, swift, dotnet, pytest, jest, tsc",
-                compile_command
-            ));
-        }
-
         let file_path = crate::config::resolve_path(file_path_str);
-        if !file_path.exists() {
-            return Err(anyhow!("File does not exist: {:?}", file_path));
-        }
+        crate::core::heal::run_compiler_auto_heal(
+            self.provider.as_ref(),
+            &file_path,
+            instruction,
+            compile_command,
+            max_iterations,
+        )
+        .await
+    }
+}
 
-        // Create backup before modification
-        let backup_path = file_path.with_extension(format!(
-            "{}.bak",
-            file_path.extension().and_then(|e| e.to_str()).unwrap_or("")
-        ));
-        if let Err(e) = std::fs::copy(&file_path, &backup_path) {
-            tracing::warn!("Failed to create backup of {:?}: {}", file_path, e);
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        // 1. Read initial file content
-        let mut file_content = std::fs::read_to_string(&file_path)?;
+    #[test]
+    fn test_compiler_auto_heal_schema() {
+        let config = Config::default();
+        let provider = Arc::new(crate::providers::mock::MockProvider::new());
+        let tool = CompilerAutoHealTool { config, provider };
 
-        let mut current_error = String::new();
-        let mut iteration = 0;
-        let mut compile_success = false;
+        assert_eq!(tool.name(), "compiler_auto_heal");
+        let params = tool.parameters();
+        assert!(params["required"].as_array().unwrap().contains(&Value::String("file_path".into())));
+        assert!(params["required"].as_array().unwrap().contains(&Value::String("instruction".into())));
+        assert!(params["required"].as_array().unwrap().contains(&Value::String("compile_command".into())));
+    }
 
-        let system_prompt = "You are an expert compiler auto-healing agent. Your goal is to modify the provided file content based on the instruction and ensure it compiles without errors.\n\
-        You must return the COMPLETE updated file content. Do not truncate, do not use comments for unchanged parts, do not output any explanation text or greetings.\n\
-        Output your response inside a single markdown code block (e.g. ```rust ... ``` or ```javascript ... ```).";
+    #[tokio::test]
+    async fn test_compiler_auto_heal_missing_args() {
+        let config = Config::default();
+        let provider = Arc::new(crate::providers::mock::MockProvider::new());
+        let tool = CompilerAutoHealTool { config, provider };
 
-        while iteration < max_iterations {
-            iteration += 1;
-            crate::tui_println!(
-                "{}🔧 [Compiler Auto-Heal] Iteration {}/{} for {}...{}",
-                AURA_PURPLE,
-                iteration,
-                max_iterations,
-                file_path.file_name().unwrap_or_default().to_string_lossy(),
-                COLOR_RESET
-            );
+        let res = tool.call(&serde_json::json!({})).await;
+        assert!(res.is_err());
+    }
 
-            // Construct prompt
-            let user_prompt = if current_error.is_empty() {
-                format!(
-                    "TARGET FILE: {:?}\n\n\
-                     CURRENT CONTENT:\n\
-                     ```\n\
-                     {}\n\
-                     ```\n\n\
-                     INSTRUCTION: {}\n\n\
-                     Please edit the file content to satisfy the instruction, and output the complete new file content.",
-                    file_path, file_content, instruction
-                )
-            } else {
-                format!(
-                    "TARGET FILE: {:?}\n\n\
-                     CURRENT CONTENT:\n\
-                     ```\n\
-                     {}\n\
-                     ```\n\n\
-                     The previous code failed compilation with the following error:\n\
-                     ```\n\
-                     {}\n\
-                     ```\n\n\
-                     Please fix this compilation error and output the complete corrected file content.",
-                    file_path, file_content, current_error
-                )
-            };
+    #[tokio::test]
+    async fn test_compiler_auto_heal_success() {
+        let temp_dir = std::env::temp_dir().join(format!("auto_heal_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let target_file = temp_dir.join("main.rs");
+        std::fs::write(&target_file, "fn main() { broken }").unwrap();
 
-            let messages = vec![crate::session::Message {
-                role: "user".to_string(),
-                content: user_prompt,
-                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                extra: serde_json::Map::new(),
-            }];
+        let provider = Arc::new(
+            crate::providers::mock::MockProvider::new().with_default(
+                crate::providers::mock::MockResponse::text("```rust\nfn main() {}\n```"),
+            ),
+        );
+        let config = Config::default();
+        let tool = CompilerAutoHealTool { config, provider };
 
-            let settings = crate::providers::GenerationSettings {
-                temperature: 0.1,
-                max_tokens: 4096,
-                reasoning_effort: None,
-            };
-
-            let resp = self
-                .provider
-                .chat(system_prompt, &messages, &[], &settings)
-                .await?;
-            let response_text = resp
-                .content
-                .ok_or_else(|| anyhow!("No content returned from AI"))?;
-
-            // Extract the code block
-            let mut updated_content = response_text.trim().to_string();
-            if updated_content.starts_with("```") {
-                let lines: Vec<&str> = updated_content.lines().collect();
-                let start = if lines.first().map(|l| l.starts_with("```")).unwrap_or(false) {
-                    1
-                } else {
-                    0
-                };
-                let end = if lines.last().map(|l| l.starts_with("```")).unwrap_or(false) {
-                    lines.len() - 1
-                } else {
-                    lines.len()
-                };
-                updated_content = lines[start..end].join("\n");
-            }
-            let updated_content_str = updated_content;
-
-            // Write to file
-            std::fs::write(&file_path, &updated_content_str)?;
-            file_content = updated_content_str;
-
-            // Run compile check command
-            let mut cmd = crate::core::process::host_tokio_shell_command(compile_command);
-            let output = cmd.output().await?;
-
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-
-            if output.status.success() {
-                compile_success = true;
-                crate::tui_println!(
-                    "{}✓ [Compiler Auto-Heal] Compilation succeeded! (Iteration {}){}",
-                    EMERALD_GREEN,
-                    iteration,
-                    COLOR_RESET
-                );
-                break;
-            } else {
-                current_error = format!("{}\n{}", stdout, stderr);
-                crate::tui_println!(
-                    "{}▲ [Compiler Auto-Heal] Compilation failed. Error output captured.{}",
-                    AURA_GOLD,
-                    COLOR_RESET
-                );
-            }
-        }
-
-        if compile_success {
-            Ok(serde_json::json!({
-                "status": "success",
-                "message": "File edited and compiled successfully",
-                "iterations": iteration
+        let res = tool
+            .call(&serde_json::json!({
+                "file_path": target_file.to_str().unwrap(),
+                "instruction": "Fix main",
+                "compile_command": "true",
+                "max_iterations": 2
             }))
-        } else {
-            Ok(serde_json::json!({
-                "status": "failed",
-                "message": "Failed to compile within the maximum number of iterations",
-                "error": current_error,
-                "iterations": iteration
-            }))
-        }
+            .await
+            .unwrap();
+
+        assert_eq!(res["status"], "success");
+        assert_eq!(std::fs::read_to_string(&target_file).unwrap(), "fn main() {}");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

@@ -57,13 +57,13 @@
 - Modify: [`src/tools/compiler_auto_heal.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/compiler_auto_heal.rs)
 - Modify: [`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs)
 
-- [ ] **Step 1:** Implement canonical compile check, backup/restore, self-healing prompt generation, LLM call, and code fence stripping in `src/core/heal.rs`.
-- [ ] **Step 2:** Add unit tests for `src/core/heal.rs`.
-- [ ] **Step 3:** Refactor `CompilerAutoHealTool` in `src/tools/compiler_auto_heal.rs` to use `crate::core::heal`.
-- [ ] **Step 4:** Refactor `ZenflowEditTool` in `src/tools/filesystem.rs` to use `crate::core::heal`.
-- [ ] **Step 5:** Run `cargo test -p openz --lib core::heal -j 2`, `cargo test -p openz --lib tools::compiler_auto_heal -j 2`, and `cargo test -p openz --lib tools::filesystem -j 2`.
-- [ ] **Step 6:** Run `cargo clippy -p openz --lib -j 2`.
-- [ ] **Step 7:** Commit changes: `git commit -am "refactor(heal): unify self-healing compiler reflection loop in core::heal"`.
+- [x] **Step 1:** Implement canonical compile check, backup/restore, self-healing prompt generation, LLM call, and code fence stripping in `src/core/heal.rs`.
+- [x] **Step 2:** Add unit tests for `src/core/heal.rs`.
+- [x] **Step 3:** Refactor `CompilerAutoHealTool` in `src/tools/compiler_auto_heal.rs` to use `crate::core::heal`.
+- [x] **Step 4:** Refactor `ZenflowEditTool` in `src/tools/filesystem.rs` to use `crate::core::heal`.
+- [x] **Step 5:** Run `cargo test -p openz --lib core::heal -j 2`, `cargo test -p openz --lib tools::compiler_auto_heal -j 2`, and `cargo test -p openz --lib tools::filesystem -j 2`.
+- [x] **Step 6:** Run `cargo clippy -p openz --lib -j 2`.
+- [x] **Step 7:** Commit changes: `git commit -am "refactor(heal): unify self-healing compiler reflection loop in core::heal"`.
 
 ---
 
