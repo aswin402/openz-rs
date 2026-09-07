@@ -1,5 +1,7 @@
 //! Unified secret detection, collection, and redaction utilities.
 
+use std::sync::LazyLock;
+
 use serde_json::Value;
 
 /// Normalize a key string for secret identification by keeping only ASCII
@@ -99,6 +101,59 @@ pub fn mask_secret_str(secret: &str) -> String {
     }
 }
 
+static SECRET_PATTERNS: LazyLock<Vec<regex::Regex>> = LazyLock::new(|| {
+    vec![
+        regex::Regex::new(r"\d{8,}:[A-Za-z0-9_-]{16,}\b").expect("valid telegram token regex"),
+        regex::Regex::new(r"\bsk-[A-Za-z0-9_-]{16,}\b").expect("valid sk token regex"),
+        regex::Regex::new(r"\d{8,}:[A-Za-z0-9_-]{3,}\.\.\.")
+            .expect("valid partial telegram token regex"),
+        regex::Regex::new(r"\bsk-[A-Za-z0-9_-]{4,}\.\.\.").expect("valid partial sk token regex"),
+    ]
+});
+
+/// Return the compiled regular expressions matching well-known API keys and credentials.
+pub fn secret_patterns() -> &'static [regex::Regex] {
+    &SECRET_PATTERNS
+}
+
+/// Scrub text by replacing matches of known secret token regex patterns with `[REDACTED_SECRET]`.
+/// Returns the sanitized string and the total number of replacements performed.
+pub fn scrub_secret_text(text: &str) -> (String, usize) {
+    let mut scrubbed = text.to_string();
+    let mut replacements = 0usize;
+    for pattern in secret_patterns() {
+        let count = pattern.find_iter(&scrubbed).count();
+        if count > 0 {
+            scrubbed = pattern
+                .replace_all(&scrubbed, "[REDACTED_SECRET]")
+                .into_owned();
+            replacements = replacements.saturating_add(count);
+        }
+    }
+    (scrubbed, replacements)
+}
+
+/// Redact occurrences of specific known secret values from a text string.
+pub fn redact_text_with_secrets(text: &str, secrets: &[String]) -> String {
+    secrets.iter().fold(text.to_string(), |result, secret| {
+        result.replace(secret, "[REDACTED_SECRET]")
+    })
+}
+
+/// Collect credentials from both config and environment variables.
+pub fn collect_all_environment_and_config_secrets(config: &serde_json::Value) -> Vec<String> {
+    let mut secrets = Vec::new();
+    collect_secret_values(config, &mut secrets);
+    for (key, value) in std::env::vars() {
+        if is_secret_key(&key) && value.trim().len() >= 8 {
+            secrets.push(value.trim().to_string());
+        }
+    }
+    secrets.sort_by_key(|v| std::cmp::Reverse(v.len()));
+    secrets.dedup();
+    secrets
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,5 +208,36 @@ mod tests {
     fn test_mask_secret_str() {
         assert_eq!(mask_secret_str("short"), "********");
         assert_eq!(mask_secret_str("sk-1234567890abcdef"), "sk-...cdef");
+    }
+
+    #[test]
+    fn test_scrub_secret_text_patterns() {
+        let input = "sk-12345678901234567890 and bot 12345678:abcdefghijklmnopqrst";
+        let (scrubbed, count) = scrub_secret_text(input);
+        assert_eq!(count, 2);
+        assert!(!scrubbed.contains("sk-12345678901234567890"));
+        assert!(!scrubbed.contains("12345678:abcdefghijklmnopqrst"));
+        assert!(scrubbed.contains("[REDACTED_SECRET]"));
+    }
+
+    #[test]
+    fn test_redact_text_with_secrets_replaces_known_keys() {
+        let secrets = vec!["supersecretpass123".to_string()];
+        let redacted = redact_text_with_secrets("My password is supersecretpass123!", &secrets);
+        assert_eq!(redacted, "My password is [REDACTED_SECRET]!");
+    }
+
+    #[test]
+    fn test_collect_all_environment_and_config_secrets() {
+        let config = serde_json::json!({
+            "api_key": "config-secret-key-12345"
+        });
+        let secrets = collect_all_environment_and_config_secrets(&config);
+        assert!(secrets.contains(&"config-secret-key-12345".to_string()));
+    }
+
+    #[test]
+    fn test_secret_patterns_not_empty() {
+        assert!(!secret_patterns().is_empty());
     }
 }

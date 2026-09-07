@@ -89,30 +89,10 @@ struct SecretScrubReport {
     replacements: usize,
 }
 
-fn secret_patterns() -> Vec<regex::Regex> {
-    vec![
-        regex::Regex::new(r"\d{8,}:[A-Za-z0-9_-]{16,}\b").expect("valid telegram token regex"),
-        regex::Regex::new(r"\bsk-[A-Za-z0-9_-]{16,}\b").expect("valid sk token regex"),
-        regex::Regex::new(r"\d{8,}:[A-Za-z0-9_-]{3,}\.\.\.")
-            .expect("valid partial telegram token regex"),
-        regex::Regex::new(r"\bsk-[A-Za-z0-9_-]{4,}\.\.\.").expect("valid partial sk token regex"),
-    ]
-}
-
 fn scrub_secret_text(text: &str) -> SecretScrubResult {
-    let mut scrubbed = text.to_string();
-    let mut replacements = 0usize;
-    for pattern in secret_patterns() {
-        let count = pattern.find_iter(&scrubbed).count();
-        if count > 0 {
-            scrubbed = pattern
-                .replace_all(&scrubbed, "[REDACTED_SECRET]")
-                .into_owned();
-            replacements = replacements.saturating_add(count);
-        }
-    }
+    let (text, replacements) = crate::core::secrets::scrub_secret_text(text);
     SecretScrubResult {
-        text: scrubbed,
+        text,
         replacements,
     }
 }

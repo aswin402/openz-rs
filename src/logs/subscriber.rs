@@ -1,7 +1,10 @@
 use std::sync::{Arc, OnceLock};
 
 use super::storage::LogEntry;
-use crate::core::secrets::{collect_secret_values, is_secret_key};
+use crate::core::secrets::{
+    collect_all_environment_and_config_secrets,
+    redact_text_with_secrets as core_redact_text_with_secrets,
+};
 
 pub static LOG_TX: OnceLock<tokio::sync::mpsc::UnboundedSender<LogEntry>> = OnceLock::new();
 
@@ -10,24 +13,14 @@ static LOG_SECRETS: OnceLock<Arc<Vec<String>>> = OnceLock::new();
 /// Load configured and environment-backed credentials into the log scrubber.
 /// Values are retained only in memory and are never emitted to logs.
 pub fn initialize_secret_redaction(config: &serde_json::Value) -> Arc<Vec<String>> {
-    let mut secrets = Vec::new();
-    collect_secret_values(config, &mut secrets);
-    for (key, value) in std::env::vars() {
-        if is_secret_key(&key) && value.trim().len() >= 8 {
-            secrets.push(value.trim().to_string());
-        }
-    }
-    secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
-    secrets.dedup();
+    let secrets = collect_all_environment_and_config_secrets(config);
     let shared = Arc::new(secrets);
     let _ = LOG_SECRETS.set(shared.clone());
     shared
 }
 
 pub(crate) fn redact_text_with_secrets(text: &str, secrets: &[String]) -> String {
-    secrets.iter().fold(text.to_string(), |result, secret| {
-        result.replace(secret, "[REDACTED_SECRET]")
-    })
+    core_redact_text_with_secrets(text, secrets)
 }
 
 pub fn redact_sensitive_text(text: &str) -> String {
