@@ -572,7 +572,8 @@ mod tests {
     async fn test_full_native_tool_registration_integrity() {
         let config = Config::default();
         let provider = std::sync::Arc::new(crate::providers::mock::MockProvider::new());
-        let sessions = SessionManager::new(std::path::PathBuf::from("/tmp/openz-builder-test-sessions"));
+        let temp_dir = std::env::temp_dir().join(format!("openz-builder-test-sessions-{}", uuid::Uuid::new_v4()));
+        let sessions = SessionManager::new(temp_dir);
         let registry = ToolRegistry::new_with_context(
             config.clone(),
             provider.clone(),

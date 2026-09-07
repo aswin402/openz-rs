@@ -83,12 +83,17 @@ mod tests {
         )
     }
 
+    fn temp_test_sessions(prefix: &str) -> SessionManager {
+        let path = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
+        SessionManager::new(path)
+    }
+
     #[tokio::test]
     async fn required_raw_json_tool_fields_are_documented_or_normalized() {
         let registry = ToolRegistry::new();
         let config = Config::default();
         let provider = Arc::new(crate::providers::mock::MockProvider::new());
-        let sessions = SessionManager::new(std::path::PathBuf::from("/tmp/openz-test-sessions"));
+        let sessions = temp_test_sessions("openz-test-sessions");
 
         register_all_tools(&registry, &config, provider, sessions).unwrap();
 
@@ -123,7 +128,7 @@ mod tests {
     async fn tool_registry_exposes_every_registered_tool() {
         let config = Config::default();
         let provider = Arc::new(crate::providers::mock::MockProvider::new());
-        let sessions = SessionManager::new(std::path::PathBuf::from("/tmp/openz-test-sessions"));
+        let sessions = temp_test_sessions("openz-test-sessions");
         let registry = ToolRegistry::new_with_context(
             config.clone(),
             provider.clone(),
@@ -393,7 +398,7 @@ mod tests {
         let registry = ToolRegistry::new();
         let config = Config::default();
         let provider = Arc::new(crate::providers::mock::MockProvider::new());
-        let sessions = SessionManager::new(std::path::PathBuf::from("/tmp/openz-test-sessions"));
+        let sessions = temp_test_sessions("openz-test-sessions");
         register_all_tools(&registry, &config, provider, sessions).unwrap();
 
         let tools = registry.to_openai_format_for_prompt("run cargo test");
@@ -514,7 +519,7 @@ mod tests {
     async fn openai_format_reserves_api_slots_for_dynamic_subagents() {
         let config = Config::default();
         let provider = Arc::new(crate::providers::mock::MockProvider::new());
-        let sessions = SessionManager::new(std::path::PathBuf::from("/tmp/openz-test-sessions"));
+        let sessions = temp_test_sessions("openz-test-sessions");
         let registry =
             ToolRegistry::new_with_context(config.clone(), provider.clone(), sessions.clone());
 

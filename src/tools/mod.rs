@@ -1074,9 +1074,9 @@ mod route_cache_tests {
     fn capability_policy_deny_shell_blocks_shell_but_not_subagent_wrappers() {
         let config = Config::default();
         let provider = Arc::new(crate::providers::mock::MockProvider::new());
-        let sessions = SessionManager::new(std::path::PathBuf::from(
-            "/tmp/openz-policy-wrapper-sessions",
-        ));
+        let sessions = SessionManager::new(
+            std::env::temp_dir().join(format!("openz-policy-wrapper-sessions-{}", uuid::Uuid::new_v4())),
+        );
         let registry = ToolRegistry::new_with_context(config, provider, sessions);
         registry.set_capability_policy(Some(crate::orchestrator::spec::CapabilityPolicy {
             allowed_tools: vec![],
@@ -1101,9 +1101,9 @@ mod route_cache_tests {
     async fn ordinary_subagent_cannot_access_orchestrator_tool() {
         let config = Config::default();
         let provider = Arc::new(crate::providers::mock::MockProvider::new());
-        let sessions = SessionManager::new(std::path::PathBuf::from(
-            "/tmp/openz-nested-orchestrator-policy-sessions",
-        ));
+        let sessions = SessionManager::new(
+            std::env::temp_dir().join(format!("openz-nested-orchestrator-policy-sessions-{}", uuid::Uuid::new_v4())),
+        );
         let registry = ToolRegistry::new_with_context(config, provider, sessions);
 
         crate::tools::subagent::ACTIVE_SUBAGENT
@@ -1125,9 +1125,9 @@ mod route_cache_tests {
     async fn orchestrated_worker_policy_blocks_nested_delegation_tools() {
         let config = Config::default();
         let provider = Arc::new(crate::providers::mock::MockProvider::new());
-        let sessions = SessionManager::new(std::path::PathBuf::from(
-            "/tmp/openz-orchestrated-nested-delegation-sessions",
-        ));
+        let sessions = SessionManager::new(
+            std::env::temp_dir().join(format!("openz-orchestrated-nested-delegation-sessions-{}", uuid::Uuid::new_v4())),
+        );
         let registry = ToolRegistry::new_with_context(config, provider, sessions);
 
         assert!(registry.get("delegate_task").is_some());
@@ -1158,7 +1158,9 @@ mod route_cache_tests {
     fn capability_policy_blocks_dynamic_subagent_tool_lookup() {
         let config = Config::default();
         let provider = Arc::new(crate::providers::mock::MockProvider::new());
-        let sessions = SessionManager::new(std::path::PathBuf::from("/tmp/openz-policy-sessions"));
+        let sessions = SessionManager::new(
+            std::env::temp_dir().join(format!("openz-policy-sessions-{}", uuid::Uuid::new_v4())),
+        );
         let registry = ToolRegistry::new_with_context(config, provider, sessions);
         registry.set_capability_policy(Some(crate::orchestrator::spec::CapabilityPolicy {
             allowed_tools: vec!["read_file".to_string()],
