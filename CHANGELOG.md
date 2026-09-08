@@ -1,4 +1,16 @@
-### v0.0.153 (Latest Release)
+### v0.0.154 (Latest Release)
+- **Ratatui TUI Rendering Engine Decomposition (`channels/ratatui/ui.rs`)**:
+  - Decomposed the monolithic 1,104-line Ratatui TUI renderer into focused submodules:
+    - [`src/channels/ratatui/markdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown.rs): inline markdown formatting (bold, code spans), headings, horizontal rules, and bullet/numbered lists with unit test coverage.
+    - [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs): conversation timeline, authentic ASCII logo banner, system metadata badges, message card rendering, and smooth auto-scrolling logic.
+    - [`src/channels/ratatui/modals.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/modals.rs): modal dialog overlays (provider select, model select, skills, help, approval, confirmation) and geometry helpers (`centered_rect`).
+  - Slashed `src/channels/ratatui/ui.rs` from 1,104 lines to 247 lines (~77.6% line reduction) coordinating top-level layout composition, elevated input dock, autocomplete dock, and status bar.
+- **Process Marker & Session Mutation Extraction (`channels/ratatui/session.rs`)**:
+  - Extracted process marker management (`tui_marker_dir`, `write_tui_marker_in_dir`, `remove_tui_marker_in_dir`, `process_is_alive`, `is_last_live_tui_in_dir`) and session mutation routines (`save_session_model_override`, `save_session_streaming_override`, `save_default_model_selection`, `apply_session_model_selection`, `reset_active_session`) into [`src/channels/ratatui/session.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/session.rs).
+  - Maintained full backward compatibility with clean `pub use session::*;` in [`src/channels/ratatui/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/mod.rs).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.153
 - **Subagent Workspace Lifecycle Modularization (`subagent/workspace.rs`)**:
   - Extracted 846 lines of workspace isolation, worktree lifecycle, disk quota management, git status filtering, and evolution review out of [`src/tools/subagent/delegate_task.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task.rs) into a dedicated module [`src/tools/subagent/workspace.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/workspace.rs).
   - Slashed `delegate_task.rs` from 1,126 lines down to 286 lines (~74.6% line reduction) while providing full backward compatibility via re-exports.

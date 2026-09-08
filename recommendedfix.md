@@ -363,6 +363,17 @@ struct WebFetchTool;
 
 ---
 
+### 4.18 Ratatui Terminal TUI Decomposition & Session Extraction (Resolved in v0.0.154)
+
+**Files:** [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs), [`src/channels/ratatui/markdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown.rs), [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs), [`src/channels/ratatui/modals.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/modals.rs), [`src/channels/ratatui/session.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/session.rs), [`src/channels/ratatui/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/mod.rs)
+
+**Status:**
+- Decomposed monolithic 1,104-line Ratatui TUI renderer into `markdown.rs`, `timeline.rs`, and `modals.rs`, slashing `ui.rs` to 247 lines (~77.6% line reduction).
+- Extracted process marker management and session mutation routines from `mod.rs` into `session.rs` with dedicated unit test coverage.
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)
