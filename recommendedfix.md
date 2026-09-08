@@ -352,6 +352,17 @@ struct WebFetchTool;
 
 ---
 
+### 4.17 Subagent Workspace Modularization & Prompt Test Extraction (Resolved in v0.0.153)
+
+**Files:** [`src/tools/subagent/delegate_task.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task.rs), [`src/tools/subagent/workspace.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/workspace.rs), [`src/tools/subagent/delegate_profile.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_profile.rs), [`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs), [`src/agent/agent_loop/build_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build_tests.rs)
+
+**Status:**
+- Extracted 846 lines of workspace isolation, worktree lifecycle, disk quota management, git status filtering, and evolution review out of `src/tools/subagent/delegate_task.rs` into dedicated module `src/tools/subagent/workspace.rs`. Reduced `delegate_task.rs` from 1,126 lines to 286 lines (~74.6% line reduction).
+- Decoupled `delegate_profile.rs` from borrowing internal helpers from `delegate_task.rs`.
+- Extracted 426 lines of embedded unit tests from `src/agent/agent_loop/build.rs` into `src/agent/agent_loop/build_tests.rs`, reducing `build.rs` from 1,527 lines to 1,101 lines.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)

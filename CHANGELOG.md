@@ -1,4 +1,14 @@
-### v0.0.152 (Latest Release)
+### v0.0.153 (Latest Release)
+- **Subagent Workspace Lifecycle Modularization (`subagent/workspace.rs`)**:
+  - Extracted 846 lines of workspace isolation, worktree lifecycle, disk quota management, git status filtering, and evolution review out of [`src/tools/subagent/delegate_task.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task.rs) into a dedicated module [`src/tools/subagent/workspace.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/workspace.rs).
+  - Slashed `delegate_task.rs` from 1,126 lines down to 286 lines (~74.6% line reduction) while providing full backward compatibility via re-exports.
+  - Decoupled [`delegate_profile.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_profile.rs) from borrowing internal symbols from `delegate_task.rs`.
+- **Prompt Builder Unit Test Extraction (`build_tests.rs`)**:
+  - Extracted 426 lines of embedded unit tests from [`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs) into a dedicated test submodule [`src/agent/agent_loop/build_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build_tests.rs).
+  - Reduced `build.rs` from 1,527 lines to 1,101 lines.
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.152
 - **Scoped Intent Prioritization & Pack Routing**:
   - Reordered intent detection in [`src/agent/agent_loop/intent.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/intent.rs) so local repository queries, orchestration workflows, and cron schedule intents take precedence over live web research heuristics, preventing queries like "schedule a daily web check" from being prematurely misclassified as web research.
   - Assigned pack scoping in [`src/tools/defs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/defs.rs): associated `manage_servers` with `&["core", "local_exec"]` and `workflow_memory` with `&["core", "memory"]`.
