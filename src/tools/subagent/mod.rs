@@ -18,6 +18,7 @@ pub mod lifecycle;
 pub mod optimize_profile;
 pub mod parallel_research;
 pub mod schema_retry;
+pub mod workspace;
 
 #[cfg(test)]
 mod tests;

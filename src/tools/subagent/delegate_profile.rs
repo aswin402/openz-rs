@@ -1,5 +1,5 @@
-use super::delegate_task::{current_workspace_root, WorktreeGuard};
 use super::parallel_research::get_status_from_goal;
+use super::workspace::{current_workspace_root, WorktreeGuard};
 use super::{
     build_provider_for_model, build_subagent_prompt, cancellation_result_json,
     ensure_markdown_images, run_subagent_attempt, status_json, CancellationToken,
