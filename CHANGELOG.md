@@ -1,4 +1,18 @@
-### v0.0.151 (Latest Release)
+### v0.0.152 (Latest Release)
+- **Scoped Intent Prioritization & Pack Routing**:
+  - Reordered intent detection in [`src/agent/agent_loop/intent.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/intent.rs) so local repository queries, orchestration workflows, and cron schedule intents take precedence over live web research heuristics, preventing queries like "schedule a daily web check" from being prematurely misclassified as web research.
+  - Assigned pack scoping in [`src/tools/defs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/defs.rs): associated `manage_servers` with `&["core", "local_exec"]` and `workflow_memory` with `&["core", "memory"]`.
+  - Aligned legacy router tests in [`src/cli/tools.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tools.rs) with `ToolScopeEngine` dynamic scoring semantics.
+- **CLI Channel God-File Modularization (`channels/cli/mod.rs`)**:
+  - Slashed the 1,548-line [`src/channels/cli/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/mod.rs) down to 431 lines (~72% line reduction) while preserving 100% backward compatibility.
+  - Extracted hardware, network, and battery device commands into [`src/channels/cli/device.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/device.rs) (253 lines).
+  - Extracted interactive slash command execution (`handle_slash_command`) into [`src/channels/cli/commands.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/commands.rs) (928 lines).
+- **Security Unit Test Decomposition**:
+  - Extracted 580 lines of embedded unit tests from [`src/agent/security.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/security.rs) into a dedicated test submodule [`src/agent/security_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/security_tests.rs).
+  - Reduced `src/agent/security.rs` from 1,497 lines to 922 lines.
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.151
 - **God-File Modularization (`run/mod.rs` & `websocket/mod.rs`)**:
   - Decomposed [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs) by extracting ~500 lines of embedded unit tests into a dedicated submodule [`src/agent/agent_loop/run/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/tests.rs).
   - Decomposed [`src/channels/websocket/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/mod.rs) (slashed from 1,204 lines down to ~380 lines) by extracting WebSocket connection frame handling into [`src/channels/websocket/socket.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/socket.rs) and HTTP REST endpoints (`openai_chat_completions`, `trigger_sop_handler`, `resume_sop_handler`, and `hono_log_middleware`) into [`src/channels/websocket/handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/handlers.rs).

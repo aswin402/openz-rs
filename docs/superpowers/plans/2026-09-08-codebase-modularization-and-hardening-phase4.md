@@ -25,12 +25,12 @@
 - Modify: [`src/tools/defs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/defs.rs)
 - Modify: [`src/cli/tools.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tools.rs)
 
-- [ ] **Step 1:** In `src/agent/agent_loop/intent.rs`, check `is_cron_query` before `has_live_research_intent`.
-- [ ] **Step 2:** In `src/tools/defs.rs`, assign packs to `manage_servers` (`&["core", "local_exec"]`) and `workflow_memory` (`&["core", "memory"]`).
-- [ ] **Step 3:** In `src/cli/tools.rs`, update tests to align with `ToolScopeEngine` (`cron_scheduler_tools_stay_exposed_under_tool_limit`, `runtime_management_tools_stay_exposed_under_tool_limit`, `openai_format_prioritizes_high_value_tools_when_truncated`, `route_analysis_formats_compact_status_line`, `route_analysis_reports_api_limit_hidden_reason`, `openai_format_reserves_api_slots_for_dynamic_subagents`).
-- [ ] **Step 4:** Run `cargo test -p openz --lib cli::tools -j 2` and verify all tests pass.
-- [ ] **Step 5:** Run `cargo clippy -p openz --lib -j 2`.
-- [ ] **Step 6:** Commit: `git commit -am "fix(router): prioritize cron intent and associate core packs with server and workflow tools"`.
+- [x] **Step 1:** In `src/agent/agent_loop/intent.rs`, check `is_cron_query` before `has_live_research_intent`.
+- [x] **Step 2:** In `src/tools/defs.rs`, assign packs to `manage_servers` (`&["core", "local_exec"]`) and `workflow_memory` (`&["core", "memory"]`).
+- [x] **Step 3:** In `src/cli/tools.rs`, update tests to align with `ToolScopeEngine` (`cron_scheduler_tools_stay_exposed_under_tool_limit`, `runtime_management_tools_stay_exposed_under_tool_limit`, `openai_format_prioritizes_high_value_tools_when_truncated`, `route_analysis_formats_compact_status_line`, `route_analysis_reports_api_limit_hidden_reason`, `openai_format_reserves_api_slots_for_dynamic_subagents`).
+- [x] **Step 4:** Run `cargo test -p openz --lib cli::tools -j 2` and verify all tests pass.
+- [x] **Step 5:** Run `cargo clippy -p openz --lib -j 2`.
+- [x] **Step 6:** Commit: `git commit -am "fix(router): prioritize cron intent and associate core packs with server and workflow tools"`.
 
 ---
 
@@ -40,12 +40,12 @@
 - Create: [`src/channels/cli/commands.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/commands.rs)
 - Modify: [`src/channels/cli/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/mod.rs)
 
-- [ ] **Step 1:** Extract `handle_device_command`, `print_device_usage`, `print_device_result`, and `print_device_capability` into `src/channels/cli/device.rs`.
-- [ ] **Step 2:** Extract slash command execution into `src/channels/cli/commands.rs`.
-- [ ] **Step 3:** Refactor `src/channels/cli/mod.rs` to register submodules and dispatch commands cleanly.
-- [ ] **Step 4:** Run `cargo test -p openz --lib channels::cli -j 2`.
-- [ ] **Step 5:** Run `cargo clippy -p openz --lib -j 2`.
-- [ ] **Step 6:** Commit: `git commit -am "refactor(cli): extract device inventory and slash commands into submodules"`.
+- [x] **Step 1:** Extract `handle_device_command`, `print_device_usage`, `print_device_result`, and `print_device_capability` into `src/channels/cli/device.rs`.
+- [x] **Step 2:** Extract slash command execution into `src/channels/cli/commands.rs`.
+- [x] **Step 3:** Refactor `src/channels/cli/mod.rs` to register submodules and dispatch commands cleanly.
+- [x] **Step 4:** Run `cargo test -p openz --lib channels::cli -j 2`.
+- [x] **Step 5:** Run `cargo clippy -p openz --lib -j 2`.
+- [x] **Step 6:** Commit: `git commit -am "refactor(cli): extract device inventory and slash commands into submodules"`.
 
 ---
 
@@ -55,12 +55,12 @@
 - Modify: [`src/agent/security.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/security.rs)
 - Modify: [`src/agent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/mod.rs)
 
-- [ ] **Step 1:** Extract lines 922–1497 (`mod tests`) from `src/agent/security.rs` into `src/agent/security_tests.rs`.
-- [ ] **Step 2:** Update visibilities and imports as necessary.
-- [ ] **Step 3:** Register `#[cfg(test)] mod security_tests;` in `src/agent/mod.rs`.
-- [ ] **Step 4:** Run `cargo test -p openz --lib agent::security -j 2`.
-- [ ] **Step 5:** Run `cargo clippy -p openz --lib -j 2`.
-- [ ] **Step 6:** Commit: `git commit -am "refactor(security): extract embedded unit tests into dedicated security_tests module"`.
+- [x] **Step 1:** Extract lines 922–1497 (`mod tests`) from `src/agent/security.rs` into `src/agent/security_tests.rs`.
+- [x] **Step 2:** Update visibilities and imports as necessary.
+- [x] **Step 3:** Register `#[cfg(test)] mod security_tests;` in `src/agent/mod.rs`.
+- [x] **Step 4:** Run `cargo test -p openz --lib agent::security -j 2`.
+- [x] **Step 5:** Run `cargo clippy -p openz --lib -j 2`.
+- [x] **Step 6:** Commit: `git commit -am "refactor(security): extract embedded unit tests into dedicated security_tests module"`.
 
 ---
 
@@ -72,9 +72,9 @@
 - Modify: [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md)
 - Modify: [`recommendedfix.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/recommendedfix.md)
 
-- [ ] **Step 1:** Verify the 260 native tools invariant: `cargo test -p openz --lib test_native_tool_registration_names -j 2`.
-- [ ] **Step 2:** Bump version to `0.0.152` in `Cargo.toml`, `onpkg.json`, and `README.md`.
-- [ ] **Step 3:** Add release notes for `v0.0.152` in `CHANGELOG.md` and update `recommendedfix.md`.
-- [ ] **Step 4:** Run `cargo test -p openz --lib version_sync_tests -j 2`.
-- [ ] **Step 5:** Run `cargo clippy -p openz --lib -j 2`.
-- [ ] **Step 6:** Commit: `git commit -am "chore(release): bump openz to v0.0.152 with scoped intent fixes and CLI modularization"`.
+- [x] **Step 1:** Verify the 260 native tools invariant: `cargo test -p openz --lib test_native_tool_registration_names -j 2`.
+- [x] **Step 2:** Bump version to `0.0.152` in `Cargo.toml`, `onpkg.json`, and `README.md`.
+- [x] **Step 3:** Add release notes for `v0.0.152` in `CHANGELOG.md` and update `recommendedfix.md`.
+- [x] **Step 4:** Run `cargo test -p openz --lib version_sync_tests -j 2`.
+- [x] **Step 5:** Run `cargo clippy -p openz --lib -j 2`.
+- [x] **Step 6:** Commit: `git commit -am "chore(release): bump openz to v0.0.152 with scoped intent fixes and CLI modularization"`.

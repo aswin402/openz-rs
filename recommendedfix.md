@@ -340,6 +340,18 @@ struct WebFetchTool;
 
 ---
 
+### 4.16 Scoped Intent Prioritization & CLI Channel Modularization (Resolved in v0.0.152)
+
+**Files:** [`src/agent/agent_loop/intent.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/intent.rs), [`src/tools/defs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/defs.rs), [`src/channels/cli/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/mod.rs), [`src/channels/cli/device.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/device.rs), [`src/channels/cli/commands.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/commands.rs), [`src/agent/security.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/security.rs), [`src/agent/security_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/security_tests.rs)
+
+**Status:**
+- Prioritized cron, workflow, and local repo intent checks before live research heuristics in `src/agent/agent_loop/intent.rs`, preventing scheduling commands from being misrouted to web research.
+- Assigned pack scoping for `manage_servers` (`core`, `local_exec`) and `workflow_memory` (`core`, `memory`) in `src/tools/defs.rs`.
+- Decomposed the 1,548-line `src/channels/cli/mod.rs` god-file into `device.rs` (253 lines) and `commands.rs` (928 lines), reducing `mod.rs` to 431 lines while maintaining full backward compatibility.
+- Extracted 580 lines of unit tests from `src/agent/security.rs` into `src/agent/security_tests.rs`, reducing `security.rs` to 922 lines.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)
