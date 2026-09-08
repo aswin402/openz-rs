@@ -1,5 +1,8 @@
 pub mod app;
+pub mod markdown;
+pub mod modals;
 pub mod theme;
+pub mod timeline;
 pub mod ui;
 
 use anyhow::Result;
