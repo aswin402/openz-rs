@@ -15,3 +15,6 @@ pub use self::activity::{
 pub use self::agent_loop::{AgentLoop, RunResult, TurnState};
 pub use self::security::{ask_approval, SecurityGuard};
 pub use self::skills::Skill;
+
+#[cfg(test)]
+mod security_tests;
