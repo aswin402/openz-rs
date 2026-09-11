@@ -1,4 +1,22 @@
-### v0.0.160 (Latest Release)
+### v0.0.161 (Latest Release)
+- **Activity Tracker Test Suite Decomposition (`agent/activity_tests.rs`)**:
+  - Extracted 229 lines of embedded activity, daily rollup, and event tracking unit tests from [`src/agent/activity.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/activity.rs) into [`src/agent/activity_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/activity_tests.rs).
+  - Reduced `src/agent/activity.rs` from 707 lines down to 480 lines (~32.1% line reduction).
+- **Cron Scheduler Test Suite Extraction (`cron/scheduler_tests.rs`)**:
+  - Extracted 222 lines of job dispatch, cron schedule parsing, and execution history unit tests from [`src/cron/scheduler.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cron/scheduler.rs) into [`src/cron/scheduler_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cron/scheduler_tests.rs).
+  - Reduced `src/cron/scheduler.rs` from 624 lines down to 404 lines (~35.3% line reduction).
+- **Resource Policy Test Suite Extraction (`tools/resource_policy_tests.rs`)**:
+  - Extracted 199 lines of resource envelope, budget enforcement, and capability governance unit tests from [`src/tools/resource_policy.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/resource_policy.rs) into [`src/tools/resource_policy_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/resource_policy_tests.rs).
+  - Reduced `src/tools/resource_policy.rs` from 407 lines down to 211 lines (~48.2% line reduction).
+- **SearchXyz Web Search Suite Extraction (`tools/searchxyz/web_tests.rs`)**:
+  - Extracted 229 lines of browser search URL building, DOM extraction, cooldown tracking, and doctor report unit tests from [`src/tools/searchxyz/web.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/web.rs) into [`src/tools/searchxyz/web_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/web_tests.rs).
+  - Reduced `src/tools/searchxyz/web.rs` from 1,443 lines down to 1,216 lines (~15.7% line reduction).
+- **Web Search Tool Test Suite Extraction (`tools/web_search_tests.rs`)**:
+  - Extracted 195 lines of search policy resolution, auto-reading heuristics, failure diagnostics, and native rescue unit tests from [`src/tools/web_search.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_search.rs) into [`src/tools/web_search_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_search_tests.rs).
+  - Reduced `src/tools/web_search.rs` from 968 lines down to 774 lines (~20.0% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.160
 - **Config Schema Test Suite Decomposition (`config/schema_tests.rs`)**:
   - Extracted 380 lines of embedded unit tests (`provider_resolution_tests`, general tests, and `layered_tool_routing_tests`) out of [`src/config/schema.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/schema.rs) into [`src/config/schema_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/schema_tests.rs).
   - Slashed `src/config/schema.rs` from 1,496 lines down to 1,115 lines (~25.5% line reduction), isolating data models and serde structures.

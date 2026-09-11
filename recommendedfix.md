@@ -451,6 +451,20 @@ struct WebFetchTool;
 
 ---
 
+### 4.25 Subsystem & Search Test Suite Decomposition (Resolved in v0.0.161)
+
+**Files:** [`src/agent/activity.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/activity.rs), [`src/agent/activity_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/activity_tests.rs), [`src/cron/scheduler.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cron/scheduler.rs), [`src/cron/scheduler_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cron/scheduler_tests.rs), [`src/tools/resource_policy.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/resource_policy.rs), [`src/tools/resource_policy_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/resource_policy_tests.rs), [`src/tools/searchxyz/web.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/web.rs), [`src/tools/searchxyz/web_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/web_tests.rs), [`src/tools/web_search.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_search.rs), [`src/tools/web_search_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_search_tests.rs)
+
+**Status:**
+- Extracted 229 lines of embedded unit tests from `src/agent/activity.rs` into `src/agent/activity_tests.rs`, reducing `activity.rs` from 707 to 480 lines (~32.1% reduction).
+- Extracted 222 lines of embedded unit tests from `src/cron/scheduler.rs` into `src/cron/scheduler_tests.rs`, reducing `scheduler.rs` from 624 to 404 lines (~35.3% reduction).
+- Extracted 199 lines of embedded unit tests from `src/tools/resource_policy.rs` into `src/tools/resource_policy_tests.rs`, reducing `resource_policy.rs` from 407 to 211 lines (~48.2% reduction).
+- Extracted 229 lines of embedded unit tests from `src/tools/searchxyz/web.rs` into `src/tools/searchxyz/web_tests.rs`, reducing `web.rs` from 1,443 to 1,216 lines (~15.7% reduction).
+- Extracted 195 lines of embedded unit tests from `src/tools/web_search.rs` into `src/tools/web_search_tests.rs`, reducing `web_search.rs` from 968 to 774 lines (~20.0% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)
