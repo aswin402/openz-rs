@@ -411,6 +411,19 @@ struct WebFetchTool;
 
 ---
 
+### 4.22 Subagent Runner Extraction & Test Suite Decomposition (Resolved in v0.0.158)
+
+**Files:** [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs), [`src/tools/subagent/runner.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner.rs), [`src/session.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/session.rs), [`src/session_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/session_tests.rs), [`src/tools/headroom/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/mod.rs), [`src/tools/headroom/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/tests.rs), [`src/tools/self_management/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/mod.rs), [`src/tools/self_management/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/tests.rs)
+
+**Status:**
+- Extracted 872 lines of execution runner and workspace isolation logic from `src/tools/subagent/mod.rs` into `src/tools/subagent/runner.rs`, reducing `subagent/mod.rs` from 921 to 60 lines (~93.5% reduction).
+- Extracted 290 lines of interleaved test suites (`hash_tests`, `lock_tests`, `delete_tests`, `summary_tests`) from `src/session.rs` into `src/session_tests.rs`, reducing `session.rs` to an uninterrupted production module.
+- Extracted 706 lines of embedded tests from `src/tools/headroom/mod.rs` into `src/tools/headroom/tests.rs`, reducing `headroom/mod.rs` from 739 to 33 lines (~95.5% reduction).
+- Extracted 687 lines of embedded tests from `src/tools/self_management/mod.rs` into `src/tools/self_management/tests.rs`, reducing `self_management/mod.rs` from 711 to 26 lines (~96.3% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)
@@ -451,5 +464,5 @@ No use of `proptest` or `quickcheck` for:
 | **P1** | 1.2-1.5 Match bloat, unwraps, monolith, provider config | ~500 lines across 5 files | Runtime panics, new provider friction |
 | **P2** | 2.1-2.6 Stale errors, locking, notifications, router caching, API key diagnostics, config drift | ~600 lines across 8 files | User confusion, silent failures |
 | **P3** | 3.1-3.5 Naming, activity I/O, HTTP timeouts, select bias, cleanup | ~200 lines | Tech debt, marginal reliability |
-| **Enhancements** | 4.1-4.21 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition | — | Feature gap |
+| **Enhancements** | 4.1-4.22 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization | — | Feature gap |
 | **Testing** | 5.1, 5.3 Integration tests and property tests | — | Coverage gap |

@@ -1,4 +1,19 @@
-### v0.0.157 (Latest Release)
+### v0.0.158 (Latest Release)
+- **Subagent Execution Runner Extraction (`tools/subagent/runner.rs`)**:
+  - Extracted 872 lines of subagent orchestration, workspace isolation, token cancellation drop guards (`CancelOnDrop`, `WorkspaceIsolation`, `create_workspace_isolation`), and attempt execution out of [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs) into a dedicated module [`src/tools/subagent/runner.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner.rs).
+  - Slashed `src/tools/subagent/mod.rs` from 921 lines down to 60 lines (~93.5% line reduction) with clean re-exports via `pub mod runner; pub use runner::*;`.
+- **Session Test Suite Decomposition (`session_tests.rs`)**:
+  - Extracted 290 lines of interleaved unit test suites (`hash_tests`, `lock_tests`, `delete_tests`, `summary_tests`) out of [`src/session.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/session.rs) into [`src/session_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/session_tests.rs).
+  - Consolidated core production structures (`Message`, `Session`, `ArchivedSession`, `SessionSummary`, `SessionManager`) into an uninterrupted module.
+- **Headroom Test Suite Extraction (`tools/headroom/tests.rs`)**:
+  - Extracted 706 lines of embedded unit tests from [`src/tools/headroom/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/mod.rs) into [`src/tools/headroom/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/tests.rs).
+  - Slashed `src/tools/headroom/mod.rs` from 739 lines down to 33 lines (~95.5% line reduction).
+- **Self-Management Test Suite Extraction (`tools/self_management/tests.rs`)**:
+  - Extracted 687 lines of embedded unit tests from [`src/tools/self_management/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/mod.rs) into [`src/tools/self_management/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/tests.rs).
+  - Slashed `src/tools/self_management/mod.rs` from 711 lines down to 26 lines (~96.3% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.157
 - **Subagent Subsystem Modularization (`src/subagents/`)**:
   - Decomposed the monolithic 1,088-line [`src/subagents/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/mod.rs) into focused domain submodules:
     - [`src/subagents/defaults.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/defaults.rs): Default profile configurations (`default_profiles()`, `DEFAULT_SUBAGENT_NAMES`, `is_default_subagent`) including orchestrator, planner, researcher, coder, and specialized profiles.
