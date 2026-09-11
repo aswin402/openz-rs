@@ -1,4 +1,23 @@
-### v0.0.159 (Latest Release)
+### v0.0.160 (Latest Release)
+- **Config Schema Test Suite Decomposition (`config/schema_tests.rs`)**:
+  - Extracted 380 lines of embedded unit tests (`provider_resolution_tests`, general tests, and `layered_tool_routing_tests`) out of [`src/config/schema.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/schema.rs) into [`src/config/schema_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/schema_tests.rs).
+  - Slashed `src/config/schema.rs` from 1,496 lines down to 1,115 lines (~25.5% line reduction), isolating data models and serde structures.
+- **Config Loader Test Suite Extraction (`config/loader_tests.rs`)**:
+  - Extracted 358 lines of configuration caching, path resolution, and legacy alias rewrite tests from [`src/config/loader.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/loader.rs) into [`src/config/loader_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/loader_tests.rs).
+  - Reduced `src/config/loader.rs` from 928 lines down to 572 lines (~38.4% line reduction).
+- **SOP Workflow Engine Test Suite Extraction (`sop/tests.rs`)**:
+  - Extracted 265 lines of template substitution, validation, and simulated workflow lifecycle tests from [`src/sop/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/sop/mod.rs) into [`src/sop/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/sop/tests.rs).
+  - Reduced `src/sop/mod.rs` from 677 lines down to 412 lines (~39.1% line reduction).
+- **Filesystem Tools Test Suite Extraction (`tools/filesystem_tests.rs`)**:
+  - Extracted 247 lines of source-integrity, symlink restriction, and non-destructive transactional rollback tests from [`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs) into [`src/tools/filesystem_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem_tests.rs).
+  - Reduced `src/tools/filesystem.rs` from 784 lines down to 539 lines (~31.3% line reduction).
+- **Agent Loop Core Test Suite Extraction (`agent/agent_loop/tests.rs`)**:
+  - Extracted 236 lines of turn cancellation context, session override mappings, and provider timeout/cancellation tests from [`src/agent/agent_loop/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/mod.rs) into [`src/agent/agent_loop/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/tests.rs).
+  - Hardened parallel test execution against cross-test CLI cancellation interference with dedicated test locking.
+  - Reduced `src/agent/agent_loop/mod.rs` from 922 lines down to 686 lines (~25.6% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.159
 - **CLI Builder Test Suite Extraction (`cli/builder_tests.rs`)**:
   - Extracted 578 lines of embedded unit tests from [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs) into [`src/cli/builder_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder_tests.rs).
   - Reduced `src/cli/builder.rs` from 615 lines down to 40 lines (~93.5% line reduction), establishing an ultra-clean construction facade.

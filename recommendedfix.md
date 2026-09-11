@@ -437,6 +437,20 @@ struct WebFetchTool;
 
 ---
 
+### 4.24 Core Engine & Config Test Suite Decomposition (Resolved in v0.0.160)
+
+**Files:** [`src/config/schema.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/schema.rs), [`src/config/schema_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/schema_tests.rs), [`src/config/loader.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/loader.rs), [`src/config/loader_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/loader_tests.rs), [`src/sop/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/sop/mod.rs), [`src/sop/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/sop/tests.rs), [`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs), [`src/tools/filesystem_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem_tests.rs), [`src/agent/agent_loop/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/mod.rs), [`src/agent/agent_loop/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/tests.rs)
+
+**Status:**
+- Extracted 380 lines of embedded unit tests from `src/config/schema.rs` into `src/config/schema_tests.rs`, reducing `schema.rs` from 1,496 to 1,115 lines (~25.5% reduction).
+- Extracted 358 lines of embedded unit tests from `src/config/loader.rs` into `src/config/loader_tests.rs`, reducing `loader.rs` from 928 to 572 lines (~38.4% reduction).
+- Extracted 265 lines of embedded unit tests from `src/sop/mod.rs` into `src/sop/tests.rs`, reducing `sop/mod.rs` from 677 to 412 lines (~39.1% reduction).
+- Extracted 247 lines of embedded unit tests from `src/tools/filesystem.rs` into `src/tools/filesystem_tests.rs`, reducing `filesystem.rs` from 784 to 539 lines (~31.3% reduction).
+- Extracted 236 lines of embedded unit tests from `src/agent/agent_loop/mod.rs` into `src/agent/agent_loop/tests.rs` with dedicated test synchronization locks, reducing `agent_loop/mod.rs` from 922 to 686 lines (~25.6% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)
