@@ -1,4 +1,19 @@
-### v0.0.156 (Latest Release)
+### v0.0.157 (Latest Release)
+- **Subagent Subsystem Modularization (`src/subagents/`)**:
+  - Decomposed the monolithic 1,088-line [`src/subagents/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/mod.rs) into focused domain submodules:
+    - [`src/subagents/defaults.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/defaults.rs): Default profile configurations (`default_profiles()`, `DEFAULT_SUBAGENT_NAMES`, `is_default_subagent`) including orchestrator, planner, researcher, coder, and specialized profiles.
+    - [`src/subagents/health.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/health.rs): Adaptive health tracking registry (`SubagentHealthRecord`, `SubagentHealthRegistry`, `record_subagent_success`, `record_subagent_failure`) and automatic fallback cascades.
+    - [`src/subagents/interactive.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/interactive.rs): Interactive terminal management wizard (`run_subagent_manager`, `manage_menu`, `create_menu`, `ask_openz_to_design`, `prompt_choose_model`).
+    - [`src/subagents/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/tests.rs): Comprehensive unit tests covering health metrics, default policies, and registry state.
+  - Slashed `src/subagents/mod.rs` from 1,088 lines down to 210 lines (~80.7% line reduction) as a clean architectural facade with 100% backward-compatible re-exports.
+- **Shared Memory Unit Test Extraction (`tools/shared_memory/`)**:
+  - Extracted 365 lines of embedded unit tests from [`src/tools/shared_memory/knowledge.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/knowledge.rs) into [`src/tools/shared_memory/knowledge_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/knowledge_tests.rs), reducing `knowledge.rs` from 1,350 lines to 988 lines (~26.8% line reduction).
+  - Extracted 399 lines of embedded unit tests from [`src/tools/shared_memory/auto_capture.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/auto_capture.rs) into [`src/tools/shared_memory/auto_capture_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/auto_capture_tests.rs), reducing `auto_capture.rs` from 1,214 lines to 816 lines (~32.8% line reduction).
+- **Skills Subsystem Unit Test Extraction (`agent/skills_tests.rs`)**:
+  - Extracted 110 lines of embedded unit tests from [`src/agent/skills.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/skills.rs) into [`src/agent/skills_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/skills_tests.rs), reducing `skills.rs` from 1,103 lines to 995 lines.
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.156
 - **Tool Registry Subsystem Modularization (`tools/registry.rs`)**:
   - Extracted `ToolRegistry`, route analysis structures (`ToolRouteEntry`, `ToolRouteAnalysis`, `PendingToolScope`, `ToolRouteCacheKey`), prompt intent scoring routing, and dynamic subagent resolution out of [`src/tools/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mod.rs) into a dedicated module [`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs).
   - Integrated canonical registration deduplication (`insert_unique_tool`), drift detection (`static_tool_drift`), and name resolution (`resolve_static_name`) seamlessly.

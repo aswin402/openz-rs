@@ -398,6 +398,19 @@ struct WebFetchTool;
 
 ---
 
+### 4.21 Subagent Decomposition & Memory Test Extraction (Resolved in v0.0.157)
+
+**Files:** [`src/subagents/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/mod.rs), [`src/subagents/defaults.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/defaults.rs), [`src/subagents/health.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/health.rs), [`src/subagents/interactive.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/interactive.rs), [`src/subagents/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/tests.rs), [`src/tools/shared_memory/knowledge.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/knowledge.rs), [`src/tools/shared_memory/knowledge_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/knowledge_tests.rs), [`src/tools/shared_memory/auto_capture.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/auto_capture.rs), [`src/tools/shared_memory/auto_capture_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/auto_capture_tests.rs), [`src/agent/skills.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/skills.rs), [`src/agent/skills_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/skills_tests.rs)
+
+**Status:**
+- Decomposed monolithic 1,088-line `src/subagents/mod.rs` into focused domain submodules (`defaults.rs`, `health.rs`, `interactive.rs`, `tests.rs`) and reduced `mod.rs` to 210 lines (~80.7% reduction).
+- Extracted 365 lines of embedded unit tests from `src/tools/shared_memory/knowledge.rs` into `src/tools/shared_memory/knowledge_tests.rs`, reducing `knowledge.rs` from 1,350 to 988 lines (~26.8% reduction).
+- Extracted 399 lines of embedded unit tests from `src/tools/shared_memory/auto_capture.rs` into `src/tools/shared_memory/auto_capture_tests.rs`, reducing `auto_capture.rs` from 1,214 to 816 lines (~32.8% reduction).
+- Extracted 110 lines of embedded unit tests from `src/agent/skills.rs` into `src/agent/skills_tests.rs`, reducing `skills.rs` from 1,103 to 995 lines.
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)
@@ -438,5 +451,5 @@ No use of `proptest` or `quickcheck` for:
 | **P1** | 1.2-1.5 Match bloat, unwraps, monolith, provider config | ~500 lines across 5 files | Runtime panics, new provider friction |
 | **P2** | 2.1-2.6 Stale errors, locking, notifications, router caching, API key diagnostics, config drift | ~600 lines across 8 files | User confusion, silent failures |
 | **P3** | 3.1-3.5 Naming, activity I/O, HTTP timeouts, select bias, cleanup | ~200 lines | Tech debt, marginal reliability |
-| **Enhancements** | 4.1-4.19 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction | — | Feature gap |
+| **Enhancements** | 4.1-4.21 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition | — | Feature gap |
 | **Testing** | 5.1, 5.3 Integration tests and property tests | — | Coverage gap |
