@@ -465,6 +465,20 @@ struct WebFetchTool;
 
 ---
 
+### 4.26 Interactive, Workflow & Web Tool Test Suite Decomposition (Resolved in v0.0.162)
+
+**Files:** [`src/tools/orchestrator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/orchestrator.rs), [`src/tools/orchestrator_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/orchestrator_tests.rs), [`src/grounding.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/grounding.rs), [`src/grounding_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/grounding_tests.rs), [`src/channels/ratatui/app.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app.rs), [`src/channels/ratatui/app_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app_tests.rs), [`src/tools/web.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web.rs), [`src/tools/web_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_tests.rs), [`src/tools/cron.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/cron.rs), [`src/tools/cron_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/cron_tests.rs)
+
+**Status:**
+- Extracted 175 lines of embedded unit tests from `src/tools/orchestrator.rs` into `src/tools/orchestrator_tests.rs`, cleaning up mid-file test declarations and reducing `orchestrator.rs` from 574 to 401 lines (~30.1% reduction).
+- Extracted 171 lines of embedded unit tests from `src/grounding.rs` into `src/grounding_tests.rs`, reducing `grounding.rs` from 445 to 274 lines (~38.4% reduction).
+- Extracted 165 lines of embedded unit tests from `src/channels/ratatui/app.rs` into `src/channels/ratatui/app_tests.rs`, reducing `app.rs` from 586 to 421 lines (~28.2% reduction).
+- Extracted 161 lines of embedded unit tests from `src/tools/web.rs` into `src/tools/web_tests.rs`, reducing `web.rs` from 942 to 781 lines (~17.1% reduction).
+- Extracted 153 lines of embedded unit tests from `src/tools/cron.rs` into `src/tools/cron_tests.rs`, reducing `cron.rs` from 600 to 447 lines (~25.5% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)

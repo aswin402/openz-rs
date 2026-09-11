@@ -1,4 +1,22 @@
-### v0.0.161 (Latest Release)
+### v0.0.162 (Latest Release)
+- **Orchestrator Workflow Tool Test Suite Extraction (`tools/orchestrator_tests.rs`)**:
+  - Extracted 175 lines of workflow spec validation, tool filtering, and capability policy governance unit tests from [`src/tools/orchestrator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/orchestrator.rs) into [`src/tools/orchestrator_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/orchestrator_tests.rs).
+  - Cleaned up misplaced mid-file test declarations, reducing `src/tools/orchestrator.rs` from 574 lines down to 401 lines (~30.1% line reduction).
+- **Grounding Classification Test Suite Extraction (`grounding_tests.rs`)**:
+  - Extracted 171 lines of grounding heuristic classification, research step policies, and evolution suppression unit tests from [`src/grounding.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/grounding.rs) into [`src/grounding_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/grounding_tests.rs).
+  - Reduced `src/grounding.rs` from 445 lines down to 274 lines (~38.4% line reduction).
+- **Ratatui Terminal UI App Test Suite Extraction (`channels/ratatui/app_tests.rs`)**:
+  - Extracted 165 lines of scrolling behavior, sync session notice preservation, git branch caching, and message parsing unit tests from [`src/channels/ratatui/app.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app.rs) into [`src/channels/ratatui/app_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app_tests.rs).
+  - Reduced `src/channels/ratatui/app.rs` from 586 lines down to 421 lines (~28.2% line reduction).
+- **Web Fetch Tool Test Suite Extraction (`tools/web_tests.rs`)**:
+  - Extracted 161 lines of HTML tree node parsing, SSRF safe IP validation, HTTP caching heuristics, and browser render broker unit tests from [`src/tools/web.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web.rs) into [`src/tools/web_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_tests.rs).
+  - Reduced `src/tools/web.rs` from 942 lines down to 781 lines (~17.1% line reduction).
+- **Cron Management Tools Test Suite Extraction (`tools/cron_tests.rs`)**:
+  - Extracted 153 lines of pause/resume job toggling, execution guard, and structured run log retrieval unit tests from [`src/tools/cron.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/cron.rs) into [`src/tools/cron_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/cron_tests.rs).
+  - Reduced `src/tools/cron.rs` from 600 lines down to 447 lines (~25.5% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.161
 - **Activity Tracker Test Suite Decomposition (`agent/activity_tests.rs`)**:
   - Extracted 229 lines of embedded activity, daily rollup, and event tracking unit tests from [`src/agent/activity.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/activity.rs) into [`src/agent/activity_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/activity_tests.rs).
   - Reduced `src/agent/activity.rs` from 707 lines down to 480 lines (~32.1% line reduction).
