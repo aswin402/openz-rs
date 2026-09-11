@@ -1,4 +1,19 @@
-### v0.0.158 (Latest Release)
+### v0.0.159 (Latest Release)
+- **CLI Builder Test Suite Extraction (`cli/builder_tests.rs`)**:
+  - Extracted 578 lines of embedded unit tests from [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs) into [`src/cli/builder_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder_tests.rs).
+  - Reduced `src/cli/builder.rs` from 615 lines down to 40 lines (~93.5% line reduction), establishing an ultra-clean construction facade.
+- **CLI Tools Registration Test Suite Extraction (`cli/tools_tests.rs`)**:
+  - Extracted 552 lines of embedded unit tests from [`src/cli/tools.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tools.rs) into [`src/cli/tools_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tools_tests.rs).
+  - Reduced `src/cli/tools.rs` from 588 lines down to 37 lines (~93.7% line reduction).
+- **Agent Loop Control Test Suite Extraction (`agent/agent_loop/loop_control_tests.rs`)**:
+  - Extracted 397 lines of embedded unit tests from [`src/agent/agent_loop/loop_control.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/loop_control.rs) into [`src/agent/agent_loop/loop_control_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/loop_control_tests.rs).
+  - Grouped production loop-control heuristics and self-healing error recovery, reducing `src/agent/agent_loop/loop_control.rs` from 779 lines down to 385 lines (~50.6% line reduction).
+- **Provider Resolver Test Suite Extraction (`providers/resolver_tests.rs`)**:
+  - Extracted 446 lines of embedded unit tests from [`src/providers/resolver.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/resolver.rs) into [`src/providers/resolver_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/resolver_tests.rs).
+  - Reduced `src/providers/resolver.rs` from 750 lines down to 305 lines (~59.3% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.158
 - **Subagent Execution Runner Extraction (`tools/subagent/runner.rs`)**:
   - Extracted 872 lines of subagent orchestration, workspace isolation, token cancellation drop guards (`CancelOnDrop`, `WorkspaceIsolation`, `create_workspace_isolation`), and attempt execution out of [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs) into a dedicated module [`src/tools/subagent/runner.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner.rs).
   - Slashed `src/tools/subagent/mod.rs` from 921 lines down to 60 lines (~93.5% line reduction) with clean re-exports via `pub mod runner; pub use runner::*;`.

@@ -424,6 +424,19 @@ struct WebFetchTool;
 
 ---
 
+### 4.23 CLI & Engine Test Suite Decomposition (Resolved in v0.0.159)
+
+**Files:** [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs), [`src/cli/builder_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder_tests.rs), [`src/cli/tools.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tools.rs), [`src/cli/tools_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tools_tests.rs), [`src/agent/agent_loop/loop_control.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/loop_control.rs), [`src/agent/agent_loop/loop_control_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/loop_control_tests.rs), [`src/providers/resolver.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/resolver.rs), [`src/providers/resolver_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/resolver_tests.rs)
+
+**Status:**
+- Extracted 578 lines of embedded unit tests from `src/cli/builder.rs` into `src/cli/builder_tests.rs`, reducing `builder.rs` from 615 to 40 lines (~93.5% reduction).
+- Extracted 552 lines of embedded unit tests from `src/cli/tools.rs` into `src/cli/tools_tests.rs`, reducing `tools.rs` from 588 to 37 lines (~93.7% reduction).
+- Extracted 397 lines of embedded unit tests from `src/agent/agent_loop/loop_control.rs` into `src/agent/agent_loop/loop_control_tests.rs`, reducing `loop_control.rs` from 779 to 385 lines (~50.6% reduction).
+- Extracted 446 lines of embedded unit tests from `src/providers/resolver.rs` into `src/providers/resolver_tests.rs`, reducing `resolver.rs` from 750 to 305 lines (~59.3% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)
