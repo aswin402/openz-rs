@@ -1,4 +1,17 @@
-### v0.0.154 (Latest Release)
+### v0.0.155 (Latest Release)
+- **Extended Memory Unit Test Extraction (`tools/memory_extra/tests.rs`)**:
+  - Extracted 1,463 lines of embedded unit tests from [`src/tools/memory_extra/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/mod.rs) into a dedicated test submodule [`src/tools/memory_extra/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/tests.rs).
+  - Slashed `mod.rs` from 1,496 lines to 34 lines (~97.7% line reduction) while preserving all 36 unit tests and concurrency guards.
+- **Orchestrator Workflow Runtime Test Extraction (`orchestrator/runtime_tests.rs`)**:
+  - Extracted 801 lines of embedded unit tests from [`src/orchestrator/runtime.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/runtime.rs) into [`src/orchestrator/runtime_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/runtime_tests.rs).
+  - Slashed `runtime.rs` from 1,420 lines to 620 lines (~56.3% line reduction) while maintaining all 21 workflow execution tests.
+- **Channel Model Switch Command & Test Decomposition (`channels/model_switch.rs` & `channels/tests.rs`)**:
+  - Extracted model switch interactive command parsing, terminal formatting, and background smoke test dispatch from [`src/channels/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/mod.rs) into a dedicated submodule [`src/channels/model_switch.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/model_switch.rs) (320 lines).
+  - Extracted 312 lines of embedded channel test suites (`notifications`, `stop_command`, `channel_session`, `model_switch`) into [`src/channels/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/tests.rs).
+  - Slashed `src/channels/mod.rs` from 1,020 lines to 396 lines (~61.2% line reduction) with 100% backward-compatible re-exports.
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.154
 - **Ratatui TUI Rendering Engine Decomposition (`channels/ratatui/ui.rs`)**:
   - Decomposed the monolithic 1,104-line Ratatui TUI renderer into focused submodules:
     - [`src/channels/ratatui/markdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown.rs): inline markdown formatting (bold, code spans), headings, horizontal rules, and bullet/numbered lists with unit test coverage.

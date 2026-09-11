@@ -374,6 +374,18 @@ struct WebFetchTool;
 
 ---
 
+### 4.19 Subsystem Root De-Bloat & Test Extraction (Resolved in v0.0.155)
+
+**Files:** [`src/tools/memory_extra/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/mod.rs), [`src/tools/memory_extra/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/tests.rs), [`src/orchestrator/runtime.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/runtime.rs), [`src/orchestrator/runtime_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/runtime_tests.rs), [`src/channels/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/mod.rs), [`src/channels/model_switch.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/model_switch.rs), [`src/channels/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/tests.rs)
+
+**Status:**
+- Extracted 1,463 lines of unit tests from `tools/memory_extra/mod.rs` into `tools/memory_extra/tests.rs`, reducing `mod.rs` from 1,496 to 34 lines (~97.7% reduction).
+- Extracted 801 lines of unit tests from `orchestrator/runtime.rs` into `orchestrator/runtime_tests.rs`, reducing `runtime.rs` from 1,420 to 620 lines (~56.3% reduction).
+- Extracted model switch command parsing, formatting, and smoke tests from `channels/mod.rs` into `channels/model_switch.rs` (320 lines) and channel tests into `channels/tests.rs` (312 lines), reducing `channels/mod.rs` from 1,020 to 396 lines (~61.2% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)
@@ -414,5 +426,5 @@ No use of `proptest` or `quickcheck` for:
 | **P1** | 1.2-1.5 Match bloat, unwraps, monolith, provider config | ~500 lines across 5 files | Runtime panics, new provider friction |
 | **P2** | 2.1-2.6 Stale errors, locking, notifications, router caching, API key diagnostics, config drift | ~600 lines across 8 files | User confusion, silent failures |
 | **P3** | 3.1-3.5 Naming, activity I/O, HTTP timeouts, select bias, cleanup | ~200 lines | Tech debt, marginal reliability |
-| **Enhancements** | 4.1-4.13 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy | — | Feature gap |
+| **Enhancements** | 4.1-4.19 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction | — | Feature gap |
 | **Testing** | 5.1, 5.3 Integration tests and property tests | — | Coverage gap |
