@@ -1,4 +1,14 @@
-### v0.0.155 (Latest Release)
+### v0.0.156 (Latest Release)
+- **Tool Registry Subsystem Modularization (`tools/registry.rs`)**:
+  - Extracted `ToolRegistry`, route analysis structures (`ToolRouteEntry`, `ToolRouteAnalysis`, `PendingToolScope`, `ToolRouteCacheKey`), prompt intent scoring routing, and dynamic subagent resolution out of [`src/tools/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mod.rs) into a dedicated module [`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs).
+  - Integrated canonical registration deduplication (`insert_unique_tool`), drift detection (`static_tool_drift`), and name resolution (`resolve_static_name`) seamlessly.
+- **Route Cache & Tool Routing Test Extraction (`tools/registry_tests.rs`)**:
+  - Extracted 480 lines of embedded unit tests covering route caching, argument normalization, capability policy enforcement, intent scoping, and subagent lookup into [`src/tools/registry_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry_tests.rs).
+- **Tools Subsystem Root Slashed by ~82.9% (`tools/mod.rs`)**:
+  - Slashed `src/tools/mod.rs` from 1,571 lines down to 269 lines (~82.9% line reduction), transforming it into a clean, well-documented architectural facade with 100% backward-compatible re-exports via `pub use registry::*;`.
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.155
 - **Extended Memory Unit Test Extraction (`tools/memory_extra/tests.rs`)**:
   - Extracted 1,463 lines of embedded unit tests from [`src/tools/memory_extra/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/mod.rs) into a dedicated test submodule [`src/tools/memory_extra/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/tests.rs).
   - Slashed `mod.rs` from 1,496 lines to 34 lines (~97.7% line reduction) while preserving all 36 unit tests and concurrency guards.

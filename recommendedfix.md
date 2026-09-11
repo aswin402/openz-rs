@@ -386,6 +386,18 @@ struct WebFetchTool;
 
 ---
 
+### 4.20 Tool Registry Subsystem Modularization & Route Test Extraction (Resolved in v0.0.156)
+
+**Files:** [`src/tools/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mod.rs), [`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs), [`src/tools/registry_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry_tests.rs)
+
+**Status:**
+- Extracted `ToolRegistry`, route analysis types, dynamic subagent resolution, and prompt intent routing into [`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs).
+- Extracted 480 lines of unit tests into dedicated [`src/tools/registry_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry_tests.rs).
+- Slashed `src/tools/mod.rs` from 1,571 to 269 lines (~82.9% reduction) while preserving 100% backward compatibility via `pub use registry::*;`.
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)
