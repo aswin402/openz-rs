@@ -479,6 +479,20 @@ struct WebFetchTool;
 
 ---
 
+### 4.27 System Core & Inspection Test Suite Decomposition (Resolved in v0.0.163)
+
+**Files:** [`src/core/inventory.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/inventory.rs), [`src/core/inventory_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/inventory_tests.rs), [`src/agent/agent_loop/transcript.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/transcript.rs), [`src/agent/agent_loop/transcript_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/transcript_tests.rs), [`src/tools/db_inspector.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/db_inspector.rs), [`src/tools/db_inspector_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/db_inspector_tests.rs), [`src/providers/model_prefs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/model_prefs.rs), [`src/providers/model_prefs_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/model_prefs_tests.rs), [`src/config/watcher.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/watcher.rs), [`src/config/watcher_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/watcher_tests.rs)
+
+**Status:**
+- Extracted 146 lines of embedded unit tests from `src/core/inventory.rs` into `src/core/inventory_tests.rs`, reducing `inventory.rs` from 759 to 614 lines (~19.1% reduction).
+- Extracted 140 lines of embedded unit tests from `src/agent/agent_loop/transcript.rs` into `src/agent/agent_loop/transcript_tests.rs`, reducing `transcript.rs` from 321 to 183 lines (~43.0% reduction).
+- Extracted 137 lines of embedded unit tests from `src/tools/db_inspector.rs` into `src/tools/db_inspector_tests.rs`, reducing `db_inspector.rs` from 401 to 265 lines (~33.9% reduction).
+- Extracted 133 lines of embedded unit tests from `src/providers/model_prefs.rs` into `src/providers/model_prefs_tests.rs`, reducing `model_prefs.rs` from 262 to 130 lines (~50.4% reduction).
+- Extracted 128 lines of embedded unit tests from `src/config/watcher.rs` into `src/config/watcher_tests.rs`, reducing `watcher.rs` from 294 to 167 lines (~43.2% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)

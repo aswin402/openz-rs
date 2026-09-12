@@ -1,4 +1,22 @@
-### v0.0.162 (Latest Release)
+### v0.0.163 (Latest Release)
+- **Core Inventory Test Suite Extraction (`core/inventory_tests.rs`)**:
+  - Extracted 146 lines of runtime path inventory, subagent capability inspection, vision support classification, and session fixture grouping unit tests from [`src/core/inventory.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/inventory.rs) into [`src/core/inventory_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/inventory_tests.rs).
+  - Reduced `src/core/inventory.rs` from 759 lines down to 614 lines (~19.1% line reduction).
+- **Agent Loop Transcript Test Suite Extraction (`agent/agent_loop/transcript_tests.rs`)**:
+  - Extracted 140 lines of oversized tool output persistence, safe directory path handling, retrieval passthrough, and assistant tool-call appending unit tests from [`src/agent/agent_loop/transcript.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/transcript.rs) into [`src/agent/agent_loop/transcript_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/transcript_tests.rs).
+  - Reduced `src/agent/agent_loop/transcript.rs` from 321 lines down to 183 lines (~43.0% line reduction).
+- **Database Inspector & Writer Test Suite Extraction (`tools/db_inspector_tests.rs`)**:
+  - Extracted 137 lines of in-process SQLite table creation, query validation, mutating query rejection, and path traversal prevention unit tests from [`src/tools/db_inspector.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/db_inspector.rs) into [`src/tools/db_inspector_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/db_inspector_tests.rs).
+  - Reduced `src/tools/db_inspector.rs` from 401 lines down to 265 lines (~33.9% line reduction).
+- **Model Preferences Test Suite Extraction (`providers/model_prefs_tests.rs`)**:
+  - Extracted 133 lines of recent model tracking, favorite toggling, bounded history pruning, atomic file swap, and cleanup error handling unit tests from [`src/providers/model_prefs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/model_prefs.rs) into [`src/providers/model_prefs_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/model_prefs_tests.rs).
+  - Reduced `src/providers/model_prefs.rs` from 262 lines down to 130 lines (~50.4% line reduction).
+- **Config Watcher Test Suite Extraction (`config/watcher_tests.rs`)**:
+  - Extracted 128 lines of live config hot-reloading, redundant write debouncing, and malformed JSON recovery unit tests from [`src/config/watcher.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/watcher.rs) into [`src/config/watcher_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/watcher_tests.rs).
+  - Reduced `src/config/watcher.rs` from 294 lines down to 167 lines (~43.2% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.162
 - **Orchestrator Workflow Tool Test Suite Extraction (`tools/orchestrator_tests.rs`)**:
   - Extracted 175 lines of workflow spec validation, tool filtering, and capability policy governance unit tests from [`src/tools/orchestrator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/orchestrator.rs) into [`src/tools/orchestrator_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/orchestrator_tests.rs).
   - Cleaned up misplaced mid-file test declarations, reducing `src/tools/orchestrator.rs` from 574 lines down to 401 lines (~30.1% line reduction).
