@@ -493,6 +493,21 @@ struct WebFetchTool;
 
 ---
 
+### 4.28 Media, Style, Cron & Task Manager Test Suite Decomposition (Resolved in v0.0.164)
+
+**Files:** [`src/tools/svg_animator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/svg_animator.rs), [`src/tools/svg_animator_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/svg_animator_tests.rs), [`src/tools/openmedia/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod.rs), [`src/tools/openmedia/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod_tests.rs), [`src/agent/style/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/mod.rs), [`src/agent/style/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/mod_tests.rs), [`src/cron/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cron/mod.rs), [`src/cron/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cron/mod_tests.rs), [`src/tools/task_manager.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/task_manager.rs), [`src/tools/task_manager_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/task_manager_tests.rs), [`.cargo/config.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/.cargo/config.toml)
+
+**Status:**
+- Extracted 138 lines of embedded unit tests from `src/tools/svg_animator.rs` into `src/tools/svg_animator_tests.rs`, reducing `svg_animator.rs` from 1,158 to 1,020 lines (~11.9% reduction).
+- Extracted 136 lines of embedded unit tests from `src/tools/openmedia/mod.rs` into `src/tools/openmedia/mod_tests.rs`, reducing `openmedia/mod.rs` from 899 to 763 lines (~15.1% reduction).
+- Extracted 134 lines of embedded unit tests from `src/agent/style/mod.rs` into `src/agent/style/mod_tests.rs`, reducing `style/mod.rs` from 835 to 701 lines (~16.1% reduction).
+- Extracted 123 lines of embedded unit tests from `src/cron/mod.rs` into `src/cron/mod_tests.rs`, reducing `cron/mod.rs` from 456 to 333 lines (~27.0% reduction).
+- Extracted 119 lines of embedded unit tests from `src/tools/task_manager.rs` into `src/tools/task_manager_tests.rs`, added concurrency test lock `TEST_LOCK`, reducing `task_manager.rs` from 467 to 348 lines (~25.5% reduction).
+- Added `.cargo/config.toml` capping compilation jobs to 2, protecting developer hardware from memory spikes and swap thrashing.
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
+---
+
 ## 5. Testing Gaps
 
 ### 5.1 Integration Tests (In Progress / Partially Resolved)

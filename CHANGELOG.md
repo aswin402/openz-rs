@@ -1,4 +1,25 @@
-### v0.0.163 (Latest Release)
+### v0.0.164 (Latest Release)
+- **SVG Animator Test Suite Extraction (`tools/svg_animator_tests.rs`)**:
+  - Extracted 138 lines of animated SVG creation, path drawing animation, gradient definition, and raw SVG injection unit tests from [`src/tools/svg_animator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/svg_animator.rs) into [`src/tools/svg_animator_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/svg_animator_tests.rs).
+  - Reduced `src/tools/svg_animator.rs` from 1,158 lines down to 1,020 lines (~11.9% line reduction).
+- **OpenMedia Hub Test Suite Extraction (`tools/openmedia/mod_tests.rs`)**:
+  - Extracted 136 lines of media argument normalization, SVG alias mapping, schema example validation, raw scene wrapping, and gRPC ping unit tests from [`src/tools/openmedia/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod.rs) into [`src/tools/openmedia/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod_tests.rs).
+  - Reduced `src/tools/openmedia/mod.rs` from 899 lines down to 763 lines (~15.1% line reduction).
+- **Terminal Style Engine Test Suite Extraction (`agent/style/mod_tests.rs`)**:
+  - Extracted 134 lines of clean tool name mapping, nested delegation depth tree prefix formatting, spinner message construction, and ANSI strip unit tests from [`src/agent/style/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/mod.rs) into [`src/agent/style/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/mod_tests.rs).
+  - Reduced `src/agent/style/mod.rs` from 835 lines down to 701 lines (~16.1% line reduction).
+- **Cron Engine Test Suite Extraction (`cron/mod_tests.rs`)**:
+  - Extracted 123 lines of cron schedule string duration parsing, wall-clock next run computation, deserialization defaults, and run history record logging unit tests from [`src/cron/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cron/mod.rs) into [`src/cron/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cron/mod_tests.rs).
+  - Reduced `src/cron/mod.rs` from 456 lines down to 333 lines (~27.0% line reduction).
+- **Task Manager Test Suite Extraction & Concurrency Hardening (`tools/task_manager_tests.rs`)**:
+  - Extracted 119 lines of managed task registration, turn-end cleanup, external process isolation, and TTL expiration unit tests from [`src/tools/task_manager.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/task_manager.rs) into [`src/tools/task_manager_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/task_manager_tests.rs).
+  - Added thread-safe synchronization guard (`TEST_LOCK`) preventing test race conditions across parallel test workers against the static registry.
+  - Reduced `src/tools/task_manager.rs` from 467 lines down to 348 lines (~25.5% line reduction).
+- **Hardware Protection Configuration (`.cargo/config.toml`)**:
+  - Added repository-level `.cargo/config.toml` capping compilation to 2 concurrent jobs to protect laptops from memory saturation, swap thrashing, and test crashes.
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.163
 - **Core Inventory Test Suite Extraction (`core/inventory_tests.rs`)**:
   - Extracted 146 lines of runtime path inventory, subagent capability inspection, vision support classification, and session fixture grouping unit tests from [`src/core/inventory.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/inventory.rs) into [`src/core/inventory_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/inventory_tests.rs).
   - Reduced `src/core/inventory.rs` from 759 lines down to 614 lines (~19.1% line reduction).
