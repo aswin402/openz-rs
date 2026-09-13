@@ -506,6 +506,18 @@ struct WebFetchTool;
 - Added `.cargo/config.toml` capping compilation jobs to 2, protecting developer hardware from memory spikes and swap thrashing.
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.29 Devices, Secrets, Providers & Source Ledger Test Suite Decomposition (Resolved in v0.0.165)
+
+**Files:** [`src/tools/device_inventory.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/device_inventory.rs), [`src/tools/device_inventory_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/device_inventory_tests.rs), [`src/core/secrets.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/secrets.rs), [`src/core/secrets_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/secrets_tests.rs), [`src/providers/openai.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/openai.rs), [`src/providers/openai_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/openai_tests.rs), [`src/providers/mock.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/mock.rs), [`src/providers/mock_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/mock_tests.rs), [`src/agent/source_ledger.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/source_ledger.rs), [`src/agent/source_ledger_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/source_ledger_tests.rs)
+
+**Status:**
+- Extracted 118 lines of embedded unit tests from `src/tools/device_inventory.rs` into `src/tools/device_inventory_tests.rs`, reducing `device_inventory.rs` from 575 to 457 lines (~20.5% reduction).
+- Extracted 115 lines of embedded unit tests from `src/core/secrets.rs` into `src/core/secrets_tests.rs`, reducing `secrets.rs` from 495 to 380 lines (~23.2% reduction).
+- Extracted 108 lines of embedded unit tests from `src/providers/openai.rs` into `src/providers/openai_tests.rs`, eliminated mid-file test placement before `is_reasoning_model`, reducing `openai.rs` from 888 to 780 lines (~12.2% reduction).
+- Extracted 100 lines of embedded unit tests from `src/providers/mock.rs` into `src/providers/mock_tests.rs`, reducing `mock.rs` from 289 to 189 lines (~34.6% reduction).
+- Extracted 94 lines of embedded unit tests from `src/agent/source_ledger.rs` into `src/agent/source_ledger_tests.rs`, reducing `source_ledger.rs` from 305 to 211 lines (~30.8% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
@@ -548,5 +560,6 @@ No use of `proptest` or `quickcheck` for:
 | **P1** | 1.2-1.5 Match bloat, unwraps, monolith, provider config | ~500 lines across 5 files | Runtime panics, new provider friction |
 | **P2** | 2.1-2.6 Stale errors, locking, notifications, router caching, API key diagnostics, config drift | ~600 lines across 8 files | User confusion, silent failures |
 | **P3** | 3.1-3.5 Naming, activity I/O, HTTP timeouts, select bias, cleanup | ~200 lines | Tech debt, marginal reliability |
-| **Enhancements** | 4.1-4.22 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization | — | Feature gap |
+| **Enhancements** | 4.1-4.29 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, test suite decomposition | — | Feature gap |
 | **Testing** | 5.1, 5.3 Integration tests and property tests | — | Coverage gap |
+

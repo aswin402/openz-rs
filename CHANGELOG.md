@@ -1,4 +1,22 @@
-### v0.0.164 (Latest Release)
+### v0.0.165 (Latest Release)
+- **Device Inventory Test Suite Extraction (`tools/device_inventory_tests.rs`)**:
+  - Extracted 118 lines of device capability inspection, display resolution detection, battery monitoring, and audio device probing unit tests from [`src/tools/device_inventory.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/device_inventory.rs) into [`src/tools/device_inventory_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/device_inventory_tests.rs).
+  - Reduced `src/tools/device_inventory.rs` from 575 lines down to 457 lines (~20.5% line reduction).
+- **Core Secrets Test Suite Extraction (`core/secrets_tests.rs`)**:
+  - Extracted 115 lines of secret pattern normalization, multi-secret redaction, regex scrubbing, and credential masking unit tests from [`src/core/secrets.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/secrets.rs) into [`src/core/secrets_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/secrets_tests.rs).
+  - Reduced `src/core/secrets.rs` from 495 lines down to 380 lines (~23.2% line reduction).
+- **OpenAI Provider Test Suite Extraction (`providers/openai_tests.rs`)**:
+  - Extracted 108 lines of OpenAI chat payload serialization, tool response parsing, error handling, and model routing unit tests from [`src/providers/openai.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/openai.rs) into [`src/providers/openai_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/openai_tests.rs).
+  - Cleaned up mid-file test block placement and reduced `src/providers/openai.rs` from 888 lines down to 780 lines (~12.2% line reduction).
+- **Mock Provider Test Suite Extraction (`providers/mock_tests.rs`)**:
+  - Extracted 100 lines of mock response sequences, error injection, tool call synthesis, and call counter tracking unit tests from [`src/providers/mock.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/mock.rs) into [`src/providers/mock_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/mock_tests.rs).
+  - Reduced `src/providers/mock.rs` from 289 lines down to 189 lines (~34.6% line reduction).
+- **Source Ledger Test Suite Extraction (`agent/source_ledger_tests.rs`)**:
+  - Extracted 94 lines of live claim confidence computation, URL normalization, failure tracking, and nested tool result recording unit tests from [`src/agent/source_ledger.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/source_ledger.rs) into [`src/agent/source_ledger_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/source_ledger_tests.rs).
+  - Reduced `src/agent/source_ledger.rs` from 305 lines down to 211 lines (~30.8% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.164
 - **SVG Animator Test Suite Extraction (`tools/svg_animator_tests.rs`)**:
   - Extracted 138 lines of animated SVG creation, path drawing animation, gradient definition, and raw SVG injection unit tests from [`src/tools/svg_animator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/svg_animator.rs) into [`src/tools/svg_animator_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/svg_animator_tests.rs).
   - Reduced `src/tools/svg_animator.rs` from 1,158 lines down to 1,020 lines (~11.9% line reduction).
