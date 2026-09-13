@@ -518,6 +518,18 @@ struct WebFetchTool;
 - Extracted 94 lines of embedded unit tests from `src/agent/source_ledger.rs` into `src/agent/source_ledger_tests.rs`, reducing `source_ledger.rs` from 305 to 211 lines (~30.8% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.30 Code Outline, MCP Manager, Shell, Semantic Search & Git Manager Test Suite Decomposition (Resolved in v0.0.166)
+
+**Files:** [`src/tools/outline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/outline.rs), [`src/tools/outline_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/outline_tests.rs), [`src/tools/mcp_manager.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mcp_manager.rs), [`src/tools/mcp_manager_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mcp_manager_tests.rs), [`src/tools/shell.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shell.rs), [`src/tools/shell_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shell_tests.rs), [`src/tools/semantic_search.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/semantic_search.rs), [`src/tools/semantic_search_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/semantic_search_tests.rs), [`src/tools/git_manager.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/git_manager.rs), [`src/tools/git_manager_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/git_manager_tests.rs)
+
+**Status:**
+- Extracted 93 lines of embedded unit tests from `src/tools/outline.rs` into `src/tools/outline_tests.rs`, reducing `outline.rs` from 382 to 289 lines (~24.3% reduction).
+- Extracted 89 lines of embedded unit tests from `src/tools/mcp_manager.rs` into `src/tools/mcp_manager_tests.rs`, reducing `mcp_manager.rs` from 277 to 188 lines (~32.1% reduction).
+- Extracted 87 lines of embedded unit tests from `src/tools/shell.rs` into `src/tools/shell_tests.rs`, reducing `shell.rs` from 988 to 901 lines (~8.8% reduction).
+- Extracted 85 lines of embedded unit tests from `src/tools/semantic_search.rs` into `src/tools/semantic_search_tests.rs`, reducing `semantic_search.rs` from 430 to 345 lines (~19.8% reduction).
+- Extracted 85 lines of embedded unit tests from `src/tools/git_manager.rs` into `src/tools/git_manager_tests.rs`, reducing `git_manager.rs` from 208 to 123 lines (~40.9% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
@@ -560,6 +572,6 @@ No use of `proptest` or `quickcheck` for:
 | **P1** | 1.2-1.5 Match bloat, unwraps, monolith, provider config | ~500 lines across 5 files | Runtime panics, new provider friction |
 | **P2** | 2.1-2.6 Stale errors, locking, notifications, router caching, API key diagnostics, config drift | ~600 lines across 8 files | User confusion, silent failures |
 | **P3** | 3.1-3.5 Naming, activity I/O, HTTP timeouts, select bias, cleanup | ~200 lines | Tech debt, marginal reliability |
-| **Enhancements** | 4.1-4.29 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, test suite decomposition | — | Feature gap |
+| **Enhancements** | 4.1-4.30 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, test suite decomposition | — | Feature gap |
 | **Testing** | 5.1, 5.3 Integration tests and property tests | — | Coverage gap |
 

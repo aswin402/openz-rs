@@ -1,4 +1,22 @@
-### v0.0.165 (Latest Release)
+### v0.0.166 (Latest Release)
+- **Code Outline Test Suite Extraction (`tools/outline_tests.rs`)**:
+  - Extracted 93 lines of structural code symbol extraction, TypeScript/JavaScript interface/class/function extraction, and file parsing unit tests from [`src/tools/outline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/outline.rs) into [`src/tools/outline_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/outline_tests.rs).
+  - Reduced `src/tools/outline.rs` from 382 lines down to 289 lines (~24.3% line reduction).
+- **MCP Manager Test Suite Extraction (`tools/mcp_manager_tests.rs`)**:
+  - Extracted 89 lines of MCP server configuration lifecycle, add/list/enable/disable/remove operations, and confirmation validation unit tests from [`src/tools/mcp_manager.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mcp_manager.rs) into [`src/tools/mcp_manager_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mcp_manager_tests.rs).
+  - Reduced `src/tools/mcp_manager.rs` from 277 lines down to 188 lines (~32.1% line reduction).
+- **Shell Executor Test Suite Extraction (`tools/shell_tests.rs`)**:
+  - Extracted 87 lines of shell argument parsing, WASM file lookup across workspace/repo paths, and sandboxed subprocess execution unit tests from [`src/tools/shell.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shell.rs) into [`src/tools/shell_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shell_tests.rs).
+  - Reduced `src/tools/shell.rs` from 988 lines down to 901 lines (~8.8% line reduction).
+- **Semantic Search Test Suite Extraction (`tools/semantic_search_tests.rs`)**:
+  - Extracted 85 lines of SQLite embedding cache storage, chunk retrieval, and deleted file cache pruning unit tests from [`src/tools/semantic_search.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/semantic_search.rs) into [`src/tools/semantic_search_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/semantic_search_tests.rs).
+  - Reduced `src/tools/semantic_search.rs` from 430 lines down to 345 lines (~19.8% line reduction).
+- **Git Manager Test Suite Extraction (`tools/git_manager_tests.rs`)**:
+  - Extracted 85 lines of Git repo initialization, local configuration, status inspection, staging, committing, and log retrieval unit tests from [`src/tools/git_manager.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/git_manager.rs) into [`src/tools/git_manager_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/git_manager_tests.rs).
+  - Reduced `src/tools/git_manager.rs` from 208 lines down to 123 lines (~40.9% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.165
 - **Device Inventory Test Suite Extraction (`tools/device_inventory_tests.rs`)**:
   - Extracted 118 lines of device capability inspection, display resolution detection, battery monitoring, and audio device probing unit tests from [`src/tools/device_inventory.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/device_inventory.rs) into [`src/tools/device_inventory_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/device_inventory_tests.rs).
   - Reduced `src/tools/device_inventory.rs` from 575 lines down to 457 lines (~20.5% line reduction).

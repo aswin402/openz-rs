@@ -1,6 +1,6 @@
 [package]
 name = "openz"
-version = "0.0.165"
+version = "0.0.166"
 edition = "2021"
 
 
@@ -168,4 +168,15 @@ codegen-units = 1
 lto = false             # Low-resource mode prioritizes finishing without linker spikes
 strip = true
 debug = false
+
+[profile.dev]
+opt-level = 0
+debug = 0               # Disable debug symbols to eliminate multi-gigabyte linker RAM exhaustion
+codegen-units = 2       # Cap internal codegen threads to 2 to prevent RAM exhaustion and laptop lag
+
+[profile.test]
+opt-level = 0
+debug = 0               # Disable debug symbols to eliminate test linker memory spikes
+codegen-units = 2       # Cap test compile parallel units to 2 to eliminate swap thrashing
+
 
