@@ -530,6 +530,18 @@ struct WebFetchTool;
 - Extracted 85 lines of embedded unit tests from `src/tools/git_manager.rs` into `src/tools/git_manager_tests.rs`, reducing `git_manager.rs` from 208 to 123 lines (~40.9% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.31 CLI Doctor, Render, Research Policy, Workflows & Video Test Suite Decomposition (Resolved in v0.0.167)
+
+**Files:** [`src/cli/doctor.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/doctor.rs), [`src/cli/doctor_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/doctor_tests.rs), [`src/channels/cli/render.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render.rs), [`src/channels/cli/render_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render_tests.rs), [`src/agent/agent_loop/research_policy.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/research_policy.rs), [`src/agent/agent_loop/research_policy_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/research_policy_tests.rs), [`src/tools/shared_memory/workflows.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/workflows.rs), [`src/tools/shared_memory/workflows_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/workflows_tests.rs), [`src/tools/video.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/video.rs), [`src/tools/video_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/video_tests.rs)
+
+**Status:**
+- Extracted 85 lines of embedded unit tests from `src/cli/doctor.rs` into `src/cli/doctor_tests.rs`, reducing `doctor.rs` from 602 to 516 lines (~14.3% reduction).
+- Extracted 85 lines of embedded unit tests from `src/channels/cli/render.rs` into `src/channels/cli/render_tests.rs`, reducing `render.rs` from 1,209 to 1,123 lines (~7.1% reduction).
+- Extracted 85 lines of embedded unit tests from `src/agent/agent_loop/research_policy.rs` into `src/agent/agent_loop/research_policy_tests.rs`, reducing `research_policy.rs` from 333 to 247 lines (~25.8% reduction).
+- Extracted 82 lines of embedded unit tests from `src/tools/shared_memory/workflows.rs` into `src/tools/shared_memory/workflows_tests.rs`, reducing `workflows.rs` from 462 to 379 lines (~18.0% reduction).
+- Extracted 80 lines of embedded unit tests from `src/tools/video.rs` into `src/tools/video_tests.rs`, reducing `video.rs` from 210 to 129 lines (~38.6% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
@@ -572,6 +584,6 @@ No use of `proptest` or `quickcheck` for:
 | **P1** | 1.2-1.5 Match bloat, unwraps, monolith, provider config | ~500 lines across 5 files | Runtime panics, new provider friction |
 | **P2** | 2.1-2.6 Stale errors, locking, notifications, router caching, API key diagnostics, config drift | ~600 lines across 8 files | User confusion, silent failures |
 | **P3** | 3.1-3.5 Naming, activity I/O, HTTP timeouts, select bias, cleanup | ~200 lines | Tech debt, marginal reliability |
-| **Enhancements** | 4.1-4.30 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, test suite decomposition | — | Feature gap |
+| **Enhancements** | 4.1-4.31 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, test suite decomposition | — | Feature gap |
 | **Testing** | 5.1, 5.3 Integration tests and property tests | — | Coverage gap |
 

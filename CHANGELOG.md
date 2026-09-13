@@ -1,4 +1,22 @@
-### v0.0.166 (Latest Release)
+### v0.0.167 (Latest Release)
+- **CLI Doctor Test Suite Extraction (`cli/doctor_tests.rs`)**:
+  - Extracted 85 lines of diagnostic health check, secret pattern scrubbing, and target cache cleaning unit tests from [`src/cli/doctor.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/doctor.rs) into [`src/cli/doctor_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/doctor_tests.rs).
+  - Reduced `src/cli/doctor.rs` from 602 lines down to 516 lines (~14.3% line reduction).
+- **CLI Render Test Suite Extraction (`channels/cli/render_tests.rs`)**:
+  - Extracted 85 lines of multiline prompt wrapping, table row parsing, text wrapping, and horizontal rule detection unit tests from [`src/channels/cli/render.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render.rs) into [`src/channels/cli/render_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render_tests.rs).
+  - Reduced `src/channels/cli/render.rs` from 1,209 lines down to 1,123 lines (~7.1% line reduction).
+- **Research Policy Test Suite Extraction (`agent/agent_loop/research_policy_tests.rs`)**:
+  - Extracted 85 lines of live research intent parsing, budget bounding, failure classification, and link analysis unit tests from [`src/agent/agent_loop/research_policy.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/research_policy.rs) into [`src/agent/agent_loop/research_policy_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/research_policy_tests.rs).
+  - Reduced `src/agent/agent_loop/research_policy.rs` from 333 lines down to 247 lines (~25.8% line reduction).
+- **Shared Memory Workflows Test Suite Extraction (`tools/shared_memory/workflows_tests.rs`)**:
+  - Extracted 82 lines of workflow search relevance filtering, rank scoring, and run execution recording unit tests from [`src/tools/shared_memory/workflows.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/workflows.rs) into [`src/tools/shared_memory/workflows_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/workflows_tests.rs).
+  - Reduced `src/tools/shared_memory/workflows.rs` from 462 lines down to 379 lines (~18.0% line reduction).
+- **Video Generator Test Suite Extraction (`tools/video_tests.rs`)**:
+  - Extracted 80 lines of Wavyte programmatic video composition, animation timeline, and video generation unit tests from [`src/tools/video.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/video.rs) into [`src/tools/video_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/video_tests.rs).
+  - Reduced `src/tools/video.rs` from 210 lines down to 129 lines (~38.6% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.166
 - **Code Outline Test Suite Extraction (`tools/outline_tests.rs`)**:
   - Extracted 93 lines of structural code symbol extraction, TypeScript/JavaScript interface/class/function extraction, and file parsing unit tests from [`src/tools/outline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/outline.rs) into [`src/tools/outline_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/outline_tests.rs).
   - Reduced `src/tools/outline.rs` from 382 lines down to 289 lines (~24.3% line reduction).
