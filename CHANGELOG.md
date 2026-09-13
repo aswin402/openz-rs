@@ -1,4 +1,22 @@
-### v0.0.167 (Latest Release)
+### v0.0.168 (Latest Release)
+- **Get Logs Test Suite Extraction (`tools/get_logs_tests.rs`)**:
+  - Extracted 80 lines of log database insertion, session-filtered querying, and log level filtering unit tests from [`src/tools/get_logs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/get_logs.rs) into [`src/tools/get_logs_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/get_logs_tests.rs).
+  - Reduced `src/tools/get_logs.rs` from 239 lines down to 159 lines (~33.5% line reduction).
+- **Manage Whitelist Test Suite Extraction (`tools/manage_whitelist_tests.rs`)**:
+  - Extracted 77 lines of command prefix whitelist addition/removal, path whitelist management, and whitelist listing unit tests from [`src/tools/manage_whitelist.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/manage_whitelist.rs) into [`src/tools/manage_whitelist_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/manage_whitelist_tests.rs).
+  - Reduced `src/tools/manage_whitelist.rs` from 230 lines down to 153 lines (~33.5% line reduction).
+- **Agent Events Test Suite Extraction (`agent/events_tests.rs`)**:
+  - Extracted 76 lines of public vs private event visibility, reasoning compaction, and trace event filtering unit tests from [`src/agent/events.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/events.rs) into [`src/agent/events_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/events_tests.rs).
+  - Reduced `src/agent/events.rs` from 207 lines down to 131 lines (~36.7% line reduction).
+- **Self-Healing Core Test Suite Extraction (`core/heal_tests.rs`)**:
+  - Extracted 74 lines of compile command validation, markdown code fence stripping, compile check execution, and file backup guard rollback/defusal unit tests from [`src/core/heal.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/heal.rs) into [`src/core/heal_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/heal_tests.rs).
+  - Reduced `src/core/heal.rs` from 468 lines down to 394 lines (~15.8% line reduction).
+- **Doc Reader Test Suite Extraction (`tools/doc_reader_tests.rs`)**:
+  - Extracted 73 lines of PDF OCR candidate detection, supported document extensions, document complexity analysis, and OCR JSON response parsing unit tests from [`src/tools/doc_reader.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/doc_reader.rs) into [`src/tools/doc_reader_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/doc_reader_tests.rs).
+  - Reduced `src/tools/doc_reader.rs` from 405 lines down to 332 lines (~18.0% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.167
 - **CLI Doctor Test Suite Extraction (`cli/doctor_tests.rs`)**:
   - Extracted 85 lines of diagnostic health check, secret pattern scrubbing, and target cache cleaning unit tests from [`src/cli/doctor.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/doctor.rs) into [`src/cli/doctor_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/doctor_tests.rs).
   - Reduced `src/cli/doctor.rs` from 602 lines down to 516 lines (~14.3% line reduction).

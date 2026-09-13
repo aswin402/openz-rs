@@ -542,6 +542,18 @@ struct WebFetchTool;
 - Extracted 80 lines of embedded unit tests from `src/tools/video.rs` into `src/tools/video_tests.rs`, reducing `video.rs` from 210 to 129 lines (~38.6% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.32 Get Logs, Manage Whitelist, Events, Heal & Doc Reader Test Suite Decomposition (Resolved in v0.0.168)
+
+**Files:** [`src/tools/get_logs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/get_logs.rs), [`src/tools/get_logs_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/get_logs_tests.rs), [`src/tools/manage_whitelist.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/manage_whitelist.rs), [`src/tools/manage_whitelist_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/manage_whitelist_tests.rs), [`src/agent/events.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/events.rs), [`src/agent/events_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/events_tests.rs), [`src/core/heal.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/heal.rs), [`src/core/heal_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/heal_tests.rs), [`src/tools/doc_reader.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/doc_reader.rs), [`src/tools/doc_reader_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/doc_reader_tests.rs)
+
+**Status:**
+- Extracted 80 lines of embedded unit tests from `src/tools/get_logs.rs` into `src/tools/get_logs_tests.rs`, reducing `get_logs.rs` from 239 to 159 lines (~33.5% reduction).
+- Extracted 77 lines of embedded unit tests from `src/tools/manage_whitelist.rs` into `src/tools/manage_whitelist_tests.rs`, reducing `manage_whitelist.rs` from 230 to 153 lines (~33.5% reduction).
+- Extracted 76 lines of embedded unit tests from `src/agent/events.rs` into `src/agent/events_tests.rs`, reducing `events.rs` from 207 to 131 lines (~36.7% reduction).
+- Extracted 74 lines of embedded unit tests from `src/core/heal.rs` into `src/core/heal_tests.rs`, reducing `heal.rs` from 468 to 394 lines (~15.8% reduction).
+- Extracted 73 lines of embedded unit tests from `src/tools/doc_reader.rs` into `src/tools/doc_reader_tests.rs`, reducing `doc_reader.rs` from 405 to 332 lines (~18.0% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
@@ -584,6 +596,6 @@ No use of `proptest` or `quickcheck` for:
 | **P1** | 1.2-1.5 Match bloat, unwraps, monolith, provider config | ~500 lines across 5 files | Runtime panics, new provider friction |
 | **P2** | 2.1-2.6 Stale errors, locking, notifications, router caching, API key diagnostics, config drift | ~600 lines across 8 files | User confusion, silent failures |
 | **P3** | 3.1-3.5 Naming, activity I/O, HTTP timeouts, select bias, cleanup | ~200 lines | Tech debt, marginal reliability |
-| **Enhancements** | 4.1-4.31 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, test suite decomposition | — | Feature gap |
+| **Enhancements** | 4.1-4.32 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, test suite decomposition | — | Feature gap |
 | **Testing** | 5.1, 5.3 Integration tests and property tests | — | Coverage gap |
 
