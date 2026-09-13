@@ -554,6 +554,18 @@ struct WebFetchTool;
 - Extracted 73 lines of embedded unit tests from `src/tools/doc_reader.rs` into `src/tools/doc_reader_tests.rs`, reducing `doc_reader.rs` from 405 to 332 lines (~18.0% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.33 WhatsApp, Notifications, CLI Input, Ratatui Session & Template Compiler Test Suite Decomposition (Resolved in v0.0.169)
+
+**Files:** [`src/channels/whatsapp.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/whatsapp.rs), [`src/channels/whatsapp_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/whatsapp_tests.rs), [`src/channels/notifications.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/notifications.rs), [`src/channels/notifications_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/notifications_tests.rs), [`src/channels/cli/input.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/input.rs), [`src/channels/cli/input_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/input_tests.rs), [`src/channels/ratatui/session.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/session.rs), [`src/channels/ratatui/session_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/session_tests.rs), [`src/tools/template_compiler.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/template_compiler.rs), [`src/tools/template_compiler_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/template_compiler_tests.rs)
+
+**Status:**
+- Extracted 73 lines of embedded unit tests from `src/channels/whatsapp.rs` into `src/channels/whatsapp_tests.rs`, reducing `whatsapp.rs` from 444 to 371 lines (~16.4% reduction).
+- Extracted 73 lines of embedded unit tests from `src/channels/notifications.rs` into `src/channels/notifications_tests.rs`, reducing `notifications.rs` from 324 to 251 lines (~22.5% reduction).
+- Extracted 65 lines of embedded unit tests from `src/channels/cli/input.rs` into `src/channels/cli/input_tests.rs`, reducing `input.rs` from 827 to 761 lines (~8.0% reduction).
+- Extracted 62 lines of embedded unit tests from `src/channels/ratatui/session.rs` into `src/channels/ratatui/session_tests.rs`, reducing `session.rs` from 217 to 155 lines (~28.6% reduction).
+- Extracted 62 lines of embedded unit tests from `src/tools/template_compiler.rs` into `src/tools/template_compiler_tests.rs`, reducing `template_compiler.rs` from 278 to 216 lines (~22.3% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
@@ -596,6 +608,6 @@ No use of `proptest` or `quickcheck` for:
 | **P1** | 1.2-1.5 Match bloat, unwraps, monolith, provider config | ~500 lines across 5 files | Runtime panics, new provider friction |
 | **P2** | 2.1-2.6 Stale errors, locking, notifications, router caching, API key diagnostics, config drift | ~600 lines across 8 files | User confusion, silent failures |
 | **P3** | 3.1-3.5 Naming, activity I/O, HTTP timeouts, select bias, cleanup | ~200 lines | Tech debt, marginal reliability |
-| **Enhancements** | 4.1-4.32 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, test suite decomposition | — | Feature gap |
+| **Enhancements** | 4.1-4.33 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, test suite decomposition | — | Feature gap |
 | **Testing** | 5.1, 5.3 Integration tests and property tests | — | Coverage gap |
 

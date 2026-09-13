@@ -1,4 +1,22 @@
-### v0.0.168 (Latest Release)
+### v0.0.169 (Latest Release)
+- **WhatsApp Channel Test Suite Extraction (`channels/whatsapp_tests.rs`)**:
+  - Extracted 73 lines of stop command detection, valid webhook subscription verification, challenge response matching, and invalid token rejection unit tests from [`src/channels/whatsapp.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/whatsapp.rs) into [`src/channels/whatsapp_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/whatsapp_tests.rs).
+  - Reduced `src/channels/whatsapp.rs` from 444 lines down to 371 lines (~16.4% line reduction).
+- **Notifications Channel Test Suite Extraction (`channels/notifications_tests.rs`)**:
+  - Extracted 73 lines of target normalization across Telegram/Discord/WhatsApp channels and error message credential redaction unit tests from [`src/channels/notifications.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/notifications.rs) into [`src/channels/notifications_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/notifications_tests.rs).
+  - Reduced `src/channels/notifications.rs` from 324 lines down to 251 lines (~22.5% line reduction).
+- **CLI Terminal Input Test Suite Extraction (`channels/cli/input_tests.rs`)**:
+  - Extracted 65 lines of terminal control key encodings (Ctrl+C, Ctrl+D, Shift+Ctrl+C), printable key release rejection, and turn cancellation key matching unit tests from [`src/channels/cli/input.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/input.rs) into [`src/channels/cli/input_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/input_tests.rs).
+  - Reduced `src/channels/cli/input.rs` from 827 lines down to 761 lines (~8.0% line reduction).
+- **Ratatui Session Test Suite Extraction (`channels/ratatui/session_tests.rs`)**:
+  - Extracted 62 lines of process liveness checking, TUI marker lifecycle persistence/purging, and last-live TUI directory detection unit tests from [`src/channels/ratatui/session.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/session.rs) into [`src/channels/ratatui/session_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/session_tests.rs).
+  - Reduced `src/channels/ratatui/session.rs` from 217 lines down to 155 lines (~28.6% line reduction).
+- **Template Compiler Test Suite Extraction (`tools/template_compiler_tests.rs`)**:
+  - Extracted 62 lines of simple variable substitution, loop directive rendering, and HTML template compilation file generation unit tests from [`src/tools/template_compiler.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/template_compiler.rs) into [`src/tools/template_compiler_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/template_compiler_tests.rs).
+  - Reduced `src/tools/template_compiler.rs` from 278 lines down to 216 lines (~22.3% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.168
 - **Get Logs Test Suite Extraction (`tools/get_logs_tests.rs`)**:
   - Extracted 80 lines of log database insertion, session-filtered querying, and log level filtering unit tests from [`src/tools/get_logs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/get_logs.rs) into [`src/tools/get_logs_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/get_logs_tests.rs).
   - Reduced `src/tools/get_logs.rs` from 239 lines down to 159 lines (~33.5% line reduction).
