@@ -274,3 +274,17 @@ Key resolution order: config.providers.X.api_key → `PROVIDER_API_KEY` env var.
 - `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `WHATSAPP_API_KEY`, `WHATSAPP_PHONE_NUMBER_ID`
 - `OPENZ_CONFIG_DIR` — override `~/.openz` config path
 - `OPENZ_SILENT` — suppress MCP server setup logs (set automatically for background channels)
+
+---
+
+## Release & Changelog Protocol
+
+For every new feature, refactor, and update completed in the project:
+1. **SemVer Increment**: Increment the package version by `+0.0.1` (e.g., `0.0.170` → `0.0.171`) synchronously across `Cargo.toml`, `onpkg.json`, and `README.md`.
+2. **CHANGELOG.md Mandate**: Every release entry in `CHANGELOG.md` must explicitly document:
+   - **`Ideas`**: Core technical motivation, architecture decisions, and rationale.
+   - **`Inspirations`**: Tools, protocols, upstream projects, or industry patterns that influenced the solution.
+   - **`Sources & References`**: Direct clickable markdown links to affected source files, new test modules, and planning artifacts.
+   - **`Details & Metrics`**: Specific changes, line reductions, and subsystem breakdown.
+   - **`Verification`**: Verification evidence (e.g., 260 registered native tools invariant, 0 clippy warnings).
+
