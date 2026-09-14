@@ -603,6 +603,18 @@ struct WebFetchTool;
 - Extracted 34 lines of embedded unit tests from `src/config/provider_catalog.rs` into `src/config/provider_catalog_tests.rs`, reducing `provider_catalog.rs` from 334 to 300 lines (~10.2% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.37 Core Execution & Integration Tools Test Suite Decomposition (Resolved in v0.0.173)
+
+**Files:** [`src/tools/mcp.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mcp.rs), [`src/tools/mcp_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mcp_tests.rs), [`src/tools/clipboard.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/clipboard.rs), [`src/tools/clipboard_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/clipboard_tests.rs), [`src/tools/cargo_manager.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/cargo_manager.rs), [`src/tools/cargo_manager_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/cargo_manager_tests.rs), [`src/tools/crawl.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/crawl.rs), [`src/tools/crawl_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/crawl_tests.rs), [`src/tools/open.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/open.rs), [`src/tools/open_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/open_tests.rs)
+
+**Status:**
+- Extracted 65 lines of embedded unit tests from `src/tools/mcp.rs` into `src/tools/mcp_tests.rs`, reducing `mcp.rs` from 990 to 925 lines (~6.6% reduction).
+- Extracted 47 lines of embedded unit tests from `src/tools/clipboard.rs` into `src/tools/clipboard_tests.rs`, reducing `clipboard.rs` from 121 to 74 lines (~38.8% reduction).
+- Extracted 40 lines of embedded unit tests from `src/tools/cargo_manager.rs` into `src/tools/cargo_manager_tests.rs`, reducing `cargo_manager.rs` from 354 to 314 lines (~11.3% reduction).
+- Extracted 38 lines of embedded unit tests from `src/tools/crawl.rs` into `src/tools/crawl_tests.rs`, reducing `crawl.rs` from 312 to 274 lines (~12.2% reduction).
+- Extracted 27 lines of embedded unit tests from `src/tools/open.rs` into `src/tools/open_tests.rs`, reducing `open.rs` from 153 to 126 lines (~17.6% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps

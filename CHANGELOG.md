@@ -1,4 +1,25 @@
-### v0.0.172 (Latest Release)
+### v0.0.173 (Latest Release)
+- **Ideas**:
+  - Modularize core tool execution and system integration services (`mcp`, `clipboard`, `cargo_manager`, `crawl`, `open`) by extracting embedded unit test suites into dedicated sibling test modules.
+  - Decouple stdio/gRPC bridge protocol tests, headless system clipboard fallback resilience, subprocess cargo self-healing, recursive website crawler timeouts, and cross-platform URL launcher schemas from their operational tool trait implementations.
+- **Inspirations**:
+  - Model Context Protocol (MCP) specification for JSON-RPC 2.0 / gRPC bridging and dynamic port negotiation.
+  - Rust standard library and `arboard` headless display detection protocols.
+  - Cargo subprocess orchestration, JSON diagnostics stream parsing, and automated clippy lint remediation.
+  - Spider-rs crawler architecture with dynamic timeout clamp guarantees and partial page retention.
+  - FreeDesktop XDG / Windows ShellExecute / macOS open URL dispatch patterns.
+- **Sources & References**:
+  - Implementation & Tests: [`src/tools/mcp.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mcp.rs), [`src/tools/mcp_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mcp_tests.rs), [`src/tools/clipboard.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/clipboard.rs), [`src/tools/clipboard_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/clipboard_tests.rs), [`src/tools/cargo_manager.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/cargo_manager.rs), [`src/tools/cargo_manager_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/cargo_manager_tests.rs), [`src/tools/crawl.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/crawl.rs), [`src/tools/crawl_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/crawl_tests.rs), [`src/tools/open.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/open.rs), [`src/tools/open_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/open_tests.rs).
+  - Execution Plan: [`docs/superpowers/plans/2026-09-14-codebase-modularization-and-hardening-phase25.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-14-codebase-modularization-and-hardening-phase25.md).
+- **Subsystem Test Suite Extractions**:
+  - **MCP Bridge Engine (`tools/mcp_tests.rs`)**: Extracted 65 lines of dynamic port discovery, TCP listener guard binding, client cache invalidation, and mock stdio bridge ping tests. Reduced `mcp.rs` from 990 down to 925 lines (~6.6% line reduction).
+  - **Clipboard Integration (`tools/clipboard_tests.rs`)**: Extracted 47 lines of headless container environment resilience, clipboard set/get lifecycle, and graceful error handling tests. Reduced `clipboard.rs` from 121 down to 74 lines (~38.8% line reduction).
+  - **Cargo Manager Tool (`tools/cargo_manager_tests.rs`)**: Extracted 40 lines of isolated temporary cargo project scaffolding, clippy diagnostic analysis, and error recovery tests. Reduced `cargo_manager.rs` from 354 down to 314 lines (~11.3% line reduction).
+  - **Website Crawler Tool (`tools/crawl_tests.rs`)**: Extracted 38 lines of tool metadata definition, crawl timeout clamping, parameter schema inspection, and partial timeout page retention tests. Reduced `crawl.rs` from 312 down to 274 lines (~12.2% line reduction).
+  - **System Open Launcher (`tools/open_tests.rs`)**: Extracted 27 lines of tool schema parsing, target URL validation, and headless CI display server fallback tests. Reduced `open.rs` from 153 down to 126 lines (~17.6% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.172
 - **Ideas**:
   - Modularize core communication channels (`discord`, `telegram/commands`, `ratatui/markdown`) and configuration engines (`path_policy`, `provider_catalog`) by decoupling inline test fixtures into dedicated sibling test modules.
   - Separate platform serialization logic, path boundary enforcement rules, and command dispatch routing from test fixtures, improving code readability and compilation caching.
