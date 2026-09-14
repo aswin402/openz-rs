@@ -566,6 +566,18 @@ struct WebFetchTool;
 - Extracted 62 lines of embedded unit tests from `src/tools/template_compiler.rs` into `src/tools/template_compiler_tests.rs`, reducing `template_compiler.rs` from 278 to 216 lines (~22.3% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.34 AST Grep, GitHub Provider, Arguments, Grep & Image Generator Test Suite Decomposition (Resolved in v0.0.170)
+
+**Files:** [`src/tools/ast_grep.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/ast_grep.rs), [`src/tools/ast_grep_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/ast_grep_tests.rs), [`src/tools/github.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github.rs), [`src/tools/github_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github_tests.rs), [`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs), [`src/tools/arguments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments_tests.rs), [`src/tools/grep.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/grep.rs), [`src/tools/grep_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/grep_tests.rs), [`src/tools/image_generator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/image_generator.rs), [`src/tools/image_generator_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/image_generator_tests.rs)
+
+**Status:**
+- Extracted 60 lines of embedded unit tests from `src/tools/ast_grep.rs` into `src/tools/ast_grep_tests.rs`, reducing `ast_grep.rs` from 445 to 385 lines (~13.5% reduction).
+- Extracted 56 lines of embedded unit tests from `src/tools/github.rs` into `src/tools/github_tests.rs`, reducing `github.rs` from 519 to 463 lines (~10.8% reduction).
+- Extracted 55 lines of embedded unit tests from `src/tools/arguments.rs` into `src/tools/arguments_tests.rs`, reducing `arguments.rs` from 182 to 127 lines (~30.2% reduction).
+- Extracted 50 lines of embedded unit tests from `src/tools/grep.rs` into `src/tools/grep_tests.rs`, reducing `grep.rs` from 344 to 294 lines (~14.5% reduction).
+- Extracted 53 lines of embedded unit tests from `src/tools/image_generator.rs` into `src/tools/image_generator_tests.rs`, reducing `image_generator.rs` from 649 to 605 lines (~6.8% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps

@@ -1,4 +1,22 @@
-### v0.0.169 (Latest Release)
+### v0.0.170 (Latest Release)
+- **AST Grep Tool Test Suite Extraction (`tools/ast_grep_tests.rs`)**:
+  - Extracted 60 lines of AST Grep language parsing from extensions, query schema validation, and syntax matching unit tests from [`src/tools/ast_grep.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/ast_grep.rs) into [`src/tools/ast_grep_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/ast_grep_tests.rs).
+  - Reduced `src/tools/ast_grep.rs` from 445 lines down to 385 lines (~13.5% line reduction).
+- **GitHub Provider Tool Test Suite Extraction (`tools/github_tests.rs`)**:
+  - Extracted 56 lines of provider URL construction, parameter verification, and tool registration schema unit tests from [`src/tools/github.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github.rs) into [`src/tools/github_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github_tests.rs).
+  - Reduced `src/tools/github.rs` from 519 lines down to 463 lines (~10.8% line reduction).
+- **Tool Arguments Parser Test Suite Extraction (`tools/arguments_tests.rs`)**:
+  - Extracted 55 lines of case-insensitive argument alias extraction, string normalization, and integer parameter parsing unit tests from [`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs) into [`src/tools/arguments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments_tests.rs).
+  - Reduced `src/tools/arguments.rs` from 182 lines down to 127 lines (~30.2% line reduction).
+- **Grep Tool Test Suite Extraction (`tools/grep_tests.rs`)**:
+  - Extracted 50 lines of ripgrep argument construction, regex escape handling, and multiline matching unit tests from [`src/tools/grep.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/grep.rs) into [`src/tools/grep_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/grep_tests.rs).
+  - Reduced `src/tools/grep.rs` from 344 lines down to 294 lines (~14.5% line reduction).
+- **Image Generator Tool Test Suite Extraction (`tools/image_generator_tests.rs`)**:
+  - Extracted 53 lines of tool metadata definition and resilient headless browser CDP execution unit tests from [`src/tools/image_generator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/image_generator.rs) into [`src/tools/image_generator_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/image_generator_tests.rs).
+  - Reduced `src/tools/image_generator.rs` from 649 lines down to 605 lines (~6.8% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.169
 - **WhatsApp Channel Test Suite Extraction (`channels/whatsapp_tests.rs`)**:
   - Extracted 73 lines of stop command detection, valid webhook subscription verification, challenge response matching, and invalid token rejection unit tests from [`src/channels/whatsapp.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/whatsapp.rs) into [`src/channels/whatsapp_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/whatsapp_tests.rs).
   - Reduced `src/channels/whatsapp.rs` from 444 lines down to 371 lines (~16.4% line reduction).
