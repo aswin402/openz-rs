@@ -99,16 +99,5 @@ impl Tool for SystemInfoTool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_system_info() -> Result<()> {
-        let tool = SystemInfoTool;
-        let res = tool.call(&json!({})).await?;
-        assert_eq!(res["status"], "success");
-        assert!(res["os"].as_str().is_some());
-        assert!(res["architecture"].as_str().is_some());
-        Ok(())
-    }
-}
+#[path = "system_info_tests.rs"]
+mod tests;
