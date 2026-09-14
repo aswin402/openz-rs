@@ -615,6 +615,18 @@ struct WebFetchTool;
 - Extracted 27 lines of embedded unit tests from `src/tools/open.rs` into `src/tools/open_tests.rs`, reducing `open.rs` from 153 to 126 lines (~17.6% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.38 Developer Utilities & System Inspection Test Suite Decomposition (Resolved in v0.0.174)
+
+**Files:** [`src/tools/js_format.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/js_format.rs), [`src/tools/js_format_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/js_format_tests.rs), [`src/tools/mermaid.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mermaid.rs), [`src/tools/mermaid_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mermaid_tests.rs), [`src/tools/network.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/network.rs), [`src/tools/network_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/network_tests.rs), [`src/tools/system_info.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/system_info.rs), [`src/tools/system_info_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/system_info_tests.rs), [`src/tools/remote.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/remote.rs), [`src/tools/remote_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/remote_tests.rs)
+
+**Status:**
+- Extracted 32 lines of embedded unit tests from `src/tools/js_format.rs` into `src/tools/js_format_tests.rs`, reducing `js_format.rs` from 113 to 81 lines (~28.3% reduction).
+- Extracted 28 lines of embedded unit tests from `src/tools/mermaid.rs` into `src/tools/mermaid_tests.rs`, reducing `mermaid.rs` from 92 to 64 lines (~30.4% reduction).
+- Extracted 18 lines of embedded unit tests from `src/tools/network.rs` into `src/tools/network_tests.rs`, reducing `network.rs` from 157 to 139 lines (~11.5% reduction).
+- Extracted 14 lines of embedded unit tests from `src/tools/system_info.rs` into `src/tools/system_info_tests.rs`, reducing `system_info.rs` from 115 to 101 lines (~12.2% reduction).
+- Extracted 11 lines of embedded unit tests from `src/tools/remote.rs` into `src/tools/remote_tests.rs`, reducing `remote.rs` from 95 to 84 lines (~11.6% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps

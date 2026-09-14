@@ -1,4 +1,25 @@
-### v0.0.173 (Latest Release)
+### v0.0.174 (Latest Release)
+- **Ideas**:
+  - Modularize developer utility and system introspection tools (`js_format`, `mermaid`, `network`, `system_info`, `remote`) by extracting embedded unit test suites into dedicated sibling test modules.
+  - Decouple Biome JS/TS parser formatting evaluations, SVG flowchart graph generation assertions, local socket port availability checks, host hardware and OS architecture inspection, and cross-session remote prompt loopback detection from tool runtime structures.
+- **Inspirations**:
+  - Biome.js (in-process JavaScript / TypeScript AST parsing and code formatting).
+  - Mermaid.js diagram generation standards and vector SVG rendering.
+  - POSIX and Tokio non-blocking TCP socket binding protocols.
+  - Sysinfo OS / CPU / RAM metrics extraction patterns.
+  - Inter-agent message forwarding and cross-channel routing architecture.
+- **Sources & References**:
+  - Implementation & Tests: [`src/tools/js_format.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/js_format.rs), [`src/tools/js_format_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/js_format_tests.rs), [`src/tools/mermaid.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mermaid.rs), [`src/tools/mermaid_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mermaid_tests.rs), [`src/tools/network.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/network.rs), [`src/tools/network_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/network_tests.rs), [`src/tools/system_info.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/system_info.rs), [`src/tools/system_info_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/system_info_tests.rs), [`src/tools/remote.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/remote.rs), [`src/tools/remote_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/remote_tests.rs).
+  - Execution Plan: [`docs/superpowers/plans/2026-09-14-codebase-modularization-and-hardening-phase26.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-14-codebase-modularization-and-hardening-phase26.md).
+- **Subsystem Test Suite Extractions**:
+  - **JavaScript/TypeScript Formatter (`tools/js_format_tests.rs`)**: Extracted 32 lines of Biome AST syntax formatting, whitespace normalization, and invalid JavaScript syntax error reporting tests. Reduced `js_format.rs` from 113 down to 81 lines (~28.3% line reduction).
+  - **Mermaid Diagram Generator (`tools/mermaid_tests.rs`)**: Extracted 28 lines of isolated temporary SVG flowchart generation, XML tag validation, and cleanup tests. Reduced `mermaid.rs` from 92 down to 64 lines (~30.4% line reduction).
+  - **Network Port Inspector (`tools/network_tests.rs`)**: Extracted 18 lines of ephemeral port binding, availability inspection, and JSON status formatting tests. Reduced `network.rs` from 157 down to 139 lines (~11.5% line reduction).
+  - **Host System Diagnostics (`tools/system_info_tests.rs`)**: Extracted 14 lines of hardware architecture, CPU/OS detection, and memory summary assertions. Reduced `system_info.rs` from 115 down to 101 lines (~12.2% line reduction).
+  - **Remote Prompt Forwarder (`tools/remote_tests.rs`)**: Extracted 11 lines of self-target loopback rejection and direct session alias matching tests. Reduced `remote.rs` from 95 down to 84 lines (~11.6% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.173
 - **Ideas**:
   - Modularize core tool execution and system integration services (`mcp`, `clipboard`, `cargo_manager`, `crawl`, `open`) by extracting embedded unit test suites into dedicated sibling test modules.
   - Decouple stdio/gRPC bridge protocol tests, headless system clipboard fallback resilience, subprocess cargo self-healing, recursive website crawler timeouts, and cross-platform URL launcher schemas from their operational tool trait implementations.
