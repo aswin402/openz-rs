@@ -1,4 +1,24 @@
-### v0.0.170 (Latest Release)
+### v0.0.171 (Latest Release)
+- **Ideas**:
+  - Modularize the complete browser automation and preflight subsystem (`status`, `gsd`, `firefox`, `broker`, `common`, `obscura`) by extracting embedded unit test fixtures into dedicated sibling test modules.
+  - Enforce clean separation of concerns: browser tool files strictly house the `Tool` trait, CDP/WebDriver commands, lifecycle supervision, and health diagnostics, while all test scaffolding lives in isolated `#[path = "..._tests.rs"] mod tests;` targets.
+- **Inspirations**:
+  - Chrome DevTools Protocol (CDP) for lightweight, direct WebSocket tab evaluation without external driver daemons.
+  - Playwright / Puppeteer architecture for reliable headless browser broker fallback pipelines (`obscura` -> `firefox` -> `gsd`).
+  - Mozilla Marionette / GeckoDriver HTTP WebDriver wire protocol specifications.
+  - Rust modular testing pattern (`#[path = "..._tests.rs"] mod tests;`).
+- **Sources & References**:
+  - Implementation & Tests: [`src/tools/browser/status.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/status.rs), [`src/tools/browser/status_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/status_tests.rs), [`src/tools/browser/gsd.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/gsd.rs), [`src/tools/browser/gsd_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/gsd_tests.rs), [`src/tools/browser/firefox.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/firefox.rs), [`src/tools/browser/firefox_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/firefox_tests.rs), [`src/tools/browser/broker.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/broker.rs), [`src/tools/browser/broker_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/broker_tests.rs), [`src/tools/browser/common.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/common.rs), [`src/tools/browser/common_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/common_tests.rs), [`src/tools/browser/obscura.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/obscura.rs), [`src/tools/browser/obscura_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/obscura_tests.rs).
+  - Execution Plan: [`docs/superpowers/plans/2026-09-14-codebase-modularization-and-hardening-phase23.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-14-codebase-modularization-and-hardening-phase23.md).
+- **Subsystem Test Suite Extractions**:
+  - **Browser Status & Inspection (`tools/browser/status_tests.rs`)**: Extracted 71 lines of browser health preflight, CDP port evaluation, and structured diagnostic error payload tests. Reduced `status.rs` from 391 down to 320 lines (~18.2% line reduction).
+  - **GSD Playwright Automation (`tools/browser/gsd_tests.rs`)**: Extracted 67 lines of parameter aliases, last-resort description validation, receiver disconnection error recovery, and structured preflight failure tests. Reduced `gsd.rs` from 361 down to 294 lines (~18.6% line reduction).
+  - **Firefox WebDriver Engine (`tools/browser/firefox_tests.rs`)**: Extracted 59 lines of attach/headless/visible execution mode validation, dedicated port routing, and missing geckodriver actionable diagnostic tests. Reduced `firefox.rs` from 482 down to 423 lines (~12.2% line reduction).
+  - **Browser Broker Multiplexer (`tools/browser/broker_tests.rs`)**: Extracted 36 lines of backend priority order assertions (`obscura` -> `firefox` -> `gsd`), daemon cleanup labeling, and fallback execution tracking tests. Reduced `broker.rs` from 243 down to 207 lines (~14.8% line reduction).
+  - **Browser Utilities & Obscura CDP (`tools/browser/common_tests.rs` & `obscura_tests.rs`)**: Extracted 23 lines covering default CDP port detection, safe non-existent port termination, and tool metadata schemas. Reduced `common.rs` from 195 to 182 lines (~6.7%) and `obscura.rs` from 338 to 328 lines (~3.0%).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.170
 - **Ideas**:
   - Modularize core developer tools (`ast_grep`, `github`, `arguments`, `grep`, `image_generator`) by decoupling embedded test fixtures from tool trait implementations, shrinking source file footprints and isolating test-only dependencies.
   - Fortify headless browser test execution in constrained sandboxes against transient Chrome DevTools Protocol (CDP) `/json/new` socket disconnects.

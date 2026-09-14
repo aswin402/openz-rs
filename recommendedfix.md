@@ -578,6 +578,19 @@ struct WebFetchTool;
 - Extracted 53 lines of embedded unit tests from `src/tools/image_generator.rs` into `src/tools/image_generator_tests.rs`, reducing `image_generator.rs` from 649 to 605 lines (~6.8% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.35 Complete Browser Subsystem Test Suite Decomposition (Resolved in v0.0.171)
+
+**Files:** [`src/tools/browser/status.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/status.rs), [`src/tools/browser/status_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/status_tests.rs), [`src/tools/browser/gsd.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/gsd.rs), [`src/tools/browser/gsd_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/gsd_tests.rs), [`src/tools/browser/firefox.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/firefox.rs), [`src/tools/browser/firefox_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/firefox_tests.rs), [`src/tools/browser/broker.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/broker.rs), [`src/tools/browser/broker_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/broker_tests.rs), [`src/tools/browser/common.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/common.rs), [`src/tools/browser/common_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/common_tests.rs), [`src/tools/browser/obscura.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/obscura.rs), [`src/tools/browser/obscura_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/obscura_tests.rs)
+
+**Status:**
+- Extracted 71 lines of embedded unit tests from `src/tools/browser/status.rs` into `src/tools/browser/status_tests.rs`, reducing `status.rs` from 391 to 320 lines (~18.2% reduction).
+- Extracted 67 lines of embedded unit tests from `src/tools/browser/gsd.rs` into `src/tools/browser/gsd_tests.rs`, reducing `gsd.rs` from 361 to 294 lines (~18.6% reduction).
+- Extracted 59 lines of embedded unit tests from `src/tools/browser/firefox.rs` into `src/tools/browser/firefox_tests.rs`, reducing `firefox.rs` from 482 to 423 lines (~12.2% reduction).
+- Extracted 36 lines of embedded unit tests from `src/tools/browser/broker.rs` into `src/tools/browser/broker_tests.rs`, reducing `broker.rs` from 243 to 207 lines (~14.8% reduction).
+- Extracted 13 lines of embedded unit tests from `src/tools/browser/common.rs` into `src/tools/browser/common_tests.rs`, reducing `common.rs` from 195 to 182 lines (~6.7% reduction).
+- Extracted 10 lines of embedded unit tests from `src/tools/browser/obscura.rs` into `src/tools/browser/obscura_tests.rs`, reducing `obscura.rs` from 338 to 328 lines (~3.0% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
