@@ -176,19 +176,7 @@ pub async fn connect_to_tab(ws_url: &str) -> Result<(WsSink, WsStream)> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+#[path = "common_tests.rs"]
+mod tests;
 
-    #[test]
-    fn test_browser_cdp_port_default() {
-        let port = browser_cdp_port();
-        assert!(port > 0);
-    }
-
-    #[test]
-    fn test_kill_browser_on_port_non_existent() {
-        // Port 59999 should safely execute without error or panics
-        kill_browser_on_port(59999);
-    }
-}
 
