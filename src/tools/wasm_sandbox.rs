@@ -138,20 +138,5 @@ pub fn execute_wasm(wasm_path: &Path, args: Vec<String>) -> Result<Value> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_wasm_execute_metadata() -> Result<()> {
-        let tool = WasmSandboxTool;
-        assert_eq!(tool.name(), "wasm_execute");
-        assert!(tool.description().contains("secure"));
-
-        let args = json!({
-            "wasm_path": "nonexistent.wasm"
-        });
-        let res = tool.call(&args).await;
-        assert!(res.is_err());
-        Ok(())
-    }
-}
+#[path = "wasm_sandbox_tests.rs"]
+mod tests;
