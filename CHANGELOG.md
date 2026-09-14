@@ -1,4 +1,24 @@
-### v0.0.171 (Latest Release)
+### v0.0.172 (Latest Release)
+- **Ideas**:
+  - Modularize core communication channels (`discord`, `telegram/commands`, `ratatui/markdown`) and configuration engines (`path_policy`, `provider_catalog`) by decoupling inline test fixtures into dedicated sibling test modules.
+  - Separate platform serialization logic, path boundary enforcement rules, and command dispatch routing from test fixtures, improving code readability and compilation caching.
+- **Inspirations**:
+  - Discord Gateway v10 WebSocket protocol specification (heartbeat negotiation & message create dispatch).
+  - Telegram Bot API bot command guidelines (safe alphanumeric naming & `/cancel` cancellation action taxonomy).
+  - Ratatui / Crossterm terminal UI styling (ANSI escape sequences & syntax tree span formatting).
+  - OpenZ multi-provider model routing cascade and canonical alias resolution patterns.
+- **Sources & References**:
+  - Implementation & Tests: [`src/config/path_policy.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/path_policy.rs), [`src/config/path_policy_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/path_policy_tests.rs), [`src/channels/discord.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/discord.rs), [`src/channels/discord_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/discord_tests.rs), [`src/channels/telegram/commands.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/commands.rs), [`src/channels/telegram/commands_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/commands_tests.rs), [`src/channels/ratatui/markdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown.rs), [`src/channels/ratatui/markdown_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown_tests.rs), [`src/config/provider_catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/provider_catalog.rs), [`src/config/provider_catalog_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/provider_catalog_tests.rs).
+  - Execution Plan: [`docs/superpowers/plans/2026-09-14-codebase-modularization-and-hardening-phase24.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-14-codebase-modularization-and-hardening-phase24.md).
+- **Subsystem Test Suite Extractions**:
+  - **Path Policy Security Engine (`config/path_policy_tests.rs`)**: Extracted 63 lines of workspace boundary isolation, symlink breakout rejections, and headroom-sensitive root protection tests. Reduced `path_policy.rs` from 252 down to 189 lines (~25.0% line reduction).
+  - **Discord Gateway Listener (`channels/discord_tests.rs`)**: Extracted 45 lines of stop command detection, Hello payload heartbeat deserialization, and MessageCreate event parsing tests. Reduced `discord.rs` from 450 down to 405 lines (~10.0% line reduction).
+  - **Telegram Bot Commands (`channels/telegram/commands_tests.rs`)**: Extracted 45 lines of command name validation, stop/cancel/remote command classification, and keyboard payload generation tests. Reduced `commands.rs` from 521 down to 476 lines (~8.6% line reduction).
+  - **Ratatui Terminal Markdown (`channels/ratatui/markdown_tests.rs`)**: Extracted 38 lines of heading span styles, inline bold/code tokenization, and bullet/numbered list parsing tests. Reduced `markdown.rs` from 255 down to 217 lines (~14.9% line reduction).
+  - **Provider Catalog & Resolver (`config/provider_catalog_tests.rs`)**: Extracted 34 lines of canonical name normalization, model prefix matching, and keyword candidate heuristic tests. Reduced `provider_catalog.rs` from 334 down to 300 lines (~10.2% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.171
 - **Ideas**:
   - Modularize the complete browser automation and preflight subsystem (`status`, `gsd`, `firefox`, `broker`, `common`, `obscura`) by extracting embedded unit test fixtures into dedicated sibling test modules.
   - Enforce clean separation of concerns: browser tool files strictly house the `Tool` trait, CDP/WebDriver commands, lifecycle supervision, and health diagnostics, while all test scaffolding lives in isolated `#[path = "..._tests.rs"] mod tests;` targets.

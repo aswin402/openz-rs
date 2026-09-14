@@ -591,6 +591,18 @@ struct WebFetchTool;
 - Extracted 10 lines of embedded unit tests from `src/tools/browser/obscura.rs` into `src/tools/browser/obscura_tests.rs`, reducing `obscura.rs` from 338 to 328 lines (~3.0% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.36 Channels & Core Configuration Test Suite Decomposition (Resolved in v0.0.172)
+
+**Files:** [`src/config/path_policy.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/path_policy.rs), [`src/config/path_policy_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/path_policy_tests.rs), [`src/channels/discord.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/discord.rs), [`src/channels/discord_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/discord_tests.rs), [`src/channels/telegram/commands.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/commands.rs), [`src/channels/telegram/commands_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/commands_tests.rs), [`src/channels/ratatui/markdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown.rs), [`src/channels/ratatui/markdown_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown_tests.rs), [`src/config/provider_catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/provider_catalog.rs), [`src/config/provider_catalog_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/provider_catalog_tests.rs)
+
+**Status:**
+- Extracted 63 lines of embedded unit tests from `src/config/path_policy.rs` into `src/config/path_policy_tests.rs`, reducing `path_policy.rs` from 252 to 189 lines (~25.0% reduction).
+- Extracted 45 lines of embedded unit tests from `src/channels/discord.rs` into `src/channels/discord_tests.rs`, reducing `discord.rs` from 450 to 405 lines (~10.0% reduction).
+- Extracted 45 lines of embedded unit tests from `src/channels/telegram/commands.rs` into `src/channels/telegram/commands_tests.rs`, reducing `commands.rs` from 521 to 476 lines (~8.6% reduction).
+- Extracted 38 lines of embedded unit tests from `src/channels/ratatui/markdown.rs` into `src/channels/ratatui/markdown_tests.rs`, reducing `markdown.rs` from 255 to 217 lines (~14.9% reduction).
+- Extracted 34 lines of embedded unit tests from `src/config/provider_catalog.rs` into `src/config/provider_catalog_tests.rs`, reducing `provider_catalog.rs` from 334 to 300 lines (~10.2% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
