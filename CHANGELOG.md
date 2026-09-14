@@ -1,4 +1,25 @@
-### v0.0.174 (Latest Release)
+### v0.0.175 (Latest Release)
+- **Ideas**:
+  - Modularize workflow automation, notifications, and sandbox tools (`compiler_auto_heal`, `telegram_send`, `wasm_sandbox`, `watcher`, `sop`) by extracting embedded unit test suites into dedicated sibling test modules.
+  - Decouple mock LLM iterative compiler error self-healing cycles, Telegram chat ID / username target validation heuristics, WASM bytecode module execution limits, filesystem change notification monitor statuses, and stateful Standard Operating Procedure (SOP) parameter schemas from tool operational implementations.
+- **Inspirations**:
+  - Rust compiler JSON diagnostics (`rustc --error-format=json`) and automated compiler self-repair loops.
+  - Telegram Bot API recipient identifier grammar (numeric chat IDs, supergroup IDs with `-100` prefixes, `@username` tags).
+  - WebAssembly (WASM) sandboxed runtime architectures (`wasmtime`).
+  - Cross-platform file change polling and notify-debouncing primitives.
+  - Stateful SOP workflow engine specifications.
+- **Sources & References**:
+  - Implementation & Tests: [`src/tools/compiler_auto_heal.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/compiler_auto_heal.rs), [`src/tools/compiler_auto_heal_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/compiler_auto_heal_tests.rs), [`src/tools/telegram_send.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/telegram_send.rs), [`src/tools/telegram_send_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/telegram_send_tests.rs), [`src/tools/wasm_sandbox.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wasm_sandbox.rs), [`src/tools/wasm_sandbox_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wasm_sandbox_tests.rs), [`src/tools/watcher.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/watcher.rs), [`src/tools/watcher_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/watcher_tests.rs), [`src/tools/sop.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/sop.rs), [`src/tools/sop_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/sop_tests.rs).
+  - Execution Plan: [`docs/superpowers/plans/2026-09-14-codebase-modularization-and-hardening-phase27.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-14-codebase-modularization-and-hardening-phase27.md).
+- **Subsystem Test Suite Extractions**:
+  - **Compiler Auto-Heal Tool (`tools/compiler_auto_heal_tests.rs`)**: Extracted 58 lines of schema definition, required argument validation, and mock provider iterative compile-error fix tests. Reduced `compiler_auto_heal.rs` from 137 down to 79 lines (~42.3% line reduction).
+  - **Telegram Direct Message Tool (`tools/telegram_send_tests.rs`)**: Extracted 19 lines of valid numeric/group chat IDs, username strings, and phone-number rejection heuristics. Reduced `telegram_send.rs` from 275 down to 256 lines (~6.9% line reduction).
+  - **WASM Sandbox Tool (`tools/wasm_sandbox_tests.rs`)**: Extracted 18 lines of tool metadata definition, security description assertions, and non-existent bytecode error handling tests. Reduced `wasm_sandbox.rs` from 158 down to 140 lines (~11.4% line reduction).
+  - **Filesystem Watcher Tool (`tools/watcher_tests.rs`)**: Extracted 17 lines of watcher lifecycle, inactive status reporting, and background thread safety tests. Reduced `watcher.rs` from 249 down to 232 lines (~6.8% line reduction).
+  - **SOP Workflow Trigger (`tools/sop_tests.rs`)**: Extracted 16 lines of trigger tool metadata definition, description assertions, and JSON schema property verification tests. Reduced `sop.rs` from 74 down to 58 lines (~21.6% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.174
 - **Ideas**:
   - Modularize developer utility and system introspection tools (`js_format`, `mermaid`, `network`, `system_info`, `remote`) by extracting embedded unit test suites into dedicated sibling test modules.
   - Decouple Biome JS/TS parser formatting evaluations, SVG flowchart graph generation assertions, local socket port availability checks, host hardware and OS architecture inspection, and cross-session remote prompt loopback detection from tool runtime structures.

@@ -627,6 +627,18 @@ struct WebFetchTool;
 - Extracted 11 lines of embedded unit tests from `src/tools/remote.rs` into `src/tools/remote_tests.rs`, reducing `remote.rs` from 95 to 84 lines (~11.6% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.39 Workflow Automation & Sandbox Test Suite Decomposition (Resolved in v0.0.175)
+
+**Files:** [`src/tools/compiler_auto_heal.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/compiler_auto_heal.rs), [`src/tools/compiler_auto_heal_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/compiler_auto_heal_tests.rs), [`src/tools/telegram_send.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/telegram_send.rs), [`src/tools/telegram_send_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/telegram_send_tests.rs), [`src/tools/wasm_sandbox.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wasm_sandbox.rs), [`src/tools/wasm_sandbox_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wasm_sandbox_tests.rs), [`src/tools/watcher.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/watcher.rs), [`src/tools/watcher_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/watcher_tests.rs), [`src/tools/sop.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/sop.rs), [`src/tools/sop_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/sop_tests.rs)
+
+**Status:**
+- Extracted 58 lines of embedded unit tests from `src/tools/compiler_auto_heal.rs` into `src/tools/compiler_auto_heal_tests.rs`, reducing `compiler_auto_heal.rs` from 137 to 79 lines (~42.3% reduction).
+- Extracted 19 lines of embedded unit tests from `src/tools/telegram_send.rs` into `src/tools/telegram_send_tests.rs`, reducing `telegram_send.rs` from 275 to 256 lines (~6.9% reduction).
+- Extracted 18 lines of embedded unit tests from `src/tools/wasm_sandbox.rs` into `src/tools/wasm_sandbox_tests.rs`, reducing `wasm_sandbox.rs` from 158 to 140 lines (~11.4% reduction).
+- Extracted 17 lines of embedded unit tests from `src/tools/watcher.rs` into `src/tools/watcher_tests.rs`, reducing `watcher.rs` from 249 to 232 lines (~6.8% reduction).
+- Extracted 16 lines of embedded unit tests from `src/tools/sop.rs` into `src/tools/sop_tests.rs`, reducing `sop.rs` from 74 to 58 lines (~21.6% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
