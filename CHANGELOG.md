@@ -1,19 +1,21 @@
 ### v0.0.170 (Latest Release)
-- **AST Grep Tool Test Suite Extraction (`tools/ast_grep_tests.rs`)**:
-  - Extracted 60 lines of AST Grep language parsing from extensions, query schema validation, and syntax matching unit tests from [`src/tools/ast_grep.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/ast_grep.rs) into [`src/tools/ast_grep_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/ast_grep_tests.rs).
-  - Reduced `src/tools/ast_grep.rs` from 445 lines down to 385 lines (~13.5% line reduction).
-- **GitHub Provider Tool Test Suite Extraction (`tools/github_tests.rs`)**:
-  - Extracted 56 lines of provider URL construction, parameter verification, and tool registration schema unit tests from [`src/tools/github.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github.rs) into [`src/tools/github_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github_tests.rs).
-  - Reduced `src/tools/github.rs` from 519 lines down to 463 lines (~10.8% line reduction).
-- **Tool Arguments Parser Test Suite Extraction (`tools/arguments_tests.rs`)**:
-  - Extracted 55 lines of case-insensitive argument alias extraction, string normalization, and integer parameter parsing unit tests from [`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs) into [`src/tools/arguments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments_tests.rs).
-  - Reduced `src/tools/arguments.rs` from 182 lines down to 127 lines (~30.2% line reduction).
-- **Grep Tool Test Suite Extraction (`tools/grep_tests.rs`)**:
-  - Extracted 50 lines of ripgrep argument construction, regex escape handling, and multiline matching unit tests from [`src/tools/grep.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/grep.rs) into [`src/tools/grep_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/grep_tests.rs).
-  - Reduced `src/tools/grep.rs` from 344 lines down to 294 lines (~14.5% line reduction).
-- **Image Generator Tool Test Suite Extraction (`tools/image_generator_tests.rs`)**:
-  - Extracted 53 lines of tool metadata definition and resilient headless browser CDP execution unit tests from [`src/tools/image_generator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/image_generator.rs) into [`src/tools/image_generator_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/image_generator_tests.rs).
-  - Reduced `src/tools/image_generator.rs` from 649 lines down to 605 lines (~6.8% line reduction).
+- **Ideas**:
+  - Modularize core developer tools (`ast_grep`, `github`, `arguments`, `grep`, `image_generator`) by decoupling embedded test fixtures from tool trait implementations, shrinking source file footprints and isolating test-only dependencies.
+  - Fortify headless browser test execution in constrained sandboxes against transient Chrome DevTools Protocol (CDP) `/json/new` socket disconnects.
+- **Inspirations**:
+  - `ast-grep` (AST-based pattern matching and structural search engines).
+  - `ripgrep` (BurntSushi's line-oriented regex search and flag composition).
+  - Chrome DevTools Protocol (CDP HTTP/WebSocket target management).
+  - Rust modular testing pattern (`#[path = "..._tests.rs"] mod tests;`).
+- **Sources & References**:
+  - Implementation & Tests: [`src/tools/ast_grep.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/ast_grep.rs), [`src/tools/ast_grep_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/ast_grep_tests.rs), [`src/tools/github.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github.rs), [`src/tools/github_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github_tests.rs), [`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs), [`src/tools/arguments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments_tests.rs), [`src/tools/grep.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/grep.rs), [`src/tools/grep_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/grep_tests.rs), [`src/tools/image_generator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/image_generator.rs), [`src/tools/image_generator_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/image_generator_tests.rs).
+  - Execution Plan: [`docs/superpowers/plans/2026-09-14-codebase-modularization-and-hardening-phase22.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-14-codebase-modularization-and-hardening-phase22.md).
+- **Subsystem Test Suite Extractions**:
+  - **AST Grep Tool (`tools/ast_grep_tests.rs`)**: Extracted 60 lines of language parsing, query schema validation, and syntax matching unit tests. Reduced `ast_grep.rs` from 445 down to 385 lines (~13.5% line reduction).
+  - **GitHub Provider Tool (`tools/github_tests.rs`)**: Extracted 56 lines of provider URL construction, parameter verification, and tool schema unit tests. Reduced `github.rs` from 519 down to 463 lines (~10.8% line reduction).
+  - **Tool Arguments Parser (`tools/arguments_tests.rs`)**: Extracted 55 lines of case-insensitive alias extraction, string normalization, and integer parsing tests. Reduced `arguments.rs` from 182 down to 127 lines (~30.2% line reduction).
+  - **Grep Tool (`tools/grep_tests.rs`)**: Extracted 50 lines of ripgrep argument construction, regex escape handling, and multiline matching unit tests. Reduced `grep.rs` from 344 down to 294 lines (~14.5% line reduction).
+  - **Image Generator Tool (`tools/image_generator_tests.rs`)**: Extracted 53 lines of tool metadata definition and resilient headless browser CDP execution unit tests. Reduced `image_generator.rs` from 649 down to 605 lines (~6.8% line reduction).
 - **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
 
 ### v0.0.169
