@@ -639,6 +639,18 @@ struct WebFetchTool;
 - Extracted 16 lines of embedded unit tests from `src/tools/sop.rs` into `src/tools/sop_tests.rs`, reducing `sop.rs` from 74 to 58 lines (~21.6% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.40 Core Agent Loop & Intent Classification Test Suite Decomposition (Resolved in v0.0.176)
+
+**Files:** [`src/agent/agent_loop/tool_execution.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/tool_execution.rs), [`src/agent/agent_loop/tool_execution_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/tool_execution_tests.rs), [`src/agent/agent_loop/save.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/save.rs), [`src/agent/agent_loop/save_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/save_tests.rs), [`src/agent/agent_loop/intent.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/intent.rs), [`src/agent/agent_loop/intent_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/intent_tests.rs), [`src/agent/agent_loop/streaming.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/streaming.rs), [`src/agent/agent_loop/streaming_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/streaming_tests.rs), [`src/agent/marketplace_intent.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/marketplace_intent.rs), [`src/agent/marketplace_intent_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/marketplace_intent_tests.rs)
+
+**Status:**
+- Extracted 45 lines of embedded unit tests from `src/agent/agent_loop/tool_execution.rs` into `src/agent/agent_loop/tool_execution_tests.rs`, reducing `tool_execution.rs` from 518 to 474 lines (~8.5% reduction).
+- Extracted 28 lines of embedded unit tests from `src/agent/agent_loop/save.rs` into `src/agent/agent_loop/save_tests.rs`, reducing `save.rs` from 749 to 722 lines (~3.6% reduction).
+- Extracted 40 lines of embedded unit tests from `src/agent/agent_loop/intent.rs` into `src/agent/agent_loop/intent_tests.rs`, reducing `intent.rs` from 223 to 184 lines (~17.5% reduction).
+- Extracted 33 lines of embedded unit tests from `src/agent/agent_loop/streaming.rs` into `src/agent/agent_loop/streaming_tests.rs`, reducing `streaming.rs` from 126 to 94 lines (~25.4% reduction).
+- Extracted 73 lines of embedded unit tests from `src/agent/marketplace_intent.rs` into `src/agent/marketplace_intent_tests.rs`, reducing `marketplace_intent.rs` from 178 to 106 lines (~40.4% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
