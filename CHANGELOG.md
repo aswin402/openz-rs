@@ -1,4 +1,24 @@
-### v0.0.177 (Latest Release)
+### v0.0.178 (Latest Release)
+- **Ideas**:
+  - Modularize multi-agent workflow orchestration specifications, validation invariants, WebSocket CORS authentication rules, email channel command parsing, and CLI device configuration parsing (`orchestrator::spec`, `orchestrator::validation`, `websocket::auth`, `channels::email`, `channels::cli::device`) by extracting embedded unit test suites into dedicated sibling test modules.
+  - Decouple multi-agent declarative workflow JSON round-trip serialization, model-friendly alias translations, dependency graph validation heuristics (unknown agents, duplicate step IDs, missing prerequisites), WebSocket origin CORS evaluation with wildcard handling, email shared `/stop` command detection, and CLI hardware device CSV string tokenization from their operational runtime structures.
+- **Inspirations**:
+  - Declarative DAG workflow specifications (Argo Workflows, Temporal, Airflow DAG models).
+  - Web standard Cross-Origin Resource Sharing (CORS) RFC specifications and origin wildcard validation.
+  - Asynchronous multi-channel messaging command protocols.
+  - Unix CLI delimiter-separated device and architecture configuration parsers.
+- **Sources & References**:
+  - Implementation & Tests: [`src/orchestrator/spec.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/spec.rs), [`src/orchestrator/spec_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/spec_tests.rs), [`src/orchestrator/validation.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/validation.rs), [`src/orchestrator/validation_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/validation_tests.rs), [`src/channels/websocket/auth.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/auth.rs), [`src/channels/websocket/auth_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/auth_tests.rs), [`src/channels/email.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/email.rs), [`src/channels/email_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/email_tests.rs), [`src/channels/cli/device.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/device.rs), [`src/channels/cli/device_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/device_tests.rs).
+  - Execution Plan: [`docs/superpowers/plans/2026-09-15-codebase-modularization-and-hardening-phase30.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-15-codebase-modularization-and-hardening-phase30.md).
+- **Subsystem Test Suite Extractions**:
+  - **Orchestrator Workflow Specification (`orchestrator/spec_tests.rs`)**: Extracted 65 lines of JSON schema deserialization, default field fallbacks, dependency graph linking, and model alias mapping tests. Reduced `spec.rs` from 186 down to 121 lines (~34.9% line reduction).
+  - **Workflow DAG Validation (`orchestrator/validation_tests.rs`)**: Extracted 58 lines of valid workflow acceptance, unknown agent rejection, duplicate step ID detection, and missing dependency enforcement tests. Reduced `validation.rs` from 137 down to 79 lines (~42.3% line reduction).
+  - **WebSocket CORS Origin Authentication (`channels/websocket/auth_tests.rs`)**: Extracted 19 lines of custom origin matching, local development loopback allowing, untrusted origin rejection, and wildcard origin evaluation tests. Reduced `auth.rs` from 121 down to 102 lines (~15.7% line reduction).
+  - **Email Channel Stop Command Detection (`channels/email_tests.rs`)**: Extracted 8 lines of shared channel `/stop` command string matching and general subject disambiguation tests. Reduced `email.rs` from 338 down to 330 lines (~2.4% line reduction).
+  - **CLI Device Parser (`channels/cli/device_tests.rs`)**: Extracted 11 lines of comma-separated hardware string splitting, whitespace trimming, and empty token rejection tests. Reduced `device.rs` from 254 down to 243 lines (~4.3% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.177
 - **Ideas**:
   - Modularize core system utilities and runtime reliability infrastructure (`core::process`, `core::sqlite`, `core::http`, `shutdown`, `model_registry`) by extracting embedded unit test suites into dedicated sibling test modules.
   - Decouple cross-platform shell process construction (`cmd` vs `sh`), asynchronous tokio subprocess execution, shell argument escaping heuristics, SQLite WAL/synchronous standard pragma application, shared TLS HTTP client construction with timeout constraints, cooperative SIGINT turn cancellation vs graceful process tree termination, and provider model health tracking / error message truncation from operational implementations.

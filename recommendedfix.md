@@ -663,6 +663,18 @@ struct WebFetchTool;
 - Extracted 37 lines of embedded unit tests from `src/model_registry.rs` into `src/model_registry_tests.rs`, reducing `model_registry.rs` from 215 to 178 lines (~17.2% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.42 Multi-Agent Orchestrator & Channels Test Suite Decomposition (Resolved in v0.0.178)
+
+**Files:** [`src/orchestrator/spec.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/spec.rs), [`src/orchestrator/spec_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/spec_tests.rs), [`src/orchestrator/validation.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/validation.rs), [`src/orchestrator/validation_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/validation_tests.rs), [`src/channels/websocket/auth.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/auth.rs), [`src/channels/websocket/auth_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/auth_tests.rs), [`src/channels/email.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/email.rs), [`src/channels/email_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/email_tests.rs), [`src/channels/cli/device.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/device.rs), [`src/channels/cli/device_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/device_tests.rs)
+
+**Status:**
+- Extracted 65 lines of embedded unit tests from `src/orchestrator/spec.rs` into `src/orchestrator/spec_tests.rs`, reducing `spec.rs` from 186 to 121 lines (~34.9% reduction).
+- Extracted 58 lines of embedded unit tests from `src/orchestrator/validation.rs` into `src/orchestrator/validation_tests.rs`, reducing `validation.rs` from 137 to 79 lines (~42.3% reduction).
+- Extracted 19 lines of embedded unit tests from `src/channels/websocket/auth.rs` into `src/channels/websocket/auth_tests.rs`, reducing `auth.rs` from 121 to 102 lines (~15.7% reduction).
+- Extracted 8 lines of embedded unit tests from `src/channels/email.rs` into `src/channels/email_tests.rs`, reducing `email.rs` from 338 to 330 lines (~2.4% reduction).
+- Extracted 11 lines of embedded unit tests from `src/channels/cli/device.rs` into `src/channels/cli/device_tests.rs`, reducing `device.rs` from 254 to 243 lines (~4.3% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
