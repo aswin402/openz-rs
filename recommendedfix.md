@@ -651,6 +651,18 @@ struct WebFetchTool;
 - Extracted 73 lines of embedded unit tests from `src/agent/marketplace_intent.rs` into `src/agent/marketplace_intent_tests.rs`, reducing `marketplace_intent.rs` from 178 to 106 lines (~40.4% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.41 Core Utilities & Reliability Test Suite Decomposition (Resolved in v0.0.177)
+
+**Files:** [`src/core/process.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/process.rs), [`src/core/process_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/process_tests.rs), [`src/core/sqlite.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/sqlite.rs), [`src/core/sqlite_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/sqlite_tests.rs), [`src/core/http.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/http.rs), [`src/core/http_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/http_tests.rs), [`src/shutdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/shutdown.rs), [`src/shutdown_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/shutdown_tests.rs), [`src/model_registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/model_registry.rs), [`src/model_registry_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/model_registry_tests.rs)
+
+**Status:**
+- Extracted 37 lines of embedded unit tests from `src/core/process.rs` into `src/core/process_tests.rs`, reducing `process.rs` from 103 to 66 lines (~35.9% reduction).
+- Extracted 32 lines of embedded unit tests from `src/core/sqlite.rs` into `src/core/sqlite_tests.rs`, reducing `sqlite.rs` from 61 to 29 lines (~52.5% reduction).
+- Extracted 17 lines of embedded unit tests from `src/core/http.rs` into `src/core/http_tests.rs`, reducing `http.rs` from 54 to 37 lines (~31.5% reduction).
+- Extracted 35 lines of embedded unit tests from `src/shutdown.rs` into `src/shutdown_tests.rs`, reducing `shutdown.rs` from 290 to 255 lines (~12.1% reduction).
+- Extracted 37 lines of embedded unit tests from `src/model_registry.rs` into `src/model_registry_tests.rs`, reducing `model_registry.rs` from 215 to 178 lines (~17.2% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps

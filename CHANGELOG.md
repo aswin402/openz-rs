@@ -1,4 +1,25 @@
-### v0.0.176 (Latest Release)
+### v0.0.177 (Latest Release)
+- **Ideas**:
+  - Modularize core system utilities and runtime reliability infrastructure (`core::process`, `core::sqlite`, `core::http`, `shutdown`, `model_registry`) by extracting embedded unit test suites into dedicated sibling test modules.
+  - Decouple cross-platform shell process construction (`cmd` vs `sh`), asynchronous tokio subprocess execution, shell argument escaping heuristics, SQLite WAL/synchronous standard pragma application, shared TLS HTTP client construction with timeout constraints, cooperative SIGINT turn cancellation vs graceful process tree termination, and provider model health tracking / error message truncation from operational implementations.
+- **Inspirations**:
+  - POSIX & Windows command line escaping semantics (RFC/MSDN escaping specifications).
+  - SQLite production WAL concurrency and pragma optimization standards (`PRAGMA busy_timeout = 5000`, `PRAGMA synchronous = NORMAL`).
+  - Rustls and Tokio timeout-bounded networking patterns.
+  - Unix process group session signals (`setsid`, `SIGINT`, `SIGTERM`) and clean tree teardown.
+  - Circuit-breaker model health registry and error classification metrics.
+- **Sources & References**:
+  - Implementation & Tests: [`src/core/process.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/process.rs), [`src/core/process_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/process_tests.rs), [`src/core/sqlite.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/sqlite.rs), [`src/core/sqlite_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/sqlite_tests.rs), [`src/core/http.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/http.rs), [`src/core/http_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/http_tests.rs), [`src/shutdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/shutdown.rs), [`src/shutdown_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/shutdown_tests.rs), [`src/model_registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/model_registry.rs), [`src/model_registry_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/model_registry_tests.rs).
+  - Execution Plan: [`docs/superpowers/plans/2026-09-15-codebase-modularization-and-hardening-phase29.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-15-codebase-modularization-and-hardening-phase29.md).
+- **Subsystem Test Suite Extractions**:
+  - **Cross-Platform Host Process (`core/process_tests.rs`)**: Extracted 37 lines of host shell command resolution (`cmd.exe` vs `sh`), async tokio output execution, and dual-OS shell argument quoting tests. Reduced `process.rs` from 103 down to 66 lines (~35.9% line reduction).
+  - **SQLite Standard Pragmas (`core/sqlite_tests.rs`)**: Extracted 32 lines of in-memory database standard pragma configuration, busy timeout verification, and foreign key pragma batching tests. Reduced `sqlite.rs` from 61 down to 29 lines (~52.5% line reduction).
+  - **HTTP Client Factory (`core/http_tests.rs`)**: Extracted 17 lines of default rustls HTTP client builder validation and custom timeout instantiation tests. Reduced `http.rs` from 54 down to 37 lines (~31.5% line reduction).
+  - **Shutdown & Process Group Manager (`shutdown_tests.rs`)**: Extracted 35 lines of SIGINT active turn cancellation decisions, process group tracking, and background dev-server child termination tests. Reduced `shutdown.rs` from 290 down to 255 lines (~12.1% line reduction).
+  - **Model Registry & Health Tracker (`model_registry_tests.rs`)**: Extracted 37 lines of stable provider model registry key generation, long error payload truncation, and success/failure/leak metric recording tests. Reduced `model_registry.rs` from 215 down to 178 lines (~17.2% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.176
 - **Ideas**:
   - Modularize the core agent loop, tool argument presentation formatting, self-improvement review debounce, intent classification, and chat stream assembly subsystems (`tool_execution`, `save`, `intent`, `streaming`, `marketplace_intent`) by extracting embedded unit test suites into dedicated sibling test modules.
   - Decouple tool argument formatting rules (native filesystem alias matching, HTML-to-video duration/FPS cost summary, unnormalized argument inspection), background curator session spawn debounce timers, turn intent routing policies (local repo query vs live external research vs model direct vs local execution), streaming chunk argument assembly ordering, and buyer/seller marketplace disambiguation heuristics from their runtime state machine implementations.
