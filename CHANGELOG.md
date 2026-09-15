@@ -1,4 +1,24 @@
-### v0.0.180 (Latest Release)
+### v0.0.181 (Latest Release)
+- **Ideas**:
+  - Modularize LLM provider multimodal vision heuristics, tool scope dynamic intent routing, package template manager diagnostics, headless animation video render planning, and social intelligence integrations (`providers::mod`, `tools::scope_engine`, `tools::onpkg`, `tools::html_video`, `tools::social_search`) by extracting embedded unit test suites into dedicated sibling test modules.
+  - Decouple multimodal vision model string prefix parsing, toolpack whitelist computation, onpkg doctor action invocation, HTML video duration/framerate boundary guards, and Hacker News / Polymarket async API payload verification from operational execution paths.
+- **Inspirations**:
+  - Multimodal LLM capabilities and vision API specifications (OpenAI, Anthropic, Google Gemini, Meta Llama vision matrices).
+  - Intent-driven dynamic tool scoping and policy engines for agent security.
+  - Headless browser rendering pipelines (CDP framerate and time budget limits).
+  - Web search APIs and public intelligence data source connectors.
+- **Sources & References**:
+  - Implementation & Tests: [`src/providers/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/mod.rs), [`src/providers/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/mod_tests.rs), [`src/tools/scope_engine.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/scope_engine.rs), [`src/tools/scope_engine_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/scope_engine_tests.rs), [`src/tools/onpkg.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/onpkg.rs), [`src/tools/onpkg_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/onpkg_tests.rs), [`src/tools/html_video.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/html_video.rs), [`src/tools/html_video_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/html_video_tests.rs), [`src/tools/social_search.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/social_search.rs), [`src/tools/social_search_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/social_search_tests.rs).
+  - Execution Plan: [`docs/superpowers/plans/2026-09-16-codebase-modularization-and-hardening-phase33.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-16-codebase-modularization-and-hardening-phase33.md).
+- **Subsystem Test Suite Extractions**:
+  - **Provider Vision Model Heuristics (`providers/mod_tests.rs`)**: Extracted 66 lines of vision model capability identification tests covering local MIVI, OpenAI, Anthropic, Google, Meta, and Mistral models. Reduced `providers/mod.rs` from 355 down to 291 lines (~18.0% line reduction).
+  - **Tool Scope Intent Engine (`tools/scope_engine_tests.rs`)**: Extracted 43 lines of local repo read, external research, and direct answer tool pack allowance tests. Reduced `scope_engine.rs` from 156 down to 114 lines (~26.9% line reduction).
+  - **Onpkg Package Manager (`tools/onpkg_tests.rs`)**: Extracted 25 lines of doctor tool execution and manifest synchronization tests. Reduced `onpkg.rs` from 523 down to 499 lines (~4.6% line reduction).
+  - **HTML Video Render Planner (`tools/html_video_tests.rs`)**: Extracted 19 lines of total frame calculations, direct limit checks, and segment guidance tests. Reduced `html_video.rs` from 433 down to 415 lines (~4.2% line reduction).
+  - **Social Search Integrations (`tools/social_search_tests.rs`)**: Extracted 27 lines of Hacker News and Polymarket response structure tests. Reduced `social_search.rs` from 407 down to 381 lines (~6.4% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.180
 - **Ideas**:
   - Modularize logging infrastructure, log viewer TUI, Ratatui modal layouts, and CLI interactive configuration (`logs::mod`, `logs::subscriber`, `logs::tui`, `channels::ratatui::modals`, `cli::configure`) by extracting embedded unit test suites into dedicated sibling test modules.
   - Decouple log level and session filter argument parsing, log secret scrubbing, SQLite tail log filtering, modal centered rectangle coordinate math, and built-in provider alias base URL resolution from operational production modules.

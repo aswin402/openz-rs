@@ -699,6 +699,18 @@ struct WebFetchTool;
 - Extracted 41 lines of embedded unit tests from `src/cli/configure.rs` into `src/cli/configure_tests.rs`, reducing `configure.rs` from 997 to 957 lines (~4.0% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.45 Provider Vision & Core Tools Test Suite Decomposition (Resolved in v0.0.181)
+
+**Files:** [`src/providers/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/mod.rs), [`src/providers/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/mod_tests.rs), [`src/tools/scope_engine.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/scope_engine.rs), [`src/tools/scope_engine_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/scope_engine_tests.rs), [`src/tools/onpkg.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/onpkg.rs), [`src/tools/onpkg_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/onpkg_tests.rs), [`src/tools/html_video.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/html_video.rs), [`src/tools/html_video_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/html_video_tests.rs), [`src/tools/social_search.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/social_search.rs), [`src/tools/social_search_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/social_search_tests.rs)
+
+**Status:**
+- Extracted 66 lines of embedded unit tests from `src/providers/mod.rs` into `src/providers/mod_tests.rs`, reducing `providers/mod.rs` from 355 to 291 lines (~18.0% reduction).
+- Extracted 43 lines of embedded unit tests from `src/tools/scope_engine.rs` into `src/tools/scope_engine_tests.rs`, reducing `scope_engine.rs` from 156 to 114 lines (~26.9% reduction).
+- Extracted 25 lines of embedded unit tests from `src/tools/onpkg.rs` into `src/tools/onpkg_tests.rs`, reducing `onpkg.rs` from 523 to 499 lines (~4.6% reduction).
+- Extracted 19 lines of embedded unit tests from `src/tools/html_video.rs` into `src/tools/html_video_tests.rs`, reducing `html_video.rs` from 433 to 415 lines (~4.2% reduction).
+- Extracted 27 lines of embedded unit tests from `src/tools/social_search.rs` into `src/tools/social_search_tests.rs`, reducing `social_search.rs` from 407 to 381 lines (~6.4% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
