@@ -241,13 +241,5 @@ pub(crate) fn print_device_capability(item: &serde_json::Value, score: Option<f6
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_split_csv() {
-        assert_eq!(split_csv("rs, py, js "), vec!["rs", "py", "js"]);
-        assert_eq!(split_csv(""), Vec::<String>::new());
-        assert_eq!(split_csv(",, ,"), Vec::<String>::new());
-    }
-}
+#[path = "device_tests.rs"]
+mod tests;
