@@ -314,17 +314,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+#[path = "modals_tests.rs"]
+mod tests;
 
-    #[test]
-    fn test_centered_rect_bounds() {
-        let parent = Rect::new(0, 0, 100, 100);
-        let centered = centered_rect(50, 50, parent);
-        assert_eq!(centered.width, 50);
-        assert_eq!(centered.height, 50);
-        assert_eq!(centered.x, 25);
-        assert_eq!(centered.y, 25);
-    }
-}
 
