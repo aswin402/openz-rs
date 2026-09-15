@@ -675,6 +675,18 @@ struct WebFetchTool;
 - Extracted 11 lines of embedded unit tests from `src/channels/cli/device.rs` into `src/channels/cli/device_tests.rs`, reducing `device.rs` from 254 to 243 lines (~4.3% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.43 Provider Reliability & Telegram Concurrency Test Suite Decomposition (Resolved in v0.0.179)
+
+**Files:** [`src/providers/circuit_breaker.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/circuit_breaker.rs), [`src/providers/circuit_breaker_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/circuit_breaker_tests.rs), [`src/providers/transport.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/transport.rs), [`src/providers/transport_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/transport_tests.rs), [`src/providers/risk.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/risk.rs), [`src/providers/risk_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/risk_tests.rs), [`src/channels/telegram/lock.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/lock.rs), [`src/channels/telegram/lock_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/lock_tests.rs), [`src/channels/telegram/state.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/state.rs), [`src/channels/telegram/state_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/state_tests.rs)
+
+**Status:**
+- Extracted 71 lines of embedded unit tests from `src/providers/circuit_breaker.rs` into `src/providers/circuit_breaker_tests.rs`, reducing `circuit_breaker.rs` from 301 to 232 lines (~22.9% reduction).
+- Extracted 35 lines of embedded unit tests from `src/providers/transport.rs` into `src/providers/transport_tests.rs`, reducing `transport.rs` from 152 to 118 lines (~22.4% reduction).
+- Extracted 49 lines of embedded unit tests from `src/providers/risk.rs` into `src/providers/risk_tests.rs`, reducing `risk.rs` from 116 to 68 lines (~41.4% reduction).
+- Extracted 41 lines of embedded unit tests from `src/channels/telegram/lock.rs` into `src/channels/telegram/lock_tests.rs`, reducing `lock.rs` from 82 to 42 lines (~48.8% reduction).
+- Extracted 37 lines of embedded unit tests from `src/channels/telegram/state.rs` into `src/channels/telegram/state_tests.rs`, reducing `state.rs` from 223 to 187 lines (~16.1% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps

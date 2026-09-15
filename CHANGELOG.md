@@ -1,4 +1,24 @@
-### v0.0.178 (Latest Release)
+### v0.0.179 (Latest Release)
+- **Ideas**:
+  - Modularize LLM provider reliability infrastructure, transport configuration defaults, model risk heuristics, and Telegram channel concurrency/state utilities (`providers::circuit_breaker`, `providers::transport`, `providers::risk`, `channels::telegram::lock`, `channels::telegram::state`) by extracting embedded unit test suites into dedicated sibling test modules.
+  - Decouple exponential backoff calculation, HTTP 429/5xx retryability classification, circuit breaker state machine transitions, timeout defaults, provider endpoint resolution, model risk tier heuristics, lock file creation with token hashing, and Telegram TUI active session button formatting from operational runtime logic.
+- **Inspirations**:
+  - Netflix Hystrix / Polly circuit breaker resilience design patterns.
+  - RFC 7231 HTTP status retry semantics and exponential backoff jitter algorithms.
+  - LLM risk classification matrices and curated safety boundaries.
+  - POSIX file advisory locking (`flock`) process isolation patterns.
+- **Sources & References**:
+  - Implementation & Tests: [`src/providers/circuit_breaker.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/circuit_breaker.rs), [`src/providers/circuit_breaker_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/circuit_breaker_tests.rs), [`src/providers/transport.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/transport.rs), [`src/providers/transport_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/transport_tests.rs), [`src/providers/risk.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/risk.rs), [`src/providers/risk_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/risk_tests.rs), [`src/channels/telegram/lock.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/lock.rs), [`src/channels/telegram/lock_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/lock_tests.rs), [`src/channels/telegram/state.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/state.rs), [`src/channels/telegram/state_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/state_tests.rs).
+  - Execution Plan: [`docs/superpowers/plans/2026-09-15-codebase-modularization-and-hardening-phase31.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-15-codebase-modularization-and-hardening-phase31.md).
+- **Subsystem Test Suite Extractions**:
+  - **Provider Circuit Breaker (`providers/circuit_breaker_tests.rs`)**: Extracted 71 lines of backoff calculation, retryable status codes, initial state, threshold trip, and manual/success reset tests. Reduced `circuit_breaker.rs` from 301 down to 232 lines (~22.9% line reduction).
+  - **Provider Transport Defaults (`providers/transport_tests.rs`)**: Extracted 35 lines of HTTP timeout defaults and OpenAI/Anthropic endpoint resolution tests. Reduced `transport.rs` from 152 down to 118 lines (~22.4% line reduction).
+  - **Provider Model Risk Classifier (`providers/risk_tests.rs`)**: Extracted 49 lines of unknown free model tagging, strong tier defaults, small model warnings, and experimental tier tests. Reduced `risk.rs` from 116 down to 68 lines (~41.4% line reduction).
+  - **Telegram Channel Polling Lock (`channels/telegram/lock_tests.rs`)**: Extracted 41 lines of token leakage prevention in lock paths, duplicate process locking rejection, and reusable file lock tests. Reduced `lock.rs` from 82 down to 42 lines (~48.8% line reduction).
+  - **Telegram Session State (`channels/telegram/state_tests.rs`)**: Extracted 37 lines of remote session key selection round-trips and button preview formatting tests. Reduced `state.rs` from 223 down to 187 lines (~16.1% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.178
 - **Ideas**:
   - Modularize multi-agent workflow orchestration specifications, validation invariants, WebSocket CORS authentication rules, email channel command parsing, and CLI device configuration parsing (`orchestrator::spec`, `orchestrator::validation`, `websocket::auth`, `channels::email`, `channels::cli::device`) by extracting embedded unit test suites into dedicated sibling test modules.
   - Decouple multi-agent declarative workflow JSON round-trip serialization, model-friendly alias translations, dependency graph validation heuristics (unknown agents, duplicate step IDs, missing prerequisites), WebSocket origin CORS evaluation with wildcard handling, email shared `/stop` command detection, and CLI hardware device CSV string tokenization from their operational runtime structures.
