@@ -687,6 +687,18 @@ struct WebFetchTool;
 - Extracted 37 lines of embedded unit tests from `src/channels/telegram/state.rs` into `src/channels/telegram/state_tests.rs`, reducing `state.rs` from 223 to 187 lines (~16.1% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.44 Logging & Interactive TUI Test Suite Decomposition (Resolved in v0.0.180)
+
+**Files:** [`src/logs/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/mod.rs), [`src/logs/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/mod_tests.rs), [`src/logs/subscriber.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/subscriber.rs), [`src/logs/subscriber_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/subscriber_tests.rs), [`src/logs/tui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/tui.rs), [`src/logs/tui_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/tui_tests.rs), [`src/channels/ratatui/modals.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/modals.rs), [`src/channels/ratatui/modals_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/modals_tests.rs), [`src/cli/configure.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/configure.rs), [`src/cli/configure_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/configure_tests.rs)
+
+**Status:**
+- Extracted 21 lines of embedded unit tests from `src/logs/mod.rs` into `src/logs/mod_tests.rs`, reducing `mod.rs` from 38 to 19 lines (~50.0% reduction).
+- Extracted 19 lines of embedded unit tests from `src/logs/subscriber.rs` into `src/logs/subscriber_tests.rs`, reducing `subscriber.rs` from 143 to 126 lines (~11.9% reduction).
+- Extracted 57 lines of embedded unit tests from `src/logs/tui.rs` into `src/logs/tui_tests.rs`, reducing `tui.rs` from 1223 to 1168 lines (~4.5% reduction).
+- Extracted 13 lines of embedded unit tests from `src/channels/ratatui/modals.rs` into `src/channels/ratatui/modals_tests.rs`, reducing `modals.rs` from 331 to 319 lines (~3.6% reduction).
+- Extracted 41 lines of embedded unit tests from `src/cli/configure.rs` into `src/cli/configure_tests.rs`, reducing `configure.rs` from 997 to 957 lines (~4.0% reduction).
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps

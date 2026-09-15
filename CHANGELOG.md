@@ -1,4 +1,24 @@
-### v0.0.179 (Latest Release)
+### v0.0.180 (Latest Release)
+- **Ideas**:
+  - Modularize logging infrastructure, log viewer TUI, Ratatui modal layouts, and CLI interactive configuration (`logs::mod`, `logs::subscriber`, `logs::tui`, `channels::ratatui::modals`, `cli::configure`) by extracting embedded unit test suites into dedicated sibling test modules.
+  - Decouple log level and session filter argument parsing, log secret scrubbing, SQLite tail log filtering, modal centered rectangle coordinate math, and built-in provider alias base URL resolution from operational production modules.
+- **Inspirations**:
+  - Structured logging standards (OpenTelemetry, tracing subscriber filters).
+  - Secret redaction and credential masking hygiene in observability pipelines.
+  - Terminal UI layout engines (Ratatui/Crossterm centered popup geometry).
+  - Provider alias dispatch and default API endpoint configuration matrices.
+- **Sources & References**:
+  - Implementation & Tests: [`src/logs/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/mod.rs), [`src/logs/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/mod_tests.rs), [`src/logs/subscriber.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/subscriber.rs), [`src/logs/subscriber_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/subscriber_tests.rs), [`src/logs/tui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/tui.rs), [`src/logs/tui_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/tui_tests.rs), [`src/channels/ratatui/modals.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/modals.rs), [`src/channels/ratatui/modals_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/modals_tests.rs), [`src/cli/configure.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/configure.rs), [`src/cli/configure_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/configure_tests.rs).
+  - Execution Plan: [`docs/superpowers/plans/2026-09-15-codebase-modularization-and-hardening-phase32.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-15-codebase-modularization-and-hardening-phase32.md).
+- **Subsystem Test Suite Extractions**:
+  - **Logging Filter Parsing (`logs/mod_tests.rs`)**: Extracted 21 lines of `LogLevelFilter` and `SessionFilter` string option parsing tests. Reduced `mod.rs` from 38 down to 19 lines (~50.0% line reduction).
+  - **Log Secret Scrubbing (`logs/subscriber_tests.rs`)**: Extracted 19 lines of credential masking and token sanitization tests. Reduced `subscriber.rs` from 143 down to 126 lines (~11.9% line reduction).
+  - **Log Viewer SQLite Query (`logs/tui_tests.rs`)**: Extracted 57 lines of SQLite logging, table creation, insertion, and tail log query tests. Reduced `tui.rs` from 1223 down to 1168 lines (~4.5% line reduction).
+  - **Ratatui Modals Geometry (`channels/ratatui/modals_tests.rs`)**: Extracted 13 lines of centered popup rectangle coordinate and dimension tests. Reduced `modals.rs` from 331 down to 319 lines (~3.6% line reduction).
+  - **CLI Provider Configuration (`cli/configure_tests.rs`)**: Extracted 41 lines of provider key update and built-in provider alias endpoint resolution tests. Reduced `configure.rs` from 997 down to 957 lines (~4.0% line reduction).
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant.
+
+### v0.0.179
 - **Ideas**:
   - Modularize LLM provider reliability infrastructure, transport configuration defaults, model risk heuristics, and Telegram channel concurrency/state utilities (`providers::circuit_breaker`, `providers::transport`, `providers::risk`, `channels::telegram::lock`, `channels::telegram::state`) by extracting embedded unit test suites into dedicated sibling test modules.
   - Decouple exponential backoff calculation, HTTP 429/5xx retryability classification, circuit breaker state machine transitions, timeout defaults, provider endpoint resolution, model risk tier heuristics, lock file creation with token hashing, and Telegram TUI active session button formatting from operational runtime logic.
