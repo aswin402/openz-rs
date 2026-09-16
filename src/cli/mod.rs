@@ -7,15 +7,19 @@ pub mod configure;
 pub mod doctor;
 pub mod logs;
 pub mod onboard;
+pub mod headless;
 pub mod sop;
 pub mod streaming;
 pub mod tools;
 pub(crate) mod tool_registration;
 
+#[cfg(test)]
+mod headless_tests;
+
 use crate::print;
 pub use agent::{archive_current_session, load_session_history};
 use anyhow::Result;
-pub use args::{ChannelAction, CliArgs, Command, SopAction};
+pub use args::{ChannelAction, CliArgs, Command, HeadlessArgs, SopAction};
 pub use builder::build_agent_loop;
 pub use channels::{
     handle_discord, handle_email, handle_gateway, handle_ratatui_tui, handle_telegram,
@@ -78,6 +82,9 @@ pub async fn run_cli() -> Result<()> {
             let _ = crossterm::terminal::disable_raw_mode();
             let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
             std::process::exit(0);
+        }
+        Some(Command::Run(_headless_args)) => {
+            anyhow::bail!("Headless mode execution engine is not yet implemented (scheduled for Task 3)");
         }
         Some(Command::Onboard) => {
             onboard::handle_onboard().await?;

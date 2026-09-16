@@ -4,12 +4,23 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "openz", version = env!("CARGO_PKG_VERSION"), about = "OpenZ - Rebranded Ultra-Lightweight Personal AI Agent")]
 pub struct CliArgs {
+    #[arg(short = 'p', long = "prompt", global = true)]
+    pub prompt: Option<String>,
+
+    #[arg(long, global = true)]
+    pub output_format: Option<String>,
+
+    #[arg(short = 'y', long = "yes", global = true)]
+    pub yes: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
+    #[command(alias = "exec")]
+    Run(HeadlessArgs),
     Onboard,
     Configure,
     Agent,
@@ -92,4 +103,40 @@ pub enum SopAction {
         sop_id: String,
         payload: Option<String>,
     },
+}
+
+#[derive(Parser, Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct HeadlessArgs {
+    #[arg(index = 1)]
+    pub prompt: Option<String>,
+
+    #[arg(short = 'p', long = "prompt")]
+    pub prompt_flag: Option<String>,
+
+    #[arg(long, default_value = "text")]
+    pub output_format: String,
+
+    #[arg(short = 'y', long = "yes")]
+    pub yes: bool,
+
+    #[arg(long)]
+    pub allowed_tools: Option<String>,
+
+    #[arg(long)]
+    pub session: Option<String>,
+
+    #[arg(long)]
+    pub r#continue: bool,
+
+    #[arg(short = 'm', long = "model")]
+    pub model: Option<String>,
+
+    #[arg(long)]
+    pub provider: Option<String>,
+
+    #[arg(long)]
+    pub max_iterations: Option<usize>,
+
+    #[arg(long)]
+    pub timeout: Option<u64>,
 }
