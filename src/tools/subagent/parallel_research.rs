@@ -465,3 +465,7 @@ pub fn get_heuristic_role(index: usize, goal: &str) -> String {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "parallel_research_tests.rs"]
+mod tests;

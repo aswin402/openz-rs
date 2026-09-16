@@ -91,3 +91,7 @@ impl CancellationToken {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "cancellation_token_tests.rs"]
+mod tests;
