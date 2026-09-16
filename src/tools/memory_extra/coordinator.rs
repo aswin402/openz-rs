@@ -775,3 +775,8 @@ impl MemoryCoordinator {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "coordinator_tests.rs"]
+mod tests;
+
