@@ -1,5 +1,13 @@
 #[cfg(test)]
-pub(crate) use crate::providers::LLMProvider;
+static TEST_CANCEL_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+pub(crate) async fn cancel_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    TEST_CANCEL_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
+}
 
 tokio::task_local! {
     pub static DELEGATION_DEPTH: usize;
@@ -19,6 +27,7 @@ pub mod schema_retry;
 pub mod workspace;
 
 #[cfg(test)]
+#[path = "mod_tests.rs"]
 mod tests;
 
 pub use allowlist::*;

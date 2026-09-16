@@ -1,13 +1,6 @@
 use super::*;
 
-static TEST_CANCEL_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-
-async fn cancel_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
-    TEST_CANCEL_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await
-}
+use crate::tools::subagent::cancel_test_guard;
 
 #[tokio::test]
 async fn test_cancellation_token_observes_cli_cancel_signal() {

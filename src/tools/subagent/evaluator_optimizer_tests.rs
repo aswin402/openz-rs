@@ -5,14 +5,7 @@ use crate::tools::Tool;
 use anyhow::Result;
 use std::sync::Arc;
 
-static TEST_CANCEL_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-
-async fn cancel_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
-    TEST_CANCEL_LOCK
-        .get_or_init(|| tokio::sync::Mutex::new(()))
-        .lock()
-        .await
-}
+use crate::tools::subagent::cancel_test_guard;
 
 struct LoopMockProvider {
     call_count: Arc<std::sync::atomic::AtomicUsize>,

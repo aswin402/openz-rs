@@ -127,3 +127,85 @@ fn test_delegate_profile_models_to_try() {
     assert!(!models_reviewer.is_empty());
     assert_eq!(models_reviewer.last().unwrap(), "default-gpt-model");
 }
+
+#[test]
+fn test_filter_tools_for_new_default_subagents() {
+    let tools: Vec<Arc<dyn Tool>> = vec![
+        Arc::new(DummyTool("read_file")),
+        Arc::new(DummyTool("write_file")),
+        Arc::new(DummyTool("list_dir")),
+        Arc::new(DummyTool("find_files")),
+        Arc::new(DummyTool("read_doc")),
+        Arc::new(DummyTool("exec_command")),
+        Arc::new(DummyTool("generate_image")),
+        Arc::new(DummyTool("onpkg")),
+        Arc::new(DummyTool("code_outline")),
+        Arc::new(DummyTool("cargo_manager")),
+        Arc::new(DummyTool("grep_search")),
+        Arc::new(DummyTool("compile_template")),
+        Arc::new(DummyTool("some_other_tool")),
+        Arc::new(DummyTool("openmedia_diagram_generate_mermaid")),
+        Arc::new(DummyTool("openmedia_video_create")),
+        Arc::new(DummyTool("openmedia_video_preview")),
+    ];
+
+    // Test document_compiler
+    let filtered = filter_tools_for_subagent("document_compiler", &tools);
+    assert_eq!(filtered.len(), 7);
+    assert!(filtered.iter().any(|t| t.name() == "compile_template"));
+    assert!(filtered.iter().any(|t| t.name() == "read_doc"));
+    assert!(!filtered.iter().any(|t| t.name() == "onpkg"));
+
+    // Test presentation_designer
+    let filtered = filter_tools_for_subagent("presentation_designer", &tools);
+    assert_eq!(filtered.len(), 7);
+    assert!(filtered.iter().any(|t| t.name() == "compile_template"));
+    assert!(filtered.iter().any(|t| t.name() == "generate_image"));
+    assert!(!filtered.iter().any(|t| t.name() == "read_doc"));
+
+    // Test code_synthesizer
+    let filtered = filter_tools_for_subagent("code_synthesizer", &tools);
+    assert_eq!(filtered.len(), 7);
+    assert!(filtered.iter().any(|t| t.name() == "onpkg"));
+    assert!(!filtered.iter().any(|t| t.name() == "generate_image"));
+
+    // Test summarizer_agent
+    let filtered = filter_tools_for_subagent("summarizer_agent", &tools);
+    assert_eq!(filtered.len(), 4);
+    assert!(filtered.iter().any(|t| t.name() == "grep_search"));
+    assert!(!filtered.iter().any(|t| t.name() == "onpkg"));
+
+    // Test vision_agent
+    let filtered = filter_tools_for_subagent("vision_agent", &tools);
+    assert_eq!(filtered.len(), 5);
+    assert!(filtered.iter().any(|t| t.name() == "generate_image"));
+    assert!(!filtered.iter().any(|t| t.name() == "exec_command"));
+
+    // Test skill_creator
+    let filtered = filter_tools_for_subagent("skill_creator", &tools);
+    assert_eq!(filtered.len(), 5);
+    assert!(filtered.iter().any(|t| t.name() == "exec_command"));
+    assert!(!filtered.iter().any(|t| t.name() == "generate_image"));
+
+    // Test documentation_agent
+    let filtered = filter_tools_for_subagent("documentation_agent", &tools);
+    assert_eq!(filtered.len(), 4);
+    assert!(filtered.iter().any(|t| t.name() == "read_file"));
+    assert!(!filtered.iter().any(|t| t.name() == "exec_command"));
+
+    // Test diagram_designer
+    let filtered = filter_tools_for_subagent("diagram_designer", &tools);
+    assert_eq!(filtered.len(), 4);
+    assert!(filtered
+        .iter()
+        .any(|t| t.name() == "openmedia_diagram_generate_mermaid"));
+    assert!(!filtered.iter().any(|t| t.name() == "exec_command"));
+
+    // Test video_animator
+    let filtered = filter_tools_for_subagent("video_animator", &tools);
+    assert_eq!(filtered.len(), 5);
+    assert!(filtered
+        .iter()
+        .any(|t| t.name() == "openmedia_video_create"));
+    assert!(!filtered.iter().any(|t| t.name() == "exec_command"));
+}
