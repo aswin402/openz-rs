@@ -1462,3 +1462,7 @@ impl Tool for ProactiveRecallTool {
         Ok(json!(items))
     }
 }
+
+#[cfg(test)]
+#[path = "facts_tests.rs"]
+mod tests;

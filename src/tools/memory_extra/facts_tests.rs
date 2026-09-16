@@ -1,6 +1,6 @@
 use super::*;
-use crate::tools::graph_memory::test_lock;
-use crate::tools::graph_memory::with_db;
+use crate::tools::graph_memory::{test_lock, with_db};
+use crate::tools::memory_extra::{coordinator, facts, search, working};
 use crate::tools::Tool;
 use rusqlite::params;
 use serde_json::json;

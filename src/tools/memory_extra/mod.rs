@@ -29,6 +29,3 @@ pub use working::{
     EvictExpiredWorkingMemoryTool, GetWorkingMemoryTool, PromoteWorkingMemoryTool,
     SetWorkingMemoryTool,
 };
-
-#[cfg(test)]
-mod tests;
