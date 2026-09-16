@@ -94,3 +94,7 @@ pub fn cancel_ws_approvals_for_client(client_id: &str) {
         let _ = pending.tx.send(false);
     }
 }
+
+#[cfg(test)]
+#[path = "approvals_tests.rs"]
+mod tests;

@@ -1,18 +1,6 @@
 use super::*;
 
 #[test]
-fn attachment_policy_rejects_unsafe_mime_and_aggregate_overflow() {
-    assert!(attachment_mime_allowed("image/png"));
-    assert!(attachment_mime_allowed("application/pdf"));
-    assert!(!attachment_mime_allowed("application/x-sh"));
-    assert!(attachment_total_within_quota(0, MAX_ATTACHMENT_BYTES));
-    assert!(!attachment_total_within_quota(
-        MAX_ATTACHMENT_TOTAL_BYTES - 1,
-        2,
-    ));
-}
-
-#[test]
 fn webui_capabilities_include_runtime_policy() {
     let config = crate::config::schema::Config::default();
     let capabilities = webui_capabilities(&config);
@@ -36,156 +24,6 @@ fn webui_capabilities_include_runtime_policy() {
     assert_eq!(capabilities["attachments"]["maxFileBytes"], 8 * 1024 * 1024);
     assert_eq!(capabilities["attachments"]["maxTotalBytes"], 24 * 1024 * 1024);
 }
-
-#[tokio::test]
-async fn websocket_turn_stop_is_scoped_to_owner() {
-    let turn_id = format!("turn-test-{}", uuid::Uuid::new_v4());
-    let token = crate::tools::subagent::CancellationToken::new();
-    register_ws_turn(
-        turn_id.clone(),
-        "client-a".to_string(),
-        "ws-chat-a".to_string(),
-        token.clone(),
-    );
-
-    assert!(!cancel_ws_turn(&turn_id, "client-b", "ws-chat-a"));
-    assert!(!token.is_cancelled());
-    assert!(!cancel_ws_turn(&turn_id, "client-a", "ws-chat-b"));
-    assert!(!token.is_cancelled());
-
-    assert!(cancel_ws_turn(&turn_id, "client-a", "ws-chat-a"));
-    assert!(token.is_cancelled());
-    assert!(!cancel_ws_turn(&turn_id, "client-a", "ws-chat-a"));
-}
-
-#[tokio::test]
-async fn websocket_turn_stop_does_not_cancel_another_client() {
-    let first_turn = format!("turn-first-{}", uuid::Uuid::new_v4());
-    let second_turn = format!("turn-second-{}", uuid::Uuid::new_v4());
-    let first_token = crate::tools::subagent::CancellationToken::new();
-    let second_token = crate::tools::subagent::CancellationToken::new();
-    register_ws_turn(
-        first_turn.clone(),
-        "client-a".to_string(),
-        "ws-chat".to_string(),
-        first_token.clone(),
-    );
-    register_ws_turn(
-        second_turn.clone(),
-        "client-b".to_string(),
-        "ws-chat".to_string(),
-        second_token.clone(),
-    );
-
-    assert!(cancel_ws_turn(&first_turn, "client-a", "ws-chat"));
-    assert!(first_token.is_cancelled());
-    assert!(!second_token.is_cancelled());
-
-    cancel_ws_turn(&second_turn, "client-b", "ws-chat");
-}
-
-#[tokio::test]
-async fn websocket_approval_rejects_wrong_client_or_chat() {
-    let req_id = format!("approval-test-{}", uuid::Uuid::new_v4());
-    let (tx, mut rx) = tokio::sync::oneshot::channel();
-    register_ws_approval(
-        req_id.clone(),
-        WsApprovalContext {
-            client_id: "client-a".to_string(),
-            chat_id: "ws-chat-a".to_string(),
-        },
-        tx,
-    );
-
-    assert!(!resolve_ws_approval(&req_id, "client-b", "ws-chat-a", true));
-    assert!(rx.try_recv().is_err(), "mismatched client consumed approval");
-
-    assert!(!resolve_ws_approval(&req_id, "client-a", "ws-chat-b", true));
-    assert!(rx.try_recv().is_err(), "mismatched chat consumed approval");
-
-    assert!(resolve_ws_approval(&req_id, "client-a", "ws-chat-a", true));
-    assert_eq!(rx.await.unwrap(), true);
-}
-
-#[tokio::test]
-async fn websocket_approval_event_targets_only_requesting_client() {
-    let client_id = format!("approval-target-{}", uuid::Uuid::new_v4());
-    let other_client_id = format!("approval-other-{}", uuid::Uuid::new_v4());
-    let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-    let (other_tx, mut other_rx) = tokio::sync::mpsc::channel(8);
-    crate::channels::get_active_ws_senders()
-        .lock()
-        .unwrap()
-        .insert(client_id.clone(), tx);
-    crate::channels::get_active_ws_senders()
-        .lock()
-        .unwrap()
-        .insert(other_client_id.clone(), other_tx);
-
-    assert!(publish_ws_event_to_client(
-        &client_id,
-        serde_json::json!({ "event": "security_request", "req_id": "req-1" }),
-    ));
-
-    let mut received_target = false;
-    while let Ok(msg) = rx.try_recv() {
-        if let axum::extract::ws::Message::Text(text) = msg {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                if v.get("event").and_then(|s| s.as_str()) == Some("security_request")
-                    && v.get("req_id").and_then(|s| s.as_str()) == Some("req-1")
-                {
-                    received_target = true;
-                }
-            }
-        }
-    }
-    assert!(received_target, "target client should receive security_request event");
-
-    while let Ok(msg) = other_rx.try_recv() {
-        if let axum::extract::ws::Message::Text(text) = msg {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                assert_ne!(
-                    v.get("event").and_then(|s| s.as_str()),
-                    Some("security_request"),
-                    "other client should never receive targeted security_request event"
-                );
-            }
-        }
-    }
-
-    remove_active_ws_sender(&client_id);
-    remove_active_ws_sender(&other_client_id);
-}
-
-#[tokio::test]
-async fn websocket_approval_cancels_on_client_disconnect() {
-    let req_id = format!("approval-disconnect-{}", uuid::Uuid::new_v4());
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    register_ws_approval(
-        req_id.clone(),
-        WsApprovalContext {
-            client_id: "client-disconnect".to_string(),
-            chat_id: "ws-chat".to_string(),
-        },
-        tx,
-    );
-
-    cancel_ws_approvals_for_client("client-disconnect");
-
-    assert_eq!(rx.await.unwrap(), false);
-    assert!(!resolve_ws_approval(&req_id, "client-disconnect", "ws-chat", true));
-}
-
-#[test]
-fn websocket_approval_rejection_event_is_safe_and_targeted() {
-    let event = security_response_rejected_event("req-1", "ws-chat-a");
-    assert_eq!(event["event"], "security_response_rejected");
-    assert_eq!(event["req_id"], "req-1");
-    assert_eq!(event["chat_id"], "ws-chat-a");
-    assert!(event["detail"].as_str().unwrap().contains("pending"));
-    assert!(!event.to_string().contains("tool_name"));
-}
-
 #[tokio::test]
 async fn websocket_cron_commands_update_inventory_and_logs() {
     let temp_dir = std::env::temp_dir().join(format!(
@@ -481,15 +319,6 @@ fn test_determine_routed_model_simple_fallback() {
 }
 
 #[test]
-fn gateway_token_required_for_host_rejects_public_binds() {
-    assert!(!gateway_token_required_for_host("127.0.0.1"));
-    assert!(!gateway_token_required_for_host("localhost"));
-    assert!(!gateway_token_required_for_host("::1"));
-    assert!(gateway_token_required_for_host("0.0.0.0"));
-    assert!(gateway_token_required_for_host("192.168.1.10"));
-}
-
-#[test]
 fn mask_config_secret_redacts_present_values() {
     assert_eq!(mask_config_secret(""), "");
     assert_eq!(mask_config_secret("secret"), "••••••••");
@@ -558,81 +387,6 @@ fn config_update_allows_benign_preferences_without_gateway_token() {
             }
         }
     })));
-}
-
-#[test]
-fn websocket_origin_validation_rejects_untrusted_browser_origins() {
-    let config = WebSocketChannelConfig {
-        enabled: true,
-        host: "127.0.0.1".to_string(),
-        port: 8765,
-        start_on_boot: false,
-        start_on_tui: false,
-        ..Default::default()
-    };
-
-    assert!(websocket_origin_allowed(Some("http://127.0.0.1:8765"), &config, false));
-    assert!(websocket_origin_allowed(Some("http://localhost:5173"), &config, false));
-    assert!(!websocket_origin_allowed(Some("https://evil.example"), &config, false));
-    assert!(!websocket_origin_allowed(None, &config, false));
-    assert!(websocket_origin_allowed(None, &config, true));
-}
-
-#[test]
-fn websocket_cors_origins_include_configured_and_vite_origins() {
-    let config = WebSocketChannelConfig {
-        enabled: true,
-        host: "192.168.1.20".to_string(),
-        port: 9000,
-        start_on_boot: false,
-        start_on_tui: false,
-        ..Default::default()
-    };
-
-    let origins = websocket_cors_origins(&config);
-    assert!(origins.iter().any(|origin| origin == "http://192.168.1.20:9000"));
-    assert!(origins.iter().any(|origin| origin == "https://192.168.1.20:9000"));
-    assert!(origins.iter().any(|origin| origin == "http://localhost:5173"));
-    assert!(origins.iter().any(|origin| origin == "http://127.0.0.1:5173"));
-}
-
-#[test]
-fn test_is_authorized() {
-    use axum::http::HeaderMap;
-
-    // Unset token -> open access (allow all)
-    std::env::remove_var("OPENZ_GATEWAY_TOKEN");
-    let headers = HeaderMap::new();
-    assert!(is_authorized(&headers, None));
-    assert!(is_authorized(&headers, Some("test")));
-
-    // Empty token -> open access (allow all)
-    std::env::set_var("OPENZ_GATEWAY_TOKEN", "");
-    assert!(is_authorized(&headers, None));
-    assert!(is_authorized(&headers, Some("")));
-
-    // Set token -> verify query token and header
-    std::env::set_var("OPENZ_GATEWAY_TOKEN", "super-secret-token");
-    assert!(!is_authorized(&headers, None));
-    assert!(!is_authorized(&headers, Some("wrong-token")));
-    assert!(is_authorized(&headers, Some("super-secret-token")));
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        axum::http::header::AUTHORIZATION,
-        axum::http::HeaderValue::from_static("Bearer super-secret-token"),
-    );
-    assert!(is_authorized(&headers, None));
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        axum::http::header::AUTHORIZATION,
-        axum::http::HeaderValue::from_static("Bearer wrong-token"),
-    );
-    assert!(!is_authorized(&headers, None));
-
-    // Clean up
-    std::env::remove_var("OPENZ_GATEWAY_TOKEN");
 }
 
 #[test]

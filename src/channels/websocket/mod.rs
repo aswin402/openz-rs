@@ -52,16 +52,10 @@ pub(crate) use attachments::{
     MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_COUNT, MAX_ATTACHMENT_TOTAL_BYTES,
     MAX_WS_MESSAGE_SIZE,
 };
-#[cfg(test)]
-pub(crate) use attachments::{
-    attachment_mime_allowed, attachment_total_within_quota,
-};
 
 pub(crate) use auth::{
     gateway_token_configured, gateway_token_required_for_host, websocket_cors_origins,
 };
-#[cfg(test)]
-pub(crate) use auth::{is_authorized, websocket_origin_allowed};
 
 pub(crate) use socket::{send_event, ws_handler};
 #[cfg(test)]

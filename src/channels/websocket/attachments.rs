@@ -146,3 +146,7 @@ pub(crate) async fn persist_attachments(attachments: &Value) -> Vec<String> {
     }
     refs
 }
+
+#[cfg(test)]
+#[path = "attachments_tests.rs"]
+mod tests;

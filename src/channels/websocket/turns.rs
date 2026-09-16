@@ -113,3 +113,7 @@ pub fn cancel_ws_turns_for_client(client_id: &str) {
         turn.token.cancel();
     }
 }
+
+#[cfg(test)]
+#[path = "turns_tests.rs"]
+mod tests;
