@@ -138,7 +138,7 @@
   },
   "project": {
     "name": "openz",
-    "version": "0.0.184",
+    "version": "0.0.185",
     "package_manager": "cargo",
     "runtime": "rust",
     "stack": "rust-cli"

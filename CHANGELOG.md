@@ -1,4 +1,39 @@
-### v0.0.184 (Latest Release)
+### v0.0.185 (Latest Release)
+- **Ideas**:
+  - Complete full decomposition and deletion of monolithic `src/tools/subagent/tests.rs` (originally 1,743 lines), modularizing all remaining test suites into dedicated sibling test files colocated with their target subagent subsystems:
+    - [`evaluator_optimizer_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/evaluator_optimizer_tests.rs): Schema validation, evaluator loop convergence, and capability policy rejection tests.
+    - [`optimize_profile_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/optimize_profile_tests.rs): Subagent fallback candidate count validation tests.
+    - [`runner_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner_tests.rs): Prompt section construction, markdown image url wrapping, provider prefix handling, and timeout clamping tests.
+    - [`delegate_task_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task_tests.rs): Delegation depth bounding, vision-preference model fallback ordering, router tool metadata, and cross-task cancellation propagation tests.
+    - [`delegate_profile_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_profile_tests.rs): Explicit profile denial policy, cancellation propagation, and active run cancellation tests.
+    - [`allowlist_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist_tests.rs): Extended with multi-tool filtering regression tests for default subagent profiles.
+    - [`mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod_tests.rs): Root subagent tests covering allowlisted tools registry existence, evolution gate filters, and nested delegation rules.
+  - Establish a shared test concurrency guard (`cancel_test_guard` & `TEST_CANCEL_LOCK`) in `src/tools/subagent/mod.rs` to serialize multi-threaded subagent tests that manipulate global environment variables and CLI cancellation signals.
+  - Delete `src/tools/subagent/tests.rs` entirely, achieving 100% 1:1 sibling test colocation across all 11 subagent subsystem source modules with zero remaining monolithic test files.
+- **Inspirations**:
+  - Clean Architecture & package-by-feature modularization patterns.
+  - Subsystem test isolation and elimination of monolith test files in large distributed systems.
+  - Thread-safe test synchronization for process-global configuration and signal testing in Rust.
+- **Sources & References**:
+  - Implementation & Sibling Test Modules:
+    - [`src/tools/subagent/evaluator_optimizer.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/evaluator_optimizer.rs) & [`src/tools/subagent/evaluator_optimizer_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/evaluator_optimizer_tests.rs)
+    - [`src/tools/subagent/optimize_profile.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/optimize_profile.rs) & [`src/tools/subagent/optimize_profile_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/optimize_profile_tests.rs)
+    - [`src/tools/subagent/runner.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner.rs) & [`src/tools/subagent/runner_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner_tests.rs)
+    - [`src/tools/subagent/delegate_task.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task.rs) & [`src/tools/subagent/delegate_task_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task_tests.rs)
+    - [`src/tools/subagent/delegate_profile.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_profile.rs) & [`src/tools/subagent/delegate_profile_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_profile_tests.rs)
+    - [`src/tools/subagent/allowlist.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist.rs) & [`src/tools/subagent/allowlist_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist_tests.rs)
+    - [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs) & [`src/tools/subagent/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod_tests.rs)
+  - Execution Plan: [`docs/superpowers/plans/2026-09-16-subagent-full-test-decomposition-phase37.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-16-subagent-full-test-decomposition-phase37.md)
+- **Subsystem Modularization Details**:
+  - **Evaluator-Optimizer & Profile Optimization Tests**: Extracted schema validation, iteration loop convergence, and orchestrator policy enforcement into `evaluator_optimizer_tests.rs` (4 tests); extracted fallback setting bound validation into `optimize_profile_tests.rs` (1 test).
+  - **Runner Execution & Model Fallback Tests**: Extracted prompt templating, markdown image url wrapping, provider prefix handling, and timeout clamping tests into `runner_tests.rs` (7 tests).
+  - **Task & Profile Delegation Tests**: Extracted delegation depth bounding, vision-preference model fallback ordering, router tool metadata, and cross-task cancellation propagation into `delegate_task_tests.rs` (6 tests) and `delegate_profile_tests.rs` (3 tests).
+  - **Subagent Root Tests & Allowlist Enhancement**: Created `mod_tests.rs` for subagent root capabilities (8 tests) and added `test_filter_tools_for_new_default_subagents` in `allowlist_tests.rs`.
+  - **Shared Concurrency Guard**: Centralized `TEST_CANCEL_LOCK` and `cancel_test_guard()` in `subagent/mod.rs` to prevent race conditions during concurrent test execution when altering environment variables or cancellation signals.
+  - **Monolith Deletion**: Completely removed `src/tools/subagent/tests.rs` (1,128 lines remaining from original 1,743 lines), achieving zero monolithic test files.
+- **Verification**: Maintained zero clippy/compiler warnings across the workspace, verified all 61 subagent unit tests, verified `version_sync_tests`, and validated the exact 260 registered native tools invariant.
+
+### v0.0.184
 - **Ideas**:
   - Decompose monolithic subagent test suite (`src/tools/subagent/tests.rs`) into dedicated, component-local sibling unit test suites for core subagent capabilities: workspace isolation & cleanup (`workspace_tests.rs`), lifecycle status & timeout tracking (`lifecycle_tests.rs`), JSON schema validation & self-repair loops (`schema_retry_tests.rs`), cancellation token signaling (`cancellation_token_tests.rs`), and parallel research aggregation (`parallel_research_tests.rs`).
   - Eliminate monolith coupling in `subagent/tests.rs` (reducing it from 1,743 lines down to 1,128 lines, a ~35.3% line reduction) while ensuring localized encapsulation and direct private visibility for component internals.

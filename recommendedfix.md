@@ -749,6 +749,22 @@ struct WebFetchTool;
 - Reduced `src/tools/subagent/tests.rs` from 1,743 lines down to 1,128 lines (~35.3% line reduction).
 - All 61 subagent unit tests passed; maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.49 Subagent Complete Test Decomposition & Tests Monolith Deletion (Resolved in v0.0.185)
+
+**Files:** [`src/tools/subagent/evaluator_optimizer.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/evaluator_optimizer.rs), [`src/tools/subagent/evaluator_optimizer_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/evaluator_optimizer_tests.rs), [`src/tools/subagent/optimize_profile.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/optimize_profile.rs), [`src/tools/subagent/optimize_profile_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/optimize_profile_tests.rs), [`src/tools/subagent/runner.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner.rs), [`src/tools/subagent/runner_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner_tests.rs), [`src/tools/subagent/delegate_task.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task.rs), [`src/tools/subagent/delegate_task_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task_tests.rs), [`src/tools/subagent/delegate_profile.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_profile.rs), [`src/tools/subagent/delegate_profile_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_profile_tests.rs), [`src/tools/subagent/allowlist.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist.rs), [`src/tools/subagent/allowlist_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist_tests.rs), [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs), [`src/tools/subagent/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod_tests.rs)
+
+**Status:**
+- Completely eliminated monolithic `src/tools/subagent/tests.rs` (1,128 lines remaining from original 1,743 lines), achieving 100% 1:1 sibling unit test colocation across all 11 subagent source files.
+- Extracted 224 lines of evaluator-optimizer tests (schema validation, iteration loop convergence, orchestrator capability policy denial) into `src/tools/subagent/evaluator_optimizer_tests.rs`.
+- Extracted 29 lines of profile setting bound validation into `src/tools/subagent/optimize_profile_tests.rs`.
+- Extracted 199 lines of prompt building, markdown image url wrapping, provider prefix override, and timeout clamping tests into `src/tools/subagent/runner_tests.rs`.
+- Extracted 325 lines of delegation depth limiting, vision-preference model fallback ordering, router tool metadata, and cross-task cancellation propagation tests into `src/tools/subagent/delegate_task_tests.rs`.
+- Extracted 280 lines of explicit profile denial policy, cancellation propagation, and active child run cancellation tests into `src/tools/subagent/delegate_profile_tests.rs`.
+- Extended `src/tools/subagent/allowlist_tests.rs` with multi-profile tool filtering regression tests.
+- Extracted 96 lines of subagent root tests into `src/tools/subagent/mod_tests.rs`.
+- Established shared test concurrency guard (`cancel_test_guard` & `TEST_CANCEL_LOCK`) in `src/tools/subagent/mod.rs` to serialize multi-threaded subagent tests modifying process-global environment variables and signals.
+- All 61 subagent unit tests passed; maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
@@ -791,6 +807,6 @@ No use of `proptest` or `quickcheck` for:
 | **P1** | 1.2-1.5 Match bloat, unwraps, monolith, provider config | ~500 lines across 5 files | Runtime panics, new provider friction |
 | **P2** | 2.1-2.6 Stale errors, locking, notifications, router caching, API key diagnostics, config drift | ~600 lines across 8 files | User confusion, silent failures |
 | **P3** | 3.1-3.5 Naming, activity I/O, HTTP timeouts, select bias, cleanup | ~200 lines | Tech debt, marginal reliability |
-| **Enhancements** | 4.1-4.48 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, 100% test suite decomposition, subagent allowlist modularization, subagent test decomposition | — | Feature gap |
+| **Enhancements** | 4.1-4.49 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, 100% test suite decomposition, subagent allowlist modularization, subagent test decomposition, complete subagent test modularization | — | Feature gap |
 | **Testing** | 5.1, 5.3 Integration tests and property tests | — | Coverage gap |
 
