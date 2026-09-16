@@ -711,6 +711,20 @@ struct WebFetchTool;
 - Extracted 27 lines of embedded unit tests from `src/tools/social_search.rs` into `src/tools/social_search_tests.rs`, reducing `social_search.rs` from 407 to 381 lines (~6.4% reduction).
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.46 100% Embedded Test Suite Decomposition Across Entire OpenZ Codebase (Resolved in v0.0.182)
+
+**Files:** [`src/tools/github_mcp.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github_mcp.rs), [`src/tools/github_mcp_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github_mcp_tests.rs), [`src/tools/docs_mcp.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/docs_mcp.rs), [`src/tools/docs_mcp_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/docs_mcp_tests.rs), [`src/tools/searchxyz/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/mod.rs), [`src/tools/searchxyz/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/mod_tests.rs), [`src/tools/searchxyz/graph.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/graph.rs), [`src/tools/searchxyz/graph_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/graph_tests.rs), [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs), [`src/tools/opendoc/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod_tests.rs), [`src/tools/shared_memory/embeddings.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/embeddings.rs), [`src/tools/shared_memory/embeddings_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/embeddings_tests.rs)
+
+**Status:**
+- Extracted 19 lines of embedded unit tests from `src/tools/github_mcp.rs` into `src/tools/github_mcp_tests.rs`, reducing `github_mcp.rs` from 122 to 104 lines (~14.8% reduction).
+- Extracted 10 lines of embedded unit tests from `src/tools/docs_mcp.rs` into `src/tools/docs_mcp_tests.rs`, reducing `docs_mcp.rs` from 192 to 183 lines (~4.7% reduction).
+- Extracted 54 lines of embedded unit tests from `src/tools/searchxyz/mod.rs` into `src/tools/searchxyz/mod_tests.rs`, reducing `searchxyz/mod.rs` from 211 to 159 lines (~24.6% reduction).
+- Extracted 35 lines of embedded unit tests from `src/tools/searchxyz/graph.rs` into `src/tools/searchxyz/graph_tests.rs`, reducing `searchxyz/graph.rs` from 284 to 251 lines (~11.6% reduction).
+- Extracted 22 lines of embedded unit tests from `src/tools/opendoc/mod.rs` into `src/tools/opendoc/mod_tests.rs`, reducing `opendoc/mod.rs` from 874 to 853 lines (~2.4% reduction).
+- Extracted 44 lines of embedded unit tests from `src/tools/shared_memory/embeddings.rs` into `src/tools/shared_memory/embeddings_tests.rs`, reducing `embeddings.rs` from 663 to 620 lines (~6.5% reduction).
+- Achieved **100% embedded unit test suite decomposition** across the entire OpenZ source tree: zero inline `mod tests { ... }` blocks remain across all `src/` modules.
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
@@ -753,6 +767,6 @@ No use of `proptest` or `quickcheck` for:
 | **P1** | 1.2-1.5 Match bloat, unwraps, monolith, provider config | ~500 lines across 5 files | Runtime panics, new provider friction |
 | **P2** | 2.1-2.6 Stale errors, locking, notifications, router caching, API key diagnostics, config drift | ~600 lines across 8 files | User confusion, silent failures |
 | **P3** | 3.1-3.5 Naming, activity I/O, HTTP timeouts, select bias, cleanup | ~200 lines | Tech debt, marginal reliability |
-| **Enhancements** | 4.1-4.33 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, test suite decomposition | — | Feature gap |
+| **Enhancements** | 4.1-4.46 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, 100% test suite decomposition | — | Feature gap |
 | **Testing** | 5.1, 5.3 Integration tests and property tests | — | Coverage gap |
 
