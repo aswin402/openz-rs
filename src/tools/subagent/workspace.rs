@@ -844,3 +844,8 @@ fn clean_suffix_ticks(s: &str) -> &str {
         s
     }
 }
+
+#[cfg(test)]
+#[path = "workspace_tests.rs"]
+mod tests;
+
