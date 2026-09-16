@@ -1,4 +1,31 @@
-### v0.0.183 (Latest Release)
+### v0.0.184 (Latest Release)
+- **Ideas**:
+  - Decompose monolithic subagent test suite (`src/tools/subagent/tests.rs`) into dedicated, component-local sibling unit test suites for core subagent capabilities: workspace isolation & cleanup (`workspace_tests.rs`), lifecycle status & timeout tracking (`lifecycle_tests.rs`), JSON schema validation & self-repair loops (`schema_retry_tests.rs`), cancellation token signaling (`cancellation_token_tests.rs`), and parallel research aggregation (`parallel_research_tests.rs`).
+  - Eliminate monolith coupling in `subagent/tests.rs` (reducing it from 1,743 lines down to 1,128 lines, a ~35.3% line reduction) while ensuring localized encapsulation and direct private visibility for component internals.
+  - Maintain 100% test coverage across subagents (all 61 tests passing sequentially), 260 registered native tools invariant, and 0 clippy warnings.
+- **Inspirations**:
+  - Component-colocated testing patterns and high cohesion / low coupling architectural principles.
+  - Granular lifecycle observability and deterministic cancellation cascades in actor systems.
+  - Micro-harness validation for iterative JSON repair loops.
+- **Sources & References**:
+  - Implementation & Sibling Test Suites:
+    - [`src/tools/subagent/workspace.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/workspace.rs) & [`src/tools/subagent/workspace_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/workspace_tests.rs)
+    - [`src/tools/subagent/lifecycle.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/lifecycle.rs) & [`src/tools/subagent/lifecycle_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/lifecycle_tests.rs)
+    - [`src/tools/subagent/schema_retry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/schema_retry.rs) & [`src/tools/subagent/schema_retry_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/schema_retry_tests.rs)
+    - [`src/tools/subagent/cancellation_token.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/cancellation_token.rs) & [`src/tools/subagent/cancellation_token_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/cancellation_token_tests.rs)
+    - [`src/tools/subagent/parallel_research.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/parallel_research.rs) & [`src/tools/subagent/parallel_research_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/parallel_research_tests.rs)
+    - [`src/tools/subagent/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/tests.rs)
+  - Execution Plan: [`docs/superpowers/plans/2026-09-16-subagent-test-decomposition-phase36.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-16-subagent-test-decomposition-phase36.md)
+- **Subsystem Modularization Details**:
+  - **Workspace & Worktree Isolation Tests (`tools/subagent/workspace_tests.rs`)**: Extracted 285 lines of tests (8 unit tests) covering RAII `WorktreeGuard` unregistration on drop, forced shutdown path cleanup, stale worktree pruning, total disk size quota enforcement (oldest-first eviction), scratch workspace teardown messaging, home directory copy exclusions, and metadata merging.
+  - **Lifecycle & Timeout Status Tests (`tools/subagent/lifecycle_tests.rs`)**: Extracted 116 lines of tests (7 unit tests) covering stable TUI status labels, compact CLI formatting lines, timeout classification with duration seconds, timeout JSON payload serialization, and token-based user cancellation classification.
+  - **Schema Retry & JSON Repair Tests (`tools/subagent/schema_retry_tests.rs`)**: Extracted 146 lines of tests (7 unit tests) covering fenced markdown JSON extraction, invalid JSON schema retry limits, schema mismatch auto-recovery, and terminal error propagation.
+  - **Cancellation Token Signal Tests (`tools/subagent/cancellation_token_tests.rs`)**: Extracted 28 lines verifying CLI cancel signal observation (`trigger_cli_cancel`) and tokio watch channel notification.
+  - **Parallel Research Aggregation Tests (`tools/subagent/parallel_research_tests.rs`)**: Extracted 55 lines of tests (3 unit tests) covering partial success aggregation shapes, aggregate flush deadline calculations, and subagent metadata routing definitions.
+  - **Subagent Monolith Reduction (`tools/subagent/tests.rs`)**: Reduced `src/tools/subagent/tests.rs` from 1,743 down to 1,128 lines (~615 lines extracted, 35.3% reduction).
+- **Verification**: Maintained zero clippy/compiler warnings across the workspace, verified all 61 subagent unit tests, verified `version_sync_tests`, and validated the exact 260 registered native tools invariant.
+
+### v0.0.183
 - **Ideas**:
   - Modularize subagent profile tool filtering, capability allowlists, workspace isolation requirements, and model fallback candidate resolution (`tools::subagent::allowlist`, `tools::subagent::delegate_profile`) into a dedicated domain module with sibling unit test suite.
   - Decouple static profile tool allowlists (for 30+ default subagent roles), dynamic tool pruning (e.g. interactive `send_remote_input`), workspace isolation eligibility rules, and model fallback ordering cascades from the `DelegateProfileTool` execution loop.

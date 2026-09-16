@@ -735,6 +735,20 @@ struct WebFetchTool;
 - Reduced `src/tools/subagent/delegate_profile.rs` by ~50% (from 595 down to 300 lines) while re-exporting all allowlist methods for 100% backward compatibility.
 - All 61 subagent unit tests passed; maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.48 Subagent Subsystem Test Suite Modularization (Resolved in v0.0.184)
+
+**Files:** [`src/tools/subagent/workspace.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/workspace.rs), [`src/tools/subagent/workspace_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/workspace_tests.rs), [`src/tools/subagent/lifecycle.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/lifecycle.rs), [`src/tools/subagent/lifecycle_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/lifecycle_tests.rs), [`src/tools/subagent/schema_retry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/schema_retry.rs), [`src/tools/subagent/schema_retry_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/schema_retry_tests.rs), [`src/tools/subagent/cancellation_token.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/cancellation_token.rs), [`src/tools/subagent/cancellation_token_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/cancellation_token_tests.rs), [`src/tools/subagent/parallel_research.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/parallel_research.rs), [`src/tools/subagent/parallel_research_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/parallel_research_tests.rs), [`src/tools/subagent/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/tests.rs)
+
+**Status:**
+- Decomposed monolithic `src/tools/subagent/tests.rs` (1,743 lines) into 5 dedicated sibling test modules colocated with their respective subagent subsystems.
+- Extracted 285 lines of workspace isolation unit tests into `src/tools/subagent/workspace_tests.rs`.
+- Extracted 116 lines of lifecycle status, timeout, and cancellation unit tests into `src/tools/subagent/lifecycle_tests.rs`.
+- Extracted 146 lines of schema validation and repair unit tests into `src/tools/subagent/schema_retry_tests.rs`.
+- Extracted 28 lines of CLI cancellation token watch unit tests into `src/tools/subagent/cancellation_token_tests.rs`.
+- Extracted 55 lines of parallel research aggregation unit tests into `src/tools/subagent/parallel_research_tests.rs`.
+- Reduced `src/tools/subagent/tests.rs` from 1,743 lines down to 1,128 lines (~35.3% line reduction).
+- All 61 subagent unit tests passed; maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
@@ -777,6 +791,6 @@ No use of `proptest` or `quickcheck` for:
 | **P1** | 1.2-1.5 Match bloat, unwraps, monolith, provider config | ~500 lines across 5 files | Runtime panics, new provider friction |
 | **P2** | 2.1-2.6 Stale errors, locking, notifications, router caching, API key diagnostics, config drift | ~600 lines across 8 files | User confusion, silent failures |
 | **P3** | 3.1-3.5 Naming, activity I/O, HTTP timeouts, select bias, cleanup | ~200 lines | Tech debt, marginal reliability |
-| **Enhancements** | 4.1-4.47 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, 100% test suite decomposition, subagent allowlist modularization | — | Feature gap |
+| **Enhancements** | 4.1-4.48 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, 100% test suite decomposition, subagent allowlist modularization, subagent test decomposition | — | Feature gap |
 | **Testing** | 5.1, 5.3 Integration tests and property tests | — | Coverage gap |
 
