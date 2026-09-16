@@ -866,3 +866,7 @@ pub async fn run_subagent_attempt(
     }
 }
 
+#[cfg(test)]
+#[path = "runner_tests.rs"]
+mod tests;
+
