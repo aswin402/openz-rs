@@ -284,3 +284,7 @@ pub(crate) fn delegate_task_models_to_try(
 pub use super::ensure_markdown_images;
 
 pub use super::workspace::*;
+
+#[cfg(test)]
+#[path = "delegate_task_tests.rs"]
+mod tests;

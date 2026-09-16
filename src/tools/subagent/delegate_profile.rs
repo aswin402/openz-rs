@@ -298,3 +298,7 @@ pub fn format_subagent_name(name: &str) -> String {
 
 pub use super::allowlist::*;
 
+#[cfg(test)]
+#[path = "delegate_profile_tests.rs"]
+mod tests;
+
