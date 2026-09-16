@@ -430,3 +430,7 @@ impl Tool for DiagnoseSystemTool {
         }))
     }
 }
+
+#[cfg(test)]
+#[path = "diagnostics_tests.rs"]
+mod tests;

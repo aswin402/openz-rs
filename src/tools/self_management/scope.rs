@@ -142,3 +142,7 @@ impl Tool for OptimizeToolScopeTool {
     }
 }
 
+#[cfg(test)]
+#[path = "scope_tests.rs"]
+mod tests;
+

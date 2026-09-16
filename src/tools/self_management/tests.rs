@@ -1,6 +1,5 @@
 use super::*;
 use crate::tools::Tool;
-use anyhow::Result;
 
 
 struct TestEnvLock;
@@ -27,106 +26,6 @@ impl Drop for TestEnvLock {
         let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
         let _ = std::fs::remove_file(lock_path);
     }
-}
-
-#[test]
-fn test_diagnose_openmedia_video_args_use_minimal_scene_for_placeholder() {
-    let create_args = normalize_diagnose_mock_args(
-        "openmedia_video_create",
-        serde_json::json!({ "test": true }),
-    );
-    assert_eq!(create_args["scene"]["width"], 640);
-    assert!(create_args.get("test").is_none());
-
-    let preview_args =
-        normalize_diagnose_mock_args("openmedia_video_preview", serde_json::json!({}));
-    assert_eq!(preview_args["scene"]["fps"], 1);
-    assert_eq!(preview_args["output_format"], "png");
-}
-
-#[test]
-fn test_diagnose_openmedia_video_placeholder_is_visible() {
-    let args = normalize_diagnose_mock_args("openmedia_video_create", serde_json::json!({}));
-    assert_eq!(args["scene"]["background"], "#1e293b");
-    assert_eq!(
-        args["scene"]["scenes"][0]["elements"][0]["content"],
-        "OpenZ"
-    );
-    assert_eq!(
-        args["scene"]["scenes"][0]["elements"][0]["style"]["font_size"],
-        48.0
-    );
-    assert_eq!(
-        args["scene"]["scenes"][0]["elements"][0]["style"]["font_weight"],
-        800
-    );
-}
-
-#[test]
-fn request_tool_scope_returns_structured_scope_request() {
-    let tool = RequestToolScopeTool::new(crate::tools::ToolRegistry::new());
-    let result = tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(tool.call(&serde_json::json!({
-            "reason": "need to inspect repository files",
-            "needed_domains": ["code", "filesystem"],
-            "needed_tools": ["grep_search", "read_file"]
-        })))
-        .unwrap();
-
-    assert_eq!(result["status"], "scope_request_recorded");
-    assert_eq!(result["needed_domains"][0], "code");
-    assert_eq!(result["needed_tools"][0], "grep_search");
-}
-
-#[test]
-fn test_diagnose_and_optimize_tools() {
-    let registry = crate::tools::ToolRegistry::new();
-    struct DummyTool;
-    #[async_trait::async_trait]
-    impl Tool for DummyTool {
-        fn name(&self) -> &str {
-            "dummy_tool"
-        }
-        fn description(&self) -> &str {
-            "dummy"
-        }
-        fn parameters(&self) -> serde_json::Value {
-            serde_json::json!({})
-        }
-        async fn call(&self, _args: &serde_json::Value) -> Result<serde_json::Value> {
-            Ok(serde_json::json!({ "ok": true }))
-        }
-    }
-
-    let dummy = std::sync::Arc::new(DummyTool);
-    registry.register(dummy.clone());
-
-    let diagnose = DiagnoseToolTool::new(registry.clone());
-    let res = tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(diagnose.call(&serde_json::json!({ "tool_name": "dummy_tool" })))
-        .unwrap();
-    assert!(res["success"].as_bool().unwrap());
-    assert_eq!(res["output"]["ok"].as_bool().unwrap(), true);
-
-    // Test OptimizeToolScopeTool
-    let optimizer = OptimizeToolScopeTool::new(registry.clone());
-    tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(optimizer.call(&serde_json::json!({ "active_prefixes": ["other_"] })))
-        .unwrap();
-
-    // DummyTool starts with "dummy_", which does not match prefix filter "other_"
-    // It should be filtered out
-    assert!(registry.get("dummy_tool").is_none());
-
-    // Restore filter
-    tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(optimizer.call(&serde_json::json!({ "active_prefixes": [] })))
-        .unwrap();
-    assert!(registry.get("dummy_tool").is_some());
 }
 
 #[test]
@@ -330,38 +229,6 @@ fn test_manage_config() {
 
     // Restore original config
     crate::config::loader::save_config(&original_config).unwrap();
-}
-
-#[test]
-fn test_diagnose_system() {
-    let tool = DiagnoseSystemTool;
-    let rt = tokio::runtime::Runtime::new().unwrap();
-
-    // 1. Run diagnostic without latency checking to keep it fast
-    let res = rt
-        .block_on(tool.call(&serde_json::json!({
-            "check_latency": false,
-            "check_db_integrity": false
-        })))
-        .unwrap();
-
-    assert_eq!(res["status"].as_str().unwrap(), "success");
-    assert!(res["system"]["os"].as_str().is_some());
-    assert!(res["system"]["architecture"].as_str().is_some());
-    assert!(res["system"]["cores"].as_u64().unwrap() >= 1);
-
-    // Verify directory statistics keys exist
-    assert!(res["directories"]["sessions"].is_object());
-    assert!(res["directories"]["tool_outputs"].is_object());
-    assert!(res["directories"]["traces"].is_object());
-    assert!(res["directories"]["skills"].is_object());
-
-    // Verify databases status keys exist
-    assert!(res["databases"]["memory"].is_object());
-    assert!(res["databases"]["docs"].is_object());
-    assert!(res["databases"]["graph_memory"].is_object());
-    assert!(res["databases"]["ccr_cache"].is_object());
-    assert!(res["databases"]["thoughts"].is_object());
 }
 
 #[test]

@@ -14,8 +14,6 @@ pub use inventory::OpenZInventoryTool;
 pub use scope::{OptimizeToolScopeTool, RequestToolScopeTool};
 pub use catalog::ToolCatalogTool;
 pub use diagnostics::{DiagnoseSystemTool, DiagnoseToolTool};
-#[cfg(test)]
-pub(crate) use diagnostics::normalize_diagnose_mock_args;
 pub(crate) use config::ManageConfigTool;
 #[cfg(test)]
 pub(crate) use config::redact_secrets;
