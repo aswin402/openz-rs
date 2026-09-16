@@ -189,3 +189,8 @@ pub fn cancellation_result_json(
 
     value
 }
+
+#[cfg(test)]
+#[path = "lifecycle_tests.rs"]
+mod tests;
+
