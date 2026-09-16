@@ -331,3 +331,7 @@ pub(crate) fn text_similarity(a: &str, b: &str) -> f64 {
         intersection as f64 / union as f64
     }
 }
+
+#[cfg(test)]
+#[path = "search_tests.rs"]
+mod tests;

@@ -376,3 +376,7 @@ impl Tool for QueryToolPerformanceTool {
         Ok(json!(results))
     }
 }
+
+#[cfg(test)]
+#[path = "episodic_tests.rs"]
+mod tests;
