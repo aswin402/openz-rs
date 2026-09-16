@@ -331,3 +331,7 @@ pub fn validate_schema(value: &Value, schema: &Value) -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "evaluator_optimizer_tests.rs"]
+mod tests;

@@ -432,3 +432,7 @@ impl Tool for DeleteSubagentTool {
         }))
     }
 }
+
+#[cfg(test)]
+#[path = "optimize_profile_tests.rs"]
+mod tests;
