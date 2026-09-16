@@ -1,4 +1,37 @@
-### v0.0.185 (Latest Release)
+### v0.0.186 (Latest Release)
+- **Ideas**:
+  - Complete full decomposition and deletion of monolithic `src/tools/memory_extra/tests.rs` (originally 1,460 lines, 36 unit tests), modularizing all unit tests into 6 dedicated component-local sibling test modules:
+    - [`working_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/working_tests.rs): Working memory set/get, TTL expiration, layer promotion, and expiration eviction tests (4 tests).
+    - [`episodic_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/episodic_tests.rs): Episodic reflections, execution episode logging, and tool performance recording/querying tests synchronized via graph memory test lock (3 tests).
+    - [`search_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/search_tests.rs): Text similarity scoring, shared team memory storage/retrieval, FTS5 full-text search, and hybrid semantic embedding search tests (4 tests).
+    - [`coordinator_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/coordinator_tests.rs): Coordinator write/recall/stats/forget operations, auto-importance calculations, exclusive relation resolutions, semantic similarity conflict resolutions, and semantic slot conflicts (5 tests).
+    - [`codebase_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/codebase_tests.rs): Codebase indexing capturing Rust impl/trait methods, memory stats snapshot verification across coordinator and cognitive layers, session/skill/working memory layer counts, and context compression (4 tests).
+    - [`facts_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/facts_tests.rs): Semantic fact extraction, multi-word and profile entity preservation, product tooling relationships, static semantic store persistence, query fact history, semantic fact invalidation, cross-layer memory forgetting (cognitive, research, shared, session, skills), poisoning attempt mitigations, contradiction deletion, proactive recall, and smart store auto-importance (16 tests).
+  - Eliminate the 1,460-line monolithic `src/tools/memory_extra/tests.rs` completely, achieving 100% component-local test modularity across the extended memory subsystem.
+  - Purge stale build cache in `target/debug/incremental` (freeing 28 GB of disk space) to prevent memory thrashing and swap exhaustion on resource-constrained development machines.
+- **Inspirations**:
+  - High cohesion, low coupling, and feature-colocated testing architectures.
+  - Granular subsystem test ergonomics and deterministic SQLite test isolation via RAII locking.
+  - Memory-safe, low-resource incremental compilation strategies for developer workstations.
+- **Sources & References**:
+  - Sibling Test Modules & Subsystem Sources:
+    - [`src/tools/memory_extra/working.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/working.rs) & [`src/tools/memory_extra/working_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/working_tests.rs)
+    - [`src/tools/memory_extra/episodic.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/episodic.rs) & [`src/tools/memory_extra/episodic_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/episodic_tests.rs)
+    - [`src/tools/memory_extra/search.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/search.rs) & [`src/tools/memory_extra/search_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/search_tests.rs)
+    - [`src/tools/memory_extra/coordinator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/coordinator.rs) & [`src/tools/memory_extra/coordinator_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/coordinator_tests.rs)
+    - [`src/tools/memory_extra/codebase.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/codebase.rs) & [`src/tools/memory_extra/codebase_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/codebase_tests.rs)
+    - [`src/tools/memory_extra/facts.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/facts.rs) & [`src/tools/memory_extra/facts_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/facts_tests.rs)
+    - [`src/tools/memory_extra/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/mod.rs)
+  - Execution Plan: [`docs/superpowers/plans/2026-09-16-memory-extra-test-decomposition-phase38.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-16-memory-extra-test-decomposition-phase38.md)
+- **Subsystem Modularization Details**:
+  - **Working Memory Tests**: Extracted 4 unit tests covering short-term key-value persistence, TTL expiration, promotion to long-term memory, and cleanup eviction.
+  - **Episodic & Search Memory Tests**: Extracted 7 unit tests covering execution episodes, reflection logs, tool latency metrics, string similarity, shared agent memory, FTS5 queries, and vector embeddings.
+  - **Coordinator & Codebase Memory Tests**: Extracted 9 unit tests covering multi-scope memory synchronization, auto-importance conflict resolution, AST structural code indexing, cross-layer statistics aggregation, and text compression.
+  - **Facts & Recall Memory Tests**: Extracted 16 unit tests covering fact extraction pipelines, entity graph node generation, cross-layer forgetting (session metadata, markdown skills, sqlite tables), and proactive memory recall.
+  - **Monolith Deletion**: Deleted the legacy 1,460-line `src/tools/memory_extra/tests.rs` monolith, leaving zero monolithic test files in `src/tools/memory_extra/`.
+- **Verification**: Verified all 36 memory_extra unit tests pass (`cargo test -p openz --lib tools::memory_extra`), 0 clippy warnings across the workspace, and exact 260 registered native tools invariant maintained.
+
+### v0.0.185
 - **Ideas**:
   - Complete full decomposition and deletion of monolithic `src/tools/subagent/tests.rs` (originally 1,743 lines), modularizing all remaining test suites into dedicated sibling test files colocated with their target subagent subsystems:
     - [`evaluator_optimizer_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/evaluator_optimizer_tests.rs): Schema validation, evaluator loop convergence, and capability policy rejection tests.

@@ -6722,7 +6722,7 @@ dependencies = [
 
 [[package]]
 name = "openz"
-version = "0.0.185"
+version = "0.0.186"
 dependencies = [
  "ab_glyph",
  "anyhow",
