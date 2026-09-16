@@ -1,4 +1,46 @@
-### v0.0.187 (Latest Release)
+### v0.0.188 (Latest Release)
+- **Ideas**:
+  - Fully decompose and delete monolithic `src/channels/websocket/tests.rs` (originally 855 lines, 32 unit tests) into dedicated component-local sibling test modules colocated directly with their target domain components:
+    - [`attachments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/attachments_tests.rs): Attachment policy validation rejecting unsafe MIME types and aggregate size overflow (1 test).
+    - [`turns_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/turns_tests.rs): WebSocket turn stop scoping to owner client and cross-client cancellation isolation (2 tests).
+    - [`approvals_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/approvals_tests.rs): Security approval request routing, rejection of mismatched client/chat, client disconnect auto-cancellation, and targeted security rejection event construction (4 tests).
+    - [`auth_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/auth_tests.rs): Public bind token requirements, browser origin validation against allowed/untrusted lists, CORS origin expansion, bearer/query token authorization, and custom configured origin matching (5 tests).
+    - [`events_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/events_tests.rs): Orchestration lifecycle event delivery under queue pressure, WebUI chat ID normalization and matching, and dual progress/activity notice event dispatching (3 tests).
+    - [`handlers_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/handlers_tests.rs): Stop command detection, model name normalization across providers, complex routing to premium models, and simple fallback routing (4 tests).
+    - [`socket_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/socket_tests.rs): Request ID whitespace trimming and length bounding, and stable command acknowledgement wire framing (2 tests).
+    - [`protocol_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/protocol_tests.rs): Runtime WebUI capabilities policy generation, protocol event serialization safety, and tool progress/activity notice payload validity (3 tests).
+    - [`commands/cron_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/commands/cron_tests.rs): Cron update commands (pause, resume, delete) with inventory count updates and run log querying (1 test).
+    - [`commands/sessions_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/commands/sessions_tests.rs): Session archive and delete command execution with persisted file relocation/removal (2 tests).
+    - [`commands/config_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/commands/config_tests.rs): Secret masking, gateway token validation for security modes, workspaces, channel tokens, and live configuration update broadcasts across active clients (6 tests).
+  - Eliminate the 855-line monolithic `src/channels/websocket/tests.rs` entirely, cleaning up obsolete test re-exports from `src/channels/websocket/mod.rs` and achieving 100% component-local test modularity across the WebSocket gateway channel.
+- **Inspirations**:
+  - Modular channel architecture, localized domain assertions, and clean separation of gateway protocol, socket handling, and command families.
+  - Consistent 1:1 test colocation across all major subsystems (following Phases 38 & 39 for `memory_extra` and `self_management`).
+- **Sources & References**:
+  - Sibling Test Modules & Implementation Sources:
+    - [`src/channels/websocket/attachments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/attachments.rs) & [`src/channels/websocket/attachments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/attachments_tests.rs)
+    - [`src/channels/websocket/turns.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/turns.rs) & [`src/channels/websocket/turns_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/turns_tests.rs)
+    - [`src/channels/websocket/approvals.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/approvals.rs) & [`src/channels/websocket/approvals_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/approvals_tests.rs)
+    - [`src/channels/websocket/auth.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/auth.rs) & [`src/channels/websocket/auth_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/auth_tests.rs)
+    - [`src/channels/websocket/events.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/events.rs) & [`src/channels/websocket/events_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/events_tests.rs)
+    - [`src/channels/websocket/handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/handlers.rs) & [`src/channels/websocket/handlers_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/handlers_tests.rs)
+    - [`src/channels/websocket/socket.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/socket.rs) & [`src/channels/websocket/socket_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/socket_tests.rs)
+    - [`src/channels/websocket/protocol.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/protocol.rs) & [`src/channels/websocket/protocol_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/protocol_tests.rs)
+    - [`src/channels/websocket/commands/cron.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/commands/cron.rs) & [`src/channels/websocket/commands/cron_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/commands/cron_tests.rs)
+    - [`src/channels/websocket/commands/sessions.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/commands/sessions.rs) & [`src/channels/websocket/commands/sessions_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/commands/sessions_tests.rs)
+    - [`src/channels/websocket/commands/config.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/commands/config.rs) & [`src/channels/websocket/commands/config_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/commands/config_tests.rs)
+    - [`src/channels/websocket/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/mod.rs)
+  - Execution Plan: [`docs/superpowers/plans/2026-09-16-websocket-test-decomposition-phase40.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-16-websocket-test-decomposition-phase40.md)
+- **Subsystem Modularization Details**:
+  - **Attachments & Turns**: Extracted attachment upload and size quota assertions, turn stop cancellation isolation, and scoped owner validation.
+  - **Approvals & Auth**: Extracted approval lifecycle verification, cross-client isolation, origin/token validation, and CORS expansion.
+  - **Events & Handlers**: Extracted async event publishing under backpressure, progress update dual dispatching, model routing logic, and stop command checks.
+  - **Socket & Protocol**: Extracted wire format validation, request bounding, command ack framing, and capability payload generation.
+  - **Commands (Cron, Sessions, Config)**: Extracted cron job status management, session persistence deletion/archival, and configuration broadcasts with secret redaction.
+  - **Monolith Elimination**: Completely deleted `src/channels/websocket/tests.rs` (855 lines) with zero test regression (all 33 unit tests pass).
+- **Verification**: Verified all 33 WebSocket channel unit tests pass (`cargo test -p openz --lib channels::websocket`), 0 clippy warnings across the workspace, and exact 260 registered native tools invariant maintained.
+
+### v0.0.187
 - **Ideas**:
   - Fully decompose and delete monolithic `src/tools/self_management/tests.rs` (originally 682 lines, 14 unit tests) into 8 dedicated 1:1 component-local sibling test modules colocated directly with their target self-management tools:
     - [`catalog_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog_tests.rs): `ToolCatalogTool` metadata exposure, domain filtering, example formats, and resource policy checks (2 tests).
