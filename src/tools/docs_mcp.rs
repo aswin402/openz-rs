@@ -178,12 +178,6 @@ impl crate::tools::Tool for DocsReadRustDocsTool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+#[path = "docs_mcp_tests.rs"]
+mod tests;
 
-    #[test]
-    fn test_server_init() {
-        let server = get_server();
-        assert!(server.get_db_conn().is_ok());
-    }
-}
