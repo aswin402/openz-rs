@@ -17,6 +17,3 @@ pub use diagnostics::{DiagnoseSystemTool, DiagnoseToolTool};
 pub(crate) use config::ManageConfigTool;
 pub use backups::ManageBackupsTool;
 pub use sessions::ManageSessionsTool;
-
-#[cfg(test)]
-mod tests;

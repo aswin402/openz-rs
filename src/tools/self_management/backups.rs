@@ -236,3 +236,7 @@ impl Tool for ManageBackupsTool {
     }
 }
 
+#[cfg(test)]
+#[path = "backups_tests.rs"]
+mod tests;
+

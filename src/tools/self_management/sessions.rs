@@ -219,3 +219,7 @@ impl Tool for ManageSessionsTool {
     }
 }
 
+#[cfg(test)]
+#[path = "sessions_tests.rs"]
+mod tests;
+
