@@ -187,3 +187,7 @@ pub(crate) async fn delete_session_event(
         ),
     }
 }
+
+#[cfg(test)]
+#[path = "sessions_tests.rs"]
+mod tests;

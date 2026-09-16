@@ -20,8 +20,6 @@ pub(crate) mod commands;
 pub(crate) mod turns;
 pub(crate) mod socket;
 pub(crate) mod handlers;
-#[cfg(test)]
-mod tests;
 
 pub use approvals::{
     cancel_ws_approvals_for_client, current_ws_approval_context, register_ws_approval,
@@ -34,17 +32,7 @@ pub use turns::{
 pub use events::{
     publish_activity_notice, publish_orchestration_event, publish_ws_event, ws_chat_id,
 };
-#[cfg(test)]
-pub(crate) use events::remove_active_ws_sender;
 pub(crate) use events::normalize_ws_chat_id;
-#[cfg(test)]
-pub(crate) use commands::cron::{cron_logs_event, cron_update_event};
-#[cfg(test)]
-pub(crate) use commands::config::config_update_requires_gateway_token;
-#[cfg(test)]
-pub(crate) use commands::config::mask_config_secret;
-#[cfg(test)]
-pub(crate) use commands::sessions::{archive_session_event, delete_session_event};
 pub(crate) use attachments::{
     ATTACHMENT_ALLOWED_MIME_TYPES, ATTACHMENT_TTL,
     MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_COUNT, MAX_ATTACHMENT_TOTAL_BYTES,

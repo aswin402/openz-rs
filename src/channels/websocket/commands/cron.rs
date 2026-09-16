@@ -74,3 +74,7 @@ pub(crate) fn cron_logs_event(envelope: &Value) -> Value {
         )),
     }
 }
+
+#[cfg(test)]
+#[path = "cron_tests.rs"]
+mod tests;

@@ -443,3 +443,7 @@ pub(crate) fn config_updated_event(config: &crate::config::schema::Config) -> Va
         super::super::webui_capabilities(config),
     )
 }
+
+#[cfg(test)]
+#[path = "config_tests.rs"]
+mod tests;
