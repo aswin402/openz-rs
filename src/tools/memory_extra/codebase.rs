@@ -927,3 +927,8 @@ impl Tool for AnalyzeCodeImpactTool {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "codebase_tests.rs"]
+mod tests;
+
