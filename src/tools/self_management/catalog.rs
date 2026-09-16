@@ -198,3 +198,7 @@ impl Tool for ToolCatalogTool {
         }))
     }
 }
+
+#[cfg(test)]
+#[path = "catalog_tests.rs"]
+mod tests;

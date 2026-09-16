@@ -195,3 +195,7 @@ impl Tool for OpenZInventoryTool {
     }
 }
 
+#[cfg(test)]
+#[path = "inventory_tests.rs"]
+mod tests;
+
