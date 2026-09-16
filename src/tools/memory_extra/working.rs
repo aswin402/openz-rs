@@ -377,3 +377,7 @@ pub(crate) fn store_semantic_fact(
         Ok(())
     })
 }
+
+#[cfg(test)]
+#[path = "working_tests.rs"]
+mod tests;
