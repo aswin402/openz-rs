@@ -284,3 +284,7 @@ pub fn publish_orchestration_event(chat_id: &str, payload: Value) {
         payload,
     ));
 }
+
+#[cfg(test)]
+#[path = "events_tests.rs"]
+mod tests;

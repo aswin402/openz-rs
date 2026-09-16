@@ -343,3 +343,7 @@ pub(crate) async fn openai_chat_completions(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "handlers_tests.rs"]
+mod tests;

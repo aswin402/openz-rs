@@ -506,3 +506,7 @@ pub(crate) async fn handle_socket(socket: WebSocket, state: WsState) {
         senders.remove(&client_id);
     }
 }
+
+#[cfg(test)]
+#[path = "socket_tests.rs"]
+mod tests;

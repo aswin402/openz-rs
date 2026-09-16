@@ -1110,3 +1110,7 @@ pub(crate) fn command_ack(
     }
     .into_json()
 }
+
+#[cfg(test)]
+#[path = "protocol_tests.rs"]
+mod tests;

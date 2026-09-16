@@ -35,9 +35,7 @@ pub use events::{
     publish_activity_notice, publish_orchestration_event, publish_ws_event, ws_chat_id,
 };
 #[cfg(test)]
-pub(crate) use events::{
-    active_ws_sender_snapshot_for_chat, remove_active_ws_sender,
-};
+pub(crate) use events::remove_active_ws_sender;
 pub(crate) use events::normalize_ws_chat_id;
 #[cfg(test)]
 pub(crate) use commands::cron::{cron_logs_event, cron_update_event};
@@ -58,10 +56,6 @@ pub(crate) use auth::{
 };
 
 pub(crate) use socket::{send_event, ws_handler};
-#[cfg(test)]
-pub(crate) use socket::{command_ack_event, ws_request_id, MAX_WS_REQUEST_ID_LEN};
-#[cfg(test)]
-pub(crate) use handlers::{determine_routed_model, normalize_model_name};
 pub(crate) use handlers::{
     hono_log_middleware, openai_chat_completions, resume_sop_handler, trigger_sop_handler,
 };
