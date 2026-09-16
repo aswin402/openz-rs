@@ -725,6 +725,16 @@ struct WebFetchTool;
 - Achieved **100% embedded unit test suite decomposition** across the entire OpenZ source tree: zero inline `mod tests { ... }` blocks remain across all `src/` modules.
 - Maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.47 Subagent Profile Tool Filtering & Policy Modularization (Resolved in v0.0.183)
+
+**Files:** [`src/tools/subagent/allowlist.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist.rs), [`src/tools/subagent/allowlist_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist_tests.rs), [`src/tools/subagent/delegate_profile.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_profile.rs), [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs)
+
+**Status:**
+- Extracted static capability allowlists for 30+ default subagent roles, `all_static_subagent_allowlist_tools()`, `filter_tools_for_subagent()`, `profile_needs_workspace()`, and `delegate_profile_models_to_try()` into `src/tools/subagent/allowlist.rs`.
+- Created dedicated sibling unit test suite in `src/tools/subagent/allowlist_tests.rs` with 129 lines covering tool allowlisting, interactive `send_remote_input` exclusion, workspace policy classification, and model fallback cascades.
+- Reduced `src/tools/subagent/delegate_profile.rs` by ~50% (from 595 down to 300 lines) while re-exporting all allowlist methods for 100% backward compatibility.
+- All 61 subagent unit tests passed; maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps
@@ -767,6 +777,6 @@ No use of `proptest` or `quickcheck` for:
 | **P1** | 1.2-1.5 Match bloat, unwraps, monolith, provider config | ~500 lines across 5 files | Runtime panics, new provider friction |
 | **P2** | 2.1-2.6 Stale errors, locking, notifications, router caching, API key diagnostics, config drift | ~600 lines across 8 files | User confusion, silent failures |
 | **P3** | 3.1-3.5 Naming, activity I/O, HTTP timeouts, select bias, cleanup | ~200 lines | Tech debt, marginal reliability |
-| **Enhancements** | 4.1-4.46 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, 100% test suite decomposition | — | Feature gap |
+| **Enhancements** | 4.1-4.47 Streaming, per-session config, retry, live reload, SQLite logs, shell centralization, CORS, provider domain decoupling, modular logs, unified secrets, shell quoting, tool taxonomy, god-file modularization, self-healing reflection, intent prioritization, workspace lifecycle, Ratatui decomposition, test extraction, subagent decomposition, subagent runner modularization, 100% test suite decomposition, subagent allowlist modularization | — | Feature gap |
 | **Testing** | 5.1, 5.3 Integration tests and property tests | — | Coverage gap |
 

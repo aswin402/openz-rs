@@ -1,4 +1,22 @@
-### v0.0.182 (Latest Release)
+### v0.0.183 (Latest Release)
+- **Ideas**:
+  - Modularize subagent profile tool filtering, capability allowlists, workspace isolation requirements, and model fallback candidate resolution (`tools::subagent::allowlist`, `tools::subagent::delegate_profile`) into a dedicated domain module with sibling unit test suite.
+  - Decouple static profile tool allowlists (for 30+ default subagent roles), dynamic tool pruning (e.g. interactive `send_remote_input`), workspace isolation eligibility rules, and model fallback ordering cascades from the `DelegateProfileTool` execution loop.
+  - Reduce `delegate_profile.rs` by ~50% (from 595 down to 300 lines) while preserving 100% backward-compatible public re-exports and ensuring all 61 subagent unit tests pass cleanly.
+- **Inspirations**:
+  - Principle of Single Responsibility (SRP) and separation of policy from execution mechanisms.
+  - Multi-agent role-based access control (RBAC) and capability isolation patterns.
+  - Dynamic model tier routing and resilient fallback sequences.
+- **Sources & References**:
+  - Implementation & Tests: [`src/tools/subagent/allowlist.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist.rs), [`src/tools/subagent/allowlist_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist_tests.rs), [`src/tools/subagent/delegate_profile.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_profile.rs), [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs).
+  - Execution Plan: [`docs/superpowers/plans/2026-09-16-subagent-orchestration-modularization-phase35.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-16-subagent-orchestration-modularization-phase35.md).
+- **Subsystem Modularization Details**:
+  - **Subagent Allowlist & Policy Domain (`tools/subagent/allowlist.rs`)**: Extracted 250+ lines of static tool allowlists covering 30+ specialist profiles, `all_static_subagent_allowlist_tools()`, `filter_tools_for_subagent()`, `profile_needs_workspace()`, and `delegate_profile_models_to_try()`.
+  - **Subagent Allowlist Test Suite (`tools/subagent/allowlist_tests.rs`)**: Created 129 lines of dedicated unit tests verifying tool allowlisting, interactive tool pruning, workspace policy classification, and model fallback ordering.
+  - **Delegate Profile Tool Refactoring (`tools/subagent/delegate_profile.rs`)**: Reduced from 595 down to 300 lines (~49.6% line reduction) while re-exporting all allowlist items for complete compatibility.
+- **Verification**: Maintained zero clippy/compiler warnings and verified the exact 260 registered native tools invariant. All 61 subagent unit tests passed.
+
+### v0.0.182
 - **Ideas**:
   - Complete 100% embedded unit test suite decomposition across OpenZ; decouple external MCP server wrappers, deep web research and graph query parsing, OpenDoc OCR receipt/invoice processing, and shared memory Cohere embeddings (`tools::github_mcp`, `tools::docs_mcp`, `tools::searchxyz::mod`, `tools::searchxyz::graph`, `tools::opendoc::mod`, `tools::shared_memory::embeddings`) by extracting embedded unit test suites into dedicated sibling test modules.
   - Decouple GitHub MCP tool registration and schema generation, documentation MCP search and fetch dispatching, SearchXyz domain extraction and crawl error handling, OpenDoc local OCR payload verification, and shared memory remote embedding endpoint resolution from operational tool execution pipelines.

@@ -7,6 +7,7 @@ tokio::task_local! {
     pub static ORCHESTRATED_NESTED_DELEGATION_ALLOWED: bool;
 }
 
+pub mod allowlist;
 pub mod cancellation_token;
 pub mod delegate_profile;
 pub mod delegate_task;
@@ -20,6 +21,7 @@ pub mod workspace;
 #[cfg(test)]
 mod tests;
 
+pub use allowlist::*;
 pub use cancellation_token::CancellationToken;
 pub use delegate_profile::DelegateProfileTool;
 pub use delegate_task::{cleanup_registered_worktrees, cleanup_stale_resources, DelegateTaskTool};
