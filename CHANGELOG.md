@@ -1,4 +1,39 @@
-### v0.0.186 (Latest Release)
+### v0.0.187 (Latest Release)
+- **Ideas**:
+  - Fully decompose and delete monolithic `src/tools/self_management/tests.rs` (originally 682 lines, 14 unit tests) into 8 dedicated 1:1 component-local sibling test modules colocated directly with their target self-management tools:
+    - [`catalog_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog_tests.rs): `ToolCatalogTool` metadata exposure, domain filtering, example formats, and resource policy checks (2 tests).
+    - [`inventory_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/inventory_tests.rs): `OpenZInventoryTool` live binary capability introspection, runtime identity, and model capability verification (1 test).
+    - [`diagnostics_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/diagnostics_tests.rs): `DiagnoseSystemTool` system stats, directory and database health checks, `DiagnoseToolTool` execution, and mock argument normalization (4 tests).
+    - [`scope_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/scope_tests.rs): `RequestToolScopeTool` structured requests, and `OptimizeToolScopeTool` dynamic tool prefix filtering and restoration (2 tests).
+    - [`skills_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/skills_tests.rs): `CurateSkillTool` full CRUD lifecycle (add, list, delete) against SQLite database (1 test).
+    - [`config_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/config_tests.rs): `ManageConfigTool` view/update/credential storage, schema validation, and `redact_secrets` nested credential redaction (2 tests).
+    - [`sessions_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/sessions_tests.rs): `ManageSessionsTool` lifecycle (list, archive, delete, prune) guarded with `TestEnvLock` synchronization (1 test).
+    - [`backups_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/backups_tests.rs): `ManageBackupsTool` complete backup lifecycle (create, list, restore, delete) (1 test).
+  - Eliminate the 682-line monolithic `src/tools/self_management/tests.rs` completely, achieving 100% 1:1 sibling unit test colocation across all 8 self-management source files.
+- **Inspirations**:
+  - Clean Architecture, high cohesion, and component-colocated test ownership.
+  - Granular lifecycle validation for configuration, session archives, and operational tool diagnostics.
+- **Sources & References**:
+  - Sibling Test Modules & Implementation Sources:
+    - [`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs) & [`src/tools/self_management/catalog_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog_tests.rs)
+    - [`src/tools/self_management/inventory.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/inventory.rs) & [`src/tools/self_management/inventory_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/inventory_tests.rs)
+    - [`src/tools/self_management/diagnostics.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/diagnostics.rs) & [`src/tools/self_management/diagnostics_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/diagnostics_tests.rs)
+    - [`src/tools/self_management/scope.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/scope.rs) & [`src/tools/self_management/scope_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/scope_tests.rs)
+    - [`src/tools/self_management/skills.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/skills.rs) & [`src/tools/self_management/skills_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/skills_tests.rs)
+    - [`src/tools/self_management/config.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/config.rs) & [`src/tools/self_management/config_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/config_tests.rs)
+    - [`src/tools/self_management/sessions.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/sessions.rs) & [`src/tools/self_management/sessions_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/sessions_tests.rs)
+    - [`src/tools/self_management/backups.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/backups.rs) & [`src/tools/self_management/backups_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/backups_tests.rs)
+    - [`src/tools/self_management/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/mod.rs)
+  - Execution Plan: [`docs/superpowers/plans/2026-09-16-self-management-test-decomposition-phase39.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-16-self-management-test-decomposition-phase39.md)
+- **Subsystem Modularization Details**:
+  - **Catalog & Inventory Tests**: Extracted tool metadata queries, exposure filters, prompt-aware routing scores, resource policy block decisions, and live binary identity introspection.
+  - **Diagnostics & Scope Tests**: Extracted tool health diagnostics, mock argument normalization, directory and database health checks, structured scope requests, and prefix filtering/restoration.
+  - **Skills & Config Tests**: Extracted SQLite skill CRUD operations, configuration parameter updates, credential merging with secret redaction, and nested key scrubbing.
+  - **Sessions & Backups Tests**: Extracted session lifecycle management (list, archive, delete, prune) and full configuration backup creation, restoration, and deletion.
+  - **Monolith Deletion**: Deleted `src/tools/self_management/tests.rs` (682 lines), leaving zero monolithic test files in `src/tools/self_management/`.
+- **Verification**: Verified all 14 self_management unit tests pass (`cargo test -p openz --lib tools::self_management`), 0 clippy warnings across the workspace, and exact 260 registered native tools invariant maintained.
+
+### v0.0.186
 - **Ideas**:
   - Complete full decomposition and deletion of monolithic `src/tools/memory_extra/tests.rs` (originally 1,460 lines, 36 unit tests), modularizing all unit tests into 6 dedicated component-local sibling test modules:
     - [`working_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/working_tests.rs): Working memory set/get, TTL expiration, layer promotion, and expiration eviction tests (4 tests).
