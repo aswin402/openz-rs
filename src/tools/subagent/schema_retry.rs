@@ -113,3 +113,8 @@ where
     }
     run_res
 }
+
+#[cfg(test)]
+#[path = "schema_retry_tests.rs"]
+mod tests;
+
