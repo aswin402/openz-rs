@@ -95,3 +95,7 @@ impl Tool for CurateSkillTool {
     }
 }
 
+#[cfg(test)]
+#[path = "skills_tests.rs"]
+mod tests;
+

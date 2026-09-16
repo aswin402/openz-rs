@@ -15,8 +15,6 @@ pub use scope::{OptimizeToolScopeTool, RequestToolScopeTool};
 pub use catalog::ToolCatalogTool;
 pub use diagnostics::{DiagnoseSystemTool, DiagnoseToolTool};
 pub(crate) use config::ManageConfigTool;
-#[cfg(test)]
-pub(crate) use config::redact_secrets;
 pub use backups::ManageBackupsTool;
 pub use sessions::ManageSessionsTool;
 
