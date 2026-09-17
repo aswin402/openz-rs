@@ -48,7 +48,7 @@ fn test_headless_exec_subcommand_alias() {
 }
 
 use crate::cli::headless::{
-    resolve_session_key, HeadlessFormat, HeadlessRunOutput, HeadlessSecurityPolicy,
+    format_output, resolve_session_key, HeadlessFormat, HeadlessRunOutput, HeadlessSecurityPolicy,
 };
 
 #[test]
@@ -423,6 +423,48 @@ fn test_cli_args_top_level_prompt_headless_construction() {
     assert!(headless_args.yes);
 }
 
+#[test]
+fn test_cli_args_run_subcommand_precedence_over_root_prompt() {
+    let parsed = CliArgs::try_parse_from([
+        "openz",
+        "run",
+        "-p",
+        "subcommand query",
+        "--model",
+        "gpt-4o",
+        "--allowed-tools",
+        "read_file,grep_search",
+    ])
+    .expect("should parse openz run -p");
 
+    assert!(parsed.prompt.is_none());
+    match parsed.command {
+        Some(Command::Run(headless_args)) => {
+            assert_eq!(headless_args.prompt_flag.as_deref(), Some("subcommand query"));
+            assert_eq!(headless_args.model.as_deref(), Some("gpt-4o"));
+            assert_eq!(headless_args.allowed_tools.as_deref(), Some("read_file,grep_search"));
+        }
+        other => panic!("expected Command::Run, got {:?}", other),
+    }
+}
 
+#[test]
+fn test_format_output_text_mode_with_error_and_content() {
+    let output = HeadlessRunOutput {
+        status: "security_denied".to_string(),
+        content: "I could not execute the command because permissions were not granted.".to_string(),
+        session_id: "cli:headless_test".to_string(),
+        tools_used: vec![],
+        tool_iterations: 0,
+        duration_ms: 100,
+        model: "mock-model".to_string(),
+        provider: "mock".to_string(),
+        error: Some("Execution denied: Tool 'exec_command' requires confirmation in headless mode. Run with -y/--yes or --allowed-tools to permit.".to_string()),
+        exit_code: 2,
+    };
 
+    let formatted = format_output(&output, HeadlessFormat::Text);
+    assert!(formatted.starts_with("Execution denied: Tool 'exec_command'"));
+    assert!(formatted.contains("I could not execute the command"));
+    assert!(formatted.contains("\n\n"));
+}

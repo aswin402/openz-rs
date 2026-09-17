@@ -155,8 +155,12 @@ pub async fn resolve_prompt(
 pub fn format_output(output: &HeadlessRunOutput, format: HeadlessFormat) -> String {
     match format {
         HeadlessFormat::Text => {
-            if output.status != "success" && output.content.trim().is_empty() {
-                output.error.clone().unwrap_or_default()
+            if output.status != "success" {
+                match (&output.error, output.content.trim().is_empty()) {
+                    (Some(err), false) => format!("{}\n\n{}", err, output.content),
+                    (Some(err), true) => err.clone(),
+                    (None, _) => output.content.clone(),
+                }
             } else {
                 output.content.clone()
             }
@@ -165,6 +169,8 @@ pub fn format_output(output: &HeadlessRunOutput, format: HeadlessFormat) -> Stri
             serde_json::to_string_pretty(output).unwrap_or_else(|_| "{}".to_string())
         }
         HeadlessFormat::StreamJson => {
+            // Emits completed HeadlessRunOutput as a single compact NDJSON line for MVP.
+            // Full incremental token event streaming is planned for a future milestone.
             serde_json::to_string(output).unwrap_or_else(|_| "{}".to_string())
         }
     }
@@ -230,7 +236,7 @@ pub async fn execute_headless_turn(
             if let Some(tool) = policy.last_denial() {
                 status = "security_denied".to_string();
                 error = Some(format!(
-                    "Execution denied: Tool '{}' requires confirmation in headless mode. Run with -y/--yes to permit.",
+                    "Execution denied: Tool '{}' requires confirmation in headless mode. Run with -y/--yes or --allowed-tools to permit.",
                     tool
                 ));
                 exit_code = 2;
@@ -265,7 +271,7 @@ pub async fn execute_headless_turn(
             if let Some(tool) = policy.last_denial() {
                 status = "security_denied".to_string();
                 error = Some(format!(
-                    "Execution denied: Tool '{}' requires confirmation in headless mode. Run with -y/--yes to permit.",
+                    "Execution denied: Tool '{}' requires confirmation in headless mode. Run with -y/--yes or --allowed-tools to permit.",
                     tool
                 ));
                 exit_code = 2;

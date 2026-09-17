@@ -4,7 +4,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "openz", version = env!("CARGO_PKG_VERSION"), about = "OpenZ - Rebranded Ultra-Lightweight Personal AI Agent")]
 pub struct CliArgs {
-    #[arg(short = 'p', long = "prompt", global = true)]
+    #[arg(short = 'p', long = "prompt")]
     pub prompt: Option<String>,
 
     #[arg(long, global = true)]
