@@ -749,7 +749,6 @@ pub fn render_box(
     let total_chars: usize = session.messages.iter().map(|m| m.content.len()).sum();
     let approx_tokens = total_chars / 4;
 
-    let model_lower = model.to_lowercase();
     let custom_limit = if let Ok(guard) = CUSTOM_CONTEXT_LIMIT.lock() {
         *guard
     } else {
@@ -758,41 +757,11 @@ pub fn render_box(
 
     let limit_tokens = if let Some(limit) = custom_limit {
         limit
-    } else if model_lower.contains("gemini-1.5-pro") || model_lower.contains("gemini-2.5-pro") {
-        2_097_152
-    } else if model_lower.contains("gemini") {
-        1_048_576
-    } else if model_lower.contains("claude-3-5")
-        || model_lower.contains("claude-3")
-        || model_lower.contains("o1-")
-        || model_lower.contains("o3-mini")
-    {
-        200_000
-    } else if model_lower.contains("gpt-4") || model_lower.contains("gpt-4o") {
-        128_000
-    } else if model_lower.contains("deepseek-v4") {
-        1_000_000
-    } else if model_lower.contains("deepseek-v3")
-        || model_lower.contains("deepseek-r1")
-        || model_lower.contains("deepseek-chat")
-        || model_lower.contains("deepseek-reasoner")
-        || model_lower.contains("deepseek")
-        || model_lower.contains("llama-3.1")
-        || model_lower.contains("llama-3.2")
-        || model_lower.contains("llama-3.3")
-        || model_lower.contains("llama3.1")
-        || model_lower.contains("llama3.2")
-        || model_lower.contains("llama3.3")
-    {
-        128_000
-    } else if model_lower.contains("llama-3") || model_lower.contains("llama3") {
-        8_192
-    } else if model_lower.contains("qwen") {
-        128_000
-    } else if model_lower.contains("minimax") {
-        204_800
     } else {
-        128_000
+        crate::providers::DynamicContextRegistry::resolve_context_window(
+            model,
+            &crate::config::schema::Config::default(),
+        )
     };
 
     let limit_str = if limit_tokens >= 1_000_000 {
