@@ -326,7 +326,7 @@ pub async fn handle_headless(args: crate::cli::args::HeadlessArgs) -> anyhow::Re
 
     if output.status == "success" {
         println!("{}", rendered);
-        Ok(())
+        std::process::exit(0);
     } else {
         if format == HeadlessFormat::Text {
             eprintln!("{}", rendered);
