@@ -8,6 +8,9 @@ pub fn compress_json(raw_json: &str) -> anyhow::Result<String> {
             return Ok("[]".to_string());
         }
         let total_count = arr.len();
+        if total_count <= 5 {
+            return Ok(serde_json::to_string_pretty(&arr)?);
+        }
         let mut keys = std::collections::BTreeSet::new();
         for item in &arr {
             if let Value::Object(map) = item {
@@ -18,21 +21,35 @@ pub fn compress_json(raw_json: &str) -> anyhow::Result<String> {
         }
 
         let keys_str = keys.into_iter().collect::<Vec<String>>().join(", ");
-        let first_item_str = serde_json::to_string_pretty(&arr[0]).unwrap_or_default();
+        let first_items: Vec<_> = arr.iter().take(2).collect();
+        let last_item = arr.last();
+        let first_str = serde_json::to_string_pretty(&first_items).unwrap_or_default();
+        let last_str = last_item
+            .map(|item| serde_json::to_string_pretty(item).unwrap_or_default())
+            .unwrap_or_default();
 
         Ok(format!(
-            "[JSON Array: {} objects. Keys: [{}]. \nFirst element:\n{}]",
-            total_count, keys_str, first_item_str
+            "[JSON Array: {} objects. Common keys: [{}].\nFirst 2 items:\n{}\n\n... [{} intermediate items omitted; full payload saved to disk] ...\n\nLast item:\n{}]",
+            total_count,
+            keys_str,
+            first_str,
+            total_count.saturating_sub(3),
+            last_str
         ))
     } else {
-        let minified = serde_json::to_string(&value)?;
-        if minified.len() > 1000 {
+        let pretty = serde_json::to_string_pretty(&value)?;
+        if pretty.len() > 16_000 {
+            let first_part: String = pretty.chars().take(8_000).collect();
+            let last_part: String = pretty
+                .chars()
+                .skip(pretty.chars().count().saturating_sub(8_000))
+                .collect();
             Ok(format!(
-                "{}...",
-                minified.chars().take(1000).collect::<String>()
+                "{}\n\n... [TRUNCATED INTERMEDIATE JSON OBJECT; full payload saved to disk] ...\n\n{}",
+                first_part, last_part
             ))
         } else {
-            Ok(minified)
+            Ok(pretty)
         }
     }
 }
@@ -228,4 +245,44 @@ pub fn compress_tool_output(tool_name: &str, raw_output: &str) -> String {
     }
 
     compress_logs(raw_trimmed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compress_json_small_array_preserved() {
+        let json_input = r#"[{"id": 1, "name": "first"}, {"id": 2, "name": "second"}]"#;
+        let compressed = compress_json(json_input).unwrap();
+        assert!(compressed.contains("first"));
+        assert!(compressed.contains("second"));
+        assert!(!compressed.contains("intermediate items omitted"));
+    }
+
+    #[test]
+    fn test_compress_json_large_array_structure_preserved() {
+        let mut items = Vec::new();
+        for i in 1..=10 {
+            items.push(format!(r#"{{"index": {}, "data": "item_{}"}}"#, i, i));
+        }
+        let json_input = format!("[{}]", items.join(", "));
+        let compressed = compress_json(&json_input).unwrap();
+
+        // Verifies common keys are extracted
+        assert!(compressed.contains("Common keys: [data, index]"));
+        // Verifies head items are preserved
+        assert!(compressed.contains("item_1"));
+        assert!(compressed.contains("item_2"));
+        // Verifies tail item is preserved
+        assert!(compressed.contains("item_10"));
+        // Verifies omission notice indicates count
+        assert!(compressed.contains("7 intermediate items omitted"));
+    }
+
+    #[test]
+    fn test_compress_tool_output_empty() {
+        assert_eq!(compress_tool_output("exec_command", ""), "Empty output.");
+        assert_eq!(compress_tool_output("exec_command", "   \n"), "Empty output.");
+    }
 }

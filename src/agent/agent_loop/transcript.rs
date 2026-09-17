@@ -83,7 +83,12 @@ pub(crate) async fn append_tool_results(
         );
 
         let content_str = tool_result.result.to_string();
-        let limit = config.agents.defaults.tool_output_limit.unwrap_or(4000);
+        let limit = config.agents.defaults.tool_output_limit.unwrap_or_else(|| {
+            crate::providers::DynamicContextRegistry::resolve_tool_output_limit_chars(
+                &config.agents.defaults.model,
+                config,
+            )
+        });
         let is_retrieve = tool_result.name == "retrieve_original"
             || tool_result.name == "headroom/retrieve_original";
         let mut tool_output_metadata = None;
