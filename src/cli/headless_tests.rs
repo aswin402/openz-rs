@@ -112,3 +112,144 @@ fn test_headless_format_parsing() {
     assert_eq!(HeadlessFormat::parse("unknown"), HeadlessFormat::Text);
 }
 
+use crate::cli::headless::execute_headless_turn;
+use crate::config::schema::Config;
+use crate::providers::mock::MockProvider;
+use crate::session::SessionManager;
+use crate::tools::ToolRegistry;
+use std::sync::Arc;
+
+#[tokio::test]
+async fn test_execute_headless_turn_with_mock_provider() {
+    let mut config = Config::default();
+    config.agents.defaults.model = "mock-model".to_string();
+    config.agents.defaults.provider = "mock".to_string();
+
+    let provider = Arc::new(MockProvider::new());
+    provider.add_response("Headless execution was successful.");
+
+    let registry = ToolRegistry::new();
+    let temp_dir = std::env::temp_dir().join(format!("openz-headless-test-{}", uuid::Uuid::new_v4()));
+    let session_manager = SessionManager::new(temp_dir);
+
+    let agent_loop = crate::agent::AgentLoop::new(
+        config.clone(),
+        provider.clone(),
+        registry,
+        session_manager,
+    );
+
+    let args = HeadlessArgs {
+        prompt: Some("test prompt".to_string()),
+        output_format: "json".to_string(),
+        yes: true,
+        ..Default::default()
+    };
+
+    let output = execute_headless_turn(&agent_loop, &args, "test prompt", "cli:headless_test_run")
+        .await
+        .expect("turn should succeed");
+
+    assert_eq!(output.status, "success");
+    assert_eq!(output.exit_code, 0);
+    assert!(output.content.contains("Headless execution was successful"));
+}
+
+use crate::cli::headless::{current_headless_policy, resolve_prompt, CURRENT_HEADLESS_POLICY};
+use std::str::FromStr;
+
+#[test]
+fn test_headless_format_default_and_from_str() {
+    assert_eq!(HeadlessFormat::default(), HeadlessFormat::Text);
+    assert_eq!(HeadlessFormat::from_str("json").unwrap(), HeadlessFormat::Json);
+    assert_eq!(
+        HeadlessFormat::from_str("stream-json").unwrap(),
+        HeadlessFormat::StreamJson
+    );
+    assert_eq!(
+        HeadlessFormat::from_str("ndjson").unwrap(),
+        HeadlessFormat::StreamJson
+    );
+    assert_eq!(
+        HeadlessFormat::from_str("anything").unwrap(),
+        HeadlessFormat::Text
+    );
+}
+
+#[test]
+fn test_headless_tool_permitted_trimming_and_casing() {
+    let policy = HeadlessSecurityPolicy::new(false, Some(" read_file , EXEC_COMMAND "));
+    assert!(policy.is_tool_permitted("  exec_command  ", true));
+    assert!(policy.is_tool_permitted("EXEC_COMMAND", true));
+    assert!(policy.is_tool_permitted("read_file", false));
+    assert!(!policy.is_tool_permitted("write_file", true));
+}
+
+#[test]
+fn test_headless_session_key_resolution_continue() {
+    let temp_dir = std::env::temp_dir()
+        .join(format!("openz-headless-session-test-{}", uuid::Uuid::new_v4()));
+    let manager = SessionManager::new(temp_dir);
+
+    // When session list is empty, resolve_session_key with continue generates new key
+    let key1 = resolve_session_key(None, true, Some(&manager));
+    assert!(key1.starts_with("cli:headless_"));
+
+    // Save a dummy session to manager
+    let dummy_session = crate::session::Session::new("test-continued-session");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(manager.save(&dummy_session)).unwrap();
+
+    // Now resolve_session_key with continue should find and return the latest session key
+    let key2 = resolve_session_key(None, true, Some(&manager));
+    assert_eq!(key2, "test-continued-session");
+}
+
+#[tokio::test]
+async fn test_resolve_prompt_positional_and_flag() {
+    let p1 = resolve_prompt(Some("positional prompt"), Some("flag prompt"))
+        .await
+        .unwrap();
+    assert_eq!(p1, "positional prompt");
+
+    let p2 = resolve_prompt(None, Some("flag prompt")).await.unwrap();
+    assert_eq!(p2, "flag prompt");
+}
+
+#[tokio::test]
+async fn test_headless_security_policy_task_local_and_ask_approval() {
+    let policy = HeadlessSecurityPolicy::new(false, Some("read_file,allowed_tool"));
+    let dummy_args = serde_json::json!({});
+
+    CURRENT_HEADLESS_POLICY
+        .scope(policy.clone(), async {
+            let active = current_headless_policy();
+            assert!(active.is_some());
+
+            // Allowed tool auto-approves
+            let approved = crate::agent::security::ask_approval(
+                "cli:headless_test",
+                "allowed_tool",
+                &dummy_args,
+            )
+            .await
+            .unwrap();
+            assert!(approved);
+
+            // Denied tool auto-denies without prompting
+            let denied = crate::agent::security::ask_approval(
+                "cli:headless_test",
+                "disallowed_tool",
+                &dummy_args,
+            )
+            .await
+            .unwrap();
+            assert!(!denied);
+        })
+        .await;
+
+    assert!(current_headless_policy().is_none());
+}
+
+
+

@@ -577,7 +577,9 @@ impl AgentLoop {
             && (!session_key.starts_with("subagent:") || crate::shutdown::is_cli_active());
         let is_ratatui = crate::channels::ratatui::app::IS_RATATUI_ACTIVE
             .load(std::sync::atomic::Ordering::Relaxed);
-        let silent = !is_cli || is_ratatui;
+        let is_headless = target_key.starts_with("cli:headless")
+            || crate::cli::headless::current_headless_policy().is_some();
+        let silent = !is_cli || is_ratatui || is_headless || crate::agent::style::spinner::is_silent();
 
         crate::agent::style::spinner::IS_SILENT
             .scope(silent, async move {

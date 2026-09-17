@@ -723,6 +723,18 @@ pub(crate) fn compact_approval_description(description: &str, max_width: usize) 
 
 /// Request approval for a sensitive tool call over TUI, Telegram, or the WebUI.
 pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value) -> Result<bool> {
+    if let Some(policy) = crate::cli::headless::current_headless_policy() {
+        let permitted = policy.is_tool_permitted(tool_name, true);
+        if !permitted {
+            tracing::warn!(
+                session = %session_key,
+                tool = %tool_name,
+                "Headless security policy denied execution of sensitive tool"
+            );
+        }
+        return Ok(permitted);
+    }
+
     let description = SecurityGuard::format_description(tool_name, arguments);
 
     let actual_session = crate::agent::style::spinner::get_current_session_key()

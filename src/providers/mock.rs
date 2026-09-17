@@ -98,7 +98,7 @@ impl From<MockResponse> for crate::providers::LLMResponse {
 #[derive(Debug)]
 pub struct MockProvider {
     /// Ordered list of responses. Index advances on each successful `chat()` call.
-    responses: Vec<MockResponse>,
+    responses: std::sync::Mutex<Vec<MockResponse>>,
     /// Call counter used to index into `responses`.
     call_count: Arc<AtomicUsize>,
     /// Default response returned when `call_count` exceeds `responses.len()`.
@@ -116,7 +116,7 @@ impl Default for MockProvider {
 impl MockProvider {
     pub fn new() -> Self {
         Self {
-            responses: Vec::new(),
+            responses: std::sync::Mutex::new(Vec::new()),
             call_count: Arc::new(AtomicUsize::new(0)),
             default_response: MockResponse::text("mock default response"),
             inject_errors: Arc::new(AtomicUsize::new(0)),
@@ -124,9 +124,17 @@ impl MockProvider {
     }
 
     /// Append a canned response to the sequence.
-    pub fn with_response(mut self, response: MockResponse) -> Self {
-        self.responses.push(response);
+    pub fn with_response(self, response: MockResponse) -> Self {
+        self.responses.lock().unwrap().push(response);
         self
+    }
+
+    /// Append a text response to the sequence (callable on Arc<MockProvider>).
+    pub fn add_response(&self, response: impl Into<String>) {
+        self.responses
+            .lock()
+            .unwrap()
+            .push(MockResponse::text(response));
     }
 
     /// Set the default response (used when the response sequence is exhausted).
@@ -177,8 +185,8 @@ impl crate::providers::LLMProvider for MockProvider {
 
         let count = self.call_count.fetch_add(1, Ordering::SeqCst);
 
-        let response = self
-            .responses
+        let responses = self.responses.lock().unwrap();
+        let response = responses
             .get(count)
             .unwrap_or(&self.default_response)
             .clone();
