@@ -17,7 +17,7 @@
     - [`src/agent/security.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/security.rs): Task-local security policy integration and non-interactive permission evaluation.
     - [`src/agent/agent_loop/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/mod.rs): Dynamic config reload preserving CLI `max_tool_iterations` overrides.
   - Test Modules:
-    - [`src/cli/headless_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/headless_tests.rs): 18 comprehensive unit tests covering flags, formats, security policies, turn execution, mock provider loops, timeouts, and denials.
+    - [`src/cli/headless_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/headless_tests.rs): 20 comprehensive unit tests covering flags, formats, security policies, turn execution, mock provider loops, timeouts, denials, precedence, and text formatting.
   - Planning & Specifications:
     - Spec: [`docs/superpowers/specs/2026-09-17-headless-cli-design.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/specs/2026-09-17-headless-cli-design.md)
     - Plan: [`docs/superpowers/plans/2026-09-17-headless-cli-mode.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-17-headless-cli-mode.md)
@@ -27,8 +27,8 @@
   - Added `HeadlessRunOutput` JSON serialization structure with full session and diagnostic telemetry.
   - Implemented `HeadlessSecurityPolicy` with `record_denial` and `last_denial` integration inside `SecurityGuard::ask_approval`.
   - Enforced strict exit codes: `0` (turn succeeded), `1` (general error, timeout, or turn failure), `2` (security policy blocked sensitive tool).
-  - Maintained zero clippy warnings and verified all 18 headless test suites.
-- **Verification**: Verified all 18 headless mode unit tests pass (`cargo test -p openz --lib cli::headless_tests -j 1`), exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`), 0 clippy warnings across workspace (`cargo clippy -p openz -j 1`), and release version sync verified (`cargo test -p openz --lib version_sync_tests -j 1`).
+  - Maintained zero clippy warnings and verified all 20 headless test suites.
+- **Verification**: Verified all 20 headless mode unit tests pass (`cargo test -p openz --lib cli::headless_tests -j 1`), exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`), 0 clippy warnings across workspace (`cargo clippy -p openz -j 1`), and release version sync verified (`cargo test -p openz --lib version_sync_tests -j 1`).
 
 ### v0.0.188
 - **Ideas**:
