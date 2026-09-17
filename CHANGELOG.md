@@ -1,4 +1,36 @@
-### v0.0.188 (Latest Release)
+### v0.0.189 (Latest Release)
+- **Ideas**:
+  - Introduce full headless CLI execution mode to OpenZ (`openz run "<prompt>"`, `openz exec "<prompt>"`, `openz -p "<prompt>"`, and piped stdin `cat prompt.txt | openz`), allowing autonomous AI agents to use OpenZ as an integrated subagent, enabling automated test harnesses/eval suites to exercise OpenZ end-to-end, and providing humans with non-interactive scriptability without requiring an interactive TUI terminal.
+  - Multi-format output streaming pipeline supporting `--output-format <text|json|stream-json>`: clean markdown text on stdout (with structured error alerts on stderr when non-zero exit codes occur), typed JSON output payloads (`status`, `content`, `session_id`, `tools_used`, `duration_ms`, `error`, `exit_code`), and newline-delimited JSON stream events.
+  - Non-interactive security enforcement: safe/read-only tools execute automatically while sensitive/mutating tools require explicit authorization via `--yes` / `-y` or inclusion in `--allowed-tools`. Unauthorized tool attempts fail fast with exit code 2 and structured diagnostics without hanging on terminal prompts.
+  - Ephemeral session isolation (`cli:headless_<timestamp>_<uuid>`) preventing test and benchmark state pollution by default, while supporting explicit session persistence and thread continuation via `--session <id>` and `--continue`.
+  - Scoped silent output isolation via `IS_SILENT.scope(true, ...)` suppressing extraneous MCP and runtime banners, and dynamic runtime configuration persistence preserving CLI `--max-iterations` overrides across turn-level config reloads.
+- **Inspirations**:
+  - Subagent invocation interfaces and headless tool standards from `claude -p`, `gh run`, and OpenCode Zen autonomous agent protocols.
+  - Unix philosophy of composable pipes and predictable exit codes (0 = success, 1 = general error/timeout, 2 = security denial).
+  - Non-blocking task-local security policy contexts (`tokio::task_local!`) ensuring thread-safe, non-interactive execution.
+- **Sources & References**:
+  - Implementation & Dispatch Sources:
+    - [`src/cli/args.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/args.rs): `HeadlessArgs` definition, top-level flags, and `Command::Run` (aliased to `exec`).
+    - [`src/cli/headless.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/headless.rs): `HeadlessRunOutput`, `HeadlessFormat`, `HeadlessSecurityPolicy`, `resolve_session_key`, `resolve_prompt`, and `execute_headless_turn`.
+    - [`src/cli/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/mod.rs): Top-level `-p` routing, piped stdin detection (`!io::stdin().is_tty()`), and subcommand dispatch.
+    - [`src/agent/security.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/security.rs): Task-local security policy integration and non-interactive permission evaluation.
+    - [`src/agent/agent_loop/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/mod.rs): Dynamic config reload preserving CLI `max_tool_iterations` overrides.
+  - Test Modules:
+    - [`src/cli/headless_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/headless_tests.rs): 18 comprehensive unit tests covering flags, formats, security policies, turn execution, mock provider loops, timeouts, and denials.
+  - Planning & Specifications:
+    - Spec: [`docs/superpowers/specs/2026-09-17-headless-cli-design.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/specs/2026-09-17-headless-cli-design.md)
+    - Plan: [`docs/superpowers/plans/2026-09-17-headless-cli-mode.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-17-headless-cli-mode.md)
+- **Details & Metrics**:
+  - Added `HeadlessArgs` CLI options: `--prompt` (`-p`), `--output-format`, `--yes` (`-y`), `--allowed-tools`, `--session`, `--continue`, `--timeout-secs`, and `--max-iterations`.
+  - Added `Command::Run` (`openz run`) with subcommand alias `openz exec`.
+  - Added `HeadlessRunOutput` JSON serialization structure with full session and diagnostic telemetry.
+  - Implemented `HeadlessSecurityPolicy` with `record_denial` and `last_denial` integration inside `SecurityGuard::ask_approval`.
+  - Enforced strict exit codes: `0` (turn succeeded), `1` (general error, timeout, or turn failure), `2` (security policy blocked sensitive tool).
+  - Maintained zero clippy warnings and verified all 18 headless test suites.
+- **Verification**: Verified all 18 headless mode unit tests pass (`cargo test -p openz --lib cli::headless_tests -j 1`), exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`), 0 clippy warnings across workspace (`cargo clippy -p openz -j 1`), and release version sync verified (`cargo test -p openz --lib version_sync_tests -j 1`).
+
+### v0.0.188
 - **Ideas**:
   - Fully decompose and delete monolithic `src/channels/websocket/tests.rs` (originally 855 lines, 32 unit tests) into dedicated component-local sibling test modules colocated directly with their target domain components:
     - [`attachments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/attachments_tests.rs): Attachment policy validation rejecting unsafe MIME types and aggregate size overflow (1 test).
