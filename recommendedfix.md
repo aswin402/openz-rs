@@ -816,6 +816,17 @@ struct WebFetchTool;
 - Deleted `src/channels/websocket/tests.rs` (855 lines) and purged obsolete test-only re-exports from `src/channels/websocket/mod.rs`.
 - All 33 WebSocket channel unit tests passed; maintained exact 260 registered native tools invariant and 0 clippy warnings.
 
+### 4.53 Document Processing Robustness & Format Hardening (Resolved in v0.0.191)
+
+**Files:** [`tools/opendoc/src/server.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/opendoc/src/server.rs), [`tools/opendoc/src/handlers/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/opendoc/src/handlers/mod.rs), [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs), [`src/core/heal.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/heal.rs), [`tools/opendoc/tests/integration.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/opendoc/tests/integration.rs), [`src/tools/compiler_auto_heal_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/compiler_auto_heal_tests.rs), [`src/tools/opendoc/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod_tests.rs)
+
+**Status:**
+- Added `normalize_json_param` helper to automatically deserialize stringified JSON arrays and objects passed by LLMs in `create_xlsx` (`sheets`), `edit_xlsx` (`add_sheets`, `cell_updates`), `fill_template` (`variables`), and `fill_pdf_form` (`values`).
+- Made `template_type` optional (`Option<String>`) in `ExtractStructuredMetadataParams` with automatic fallback to `"general"` mode combining legal, financial, and timeline entities into a unified JSON structure.
+- Implemented `sniff_format` magic-byte inspection (`%PDF-`, `PK\x03\x04` inspecting zip inner structure for `word/`, `xl/`, `ppt/`) in `load_to_ir_with_password` so non-standard file extensions (`.docx.bak`, `.pdf.old`, `.tmp`) parse correctly.
+- Added binary file extension guard in `compiler_auto_heal` preventing stream decoding panics on office and archive formats.
+- Maintained exact 260 registered native tools invariant and 0 clippy warnings.
+
 ---
 
 ## 5. Testing Gaps

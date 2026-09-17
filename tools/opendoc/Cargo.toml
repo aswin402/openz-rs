@@ -1,6 +1,6 @@
 [package]
 name = "opendoc-mcp"
-version = "0.0.12"
+version = "0.0.13"
 edition = "2021"
 description = "Rust-native Document Intelligence Engine + MCP Server for AI Agents — DOCX, PPTX, XLSX, PDF, HTML, MD, CSV"
 license = "MIT"

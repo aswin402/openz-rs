@@ -53,3 +53,35 @@ async fn test_compiler_auto_heal_success() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[tokio::test]
+async fn test_compiler_auto_heal_rejects_binary_document_formats() {
+    let temp_dir = std::env::temp_dir().join(format!("auto_heal_bin_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let target_file = temp_dir.join("report.docx");
+    std::fs::write(&target_file, b"PK\x03\x04dummy").unwrap();
+
+    let provider = Arc::new(crate::providers::mock::MockProvider::new());
+    let config = Config::default();
+    let tool = CompilerAutoHealTool { config, provider };
+
+    let res = tool
+        .call(&serde_json::json!({
+            "file_path": target_file.to_str().unwrap(),
+            "instruction": "Fix docx",
+            "compile_command": "true",
+            "max_iterations": 2
+        }))
+        .await;
+
+    assert!(res.is_err());
+    let err_msg = res.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("only supports text/code source files")
+            && err_msg.contains(".docx"),
+        "Unexpected error message: {err_msg}"
+    );
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+

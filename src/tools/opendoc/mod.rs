@@ -235,16 +235,19 @@ define_opendoc_tool!(
 pub struct ExtractStructuredMetadataParams {
     #[schemars(description = "File path to the document")]
     pub file_path: String,
-    #[schemars(description = "The target domain template: 'legal', 'financial', or 'timeline'")]
-    pub template_type: String,
+    #[schemars(description = "The target domain template: 'legal', 'financial', 'timeline', or 'general' (optional, defaults to 'general')")]
+    pub template_type: Option<String>,
 }
 define_opendoc_tool!(
     OpendocExtractStructuredMetadataTool,
     "opendoc_extract_structured_metadata",
-    "Extract structured domain metadata (legal, financial, timeline) using rule-based parsing.",
+    "Extract structured domain metadata (legal, financial, timeline, general) using rule-based parsing.",
     ExtractStructuredMetadataParams,
     |p: ExtractStructuredMetadataParams| {
-        get_server().extract_structured_metadata(p.file_path, p.template_type)
+        get_server().extract_structured_metadata(
+            p.file_path,
+            p.template_type.unwrap_or_else(|| "general".to_string()),
+        )
     }
 );
 

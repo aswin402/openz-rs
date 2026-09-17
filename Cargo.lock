@@ -6467,7 +6467,7 @@ dependencies = [
 
 [[package]]
 name = "opendoc-mcp"
-version = "0.0.12"
+version = "0.0.13"
 dependencies = [
  "anyhow",
  "calamine 0.24.0",
@@ -6722,7 +6722,7 @@ dependencies = [
 
 [[package]]
 name = "openz"
-version = "0.0.190"
+version = "0.0.191"
 dependencies = [
  "ab_glyph",
  "anyhow",

@@ -300,3 +300,39 @@ fn test_conversion_bidirectional() {
     let _ = std::fs::remove_file(path_md);
     let _ = std::fs::remove_file(path_html);
 }
+
+#[test]
+fn test_sniff_format_nonstandard_extension() {
+    let xlsx_path = temp_path("bak");
+    gen_xlsx(&xlsx_path);
+
+    let doc = load_to_ir(xlsx_path.to_str().unwrap()).unwrap();
+    assert_eq!(doc.format, "xlsx");
+    assert!(doc.text.unwrap_or_default().contains("Alice"));
+    let _ = std::fs::remove_file(xlsx_path);
+}
+
+#[test]
+fn test_create_xlsx_with_stringified_json_sheets() {
+    let server = opendoc_mcp::server::OpendocServer;
+    let path = temp_path("xlsx");
+    let stringified_sheets = serde_json::Value::String(
+        "[{\"name\": \"Data\", \"headers\": [\"Metric\", \"Value\"], \"data\": [[\"CPU\", \"85%\"]]}]".to_string()
+    );
+    let res = server.create_xlsx(path.to_str().unwrap().to_string(), stringified_sheets);
+    assert!(res.contains("success") || res.contains("created") || res.contains("file_path"));
+    assert!(path.exists());
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn test_extract_structured_metadata_general() {
+    let server = opendoc_mcp::server::OpendocServer;
+    let path = temp_path("txt");
+    std::fs::write(&path, "On 2026-09-17, the agreement was executed for $500,000 between Acme and Beta.").unwrap();
+
+    let res = server.extract_structured_metadata(path.to_str().unwrap().to_string(), "general".to_string());
+    assert!(res.contains("timeline") && res.contains("legal") && res.contains("financial"));
+    let _ = std::fs::remove_file(path);
+}
+

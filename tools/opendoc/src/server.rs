@@ -16,6 +16,22 @@ macro_rules! validate_path {
     };
 }
 
+fn normalize_json_param(val: serde_json::Value) -> serde_json::Value {
+    match val {
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            if (trimmed.starts_with('{') && trimmed.ends_with('}'))
+                || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+            {
+                serde_json::from_str(trimmed).unwrap_or(serde_json::Value::String(s))
+            } else {
+                serde_json::Value::String(s)
+            }
+        }
+        other => other,
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct OpendocServer;
 
@@ -371,6 +387,7 @@ impl OpendocServer {
         password: Option<String>,
     ) -> String {
         let file_path = validate_path!(file_path);
+        let variables = normalize_json_param(variables);
         let vars: Vec<(String, String)> = if let serde_json::Value::Object(map) = variables {
             map.into_iter()
                 .map(|(k, v)| {
@@ -1021,6 +1038,7 @@ impl OpendocServer {
         sheets: serde_json::Value,
     ) -> String {
         let file_path = validate_path!(file_path);
+        let sheets = normalize_json_param(sheets);
         let sheets: Vec<xlsx::XlsxSheet> = match serde_json::from_value(sheets) {
             Ok(s) => s,
             Err(e) => {
@@ -1050,10 +1068,12 @@ impl OpendocServer {
     ) -> String {
         let file_path = validate_path!(file_path);
 
-        let parsed_add_sheets: Option<Vec<String>> =
-            add_sheets.and_then(|v| serde_json::from_value(v).ok());
-        let parsed_cell_updates: Option<Vec<xlsx::XlsxCellOperation>> =
-            cell_updates.and_then(|v| serde_json::from_value(v).ok());
+        let parsed_add_sheets: Option<Vec<String>> = add_sheets
+            .map(normalize_json_param)
+            .and_then(|v| serde_json::from_value(v).ok());
+        let parsed_cell_updates: Option<Vec<xlsx::XlsxCellOperation>> = cell_updates
+            .map(normalize_json_param)
+            .and_then(|v| serde_json::from_value(v).ok());
 
         let request = xlsx::XlsxEditRequest {
             file_path,
@@ -1215,6 +1235,7 @@ impl OpendocServer {
         values: serde_json::Value,
     ) -> String {
         let file_path = validate_path!(file_path);
+        let values = normalize_json_param(values);
         let vals: Vec<(String, String)> = if let serde_json::Value::Object(map) = values {
             map.into_iter()
                 .map(|(k, v)| {
@@ -1412,8 +1433,19 @@ impl OpendocServer {
                 let res = crate::engine::extract::extract_timeline(&doc);
                 serde_json::to_string_pretty(&res).unwrap_or_default()
             }
+            "general" | "" => {
+                let legal = crate::engine::extract::extract_legal(&doc);
+                let financial = crate::engine::extract::extract_financial(&doc);
+                let timeline = crate::engine::extract::extract_timeline(&doc);
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "legal": legal,
+                    "financial": financial,
+                    "timeline": timeline,
+                }))
+                .unwrap_or_default()
+            }
             other => serde_json::json!({
-                "error": format!("Unsupported template type: '{}'. Supported types: 'legal', 'financial', 'timeline'.", other)
+                "error": format!("Unsupported template type: '{}'. Supported types: 'legal', 'financial', 'timeline', 'general'.", other)
             }).to_string(),
         }
     }

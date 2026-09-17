@@ -1,4 +1,31 @@
-### v0.0.190 (Latest Release)
+### v0.0.191 (Latest Release)
+- **Ideas**:
+  - Address real-world friction and edge cases discovered during autonomous headless subagent testing of the Document Processing tool suite (35 OpenDoc & DocReader native tools).
+  - Robust LLM JSON serialization tolerance: LLMs frequently serialize nested JSON objects and arrays as stringified JSON strings (e.g. `sheets: "[{\"name\": ...}]"` or `variables: "{\"k\": \"v\"}"`). Add `normalize_json_param` fallback to automatically deserialize stringified JSON inputs before validating parameters in `create_xlsx`, `edit_xlsx`, `fill_template`, and `fill_pdf_form`.
+  - Flexible document metadata extraction: Make `template_type` optional (`Option<String>`) in `ExtractStructuredMetadataParams`, providing a default `"general"` mode that aggregates timeline, legal, and financial entities into a single unified extraction schema.
+  - Magic-byte document format sniffing: Enable content-based file format detection (`%PDF-`, `PK\x03\x04` inspecting zip inner structure for `word/`, `xl/`, `ppt/`) when document file extensions are non-standard (e.g. `.docx.bak`, `.pdf.old`, or `.tmp`), preventing `"Unsupported format: bak"` failures during document diffing and inspection.
+  - Binary format protection in `compiler_auto_heal`: Guard against binary office documents and archives (`.docx`, `.xlsx`, `.pdf`, `.pptx`, `.zip`, `.png`, etc.) upfront before attempting to read them as UTF-8 source code, preventing stream decoding panics.
+- **Inspirations**:
+  - Headless subagent eval findings across the 35 OpenDoc and DocReader tool suites.
+  - Robustness principle (Postel's Law): "Be conservative in what you send, be liberal in what you accept" applied to model tool calling parameters.
+  - Unix `file(1)` libmagic file sniffing architecture for container format disambiguation.
+- **Sources & References**:
+  - Implementation & Dispatch Sources:
+    - [`tools/opendoc/src/server.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/opendoc/src/server.rs): `normalize_json_param` helper for stringified JSON arrays/objects, optional `general` template type in `extract_structured_metadata`.
+    - [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs): Optional `template_type: Option<String>` in `ExtractStructuredMetadataParams` with general fallback.
+    - [`tools/opendoc/src/handlers/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/opendoc/src/handlers/mod.rs): `sniff_format` magic-byte fallback inspection in `load_to_ir_with_password`.
+    - [`src/core/heal.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/heal.rs): Binary office format guard in `run_compiler_auto_heal`.
+  - Test Modules:
+    - [`tools/opendoc/tests/integration.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/opendoc/tests/integration.rs): `test_sniff_format_nonstandard_extension`, `test_create_xlsx_with_stringified_json_sheets`, `test_extract_structured_metadata_general`.
+    - [`src/tools/compiler_auto_heal_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/compiler_auto_heal_tests.rs): `test_compiler_auto_heal_rejects_binary_document_formats`.
+    - [`src/tools/opendoc/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod_tests.rs): `test_opendoc_extract_structured_metadata_optional_template_type`.
+- **Details & Metrics**:
+  - Resolved 5 critical edge cases identified by real-world subagents during multi-suite headless document processing.
+  - Added 5 new unit and integration tests across `opendoc-mcp` (now 115 passing tests) and `openz`.
+  - Bumped `opendoc-mcp` to `v0.0.13` and `openz` to `v0.0.191`.
+- **Verification**: Verified 115 opendoc tests pass (`cargo test -p opendoc-mcp -j 1`), 4 compiler auto-heal tests pass (`cargo test -p openz --lib tools::compiler_auto_heal -j 1`), 2 opendoc tests in openz pass (`cargo test -p openz --lib test_opendoc -j 1`), exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`), 0 clippy warnings across workspace (`cargo clippy -p openz -j 1`), and release version sync verified (`cargo test -p openz --lib version_sync_tests -j 1`).
+
+### v0.0.190
 - **Ideas**:
   - Eliminate the artificial 16k token context bottleneck in OpenZ when running large-context models (e.g. MiniMax 204.8k, Claude 3.5 Sonnet 200k, Gemini 1M-2M, DeepSeek 1M, GPT-4o 128k).
   - Replace hardcoded static character and message clamps (the 64,000-character clamp in `resolve_prompt_budget`, the 32,000-character fallback in `build.rs`, the 4,000-character tool clamp in `transcript.rs`, and rigid 120-message compaction) with a unified, proportional dynamic context budgeting engine.

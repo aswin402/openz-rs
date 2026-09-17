@@ -17,17 +17,55 @@ pub fn load_to_ir(file_path: &str) -> Result<Document, LoadError> {
     load_to_ir_with_password(file_path, None)
 }
 
+fn sniff_format(file_path: &str) -> Option<String> {
+    let mut file = std::fs::File::open(file_path).ok()?;
+    use std::io::Read;
+    let mut buf = [0u8; 16];
+    let n = file.read(&mut buf).ok()?;
+    if n >= 4 && &buf[0..4] == b"%PDF" {
+        return Some("pdf".to_string());
+    }
+    if n >= 4 && &buf[0..4] == b"PK\x03\x04" {
+        if let Ok(mut archive) = zip::ZipArchive::new(file) {
+            for i in 0..archive.len() {
+                if let Ok(f) = archive.by_index(i) {
+                    let name = f.name();
+                    if name.starts_with("word/") {
+                        return Some("docx".to_string());
+                    }
+                    if name.starts_with("xl/") {
+                        return Some("xlsx".to_string());
+                    }
+                    if name.starts_with("ppt/") {
+                        return Some("pptx".to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Load any supported document into the Internal Representation (IR) with an optional password.
 pub fn load_to_ir_with_password(
     file_path: &str,
     password: Option<&str>,
 ) -> Result<Document, LoadError> {
     let path = Path::new(file_path);
-    let ext = path
+    let mut ext = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
+
+    if !matches!(
+        ext.as_str(),
+        "docx" | "doc" | "pptx" | "ppt" | "pdf" | "xlsx" | "xls" | "md" | "markdown" | "html" | "htm" | "csv" | "txt" | "text"
+    ) {
+        if let Some(sniffed) = sniff_format(file_path) {
+            ext = sniffed;
+        }
+    }
 
     match ext.as_str() {
         "docx" | "doc" => {

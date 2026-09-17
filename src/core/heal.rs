@@ -231,6 +231,19 @@ pub async fn run_compiler_auto_heal(
         return Err(anyhow!("File does not exist: {:?}", file_path));
     }
 
+    if let Some(ext) = file_path.extension().and_then(|e| e.to_str()) {
+        let lower = ext.to_lowercase();
+        if matches!(
+            lower.as_str(),
+            "docx" | "xlsx" | "pdf" | "pptx" | "zip" | "png" | "jpg" | "jpeg" | "bin" | "exe" | "tar" | "gz" | "so" | "dylib"
+        ) {
+            return Err(anyhow!(
+                "compiler_auto_heal only supports text/code source files, not binary format '.{}'",
+                ext
+            ));
+        }
+    }
+
     let mut backup = FileBackupGuard::create(file_path, true)?;
     let mut file_content = std::fs::read_to_string(file_path)?;
     let mut current_error = String::new();
