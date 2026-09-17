@@ -1,4 +1,42 @@
-### v0.0.189 (Latest Release)
+### v0.0.190 (Latest Release)
+- **Ideas**:
+  - Eliminate the artificial 16k token context bottleneck in OpenZ when running large-context models (e.g. MiniMax 204.8k, Claude 3.5 Sonnet 200k, Gemini 1M-2M, DeepSeek 1M, GPT-4o 128k).
+  - Replace hardcoded static character and message clamps (the 64,000-character clamp in `resolve_prompt_budget`, the 32,000-character fallback in `build.rs`, the 4,000-character tool clamp in `transcript.rs`, and rigid 120-message compaction) with a unified, proportional dynamic context budgeting engine.
+  - Implement `DynamicContextRegistry` providing a 4-tier model context resolution hierarchy: user config override (`context_limit`), dynamic JSON catalog (`~/.openz/models.json`), built-in pattern catalog, and safe fallback (128,000 tokens).
+  - Implement proportional percentage token budgeting in `AgentDefaults`: `prompt_budget_ratio` (default 25%), `tool_output_ratio` (default 8%), `compaction_threshold_ratio` (default 80%), and `keep_recent_ratio` (default 20%).
+  - Token-pressure compaction: Compaction in `compact.rs` now triggers dynamically based on estimated token pressure against the active model's capacity rather than a static message count.
+  - Hermes Pre-Compression Hook: Extracts and consolidates critical decisions, preferences, and file modification paths into persistent memory *before* pruning or summarizing older messages.
+  - Structure-preserving compactor: Eliminates destructive truncation of JSON arrays (which previously dropped items 2..N), retaining head and tail elements, item counts, and schema keys.
+  - Unify the CLI TUI status bar model window resolution with `DynamicContextRegistry`, eliminating 40 lines of duplicate pattern matching.
+- **Inspirations**:
+  - Nous Research Hermes Agent (dual-layer context engine, pre-compression memory hook `on_pre_compress`).
+  - Pi Agent (@earendil-works / Pi-dev) proportional token knobs (`reserveTokens`, `keepRecentTokens`).
+  - Prime Agent (Prime Intellect RLM variable context architecture).
+  - Academic research: Verma (2026) Active Context Compression, ACM (Li et al., 2026), ACON (2025/2026), EMNLP 2026 Context Compression Survey (Pre-compression Decision Error and Post-compression Access Failure), and Liu et al. (2023) "Lost in the Middle".
+- **Sources & References**:
+  - Implementation & Dispatch Sources:
+    - [`src/providers/context_registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/context_registry.rs): `DynamicContextRegistry`, 4-tier context resolution, dynamic models.json loader, and proportional budgeting.
+    - [`src/config/schema.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/schema.rs): `prompt_budget_ratio`, `tool_output_ratio`, `compaction_threshold_ratio`, and `keep_recent_ratio` fields.
+    - [`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs): Dynamic prompt budget calculation without 64k character clamp.
+    - [`src/agent/agent_loop/transcript.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/transcript.rs): Model-aware dynamic tool output limit resolution.
+    - [`src/agent/agent_loop/compact.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/compact.rs): Token-pressure compaction triggering and Hermes pre-compression memory preservation.
+    - [`src/agent/context_compactor.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/context_compactor.rs): Structure-preserving JSON compaction and log formatting.
+    - [`src/channels/cli/render.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render.rs): Unified status bar context limit lookup.
+  - Test Modules:
+    - [`src/providers/context_registry_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/context_registry_tests.rs): Unit tests for 4-tier resolution, budget scaling, and token pressure.
+    - [`src/agent/agent_loop/build_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build_tests.rs): Prompt budget scaling beyond 64k chars.
+    - [`src/agent/context_compactor.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/context_compactor.rs): Unit tests for small and large JSON array preservation.
+  - Planning & Specifications:
+    - Spec: [`docs/superpowers/specs/2026-09-17-dynamic-context-engine-design.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/specs/2026-09-17-dynamic-context-engine-design.md)
+    - Plan: [`docs/superpowers/plans/2026-09-17-dynamic-context-engine.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-17-dynamic-context-engine.md)
+- **Details & Metrics**:
+  - `resolve_prompt_budget_chars` on MiniMax 204.8k now resolves to 204,800 characters (~51,200 tokens) vs old 64,000 char clamp.
+  - `resolve_tool_output_limit_chars` on MiniMax 204.8k resolves to 65,536 characters (~16,384 tokens) vs old 4,000 char clamp.
+  - Eliminated 40 lines of duplicated pattern-matching code from `src/channels/cli/render.rs`.
+  - Added 10 new unit tests across `context_registry_tests`, `build_tests`, and `context_compactor`.
+- **Verification**: Verified 7 context registry unit tests pass (`cargo test -p openz --lib providers::context_registry_tests -j 1`), 3 context compactor tests pass (`cargo test -p openz --lib agent::context_compactor::tests -j 1`), exact 260 registered native tools invariant maintained (`cargo test --lib -j 1 -- test_native_tool_registration_names`), 0 clippy warnings across workspace (`cargo clippy -p openz -j 1`), and release version sync verified (`cargo test -p openz --lib version_sync_tests -j 1`).
+
+### v0.0.189
 - **Ideas**:
   - Introduce full headless CLI execution mode to OpenZ (`openz run "<prompt>"`, `openz exec "<prompt>"`, `openz -p "<prompt>"`, and piped stdin `cat prompt.txt | openz`), allowing autonomous AI agents to use OpenZ as an integrated subagent, enabling automated test harnesses/eval suites to exercise OpenZ end-to-end, and providing humans with non-interactive scriptability without requiring an interactive TUI terminal.
   - Multi-format output streaming pipeline supporting `--output-format <text|json|stream-json>`: clean markdown text on stdout (with structured error alerts on stderr when non-zero exit codes occur), typed JSON output payloads (`status`, `content`, `session_id`, `tools_used`, `duration_ms`, `error`, `exit_code`), and newline-delimited JSON stream events.
