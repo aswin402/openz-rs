@@ -46,3 +46,69 @@ fn test_headless_exec_subcommand_alias() {
         .expect("should parse exec alias");
     assert!(matches!(args.command, Some(Command::Run(_))));
 }
+
+use crate::cli::headless::{
+    resolve_session_key, HeadlessFormat, HeadlessRunOutput, HeadlessSecurityPolicy,
+};
+
+#[test]
+fn test_headless_run_output_json_serialization() {
+    let output = HeadlessRunOutput {
+        status: "success".to_string(),
+        content: "Operation completed successfully".to_string(),
+        session_id: "cli:headless_test".to_string(),
+        tools_used: vec!["read_file".to_string(), "grep_search".to_string()],
+        tool_iterations: 2,
+        duration_ms: 450,
+        model: "anthropic/claude-3-5-sonnet".to_string(),
+        provider: "anthropic".to_string(),
+        error: None,
+        exit_code: 0,
+    };
+
+    let json_str = serde_json::to_string_pretty(&output).expect("must serialize");
+    let parsed: serde_json::Value = serde_json::from_str(&json_str).expect("must parse");
+    assert_eq!(parsed["status"], "success");
+    assert_eq!(parsed["exit_code"], 0);
+    assert_eq!(parsed["tools_used"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn test_headless_security_policy_evaluation() {
+    // 1. Strict mode without --yes or allowed tools
+    let policy = HeadlessSecurityPolicy::new(false, None);
+    assert!(policy.is_tool_permitted("read_file", false));
+    assert!(!policy.is_tool_permitted("exec_command", true));
+    assert!(!policy.is_tool_permitted("write_file", true));
+
+    // 2. Auto-approved with --yes
+    let policy_yes = HeadlessSecurityPolicy::new(true, None);
+    assert!(policy_yes.is_tool_permitted("read_file", false));
+    assert!(policy_yes.is_tool_permitted("exec_command", true));
+    assert!(policy_yes.is_tool_permitted("write_file", true));
+
+    // 3. Allowed tools list
+    let policy_allowed = HeadlessSecurityPolicy::new(false, Some("read_file,exec_command"));
+    assert!(policy_allowed.is_tool_permitted("exec_command", true));
+    assert!(!policy_allowed.is_tool_permitted("write_file", true));
+}
+
+#[test]
+fn test_headless_session_key_resolution() {
+    let ephemeral = resolve_session_key(None, false, None);
+    assert!(ephemeral.starts_with("cli:headless_"));
+
+    let custom = resolve_session_key(Some("custom-thread-key"), false, None);
+    assert_eq!(custom, "custom-thread-key");
+}
+
+#[test]
+fn test_headless_format_parsing() {
+    assert_eq!(HeadlessFormat::parse("text"), HeadlessFormat::Text);
+    assert_eq!(HeadlessFormat::parse("json"), HeadlessFormat::Json);
+    assert_eq!(HeadlessFormat::parse("stream-json"), HeadlessFormat::StreamJson);
+    assert_eq!(HeadlessFormat::parse("stream_json"), HeadlessFormat::StreamJson);
+    assert_eq!(HeadlessFormat::parse("ndjson"), HeadlessFormat::StreamJson);
+    assert_eq!(HeadlessFormat::parse("unknown"), HeadlessFormat::Text);
+}
+
