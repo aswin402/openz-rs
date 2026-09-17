@@ -69,6 +69,7 @@ fn test_identity_memory_candidate_matches_bot_name_and_custom_hints() {
 #[test]
 fn test_prompt_budget_resolution() {
     assert_eq!(resolve_prompt_budget(Some(64000), 128000), 64000);
+    assert_eq!(resolve_prompt_budget(None, 200000), 75000); // Exceeds 64k without truncation
     assert_eq!(resolve_prompt_budget(None, 128000), 48000);
     assert_eq!(resolve_prompt_budget(None, 32000), 12000);
     assert_eq!(resolve_prompt_budget(None, 16000), 8000);

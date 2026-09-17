@@ -148,9 +148,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         retrieve_cross_session_memories(ctx.user_content, &config.agents.defaults.bot_name).await;
 
     // Calculate total character limit and base length
-    let budget_limit = resolve_prompt_budget(
-        config.agents.defaults.prompt_budget_limit,
-        config.agents.defaults.context_limit.unwrap_or(32000),
+    let budget_limit = crate::providers::DynamicContextRegistry::resolve_prompt_budget_chars(
+        &config.agents.defaults.model,
+        config,
     );
 
     let header = format!(
@@ -293,9 +293,9 @@ pub fn resolve_prompt_budget(configured_budget: Option<usize>, context_window: u
     if let Some(explicit) = configured_budget {
         return explicit;
     }
-    // Allocate up to 3/8 of total context window for prompt overhead, clamped between 8k and 64k chars
+    // Allocate up to 3/8 of total context window for prompt overhead, with a minimum floor of 8k chars
     let computed = (context_window * 3) / 8;
-    computed.clamp(8000, 64000)
+    computed.max(8000)
 }
 
 fn identity_answer_priority_context(user_content: &str, pinned_memory: &str) -> &'static str {
