@@ -347,5 +347,82 @@ async fn test_execute_headless_turn_timeout_returns_code_1() {
     assert!(output.error.unwrap().contains("timed out after 1s"));
 }
 
+#[test]
+fn test_headless_args_merge_global() {
+    let mut args = HeadlessArgs {
+        output_format: "text".to_string(),
+        yes: false,
+        ..Default::default()
+    };
+
+    // Merging with None and false preserves defaults
+    args.merge_global(None, false);
+    assert_eq!(args.output_format, "text");
+    assert!(!args.yes);
+
+    // Merging with Some format and true overrides
+    args.merge_global(Some("json".to_string()), true);
+    assert_eq!(args.output_format, "json");
+    assert!(args.yes);
+
+    // Merging again with false does not reset yes
+    args.merge_global(None, false);
+    assert!(args.yes);
+}
+
+#[test]
+fn test_cli_args_run_with_global_flags_merging() {
+    let parsed = CliArgs::try_parse_from([
+        "openz",
+        "-y",
+        "--output-format",
+        "json",
+        "run",
+        "run query",
+    ])
+    .expect("should parse openz -y --output-format json run");
+
+    assert!(parsed.yes);
+    assert_eq!(parsed.output_format.as_deref(), Some("json"));
+
+    match parsed.command {
+        Some(Command::Run(mut headless_args)) => {
+            assert_eq!(headless_args.prompt.as_deref(), Some("run query"));
+            headless_args.merge_global(parsed.output_format, parsed.yes);
+            assert!(headless_args.yes);
+            assert_eq!(headless_args.output_format, "json");
+        }
+        other => panic!("expected Command::Run, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_cli_args_top_level_prompt_headless_construction() {
+    let parsed = CliArgs::try_parse_from([
+        "openz",
+        "-p",
+        "top-level query",
+        "--output-format",
+        "stream-json",
+        "-y",
+    ])
+    .expect("should parse openz -p flag");
+
+    assert!(parsed.command.is_none());
+    assert_eq!(parsed.prompt.as_deref(), Some("top-level query"));
+
+    let headless_args = HeadlessArgs {
+        prompt: parsed.prompt,
+        output_format: parsed.output_format.unwrap_or_else(|| "text".to_string()),
+        yes: parsed.yes,
+        ..Default::default()
+    };
+
+    assert_eq!(headless_args.prompt.as_deref(), Some("top-level query"));
+    assert_eq!(headless_args.output_format, "stream-json");
+    assert!(headless_args.yes);
+}
+
+
 
 

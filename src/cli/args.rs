@@ -140,3 +140,14 @@ pub struct HeadlessArgs {
     #[arg(long)]
     pub timeout: Option<u64>,
 }
+
+impl HeadlessArgs {
+    pub fn merge_global(&mut self, global_output_format: Option<String>, global_yes: bool) {
+        if global_yes {
+            self.yes = true;
+        }
+        if let Some(fmt) = global_output_format {
+            self.output_format = fmt;
+        }
+    }
+}

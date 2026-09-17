@@ -76,15 +76,36 @@ pub async fn run_cli() -> Result<()> {
     // working directory instead of letting them shadow the global database.
     crate::config::loader::check_root_runtime_dbs();
 
+    // 1. Top-level -p flag check:
+    if let Some(prompt) = args.prompt {
+        let headless_args = args::HeadlessArgs {
+            prompt: Some(prompt),
+            output_format: args.output_format.unwrap_or_else(|| "text".to_string()),
+            yes: args.yes,
+            ..Default::default()
+        };
+        return headless::handle_headless(headless_args).await;
+    }
+
     match args.command {
         None => {
+            use crossterm::tty::IsTty;
+            if !std::io::stdin().is_tty() {
+                let headless_args = args::HeadlessArgs {
+                    output_format: args.output_format.unwrap_or_else(|| "text".to_string()),
+                    yes: args.yes,
+                    ..Default::default()
+                };
+                return headless::handle_headless(headless_args).await;
+            }
             channels::handle_ratatui_tui().await?;
             let _ = crossterm::terminal::disable_raw_mode();
             let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
             std::process::exit(0);
         }
-        Some(Command::Run(_headless_args)) => {
-            anyhow::bail!("Headless mode execution engine is not yet implemented (scheduled for Task 3)");
+        Some(Command::Run(mut headless_args)) => {
+            headless_args.merge_global(args.output_format, args.yes);
+            return headless::handle_headless(headless_args).await;
         }
         Some(Command::Onboard) => {
             onboard::handle_onboard().await?;
