@@ -55,6 +55,7 @@ impl std::fmt::Display for HeadlessFormat {
 pub struct HeadlessSecurityPolicy {
     pub auto_approve_all: bool,
     pub allowed_tools: std::collections::HashSet<String>,
+    pub denied_tool: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl HeadlessSecurityPolicy {
@@ -71,7 +72,18 @@ impl HeadlessSecurityPolicy {
         Self {
             auto_approve_all,
             allowed_tools,
+            denied_tool: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
+    }
+
+    pub fn record_denial(&self, tool: &str) {
+        if let Ok(mut guard) = self.denied_tool.lock() {
+            *guard = Some(tool.to_string());
+        }
+    }
+
+    pub fn last_denial(&self) -> Option<String> {
+        self.denied_tool.lock().ok().and_then(|g| g.clone())
     }
 
     pub fn is_tool_permitted(&self, tool_name: &str, is_sensitive: bool) -> bool {
@@ -143,7 +155,7 @@ pub async fn resolve_prompt(
 pub fn format_output(output: &HeadlessRunOutput, format: HeadlessFormat) -> String {
     match format {
         HeadlessFormat::Text => {
-            if output.status == "error" && output.content.trim().is_empty() {
+            if output.status != "success" && output.content.trim().is_empty() {
                 output.error.clone().unwrap_or_default()
             } else {
                 output.content.clone()
@@ -174,7 +186,7 @@ pub async fn execute_headless_turn(
         crate::agent::style::spinner::IS_SILENT
             .scope(true, async {
                 CURRENT_HEADLESS_POLICY
-                    .scope(policy, async {
+                    .scope(policy.clone(), async {
                         agent_loop.run(prompt, session_key).await
                     })
                     .await
@@ -201,7 +213,7 @@ pub async fn execute_headless_turn(
                 model: agent_loop.config.agents.defaults.model.clone(),
                 provider: agent_loop.config.agents.defaults.provider.clone(),
                 error: Some(format!("Execution timed out after {}s", timeout_secs)),
-                exit_code: 2,
+                exit_code: 1,
             });
         }
     };
@@ -211,8 +223,21 @@ pub async fn execute_headless_turn(
         Ok(run_result) => {
             let tools_used = run_result.tools_used;
             let tool_iterations = tools_used.len();
+            let mut status = "success".to_string();
+            let mut error = None;
+            let mut exit_code = 0;
+
+            if let Some(tool) = policy.last_denial() {
+                status = "security_denied".to_string();
+                error = Some(format!(
+                    "Execution denied: Tool '{}' requires confirmation in headless mode. Run with -y/--yes to permit.",
+                    tool
+                ));
+                exit_code = 2;
+            }
+
             Ok(HeadlessRunOutput {
-                status: "success".to_string(),
+                status,
                 content: run_result.content,
                 session_id: session_key.to_string(),
                 tools_used,
@@ -220,13 +245,13 @@ pub async fn execute_headless_turn(
                 duration_ms,
                 model: agent_loop.config.agents.defaults.model.clone(),
                 provider: agent_loop.config.agents.defaults.provider.clone(),
-                error: None,
-                exit_code: 0,
+                error,
+                exit_code,
             })
         }
         Err(err) => {
             let err_msg = err.to_string();
-            let exit_code = if err_msg.contains("denied")
+            let mut exit_code = if err_msg.contains("denied")
                 || err_msg.contains("security")
                 || err_msg.contains("forbidden")
             {
@@ -234,8 +259,20 @@ pub async fn execute_headless_turn(
             } else {
                 1
             };
+            let mut status = "error".to_string();
+            let mut error = Some(err_msg);
+
+            if let Some(tool) = policy.last_denial() {
+                status = "security_denied".to_string();
+                error = Some(format!(
+                    "Execution denied: Tool '{}' requires confirmation in headless mode. Run with -y/--yes to permit.",
+                    tool
+                ));
+                exit_code = 2;
+            }
+
             Ok(HeadlessRunOutput {
-                status: "error".to_string(),
+                status,
                 content: String::new(),
                 session_id: session_key.to_string(),
                 tools_used: Vec::new(),
@@ -243,7 +280,7 @@ pub async fn execute_headless_turn(
                 duration_ms,
                 model: agent_loop.config.agents.defaults.model.clone(),
                 provider: agent_loop.config.agents.defaults.provider.clone(),
-                error: Some(err_msg),
+                error,
                 exit_code,
             })
         }

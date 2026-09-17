@@ -55,8 +55,10 @@ async fn turn_cancellation_context_is_visible_inside_scope() {
 fn runtime_subagent_model_override_survives_config_reload() {
     let mut runtime_config = Config::default();
     runtime_config.agents.defaults.model = "google/gemma-4-31b-it:free".to_string();
+    runtime_config.agents.defaults.max_tool_iterations = 42;
     let mut latest_config = Config::default();
     latest_config.agents.defaults.model = "deepseek-v4-flash-free".to_string();
+    latest_config.agents.defaults.max_tool_iterations = 200;
 
     let merged = merge_latest_config_for_runtime(
         &runtime_config,
@@ -66,6 +68,7 @@ fn runtime_subagent_model_override_survives_config_reload() {
     );
 
     assert_eq!(merged.agents.defaults.model, "google/gemma-4-31b-it:free");
+    assert_eq!(merged.agents.defaults.max_tool_iterations, 42);
 }
 #[test]
 fn fallback_models_for_turn_limits_configured_fallbacks_by_default() {

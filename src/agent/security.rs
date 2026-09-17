@@ -726,6 +726,7 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
     if let Some(policy) = crate::cli::headless::current_headless_policy() {
         let permitted = policy.is_tool_permitted(tool_name, true);
         if !permitted {
+            policy.record_denial(tool_name);
             tracing::warn!(
                 session = %session_key,
                 tool = %tool_name,

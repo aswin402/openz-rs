@@ -165,6 +165,8 @@ fn merge_latest_config_for_runtime(
     latest_config.agents.defaults.provider = runtime_config.agents.defaults.provider.clone();
     latest_config.agents.defaults.fallback_models =
         runtime_config.agents.defaults.fallback_models.clone();
+    latest_config.agents.defaults.max_tool_iterations =
+        runtime_config.agents.defaults.max_tool_iterations;
 
     if let Some(metadata) = session_metadata {
         apply_session_overrides(&mut latest_config, metadata);

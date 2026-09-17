@@ -114,7 +114,7 @@ fn test_headless_format_parsing() {
 
 use crate::cli::headless::execute_headless_turn;
 use crate::config::schema::Config;
-use crate::providers::mock::MockProvider;
+use crate::providers::mock::{MockProvider, MockResponse};
 use crate::session::SessionManager;
 use crate::tools::ToolRegistry;
 use std::sync::Arc;
@@ -245,10 +245,106 @@ async fn test_headless_security_policy_task_local_and_ask_approval() {
             .await
             .unwrap();
             assert!(!denied);
+            assert_eq!(policy.last_denial().as_deref(), Some("disallowed_tool"));
         })
         .await;
 
     assert!(current_headless_policy().is_none());
+}
+
+#[tokio::test]
+async fn test_execute_headless_turn_security_denial_returns_code_2() {
+    let mut config = Config::default();
+    config.agents.defaults.model = "mock-model".to_string();
+    config.agents.defaults.provider = "mock".to_string();
+
+    let provider = Arc::new(
+        MockProvider::new()
+            .with_response(MockResponse::tool_call(
+                "exec_command",
+                serde_json::json!({"command": "sudo apt update"}),
+            ))
+            .with_response(MockResponse::text("Tool was denied.")),
+    );
+
+    let registry = ToolRegistry::new();
+    let temp_dir = std::env::temp_dir().join(format!("openz-headless-denial-{}", uuid::Uuid::new_v4()));
+    let session_manager = SessionManager::new(temp_dir);
+
+    let agent_loop = crate::agent::AgentLoop::new(
+        config.clone(),
+        provider.clone(),
+        registry,
+        session_manager,
+    );
+
+    let args = HeadlessArgs {
+        prompt: Some("run dangerous command".to_string()),
+        output_format: "json".to_string(),
+        yes: false,
+        allowed_tools: None,
+        ..Default::default()
+    };
+
+    let output = execute_headless_turn(&agent_loop, &args, "run dangerous command", "cli:headless_denial_test")
+        .await
+        .expect("turn should finish");
+
+    assert_eq!(output.status, "security_denied");
+    assert_eq!(output.exit_code, 2);
+    assert!(output.error.is_some());
+    let error_msg = output.error.unwrap();
+    assert!(error_msg.contains("Tool 'exec_command' requires confirmation in headless mode"));
+}
+
+#[tokio::test]
+async fn test_execute_headless_turn_timeout_returns_code_1() {
+    struct HangingProvider;
+
+    #[async_trait::async_trait]
+    impl crate::providers::LLMProvider for HangingProvider {
+        async fn chat(
+            &self,
+            _system_prompt: &str,
+            _messages: &[crate::session::Message],
+            _tools: &[serde_json::Value],
+            _settings: &crate::providers::GenerationSettings,
+        ) -> anyhow::Result<crate::providers::LLMResponse> {
+            std::future::pending::<anyhow::Result<crate::providers::LLMResponse>>().await
+        }
+    }
+
+    let mut config = Config::default();
+    config.agents.defaults.model = "mock-model".to_string();
+    config.agents.defaults.provider = "mock".to_string();
+
+    let provider = Arc::new(HangingProvider);
+    let registry = ToolRegistry::new();
+    let temp_dir = std::env::temp_dir().join(format!("openz-headless-timeout-{}", uuid::Uuid::new_v4()));
+    let session_manager = SessionManager::new(temp_dir);
+
+    let agent_loop = crate::agent::AgentLoop::new(
+        config.clone(),
+        provider,
+        registry,
+        session_manager,
+    );
+
+    let args = HeadlessArgs {
+        prompt: Some("run hanging command".to_string()),
+        output_format: "json".to_string(),
+        timeout: Some(1),
+        ..Default::default()
+    };
+
+    let output = execute_headless_turn(&agent_loop, &args, "run hanging command", "cli:headless_timeout_test")
+        .await
+        .expect("turn should return timeout output");
+
+    assert_eq!(output.status, "error");
+    assert_eq!(output.exit_code, 1);
+    assert!(output.error.is_some());
+    assert!(output.error.unwrap().contains("timed out after 1s"));
 }
 
 
