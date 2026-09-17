@@ -276,6 +276,7 @@ pub trait LLMProvider: Send + Sync {
 
 pub mod anthropic;
 pub mod circuit_breaker;
+pub mod context_registry;
 pub mod model_prefs;
 pub mod ollama_manager;
 pub mod openai;
@@ -283,10 +284,15 @@ pub mod resolver;
 pub mod risk;
 pub(crate) mod transport;
 
+pub use context_registry::DynamicContextRegistry;
+
 #[cfg(test)]
 pub mod mock;
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod context_registry_tests;
 

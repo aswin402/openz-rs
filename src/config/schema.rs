@@ -149,6 +149,14 @@ pub struct AgentDefaults {
     pub security_mode: String,
     #[serde(default, alias = "tool_output_limit")]
     pub tool_output_limit: Option<usize>,
+    #[serde(default, alias = "prompt_budget_ratio")]
+    pub prompt_budget_ratio: Option<f64>,
+    #[serde(default, alias = "tool_output_ratio")]
+    pub tool_output_ratio: Option<f64>,
+    #[serde(default, alias = "compaction_threshold_ratio")]
+    pub compaction_threshold_ratio: Option<f64>,
+    #[serde(default, alias = "keep_recent_ratio")]
+    pub keep_recent_ratio: Option<f64>,
     #[serde(default = "default_enable_sandbox", alias = "enable_sandbox")]
     pub enable_sandbox: bool,
     #[serde(default = "default_tool_timeout_secs", alias = "tool_timeout_secs")]
@@ -291,6 +299,10 @@ impl Default for AgentDefaults {
             prompt_budget_limit: None,
             security_mode: default_security_mode(),
             tool_output_limit: None,
+            prompt_budget_ratio: None,
+            tool_output_ratio: None,
+            compaction_threshold_ratio: None,
+            keep_recent_ratio: None,
             enable_sandbox: default_enable_sandbox(),
             tool_timeout_secs: default_tool_timeout_secs(),
             show_tool_router_status: default_show_tool_router_status(),
