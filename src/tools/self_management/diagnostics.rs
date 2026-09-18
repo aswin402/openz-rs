@@ -99,10 +99,11 @@ impl Tool for DiagnoseToolTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let tool_name = arguments
+        let raw_tool_name = arguments
             .get("tool_name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing tool_name"))?;
+        let tool_name = raw_tool_name.trim();
         let mock_args = arguments
             .get("mock_args")
             .cloned()
@@ -244,6 +245,22 @@ fn check_db(path: &std::path::Path, run_integrity: bool) -> Value {
     }
 }
 
+fn parse_bool_param(arguments: &Value, key: &str, default: bool) -> bool {
+    if let Some(v) = arguments.get(key) {
+        if let Some(b) = v.as_bool() {
+            return b;
+        }
+        if let Some(s) = v.as_str() {
+            match s.trim().to_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => return true,
+                "false" | "0" | "no" | "off" => return false,
+                _ => {}
+            }
+        }
+    }
+    default
+}
+
 pub struct DiagnoseSystemTool;
 
 #[async_trait::async_trait]
@@ -273,14 +290,8 @@ impl Tool for DiagnoseSystemTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let check_latency = arguments
-            .get("check_latency")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        let check_db_integrity = arguments
-            .get("check_db_integrity")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let check_latency = parse_bool_param(arguments, "check_latency", true);
+        let check_db_integrity = parse_bool_param(arguments, "check_db_integrity", false);
 
         let os_type = std::env::consts::OS.to_string();
         let arch = std::env::consts::ARCH.to_string();

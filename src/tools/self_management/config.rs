@@ -195,6 +195,43 @@ fn merge_channel_credential(
     Ok(())
 }
 
+fn parse_bool_value(v: &Value) -> Option<bool> {
+    if let Some(b) = v.as_bool() {
+        return Some(b);
+    }
+    if let Some(s) = v.as_str() {
+        match s.trim().to_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => Some(true),
+            "false" | "0" | "no" | "off" => Some(false),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+fn parse_u64_value(v: &Value) -> Option<u64> {
+    if let Some(n) = v.as_u64() {
+        return Some(n);
+    }
+    if let Some(s) = v.as_str() {
+        s.trim().parse::<u64>().ok()
+    } else {
+        None
+    }
+}
+
+fn parse_f64_value(v: &Value) -> Option<f64> {
+    if let Some(f) = v.as_f64() {
+        return Some(f);
+    }
+    if let Some(s) = v.as_str() {
+        s.trim().parse::<f64>().ok()
+    } else {
+        None
+    }
+}
+
 pub struct ManageConfigTool;
 
 #[async_trait::async_trait]
@@ -338,10 +375,17 @@ impl Tool for ManageConfigTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments
+        let raw_action = arguments
             .get("action")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing action"))?;
+        let normalized_action = raw_action.trim().to_lowercase();
+        let action = match normalized_action.as_str() {
+            "view" | "show" | "get" | "read" => "view",
+            "update" | "set" | "modify" => "update",
+            "set_credential" | "credential" | "credentials" => "set_credential",
+            other => other,
+        };
 
         match action {
             "view" => {
@@ -364,7 +408,7 @@ impl Tool for ManageConfigTool {
                 for (k, v) in updates {
                     match k.as_str() {
                         "firefox_webdriver_port" | "firefox_attach_port" => {
-                            let Some(port) = v.as_u64().and_then(|value| u16::try_from(value).ok())
+                            let Some(port) = parse_u64_value(v).and_then(|value| u16::try_from(value).ok())
                             else {
                                 return Ok(
                                     serde_json::json!({"success": false, "error": format!("{} must be an integer port", k)}),
@@ -382,42 +426,42 @@ impl Tool for ManageConfigTool {
                             }
                         }
                         "model" => {
-                            if let Some(s) = v.as_str() {
+                            if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
                                 config.agents.defaults.model = s.to_string();
                             }
                         }
                         "provider" => {
-                            if let Some(s) = v.as_str() {
+                            if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
                                 config.agents.defaults.provider = s.to_string();
                             }
                         }
                         "max_tokens" => {
-                            if let Some(n) = v.as_u64() {
+                            if let Some(n) = parse_u64_value(v) {
                                 config.agents.defaults.max_tokens = n as usize;
                             }
                         }
                         "temperature" => {
-                            if let Some(f) = v.as_f64() {
+                            if let Some(f) = parse_f64_value(v) {
                                 config.agents.defaults.temperature = f as f32;
                             }
                         }
                         "caveman_mode" => {
-                            if let Some(b) = v.as_bool() {
+                            if let Some(b) = parse_bool_value(v) {
                                 config.agents.defaults.caveman_mode = b;
                             }
                         }
                         "tool_timeout_secs" => {
-                            if let Some(n) = v.as_u64() {
+                            if let Some(n) = parse_u64_value(v) {
                                 config.agents.defaults.tool_timeout_secs = n;
                             }
                         }
                         "streaming" => {
-                            if let Some(b) = v.as_bool() {
+                            if let Some(b) = parse_bool_value(v) {
                                 config.agents.defaults.streaming = b;
                             }
                         }
                         "show_tool_router_status" => {
-                            if let Some(b) = v.as_bool() {
+                            if let Some(b) = parse_bool_value(v) {
                                 config.agents.defaults.show_tool_router_status = b;
                             }
                         }
@@ -438,32 +482,32 @@ impl Tool for ManageConfigTool {
                             }
                         }
                         "min_free_disk_gb" => {
-                            if let Some(n) = v.as_f64() {
+                            if let Some(n) = parse_f64_value(v) {
                                 config.agents.defaults.min_free_disk_gb = n;
                             }
                         }
                         "allow_network_tools" => {
-                            if let Some(b) = v.as_bool() {
+                            if let Some(b) = parse_bool_value(v) {
                                 config.agents.defaults.allow_network_tools = b;
                             }
                         }
                         "max_concurrent_process_tools" => {
-                            if let Some(n) = v.as_u64() {
+                            if let Some(n) = parse_u64_value(v) {
                                 config.agents.defaults.max_concurrent_process_tools = n as usize;
                             }
                         }
                         "warn_before_expensive_tools" => {
-                            if let Some(b) = v.as_bool() {
+                            if let Some(b) = parse_bool_value(v) {
                                 config.agents.defaults.warn_before_expensive_tools = b;
                             }
                         }
                         "max_tool_iterations" => {
-                            if let Some(n) = v.as_u64() {
+                            if let Some(n) = parse_u64_value(v) {
                                 config.agents.defaults.max_tool_iterations = n as usize;
                             }
                         }
                         "skills_workspace_skills_enabled" => {
-                            if let Some(b) = v.as_bool() {
+                            if let Some(b) = parse_bool_value(v) {
                                 config.skills.workspace_skills_enabled = b;
                             }
                         }
@@ -476,7 +520,7 @@ impl Tool for ManageConfigTool {
                             }
                         }
                         "skills_write_approval" => {
-                            if let Some(b) = v.as_bool() {
+                            if let Some(b) = parse_bool_value(v) {
                                 config.skills.write_approval = b;
                             }
                         }
@@ -540,7 +584,7 @@ impl Tool for ManageConfigTool {
                     "message": format!("Credential target '{}' updated. Secrets are redacted in config views.", target)
                 }))
             }
-            _ => Err(anyhow::anyhow!("Invalid action")),
+            _ => Err(anyhow::anyhow!("Invalid action '{}'", raw_action)),
         }
     }
 }

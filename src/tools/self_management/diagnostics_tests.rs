@@ -98,3 +98,18 @@ fn test_diagnose_system() {
     assert!(res["databases"]["ccr_cache"].is_object());
     assert!(res["databases"]["thoughts"].is_object());
 }
+
+#[test]
+fn test_diagnose_system_string_boolean_coercion() {
+    let tool = DiagnoseSystemTool;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    let res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "check_latency": "false",
+            "check_db_integrity": "false"
+        })))
+        .unwrap();
+
+    assert_eq!(res["status"].as_str().unwrap(), "success");
+}

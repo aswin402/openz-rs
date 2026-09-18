@@ -41,14 +41,25 @@ impl Tool for CurateSkillTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments
+        let raw_action = arguments
             .get("action")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing action"))?;
+        let normalized_action = raw_action.trim().to_lowercase();
+        let action = match normalized_action.as_str() {
+            "list" | "ls" | "view" | "show" => "list",
+            "add" | "save" | "create" | "set" => "add",
+            "delete" | "remove" | "rm" => "delete",
+            other => other,
+        };
 
         match action {
             "list" => {
-                let profile = arguments.get("profile").and_then(|v| v.as_str());
+                let profile = arguments
+                    .get("profile")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
                 let skills = crate::agent::skills::load_skills_with_profile(profile)?;
                 Ok(serde_json::json!({
                     "success": true,
@@ -59,12 +70,18 @@ impl Tool for CurateSkillTool {
                 let skill_name = arguments
                     .get("skill_name")
                     .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
                     .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'add'"))?;
                 let content = arguments
                     .get("content")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("Missing content for action 'add'"))?;
-                let profile = arguments.get("profile").and_then(|v| v.as_str());
+                let profile = arguments
+                    .get("profile")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
 
                 if let Some(prof) = profile {
                     crate::agent::skills::save_subagent_skill(prof, skill_name, content)?;
@@ -81,8 +98,14 @@ impl Tool for CurateSkillTool {
                 let skill_name = arguments
                     .get("skill_name")
                     .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
                     .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'delete'"))?;
-                let profile = arguments.get("profile").and_then(|v| v.as_str());
+                let profile = arguments
+                    .get("profile")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
 
                 crate::agent::skills::delete_skill_with_profile(skill_name, profile)?;
                 Ok(serde_json::json!({
@@ -90,7 +113,7 @@ impl Tool for CurateSkillTool {
                     "message": format!("Skill '{}' successfully deleted", skill_name)
                 }))
             }
-            _ => Err(anyhow::anyhow!("Invalid action")),
+            _ => Err(anyhow::anyhow!("Invalid action '{}'", raw_action)),
         }
     }
 }

@@ -33,10 +33,18 @@ impl Tool for ManageBackupsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments
+        let raw_action = arguments
             .get("action")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'action'"))?;
+        let normalized_action = raw_action.trim().to_lowercase();
+        let action = match normalized_action.as_str() {
+            "create" | "backup" | "save" | "new" => "create",
+            "list" | "ls" | "view" => "list",
+            "restore" | "load" => "restore",
+            "delete" | "remove" | "rm" => "delete",
+            other => other,
+        };
         let openz_dir = crate::config::loader::runtime_data_dir();
         let backups_dir = openz_dir.join("backups");
 
@@ -150,6 +158,8 @@ impl Tool for ManageBackupsTool {
                 let backup_name = arguments
                     .get("backup_name")
                     .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
                     .ok_or_else(|| anyhow::anyhow!("Missing 'backup_name' for restore action"))?;
 
                 if backup_name.contains('/')
@@ -207,6 +217,8 @@ impl Tool for ManageBackupsTool {
                 let backup_name = arguments
                     .get("backup_name")
                     .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
                     .ok_or_else(|| anyhow::anyhow!("Missing 'backup_name' for delete action"))?;
 
                 if backup_name.contains('/')
@@ -231,7 +243,7 @@ impl Tool for ManageBackupsTool {
                     "message": format!("Backup '{}' successfully deleted.", backup_name)
                 }))
             }
-            _ => Err(anyhow::anyhow!("Invalid action")),
+            _ => Err(anyhow::anyhow!("Invalid action '{}'", raw_action)),
         }
     }
 }

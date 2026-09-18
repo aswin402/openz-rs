@@ -6,6 +6,18 @@ pub struct OpenZInventoryTool {
     registry: crate::tools::ToolRegistry,
 }
 
+fn parse_bool_value(v: Option<&Value>, default: bool) -> bool {
+    match v {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::String(s)) => match s.trim().to_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => true,
+            "false" | "0" | "no" | "off" => false,
+            _ => default,
+        },
+        _ => default,
+    }
+}
+
 impl OpenZInventoryTool {
     pub fn new(registry: crate::tools::ToolRegistry) -> Self {
         Self { registry }
@@ -43,14 +55,8 @@ impl Tool for OpenZInventoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let include_tools = arguments
-            .get("include_tools")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let include_subagents = arguments
-            .get("include_subagents")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let include_tools = parse_bool_value(arguments.get("include_tools"), false);
+        let include_subagents = parse_bool_value(arguments.get("include_subagents"), false);
         let prompt = arguments
             .get("prompt")
             .and_then(|v| v.as_str())

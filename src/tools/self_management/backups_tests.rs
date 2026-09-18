@@ -58,3 +58,38 @@ fn test_manage_backups() {
         .any(|b| b["backup_name"].as_str().unwrap() == backup_name);
     assert!(!found_2);
 }
+
+#[test]
+fn test_manage_backups_aliases_and_case() {
+    let tool = ManageBackupsTool;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    // 1. Create via alias "BACKUP"
+    let create_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "BACKUP"
+        })))
+        .unwrap();
+    assert_eq!(create_res["status"].as_str().unwrap(), "success");
+    let backup_name = create_res["backup_name"].as_str().unwrap();
+
+    // 2. List via alias "ls"
+    let list_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "ls"
+        })))
+        .unwrap();
+    assert_eq!(list_res["status"].as_str().unwrap(), "success");
+    let backups = list_res["backups"].as_array().unwrap();
+    assert!(backups.iter().any(|b| b["backup_name"].as_str().unwrap() == backup_name));
+
+    // 3. Delete via alias "rm" with whitespace padding
+    let padded_name = format!("  {}  ", backup_name);
+    let delete_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "rm",
+            "backup_name": padded_name
+        })))
+        .unwrap();
+    assert_eq!(delete_res["status"].as_str().unwrap(), "success");
+}

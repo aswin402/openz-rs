@@ -6,6 +6,22 @@ pub struct RequestToolScopeTool {
     registry: crate::tools::ToolRegistry,
 }
 
+fn parse_string_list(val: Option<&Value>) -> Vec<String> {
+    match val {
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty())
+            .collect(),
+        Some(Value::String(s)) => s
+            .split(',')
+            .map(|part| part.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 impl RequestToolScopeTool {
     pub fn new(registry: crate::tools::ToolRegistry) -> Self {
         Self { registry }
@@ -51,24 +67,10 @@ impl Tool for RequestToolScopeTool {
             .and_then(|v| v.as_str())
             .unwrap_or("no reason provided")
             .to_string();
-        let needed_domains = arguments
-            .get("needed_domains")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let needed_tools = arguments
-            .get("needed_tools")
-            .and_then(|v| v.as_array())
-            .into_iter()
-            .flatten()
-            .filter_map(|value| value.as_str().map(str::to_string))
-            .collect::<Vec<_>>();
-        let needed_domain_names = needed_domains
-            .iter()
-            .filter_map(|value| value.as_str().map(str::to_string))
-            .collect::<Vec<_>>();
+        let needed_domains = parse_string_list(arguments.get("needed_domains"));
+        let needed_tools = parse_string_list(arguments.get("needed_tools"));
         self.registry
-            .request_tool_scope(needed_tools.clone(), needed_domain_names);
+            .request_tool_scope(needed_tools.clone(), needed_domains.clone());
 
         Ok(serde_json::json!({
             "status": "scope_request_recorded",

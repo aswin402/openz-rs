@@ -6,6 +6,18 @@ pub struct ToolCatalogTool {
     registry: crate::tools::ToolRegistry,
 }
 
+fn parse_bool_value(v: Option<&Value>, default: bool) -> bool {
+    match v {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::String(s)) => match s.trim().to_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => true,
+            "false" | "0" | "no" | "off" => false,
+            _ => default,
+        },
+        _ => default,
+    }
+}
+
 impl ToolCatalogTool {
     pub fn new(registry: crate::tools::ToolRegistry) -> Self {
         Self { registry }
@@ -56,14 +68,8 @@ impl Tool for ToolCatalogTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let include_schema = arguments
-            .get("include_schema")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let only_exposed = arguments
-            .get("only_exposed")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let include_schema = parse_bool_value(arguments.get("include_schema"), false);
+        let only_exposed = parse_bool_value(arguments.get("only_exposed"), false);
         let domain_filter = arguments.get("domain").and_then(|v| v.as_str());
         let risk_filter = arguments.get("risk").and_then(|v| v.as_str());
         let prompt = arguments

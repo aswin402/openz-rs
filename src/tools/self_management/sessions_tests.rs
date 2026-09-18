@@ -126,3 +126,77 @@ fn test_manage_sessions() {
     }
     let _ = std::fs::remove_dir_all(&openz_dir);
 }
+
+#[test]
+fn test_manage_sessions_colon_keys_and_coercion() {
+    let _env_lock = TestEnvLock::acquire();
+    let previous_config_dir = std::env::var("OPENZ_CONFIG_DIR").ok();
+    let openz_dir =
+        std::env::temp_dir().join(format!("openz_manage_sessions_colon_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&openz_dir).unwrap();
+    std::env::set_var("OPENZ_CONFIG_DIR", &openz_dir);
+
+    let tool = ManageSessionsTool;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    let sessions_dir = openz_dir.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).unwrap();
+
+    // Stored on disk with safe_key replacing : with _
+    let colon_session_key = format!("cli:headless_{}", uuid::Uuid::new_v4());
+    let safe_key = crate::session::SessionManager::safe_key(&colon_session_key);
+    let session_file = sessions_dir.join(format!("{}.json", safe_key));
+
+    std::fs::write(
+        &session_file,
+        serde_json::json!({
+            "messages": [{"role": "user", "content": "Test colon key"}]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    // 1. Test alias "ls" and list
+    let list_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "LS"
+        })))
+        .unwrap();
+    assert_eq!(list_res["status"].as_str().unwrap(), "success");
+
+    // 2. Test export with raw colon key
+    let export_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "dump",
+            "session_key": &colon_session_key
+        })))
+        .unwrap();
+    assert_eq!(export_res["status"].as_str().unwrap(), "success");
+    assert_eq!(export_res["session"]["messages"][0]["content"], "Test colon key");
+
+    // 3. Test delete with raw colon key via alias "rm"
+    let delete_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "rm",
+            "session_key": &colon_session_key
+        })))
+        .unwrap();
+    assert_eq!(delete_res["status"].as_str().unwrap(), "success");
+    assert!(!session_file.exists());
+
+    // 4. Test prune with string older_than_days via alias "clean"
+    let prune_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "clean",
+            "older_than_days": "14"
+        })))
+        .unwrap();
+    assert_eq!(prune_res["status"].as_str().unwrap(), "success");
+
+    if let Some(prev) = previous_config_dir {
+        std::env::set_var("OPENZ_CONFIG_DIR", prev);
+    } else {
+        std::env::remove_var("OPENZ_CONFIG_DIR");
+    }
+    let _ = std::fs::remove_dir_all(&openz_dir);
+}

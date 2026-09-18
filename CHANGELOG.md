@@ -1,4 +1,37 @@
-### v0.0.194 (Latest Release)
+### v0.0.195 (Latest Release)
+- **Ideas**:
+  - Comprehensive headless subagent validation across the Self-Management & Diagnostics Suite (`diagnose_system`, `manage_backups`, `manage_config`, `curate_skill`, `manage_sessions`, `diagnose_tool`, `openz_inventory`, `tool_catalog`, `optimize_tool_scope`, `request_tool_scope`).
+  - Safe-Key Session Path Resolution: Fixed an issue in `manage_sessions` where `archive` and `delete` actions looked for raw `session_key.json` without resolving keys containing colons or slashes (e.g. `cli:headless_...`), which are stored on disk with `SessionManager::safe_key` (`cli_headless_...`). Implemented `resolve_session_path` across `archive`, `delete`, and `export` to check both `safe_key` and raw filename paths, ensuring 100% interoperability with channel and headless session identifiers.
+  - Action Normalization and Aliases: Implemented case-insensitive action matching and popular aliases across `manage_sessions` (`ls`/`show` -> `list`, `clean`/`cleanup` -> `prune`, `dump` -> `export`, `remove`/`rm` -> `delete`), `curate_skill` (`ls`/`view`/`show` -> `list`, `save`/`create`/`set` -> `add`, `remove`/`rm` -> `delete`), `manage_backups` (`backup`/`save`/`new` -> `create`, `ls`/`view` -> `list`, `load` -> `restore`, `remove`/`rm` -> `delete`), and `manage_config` (`show`/`get`/`read` -> `view`, `set`/`modify` -> `update`, `credential`/`credentials` -> `set_credential`).
+  - Coercion for Numeric and Boolean Hyperparameters: In `manage_config`, added `parse_bool_value`, `parse_u64_value`, and `parse_f64_value` to support stringified numbers and booleans for `firefox_webdriver_port`, `firefox_attach_port`, `max_tokens`, `temperature`, `caveman_mode`, `tool_timeout_secs`, `streaming`, `show_tool_router_status`, `min_free_disk_gb`, `allow_network_tools`, `max_concurrent_process_tools`, `warn_before_expensive_tools`, `max_tool_iterations`, `skills_workspace_skills_enabled`, and `skills_write_approval`. In `diagnose_system`, added `parse_bool_param` for `check_latency` and `check_db_integrity`. In `tool_catalog` and `openz_inventory`, coerced string booleans. In `request_tool_scope`, parsed `needed_domains` and `needed_tools` from arrays or comma-separated strings.
+  - Test Isolation with `TestEnvLock`: Added thread-safe environment locking in `config_tests.rs` matching `sessions_tests.rs` and `loader_tests.rs` to prevent race conditions during parallel test execution when manipulating `OPENZ_CONFIG_DIR`.
+- **Inspirations**:
+  - Headless subagent real-world evaluation findings across self-management, configuration, and diagnostics tools.
+  - Robustness Principle (Postel's Law): Be liberal in what you accept from LLMs (case-insensitive actions, aliases, string numbers/booleans, and raw colon session keys).
+  - OpenZ session safe-key translation consistency.
+- **Sources & References**:
+  - Implementation & Dispatch Sources:
+    - [`src/tools/self_management/sessions.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/sessions.rs): `resolve_session_path`, action normalization, aliases, and `older_than_days` string coercion.
+    - [`src/tools/self_management/config.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/config.rs): `parse_bool_value`, `parse_u64_value`, `parse_f64_value`, action normalization, aliases, and hyperparameter coercion.
+    - [`src/tools/self_management/skills.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/skills.rs): Action normalization, aliases, and whitespace trimming.
+    - [`src/tools/self_management/backups.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/backups.rs): Action normalization, aliases, and `backup_name` trimming.
+    - [`src/tools/self_management/diagnostics.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/diagnostics.rs): `parse_bool_param` for `check_latency` and `check_db_integrity`, and `tool_name` trimming.
+    - [`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs): `parse_bool_value` for `include_schema` and `only_exposed`.
+    - [`src/tools/self_management/inventory.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/inventory.rs): `parse_bool_value` for `include_tools` and `include_subagents`.
+    - [`src/tools/self_management/scope.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/scope.rs): `parse_string_list` for array and comma-separated string tolerance.
+  - Test Modules:
+    - [`src/tools/self_management/sessions_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/sessions_tests.rs): `test_manage_sessions_colon_keys_and_coercion`.
+    - [`src/tools/self_management/config_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/config_tests.rs): `TestEnvLock` isolation and `test_manage_config_coercion_and_aliases`.
+    - [`src/tools/self_management/skills_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/skills_tests.rs): `test_curate_skills_aliases_and_case`.
+    - [`src/tools/self_management/backups_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/backups_tests.rs): `test_manage_backups_aliases_and_case`.
+    - [`src/tools/self_management/diagnostics_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/diagnostics_tests.rs): `test_diagnose_system_string_boolean_coercion`.
+- **Details & Metrics**:
+  - 100% pass rate achieved across all self-management tools in real-world headless subagent mode.
+  - Execution latencies: `diagnose_system` ~1.32s (5 SQLite DB integrity checks + OpenRouter ping ~225ms), `manage_backups` create ~44ms, list ~35ms, delete ~32ms, `manage_config` view ~33ms, `curate_skill` list ~80ms (13 skills), `manage_sessions` list ~1.7s (90+ sessions), `openz_inventory` ~770ms, `diagnose_tool` ~240ms.
+  - Resolved 5 key friction points across session path translation, action casing/aliases, parameter string coercion, and test environment isolation.
+- **Verification**: Verified 19 self-management tests pass (`cargo test -p openz --lib tools::self_management -j 1`), exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`), version sync verified (`cargo test -p openz --lib version_sync_tests -j 1`), 0 clippy warnings (`cargo clippy -p openz -j 1`), and clean build (`cargo build -p openz --bin openz -j 2`).
+
+### v0.0.194
 - **Ideas**:
   - Comprehensive headless subagent validation across the GSD & Playwright Browser Automation Suite (`gsd_browser`, `obscura_browser`, `web_fetch`, `crawl_website`, `firefox_browser`, `inspect_browsers`).
   - Action normalization and alias mapping: LLMs frequently use variant browser action names (e.g. `goto` or `open` instead of `navigate`, `eval_js` or `evaluate` or `js` instead of `eval`, `snapshot` instead of `render`, `accessibility_tree` with dashes or underscores). Implemented robust action normalization across `gsd_browser`, `obscura_browser`, and `firefox_browser`.

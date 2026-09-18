@@ -4,6 +4,26 @@ use serde_json::Value;
 
 pub struct ManageSessionsTool;
 
+fn resolve_session_path(
+    sessions_dir: &std::path::Path,
+    session_key: &str,
+) -> (std::path::PathBuf, std::path::PathBuf, String) {
+    let key = session_key.trim();
+    let safe_key = crate::session::SessionManager::safe_key(key);
+    let direct_json = sessions_dir.join(format!("{}.json", key));
+    let safe_json = sessions_dir.join(format!("{}.json", safe_key));
+    let direct_lock = sessions_dir.join(format!("{}.lock", key));
+    let safe_lock = sessions_dir.join(format!("{}.lock", safe_key));
+
+    if safe_json.exists() {
+        (safe_json, safe_lock, safe_key)
+    } else if direct_json.exists() {
+        (direct_json, direct_lock, key.to_string())
+    } else {
+        (safe_json, safe_lock, safe_key)
+    }
+}
+
 #[async_trait::async_trait]
 impl Tool for ManageSessionsTool {
     fn name(&self) -> &str {
@@ -37,10 +57,19 @@ impl Tool for ManageSessionsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments
+        let raw_action = arguments
             .get("action")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'action'"))?;
+        let normalized_action = raw_action.trim().to_lowercase();
+        let action = match normalized_action.as_str() {
+            "list" | "ls" | "show" => "list",
+            "prune" | "clean" | "cleanup" => "prune",
+            "archive" => "archive",
+            "export" | "dump" => "export",
+            "delete" | "remove" | "rm" => "delete",
+            other => other,
+        };
         let openz_dir = crate::config::loader::runtime_data_dir();
         let sessions_dir = openz_dir.join("sessions");
 
@@ -98,7 +127,12 @@ impl Tool for ManageSessionsTool {
 
                 let older_than_days = arguments
                     .get("older_than_days")
-                    .and_then(|v| v.as_u64())
+                    .and_then(|v| {
+                        v.as_u64().or_else(|| {
+                            v.as_str()
+                                .and_then(|s| s.trim().parse::<u64>().ok())
+                        })
+                    })
                     .unwrap_or(7);
                 let outputs_dir = openz_dir.join("tool_outputs");
                 let mut files_removed = 0;
@@ -141,9 +175,10 @@ impl Tool for ManageSessionsTool {
                 let session_key = arguments
                     .get("session_key")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("Missing 'session_key' for action 'archive'"))?;
-                let session_file = sessions_dir.join(format!("{}.json", session_key));
-                let lock_file = sessions_dir.join(format!("{}.lock", session_key));
+                    .ok_or_else(|| anyhow::anyhow!("Missing 'session_key' for action 'archive'"))?
+                    .trim();
+                let (session_file, lock_file, safe_key) =
+                    resolve_session_path(&sessions_dir, session_key);
 
                 if !session_file.exists() {
                     return Err(anyhow::anyhow!("Session '{}' does not exist.", session_key));
@@ -153,7 +188,7 @@ impl Tool for ManageSessionsTool {
                 std::fs::create_dir_all(&archives_dir)?;
 
                 let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
-                let archive_file = archives_dir.join(format!("{}_{}.json", session_key, timestamp));
+                let archive_file = archives_dir.join(format!("{}_{}.json", safe_key, timestamp));
 
                 let size = session_file.metadata().map(|m| m.len()).unwrap_or(0);
                 std::fs::copy(&session_file, &archive_file)?;
@@ -175,9 +210,9 @@ impl Tool for ManageSessionsTool {
                 let session_key = arguments
                     .get("session_key")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("Missing session_key for export"))?;
-                let safe_key = session_key.replace(":", "_").replace("/", "_");
-                let session_file = sessions_dir.join(format!("{}.json", safe_key));
+                    .ok_or_else(|| anyhow::anyhow!("Missing session_key for export"))?
+                    .trim();
+                let (session_file, _, _) = resolve_session_path(&sessions_dir, session_key);
                 if !session_file.exists() {
                     return Err(anyhow::anyhow!("Session does not exist: {}", session_key));
                 }
@@ -191,9 +226,9 @@ impl Tool for ManageSessionsTool {
                 let session_key = arguments
                     .get("session_key")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("Missing 'session_key' for action 'delete'"))?;
-                let session_file = sessions_dir.join(format!("{}.json", session_key));
-                let lock_file = sessions_dir.join(format!("{}.lock", session_key));
+                    .ok_or_else(|| anyhow::anyhow!("Missing 'session_key' for action 'delete'"))?
+                    .trim();
+                let (session_file, lock_file, _) = resolve_session_path(&sessions_dir, session_key);
 
                 if !session_file.exists() {
                     return Err(anyhow::anyhow!("Session '{}' does not exist.", session_key));

@@ -22,8 +22,41 @@ fn redact_secrets_handles_camel_case_and_nested_values() {
     assert_eq!(value["model"], "openai/gpt-4o");
 }
 
+struct TestEnvLock;
+
+impl TestEnvLock {
+    fn acquire() -> Self {
+        let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(_) => break,
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            }
+        }
+        TestEnvLock
+    }
+}
+
+impl Drop for TestEnvLock {
+    fn drop(&mut self) {
+        let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
+        let _ = std::fs::remove_file(lock_path);
+    }
+}
+
 #[test]
 fn test_manage_config() {
+    let _env_lock = TestEnvLock::acquire();
+    let previous_config_dir = std::env::var("OPENZ_CONFIG_DIR").ok();
+    let openz_dir =
+        std::env::temp_dir().join(format!("openz_manage_config_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&openz_dir).unwrap();
+    std::env::set_var("OPENZ_CONFIG_DIR", &openz_dir);
+
     let tool = ManageConfigTool;
     let rt = tokio::runtime::Runtime::new().unwrap();
 
@@ -157,4 +190,68 @@ fn test_manage_config() {
 
     // Restore original config
     crate::config::loader::save_config(&original_config).unwrap();
+
+    if let Some(prev) = previous_config_dir {
+        std::env::set_var("OPENZ_CONFIG_DIR", prev);
+    } else {
+        std::env::remove_var("OPENZ_CONFIG_DIR");
+    }
+    let _ = std::fs::remove_dir_all(&openz_dir);
+}
+
+#[test]
+fn test_manage_config_coercion_and_aliases() {
+    let _env_lock = TestEnvLock::acquire();
+    let previous_config_dir = std::env::var("OPENZ_CONFIG_DIR").ok();
+    let openz_dir =
+        std::env::temp_dir().join(format!("openz_manage_config_coercion_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&openz_dir).unwrap();
+    std::env::set_var("OPENZ_CONFIG_DIR", &openz_dir);
+
+    let tool = ManageConfigTool;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    let original_config = crate::config::loader::load_config().unwrap();
+
+    // 1. Alias "SHOW"
+    let view_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "SHOW"
+        })))
+        .unwrap();
+    assert!(view_res["success"].as_bool().unwrap());
+
+    // 2. Alias "set" with string coercion for numbers and booleans
+    let update_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "set",
+            "updates": {
+                "max_tokens": "2048",
+                "temperature": "0.35",
+                "caveman_mode": "true",
+                "streaming": "false",
+                "firefox_webdriver_port": "4545",
+                "min_free_disk_gb": "4.2"
+            }
+        })))
+        .unwrap();
+    assert!(update_res["success"].as_bool().unwrap());
+
+    let updated = crate::config::loader::load_config().unwrap();
+    assert_eq!(updated.agents.defaults.max_tokens, 2048);
+    assert!((updated.agents.defaults.temperature - 0.35f32).abs() < 1e-4);
+    assert_eq!(updated.agents.defaults.caveman_mode, true);
+    assert_eq!(updated.agents.defaults.streaming, false);
+    assert_eq!(updated.browser.firefox_webdriver_port, 4545);
+    assert!((updated.agents.defaults.min_free_disk_gb - 4.2).abs() < 1e-4);
+
+    // Restore original config
+    crate::config::loader::save_config(&original_config).unwrap();
+
+    if let Some(prev) = previous_config_dir {
+        std::env::set_var("OPENZ_CONFIG_DIR", prev);
+    } else {
+        std::env::remove_var("OPENZ_CONFIG_DIR");
+    }
+    let _ = std::fs::remove_dir_all(&openz_dir);
 }
