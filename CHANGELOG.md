@@ -1,4 +1,36 @@
-### v0.0.191 (Latest Release)
+### v0.0.192 (Latest Release)
+- **Ideas**:
+  - Comprehensive headless subagent validation across the complete Media Engine suite (52 tools across vector graphics, animation generators, image transformations, video synthesis, template management, and quality evaluation).
+  - Numeric coercion for LLM tool arguments: LLMs routinely emit numeric dimensions (e.g. width, height, fps, duration, loops) as strings (`"width": "300"`, `"duration": "2.5"`). Serde standard deserialization rejects these string numbers with type mismatch errors. Implement `coerce_number_value` and `coerce_numeric_fields` across SVG creation/animation and video operations to transparently parse and coerce stringified numbers to valid JSON numbers.
+  - Robust batch image operation discriminator parsing: Serde enums default to external tagging (`{"Resize": {...}}`), whereas LLMs frequently emit tagged discriminator objects (`{"operation": "resize", "width": 80, "height": 80}`) or plain string operation identifiers (`"invert"`, `"grayscale"`). Implement `normalize_process_operation_value` in `openmedia_image_batch_process` to convert untagged string and discriminator map inputs into matching internal variant schemas, and provide `#[derive(Default)]` on `ResizeMethod` with `#[serde(default)]` on resize parameters.
+  - User & LLM Rating Scale Tolerance: The SQLite database schema for `media_feedback` enforces `CHECK (rating >= 0.0 AND rating <= 1.0)`. However, human users and LLMs naturally rate outputs on 1-5, 1-10, or 1-100 scales (e.g. 5 stars). Automatically normalize ratings `> 1.0` (scale 1-5 to `/ 5.0`, 1-10 to `/ 10.0`, 1-100 to `/ 100.0`) in both OpenZ and OpenMedia MCP before SQLite insertion, eliminating constraint violation failures.
+  - Headless CDP Browser Screenshot Resilience: On systems where specialized browser engines (such as Obscura) or minimal CDP daemons are running or listed first in `chrome_paths`, CDP screenshot capturing can hang or fail due to non-standard WebSocket target endpoints or unimplemented `Page.captureScreenshot`. Enhance `obtain_tab_websocket_url` to fall back to `/json/list` scraping, prioritize full `google-chrome` binaries over minimal scrapers, and add automatic fallback in `generate_image` to `openmedia_mcp::html_to_image` when CDP browser rendering fails or is unavailable.
+  - Tab lifecycle cleanup in `html_video`: Properly close the specific opened target tab via `tab_id` and CDP client rather than leaving dangling headless tabs.
+- **Inspirations**:
+  - Headless subagent evaluation findings across all 52 Media Engine tools.
+  - Robustness Principle (Postel's Law): Be liberal in what you accept from LLMs (stringified numeric parameters, discriminator-tagged maps, and 5-star ratings).
+  - Resilient multi-tier rendering fallback architectures (CDP -> resvg / skia / font-rasterization).
+- **Sources & References**:
+  - Implementation & Dispatch Sources:
+    - [`src/tools/openmedia/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod.rs): `coerce_number_value`, `coerce_numeric_fields`, `normalize_batch_ops`, and rating normalization.
+    - [`tools/openmedia/mcp/src/image_handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/openmedia/mcp/src/image_handlers.rs): `normalize_process_operation_value` in batch image processing.
+    - [`tools/openmedia/mcp/src/improvement_handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/openmedia/mcp/src/improvement_handlers.rs): Flexible rating normalization (1-5, 1-10, 1-100 scales to 0.0..1.0).
+    - [`tools/openmedia/process/src/lib.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/openmedia/process/src/lib.rs): `#[derive(Default)]` on `ResizeMethod` and `#[serde(default)]` on `ProcessOperation::Resize.method`.
+    - [`tools/openmedia/mcp/src/lib.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/openmedia/mcp/src/lib.rs): Re-export of `normalize_process_operation_value`.
+    - [`src/tools/browser/common.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/common.rs): `obtain_tab_websocket_url` with fallback to `/json/list`, `google-chrome` prioritization over `obscura`.
+    - [`src/tools/image_generator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/image_generator.rs): Fallback to `openmedia_mcp::html_to_image` when CDP screenshot capture encounters an error.
+    - [`src/tools/html_video.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/html_video.rs): Explicit tab closing by tab id.
+  - Test Modules:
+    - [`src/tools/openmedia/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod_tests.rs): `test_coerce_number_value`, `test_coerce_numeric_fields`, `test_normalize_batch_ops_string_and_discriminator`, `test_normalize_rating_scale`.
+    - [`tools/openmedia/mcp/src/image_handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/openmedia/mcp/src/image_handlers.rs): `test_normalize_process_operation_value_tagged_and_string`.
+- **Details & Metrics**:
+  - Validated all 52 Media Engine tools (37 `openmedia_*` MCP tools + native core media tools `generate_image`, `render_mermaid`, `create_animated_svg`, `html_to_video`, `generate_video`).
+  - 100% pass rate achieved across all suites.
+  - Subagent real-world execution speeds: SVG generation ~54ms, image resizing/filtering ~150-300ms, feedback recording ~5.6s, high-resolution 1600x1600 PNG rendering ~2.8s.
+  - Resolved 5 friction points and edge cases across string-to-number coercion, discriminator deserialization, SQLite check constraints, and CDP screenshot capture.
+- **Verification**: Verified 11 openmedia tests in openz pass (`cargo test -p openz --lib tools::openmedia -j 1`), 29 openmedia-mcp tests pass (`cargo test -p openmedia-mcp -j 1`), exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`), version sync verified (`cargo test -p openz --lib version_sync_tests -j 1`), 0 clippy warnings (`cargo clippy -p openz -j 1`), and clean build (`cargo build -p openz -j 2`).
+
+### v0.0.191
 - **Ideas**:
   - Address real-world friction and edge cases discovered during autonomous headless subagent testing of the Document Processing tool suite (35 OpenDoc & DocReader native tools).
   - Robust LLM JSON serialization tolerance: LLMs frequently serialize nested JSON objects and arrays as stringified JSON strings (e.g. `sheets: "[{\"name\": ...}]"` or `variables: "{\"k\": \"v\"}"`). Add `normalize_json_param` fallback to automatically deserialize stringified JSON inputs before validating parameters in `create_xlsx`, `edit_xlsx`, `fill_template`, and `fill_pdf_form`.

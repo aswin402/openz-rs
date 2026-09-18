@@ -240,9 +240,21 @@ impl OpenMediaServer {
     ) -> Result<Json<McpObject>, String> {
         let req = params.0;
 
+        let mut rating = req.rating;
+        if rating > 1.0 {
+            if rating <= 5.0 {
+                rating /= 5.0;
+            } else if rating <= 10.0 {
+                rating /= 10.0;
+            } else if rating <= 100.0 {
+                rating /= 100.0;
+            }
+        }
+        let rating = rating.clamp(0.0, 1.0);
+
         let feedback = Feedback {
             generation_id: req.generation_id,
-            rating: req.rating,
+            rating,
             feedback: req.feedback,
             keep: req.keep.unwrap_or(true),
             created_at: chrono::Utc::now().to_rfc3339(),

@@ -26,6 +26,7 @@ pub(crate) use helpers::{
     parse_video_scene_value, resolve_theme_preset,
 };
 pub use helpers::{parse_transition_type, parse_transition_type_with_fallback};
+pub use image_handlers::normalize_process_operation_value;
 
 /// Main MCP server for OpenMedia
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

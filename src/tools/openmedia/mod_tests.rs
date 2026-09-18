@@ -132,3 +132,143 @@ async fn test_openmedia_server_ping() {
     let res = get_server().await.unwrap().ping().await;
     assert!(res.contains("pong"));
 }
+
+#[test]
+fn test_openmedia_create_svg_coerces_string_numbers() {
+    let normalized = normalize_openmedia_arguments(
+        "openmedia_create_svg",
+        &json!({
+            "width": "400",
+            "height": "300",
+            "elements": [
+                {
+                    "type": "rect",
+                    "x": "10",
+                    "y": "20",
+                    "width": "100",
+                    "height": "50",
+                    "fill": "#ff0000",
+                    "stroke_width": "2"
+                },
+                {
+                    "type": "circle",
+                    "cx": "200",
+                    "cy": "150",
+                    "r": "40",
+                    "fill": "#00ff00"
+                }
+            ]
+        }),
+    );
+
+    assert_eq!(normalized["width"], 400);
+    assert_eq!(normalized["height"], 300);
+    assert_eq!(normalized["elements"][0]["x"], 10);
+    assert_eq!(normalized["elements"][0]["y"], 20);
+    assert_eq!(normalized["elements"][0]["width"], 100);
+    assert_eq!(normalized["elements"][0]["height"], 50);
+    assert_eq!(normalized["elements"][0]["stroke_width"], 2);
+    assert_eq!(normalized["elements"][1]["cx"], 200);
+    assert_eq!(normalized["elements"][1]["cy"], 150);
+    assert_eq!(normalized["elements"][1]["r"], 40);
+}
+
+#[test]
+fn test_openmedia_animate_and_video_coerce_string_numbers() {
+    let anim = normalize_openmedia_arguments(
+        "openmedia_animate_svg",
+        &json!({
+            "width": "500",
+            "height": "500",
+            "fps": "24",
+            "duration": "3.5"
+        }),
+    );
+    assert_eq!(anim["width"], 500);
+    assert_eq!(anim["height"], 500);
+    assert_eq!(anim["fps"], 24);
+    assert_eq!(anim["duration"], 3.5);
+
+    let slideshow = normalize_openmedia_arguments(
+        "openmedia_video_create_slideshow",
+        &json!({
+            "images": ["/tmp/a.png"],
+            "width": "640",
+            "height": "360",
+            "fps": "15",
+            "duration_per_image": "2.0"
+        }),
+    );
+    assert_eq!(slideshow["width"], 640);
+    assert_eq!(slideshow["height"], 360);
+    assert_eq!(slideshow["fps"], 15);
+    assert_eq!(slideshow["duration_per_image"], 2.0);
+
+    let trim = normalize_openmedia_arguments(
+        "openmedia_video_trim",
+        &json!({
+            "video_path": "/tmp/test.mp4",
+            "start_time": "1.5",
+            "end_time": "5.0"
+        }),
+    );
+    assert_eq!(trim["start_time"], 1.5);
+    assert_eq!(trim["end_time"], 5.0);
+}
+
+#[test]
+fn test_openmedia_improve_feedback_normalizes_rating() {
+    let f5 = normalize_openmedia_arguments(
+        "openmedia_improve_feedback",
+        &json!({
+            "generation_id": "gen-1",
+            "rating": 5
+        }),
+    );
+    assert_eq!(f5["rating"], 1.0);
+
+    let f4 = normalize_openmedia_arguments(
+        "openmedia_improve_feedback",
+        &json!({
+            "generation_id": "gen-1",
+            "rating": "4"
+        }),
+    );
+    assert_eq!(f4["rating"], 0.8);
+
+    let f09 = normalize_openmedia_arguments(
+        "openmedia_improve_feedback",
+        &json!({
+            "generation_id": "gen-1",
+            "rating": 0.9
+        }),
+    );
+    assert_eq!(f09["rating"], 0.9);
+}
+
+#[test]
+fn test_openmedia_image_batch_process_normalizes_operations() {
+    let batch = normalize_openmedia_arguments(
+        "openmedia_image_batch_process",
+        &json!({
+            "glob_pattern": "*.png",
+            "output_dir": "/tmp/out",
+            "operations": [
+                {
+                    "operation": "resize",
+                    "width": 120,
+                    "height": 120
+                },
+                {
+                    "operation": "invert"
+                }
+            ]
+        }),
+    );
+
+    let ops = batch["operations"].as_array().unwrap();
+    assert_eq!(ops[0]["Resize"]["width"], 120);
+    assert_eq!(ops[0]["Resize"]["height"], 120);
+    assert_eq!(ops[0]["Resize"]["method"], "lanczos3");
+    assert_eq!(ops[1], "Invert");
+}

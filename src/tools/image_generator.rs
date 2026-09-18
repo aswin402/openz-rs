@@ -1,7 +1,7 @@
 use crate::config::resolve_path;
 use crate::tools::browser_common::{
     browser_cdp_port, connect_to_tab, ensure_browser_running, kill_browser_on_cdp_port,
-    send_cdp_cmd,
+    obtain_tab_websocket_url, send_cdp_cmd,
 };
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
@@ -337,44 +337,18 @@ impl Tool for GenerateImageTool {
         ensure_browser_running().await?;
 
         let cdp_port = browser_cdp_port();
-        let client = crate::core::http::default_http_client();
-        let new_tab_url = format!("http://127.0.0.1:{cdp_port}/json/new");
-        let mut res = client.put(&new_tab_url).send().await;
-
-        if !matches!(&res, Ok(r) if r.status().is_success()) {
-            res = client.get(&new_tab_url).send().await;
-        }
-
-        if !matches!(&res, Ok(r) if r.status().is_success()) {
-            kill_browser_on_cdp_port();
-            sleep(Duration::from_millis(500)).await;
-            ensure_browser_running().await?;
-            res = client.put(&new_tab_url).send().await;
-            if !matches!(&res, Ok(r) if r.status().is_success()) {
-                res = client.get(&new_tab_url).send().await;
+        let (tab_id, ws_url) = match obtain_tab_websocket_url(cdp_port).await {
+            Ok(pair) => pair,
+            Err(_) => {
+                kill_browser_on_cdp_port();
+                sleep(Duration::from_millis(500)).await;
+                ensure_browser_running().await?;
+                obtain_tab_websocket_url(cdp_port).await?
             }
-        }
-
-        let res = res?;
-        if !res.status().is_success() {
-            if let Some(path) = &temp_file_path {
-                let _ = fs::remove_file(path);
-            }
-            return Err(anyhow!("Failed to create a new tab via CDP HTTP API"));
-        }
-
-        let tab_info: Value = res.json().await?;
-        let tab_id = tab_info
-            .get("id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("No tab ID returned from /json/new"))?;
-        let ws_url = tab_info
-            .get("webSocketDebuggerUrl")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("No webSocketDebuggerUrl returned from /json/new"))?;
+        };
 
         // Connect to WebSocket
-        let (mut write, mut read) = connect_to_tab(ws_url).await?;
+        let (mut write, mut read) = connect_to_tab(&ws_url).await?;
         let mut message_id = 0u64;
 
         // Enable Page and Runtime domains
@@ -546,12 +520,48 @@ impl Tool for GenerateImageTool {
         )
         .await?;
 
-        let base64_data = screenshot_res
+        let image_bytes = if let Some(base64_data) = screenshot_res
             .pointer("/result/data")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Failed to capture screenshot data"))?;
-
-        let image_bytes = BASE64_STANDARD.decode(base64_data)?;
+        {
+            BASE64_STANDARD.decode(base64_data)?
+        } else if let Some(html_content) = arguments.get("html").and_then(|v| v.as_str()) {
+            if let Ok(server) = crate::tools::openmedia::get_server().await {
+                let req = openmedia_mcp::Parameters(openmedia_mcp::HtmlToImageRequest {
+                    html: html_content.to_string(),
+                    width: Some(width as u32),
+                    height: Some(height as u32),
+                    device_scale_factor: Some(device_scale_factor),
+                    output_format: Some("png".to_string()),
+                });
+                if let Ok(res) = server.html_to_image(req).await {
+                    let val: Value = serde_json::from_value(res.0 .0)?;
+                    if let Some(path_str) = val.get("path").and_then(|v| v.as_str()) {
+                        let gen_path = std::path::Path::new(path_str);
+                        if gen_path.exists() {
+                            if let Some(parent) = output_path.parent() {
+                                let _ = fs::create_dir_all(parent);
+                            }
+                            let _ = fs::copy(gen_path, &output_path);
+                            if let Some(path) = &temp_file_path {
+                                let _ = fs::remove_file(path);
+                            }
+                            return Ok(json!({
+                                "status": "success",
+                                "complete": true,
+                                "output_path": output_path.to_string_lossy(),
+                                "backend": "openmedia_chromiumoxide_fallback",
+                                "width": width,
+                                "height": height,
+                            }));
+                        }
+                    }
+                }
+            }
+            return Err(anyhow!("Failed to capture screenshot data via CDP and fallback renderer"));
+        } else {
+            return Err(anyhow!("Failed to capture screenshot data"));
+        };
 
         // Ensure parent directories exist
         if let Some(parent) = output_path.parent() {
@@ -562,6 +572,7 @@ impl Tool for GenerateImageTool {
         fs::write(&output_path, image_bytes)?;
 
         // Close the tab
+        let client = crate::core::http::default_http_client();
         let close_url = format!("http://127.0.0.1:{cdp_port}/json/close/{}", tab_id);
         let _ = client.get(&close_url).send().await;
 

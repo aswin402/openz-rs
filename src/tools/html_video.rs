@@ -1,7 +1,7 @@
 use crate::config::resolve_path;
 use crate::tools::browser_common::{
     browser_cdp_port, connect_to_tab, ensure_browser_running, kill_browser_on_cdp_port,
-    send_cdp_cmd,
+    obtain_tab_websocket_url, send_cdp_cmd,
 };
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
@@ -235,31 +235,17 @@ impl Tool for HtmlToVideoTool {
         ensure_browser_running().await?;
 
         let cdp_port = browser_cdp_port();
-        let client = crate::core::http::default_http_client();
-        let new_tab_url = format!("http://127.0.0.1:{cdp_port}/json/new");
-        let mut res = client.put(&new_tab_url).send().await;
-
-        if !matches!(&res, Ok(r) if r.status().is_success()) {
-            res = client.get(&new_tab_url).send().await;
-        }
-
-        if !matches!(&res, Ok(r) if r.status().is_success()) {
-            kill_browser_on_cdp_port();
-            sleep(Duration::from_millis(500)).await;
-            ensure_browser_running().await?;
-            res = client.put(&new_tab_url).send().await;
-            if !matches!(&res, Ok(r) if r.status().is_success()) {
-                res = client.get(&new_tab_url).send().await;
+        let (tab_id, web_socket_debugger_url) = match obtain_tab_websocket_url(cdp_port).await {
+            Ok(pair) => pair,
+            Err(_) => {
+                kill_browser_on_cdp_port();
+                sleep(Duration::from_millis(500)).await;
+                ensure_browser_running().await?;
+                obtain_tab_websocket_url(cdp_port).await?
             }
-        }
+        };
 
-        let tab_info: Value = res?.json().await?;
-        let web_socket_debugger_url = tab_info
-            .get("webSocketDebuggerUrl")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("No webSocketDebuggerUrl returned from browser tab"))?;
-
-        let (mut write, mut read) = connect_to_tab(web_socket_debugger_url).await?;
+        let (mut write, mut read) = connect_to_tab(&web_socket_debugger_url).await?;
         let mut message_id = 0u64;
 
         let _ = send_cdp_cmd(
@@ -347,9 +333,9 @@ impl Tool for HtmlToVideoTool {
             fs::write(&frame_file, image_bytes)?;
         }
 
-        let target_id = tab_info.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let client = crate::core::http::default_http_client();
         let _ = client
-            .get(format!("http://127.0.0.1:{cdp_port}/json/close/{}", target_id))
+            .get(format!("http://127.0.0.1:{cdp_port}/json/close/{}", tab_id))
             .send()
             .await;
 

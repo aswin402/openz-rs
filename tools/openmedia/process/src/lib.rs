@@ -45,6 +45,7 @@ pub enum ProcessOperation {
     Resize {
         width: u32,
         height: u32,
+        #[serde(default)]
         method: ResizeMethod,
     },
     Crop {
@@ -94,11 +95,12 @@ pub enum BlendMode {
 }
 
 /// Image resize method
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ResizeMethod {
     Nearest,
     Bilinear,
+    #[default]
     Lanczos3,
 }
 

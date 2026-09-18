@@ -65,11 +65,11 @@ pub async fn ensure_browser_running() -> Result<()> {
     }
 
     let chrome_paths = [
-        "obscura",
         "google-chrome",
         "chrome",
         "chromium",
         "chromium-browser",
+        "obscura",
     ];
     let port_str = port.to_string();
     let port_arg = format!("--remote-debugging-port={port}");
@@ -173,6 +173,51 @@ pub async fn send_cdp_cmd(
 pub async fn connect_to_tab(ws_url: &str) -> Result<(WsSink, WsStream)> {
     let (ws_stream, _) = connect_async(ws_url).await?;
     Ok(ws_stream.split())
+}
+
+pub async fn obtain_tab_websocket_url(cdp_port: u16) -> Result<(String, String)> {
+    let client = crate::core::http::default_http_client();
+    let new_tab_url = format!("http://127.0.0.1:{cdp_port}/json/new");
+
+    let mut res = client.put(&new_tab_url).send().await;
+    if !matches!(&res, Ok(r) if r.status().is_success()) {
+        res = client.get(&new_tab_url).send().await;
+    }
+
+    if let Ok(r) = res {
+        if r.status().is_success() {
+            if let Ok(tab_info) = r.json::<Value>().await {
+                let tid = tab_info
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("page-1")
+                    .to_string();
+                if let Some(ws_url) = tab_info.get("webSocketDebuggerUrl").and_then(|v| v.as_str()) {
+                    return Ok((tid, ws_url.to_string()));
+                }
+            }
+        }
+    }
+
+    // Fallback: /json/list (e.g. for Obscura or existing browser daemon tabs)
+    let list_url = format!("http://127.0.0.1:{cdp_port}/json/list");
+    let list_res = client.get(&list_url).send().await?;
+    let tabs: Vec<Value> = list_res.json().await?;
+    let tab = tabs
+        .into_iter()
+        .find(|t| t.get("webSocketDebuggerUrl").and_then(|v| v.as_str()).is_some())
+        .ok_or_else(|| anyhow!("No available tab with webSocketDebuggerUrl found in /json/list"))?;
+    let tid = tab
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("page-1")
+        .to_string();
+    let ws_url = tab
+        .get("webSocketDebuggerUrl")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .to_string();
+    Ok((tid, ws_url))
 }
 
 #[cfg(test)]

@@ -283,7 +283,8 @@ impl OpenMediaServer {
         let req = params.0;
         let mut chain = openmedia_process::FilterChain::new();
         for op_val in req.operations {
-            let op = serde_json::from_value::<openmedia_process::ProcessOperation>(op_val)
+            let normalized_op_val = normalize_process_operation_value(&op_val);
+            let op = serde_json::from_value::<openmedia_process::ProcessOperation>(normalized_op_val)
                 .map_err(|e| format!("Invalid process operation definition: {}", e))?;
             chain.add(op);
         }
@@ -324,5 +325,90 @@ impl OpenMediaServer {
             .map(McpObject)
             .map(Json)
             .map_err(|e| e.to_string())
+    }
+}
+
+pub fn normalize_process_operation_value(val: &serde_json::Value) -> serde_json::Value {
+    match val {
+        serde_json::Value::String(s) => match s.to_lowercase().as_str() {
+            "invert" => serde_json::Value::String("Invert".to_string()),
+            "grayscale" => serde_json::Value::String("Grayscale".to_string()),
+            "fliph" | "flip_horizontal" | "fliphorizontal" => {
+                serde_json::Value::String("FlipHorizontal".to_string())
+            }
+            "flipv" | "flip_vertical" | "flipvertical" => {
+                serde_json::Value::String("FlipVertical".to_string())
+            }
+            _ => val.clone(),
+        },
+        serde_json::Value::Object(map) => {
+            let op_name = map
+                .get("operation")
+                .or_else(|| map.get("type"))
+                .or_else(|| map.get("op"))
+                .and_then(|v| v.as_str());
+
+            if let Some(name) = op_name {
+                match name.to_lowercase().as_str() {
+                    "invert" => serde_json::Value::String("Invert".to_string()),
+                    "grayscale" => serde_json::Value::String("Grayscale".to_string()),
+                    "fliph" | "flip_horizontal" | "fliphorizontal" => {
+                        serde_json::Value::String("FlipHorizontal".to_string())
+                    }
+                    "flipv" | "flip_vertical" | "flipvertical" => {
+                        serde_json::Value::String("FlipVertical".to_string())
+                    }
+                    "resize" => {
+                        let mut inner = map.clone();
+                        inner.remove("operation");
+                        inner.remove("type");
+                        inner.remove("op");
+                        if !inner.contains_key("method") {
+                            inner.insert("method".to_string(), serde_json::json!("lanczos3"));
+                        }
+                        serde_json::json!({ "Resize": inner })
+                    }
+                    "blur" | "gaussian_blur" | "gaussianblur" => {
+                        let mut inner = map.clone();
+                        inner.remove("operation");
+                        inner.remove("type");
+                        inner.remove("op");
+                        serde_json::json!({ "GaussianBlur": inner })
+                    }
+                    "box_blur" | "boxblur" => {
+                        let mut inner = map.clone();
+                        inner.remove("operation");
+                        inner.remove("type");
+                        inner.remove("op");
+                        serde_json::json!({ "BoxBlur": inner })
+                    }
+                    "sharpen" => {
+                        let mut inner = map.clone();
+                        inner.remove("operation");
+                        inner.remove("type");
+                        inner.remove("op");
+                        serde_json::json!({ "Sharpen": inner })
+                    }
+                    "crop" => {
+                        let mut inner = map.clone();
+                        inner.remove("operation");
+                        inner.remove("type");
+                        inner.remove("op");
+                        serde_json::json!({ "Crop": inner })
+                    }
+                    "rotate" => {
+                        let mut inner = map.clone();
+                        inner.remove("operation");
+                        inner.remove("type");
+                        inner.remove("op");
+                        serde_json::json!({ "Rotate": inner })
+                    }
+                    _ => val.clone(),
+                }
+            } else {
+                val.clone()
+            }
+        }
+        _ => val.clone(),
     }
 }
