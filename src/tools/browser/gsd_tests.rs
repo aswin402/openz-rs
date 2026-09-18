@@ -65,3 +65,44 @@ fn gsd_browser_disconnected_payload_is_machine_readable() {
         .unwrap()
         .contains("inspect_browsers"));
 }
+
+#[test]
+fn test_build_gsd_browser_command_aliases_and_action_normalization() {
+    let bin = PathBuf::from("gsd-browser");
+
+    // goto action + target_url alias
+    let cmd1 = build_gsd_browser_command(&bin, &json!({
+        "action": "goto",
+        "target_url": "https://example.com"
+    })).expect("valid navigate command");
+    let debug1 = format!("{:?}", cmd1);
+    assert!(debug1.contains("navigate"));
+    assert!(debug1.contains("https://example.com"));
+
+    // eval_js + expression alias
+    let cmd2 = build_gsd_browser_command(&bin, &json!({
+        "action": "eval_js",
+        "expression": "document.title"
+    })).expect("valid eval command");
+    let debug2 = format!("{:?}", cmd2);
+    assert!(debug2.contains("eval"));
+    assert!(debug2.contains("document.title"));
+
+    // click + refId alias
+    let cmd3 = build_gsd_browser_command(&bin, &json!({
+        "action": "click",
+        "refId": "@v1:e2"
+    })).expect("valid click command");
+    let debug3 = format!("{:?}", cmd3);
+    assert!(debug3.contains("click-ref"));
+    assert!(debug3.contains("@v1:e2"));
+
+    // screenshot + output_path alias
+    let cmd4 = build_gsd_browser_command(&bin, &json!({
+        "action": "screenshot",
+        "output_path": "/tmp/shot.png"
+    })).expect("valid screenshot command");
+    let debug4 = format!("{:?}", cmd4);
+    assert!(debug4.contains("screenshot"));
+    assert!(debug4.contains("--output"));
+}

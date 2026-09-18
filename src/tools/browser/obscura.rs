@@ -28,7 +28,7 @@ impl ObscuraBrowserTool {
         _client: &reqwest::Client,
         ws_url: &str,
         _tab_id: &str,
-        action: &str,
+        is_eval: bool,
         script_str: Option<&str>,
         navigate_url: &str,
         timeout_secs: u64,
@@ -82,7 +82,7 @@ impl ObscuraBrowserTool {
             }
         }
 
-        if action == "eval_js" {
+        if is_eval {
             let script_expr = script_str
                 .ok_or_else(|| anyhow!("Missing 'script' parameter for eval_js action"))?;
             let eval_res = send_cdp_cmd(
@@ -177,19 +177,44 @@ impl Tool for ObscuraBrowserTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let url_str = arguments
             .get("url")
+            .or_else(|| arguments.get("target_url"))
+            .or_else(|| arguments.get("targetUrl"))
+            .or_else(|| arguments.get("uri"))
+            .or_else(|| arguments.get("link"))
+            .or_else(|| arguments.get("target"))
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'url' parameter"))?;
+            .ok_or_else(|| anyhow!("Missing 'url' parameter"))?
+            .trim();
 
         validate_url(url_str).await?;
 
-        let action = arguments
+        let raw_action = arguments
             .get("action")
             .and_then(|v| v.as_str())
             .unwrap_or("render");
-        let script_str = arguments.get("script").and_then(|v| v.as_str());
+        let action_normalized = raw_action.trim().to_lowercase().replace('-', "_");
+        let is_eval = matches!(
+            action_normalized.as_str(),
+            "eval_js" | "eval" | "evaluate" | "js"
+        );
+
+        let script_str = arguments
+            .get("script")
+            .or_else(|| arguments.get("expression"))
+            .or_else(|| arguments.get("code"))
+            .or_else(|| arguments.get("js"))
+            .and_then(|v| v.as_str());
+
         let timeout_secs = arguments
             .get("timeout")
-            .and_then(|v| v.as_u64())
+            .or_else(|| arguments.get("timeout_secs"))
+            .or_else(|| arguments.get("timeoutSecs"))
+            .and_then(|v| {
+                v.as_u64().or_else(|| {
+                    v.as_str()
+                        .and_then(|s| s.trim().parse::<u64>().ok())
+                })
+            })
             .unwrap_or(15);
 
         // Ensure browser is running
@@ -250,7 +275,7 @@ impl Tool for ObscuraBrowserTool {
                 &client,
                 ws_url,
                 &tab_id,
-                action,
+                is_eval,
                 script_str,
                 url_str,
                 timeout_secs,

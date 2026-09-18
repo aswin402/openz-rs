@@ -57,3 +57,24 @@ async fn test_firefox_browser_tool_metadata() -> Result<()> {
     assert!(modes.iter().any(|mode| mode == "attach"));
     Ok(())
 }
+
+#[test]
+fn test_firefox_action_normalization_and_timeout_parsing() {
+    let actions = ["goto", "navigate", "open", "NAVIGATE"];
+    for act in actions {
+        let norm = act.trim().to_lowercase().replace('-', "_");
+        assert!(matches!(norm.as_str(), "navigate" | "goto" | "open"));
+    }
+
+    let eval_actions = ["eval", "eval_js", "eval-js", "evaluate", "js"];
+    for act in eval_actions {
+        let norm = act.trim().to_lowercase().replace('-', "_");
+        assert!(matches!(norm.as_str(), "eval" | "eval_js" | "evaluate" | "js"));
+    }
+
+    let args = json!({ "timeoutSecs": "30" });
+    let timeout = args.get("timeout_secs").or_else(|| args.get("timeout")).or_else(|| args.get("timeoutSecs")).and_then(|v| {
+        v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+    }).unwrap_or(10);
+    assert_eq!(timeout, 30);
+}

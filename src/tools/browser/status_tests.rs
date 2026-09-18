@@ -69,3 +69,20 @@ async fn test_inspect_browsers_execution() -> Result<()> {
     assert!(res.get("recent_browser_errors").is_some());
     Ok(())
 }
+
+#[test]
+fn status_value_to_backend_status_marks_unhealthy_as_broken() {
+    let unhealthy_val = json!({
+        "status": "unhealthy",
+        "health": "Daemon: unhealthy\nPID: 1234\nReason: daemon socket exists without a live daemon PID"
+    });
+    let status = status_value_to_backend_status(&unhealthy_val, &["not found"]);
+    assert_eq!(status, BrowserBackendStatus::Broken);
+
+    let running_val = json!({
+        "status": "running",
+        "health": "Daemon: healthy (pid: 1234)"
+    });
+    let status2 = status_value_to_backend_status(&running_val, &["not found"]);
+    assert_eq!(status2, BrowserBackendStatus::Running);
+}

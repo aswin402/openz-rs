@@ -15,6 +15,25 @@ fn crawl_timeout_defaults_and_clamps() {
     assert_eq!(crawl_timeout_secs(&json!({ "timeout_secs": 1 })), 5);
     assert_eq!(crawl_timeout_secs(&json!({ "timeout_secs": 999 })), 300);
     assert_eq!(crawl_timeout_secs(&json!({ "timeout": 12 })), 12);
+    assert_eq!(crawl_timeout_secs(&json!({ "timeout_secs": "15" })), 15);
+    assert_eq!(crawl_timeout_secs(&json!({ "timeoutSecs": "25" })), 25);
+}
+
+#[test]
+fn crawl_arg_coercion_supports_strings_and_aliases() {
+    let args = json!({
+        "limit": "4",
+        "maxDepth": "2",
+        "delayMs": "300",
+        "respectRobotsTxt": "false"
+    });
+    assert_eq!(get_u64_arg(&args, &["limit", "max_pages", "maxPages"], 10), 4);
+    assert_eq!(get_u64_arg(&args, &["depth", "max_depth", "maxDepth"], 3), 2);
+    assert_eq!(get_u64_arg(&args, &["delay", "delay_ms", "delayMs"], 250), 300);
+    assert!(!get_bool_arg(&args, &["respect_robots_txt", "respectRobotsTxt", "respect_robots"], true));
+
+    let truthy_args = json!({ "respect_robots": "true" });
+    assert!(get_bool_arg(&truthy_args, &["respect_robots_txt", "respectRobotsTxt", "respect_robots"], false));
 }
 
 #[test]

@@ -271,14 +271,22 @@ impl Tool for FirefoxBrowserTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments
+        let raw_action = arguments
             .get("action")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
+        let action = raw_action.trim().to_lowercase().replace('-', "_");
         let mode = requested_mode(arguments)?;
         let timeout_secs = arguments
             .get("timeout_secs")
-            .and_then(|v| v.as_u64())
+            .or_else(|| arguments.get("timeout"))
+            .or_else(|| arguments.get("timeoutSecs"))
+            .and_then(|v| {
+                v.as_u64().or_else(|| {
+                    v.as_str()
+                        .and_then(|s| s.trim().parse::<u64>().ok())
+                })
+            })
             .unwrap_or(10);
 
         if action == "close" {
@@ -297,12 +305,18 @@ impl Tool for FirefoxBrowserTool {
             }
         };
 
-        let result = match action {
-            "navigate" => {
+        let result = match action.as_str() {
+            "navigate" | "goto" | "open" => {
                 let url = arguments
                     .get("url")
+                    .or_else(|| arguments.get("target_url"))
+                    .or_else(|| arguments.get("targetUrl"))
+                    .or_else(|| arguments.get("uri"))
+                    .or_else(|| arguments.get("link"))
+                    .or_else(|| arguments.get("target"))
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'url' parameter for navigate action"))?;
+                    .ok_or_else(|| anyhow!("Missing 'url' parameter for navigate action"))?
+                    .trim();
                 if let Err(e) = driver.goto(url).await {
                     reset_driver().await;
                     return Err(anyhow!("Navigation failed: {:?}", e));
@@ -315,8 +329,13 @@ impl Tool for FirefoxBrowserTool {
             "wait_for" => {
                 let selector = arguments
                     .get("selector")
+                    .or_else(|| arguments.get("css_selector"))
+                    .or_else(|| arguments.get("cssSelector"))
+                    .or_else(|| arguments.get("css"))
+                    .or_else(|| arguments.get("element"))
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing selector for wait_for"))?;
+                    .ok_or_else(|| anyhow!("Missing selector for wait_for"))?
+                    .trim();
                 let _ = wait_for_element(&driver, selector, timeout_secs).await?;
                 json!({ "status": "success", "selector": selector, "message": format!("Element {} is ready", selector) })
             }
@@ -332,8 +351,13 @@ impl Tool for FirefoxBrowserTool {
             "click" => {
                 let selector = arguments
                     .get("selector")
+                    .or_else(|| arguments.get("css_selector"))
+                    .or_else(|| arguments.get("cssSelector"))
+                    .or_else(|| arguments.get("css"))
+                    .or_else(|| arguments.get("element"))
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'selector' parameter for click action"))?;
+                    .ok_or_else(|| anyhow!("Missing 'selector' parameter for click action"))?
+                    .trim();
                 let elem = wait_for_element(&driver, selector, timeout_secs).await?;
                 elem.click().await?;
                 json!({
@@ -344,10 +368,18 @@ impl Tool for FirefoxBrowserTool {
             "fill" => {
                 let selector = arguments
                     .get("selector")
+                    .or_else(|| arguments.get("css_selector"))
+                    .or_else(|| arguments.get("cssSelector"))
+                    .or_else(|| arguments.get("css"))
+                    .or_else(|| arguments.get("element"))
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'selector' parameter for fill action"))?;
+                    .ok_or_else(|| anyhow!("Missing 'selector' parameter for fill action"))?
+                    .trim();
                 let text = arguments
                     .get("text")
+                    .or_else(|| arguments.get("value"))
+                    .or_else(|| arguments.get("query"))
+                    .or_else(|| arguments.get("content"))
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'text' parameter for fill action"))?;
                 let elem = wait_for_element(&driver, selector, timeout_secs).await?;
@@ -361,12 +393,26 @@ impl Tool for FirefoxBrowserTool {
             "screenshot" => {
                 let path = arguments
                     .get("path")
+                    .or_else(|| arguments.get("output"))
+                    .or_else(|| arguments.get("output_path"))
+                    .or_else(|| arguments.get("outputPath"))
+                    .or_else(|| arguments.get("file_path"))
+                    .or_else(|| arguments.get("file"))
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'path' parameter for screenshot action"))?;
+                    .ok_or_else(|| anyhow!("Missing 'path' parameter for screenshot action"))?
+                    .trim();
                 driver.screenshot(std::path::Path::new(path)).await?;
                 let opened = arguments
                     .get("open_after")
-                    .and_then(|v| v.as_bool())
+                    .or_else(|| arguments.get("openAfter"))
+                    .and_then(|v| {
+                        v.as_bool().or_else(|| {
+                            v.as_str().map(|s| {
+                                let trimmed = s.trim().to_lowercase();
+                                trimmed == "true" || trimmed == "1" || trimmed == "yes"
+                            })
+                        })
+                    })
                     .unwrap_or(false);
                 let device_inventory_recorded = if opened {
                     let target = path.to_string();
@@ -385,9 +431,12 @@ impl Tool for FirefoxBrowserTool {
                     "message": if opened { format!("Screenshot saved and opened with the system viewer: {}", path) } else { format!("Screenshot saved to {}", path) }
                 })
             }
-            "eval" => {
+            "eval" | "eval_js" | "evaluate" | "js" => {
                 let script = arguments
                     .get("script")
+                    .or_else(|| arguments.get("expression"))
+                    .or_else(|| arguments.get("code"))
+                    .or_else(|| arguments.get("js"))
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'script' parameter for eval action"))?;
                 let val = driver.execute(script, vec![]).await?;
@@ -396,9 +445,17 @@ impl Tool for FirefoxBrowserTool {
                     "output": val.json().to_string()
                 })
             }
-            "render" => {
-                if let Some(url) = arguments.get("url").and_then(|v| v.as_str()) {
-                    if let Err(e) = driver.goto(url).await {
+            "render" | "snapshot" => {
+                let url_opt = arguments
+                    .get("url")
+                    .or_else(|| arguments.get("target_url"))
+                    .or_else(|| arguments.get("targetUrl"))
+                    .or_else(|| arguments.get("uri"))
+                    .or_else(|| arguments.get("link"))
+                    .or_else(|| arguments.get("target"))
+                    .and_then(|v| v.as_str());
+                if let Some(url) = url_opt {
+                    if let Err(e) = driver.goto(url.trim()).await {
                         reset_driver().await;
                         return Err(anyhow!("Navigation failed: {:?}", e));
                     }
@@ -410,7 +467,7 @@ impl Tool for FirefoxBrowserTool {
                     "output": md
                 })
             }
-            _ => return Err(anyhow!("Unknown action: {}", action)),
+            _ => return Err(anyhow!("Unknown action: {}", raw_action)),
         };
 
         Ok(result)

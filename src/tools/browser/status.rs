@@ -102,12 +102,14 @@ fn status_value_to_backend_status(value: &Value, missing_text: &[&str]) -> Brows
     let error_or_message = value
         .get("error")
         .or_else(|| value.get("message"))
+        .or_else(|| value.get("health"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_lowercase();
 
     match status {
-        "running" => BrowserBackendStatus::Running,
+        "running" if !error_or_message.contains("unhealthy") => BrowserBackendStatus::Running,
+        "unhealthy" => BrowserBackendStatus::Broken,
         _ if missing_text
             .iter()
             .any(|needle| error_or_message.contains(needle)) =>
@@ -255,6 +257,7 @@ impl Tool for InspectBrowsersTool {
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&out.stderr).to_string();
                 if out.status.success() {
+                    let is_unhealthy = stdout.to_lowercase().contains("unhealthy");
                     let mut gsd_pages_cmd = Command::new(&bin_path);
                     gsd_pages_cmd.arg("list-pages").arg("--json");
                     let pages_val = match gsd_pages_cmd.output().await {
@@ -267,7 +270,7 @@ impl Tool for InspectBrowsersTool {
                     };
 
                     json!({
-                        "status": "running",
+                        "status": if is_unhealthy { "unhealthy" } else { "running" },
                         "health": stdout.trim(),
                         "pages": pages_val
                     })

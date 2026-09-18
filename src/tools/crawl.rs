@@ -78,13 +78,43 @@ impl CrawlSiteTool {
     }
 }
 
+fn get_u64_arg(arguments: &Value, keys: &[&str], default: u64) -> u64 {
+    for key in keys {
+        if let Some(val) = arguments.get(*key) {
+            if let Some(n) = val.as_u64() {
+                return n;
+            }
+            if let Some(s) = val.as_str() {
+                if let Ok(n) = s.trim().parse::<u64>() {
+                    return n;
+                }
+            }
+        }
+    }
+    default
+}
+
+fn get_bool_arg(arguments: &Value, keys: &[&str], default: bool) -> bool {
+    for key in keys {
+        if let Some(val) = arguments.get(*key) {
+            if let Some(b) = val.as_bool() {
+                return b;
+            }
+            if let Some(s) = val.as_str() {
+                let trimmed = s.trim().to_lowercase();
+                if trimmed == "true" || trimmed == "1" || trimmed == "yes" {
+                    return true;
+                } else if trimmed == "false" || trimmed == "0" || trimmed == "no" {
+                    return false;
+                }
+            }
+        }
+    }
+    default
+}
+
 fn crawl_timeout_secs(arguments: &Value) -> u64 {
-    arguments
-        .get("timeout_secs")
-        .or_else(|| arguments.get("timeout"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(45)
-        .clamp(5, 300)
+    get_u64_arg(arguments, &["timeout_secs", "timeout", "timeoutSecs"], 45).clamp(5, 300)
 }
 
 fn crawl_timeout_response(
@@ -156,30 +186,21 @@ impl Tool for CrawlSiteTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let url_str = arguments
             .get("url")
+            .or_else(|| arguments.get("target_url"))
+            .or_else(|| arguments.get("targetUrl"))
+            .or_else(|| arguments.get("uri"))
+            .or_else(|| arguments.get("link"))
+            .or_else(|| arguments.get("target"))
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'url' parameter"))?;
+            .ok_or_else(|| anyhow!("Missing 'url' parameter"))?
+            .trim();
 
         validate_url(url_str).await?;
 
-        let limit = arguments
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(10)
-            .min(1000) as u32;
-        let depth = arguments
-            .get("depth")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(3)
-            .min(10) as usize;
-        let respect = arguments
-            .get("respect_robots_txt")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        let delay = arguments
-            .get("delay")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(250)
-            .max(50);
+        let limit = get_u64_arg(arguments, &["limit", "max_pages", "maxPages"], 10).min(1000) as u32;
+        let depth = get_u64_arg(arguments, &["depth", "max_depth", "maxDepth"], 3).min(10) as usize;
+        let respect = get_bool_arg(arguments, &["respect_robots_txt", "respectRobotsTxt", "respect_robots"], true);
+        let delay = get_u64_arg(arguments, &["delay", "delay_ms", "delayMs"], 250).max(50);
         let timeout_secs = crawl_timeout_secs(arguments);
 
         let mut website = Website::new(url_str)

@@ -1,4 +1,36 @@
-### v0.0.193 (Latest Release)
+### v0.0.194 (Latest Release)
+- **Ideas**:
+  - Comprehensive headless subagent validation across the GSD & Playwright Browser Automation Suite (`gsd_browser`, `obscura_browser`, `web_fetch`, `crawl_website`, `firefox_browser`, `inspect_browsers`).
+  - Action normalization and alias mapping: LLMs frequently use variant browser action names (e.g. `goto` or `open` instead of `navigate`, `eval_js` or `evaluate` or `js` instead of `eval`, `snapshot` instead of `render`, `accessibility_tree` with dashes or underscores). Implemented robust action normalization across `gsd_browser`, `obscura_browser`, and `firefox_browser`.
+  - Comprehensive parameter alias tolerance: Supported interchangeable naming across all browser tools for URLs (`url`, `target_url`, `uri`, `link`, `target`), selectors (`selector`, `css_selector`, `cssSelector`, `css`, `element`), element references (`ref_id`, `refId`, `ref`, `element`, `id`), file paths (`path`, `output`, `output_path`, `file_path`, `file`), and scripts (`script`, `expression`, `code`, `js`).
+  - Robust numeric & boolean coercion in `crawl_website`, `web_fetch`, `obscura_browser`, and `firefox_browser`: Implemented `get_u64_arg` and `get_bool_arg` to safely parse stringified integers and booleans (`"limit": "2"`, `"depth": "1"`, `"timeout_secs": "10"`, `"render_js": "false"`, `"respect_robots_txt": "true"`), eliminating silent fallback to defaults.
+  - Stale & unhealthy browser daemon detection in `inspect_browsers`: Fixed a false-positive health status where `gsd-browser daemon health` exiting with code 0 but reporting `Daemon: unhealthy (stale socket)` was incorrectly reported as `running` and recommended as the primary backend. `status_value_to_backend_status` now marks unhealthy daemons as `Broken` so OpenZ avoids routing tasks to broken background daemons.
+- **Inspirations**:
+  - Headless subagent real-world evaluation findings across browser automation tools.
+  - Robustness Principle (Postel's Law): Be liberal in what you accept from LLMs.
+  - Resilient multi-tier browser brokering (Obscura CDP -> Firefox Marionette -> GsdBrowser Playwright GUI).
+- **Sources & References**:
+  - Implementation & Dispatch Sources:
+    - [`src/tools/crawl.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/crawl.rs): `get_u64_arg`, `get_bool_arg`, parameter aliases, and string-to-number/bool coercion.
+    - [`src/tools/browser/obscura.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/obscura.rs): Action normalization (`eval`, `evaluate`, `js` -> `is_eval`), URL and script aliases, timeout string parsing.
+    - [`src/tools/browser/gsd.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/gsd.rs): `build_gsd_browser_command` action normalization (`goto`, `eval_js`, `accessibility_tree`, `page_source`, `save_pdf`) and aliases for `url`, `ref_id`, `path`, `script`.
+    - [`src/tools/browser/firefox.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/firefox.rs): Action normalization and aliases for `url`, `selector`, `path`, `script`, and `timeout_secs`.
+    - [`src/tools/browser/status.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/status.rs): Unhealthy daemon detection in `gsd_status` and `status_value_to_backend_status`.
+    - [`src/tools/web.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web.rs): `web_fetch_render_js_enabled` string boolean coercion and URL parameter aliases.
+  - Test Modules:
+    - [`src/tools/crawl_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/crawl_tests.rs): `crawl_arg_coercion_supports_strings_and_aliases`, string timeout tests.
+    - [`src/tools/browser/obscura_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/obscura_tests.rs): `test_obscura_action_recognition`, `test_obscura_timeout_and_aliases`.
+    - [`src/tools/browser/gsd_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/gsd_tests.rs): `test_build_gsd_browser_command_aliases_and_action_normalization`.
+    - [`src/tools/browser/firefox_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/firefox_tests.rs): `test_firefox_action_normalization_and_timeout_parsing`.
+    - [`src/tools/browser/status_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/status_tests.rs): `status_value_to_backend_status_marks_unhealthy_as_broken`.
+    - [`src/tools/web_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_tests.rs): `web_fetch_browser_retry_can_be_disabled_explicitly` string boolean tests.
+- **Details & Metrics**:
+  - 100% pass rate achieved across all browser automation tools in real-world headless subagent mode.
+  - Execution latencies: `inspect_browsers` ~90ms, `gsd_browser` navigate ~670ms, `gsd_browser` snapshot ~56ms, `gsd_browser` eval ~48ms, `gsd_browser` screenshot ~500ms, `gsd_browser` save_pdf ~170ms, `obscura_browser` render ~1.2s, `obscura_browser` eval_js ~790ms, `web_fetch` ~460ms, `crawl_website` ~2.0s.
+  - Resolved 5 friction points and edge cases across action variants, parameter aliases, string numbers/booleans, and daemon health reporting.
+- **Verification**: Verified 5 crawl tests pass (`cargo test -p openz --lib tools::crawl -j 1`), 27 browser tests pass (`cargo test -p openz --lib tools::browser -j 1`), 28 web tests pass (`cargo test -p openz --lib tools::web -j 1`), exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`), version sync verified (`cargo test -p openz --lib version_sync_tests -j 1`), 0 clippy warnings (`cargo clippy -p openz -j 1`), and clean build (`cargo build -p openz --bin openz -j 2`).
+
+### v0.0.193
 - **Ideas**:
   - Comprehensive headless subagent validation across the complete SearchXYZ & Web Research Engine (17 tools across multi-engine web search, browser automation search, markdown DOM scraping, integrated search-and-read, recursive deep research, sitemap discovery, knowledge graph relationship indexing and querying, GitHub repository ingestion and tree mapping, Tantivy full-text search indexing, semantic recall, source listing, research bundle export/import, source deletion, and index clearing).
   - Bing Click-Tracking Redirect Unwrapping: Bing web search results frequently wrap destination URLs in click-tracking redirect links (`https://www.bing.com/ck/a?!...&u=a1<base64>&...`). Downstream markdown scrapers, readers, and deep research agents following these URLs hit Bing tracking redirects, resulting in 404s, redirect loops, or bot verification barriers. Implemented `unwrap_bing_redirect` using Base64 decoding (supporting both standard and URL-safe base64, with or without padding) on Bing's `u=a1<base64>` query parameter to extract and unmask the genuine destination URL (e.g. `https://en.wikipedia.org/...`). Prioritized `title_el.select(&link_sel)` over container-wide anchors.

@@ -67,43 +67,65 @@ async fn restart_gsd_browser_daemon(bin_path: &PathBuf) {
 }
 
 fn build_gsd_browser_command(bin_path: &PathBuf, arguments: &Value) -> Result<Command> {
-    let action = arguments
+    let raw_action = arguments
         .get("action")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
+    let action_normalized = raw_action.trim().to_lowercase().replace('-', "_");
 
     let mut cmd = Command::new(bin_path);
 
-    match action {
-        "navigate" => {
+    match action_normalized.as_str() {
+        "navigate" | "goto" | "open" => {
             let url = arguments
                 .get("url")
+                .or_else(|| arguments.get("target_url"))
+                .or_else(|| arguments.get("targetUrl"))
+                .or_else(|| arguments.get("uri"))
+                .or_else(|| arguments.get("link"))
+                .or_else(|| arguments.get("target"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Missing 'url' parameter for navigate action"))?;
+                .ok_or_else(|| anyhow!("Missing 'url' parameter for navigate action"))?
+                .trim();
             cmd.arg("navigate").arg(url);
         }
         "snapshot" => {
             cmd.arg("snapshot");
         }
-        "click" => {
+        "click" | "click_ref" => {
             let ref_id = arguments
                 .get("ref_id")
+                .or_else(|| arguments.get("refId"))
+                .or_else(|| arguments.get("ref"))
+                .or_else(|| arguments.get("element"))
+                .or_else(|| arguments.get("id"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for click action"))?;
+                .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for click action"))?
+                .trim();
             cmd.arg("click-ref").arg(ref_id);
         }
-        "hover" => {
+        "hover" | "hover_ref" => {
             let ref_id = arguments
                 .get("ref_id")
+                .or_else(|| arguments.get("refId"))
+                .or_else(|| arguments.get("ref"))
+                .or_else(|| arguments.get("element"))
+                .or_else(|| arguments.get("id"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for hover action"))?;
+                .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for hover action"))?
+                .trim();
             cmd.arg("hover-ref").arg(ref_id);
         }
-        "fill" => {
+        "fill" | "fill_ref" | "type" => {
             let ref_id = arguments
                 .get("ref_id")
+                .or_else(|| arguments.get("refId"))
+                .or_else(|| arguments.get("ref"))
+                .or_else(|| arguments.get("element"))
+                .or_else(|| arguments.get("id"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for fill action"))?;
+                .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for fill action"))?
+                .trim();
             let text = arguments
                 .get("text")
                 .or_else(|| arguments.get("value"))
@@ -120,14 +142,23 @@ fn build_gsd_browser_command(bin_path: &PathBuf, arguments: &Value) -> Result<Co
         "screenshot" => {
             let path = arguments
                 .get("path")
+                .or_else(|| arguments.get("output"))
+                .or_else(|| arguments.get("output_path"))
+                .or_else(|| arguments.get("outputPath"))
+                .or_else(|| arguments.get("file_path"))
+                .or_else(|| arguments.get("file"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Missing 'path' parameter for screenshot action"))?;
+                .ok_or_else(|| anyhow!("Missing 'path' parameter for screenshot action"))?
+                .trim();
             let resolved = crate::config::resolve_path(path);
             cmd.arg("screenshot").arg("--output").arg(resolved);
         }
-        "eval" => {
+        "eval" | "eval_js" | "evaluate" | "js" => {
             let script = arguments
                 .get("script")
+                .or_else(|| arguments.get("expression"))
+                .or_else(|| arguments.get("code"))
+                .or_else(|| arguments.get("js"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Missing 'script' parameter for eval action"))?;
             cmd.arg("eval").arg(script);
@@ -141,12 +172,18 @@ fn build_gsd_browser_command(bin_path: &PathBuf, arguments: &Value) -> Result<Co
         "save_pdf" => {
             let path = arguments
                 .get("path")
+                .or_else(|| arguments.get("output"))
+                .or_else(|| arguments.get("output_path"))
+                .or_else(|| arguments.get("outputPath"))
+                .or_else(|| arguments.get("file_path"))
+                .or_else(|| arguments.get("file"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Missing 'path' parameter for save_pdf action"))?;
+                .ok_or_else(|| anyhow!("Missing 'path' parameter for save_pdf action"))?
+                .trim();
             let resolved = crate::config::resolve_path(path);
             cmd.arg("save-pdf").arg("--output").arg(resolved);
         }
-        _ => return Err(anyhow!("Unsupported browser action: {}", action)),
+        _ => return Err(anyhow!("Unsupported browser action: {}", raw_action)),
     }
 
     Ok(cmd)

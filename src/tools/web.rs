@@ -358,11 +358,17 @@ fn extract_text_from_html(html: &str) -> String {
 }
 
 fn web_fetch_render_js_enabled(arguments: &serde_json::Value) -> bool {
-    arguments
+    let val = arguments
         .get("render_js")
-        .or_else(|| arguments.get("renderJs"))
-        .and_then(|value| value.as_bool())
-        .unwrap_or(true)
+        .or_else(|| arguments.get("renderJs"));
+    match val {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::String(s)) => {
+            let s = s.trim().to_lowercase();
+            s != "false" && s != "0" && s != "no"
+        }
+        _ => true,
+    }
 }
 
 fn web_fetch_should_retry_browser_render(
@@ -621,8 +627,14 @@ impl Tool for WebFetchTool {
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
         let url_str = arguments
             .get("url")
+            .or_else(|| arguments.get("target_url"))
+            .or_else(|| arguments.get("targetUrl"))
+            .or_else(|| arguments.get("uri"))
+            .or_else(|| arguments.get("link"))
+            .or_else(|| arguments.get("target"))
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'url' argument"))?;
+            .ok_or_else(|| anyhow!("Missing 'url' argument"))?
+            .trim();
         let cache_mode = WebFetchCacheMode::from_args(arguments)?;
         let cached = load_cached_web_fetch(url_str).unwrap_or_else(|err| {
             tracing::debug!(error = ?err, url = %url_str, "web_fetch cache lookup skipped");

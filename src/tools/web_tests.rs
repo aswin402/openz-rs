@@ -140,6 +140,21 @@ fn web_fetch_browser_retry_can_be_disabled_explicitly() {
         &text,
         &serde_json::json!({ "render_js": false })
     ));
+    assert!(!web_fetch_should_retry_browser_render(
+        html,
+        &text,
+        &serde_json::json!({ "render_js": "false" })
+    ));
+    assert!(!web_fetch_should_retry_browser_render(
+        html,
+        &text,
+        &serde_json::json!({ "renderJs": "0" })
+    ));
+    assert!(web_fetch_should_retry_browser_render(
+        html,
+        &text,
+        &serde_json::json!({ "render_js": "true" })
+    ));
 }
 
 #[tokio::test]
