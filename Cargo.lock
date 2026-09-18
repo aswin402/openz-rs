@@ -6722,7 +6722,7 @@ dependencies = [
 
 [[package]]
 name = "openz"
-version = "0.0.192"
+version = "0.0.193"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -9247,6 +9247,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum 0.7.9",
+ "base64 0.22.1",
  "chromiumoxide 0.9.1",
  "chrono",
  "clap",

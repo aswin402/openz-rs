@@ -49,3 +49,47 @@ fn test_searchxyz_tools_metadata() {
     assert_eq!(SearchXyzDeleteSourceTool.name(), "searchxyz_delete_source");
     assert_eq!(SearchXyzClearIndexTool.name(), "searchxyz_clear_index");
 }
+
+#[test]
+fn test_searchxyz_coerce_number_value() {
+    assert_eq!(
+        coerce_number_value(&serde_json::json!("42")),
+        Some(serde_json::json!(42))
+    );
+    assert_eq!(
+        coerce_number_value(&serde_json::json!("-10")),
+        Some(serde_json::json!(-10))
+    );
+    assert_eq!(
+        coerce_number_value(&serde_json::json!(100)),
+        Some(serde_json::json!(100))
+    );
+    assert_eq!(coerce_number_value(&serde_json::json!("invalid")), None);
+}
+
+#[test]
+fn test_searchxyz_coerce_numeric_fields() {
+    let mut val = serde_json::json!({
+        "query": "rust",
+        "max_results": "10",
+        "limit": "50",
+        "preserve": "text"
+    });
+    coerce_numeric_fields(&mut val, &["max_results", "limit"]);
+    assert_eq!(val["max_results"], serde_json::json!(10));
+    assert_eq!(val["limit"], serde_json::json!(50));
+    assert_eq!(val["preserve"], serde_json::json!("text"));
+}
+
+#[test]
+fn test_searchxyz_coerce_bool_fields() {
+    let mut val = serde_json::json!({
+        "confirm": "true",
+        "dry_run": "FALSE",
+        "other": "not_bool"
+    });
+    coerce_bool_fields(&mut val, &["confirm", "dry_run"]);
+    assert_eq!(val["confirm"], serde_json::json!(true));
+    assert_eq!(val["dry_run"], serde_json::json!(false));
+    assert_eq!(val["other"], serde_json::json!("not_bool"));
+}

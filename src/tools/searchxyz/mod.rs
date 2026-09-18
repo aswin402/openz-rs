@@ -58,6 +58,52 @@ fn apply_openz_embedded_paths(config: &mut Config) {
     }
 }
 
+pub(crate) fn coerce_number_value(val: &serde_json::Value) -> Option<serde_json::Value> {
+    match val {
+        serde_json::Value::Number(_) => Some(val.clone()),
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            if let Ok(i) = trimmed.parse::<i64>() {
+                Some(serde_json::Value::Number(serde_json::Number::from(i)))
+            } else if let Ok(u) = trimmed.parse::<u64>() {
+                Some(serde_json::Value::Number(serde_json::Number::from(u)))
+            } else if let Ok(f) = trimmed.parse::<f64>() {
+                serde_json::Number::from_f64(f).map(serde_json::Value::Number)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn coerce_numeric_fields(val: &mut serde_json::Value, field_names: &[&str]) {
+    if let serde_json::Value::Object(map) = val {
+        for &name in field_names {
+            if let Some(entry) = map.get(name) {
+                if let Some(coerced) = coerce_number_value(entry) {
+                    map.insert(name.to_string(), coerced);
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn coerce_bool_fields(val: &mut serde_json::Value, field_names: &[&str]) {
+    if let serde_json::Value::Object(map) = val {
+        for &name in field_names {
+            if let Some(serde_json::Value::String(s)) = map.get(name) {
+                let lower = s.trim().to_lowercase();
+                if lower == "true" {
+                    map.insert(name.to_string(), serde_json::Value::Bool(true));
+                } else if lower == "false" {
+                    map.insert(name.to_string(), serde_json::Value::Bool(false));
+                }
+            }
+        }
+    }
+}
+
 pub fn get_server() -> &'static SearchXyzServer {
     static SERVER: OnceLock<SearchXyzServer> = OnceLock::new();
     SERVER.get_or_init(|| {

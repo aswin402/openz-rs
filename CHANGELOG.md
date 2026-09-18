@@ -1,4 +1,32 @@
-### v0.0.192 (Latest Release)
+### v0.0.193 (Latest Release)
+- **Ideas**:
+  - Comprehensive headless subagent validation across the complete SearchXYZ & Web Research Engine (17 tools across multi-engine web search, browser automation search, markdown DOM scraping, integrated search-and-read, recursive deep research, sitemap discovery, knowledge graph relationship indexing and querying, GitHub repository ingestion and tree mapping, Tantivy full-text search indexing, semantic recall, source listing, research bundle export/import, source deletion, and index clearing).
+  - Bing Click-Tracking Redirect Unwrapping: Bing web search results frequently wrap destination URLs in click-tracking redirect links (`https://www.bing.com/ck/a?!...&u=a1<base64>&...`). Downstream markdown scrapers, readers, and deep research agents following these URLs hit Bing tracking redirects, resulting in 404s, redirect loops, or bot verification barriers. Implemented `unwrap_bing_redirect` using Base64 decoding (supporting both standard and URL-safe base64, with or without padding) on Bing's `u=a1<base64>` query parameter to extract and unmask the genuine destination URL (e.g. `https://en.wikipedia.org/...`). Prioritized `title_el.select(&link_sel)` over container-wide anchors.
+  - Robust String-to-Number & Boolean Coercion for LLM Tool Arguments: LLMs routinely emit numeric and boolean parameters as strings (`"max_results": "3"`, `"limit": "10"`, `"depth": "2"`, `"confirm": "true"`). Standard Serde deserialization rejects stringified numbers and booleans with strict type mismatch errors. Implemented `coerce_number_value`, `coerce_numeric_fields`, and `coerce_bool_fields` in `src/tools/searchxyz/mod.rs` and wired them across all web search, reading, graph, and index tools prior to Serde deserialization.
+  - Direct JSON Object/Array Tolerance in `searchxyz_import_research`: Serde expected `payload: String` as a stringified JSON blob. However, LLMs frequently pass the parsed research bundle directly as a JSON object or array in `payload`, or omit `payload` and pass bundle fields at top-level. Added automatic payload normalization to serialize direct JSON payloads seamlessly before bundle validation and import.
+- **Inspirations**:
+  - Headless subagent real-world evaluation findings across all 17 SearchXYZ tools.
+  - Robustness Principle (Postel's Law): Be liberal in what you accept from LLMs (stringified numeric parameters, unescaped JSON bundles, and raw Bing redirect URLs).
+  - Base64 URL decoding patterns for search engine click-tracking telemetry unwrapping.
+- **Sources & References**:
+  - Implementation & Dispatch Sources:
+    - [`tools/searchxyz/Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/searchxyz/Cargo.toml): Added `base64 = "0.22"` dependency.
+    - [`tools/searchxyz/src/search/bing.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/searchxyz/src/search/bing.rs): `unwrap_bing_redirect` Base64 decoding and targeted anchor selection.
+    - [`src/tools/searchxyz/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/mod.rs): `coerce_number_value`, `coerce_numeric_fields`, `coerce_bool_fields`.
+    - [`src/tools/searchxyz/web.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/web.rs): Numeric coercion across `searchxyz_browser_search`, `searchxyz_search_web`, `searchxyz_read_url`, `searchxyz_search_and_read`, `searchxyz_deep_research`, and `searchxyz_site_map`.
+    - [`src/tools/searchxyz/graph.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/graph.rs): Numeric coercion in `searchxyz_query_graph` and `searchxyz_read_github_repo`.
+    - [`src/tools/searchxyz/index.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/index.rs): Numeric/boolean coercion and JSON bundle tolerance in `searchxyz_recall`, `searchxyz_list_sources`, `searchxyz_export_research`, `searchxyz_delete_source`, `searchxyz_clear_index`, and `searchxyz_import_research`.
+  - Test Modules:
+    - [`tools/searchxyz/src/search/bing.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/searchxyz/src/search/bing.rs): `test_unwrap_bing_redirect`.
+    - [`src/tools/searchxyz/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/mod_tests.rs): `test_coerce_number_value`, `test_coerce_numeric_fields`, `test_coerce_bool_fields`.
+- **Details & Metrics**:
+  - Validated all 17 SearchXYZ tools (7 Web & Search + 3 Knowledge Graph & Repos + 7 Index & Recall).
+  - 100% pass rate achieved across all suites in real-world headless subagent mode.
+  - Subagent real-world execution speeds: web search 350-600ms, markdown DOM read 700ms-1.2s, browser search 1.03s, combined search-and-read 740ms, GitHub clone & tree map 3.0s, graph query ~12ms, recall ~18ms, Tantivy deletion & GC 16ms.
+  - Resolved 3 core friction points across Bing tracking redirect loops, Serde string-to-number/bool deserialization failures, and nested JSON import payloads.
+- **Verification**: Verified Bing unit tests pass (`cargo test -p searchxyz --lib search::bing -j 1`), 58 SearchXYZ crate tests pass (`cargo test -p searchxyz --lib -j 1 -- --test-threads=1`), 23 SearchXYZ tests in openz pass (`cargo test -p openz --lib tools::searchxyz -j 1`), exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`), version sync verified (`cargo test -p openz --lib version_sync_tests -j 1`), 0 clippy warnings (`cargo clippy -p openz -j 1`), and clean build (`cargo build -p openz -j 2`).
+
+### v0.0.192
 - **Ideas**:
   - Comprehensive headless subagent validation across the complete Media Engine suite (52 tools across vector graphics, animation generators, image transformations, video synthesis, template management, and quality evaluation).
   - Numeric coercion for LLM tool arguments: LLMs routinely emit numeric dimensions (e.g. width, height, fps, duration, loops) as strings (`"width": "300"`, `"duration": "2.5"`). Serde standard deserialization rejects these string numbers with type mismatch errors. Implement `coerce_number_value` and `coerce_numeric_fields` across SVG creation/animation and video operations to transparently parse and coerce stringified numbers to valid JSON numbers.

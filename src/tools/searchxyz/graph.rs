@@ -88,7 +88,9 @@ impl Tool for SearchXyzQueryGraphTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: QueryGraphRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        super::coerce_numeric_fields(&mut normalized, &["max_depth"]);
+        let req: QueryGraphRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .query_graph(Parameters(req))
             .await
@@ -209,13 +211,18 @@ impl Tool for SearchXyzReadGithubRepoTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: ReadGithubRepoRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        super::coerce_numeric_fields(
+            &mut normalized,
+            &["max_files", "max_total_bytes", "git_timeout_secs", "max_chars"],
+        );
+        let req: ReadGithubRepoRequest = serde_json::from_value(normalized.clone())?;
         let res = match get_server().read_github_repo(Parameters(req)).await {
             Ok(res) => res,
             Err(err) => {
                 if let Some((files, max_files)) = parse_github_file_limit_error(&err.message) {
-                    if github_file_limit_should_auto_retry(arguments, files, max_files) {
-                        let mut retry_args = arguments.clone();
+                    if github_file_limit_should_auto_retry(&normalized, files, max_files) {
+                        let mut retry_args = normalized.clone();
                         retry_args["max_files"] = json!(files);
                         tracing::info!(
                             files,

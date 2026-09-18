@@ -1,10 +1,51 @@
 use async_trait::async_trait;
+use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+use base64::Engine;
 use reqwest::Client;
 use scraper::{Html, Selector};
 
 use super::{SearchBackend, SearchQuery, SearchResult};
 use crate::crawler::fingerprint::HeaderGenerator;
 use crate::error::SearchXyzError;
+
+/// Unwraps Bing click-tracking redirect URLs (e.g. `https://www.bing.com/ck/a?!...&u=a1<base64>&...`)
+/// into direct canonical destination URLs.
+pub fn unwrap_bing_redirect(url_str: &str) -> String {
+    if !url_str.contains("bing.com/ck/a") {
+        return url_str.to_string();
+    }
+
+    let Ok(parsed) = url::Url::parse(url_str) else {
+        return url_str.to_string();
+    };
+
+    for (k, v) in parsed.query_pairs() {
+        if k == "u" {
+            let payload = if v.len() > 2 && (v.starts_with("a1") || v.starts_with("a0")) {
+                &v[2..]
+            } else {
+                &v[..]
+            };
+
+            let try_decoders = [
+                STANDARD.decode(payload),
+                URL_SAFE.decode(payload),
+                STANDARD_NO_PAD.decode(payload.trim_end_matches('=')),
+                URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')),
+            ];
+
+            for bytes in try_decoders.into_iter().flatten() {
+                if let Ok(decoded) = String::from_utf8(bytes) {
+                    if decoded.starts_with("http://") || decoded.starts_with("https://") {
+                        return decoded;
+                    }
+                }
+            }
+        }
+    }
+
+    url_str.to_string()
+}
 
 /// Native Bing Scraper Backend — no API key required.
 pub struct BingBackend {
@@ -58,18 +99,17 @@ impl BingBackend {
                     continue;
                 }
 
-                // Find the first href anchor in the container (often enclosing h2 or nearby)
-                let url = match container.select(&link_sel).next() {
-                    Some(el) => match el.value().attr("href") {
-                        Some(href) => {
-                            if href.starts_with("http") {
-                                href.to_string()
-                            } else {
-                                continue;
-                            }
-                        }
-                        None => continue,
-                    },
+                // Find the href anchor in title_el or container
+                let raw_url = title_el
+                    .select(&link_sel)
+                    .next()
+                    .or_else(|| container.select(&link_sel).next())
+                    .and_then(|el| el.value().attr("href"))
+                    .filter(|href| href.starts_with("http"))
+                    .map(str::to_string);
+
+                let url = match raw_url {
+                    Some(u) => unwrap_bing_redirect(&u),
                     None => continue,
                 };
 
@@ -141,9 +181,10 @@ impl BingBackend {
                 }
 
                 if let Some(url) = url {
+                    let clean_url = unwrap_bing_redirect(&url);
                     results.push(SearchResult {
                         title,
-                        url,
+                        url: clean_url,
                         snippet: String::new(),
                         source: "bing".into(),
                     });
@@ -237,5 +278,18 @@ mod tests {
         assert_eq!(results[1].title, "Rust Github Repo");
         assert_eq!(results[1].url, "https://github.com/rust-lang/rust");
         assert_eq!(results[1].snippet, "Source code repository for Rust.");
+    }
+
+    #[test]
+    fn test_unwrap_bing_redirect() {
+        let tracking = "https://www.bing.com/ck/a?!&&p=84c478a0c242337a50352ff90ee693b4823293dc2c2cfa4192b45e7f1396b7adJmltdHM9MTczMjU3OTIwMA&ptn=3&ver=2&hsh=4&fclid=123&u=a1aHR0cHM6Ly9lbi53aWtpcGVkaWEub3JnL3dpa2kvUnVzdF8ocHJvZ3JhbW1pbmdfbGFuZ3VhZ2Up&ntb=1";
+        let clean = unwrap_bing_redirect(tracking);
+        assert_eq!(
+            clean,
+            "https://en.wikipedia.org/wiki/Rust_(programming_language)"
+        );
+
+        let regular = "https://rust-lang.org/learn";
+        assert_eq!(unwrap_bing_redirect(regular), regular);
     }
 }

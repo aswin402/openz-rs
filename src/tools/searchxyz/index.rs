@@ -43,7 +43,9 @@ impl Tool for SearchXyzRecallTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: RecallRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        super::coerce_numeric_fields(&mut normalized, &["max_results"]);
+        let req: RecallRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .recall(Parameters(req))
             .await
@@ -86,7 +88,9 @@ impl Tool for SearchXyzListSourcesTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: ListSourcesRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        super::coerce_numeric_fields(&mut normalized, &["limit", "offset"]);
+        let req: ListSourcesRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .list_sources(Parameters(req))
             .await
@@ -173,7 +177,9 @@ impl Tool for SearchXyzExportResearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: ExportResearchRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        super::coerce_numeric_fields(&mut normalized, &["limit", "max_chars"]);
+        let req: ExportResearchRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .export_research(Parameters(req))
             .await
@@ -209,7 +215,17 @@ impl Tool for SearchXyzImportResearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: ImportResearchRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        if let Some(payload_val) = normalized.get("payload") {
+            if payload_val.is_object() || payload_val.is_array() {
+                normalized["payload"] = Value::String(payload_val.to_string());
+            }
+        } else if normalized.get("documents").is_some() || normalized.get("graph").is_some() {
+            normalized = json!({
+                "payload": arguments.to_string()
+            });
+        }
+        let req: ImportResearchRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .import_research(Parameters(req))
             .await
@@ -249,7 +265,9 @@ impl Tool for SearchXyzDeleteSourceTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: DeleteSourceRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        super::coerce_bool_fields(&mut normalized, &["confirm"]);
+        let req: DeleteSourceRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .delete_source(Parameters(req))
             .await
@@ -285,7 +303,9 @@ impl Tool for SearchXyzClearIndexTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: ClearIndexRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        super::coerce_bool_fields(&mut normalized, &["confirm"]);
+        let req: ClearIndexRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .clear_index(Parameters(req))
             .await

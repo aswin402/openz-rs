@@ -712,20 +712,22 @@ impl Tool for SearchXyzBrowserSearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments
+        let mut normalized = arguments.clone();
+        super::coerce_numeric_fields(&mut normalized, &["max_results", "timeout_secs", "max_pages"]);
+        let query = normalized
             .get("query")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
-        let engine = arguments
+        let engine = normalized
             .get("engine")
             .and_then(|v| v.as_str())
             .unwrap_or("duckduckgo");
-        let max_results = arguments
+        let max_results = normalized
             .get("max_results")
             .and_then(|v| v.as_u64())
             .unwrap_or(5)
             .clamp(1, 20) as usize;
-        let timeout_secs = arguments
+        let timeout_secs = normalized
             .get("timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(8)
@@ -926,7 +928,9 @@ impl Tool for SearchXyzSearchWebTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: SearchWebRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        super::coerce_numeric_fields(&mut normalized, &["max_results"]);
+        let req: SearchWebRequest = serde_json::from_value(normalized)?;
         let server = get_server();
         let configured_backends = server.config.search.backends.clone();
         match server.search_web(Parameters(req)).await {
@@ -997,7 +1001,9 @@ impl Tool for SearchXyzReadUrlTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: ReadUrlRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        super::coerce_numeric_fields(&mut normalized, &["depth", "max_chars"]);
+        let req: ReadUrlRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .read_url(Parameters(req))
             .await
@@ -1073,7 +1079,9 @@ impl Tool for SearchXyzSearchAndReadTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: SearchAndReadRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        super::coerce_numeric_fields(&mut normalized, &["max_pages", "max_chars"]);
+        let req: SearchAndReadRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .search_and_read(Parameters(req))
             .await
@@ -1153,7 +1161,12 @@ impl Tool for SearchXyzDeepResearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: DeepResearchRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        super::coerce_numeric_fields(
+            &mut normalized,
+            &["breadth", "max_pages_per_query", "max_chars"],
+        );
+        let req: DeepResearchRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .deep_research(Parameters(req))
             .await
@@ -1201,7 +1214,9 @@ impl Tool for SearchXyzSiteMapTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: SiteMapRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        super::coerce_numeric_fields(&mut normalized, &["max_links"]);
+        let req: SiteMapRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .site_map(Parameters(req))
             .await
