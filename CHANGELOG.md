@@ -1,4 +1,35 @@
-### v0.0.207 (Latest Release)
+### v0.0.208 (Latest Release)
+- **Ideas**:
+  - Live real-time validation and hardening of OpenZ's core built-in capabilities:
+    - **Self-Improvement Curator**: Validated background curator execution pipeline (`~/.openz/curator_status.json`). Added `LAST_CURATOR_HANDLE` tracking with `set_last_curator_handle` and async `wait_for_curator` timeout barrier. Added `--wait-curator` CLI flag to `HeadlessArgs` in headless mode so automated scripts and test pipelines can synchronously await background conversation review, memory extraction, and procedural skill curation before process termination.
+    - **Link Saving & Source Bookmarks (`knowledge_source`)**: Hardened parameter handling to accept raw URL/path strings (e.g. `call("https://crates.io")`), automatically infer actions (`add`, `search`, `get`, `delete`, `mark_checked`), and support field aliases (`url`, `link`, `href`, `path`, `target` for `uri`; `title`, `name`, `header` for `label`; `tags`, `tag`, `alias` for `aliases`; `description`, `desc`, `notes` for `summary`). Auto-derives human-readable labels from URLs when omitted, and defaults `kind` to `"website"`, `"repo"`, or `"path"` appropriately.
+    - **Dir Saving & Cognitive Memory (`store_memory` & `recall_memory`)**: Validated persistent semantic memory bus with on-device FastEmbed ONNX embedding generation (`AllMiniLmL6V2`) and cosine similarity retrieval combined with temporal decay.
+    - **Skills System (`curate_skill`)**: Validated procedural skill authoring, Markdown heading checks, command safety scanning, SQLite database persistence, and profile isolation.
+    - **Inventory & Tool Scoping (`openz_inventory`, `tool_catalog`, `request_tool_scope`)**: Validated live capability inventory, domain filtering, risk classification, and dynamic tool scoping across the 260 registered native tools.
+    - **Registry Compatibility Aliases**: Expanded `resolve_static_name` in `src/tools/registry.rs` with intuitive compatibility mappings: `save_link` / `bookmark_url` / `add_bookmark` / `bookmark_link` / `source_bookmark` / `bookmarks` -> `knowledge_source`; `save_memory` / `remember` / `record_memory` -> `store_memory`; `search_memory` / `query_memory` / `find_memory` -> `recall_memory`; `curate_skills` / `manage_skills` / `save_skill` -> `curate_skill`; `inventory` / `runtime_inventory` -> `openz_inventory`; `catalog` / `list_tools` -> `tool_catalog`.
+    - **TUI Execution Formatting**: Added concise, readable argument representations in `format_tool_args` for `knowledge_source`, `store_memory`, `recall_memory`, `curate_skill`, `openz_inventory`, and `tool_catalog`.
+- **Inspirations**:
+  - Lifelong machine learning and cognitive agent architectures where agents autonomously curate procedural knowledge, maintain durable research sources, and manage their own capability footprint without human intervention.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/shared_memory/knowledge.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/knowledge.rs): Hardened `KnowledgeSourceTool` with raw string parsing, inferred actions, field aliases, and label derivation.
+    - [`src/agent/agent_loop/save.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/save.rs): Added `LAST_CURATOR_HANDLE`, `set_last_curator_handle`, and `wait_for_curator`.
+    - [`src/cli/args.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/args.rs): Added `--wait-curator` CLI flag to `HeadlessArgs`.
+    - [`src/cli/headless.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/headless.rs): Integrated `wait_for_curator` barrier before headless process exit.
+    - [`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs): Added compatibility aliases for memory, bookmarks, skills, and inventory tools.
+    - [`src/agent/agent_loop/tool_execution.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/tool_execution.rs): Added clean TUI log argument formatting for memory and inventory tools.
+  - Test Modules:
+    - [`src/tools/shared_memory/knowledge_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/knowledge_tests.rs): Added unit tests for raw URL strings and inferred add/search/get actions.
+    - [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs): Verified `test_native_tool_registration_names` maintaining exact 260 registered native tools invariant.
+- **Details & Metrics**:
+  - Added 350+ lines across 7 files with comprehensive unit and live headless tests.
+  - 5 core feature suites verified end-to-end against SQLite databases and live LLM iterations with exit code 0.
+- **Verification**:
+  - Exact 260 registered native tools invariant verified via `cargo test -p openz --lib test_native_tool_registration_names -j 1`.
+  - 0 compiler and clippy warnings via `cargo clippy -p openz -j 1`.
+  - Live headless execution verified with exit code 0 across all 5 test scenarios.
+
+### v0.0.207
 - **Ideas**:
   - Comprehensive evaluation, live headless validation, and hardening of the Database, Self-Management & Diagnostics Suite (13 native tools):
     - `db_inspector`: Inspect SQLite databases, query schemas, and run safe, read-only SELECT queries with keyword/syntax filtering, comments/semicolon blocking, and automatic default database resolution (`~/.openz/memory.db`).

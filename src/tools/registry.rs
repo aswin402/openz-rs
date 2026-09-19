@@ -106,6 +106,12 @@ pub(crate) fn resolve_static_name(
                     "cron_schedule" | "cron_add" => canonical == "schedule_job",
                     "cron_list" | "cron_jobs" => canonical == "list_jobs",
                     "cron_remove" | "cron_delete" => canonical == "remove_job",
+                    "save_link" | "bookmark_url" | "add_bookmark" | "bookmark_link" | "source_bookmark" | "bookmarks" => canonical == "knowledge_source",
+                    "save_memory" | "remember" | "record_memory" => canonical == "store_memory",
+                    "search_memory" | "query_memory" | "find_memory" => canonical == "recall_memory",
+                    "curate_skills" | "manage_skills" | "save_skill" => canonical == "curate_skill",
+                    "inventory" | "runtime_inventory" => canonical == "openz_inventory",
+                    "catalog" | "list_tools" => canonical == "tool_catalog",
                     _ => false,
                 };
             if is_match {

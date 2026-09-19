@@ -139,6 +139,9 @@ pub struct HeadlessArgs {
 
     #[arg(long)]
     pub timeout: Option<u64>,
+
+    #[arg(long)]
+    pub wait_curator: bool,
 }
 
 impl HeadlessArgs {

@@ -360,3 +360,52 @@ async fn source_ranking_prefers_exact_official_sources() {
     assert_eq!(delete_source(&low.id).await.unwrap(), 1);
     assert_eq!(delete_source(&official.id).await.unwrap(), 1);
 }
+
+#[tokio::test]
+async fn knowledge_source_accepts_raw_url_string() {
+    let marker = uuid::Uuid::new_v4().to_string();
+    let url = format!("https://crates.io/crates/openz-{}", marker);
+    let tool = KnowledgeSourceTool;
+    let res = tool.call(&json!(url)).await.unwrap();
+    assert_eq!(res.get("status").and_then(|v| v.as_str()), Some("success"));
+    let source = res.get("source").unwrap();
+    assert_eq!(source.get("uri").and_then(|v| v.as_str()), Some(url.as_str()));
+    assert_eq!(delete_source(&url).await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn knowledge_source_infers_add_with_url_and_title() {
+    let marker = uuid::Uuid::new_v4().to_string();
+    let url = format!("https://docs.rs/openz-{}", marker);
+    let tool = KnowledgeSourceTool;
+    let res = tool
+        .call(&json!({
+            "url": url,
+            "title": format!("OpenZ Docs {}", marker),
+            "tags": ["docs", "rust"],
+            "description": "API documentation for OpenZ"
+        }))
+        .await
+        .unwrap();
+    assert_eq!(res.get("status").and_then(|v| v.as_str()), Some("success"));
+
+    // Now test inferred search
+    let search_res = tool
+        .call(&json!({
+            "q": format!("OpenZ Docs {}", marker)
+        }))
+        .await
+        .unwrap();
+    assert_eq!(search_res.get("status").and_then(|v| v.as_str()), Some("success"));
+    let matches = search_res.get("matches").and_then(|v| v.as_array()).unwrap();
+    assert!(matches.iter().any(|m| m.get("uri").and_then(|v| v.as_str()) == Some(url.as_str())));
+
+    // Test inferred get by url
+    let get_res = tool.call(&json!({ "url": url })).await.unwrap();
+    assert_eq!(get_res.get("status").and_then(|v| v.as_str()), Some("success"));
+    let retrieved = get_res.get("source").and_then(|v| v.as_object()).unwrap();
+    assert_eq!(retrieved.get("uri").and_then(|v| v.as_str()), Some(url.as_str()));
+
+    assert_eq!(delete_source(&url).await.unwrap(), 1);
+}
+

@@ -869,49 +869,262 @@ impl Tool for KnowledgeSourceTool {
         "CRUD and search durable source bookmarks: URLs, repos, docs, local paths, social profiles, aliases, and summaries used for future research."
     }
     fn parameters(&self) -> Value {
-        json!({"type":"object","properties":{"action":{"type":"string","enum":["add","search","get","delete","mark_checked"]},"label":{"type":"string"},"kind":{"type":"string"},"uri":{"type":"string"},"aliases":{"type":"array","items":{"type":"string"}},"summary":{"type":"string"},"trust_score":{"type":"number"},"stale_after_secs":{"type":"integer"},"query":{"type":"string"},"id":{"type":"string"},"limit":{"type":"integer"}},"required":["action"]})
+        json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["add", "search", "get", "delete", "mark_checked"],
+                    "description": "Action to perform (add, search, get, delete, mark_checked). Default inferred from arguments."
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Human-readable label for the source (aliases: title, name). Auto-derived if omitted."
+                },
+                "kind": {
+                    "type": "string",
+                    "description": "Source kind: website, repo, docs, path, news, etc."
+                },
+                "uri": {
+                    "type": "string",
+                    "description": "URL or filesystem path to bookmark (aliases: url, link, path, target)."
+                },
+                "aliases": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Alternative names or tags for the source (aliases: tags, tag, alias)."
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Summary or key takeaways from this source (aliases: description, desc, notes)."
+                },
+                "trust_score": {
+                    "type": "number",
+                    "description": "Trust score from 0.0 to 1.0 (default 0.5, aliases: trust, score, confidence)."
+                },
+                "stale_after_secs": {
+                    "type": "integer",
+                    "description": "Time to live in seconds before source is considered stale (aliases: ttl)."
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query for finding source bookmarks (aliases: q, search, term)."
+                },
+                "id": {
+                    "type": "string",
+                    "description": "Bookmark ID for get/delete/mark_checked actions."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of search results to return (default 5, aliases: max_results, count, top_k)."
+                }
+            },
+            "required": []
+        })
     }
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments
+        let parsed_args;
+        let arguments = if let Some(raw_str) = arguments.as_str() {
+            let trimmed = raw_str.trim();
+            if let Ok(val) = serde_json::from_str::<Value>(trimmed) {
+                parsed_args = val;
+                &parsed_args
+            } else if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+                parsed_args = json!({"action": "add", "uri": trimmed, "label": display_source_label("", trimmed)});
+                &parsed_args
+            } else if trimmed.starts_with('/') || trimmed.starts_with('~') || trimmed.starts_with("./") {
+                parsed_args = json!({"action": "add", "uri": trimmed, "kind": "path", "label": display_source_label("", trimmed)});
+                &parsed_args
+            } else if trimmed.starts_with("search ") {
+                parsed_args = json!({"action": "search", "query": trimmed.trim_start_matches("search ").trim()});
+                &parsed_args
+            } else {
+                parsed_args = json!({"action": "search", "query": trimmed});
+                &parsed_args
+            }
+        } else {
+            arguments
+        };
+
+        let action_str = arguments
             .get("action")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing action"))?;
+            .or_else(|| arguments.get("act"))
+            .or_else(|| arguments.get("command"))
+            .or_else(|| arguments.get("cmd"))
+            .or_else(|| arguments.get("op"))
+            .and_then(|v| v.as_str());
+
+        let normalized_action = if let Some(a) = action_str {
+            a.trim().to_lowercase()
+        } else if arguments.get("query").is_some() || arguments.get("q").is_some() || arguments.get("search").is_some() {
+            "search".to_string()
+        } else if arguments.get("uri").is_some() || arguments.get("url").is_some() || arguments.get("link").is_some() {
+            if arguments.get("label").is_some() || arguments.get("title").is_some() || arguments.get("name").is_some() || arguments.get("summary").is_some() || arguments.get("description").is_some() {
+                "add".to_string()
+            } else {
+                "get".to_string()
+            }
+        } else if arguments.get("id").is_some() {
+            "get".to_string()
+        } else {
+            "search".to_string()
+        };
+
+        let action = match normalized_action.as_str() {
+            "add" | "save" | "create" | "insert" | "bookmark" => "add",
+            "search" | "find" | "list" | "ls" | "query" => "search",
+            "get" | "read" | "fetch" | "view" | "show" => "get",
+            "delete" | "remove" | "rm" => "delete",
+            "mark_checked" | "checked" | "touch" | "update" => "mark_checked",
+            other => other,
+        };
+
         match action {
-            "add" => Ok(
-                json!({"status":"success","source":add_source_bookmark(arguments.get("label").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("Missing label"))?, arguments.get("kind").and_then(|v| v.as_str()).unwrap_or("other"), arguments.get("uri").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("Missing uri"))?, json_string_array(arguments.get("aliases")), arguments.get("summary").and_then(|v| v.as_str()).unwrap_or(""), arguments.get("trust_score").and_then(|v| v.as_f64()).unwrap_or(0.5), arguments.get("stale_after_secs").and_then(|v| v.as_i64()).unwrap_or(604800)).await?}),
-            ),
-            "search" => Ok(
-                json!({"status":"success","matches":search_source_bookmarks(arguments.get("query").and_then(|v| v.as_str()).unwrap_or(""), arguments.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize).await?}),
-            ),
+            "add" => {
+                let uri = arguments
+                    .get("uri")
+                    .or_else(|| arguments.get("url"))
+                    .or_else(|| arguments.get("link"))
+                    .or_else(|| arguments.get("href"))
+                    .or_else(|| arguments.get("path"))
+                    .or_else(|| arguments.get("target"))
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Missing uri or url for action 'add'"))?;
+
+                let label_opt = arguments
+                    .get("label")
+                    .or_else(|| arguments.get("title"))
+                    .or_else(|| arguments.get("name"))
+                    .or_else(|| arguments.get("header"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                let label = label_opt
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| display_source_label("", uri));
+
+                let kind = arguments
+                    .get("kind")
+                    .or_else(|| arguments.get("type"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_else(|| {
+                        if uri.starts_with("http") {
+                            if uri.contains("github.com") || uri.contains("gitlab.com") {
+                                "repo"
+                            } else {
+                                "website"
+                            }
+                        } else if uri.starts_with('/') || uri.starts_with('~') || uri.starts_with("./") {
+                            "path"
+                        } else {
+                            "other"
+                        }
+                    });
+
+                let aliases = if let Some(arr) = arguments.get("aliases").or_else(|| arguments.get("tags")).or_else(|| arguments.get("tag")) {
+                    if arr.is_array() {
+                        json_string_array(Some(arr))
+                    } else if let Some(s) = arr.as_str() {
+                        s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+
+                let summary = arguments
+                    .get("summary")
+                    .or_else(|| arguments.get("description"))
+                    .or_else(|| arguments.get("desc"))
+                    .or_else(|| arguments.get("notes"))
+                    .or_else(|| arguments.get("note"))
+                    .or_else(|| arguments.get("about"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                let trust_score = arguments
+                    .get("trust_score")
+                    .or_else(|| arguments.get("trust"))
+                    .or_else(|| arguments.get("score"))
+                    .or_else(|| arguments.get("confidence"))
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.5);
+
+                let stale_after_secs = arguments
+                    .get("stale_after_secs")
+                    .or_else(|| arguments.get("staleAfterSecs"))
+                    .or_else(|| arguments.get("ttl"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(604800);
+
+                Ok(json!({
+                    "status": "success",
+                    "source": add_source_bookmark(&label, kind, uri, aliases, summary, trust_score, stale_after_secs).await?
+                }))
+            }
+            "search" => {
+                let query = arguments
+                    .get("query")
+                    .or_else(|| arguments.get("q"))
+                    .or_else(|| arguments.get("search"))
+                    .or_else(|| arguments.get("term"))
+                    .or_else(|| arguments.get("keyword"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let limit = arguments
+                    .get("limit")
+                    .or_else(|| arguments.get("max_results"))
+                    .or_else(|| arguments.get("count"))
+                    .or_else(|| arguments.get("top_k"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(5) as usize;
+                Ok(json!({
+                    "status": "success",
+                    "matches": search_source_bookmarks(query, limit).await?
+                }))
+            }
             "get" => {
                 let key = arguments
                     .get("id")
                     .or_else(|| arguments.get("uri"))
+                    .or_else(|| arguments.get("url"))
+                    .or_else(|| arguments.get("link"))
+                    .or_else(|| arguments.get("path"))
+                    .or_else(|| arguments.get("target"))
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing id or uri"))?;
+                    .ok_or_else(|| anyhow!("Missing id, uri, or url"))?;
                 let item =
-                    if key.starts_with("http") || key.starts_with('/') || key.starts_with('~') {
+                    if key.starts_with("http") || key.starts_with('/') || key.starts_with('~') || key.starts_with("./") {
                         get_source_by_uri(key).await?
                     } else {
                         get_source_by_id(key).await?
                     };
-                Ok(json!({"status":"success","source":item}))
+                Ok(json!({"status": "success", "source": item}))
             }
             "delete" => {
                 let key = arguments
                     .get("id")
                     .or_else(|| arguments.get("uri"))
+                    .or_else(|| arguments.get("url"))
+                    .or_else(|| arguments.get("link"))
+                    .or_else(|| arguments.get("path"))
+                    .or_else(|| arguments.get("target"))
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing id or uri"))?;
-                Ok(json!({"status":"success","deleted":delete_source(key).await?}))
+                    .ok_or_else(|| anyhow!("Missing id, uri, or url"))?;
+                Ok(json!({"status": "success", "deleted": delete_source(key).await?}))
             }
             "mark_checked" => {
                 let key = arguments
                     .get("id")
                     .or_else(|| arguments.get("uri"))
+                    .or_else(|| arguments.get("url"))
+                    .or_else(|| arguments.get("link"))
+                    .or_else(|| arguments.get("path"))
+                    .or_else(|| arguments.get("target"))
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing id or uri"))?;
-                Ok(json!({"status":"success","updated":mark_source_checked(key).await?}))
+                    .ok_or_else(|| anyhow!("Missing id, uri, or url"))?;
+                Ok(json!({"status": "success", "updated": mark_source_checked(key).await?}))
             }
             _ => Err(anyhow!("Invalid action")),
         }

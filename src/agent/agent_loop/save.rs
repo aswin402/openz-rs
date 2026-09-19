@@ -67,6 +67,27 @@ fn self_improvement_review_prompt() -> &'static str {
                 }"
 }
 
+static LAST_CURATOR_HANDLE: std::sync::OnceLock<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>> =
+    std::sync::OnceLock::new();
+
+pub fn set_last_curator_handle(handle: tokio::task::JoinHandle<()>) {
+    let mutex = LAST_CURATOR_HANDLE.get_or_init(|| tokio::sync::Mutex::new(None));
+    if let Ok(mut guard) = mutex.try_lock() {
+        *guard = Some(handle);
+    }
+}
+
+pub async fn wait_for_curator(timeout_dur: Duration) -> bool {
+    let mutex = LAST_CURATOR_HANDLE.get_or_init(|| tokio::sync::Mutex::new(None));
+    let mut guard = mutex.lock().await;
+    if let Some(handle) = guard.take() {
+        let _ = tokio::time::timeout(timeout_dur, handle).await;
+        true
+    } else {
+        false
+    }
+}
+
 fn should_spawn_curator(session_key: &str, debounce: Duration) -> bool {
     let now = Instant::now();
     let registry = CURATOR_LAST_SPAWN.get_or_init(|| Mutex::new(HashMap::new()));
@@ -136,7 +157,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         let initial_updated_at = ctx.session.updated_at;
         let initial_msg_count = ctx.session.messages.len();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             if let Some(rx) = crate::shutdown::receiver() {
                 if *rx.borrow() {
                     return;
@@ -713,6 +734,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 }
             }
         });
+        set_last_curator_handle(handle);
     }
 
     Ok(TurnState::Done)

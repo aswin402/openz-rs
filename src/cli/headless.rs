@@ -324,6 +324,10 @@ pub async fn handle_headless(args: crate::cli::args::HeadlessArgs) -> anyhow::Re
     let output = execute_headless_turn(&agent_loop, &args, &prompt, &session_key).await?;
     let rendered = format_output(&output, format);
 
+    if args.wait_curator {
+        crate::agent::agent_loop::save::wait_for_curator(std::time::Duration::from_secs(30)).await;
+    }
+
     if output.status == "success" {
         println!("{}", rendered);
         std::process::exit(0);

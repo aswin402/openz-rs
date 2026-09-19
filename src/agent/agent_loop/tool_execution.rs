@@ -258,6 +258,37 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                     format!("db: \"{}\", action: \"{}\"", db_filename, action)
                 }
             }
+            "knowledge_source" => {
+                let action = string_arg(map, &["action", "act", "op"]).unwrap_or("search");
+                let target = string_arg(map, &["uri", "url", "link", "query", "q", "id"]).unwrap_or("");
+                if target.is_empty() {
+                    format!("action: {}", action)
+                } else {
+                    format!("action: {}, target: \"{}\"", action, clip(target, 35))
+                }
+            }
+            "store_memory" => {
+                let text = string_arg(map, &["text", "content", "memory", "fact"]).unwrap_or("");
+                format!("fact: \"{}\"", clip(text, 40))
+            }
+            "recall_memory" => {
+                let query = string_arg(map, &["query", "q", "search", "term"]).unwrap_or("");
+                format!("query: \"{}\"", clip(query, 40))
+            }
+            "curate_skill" => {
+                let action = string_arg(map, &["action", "act", "op"]).unwrap_or("list");
+                let skill = string_arg(map, &["skill_name", "name", "skill"]).unwrap_or("");
+                if skill.is_empty() {
+                    format!("action: {}", action)
+                } else {
+                    format!("action: {}, skill: \"{}\"", action, skill)
+                }
+            }
+            "openz_inventory" => "runtime identity".to_string(),
+            "tool_catalog" => {
+                let domain = string_arg(map, &["domain", "category", "cat"]).unwrap_or("all");
+                format!("domain: \"{}\"", domain)
+            }
             // Generic fallback — renders any tool's arguments without special casing.
             // New tools only need an arm above if they want custom truncation.
             _ => {
