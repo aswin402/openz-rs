@@ -28,10 +28,31 @@ impl Tool for OpenTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let target = arguments
-            .get("target")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'target' parameter"))?;
+        let raw_target = match arguments {
+            Value::String(s) => s.trim().to_string(),
+            Value::Object(map) => map
+                .get("target")
+                .or_else(|| map.get("path"))
+                .or_else(|| map.get("file"))
+                .or_else(|| map.get("url"))
+                .or_else(|| map.get("uri"))
+                .or_else(|| map.get("destination"))
+                .or_else(|| map.get("location"))
+                .or_else(|| map.get("link"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .ok_or_else(|| anyhow!("Missing 'target' parameter"))?,
+            _ => return Err(anyhow!("Invalid arguments: expected object or target string")),
+        };
+
+        if raw_target.is_empty() {
+            return Err(anyhow!("Missing or empty 'target' parameter"));
+        }
+
+        let mut target = raw_target.trim_matches(|c| c == '\'' || c == '"').trim();
+        if let Some(stripped) = target.strip_prefix("file://") {
+            target = stripped;
+        }
 
         if !is_safe_target(target) {
             return Err(anyhow!(

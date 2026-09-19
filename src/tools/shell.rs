@@ -340,20 +340,61 @@ impl Tool for ExecCommandTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "command": { "type": "string", "description": "The shell command to execute" }
+                "command": { "type": "string", "description": "The shell command to execute" },
+                "cwd": { "type": "string", "description": "Optional working directory in which to execute the command" },
+                "timeout_secs": { "type": "integer", "description": "Optional execution timeout in seconds (default from config, typically 120s)" }
             },
             "required": ["command"]
         })
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let command_str = arguments
-            .get("command")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'command' argument"))?;
+        let (command_str, cwd_opt, timeout_opt) = match arguments {
+            serde_json::Value::String(s) => (s.trim().to_string(), None, None),
+            serde_json::Value::Object(map) => {
+                let cmd = map
+                    .get("command")
+                    .or_else(|| map.get("cmd"))
+                    .or_else(|| map.get("command_line"))
+                    .or_else(|| map.get("CommandLine"))
+                    .or_else(|| map.get("script"))
+                    .or_else(|| map.get("exec"))
+                    .or_else(|| map.get("shell"))
+                    .or_else(|| map.get("input"))
+                    .or_else(|| map.get("code"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .ok_or_else(|| anyhow!("Missing 'command' argument"))?;
+
+                let cwd = map
+                    .get("cwd")
+                    .or_else(|| map.get("dir"))
+                    .or_else(|| map.get("workdir"))
+                    .or_else(|| map.get("working_directory"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+
+                let timeout = map
+                    .get("timeout")
+                    .or_else(|| map.get("timeout_secs"))
+                    .or_else(|| map.get("timeoutSecs"))
+                    .and_then(|v| {
+                        v.as_u64()
+                            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                    });
+
+                (cmd, cwd, timeout)
+            }
+            _ => return Err(anyhow!("Invalid arguments: expected object or command string")),
+        };
+
+        if command_str.is_empty() {
+            return Err(anyhow!("Missing or empty 'command' argument"));
+        }
 
         // 1. Try to parse command line to see if it targets a WASM script or skill
-        let parsed_args = parse_command_line(command_str);
+        let parsed_args = parse_command_line(&command_str);
         if !parsed_args.is_empty() {
             if let Some(wasm_file) = find_wasm_file(&parsed_args[0]) {
                 let path = wasm_file.clone();
@@ -396,8 +437,8 @@ impl Tool for ExecCommandTool {
             }
         }
 
-        if let Some(detach_kind) = detach_command_kind(command_str) {
-            spawn_detached_command(command_str, detach_kind)?;
+        if let Some(detach_kind) = detach_command_kind(&command_str) {
+            spawn_detached_command(&command_str, detach_kind)?;
             let is_server = matches!(detach_kind, DetachedCommandKind::DevServer);
             return Ok(serde_json::json!({
                 "status_code": 0,
@@ -416,7 +457,15 @@ impl Tool for ExecCommandTool {
         }
 
         // 2. Fallback to standard raw host shell execution
-        let mut std_cmd = crate::core::process::host_shell_command(command_str);
+        let mut std_cmd = crate::core::process::host_shell_command(&command_str);
+        if let Some(ref cwd_str) = cwd_opt {
+            let resolved_cwd = crate::config::resolve_path(cwd_str);
+            if !resolved_cwd.exists() {
+                return Err(anyhow!("Working directory does not exist: {:?}", resolved_cwd));
+            }
+            std_cmd.current_dir(&resolved_cwd);
+        }
+
         let enable_sandbox = crate::config::loader::load_config()
             .map(|c| c.agents.defaults.enable_sandbox)
             .unwrap_or(false);
@@ -425,9 +474,11 @@ impl Tool for ExecCommandTool {
         let mut tokio_cmd = tokio::process::Command::from(std_cmd);
         tokio_cmd.kill_on_drop(true);
 
-        let timeout_secs = crate::config::loader::load_config()
-            .map(|c| c.agents.defaults.tool_timeout_secs)
-            .unwrap_or(120);
+        let timeout_secs = timeout_opt.unwrap_or_else(|| {
+            crate::config::loader::load_config()
+                .map(|c| c.agents.defaults.tool_timeout_secs)
+                .unwrap_or(120)
+        });
 
         let output_res = tokio::time::timeout(
             std::time::Duration::from_secs(timeout_secs),

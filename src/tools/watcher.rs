@@ -50,24 +50,75 @@ impl Tool for FileWatcherTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments
-            .get("action")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
+        let (action_str, path_opt, command_opt) = match arguments {
+            Value::String(s) => {
+                let trimmed = s.trim().to_lowercase();
+                match trimmed.as_str() {
+                    "status" | "info" | "query" | "get" => ("status".to_string(), None, None),
+                    "stop" | "cancel" | "kill" | "terminate" | "close" => {
+                        ("stop".to_string(), None, None)
+                    }
+                    "start" | "watch" => ("start".to_string(), Some(".".to_string()), None),
+                    _ => ("start".to_string(), Some(s.trim().to_string()), None),
+                }
+            }
+            Value::Object(map) => {
+                let path = map
+                    .get("path")
+                    .or_else(|| map.get("dir"))
+                    .or_else(|| map.get("directory"))
+                    .or_else(|| map.get("folder"))
+                    .or_else(|| map.get("target"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+
+                let command = map
+                    .get("command")
+                    .or_else(|| map.get("cmd"))
+                    .or_else(|| map.get("run"))
+                    .or_else(|| map.get("script"))
+                    .or_else(|| map.get("exec"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+
+                let action_raw = map
+                    .get("action")
+                    .or_else(|| map.get("mode"))
+                    .or_else(|| map.get("op"))
+                    .or_else(|| map.get("operation"))
+                    .or_else(|| map.get("type"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|| {
+                        if path.is_some() {
+                            "start".to_string()
+                        } else {
+                            "status".to_string()
+                        }
+                    });
+
+                (action_raw, path, command)
+            }
+            _ => return Err(anyhow!("Invalid arguments: expected object or action string")),
+        };
+
+        let action_norm = action_str.trim().to_lowercase().replace('-', "_");
+        let action = match action_norm.as_str() {
+            "status" | "info" | "query" | "get" => "status",
+            "stop" | "cancel" | "kill" | "terminate" | "close" => "stop",
+            "start" | "watch" | "run" | "begin" => "start",
+            _ => action_norm.as_str(),
+        };
 
         match action {
             "start" => {
-                let path_str = arguments
-                    .get("path")
-                    .and_then(|v| v.as_str())
+                let path_str = path_opt
                     .ok_or_else(|| anyhow!("Missing 'path' parameter for 'start' action"))?;
-                let command = arguments
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("cargo check")
-                    .to_string();
+                let command = command_opt.unwrap_or_else(|| "cargo check".to_string());
 
-                let resolved_path = crate::config::resolve_path(path_str);
+                let resolved_path = crate::config::resolve_path(&path_str);
                 if !resolved_path.exists() {
                     return Err(anyhow!("Watch path does not exist: {:?}", resolved_path));
                 }

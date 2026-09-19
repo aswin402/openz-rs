@@ -83,3 +83,28 @@ async fn test_exec_command_wasm() {
     assert!(res.get("stdout").is_some());
     assert!(res.get("stderr").is_some());
 }
+
+#[tokio::test]
+async fn test_exec_command_direct_string() {
+    let tool = ExecCommandTool;
+    let res = tool.call(&serde_json::json!("echo 'direct string shell'")).await.unwrap();
+    assert_eq!(res["status_code"].as_i64().unwrap(), 0);
+    assert!(res["stdout"].as_str().unwrap().contains("direct string shell"));
+}
+
+#[tokio::test]
+async fn test_exec_command_aliases() {
+    let tool = ExecCommandTool;
+    let res = tool.call(&serde_json::json!({ "cmd": "echo 'alias cmd'" })).await.unwrap();
+    assert_eq!(res["status_code"].as_i64().unwrap(), 0);
+    assert!(res["stdout"].as_str().unwrap().contains("alias cmd"));
+}
+
+#[tokio::test]
+async fn test_exec_command_cwd() {
+    let tool = ExecCommandTool;
+    let res = tool.call(&serde_json::json!({ "command": "pwd", "cwd": "src" })).await.unwrap();
+    assert_eq!(res["status_code"].as_i64().unwrap(), 0);
+    let stdout = res["stdout"].as_str().unwrap();
+    assert!(stdout.trim().ends_with("/src") || stdout.trim().ends_with("\\src"));
+}

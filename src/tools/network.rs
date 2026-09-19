@@ -39,31 +39,107 @@ impl Tool for CheckPortTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let port = arguments
-            .get("port")
-            .or_else(|| arguments.get("port_number"))
-            .and_then(|v| {
-                v.as_u64().or_else(|| {
-                    v.as_str().and_then(|s| s.trim().parse::<u64>().ok())
-                })
-            })
-            .ok_or_else(|| anyhow!("Missing 'port' parameter"))?;
-        let host = arguments
-            .get("host")
-            .or_else(|| arguments.get("ip"))
-            .or_else(|| arguments.get("target"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("127.0.0.1");
-        let action_raw = arguments
-            .get("action")
-            .or_else(|| arguments.get("command"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("check_listening");
-        let action_norm = action_raw.trim().to_lowercase();
+        let (port, host_str, action_str) = match arguments {
+            Value::Number(n) => {
+                let p = n.as_u64().ok_or_else(|| anyhow!("Invalid port number"))?;
+                (p, "127.0.0.1".to_string(), "check_listening".to_string())
+            }
+            Value::String(s) => {
+                let trimmed = s.trim();
+                if let Some((h, p_str)) = trimmed.rsplit_once(':') {
+                    let p = p_str
+                        .trim()
+                        .parse::<u64>()
+                        .map_err(|_| anyhow!("Invalid port in address '{}'", s))?;
+                    let h_clean = h.trim_matches(|c| c == '[' || c == ']').to_string();
+                    (
+                        p,
+                        if h_clean.is_empty() {
+                            "127.0.0.1".to_string()
+                        } else {
+                            h_clean
+                        },
+                        "check_listening".to_string(),
+                    )
+                } else {
+                    let p = trimmed
+                        .parse::<u64>()
+                        .map_err(|_| anyhow!("Invalid port '{}'", s))?;
+                    (p, "127.0.0.1".to_string(), "check_listening".to_string())
+                }
+            }
+            Value::Object(map) => {
+                let mut host = map
+                    .get("host")
+                    .or_else(|| map.get("ip"))
+                    .or_else(|| map.get("target"))
+                    .or_else(|| map.get("hostname"))
+                    .or_else(|| map.get("address"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("127.0.0.1")
+                    .trim()
+                    .to_string();
+
+                let port_opt = map
+                    .get("port")
+                    .or_else(|| map.get("port_number"))
+                    .or_else(|| map.get("portNumber"))
+                    .or_else(|| map.get("p"))
+                    .and_then(|v| {
+                        v.as_u64().or_else(|| {
+                            v.as_str().and_then(|s| s.trim().parse::<u64>().ok())
+                        })
+                    });
+
+                let port = match port_opt {
+                    Some(p) => p,
+                    None => {
+                        if let Some((h, p_str)) = host.rsplit_once(':') {
+                            let p = p_str
+                                .trim()
+                                .parse::<u64>()
+                                .map_err(|_| anyhow!("Missing or invalid 'port' parameter"))?;
+                            let h_clean = h.trim_matches(|c| c == '[' || c == ']').to_string();
+                            host = if h_clean.is_empty() {
+                                "127.0.0.1".to_string()
+                            } else {
+                                h_clean
+                            };
+                            p
+                        } else {
+                            return Err(anyhow!("Missing 'port' parameter"));
+                        }
+                    }
+                };
+
+                let action_raw = map
+                    .get("action")
+                    .or_else(|| map.get("command"))
+                    .or_else(|| map.get("mode"))
+                    .or_else(|| map.get("type"))
+                    .or_else(|| map.get("check"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("check_listening")
+                    .trim()
+                    .to_string();
+
+                (port, host, action_raw)
+            }
+            _ => {
+                return Err(anyhow!(
+                    "Invalid arguments: expected object, integer port, or address string"
+                ))
+            }
+        };
+
+        let host = host_str.as_str();
+        let action_norm = action_str.trim().to_lowercase().replace('-', "_");
         let action = match action_norm.as_str() {
-            "check_listening" | "listen" | "listening" | "active" | "open" | "status" => "check_listening",
-            "check_free" | "free" | "available" | "bind" => "check_free",
-            _ => action_norm.as_str(),
+            "check_listening" | "listen" | "listening" | "active" | "open" | "status" => {
+                "check_listening"
+            }
+            "check_free" | "free" | "available" | "bind" | "can_bind" => "check_free",
+            _ => "check_listening",
         };
 
         // Restrict to localhost to prevent internal network enumeration

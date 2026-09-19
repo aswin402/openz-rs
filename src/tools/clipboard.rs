@@ -34,10 +34,63 @@ impl Tool for ClipboardTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments
-            .get("action")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
+        let (action_str, text_opt) = match arguments {
+            Value::String(s) => {
+                let trimmed = s.trim();
+                if trimmed.eq_ignore_ascii_case("get")
+                    || trimmed.eq_ignore_ascii_case("read")
+                    || trimmed.eq_ignore_ascii_case("paste")
+                {
+                    ("get".to_string(), None)
+                } else {
+                    ("set".to_string(), Some(s.to_string()))
+                }
+            }
+            Value::Object(map) => {
+                let text = map
+                    .get("text")
+                    .or_else(|| map.get("content"))
+                    .or_else(|| map.get("value"))
+                    .or_else(|| map.get("data"))
+                    .or_else(|| map.get("message"))
+                    .or_else(|| map.get("input"))
+                    .and_then(|v| {
+                        if let Some(s) = v.as_str() {
+                            Some(s.to_string())
+                        } else if v.is_number() || v.is_boolean() {
+                            Some(v.to_string())
+                        } else {
+                            None
+                        }
+                    });
+
+                let action_raw = map
+                    .get("action")
+                    .or_else(|| map.get("mode"))
+                    .or_else(|| map.get("operation"))
+                    .or_else(|| map.get("type"))
+                    .or_else(|| map.get("command"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|| {
+                        if text.is_some() {
+                            "set".to_string()
+                        } else {
+                            "get".to_string()
+                        }
+                    });
+
+                (action_raw, text)
+            }
+            _ => return Err(anyhow!("Invalid arguments: expected object or text string")),
+        };
+
+        let action_norm = action_str.trim().to_lowercase().replace('-', "_");
+        let action = match action_norm.as_str() {
+            "get" | "read" | "copy_from" | "paste" | "fetch" => "get",
+            "set" | "write" | "copy" | "copy_to" | "put" => "set",
+            _ => action_norm.as_str(),
+        };
 
         let mut clipboard = Clipboard::new()
             .map_err(|e| anyhow!("Failed to initialize system clipboard: {}. (If running headless/CI, clipboard access may not be supported)", e))?;
@@ -53,12 +106,10 @@ impl Tool for ClipboardTool {
                 }))
             }
             "set" => {
-                let text = arguments
-                    .get("text")
-                    .and_then(|v| v.as_str())
+                let text = text_opt
                     .ok_or_else(|| anyhow!("Missing 'text' parameter for 'set' action"))?;
                 clipboard
-                    .set_text(text.to_string())
+                    .set_text(text)
                     .map_err(|e| anyhow!("Failed to write text to system clipboard: {}", e))?;
                 Ok(json!({
                     "status": "success",

@@ -1,4 +1,58 @@
-### v0.0.203 (Latest Release)
+### v0.0.204 (Latest Release)
+- **Ideas**:
+  - Comprehensive evaluation, live headless validation, and hardening of the Code Execution, Sandboxing & Automation Suite (6 native tools):
+    - `exec_command`: Sandboxed and guarded subprocess execution with working directory (`cwd`), custom timeout (`timeout_secs`), and robust shell execution.
+    - `wasm_sandbox` (registered as `wasm_execute`): In-process WebAssembly execution runtime using Wasmtime with auto-extension resolution and argument splitting.
+    - `check_port` (network suite): Socket probe tool for TCP port status checking and listening service detection.
+    - `file_watcher`: Background filesystem monitor with debounced notification and automated triggers.
+    - `clipboard`: System clipboard inspection and manipulation tool with graceful headless environment fallbacks.
+    - `open_path` (open file or URL): Default application launcher for files, directories, and URLs with URI scheme normalization.
+  - Resilient Parameter Normalization & Direct String Support:
+    - Direct string argument parsing across all 6 tools (e.g. `call("echo hello")`, `call("module.wasm")`, `call(8765)` / `call("127.0.0.1:8765")`, `call("status")`, `call("copied text")`, `call("file:///path/to/file")`).
+    - `exec_command`: Added `cwd` working directory support with path resolution via `resolve_path`, canonical verification, and directory validation; added `timeout_secs` execution limit; supported aliases (`cmd`, `command_line`, `script`, `exec`).
+    - `wasm_execute`: Supported direct string paths, aliases (`path`, `file`, `wasm`, `target`), whitespace-split string arguments, and automatic `.wasm` file extension probing.
+    - `check_port`: Supported direct integer ports, direct `host:port` address strings, and action normalization (`check_listening`, `is_listening`, `status`).
+    - `file_watcher`: Supported direct string actions/paths, auto-inferring `status` vs `start`, and parameter aliases (`dir`, `folder`, `target`, `cmd`, `run`, `script`).
+    - `clipboard`: Supported direct string text copying, action normalization (`read`, `paste`, `copy`, `write`, `set`), and text aliases (`text`, `content`, `value`, `data`, `string`), with headless safe fallbacks.
+    - `open_path`: Supported direct string file/URL paths, automatic `file://` URI prefix stripping, and path aliases (`path`, `target`, `file`, `url`, `uri`).
+- **Inspirations**:
+  - Flexible CLI agent execution patterns where LLMs supply shorthand strings or varying field names instead of exact JSON schema keys.
+  - Headless CI / displayless server execution resilience preventing panics on headless Linux displays for clipboard and opener tools.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/shell.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shell.rs): Hardened `exec_command` with direct string arguments, aliases, `cwd` support, and `timeout_secs`.
+    - [`src/tools/wasm_sandbox.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wasm_sandbox.rs): Hardened `wasm_execute` with direct string paths, aliases, arg splitting, and extension auto-completion.
+    - [`src/tools/network.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/network.rs): Hardened `check_port` with direct integer/address parsing and action aliases.
+    - [`src/tools/watcher.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/watcher.rs): Hardened `file_watcher` with direct string actions/paths and auto-inference.
+    - [`src/tools/clipboard.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/clipboard.rs): Hardened `clipboard` with direct string copy, aliases, and headless graceful handling.
+    - [`src/tools/open.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/open.rs): Hardened `open_path` with direct string targets, `file://` stripping, and headless safety.
+  - Test Modules:
+    - [`src/tools/shell_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shell_tests.rs): Added unit tests for direct string command execution, aliases, and working directory resolution.
+    - [`src/tools/wasm_sandbox_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wasm_sandbox_tests.rs): Added unit tests for direct wasm paths and aliases.
+    - [`src/tools/network_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/network_tests.rs): Added unit tests for direct integer ports and host:port parsing.
+    - [`src/tools/watcher_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/watcher_tests.rs): Added unit tests for direct string watcher commands and aliases.
+    - [`src/tools/clipboard_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/clipboard_tests.rs): Added unit tests for direct string clipboard operations and aliases.
+    - [`src/tools/open_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/open_tests.rs): Added unit tests for direct string targets, file URI stripping, and aliases.
+- **Details & Metrics**:
+  - Test Suite: All unit tests across all 6 modules passing cleanly (11 in shell, 3 in wasm_sandbox, 2 in network, 2 in watcher, 2 in clipboard, 2 in open).
+  - Native Tool Invariant: Exactly 260 registered native tools verified and maintained.
+  - Compiler & Clippy Health: 0 errors, 0 warnings under `-j 1`.
+  - Live Real-time Headless Testing:
+    - Executed live headless `exec_command` with echo command verification in 6.5s.
+    - Executed live headless `check_port` evaluating port 8765 status on 127.0.0.1 in 8.7s.
+    - Executed live headless `file_watcher` checking background file monitoring state in 7.8s.
+- **Verification**:
+  - `cargo test -p openz --lib "tools::shell" -j 1` (11 passed)
+  - `cargo test -p openz --lib "tools::wasm_sandbox" -j 1` (3 passed)
+  - `cargo test -p openz --lib "tools::network" -j 1` (2 passed)
+  - `cargo test -p openz --lib "tools::watcher" -j 1` (2 passed)
+  - `cargo test -p openz --lib "tools::clipboard" -j 1` (2 passed)
+  - `cargo test -p openz --lib "tools::open" -j 1` (16 passed)
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1` (1 passed, 260 tools verified)
+  - `cargo clippy -p openz -j 1` (0 warnings)
+  - `target/debug/openz run -y --output-format json -p "..."` (live headless execution verified)
+
+### v0.0.203
 - **Ideas**:
   - Comprehensive evaluation, live headless validation, and hardening of the Sequential Thinking & Structured Reasoning Suite (5 native tools):
     - `sequentialthinking`: dynamic, reflective problem-solving tool supporting Graph of Thoughts (GoT) branching, revisions, and assumptions.

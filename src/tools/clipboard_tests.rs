@@ -43,3 +43,57 @@ async fn test_clipboard_tool() {
         }
     }
 }
+
+#[tokio::test]
+async fn test_clipboard_tool_direct_string_and_aliases() {
+    let tool = ClipboardTool;
+
+    // Direct string copy
+    let res = tool.call(&json!("Direct string to clipboard")).await;
+    match res {
+        Ok(val) => {
+            assert_eq!(val["status"], "success");
+        }
+        Err(e) => {
+            let err_msg = e.to_string();
+            assert!(
+                err_msg.contains("Failed to initialize system clipboard")
+                    || err_msg.contains("clipboard access may not be supported")
+                    || err_msg.contains("ClipboardNotSupported")
+            );
+        }
+    }
+
+    // Direct string read
+    let res2 = tool.call(&json!("read")).await;
+    match res2 {
+        Ok(val) => {
+            assert_eq!(val["status"], "success");
+        }
+        Err(e) => {
+            let err_msg = e.to_string();
+            assert!(
+                err_msg.contains("Failed to initialize system clipboard")
+                    || err_msg.contains("clipboard access may not be supported")
+                    || err_msg.contains("ClipboardNotSupported")
+                    || err_msg.contains("Failed to read text from system clipboard")
+            );
+        }
+    }
+
+    // Alias content
+    let res3 = tool.call(&json!({ "content": "Alias text" })).await;
+    match res3 {
+        Ok(val) => {
+            assert_eq!(val["status"], "success");
+        }
+        Err(e) => {
+            let err_msg = e.to_string();
+            assert!(
+                err_msg.contains("Failed to initialize system clipboard")
+                    || err_msg.contains("clipboard access may not be supported")
+                    || err_msg.contains("ClipboardNotSupported")
+            );
+        }
+    }
+}
