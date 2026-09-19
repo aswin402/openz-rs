@@ -375,14 +375,28 @@ impl Tool for ManageConfigTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let raw_action = arguments
-            .get("action")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing action"))?;
-        let normalized_action = raw_action.trim().to_lowercase();
+        let (action_str, direct_updates) = if let Some(s) = arguments.as_str() {
+            (Some(s), None)
+        } else if let Some(obj) = arguments.as_object() {
+            let act = obj
+                .get("action")
+                .or_else(|| obj.get("act"))
+                .or_else(|| obj.get("command"))
+                .or_else(|| obj.get("cmd"))
+                .or_else(|| obj.get("op"))
+                .or_else(|| obj.get("mode"))
+                .and_then(|v| v.as_str());
+            (act, Some(obj))
+        } else {
+            (None, None)
+        };
+
+        let normalized_action = action_str
+            .map(|a| a.trim().to_lowercase())
+            .unwrap_or_else(|| "view".to_string());
         let action = match normalized_action.as_str() {
-            "view" | "show" | "get" | "read" => "view",
-            "update" | "set" | "modify" => "update",
+            "" | "view" | "show" | "get" | "read" | "list" | "inspect" => "view",
+            "update" | "set" | "modify" | "write" => "update",
             "set_credential" | "credential" | "credentials" => "set_credential",
             other => other,
         };
@@ -398,15 +412,23 @@ impl Tool for ManageConfigTool {
                 }))
             }
             "update" => {
-                let updates = arguments
+                let updates_opt = arguments
                     .get("updates")
-                    .and_then(|v| v.as_object())
-                    .ok_or_else(|| anyhow::anyhow!("Missing updates for action 'update'"))?;
+                    .or_else(|| arguments.get("config"))
+                    .or_else(|| arguments.get("settings"))
+                    .or_else(|| arguments.get("params"))
+                    .and_then(|v| v.as_object());
+                let updates = match updates_opt {
+                    Some(m) => m,
+                    None => direct_updates
+                        .ok_or_else(|| anyhow::anyhow!("Missing updates for action 'update'"))?,
+                };
 
                 let mut config = crate::config::loader::load_config()?;
 
                 for (k, v) in updates {
                     match k.as_str() {
+                        "action" | "act" | "command" | "cmd" | "op" | "mode" => {}
                         "firefox_webdriver_port" | "firefox_attach_port" => {
                             let Some(port) = parse_u64_value(v).and_then(|value| u16::try_from(value).ok())
                             else {
@@ -584,7 +606,7 @@ impl Tool for ManageConfigTool {
                     "message": format!("Credential target '{}' updated. Secrets are redacted in config views.", target)
                 }))
             }
-            _ => Err(anyhow::anyhow!("Invalid action '{}'", raw_action)),
+            _ => Err(anyhow::anyhow!("Invalid action '{}'", action)),
         }
     }
 }

@@ -112,4 +112,49 @@ fn test_diagnose_system_string_boolean_coercion() {
         .unwrap();
 
     assert_eq!(res["status"].as_str().unwrap(), "success");
+
+    // Test direct string "quick"
+    let res = rt.block_on(tool.call(&serde_json::json!("quick"))).unwrap();
+    assert_eq!(res["status"].as_str().unwrap(), "success");
+
+    // Test alias latency & integrity
+    let res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "latency": false,
+            "integrity": false
+        })))
+        .unwrap();
+    assert_eq!(res["status"].as_str().unwrap(), "success");
+}
+
+#[test]
+fn test_diagnose_tool_direct_string() {
+    let registry = crate::tools::ToolRegistry::new();
+    struct DummyTool;
+    #[async_trait::async_trait]
+    impl Tool for DummyTool {
+        fn name(&self) -> &str {
+            "test_direct_tool"
+        }
+        fn description(&self) -> &str {
+            "test_direct_tool"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        async fn call(&self, _args: &serde_json::Value) -> Result<serde_json::Value> {
+            Ok(serde_json::json!({ "called": true }))
+        }
+    }
+
+    let dummy = std::sync::Arc::new(DummyTool);
+    registry.register(dummy.clone());
+
+    let diagnose = DiagnoseToolTool::new(registry.clone());
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let res = rt
+        .block_on(diagnose.call(&serde_json::json!("test_direct_tool")))
+        .unwrap();
+    assert!(res["success"].as_bool().unwrap());
+    assert_eq!(res["output"]["called"].as_bool().unwrap(), true);
 }

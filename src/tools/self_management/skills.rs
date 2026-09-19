@@ -41,13 +41,24 @@ impl Tool for CurateSkillTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let raw_action = arguments
-            .get("action")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing action"))?;
-        let normalized_action = raw_action.trim().to_lowercase();
+        let action_str = if let Some(s) = arguments.as_str() {
+            Some(s)
+        } else if let Some(obj) = arguments.as_object() {
+            obj.get("action")
+                .or_else(|| obj.get("act"))
+                .or_else(|| obj.get("command"))
+                .or_else(|| obj.get("cmd"))
+                .or_else(|| obj.get("op"))
+                .and_then(|v| v.as_str())
+        } else {
+            None
+        };
+
+        let normalized_action = action_str
+            .map(|a| a.trim().to_lowercase())
+            .unwrap_or_else(|| "list".to_string());
         let action = match normalized_action.as_str() {
-            "list" | "ls" | "view" | "show" => "list",
+            "" | "list" | "ls" | "view" | "show" => "list",
             "add" | "save" | "create" | "set" => "add",
             "delete" | "remove" | "rm" => "delete",
             other => other,
@@ -69,12 +80,19 @@ impl Tool for CurateSkillTool {
             "add" => {
                 let skill_name = arguments
                     .get("skill_name")
+                    .or_else(|| arguments.get("skillName"))
+                    .or_else(|| arguments.get("name"))
+                    .or_else(|| arguments.get("skill"))
+                    .or_else(|| arguments.get("id"))
                     .and_then(|v| v.as_str())
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
                     .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'add'"))?;
                 let content = arguments
                     .get("content")
+                    .or_else(|| arguments.get("instructions"))
+                    .or_else(|| arguments.get("body"))
+                    .or_else(|| arguments.get("text"))
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("Missing content for action 'add'"))?;
                 let profile = arguments
@@ -97,6 +115,10 @@ impl Tool for CurateSkillTool {
             "delete" => {
                 let skill_name = arguments
                     .get("skill_name")
+                    .or_else(|| arguments.get("skillName"))
+                    .or_else(|| arguments.get("name"))
+                    .or_else(|| arguments.get("skill"))
+                    .or_else(|| arguments.get("id"))
                     .and_then(|v| v.as_str())
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
@@ -113,7 +135,7 @@ impl Tool for CurateSkillTool {
                     "message": format!("Skill '{}' successfully deleted", skill_name)
                 }))
             }
-            _ => Err(anyhow::anyhow!("Invalid action '{}'", raw_action)),
+            _ => Err(anyhow::anyhow!("Invalid action '{}'", action)),
         }
     }
 }

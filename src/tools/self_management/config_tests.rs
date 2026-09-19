@@ -245,6 +245,24 @@ fn test_manage_config_coercion_and_aliases() {
     assert_eq!(updated.browser.firefox_webdriver_port, 4545);
     assert!((updated.agents.defaults.min_free_disk_gb - 4.2).abs() < 1e-4);
 
+    // 3. Direct string "view" and empty object default to view
+    let str_res = rt.block_on(tool.call(&serde_json::json!("view"))).unwrap();
+    assert!(str_res["success"].as_bool().unwrap());
+
+    let empty_res = rt.block_on(tool.call(&serde_json::json!({}))).unwrap();
+    assert!(empty_res["success"].as_bool().unwrap());
+
+    // 4. Flattened update without nested "updates" object
+    let flat_update = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "update",
+            "max_tokens": 4096
+        })))
+        .unwrap();
+    assert!(flat_update["success"].as_bool().unwrap());
+    let updated = crate::config::loader::load_config().unwrap();
+    assert_eq!(updated.agents.defaults.max_tokens, 4096);
+
     // Restore original config
     crate::config::loader::save_config(&original_config).unwrap();
 

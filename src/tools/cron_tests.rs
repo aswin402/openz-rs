@@ -144,8 +144,64 @@ async fn get_job_logs_returns_structured_runs() {
             assert_eq!(res["status"], "success");
             assert_eq!(res["runs"].as_array().unwrap().len(), 1);
             assert_eq!(res["runs"][0]["run_id"], "run-1");
+
+            // Direct string get_job_logs
+            let res = tool.call(&serde_json::json!("daily")).await.unwrap();
+            assert_eq!(res["status"], "success");
+            assert_eq!(res["runs"].as_array().unwrap().len(), 1);
         })
         .await;
 
     let _ = std::fs::remove_dir_all(temp_dir);
 }
+
+#[tokio::test]
+async fn test_cron_tools_direct_strings_and_aliases() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_cron_aliases_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            // 1. Schedule via aliases: job_id, cron, goal, runOnce
+            let scheduler = ScheduleJobTool;
+            let res = scheduler
+                .call(&serde_json::json!({
+                    "job_id": "backup_job",
+                    "cron": "10m",
+                    "goal": "run backup now",
+                    "runOnce": "true"
+                }))
+                .await
+                .unwrap();
+            assert_eq!(res["status"], "success");
+            assert_eq!(res["run_once"], true);
+
+            // 2. Inspect via direct string
+            let get_tool = GetJobTool;
+            let res = get_tool.call(&serde_json::json!("backup_job")).await.unwrap();
+            assert_eq!(res["status"], "success");
+            assert_eq!(res["job"]["id"], "backup_job");
+
+            // 3. Pause via direct string
+            let pause_tool = PauseJobTool;
+            let res = pause_tool.call(&serde_json::json!("backup_job")).await.unwrap();
+            assert_eq!(res["status"], "success");
+
+            // 4. Resume via direct string
+            let resume_tool = ResumeJobTool;
+            let res = resume_tool.call(&serde_json::json!("backup_job")).await.unwrap();
+            assert_eq!(res["status"], "success");
+
+            // 5. Remove via direct string
+            let remove_tool = RemoveJobTool;
+            let res = remove_tool.call(&serde_json::json!("backup_job")).await.unwrap();
+            assert_eq!(res["status"], "success");
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(temp_dir);
+}
+

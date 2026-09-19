@@ -24,6 +24,28 @@ fn resolve_session_path(
     }
 }
 
+fn extract_session_key(arguments: &Value, direct_key: Option<&str>) -> Option<String> {
+    if let Some(key) = direct_key {
+        let trimmed = key.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    arguments
+        .get("session_key")
+        .or_else(|| arguments.get("sessionKey"))
+        .or_else(|| arguments.get("key"))
+        .or_else(|| arguments.get("id"))
+        .or_else(|| arguments.get("session_id"))
+        .or_else(|| arguments.get("sessionId"))
+        .or_else(|| arguments.get("session"))
+        .or_else(|| arguments.get("target"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
 #[async_trait::async_trait]
 impl Tool for ManageSessionsTool {
     fn name(&self) -> &str {
@@ -57,16 +79,35 @@ impl Tool for ManageSessionsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let raw_action = arguments
-            .get("action")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing 'action'"))?;
-        let normalized_action = raw_action.trim().to_lowercase();
+        let (action_str, direct_key) = if let Some(s) = arguments.as_str() {
+            let s_trim = s.trim();
+            match s_trim.to_lowercase().as_str() {
+                "list" | "ls" | "show" | "view" => (Some("list"), None),
+                "prune" | "clean" | "cleanup" => (Some("prune"), None),
+                _ => (Some("export"), Some(s_trim)),
+            }
+        } else if let Some(obj) = arguments.as_object() {
+            let act = obj
+                .get("action")
+                .or_else(|| obj.get("act"))
+                .or_else(|| obj.get("command"))
+                .or_else(|| obj.get("cmd"))
+                .or_else(|| obj.get("op"))
+                .or_else(|| obj.get("mode"))
+                .and_then(|v| v.as_str());
+            (act, None)
+        } else {
+            (None, None)
+        };
+
+        let normalized_action = action_str
+            .map(|a| a.trim().to_lowercase())
+            .unwrap_or_else(|| "list".to_string());
         let action = match normalized_action.as_str() {
-            "list" | "ls" | "show" => "list",
+            "" | "list" | "ls" | "show" | "view" => "list",
             "prune" | "clean" | "cleanup" => "prune",
             "archive" => "archive",
-            "export" | "dump" => "export",
+            "export" | "dump" | "get" | "read" => "export",
             "delete" | "remove" | "rm" => "delete",
             other => other,
         };
@@ -172,13 +213,10 @@ impl Tool for ManageSessionsTool {
                 }))
             }
             "archive" => {
-                let session_key = arguments
-                    .get("session_key")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("Missing 'session_key' for action 'archive'"))?
-                    .trim();
+                let session_key = extract_session_key(arguments, direct_key)
+                    .ok_or_else(|| anyhow::anyhow!("Missing 'session_key' for action 'archive'"))?;
                 let (session_file, lock_file, safe_key) =
-                    resolve_session_path(&sessions_dir, session_key);
+                    resolve_session_path(&sessions_dir, &session_key);
 
                 if !session_file.exists() {
                     return Err(anyhow::anyhow!("Session '{}' does not exist.", session_key));
@@ -207,12 +245,9 @@ impl Tool for ManageSessionsTool {
                 }))
             }
             "export" => {
-                let session_key = arguments
-                    .get("session_key")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("Missing session_key for export"))?
-                    .trim();
-                let (session_file, _, _) = resolve_session_path(&sessions_dir, session_key);
+                let session_key = extract_session_key(arguments, direct_key)
+                    .ok_or_else(|| anyhow::anyhow!("Missing 'session_key' for action 'export'"))?;
+                let (session_file, _, _) = resolve_session_path(&sessions_dir, &session_key);
                 if !session_file.exists() {
                     return Err(anyhow::anyhow!("Session does not exist: {}", session_key));
                 }
@@ -223,12 +258,9 @@ impl Tool for ManageSessionsTool {
                 )
             }
             "delete" => {
-                let session_key = arguments
-                    .get("session_key")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("Missing 'session_key' for action 'delete'"))?
-                    .trim();
-                let (session_file, lock_file, _) = resolve_session_path(&sessions_dir, session_key);
+                let session_key = extract_session_key(arguments, direct_key)
+                    .ok_or_else(|| anyhow::anyhow!("Missing 'session_key' for action 'delete'"))?;
+                let (session_file, lock_file, _) = resolve_session_path(&sessions_dir, &session_key);
 
                 if !session_file.exists() {
                     return Err(anyhow::anyhow!("Session '{}' does not exist.", session_key));

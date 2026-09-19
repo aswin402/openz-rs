@@ -1,4 +1,61 @@
-### v0.0.206 (Latest Release)
+### v0.0.207 (Latest Release)
+- **Ideas**:
+  - Comprehensive evaluation, live headless validation, and hardening of the Database, Self-Management & Diagnostics Suite (13 native tools):
+    - `db_inspector`: Inspect SQLite databases, query schemas, and run safe, read-only SELECT queries with keyword/syntax filtering, comments/semicolon blocking, and automatic default database resolution (`~/.openz/memory.db`).
+    - `db_write` (`db_writer`): Execute SQLite mutation queries (INSERT, UPDATE, DELETE, CREATE/DROP TABLE) directly using `rusqlite` without process spawning, with path traversal prevention and dot-command blocking.
+    - `manage_config`: View redacted configuration, modify agent defaults, and update credentials (providers, git services, channels) with secret masking and flattened update support.
+    - `manage_sessions`: Clean up, list, export, archive, or permanently delete session history files and temporary tool outputs with safe key resolution.
+    - `manage_backups`: Create, list, restore, and delete snapshots of configuration, subagent profiles, and skills with extension/prefix autofill.
+    - `diagnose_system`: Retrieve comprehensive system diagnostics (OS, architecture, cores, directory sizes, file counts, internal SQLite database integrity checks, and endpoint latencies).
+    - `diagnose_tool`: Inspect, validate schemas, and execute any native tool in the agent loop with mock argument validation.
+    - `curate_skill`: Add, list, and delete persistent procedural skills and guidelines in the SQLite skills database.
+    - `cron` suite (`schedule_job`, `list_jobs`, `remove_job`, `get_job`, `pause_job`, `resume_job`, `run_job_now`, `get_job_logs`): Automated scheduled agent tasks supporting durations, local times, and Unix cron syntax.
+  - Resilient Parameter Normalization & Direct String Support:
+    - Direct string calling across the suite (e.g. `call("SELECT * FROM users")`, `call("my.db")`, `call("view")`, `call("list")`, `call("create")`, `call("backup_file.json")`, `call("quick")`, `call("my_job")`).
+    - Default action inference: `manage_config` defaults to `"view"`, `manage_sessions` defaults to `"list"`, `manage_backups` defaults to `"list"`, `curate_skill` defaults to `"list"`, `db_inspector` defaults to `"schema"` (or `"query"` when SQL is supplied).
+    - Default database resolution: if `db_path` is omitted, empty, `"memory"`, `"openz"`, or `"default"`, resolves to OpenZ default database (`~/.openz/memory.db`).
+    - Strip `file://` prefixes from `db_path` inputs and allow aliases (`file_path`, `filePath`, `target`, `uri`, `path`, `database`, `db`, `file`).
+    - Parameter aliases across self-management: action aliases (`act`, `command`, `cmd`, `op`), session key aliases (`sessionKey`, `key`, `id`, `session_id`, `sessionId`, `session`, `target`), backup name aliases (`backupName`, `name`, `target`, `file`, `filename`), skill name and content aliases (`skillName`, `skill`, `instructions`, `body`, `text`), and cron job aliases (`job_id`, `jobId`, `name`, `job`, `cron`, `interval`, `goal`, `task`, `runOnce`).
+    - Dynamic Static Tool Aliasing in Registry (`resolve_static_name`): added seamless alias mappings for `db_writer` / `sqlite_write` / `sqlite_writer` -> `db_write`, `sqlite` / `sqlite_query` / `sqlite_inspector` -> `db_inspector`, `diagnose` / `system_diagnostics` / `health_check` / `system_health` -> `diagnose_system`, `cron_schedule` / `cron_add` -> `schedule_job`, `cron_list` / `cron_jobs` -> `list_jobs`, `cron_remove` / `cron_delete` -> `remove_job`.
+    - TUI Log Formatting: enhanced `format_tool_args` with clean summaries for `db_inspector`, `db_write`, and all cron tools.
+    - Test Concurrency Isolation: wrapped self-management tests (`backups_tests.rs`, `skills_tests.rs`) in `CONFIG_DIR_OVERRIDE.scope(...)` to eliminate parallel test collisions and protect live environment state.
+- **Inspirations**:
+  - Self-healing system administration architectures where agents can diagnose hardware/storage pressure, inspect databases, review configuration, and schedule maintenance autonomously without requiring human intervention or external scripting.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/db_inspector.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/db_inspector.rs): Added direct string query/path support, default database resolution, path normalization, and action inference.
+    - [`src/tools/self_management/config.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/config.rs): Added default action `"view"`, direct string calling, and flattened update support.
+    - [`src/tools/self_management/sessions.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/sessions.rs): Added `extract_session_key`, direct string calling, default action `"list"`, and alias coercion.
+    - [`src/tools/self_management/backups.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/backups.rs): Added `extract_backup_name`, extension/prefix auto-completion, default action `"list"`, and direct string calling.
+    - [`src/tools/self_management/diagnostics.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/diagnostics.rs): Added direct string calling, alias normalization, and quick/full diagnostic modes.
+    - [`src/tools/self_management/skills.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/skills.rs): Added parameter aliases, direct string `"list"`, and default action handling.
+    - [`src/tools/cron.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/cron.rs): Enhanced `job_id_arg`, `ScheduleJobTool`, and `GetJobLogsTool` with direct string calling and alias normalization.
+    - [`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs): Added alias routing for database, diagnostics, and cron tools.
+    - [`src/agent/agent_loop/tool_execution.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/tool_execution.rs): Added clean formatted tool logs for database and cron tools.
+  - Test Modules:
+    - [`src/tools/db_inspector_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/db_inspector_tests.rs): Added unit tests for direct string querying, aliases, and default memory database.
+    - [`src/tools/self_management/config_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/config_tests.rs): Added unit tests for direct string `"view"`, empty object defaults, and flattened update maps.
+    - [`src/tools/self_management/sessions_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/sessions_tests.rs): Added unit tests for direct string `"list"`, empty args defaults, and key aliases.
+    - [`src/tools/self_management/backups_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/backups_tests.rs): Added unit tests for direct string `"create"` / `"list"` / restore and task-local isolation.
+    - [`src/tools/self_management/diagnostics_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/diagnostics_tests.rs): Added unit tests for direct string `"quick"` and `diagnose_tool` direct string execution.
+    - [`src/tools/self_management/skills_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/skills_tests.rs): Added unit tests for direct string `"list"`, empty object defaults, and task-local isolation.
+    - [`src/tools/cron_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/cron_tests.rs): Added unit tests for direct string job execution, inspection, pause, resume, removal, and aliases.
+- **Details & Metrics**:
+  - Test Suite: All unit tests passing cleanly across the suite (5 in tools::db_inspector, 20 in tools::self_management, 5 in tools::cron).
+  - Native Tool Invariant: Exactly 260 registered native tools verified and maintained.
+  - Compiler & Clippy Health: 0 errors, 0 warnings under `-j 1`.
+  - Live Real-time Headless Testing:
+    - Executed live headless `diagnose_system` & `manage_config` querying system stats and agent configuration in 13.8s with exit code 0.
+    - Executed live headless `db_inspector` inspecting default database schema (`~/.openz/memory.db`) in 10.8s with exit code 0.
+- **Verification**:
+  - `cargo test -p openz --lib "tools::db_inspector" -j 1` (5 passed)
+  - `cargo test -p openz --lib "tools::self_management" -j 1` (20 passed)
+  - `cargo test -p openz --lib "tools::cron" -j 1` (5 passed)
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1` (1 passed, 260 tools verified)
+  - `cargo clippy -p openz -j 1` (0 warnings)
+  - `target/debug/openz run -y --output-format json -p "..."` (live headless execution verified with exit code 0)
+
+### v0.0.206
 - **Ideas**:
   - Comprehensive evaluation, live headless validation, and hardening of the Web Scraping, Browser Automation & Web Search Suite (7 native tools):
     - `web_fetch`: High-speed DOM parsing, markdown conversion, and SSRF-safe page fetching with SQLite-backed HTTP caching (`cache_mode`), JavaScript app shell detection, and browser rendering fallbacks.

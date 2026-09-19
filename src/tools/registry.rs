@@ -100,6 +100,12 @@ pub(crate) fn resolve_static_name(
                     "gsd" | "gsd_tool" | "chrome_gui" => canonical == "gsd_browser",
                     "firefox" | "firefox_tool" => canonical == "firefox_browser",
                     "inspect_browser" | "browser_status" | "browser_health" => canonical == "inspect_browsers",
+                    "db_writer" | "sqlite_write" | "sqlite_writer" => canonical == "db_write",
+                    "sqlite" | "sqlite_query" | "sqlite_inspector" => canonical == "db_inspector",
+                    "diagnose" | "system_diagnostics" | "health_check" | "system_health" => canonical == "diagnose_system",
+                    "cron_schedule" | "cron_add" => canonical == "schedule_job",
+                    "cron_list" | "cron_jobs" => canonical == "list_jobs",
+                    "cron_remove" | "cron_delete" => canonical == "remove_job",
                     _ => false,
                 };
             if is_match {

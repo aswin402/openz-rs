@@ -57,31 +57,61 @@ impl Tool for DbInspectorTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let db_path_raw = arguments
-            .get("db_path")
-            .or_else(|| arguments.get("path"))
-            .or_else(|| arguments.get("database"))
-            .or_else(|| arguments.get("db"))
-            .or_else(|| arguments.get("file"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'db_path' parameter"))?;
-        let db_path = crate::config::loader::resolve_path(db_path_raw);
+        let (raw_path_input, sql_from_arg) = if let Some(s) = arguments.as_str() {
+            let s_trimmed = s.trim();
+            let upper = s_trimmed.to_uppercase();
+            if upper.starts_with("SELECT") || upper.starts_with("EXPLAIN") {
+                (None, Some(s_trimmed))
+            } else {
+                (Some(s_trimmed), None)
+            }
+        } else {
+            (
+                arguments
+                    .get("db_path")
+                    .or_else(|| arguments.get("path"))
+                    .or_else(|| arguments.get("database"))
+                    .or_else(|| arguments.get("db"))
+                    .or_else(|| arguments.get("file"))
+                    .or_else(|| arguments.get("file_path"))
+                    .or_else(|| arguments.get("filePath"))
+                    .or_else(|| arguments.get("target"))
+                    .or_else(|| arguments.get("uri"))
+                    .and_then(|v| v.as_str()),
+                None,
+            )
+        };
+
+        let db_path = match raw_path_input.map(str::trim).filter(|s| !s.is_empty()) {
+            Some("memory" | "openz" | "default") | None => {
+                crate::config::loader::runtime_db_path("memory.db")
+            }
+            Some(p) => {
+                let clean = p.strip_prefix("file://").unwrap_or(p);
+                crate::config::loader::resolve_path(clean)
+            }
+        };
         crate::config::loader::verify_safe_path(&db_path)?;
 
-        let sql_opt = arguments
-            .get("sql")
-            .or_else(|| arguments.get("query"))
-            .or_else(|| arguments.get("statement"))
-            .and_then(|v| v.as_str());
+        let sql_opt = sql_from_arg.or_else(|| {
+            arguments
+                .get("sql")
+                .or_else(|| arguments.get("query"))
+                .or_else(|| arguments.get("statement"))
+                .or_else(|| arguments.get("select"))
+                .and_then(|v| v.as_str())
+        });
 
         let action_raw = arguments
             .get("action")
             .or_else(|| arguments.get("command"))
+            .or_else(|| arguments.get("cmd"))
+            .or_else(|| arguments.get("act"))
             .and_then(|v| v.as_str());
         let action_norm = action_raw.map(|a| a.trim().to_lowercase());
         let action = match action_norm.as_deref() {
-            Some("schema" | "tables" | "structure") => "schema",
-            Some("query" | "select" | "run" | "sql") => "query",
+            Some("schema" | "tables" | "structure" | "desc" | "describe" | "list") => "schema",
+            Some("query" | "select" | "run" | "sql" | "exec") => "query",
             Some(other) => other,
             None => {
                 if sql_opt.is_some() {
@@ -232,22 +262,47 @@ impl Tool for DbWriteTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let db_path_raw = arguments
-            .get("db_path")
-            .or_else(|| arguments.get("path"))
-            .or_else(|| arguments.get("database"))
-            .or_else(|| arguments.get("db"))
-            .or_else(|| arguments.get("file"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'db_path' parameter"))?;
-        let db_path = crate::config::loader::resolve_path(db_path_raw);
+        let (raw_path_input, sql_from_arg) = if let Some(s) = arguments.as_str() {
+            (None, Some(s.trim()))
+        } else {
+            (
+                arguments
+                    .get("db_path")
+                    .or_else(|| arguments.get("path"))
+                    .or_else(|| arguments.get("database"))
+                    .or_else(|| arguments.get("db"))
+                    .or_else(|| arguments.get("file"))
+                    .or_else(|| arguments.get("file_path"))
+                    .or_else(|| arguments.get("filePath"))
+                    .or_else(|| arguments.get("target"))
+                    .or_else(|| arguments.get("uri"))
+                    .and_then(|v| v.as_str()),
+                None,
+            )
+        };
+
+        let db_path = match raw_path_input.map(str::trim).filter(|s| !s.is_empty()) {
+            Some("memory" | "openz" | "default") | None => {
+                crate::config::loader::runtime_db_path("memory.db")
+            }
+            Some(p) => {
+                let clean = p.strip_prefix("file://").unwrap_or(p);
+                crate::config::loader::resolve_path(clean)
+            }
+        };
         crate::config::loader::verify_safe_path(&db_path)?;
-        let sql = arguments
-            .get("sql")
-            .or_else(|| arguments.get("query"))
-            .or_else(|| arguments.get("statement"))
-            .or_else(|| arguments.get("mutation"))
-            .and_then(|v| v.as_str())
+
+        let sql = sql_from_arg
+            .or_else(|| {
+                arguments
+                    .get("sql")
+                    .or_else(|| arguments.get("query"))
+                    .or_else(|| arguments.get("statement"))
+                    .or_else(|| arguments.get("mutation"))
+                    .or_else(|| arguments.get("command"))
+                    .or_else(|| arguments.get("exec"))
+                    .and_then(|v| v.as_str())
+            })
             .ok_or_else(|| anyhow!("Missing 'sql' parameter"))?;
 
         // Safety checks for db_write

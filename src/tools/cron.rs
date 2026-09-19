@@ -20,9 +20,22 @@ fn parse_notify_policy(arguments: &Value) -> Result<CronNotifyPolicy> {
 }
 
 fn job_id_arg(arguments: &Value) -> Result<&str> {
+    if let Some(s) = arguments.as_str() {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed);
+        }
+    }
     arguments
         .get("id")
+        .or_else(|| arguments.get("job_id"))
+        .or_else(|| arguments.get("jobId"))
+        .or_else(|| arguments.get("name"))
+        .or_else(|| arguments.get("job"))
+        .or_else(|| arguments.get("target"))
         .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow!("Missing 'id' argument"))
 }
 
@@ -76,19 +89,33 @@ impl Tool for ScheduleJobTool {
         let id = job_id_arg(arguments)?;
         let schedule = arguments
             .get("schedule")
+            .or_else(|| arguments.get("cron"))
+            .or_else(|| arguments.get("interval"))
+            .or_else(|| arguments.get("time"))
+            .or_else(|| arguments.get("when"))
             .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .ok_or_else(|| anyhow!("Missing 'schedule' argument"))?;
         let prompt = arguments
             .get("prompt")
+            .or_else(|| arguments.get("goal"))
+            .or_else(|| arguments.get("task"))
+            .or_else(|| arguments.get("command"))
+            .or_else(|| arguments.get("message"))
+            .or_else(|| arguments.get("instruction"))
             .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .ok_or_else(|| anyhow!("Missing 'prompt' argument"))?;
         let run_once = arguments
             .get("run_once")
-            .and_then(|v| v.as_bool())
+            .or_else(|| arguments.get("runOnce"))
+            .and_then(|v| v.as_bool().or_else(|| v.as_str().and_then(|s| s.parse::<bool>().ok())))
             .unwrap_or(false);
         let quiet = arguments
             .get("quiet")
-            .and_then(|v| v.as_bool())
+            .and_then(|v| v.as_bool().or_else(|| v.as_str().and_then(|s| s.parse::<bool>().ok())))
             .unwrap_or(true);
         let notify_on = parse_notify_policy(arguments)?;
         let now = chrono::Utc::now().to_rfc3339();
@@ -429,10 +456,32 @@ impl Tool for GetJobLogsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let id = arguments.get("id").and_then(|v| v.as_str());
+        let id = if let Some(s) = arguments.as_str() {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        } else {
+            arguments
+                .get("id")
+                .or_else(|| arguments.get("job_id"))
+                .or_else(|| arguments.get("jobId"))
+                .or_else(|| arguments.get("name"))
+                .or_else(|| arguments.get("job"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        };
         let limit = arguments
             .get("limit")
-            .and_then(|v| v.as_u64())
+            .and_then(|v| {
+                v.as_u64().or_else(|| {
+                    v.as_str()
+                        .and_then(|s| s.trim().parse::<u64>().ok())
+                })
+            })
             .unwrap_or(20) as usize;
         let runs = load_cron_run_records(id, limit)?;
 

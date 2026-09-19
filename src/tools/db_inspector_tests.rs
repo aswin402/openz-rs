@@ -147,7 +147,61 @@ async fn test_db_inspector_actions() -> Result<()> {
     assert_eq!(res["status"], "success");
     assert!(res["stdout"].as_str().unwrap().contains("CREATE TABLE users"));
 
+    // Test direct string calling with db_path
+    let res = tool.call(&json!(db_path_str)).await?;
+    assert_eq!(res["status"], "success");
+    assert!(res["stdout"].as_str().unwrap().contains("CREATE TABLE users"));
+
+    // Test file_path alias and uri with file:// prefix
+    let res = tool
+        .call(&json!({
+            "file_path": format!("file://{}", db_path_str),
+            "cmd": "query",
+            "select": "SELECT count(*) FROM users;"
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+    assert!(res["stdout"].as_str().unwrap().contains("1"));
+
     // Clean up
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
 }
+
+#[tokio::test]
+async fn test_db_default_memory_database() -> Result<()> {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_db_default_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            let write_tool = DbWriteTool;
+            let res = write_tool
+                .call(&json!({
+                    "sql": "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, note TEXT);"
+                }))
+                .await
+                .unwrap();
+            assert_eq!(res["status"], "success");
+
+            let res = write_tool
+                .call(&json!("INSERT INTO notes (note) VALUES ('test_note');"))
+                .await
+                .unwrap();
+            assert_eq!(res["status"], "success");
+
+            let inspector = DbInspectorTool;
+            let res = inspector
+                .call(&json!("SELECT note FROM notes;"))
+                .await
+                .unwrap();
+            assert_eq!(res["status"], "success");
+            assert!(res["stdout"].as_str().unwrap().contains("test_note"));
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+

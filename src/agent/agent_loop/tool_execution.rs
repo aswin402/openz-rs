@@ -238,14 +238,23 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 .and_then(|v| v.as_str())
                 .map(|action| format!("action: \"{}\"", action))
                 .unwrap_or_default(),
+            "schedule_job" => {
+                let id = string_arg(map, &["id", "job_id", "jobId", "name"]).unwrap_or("");
+                let schedule = string_arg(map, &["schedule", "cron", "interval"]).unwrap_or("");
+                format!("id: \"{}\", schedule: \"{}\"", id, schedule)
+            }
+            "get_job" | "remove_job" | "pause_job" | "resume_job" | "run_job_now" | "get_job_logs" => {
+                let id = string_arg(map, &["id", "job_id", "jobId", "name"]).unwrap_or("");
+                format!("id: \"{}\"", id)
+            }
             "db_inspector" | "db_write" => {
-                let db_path = string_arg(map, &["db_path", "dbPath"]).unwrap_or("");
+                let db_path = string_arg(map, &["db_path", "dbPath", "path", "database", "db", "file"]).unwrap_or("memory.db");
                 let db_filename = file_name_of(db_path);
-                let sql = map.get("sql").and_then(|v| v.as_str()).unwrap_or("");
+                let sql = string_arg(map, &["sql", "query", "statement", "select", "mutation"]).unwrap_or("");
                 if !sql.is_empty() {
                     format!("db: \"{}\", sql: \"{}\"", db_filename, clip(sql, 35))
                 } else {
-                    let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("");
+                    let action = string_arg(map, &["action", "command", "cmd"]).unwrap_or("schema");
                     format!("db: \"{}\", action: \"{}\"", db_filename, action)
                 }
             }

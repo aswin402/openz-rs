@@ -1,90 +1,127 @@
 use super::*;
+use crate::config::loader::CONFIG_DIR_OVERRIDE;
 use crate::tools::Tool;
 
-#[test]
-fn test_curate_skills() {
-    // Run database queries through curate_skill tool
-    let tool = CurateSkillTool;
-    let rt = tokio::runtime::Runtime::new().unwrap();
+#[tokio::test]
+async fn test_curate_skills() {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_skills_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
 
-    // 1. Delete skill if exists
-    let _ = rt.block_on(tool.call(&serde_json::json!({
-        "action": "delete",
-        "skill_name": "test_curate_skills_temp"
-    })));
+    CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            let tool = CurateSkillTool;
 
-    // 2. Add skill
-    let add_res = rt
-        .block_on(tool.call(&serde_json::json!({
-            "action": "add",
-            "skill_name": "test_curate_skills_temp",
-            "content": "This is a test skill content"
-        })))
-        .unwrap();
-    assert!(add_res["success"].as_bool().unwrap());
+            // 1. Delete skill if exists
+            let _ = tool
+                .call(&serde_json::json!({
+                    "action": "delete",
+                    "skill_name": "test_curate_skills_temp"
+                }))
+                .await;
 
-    // 3. List skills and verify
-    let list_res = rt
-        .block_on(tool.call(&serde_json::json!({
-            "action": "list"
-        })))
-        .unwrap();
-    assert!(list_res["success"].as_bool().unwrap());
-    let skills = list_res["skills"].as_array().unwrap();
-    let found = skills
-        .iter()
-        .any(|s| s["name"].as_str().unwrap() == "test_curate_skills_temp");
-    assert!(found);
+            // 2. Add skill
+            let add_res = tool
+                .call(&serde_json::json!({
+                    "action": "add",
+                    "skill_name": "test_curate_skills_temp",
+                    "content": "This is a test skill content"
+                }))
+                .await
+                .unwrap();
+            assert!(add_res["success"].as_bool().unwrap());
 
-    // 4. Delete skill
-    let del_res = rt
-        .block_on(tool.call(&serde_json::json!({
-            "action": "delete",
-            "skill_name": "test_curate_skills_temp"
-        })))
-        .unwrap();
-    assert!(del_res["success"].as_bool().unwrap());
+            // 3. List skills and verify
+            let list_res = tool
+                .call(&serde_json::json!({
+                    "action": "list"
+                }))
+                .await
+                .unwrap();
+            assert!(list_res["success"].as_bool().unwrap());
+            let skills = list_res["skills"].as_array().unwrap();
+            let found = skills
+                .iter()
+                .any(|s| s["name"].as_str().unwrap() == "test_curate_skills_temp");
+            assert!(found);
+
+            // 4. Delete skill
+            let del_res = tool
+                .call(&serde_json::json!({
+                    "action": "delete",
+                    "skill_name": "test_curate_skills_temp"
+                }))
+                .await
+                .unwrap();
+            assert!(del_res["success"].as_bool().unwrap());
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
-#[test]
-fn test_curate_skills_aliases_and_case() {
-    let tool = CurateSkillTool;
-    let rt = tokio::runtime::Runtime::new().unwrap();
+#[tokio::test]
+async fn test_curate_skills_aliases_and_case() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_skills_aliases_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
 
-    let _ = rt.block_on(tool.call(&serde_json::json!({
-        "action": "rm",
-        "skill_name": "test_curate_skills_alias"
-    })));
+    CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            let tool = CurateSkillTool;
 
-    // 1. Add via alias "SAVE" with untrimmed skill_name
-    let add_res = rt
-        .block_on(tool.call(&serde_json::json!({
-            "action": "SAVE",
-            "skill_name": "  test_curate_skills_alias  ",
-            "content": "Alias content"
-        })))
-        .unwrap();
-    assert!(add_res["success"].as_bool().unwrap());
+            let _ = tool
+                .call(&serde_json::json!({
+                    "action": "rm",
+                    "skill_name": "test_curate_skills_alias"
+                }))
+                .await;
 
-    // 2. List via alias "view"
-    let list_res = rt
-        .block_on(tool.call(&serde_json::json!({
-            "action": "view"
-        })))
-        .unwrap();
-    assert!(list_res["success"].as_bool().unwrap());
-    let skills = list_res["skills"].as_array().unwrap();
-    let found = skills
-        .iter()
-        .any(|s| s["name"].as_str().unwrap() == "test_curate_skills_alias");
-    assert!(found);
+            // 1. Add via alias "SAVE" with untrimmed skill_name
+            let add_res = tool
+                .call(&serde_json::json!({
+                    "action": "SAVE",
+                    "skill_name": "  test_curate_skills_alias  ",
+                    "content": "Alias content"
+                }))
+                .await
+                .unwrap();
+            assert!(add_res["success"].as_bool().unwrap());
 
-    // 3. Delete via alias "rm"
-    let del_res = rt
-        .block_on(tool.call(&serde_json::json!({
-            "action": "rm",
-            "skill_name": "test_curate_skills_alias"
-        })))
-        .unwrap();
-    assert!(del_res["success"].as_bool().unwrap());
+            // 2. List via alias "view"
+            let list_res = tool
+                .call(&serde_json::json!({
+                    "action": "view"
+                }))
+                .await
+                .unwrap();
+            assert!(list_res["success"].as_bool().unwrap());
+            let skills = list_res["skills"].as_array().unwrap();
+            let found = skills
+                .iter()
+                .any(|s| s["name"].as_str().unwrap() == "test_curate_skills_alias");
+            assert!(found);
+
+            // 3. List via direct string "list" and empty object
+            let str_res = tool.call(&serde_json::json!("list")).await.unwrap();
+            assert!(str_res["success"].as_bool().unwrap());
+
+            let empty_res = tool.call(&serde_json::json!({})).await.unwrap();
+            assert!(empty_res["success"].as_bool().unwrap());
+
+            // 4. Delete via alias "rm"
+            let del_res = tool
+                .call(&serde_json::json!({
+                    "action": "rm",
+                    "skill_name": "test_curate_skills_alias"
+                }))
+                .await
+                .unwrap();
+            assert!(del_res["success"].as_bool().unwrap());
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }

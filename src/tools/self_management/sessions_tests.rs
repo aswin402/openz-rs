@@ -193,6 +193,14 @@ fn test_manage_sessions_colon_keys_and_coercion() {
         .unwrap();
     assert_eq!(prune_res["status"].as_str().unwrap(), "success");
 
+    // 5. Test empty object defaults to "list" action
+    let default_list = rt.block_on(tool.call(&serde_json::json!({}))).unwrap();
+    assert_eq!(default_list["status"].as_str().unwrap(), "success");
+
+    // 6. Test direct string "list" and "prune"
+    let str_list = rt.block_on(tool.call(&serde_json::json!("list"))).unwrap();
+    assert_eq!(str_list["status"].as_str().unwrap(), "success");
+
     if let Some(prev) = previous_config_dir {
         std::env::set_var("OPENZ_CONFIG_DIR", prev);
     } else {

@@ -4,6 +4,37 @@ use serde_json::Value;
 
 pub struct ManageBackupsTool;
 
+fn extract_backup_name(arguments: &Value, direct_name: Option<&str>, backups_dir: &std::path::Path) -> Option<String> {
+    let raw = direct_name.map(|s| s.to_string()).or_else(|| {
+        arguments
+            .get("backup_name")
+            .or_else(|| arguments.get("backupName"))
+            .or_else(|| arguments.get("name"))
+            .or_else(|| arguments.get("target"))
+            .or_else(|| arguments.get("file"))
+            .or_else(|| arguments.get("filename"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    })?;
+
+    if backups_dir.join(&raw).exists() {
+        return Some(raw);
+    }
+    if !raw.ends_with(".json") {
+        let with_ext = format!("{}.json", raw);
+        if backups_dir.join(&with_ext).exists() {
+            return Some(with_ext);
+        }
+        let prefixed = format!("backup_{}.json", raw);
+        if backups_dir.join(&prefixed).exists() {
+            return Some(prefixed);
+        }
+    }
+    Some(raw)
+}
+
 #[async_trait::async_trait]
 impl Tool for ManageBackupsTool {
     fn name(&self) -> &str {
@@ -33,15 +64,33 @@ impl Tool for ManageBackupsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let raw_action = arguments
-            .get("action")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing 'action'"))?;
-        let normalized_action = raw_action.trim().to_lowercase();
+        let (action_str, direct_backup_name) = if let Some(s) = arguments.as_str() {
+            let s_trim = s.trim();
+            match s_trim.to_lowercase().as_str() {
+                "create" | "backup" | "save" | "new" => (Some("create"), None),
+                "list" | "ls" | "view" | "show" => (Some("list"), None),
+                _ => (Some("restore"), Some(s_trim)),
+            }
+        } else if let Some(obj) = arguments.as_object() {
+            let act = obj
+                .get("action")
+                .or_else(|| obj.get("act"))
+                .or_else(|| obj.get("command"))
+                .or_else(|| obj.get("cmd"))
+                .or_else(|| obj.get("op"))
+                .and_then(|v| v.as_str());
+            (act, None)
+        } else {
+            (None, None)
+        };
+
+        let normalized_action = action_str
+            .map(|a| a.trim().to_lowercase())
+            .unwrap_or_else(|| "list".to_string());
         let action = match normalized_action.as_str() {
+            "" | "list" | "ls" | "view" | "show" => "list",
             "create" | "backup" | "save" | "new" => "create",
-            "list" | "ls" | "view" => "list",
-            "restore" | "load" => "restore",
+            "restore" | "load" | "apply" => "restore",
             "delete" | "remove" | "rm" => "delete",
             other => other,
         };
@@ -155,11 +204,7 @@ impl Tool for ManageBackupsTool {
                 }))
             }
             "restore" => {
-                let backup_name = arguments
-                    .get("backup_name")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
+                let backup_name = extract_backup_name(arguments, direct_backup_name, &backups_dir)
                     .ok_or_else(|| anyhow::anyhow!("Missing 'backup_name' for restore action"))?;
 
                 if backup_name.contains('/')
@@ -169,7 +214,7 @@ impl Tool for ManageBackupsTool {
                     return Err(anyhow::anyhow!("Invalid backup_name specified."));
                 }
 
-                let backup_path = backups_dir.join(backup_name);
+                let backup_path = backups_dir.join(&backup_name);
                 if !backup_path.exists() {
                     return Err(anyhow::anyhow!(
                         "Backup file '{}' does not exist.",
@@ -214,11 +259,7 @@ impl Tool for ManageBackupsTool {
                 }))
             }
             "delete" => {
-                let backup_name = arguments
-                    .get("backup_name")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
+                let backup_name = extract_backup_name(arguments, direct_backup_name, &backups_dir)
                     .ok_or_else(|| anyhow::anyhow!("Missing 'backup_name' for delete action"))?;
 
                 if backup_name.contains('/')
@@ -228,7 +269,7 @@ impl Tool for ManageBackupsTool {
                     return Err(anyhow::anyhow!("Invalid backup_name specified."));
                 }
 
-                let backup_path = backups_dir.join(backup_name);
+                let backup_path = backups_dir.join(&backup_name);
                 if !backup_path.exists() {
                     return Err(anyhow::anyhow!(
                         "Backup file '{}' does not exist.",
@@ -243,7 +284,7 @@ impl Tool for ManageBackupsTool {
                     "message": format!("Backup '{}' successfully deleted.", backup_name)
                 }))
             }
-            _ => Err(anyhow::anyhow!("Invalid action '{}'", raw_action)),
+            _ => Err(anyhow::anyhow!("Invalid action '{}'", action)),
         }
     }
 }
