@@ -207,6 +207,63 @@ impl FirefoxBrowserTool {
     }
 }
 
+pub fn resolve_firefox_action_and_url(arguments: &Value) -> (String, Option<String>) {
+    if let Some(s) = arguments.as_str() {
+        let trimmed = s.trim();
+        let lower = trimmed.to_lowercase();
+        if lower == "close" || lower == "quit" || lower == "stop" || lower == "exit" {
+            return ("close".to_string(), None);
+        } else if lower == "render" || lower == "view" || lower == "source" || lower == "snapshot" {
+            return ("render".to_string(), None);
+        } else if lower == "media_status" || lower == "media" || lower == "status" {
+            return ("media_status".to_string(), None);
+        } else {
+            return ("navigate".to_string(), Some(trimmed.to_string()));
+        }
+    }
+
+    let url_opt = arguments
+        .get("url")
+        .or_else(|| arguments.get("target_url"))
+        .or_else(|| arguments.get("targetUrl"))
+        .or_else(|| arguments.get("uri"))
+        .or_else(|| arguments.get("link"))
+        .or_else(|| arguments.get("target"))
+        .or_else(|| arguments.get("site"))
+        .or_else(|| arguments.get("website"))
+        .or_else(|| arguments.get("domain"))
+        .or_else(|| arguments.get("host"))
+        .or_else(|| arguments.get("href"))
+        .or_else(|| arguments.get("page"))
+        .or_else(|| arguments.get("address"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let explicit_action = arguments
+        .get("action")
+        .or_else(|| arguments.get("act"))
+        .or_else(|| arguments.get("command"))
+        .or_else(|| arguments.get("cmd"))
+        .or_else(|| arguments.get("method"))
+        .and_then(|v| v.as_str())
+        .map(str::trim);
+
+    let action = match explicit_action {
+        Some(a) if !a.is_empty() => a.to_string(),
+        _ => {
+            if url_opt.is_some() {
+                "navigate".to_string()
+            } else {
+                "render".to_string()
+            }
+        }
+    };
+
+    (action, url_opt)
+}
+
 #[async_trait::async_trait]
 impl Tool for FirefoxBrowserTool {
     fn name(&self) -> &str {
@@ -271,10 +328,7 @@ impl Tool for FirefoxBrowserTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let raw_action = arguments
-            .get("action")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
+        let (raw_action, url_arg) = resolve_firefox_action_and_url(arguments);
         let action = raw_action.trim().to_lowercase().replace('-', "_");
         let mode = requested_mode(arguments)?;
         let timeout_secs = arguments
@@ -307,17 +361,10 @@ impl Tool for FirefoxBrowserTool {
 
         let result = match action.as_str() {
             "navigate" | "goto" | "open" => {
-                let url = arguments
-                    .get("url")
-                    .or_else(|| arguments.get("target_url"))
-                    .or_else(|| arguments.get("targetUrl"))
-                    .or_else(|| arguments.get("uri"))
-                    .or_else(|| arguments.get("link"))
-                    .or_else(|| arguments.get("target"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'url' parameter for navigate action"))?
-                    .trim();
-                if let Err(e) = driver.goto(url).await {
+                let raw_url = url_arg
+                    .ok_or_else(|| anyhow!("Missing 'url' parameter for navigate action"))?;
+                let url = crate::tools::web::normalize_web_url(&raw_url);
+                if let Err(e) = driver.goto(&url).await {
                     reset_driver().await;
                     return Err(anyhow!("Navigation failed: {:?}", e));
                 }
@@ -333,6 +380,8 @@ impl Tool for FirefoxBrowserTool {
                     .or_else(|| arguments.get("cssSelector"))
                     .or_else(|| arguments.get("css"))
                     .or_else(|| arguments.get("element"))
+                    .or_else(|| arguments.get("query"))
+                    .or_else(|| arguments.get("target"))
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing selector for wait_for"))?
                     .trim();
@@ -355,6 +404,8 @@ impl Tool for FirefoxBrowserTool {
                     .or_else(|| arguments.get("cssSelector"))
                     .or_else(|| arguments.get("css"))
                     .or_else(|| arguments.get("element"))
+                    .or_else(|| arguments.get("query"))
+                    .or_else(|| arguments.get("target"))
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'selector' parameter for click action"))?
                     .trim();
@@ -372,6 +423,8 @@ impl Tool for FirefoxBrowserTool {
                     .or_else(|| arguments.get("cssSelector"))
                     .or_else(|| arguments.get("css"))
                     .or_else(|| arguments.get("element"))
+                    .or_else(|| arguments.get("query"))
+                    .or_else(|| arguments.get("target"))
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'selector' parameter for fill action"))?
                     .trim();
@@ -380,6 +433,8 @@ impl Tool for FirefoxBrowserTool {
                     .or_else(|| arguments.get("value"))
                     .or_else(|| arguments.get("query"))
                     .or_else(|| arguments.get("content"))
+                    .or_else(|| arguments.get("input"))
+                    .or_else(|| arguments.get("string"))
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'text' parameter for fill action"))?;
                 let elem = wait_for_element(&driver, selector, timeout_secs).await?;
@@ -446,16 +501,27 @@ impl Tool for FirefoxBrowserTool {
                 })
             }
             "render" | "snapshot" => {
-                let url_opt = arguments
-                    .get("url")
-                    .or_else(|| arguments.get("target_url"))
-                    .or_else(|| arguments.get("targetUrl"))
-                    .or_else(|| arguments.get("uri"))
-                    .or_else(|| arguments.get("link"))
-                    .or_else(|| arguments.get("target"))
-                    .and_then(|v| v.as_str());
-                if let Some(url) = url_opt {
-                    if let Err(e) = driver.goto(url.trim()).await {
+                let url_opt = url_arg.or_else(|| {
+                    arguments
+                        .get("url")
+                        .or_else(|| arguments.get("target_url"))
+                        .or_else(|| arguments.get("targetUrl"))
+                        .or_else(|| arguments.get("uri"))
+                        .or_else(|| arguments.get("link"))
+                        .or_else(|| arguments.get("target"))
+                        .or_else(|| arguments.get("site"))
+                        .or_else(|| arguments.get("website"))
+                        .or_else(|| arguments.get("domain"))
+                        .or_else(|| arguments.get("host"))
+                        .or_else(|| arguments.get("href"))
+                        .or_else(|| arguments.get("page"))
+                        .or_else(|| arguments.get("address"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                });
+                if let Some(ref raw_url) = url_opt {
+                    let url = crate::tools::web::normalize_web_url(raw_url);
+                    if let Err(e) = driver.goto(&url).await {
                         reset_driver().await;
                         return Err(anyhow!("Navigation failed: {:?}", e));
                     }

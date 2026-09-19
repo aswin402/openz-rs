@@ -93,6 +93,13 @@ pub(crate) fn resolve_static_name(
                     "read_document" => canonical == "opendoc_read_document_text",
                     "opendoc_extract_tables" => canonical == "opendoc_find_tables",
                     "opendoc_convert_document" => canonical == "opendoc_convert",
+                    "crawl_site" | "crawl" | "spider" | "crawl_website_tool" => canonical == "crawl_website",
+                    "web_scrape" | "web_fetch_tool" | "fetch_web" | "scrape_web" => canonical == "web_fetch",
+                    "web_search_tool" | "search_web" | "tavily_search" => canonical == "web_search",
+                    "obscura" | "obscura_tool" | "chrome_cdp" => canonical == "obscura_browser",
+                    "gsd" | "gsd_tool" | "chrome_gui" => canonical == "gsd_browser",
+                    "firefox" | "firefox_tool" => canonical == "firefox_browser",
+                    "inspect_browser" | "browser_status" | "browser_health" => canonical == "inspect_browsers",
                     _ => false,
                 };
             if is_match {

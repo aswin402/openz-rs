@@ -1,4 +1,55 @@
-### v0.0.205 (Latest Release)
+### v0.0.206 (Latest Release)
+- **Ideas**:
+  - Comprehensive evaluation, live headless validation, and hardening of the Web Scraping, Browser Automation & Web Search Suite (7 native tools):
+    - `web_fetch`: High-speed DOM parsing, markdown conversion, and SSRF-safe page fetching with SQLite-backed HTTP caching (`cache_mode`), JavaScript app shell detection, and browser rendering fallbacks.
+    - `crawl_website`: Multi-threaded asynchronous site crawler via `spider-rs` with link depth limiting, robots.txt compliance, polite request delay, and partial success timeout preservation.
+    - `web_search`: Multi-engine web search with DuckDuckGo headless browser fallbacks, Tavily integration, Rust doc rescues, and FastEmbed research archiving.
+    - `obscura_browser`: Headless browser direct control using Chrome DevTools Protocol (CDP) for page rendering, JavaScript evaluation, and dynamic app snapshotting.
+    - `gsd_browser`: Playwright-backed GUI Chrome browser controller with element clicking, hovering, form filling, snapshotting, accessibility tree dumping, and PDF saving.
+    - `firefox_browser`: Headless and visible Firefox automation using WebDriver (`thirtyfour`) with element waiting, selector clicking, text filling, and full-page screenshots.
+    - `inspect_browsers`: Diagnostics tool inspecting active Chrome CDP, GSD Browser, and GeckoDriver daemons, running PIDs, open pages/tabs, and recent browser warnings.
+  - Resilient Parameter Normalization & Direct String Support:
+    - Direct string argument parsing across tools (e.g. `call("https://example.com")`, `call("Rust async")`, `call("close")`, `call("status")`).
+    - Added extensive URL aliases (`site`, `website`, `domain`, `host`, `href`, `page`, `address`, `target_url`, `uri`, `link`, `target`, `start_url`, `endpoint`).
+    - Action inference: in `firefox_browser`, automatically infers `"navigate"` when a URL is supplied without an explicit action, infers `"close"` for `"close"`/`"quit"`, and infers `"render"` when no target is provided; in `gsd_browser`, automatically infers `"navigate"` or `"snapshot"`.
+    - Selector and text aliases: added `query`, `element`, `target` to `selector` in `firefox_browser`; added `input`, `string` to `text` parameter in `firefox_browser`.
+    - Dynamic Static Tool Aliasing in Registry (`resolve_static_name`): added seamless alias mappings for `crawl_site` / `crawl` / `spider` -> `crawl_website`, `web_scrape` / `web_fetch_tool` -> `web_fetch`, `web_search_tool` / `search_web` -> `web_search`, `obscura` / `chrome_cdp` -> `obscura_browser`, `gsd` / `chrome_gui` -> `gsd_browser`, `firefox` -> `firefox_browser`, `inspect_browser` / `browser_status` / `browser_health` -> `inspect_browsers`.
+    - TUI Log Formatting: added clean, informative argument summaries in `format_tool_args` for `crawl_website`, `obscura_browser`, `gsd_browser`, `firefox_browser`, and `inspect_browsers`.
+- **Inspirations**:
+  - Headless-first web agent patterns where models provide bare domains or shorthand URLs without explicit protocol schemes (`example.com` -> `https://example.com`).
+  - Seamless multi-backend browser orchestration allowing agents to fall back gracefully between lightweight HTTP scraping, Chrome CDP, and WebDriver.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/web.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web.rs): Extracted `extract_web_fetch_url` with aliases and URL normalization.
+    - [`src/tools/crawl.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/crawl.rs): Added website, host, href, page, address aliases in `extract_crawl_url`.
+    - [`src/tools/browser/firefox.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/firefox.rs): Added `resolve_firefox_action_and_url`, automatic action inference, selector aliases, and URL normalization.
+    - [`src/tools/browser/obscura.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/obscura.rs): Added website, domain, host, and action aliases.
+    - [`src/tools/browser/gsd.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/gsd.rs): Added website, host aliases in `resolve_gsd_browser_action_and_url`.
+    - [`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs): Dynamic static tool alias resolution for browser and web search tool names.
+    - [`src/agent/agent_loop/tool_execution.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/tool_execution.rs): Added formatted logs for browser tools.
+  - Test Modules:
+    - [`src/tools/web_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_tests.rs): Added unit tests for URL aliases and direct string parsing.
+    - [`src/tools/crawl_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/crawl_tests.rs): Added unit tests for crawl aliases.
+    - [`src/tools/browser/firefox_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/firefox_tests.rs): Added unit tests for action and URL resolution with direct strings.
+    - [`src/tools/browser/obscura_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/obscura_tests.rs): Added unit tests for obscura aliases.
+    - [`src/tools/browser/gsd_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/gsd_tests.rs): Added unit tests for gsd command generation with website and host aliases.
+- **Details & Metrics**:
+  - Test Suite: All unit tests passing cleanly across the suite (37 in tools::web, 7 in tools::crawl, 29 in tools::browser).
+  - Native Tool Invariant: Exactly 260 registered native tools verified and maintained.
+  - Compiler & Clippy Health: 0 errors, 0 warnings under `-j 1`.
+  - Live Real-time Headless Testing:
+    - Executed live headless `inspect_browsers` querying Chrome CDP, GSD, and GeckoDriver status in 8.7s with exit code 0.
+    - Executed live headless `web_search` running DuckDuckGo browser fallback and FastEmbed embedding in 17.7s with exit code 0.
+    - Executed live headless `web_fetch` fetching HTTP response data from `httpbin.org/get` in 11.1s with exit code 0.
+- **Verification**:
+  - `cargo test -p openz --lib "tools::web" -j 1` (37 passed)
+  - `cargo test -p openz --lib "tools::crawl" -j 1` (7 passed)
+  - `cargo test -p openz --lib "tools::browser" -j 1` (29 passed)
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1` (1 passed, 260 tools verified)
+  - `cargo clippy -p openz -j 1` (0 warnings)
+  - `target/debug/openz run -y --output-format json -p "..."` (live headless execution verified with exit code 0)
+
+### v0.0.205
 - **Ideas**:
   - Comprehensive evaluation, live headless validation, and hardening of the OpenDoc Document Reading, Generation & OCR Suite (native tools):
     - `doc_reader`: Universal document parser for PDF, DOCX, XLSX, spreadsheets, text documents, and images with automatic OCR fallbacks and complexity profiling.

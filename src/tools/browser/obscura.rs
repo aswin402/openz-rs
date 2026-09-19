@@ -154,6 +154,9 @@ pub fn extract_obscura_url(arguments: &Value) -> Result<String> {
             .or_else(|| arguments.get("href"))
             .or_else(|| arguments.get("address"))
             .or_else(|| arguments.get("site"))
+            .or_else(|| arguments.get("website"))
+            .or_else(|| arguments.get("domain"))
+            .or_else(|| arguments.get("host"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'url' parameter"))?
             .trim()
@@ -218,6 +221,9 @@ impl Tool for ObscuraBrowserTool {
 
         let raw_action = arguments
             .get("action")
+            .or_else(|| arguments.get("act"))
+            .or_else(|| arguments.get("command"))
+            .or_else(|| arguments.get("cmd"))
             .and_then(|v| v.as_str())
             .unwrap_or("render");
         let is_eval = is_obscura_eval_action(raw_action);

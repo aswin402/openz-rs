@@ -95,6 +95,18 @@ fn test_extract_obscura_url_supports_schemeless_and_aliases() {
         extract_obscura_url(&json!({ "endpoint": "https://api.github.com" })).unwrap(),
         "https://api.github.com"
     );
+    assert_eq!(
+        extract_obscura_url(&json!({ "website": "https://rust-lang.org" })).unwrap(),
+        "https://rust-lang.org"
+    );
+    assert_eq!(
+        extract_obscura_url(&json!({ "domain": "crates.io" })).unwrap(),
+        "https://crates.io"
+    );
+    assert_eq!(
+        extract_obscura_url(&json!({ "host": "github.com" })).unwrap(),
+        "https://github.com"
+    );
     assert!(extract_obscura_url(&json!({})).is_err());
     assert!(extract_obscura_url(&json!("")).is_err());
 }

@@ -247,3 +247,42 @@ fn test_web_fetch_parameters_schema_includes_max_length() {
     assert!(props.contains_key("url"));
 }
 
+#[test]
+fn test_extract_web_fetch_url_aliases() {
+    assert_eq!(
+        extract_web_fetch_url(&serde_json::json!("example.com")).unwrap(),
+        "https://example.com"
+    );
+    assert_eq!(
+        extract_web_fetch_url(&serde_json::json!({ "site": "crates.io" })).unwrap(),
+        "https://crates.io"
+    );
+    assert_eq!(
+        extract_web_fetch_url(&serde_json::json!({ "website": "https://rust-lang.org" })).unwrap(),
+        "https://rust-lang.org"
+    );
+    assert_eq!(
+        extract_web_fetch_url(&serde_json::json!({ "domain": "docs.rs" })).unwrap(),
+        "https://docs.rs"
+    );
+    assert_eq!(
+        extract_web_fetch_url(&serde_json::json!({ "host": "github.com" })).unwrap(),
+        "https://github.com"
+    );
+    assert_eq!(
+        extract_web_fetch_url(&serde_json::json!({ "href": "https://news.ycombinator.com" })).unwrap(),
+        "https://news.ycombinator.com"
+    );
+    assert_eq!(
+        extract_web_fetch_url(&serde_json::json!({ "page": "https://blog.rust-lang.org" })).unwrap(),
+        "https://blog.rust-lang.org"
+    );
+    assert_eq!(
+        extract_web_fetch_url(&serde_json::json!({ "path": "https://tokio.rs" })).unwrap(),
+        "https://tokio.rs"
+    );
+    assert!(extract_web_fetch_url(&serde_json::json!({})).is_err());
+    assert!(extract_web_fetch_url(&serde_json::json!("")).is_err());
+}
+
+

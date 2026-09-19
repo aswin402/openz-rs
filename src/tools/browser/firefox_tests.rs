@@ -78,3 +78,32 @@ fn test_firefox_action_normalization_and_timeout_parsing() {
     }).unwrap_or(10);
     assert_eq!(timeout, 30);
 }
+
+#[test]
+fn test_resolve_firefox_action_and_url_direct_string_and_aliases() {
+    let (act, url) = resolve_firefox_action_and_url(&json!("https://example.com"));
+    assert_eq!(act, "navigate");
+    assert_eq!(url.as_deref(), Some("https://example.com"));
+
+    let (act, url) = resolve_firefox_action_and_url(&json!("close"));
+    assert_eq!(act, "close");
+    assert_eq!(url, None);
+
+    let (act, url) = resolve_firefox_action_and_url(&json!("render"));
+    assert_eq!(act, "render");
+    assert_eq!(url, None);
+
+    let (act, url) = resolve_firefox_action_and_url(&json!({
+        "website": "example.org"
+    }));
+    assert_eq!(act, "navigate");
+    assert_eq!(url.as_deref(), Some("example.org"));
+
+    let (act, url) = resolve_firefox_action_and_url(&json!({
+        "cmd": "click",
+        "css": "#submit-btn"
+    }));
+    assert_eq!(act, "click");
+    assert_eq!(url, None);
+}
+

@@ -73,8 +73,24 @@ fn test_extract_crawl_url_supports_aliases_and_schemeless() {
         "https://my-site.org"
     );
     assert_eq!(
-        extract_crawl_url(&json!({ "targetUrl": "http://insecure.org" })).unwrap(),
-        "http://insecure.org"
+        extract_crawl_url(&json!({ "website": "https://rust-lang.org" })).unwrap(),
+        "https://rust-lang.org"
+    );
+    assert_eq!(
+        extract_crawl_url(&json!({ "host": "github.com" })).unwrap(),
+        "https://github.com"
+    );
+    assert_eq!(
+        extract_crawl_url(&json!({ "href": "https://crates.io" })).unwrap(),
+        "https://crates.io"
+    );
+    assert_eq!(
+        extract_crawl_url(&json!({ "page": "https://docs.rs" })).unwrap(),
+        "https://docs.rs"
+    );
+    assert_eq!(
+        extract_crawl_url(&json!({ "address": "127.0.0.1" })).unwrap(),
+        "https://127.0.0.1"
     );
     assert!(extract_crawl_url(&json!({})).is_err());
     assert!(extract_crawl_url(&json!("")).is_err());

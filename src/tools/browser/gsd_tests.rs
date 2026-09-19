@@ -167,5 +167,17 @@ fn test_build_gsd_browser_command_aliases_and_action_normalization() {
         "dest": "/tmp/page.pdf"
     })).expect("pdf command");
     assert!(format!("{:?}", cmd15).contains("save-pdf"));
+
+    let cmd16 = build_gsd_browser_command(&bin, &json!({
+        "website": "rust-lang.org"
+    })).expect("website command");
+    assert!(format!("{:?}", cmd16).contains("navigate"));
+    assert!(format!("{:?}", cmd16).contains("https://rust-lang.org"));
+
+    let cmd17 = build_gsd_browser_command(&bin, &json!({
+        "host": "crates.io"
+    })).expect("host command");
+    assert!(format!("{:?}", cmd17).contains("navigate"));
+    assert!(format!("{:?}", cmd17).contains("https://crates.io"));
 }
 

@@ -94,11 +94,39 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 .and_then(|v| v.as_str())
                 .map(|p| format!("\"{}\"", clip(p, 35)))
                 .unwrap_or_default(),
-            "crawl" => map
+            "crawl" | "crawl_website" | "crawl_site" => map
                 .get("url")
                 .and_then(|v| v.as_str())
                 .map(|url| format!("url: \"{}\"", clip(url, 30)))
                 .unwrap_or_default(),
+            "obscura_browser" | "obscura" => {
+                let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("render");
+                let url = string_arg(map, URL_KEYS).unwrap_or("");
+                if url.is_empty() {
+                    format!("action: {}", action)
+                } else {
+                    format!("action: {}, url: \"{}\"", action, clip(url, 30))
+                }
+            }
+            "gsd_browser" | "gsd" => {
+                let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("navigate");
+                let url = string_arg(map, URL_KEYS).unwrap_or("");
+                if url.is_empty() {
+                    format!("action: {}", action)
+                } else {
+                    format!("action: {}, url: \"{}\"", action, clip(url, 30))
+                }
+            }
+            "firefox_browser" | "firefox" => {
+                let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("navigate");
+                let url = string_arg(map, URL_KEYS).unwrap_or("");
+                if url.is_empty() {
+                    format!("action: {}", action)
+                } else {
+                    format!("action: {}, url: \"{}\"", action, clip(url, 30))
+                }
+            }
+            "inspect_browsers" => "check health".to_string(),
             "generate_image" => {
                 let path = string_arg(map, OUTPUT_KEYS).unwrap_or("output.png");
                 let filename = file_name_of(path);
@@ -176,26 +204,6 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                     )
                 } else {
                     format!("output: \"{}\"", filename)
-                }
-            }
-            "obscura_browser" => {
-                let url = map.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                let action = map
-                    .get("action")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("render");
-                format!("action: \"{}\", url: \"{}\"", action, clip(url, 30))
-            }
-            "gsd_browser" => {
-                let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("");
-                let url = map.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                let ref_id = map.get("ref_id").and_then(|v| v.as_str()).unwrap_or("");
-                if !url.is_empty() {
-                    format!("action: \"{}\", url: \"{}\"", action, clip(url, 30))
-                } else if !ref_id.is_empty() {
-                    format!("action: \"{}\", ref_id: \"{}\"", action, ref_id)
-                } else {
-                    format!("action: \"{}\"", action)
                 }
             }
             "doc_reader" | "read_doc" => string_arg(map, PATH_KEYS)

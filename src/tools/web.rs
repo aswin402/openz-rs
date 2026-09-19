@@ -641,6 +641,38 @@ pub fn truncate_web_fetch_output(text: String, max_length: Option<usize>) -> Str
     text
 }
 
+pub fn extract_web_fetch_url(arguments: &serde_json::Value) -> Result<String> {
+    let raw_url = if let Some(s) = arguments.as_str() {
+        s.trim()
+    } else {
+        arguments
+            .get("url")
+            .or_else(|| arguments.get("target_url"))
+            .or_else(|| arguments.get("targetUrl"))
+            .or_else(|| arguments.get("uri"))
+            .or_else(|| arguments.get("link"))
+            .or_else(|| arguments.get("target"))
+            .or_else(|| arguments.get("href"))
+            .or_else(|| arguments.get("page"))
+            .or_else(|| arguments.get("endpoint"))
+            .or_else(|| arguments.get("address"))
+            .or_else(|| arguments.get("site"))
+            .or_else(|| arguments.get("website"))
+            .or_else(|| arguments.get("domain"))
+            .or_else(|| arguments.get("host"))
+            .or_else(|| arguments.get("path"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'url' argument"))?
+            .trim()
+    };
+
+    if raw_url.is_empty() {
+        return Err(anyhow!("Missing 'url' argument (received empty string)"));
+    }
+
+    Ok(normalize_web_url(raw_url))
+}
+
 #[async_trait::async_trait]
 impl Tool for WebFetchTool {
     fn name(&self) -> &str {
@@ -675,30 +707,7 @@ impl Tool for WebFetchTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let raw_url = if let Some(s) = arguments.as_str() {
-            s.trim()
-        } else {
-            arguments
-                .get("url")
-                .or_else(|| arguments.get("target_url"))
-                .or_else(|| arguments.get("targetUrl"))
-                .or_else(|| arguments.get("uri"))
-                .or_else(|| arguments.get("link"))
-                .or_else(|| arguments.get("target"))
-                .or_else(|| arguments.get("href"))
-                .or_else(|| arguments.get("page"))
-                .or_else(|| arguments.get("endpoint"))
-                .or_else(|| arguments.get("address"))
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Missing 'url' argument"))?
-                .trim()
-        };
-
-        if raw_url.is_empty() {
-            return Err(anyhow!("Missing 'url' argument (received empty string)"));
-        }
-
-        let normalized_url = normalize_web_url(raw_url);
+        let normalized_url = extract_web_fetch_url(arguments)?;
         let url_str = &normalized_url;
         let max_length = parse_max_length(arguments);
         let cache_mode = WebFetchCacheMode::from_args(arguments)?;
