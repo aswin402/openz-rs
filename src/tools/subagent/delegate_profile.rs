@@ -89,14 +89,24 @@ impl Tool for DelegateProfileTool {
             return Err(anyhow!("Delegation limit reached. Max nesting depth is 3."));
         }
 
-        let goal = arguments.get("goal").and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'goal' argument"))?;
-        let context = arguments.get("context").and_then(|v| v.as_str()).unwrap_or("");
+        let goal = super::extract_string_arg(
+            arguments,
+            &["goal", "task", "prompt", "instruction", "description"],
+        )
+        .ok_or_else(|| anyhow!("Missing 'goal' argument"))?;
+        let context = super::extract_string_arg(
+            arguments,
+            &["context", "background", "details"],
+        )
+        .unwrap_or_default();
         let json_schema = arguments.get("json_schema").cloned();
-        let timeout_secs = arguments.get("timeout_secs").and_then(|v| v.as_u64());
+        let timeout_secs = super::extract_u64_arg(
+            arguments,
+            &["timeout_secs", "timeout"],
+        );
 
-        let clean_goal = ensure_markdown_images(goal);
-        let clean_context = ensure_markdown_images(context);
+        let clean_goal = ensure_markdown_images(&goal);
+        let clean_context = ensure_markdown_images(&context);
 
         let models_to_try = delegate_profile_models_to_try(&self.config, &self.profile);
 
@@ -229,7 +239,7 @@ impl Tool for DelegateProfileTool {
                 );
 
                 let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                let status_text = get_status_from_goal(goal);
+                let status_text = get_status_from_goal(&goal);
                 crate::tui_println!(
                     "{}{}{}{}",
                     AURA_SLATE, leaf_prefix, status_text, COLOR_RESET

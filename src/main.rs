@@ -43,7 +43,14 @@ fn main() -> anyhow::Result<()> {
         .thread_name("openz-worker")
         .enable_all()
         .build()?;
-    runtime.block_on(async_main())
+    let res = runtime.block_on(async_main());
+    match res {
+        Ok(()) => std::process::exit(0),
+        Err(err) => {
+            eprintln!("Error: {:?}", err);
+            std::process::exit(1);
+        }
+    }
 }
 
 async fn async_main() -> anyhow::Result<()> {

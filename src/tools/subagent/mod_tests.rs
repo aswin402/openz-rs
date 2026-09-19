@@ -93,3 +93,36 @@ fn explicit_specialist_step_allows_nested_delegation() {
         "Delegate research to a specialist and summarize findings"
     ));
 }
+
+#[test]
+fn test_extract_string_arg_aliases_and_trim() {
+    let args = serde_json::json!({
+        "prompt": "  Analyze the codebase  ",
+        "details": "extra context"
+    });
+    assert_eq!(
+        extract_string_arg(&args, &["goal", "task", "prompt"]).unwrap(),
+        "Analyze the codebase"
+    );
+    assert_eq!(
+        extract_string_arg(&args, &["context", "details"]).unwrap(),
+        "extra context"
+    );
+    assert!(extract_string_arg(&args, &["missing", "none"]).is_none());
+}
+
+#[test]
+fn test_extract_u64_arg_coercions() {
+    let args_num = serde_json::json!({ "timeout_secs": 45 });
+    assert_eq!(extract_u64_arg(&args_num, &["timeout_secs"]).unwrap(), 45);
+
+    let args_str = serde_json::json!({ "timeout": " 120 " });
+    assert_eq!(extract_u64_arg(&args_str, &["timeout_secs", "timeout"]).unwrap(), 120);
+
+    let args_float = serde_json::json!({ "max_iterations": 5.0 });
+    assert_eq!(extract_u64_arg(&args_float, &["max_iterations"]).unwrap(), 5);
+
+    let args_invalid = serde_json::json!({ "timeout": "not_a_number" });
+    assert!(extract_u64_arg(&args_invalid, &["timeout"]).is_none());
+}
+

@@ -1,4 +1,42 @@
-### v0.0.195 (Latest Release)
+### v0.0.196 (Latest Release)
+- **Ideas**:
+  - Comprehensive headless subagent validation of the Subagent Orchestration & SOP Workflow Engine (`orchestrate_workflow`, `delegate_task`, `parallel_research`, `evaluator_optimizer_loop`, `optimize_subagent`, `update_subagent_settings`, `create_subagent`, `delete_subagent`, and stateful SOP workflows).
+  - CLI Subcommand Process Exit Hardening: Fixed an issue where CLI subcommands (`openz sop list`, `openz sop instances`, `openz changelog`, `openz doctor`, etc.) hung upon completion when returning from `async_main()` because Tokio runtime drop blocked on background logger threads in `logs.db` (`rx.blocking_recv()`). Added clean process termination via `std::process::exit(0)` / `std::process::exit(1)` in `src/main.rs`.
+  - Subagent Parameter Aliases & Robust Argument Extraction: Implemented `extract_string_arg` and `extract_u64_arg` helper utilities in `src/tools/subagent/mod.rs` to accept parameter aliases across all subagent tools:
+    - `delegate_task`: `goal` aliases (`task`, `prompt`, `instruction`, `description`), `context` aliases (`background`, `details`), `model` aliases (`model_override`), and string/numeric coercion for `timeout_secs`.
+    - `delegate_profile`: `goal` aliases (`task`, `prompt`, `instruction`, `description`), `context` aliases (`background`, `details`), and string/numeric coercion for `timeout_secs`.
+    - `parallel_research`: In each item of `tasks`, supported `goal` aliases (`task`, `prompt`, `instruction`, `description`), `context` aliases, and string/numeric coercion for `timeout_secs`.
+    - `evaluator_optimizer`: `optimizer` aliases (`optimizer_profile`, `optimizer_name`, `generator`), `evaluator` aliases (`evaluator_profile`, `evaluator_name`, `reviewer`, `critic`), `goal` aliases (`task`, `prompt`, `instruction`, `description`), `checklist` aliases (`criteria`, `rubric`, `requirements`), and numeric/string coercion for `max_iterations`.
+    - `optimize_profile`: In `optimize_subagent`, supported `subagent_name` aliases (`name`, `profile`, `profile_name`) and `feedback` aliases (`error`, `logs`, `reason`, `details`). In `update_subagent_settings`, `create_subagent`, and `delete_subagent`, supported aliases and whitespace trimming.
+- **Inspirations**:
+  - Headless subagent real-world evaluation findings across subagent orchestration and SOP workflow engine.
+  - Robustness Principle (Postel's Law): Be liberal in what you accept from LLMs.
+  - Fail-safe process teardown without uncoordinated background thread deadlocks.
+- **Sources & References**:
+  - Implementation & Dispatch Sources:
+    - [`src/main.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/main.rs): Clean CLI process exit on `async_main` completion.
+    - [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs): `extract_string_arg` and `extract_u64_arg` reusable extraction helpers.
+    - [`src/tools/subagent/delegate_task.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task.rs): Argument aliases and timeout coercion for general subagent delegation.
+    - [`src/tools/subagent/delegate_profile.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_profile.rs): Argument aliases and timeout coercion for profile delegation.
+    - [`src/tools/subagent/parallel_research.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/parallel_research.rs): Per-task argument aliases and timeout coercion for concurrent subagent execution.
+    - [`src/tools/subagent/evaluator_optimizer.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/evaluator_optimizer.rs): Role, goal, checklist aliases and iteration coercion.
+    - [`src/tools/subagent/optimize_profile.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/optimize_profile.rs): Profile name, feedback, and settings aliases across subagent management tools.
+  - Test Modules:
+    - [`src/tools/subagent/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod_tests.rs): `test_extract_string_arg_aliases_and_trim`, `test_extract_u64_arg_coercions`.
+    - [`src/tools/subagent/delegate_task_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task_tests.rs): `test_delegate_task_accepts_task_and_prompt_aliases`.
+- **Details & Metrics**:
+  - `orchestrate_workflow` executed 2-step pipeline (`planner` + `reviewer`) in 53.7s with 0 errors.
+  - `parallel_research` executed 2 concurrent research subagents in 10.7s with 0 errors.
+  - `delegate_task` executed isolated workspace delegation in 21.6s with graceful error classification and direct parent self-healing.
+  - `openz sop list`, `openz sop instances`, and `openz changelog` now return instantly with code 0 without hanging.
+- **Verification**:
+  - 64 subagent tests passing (`cargo test -p openz --lib tools::subagent -j 1`).
+  - 7 orchestrator tests passing (`cargo test -p openz --lib tools::orchestrator -j 1`).
+  - 10 SOP tests passing (`cargo test -p openz --lib sop -j 1`).
+  - Exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`).
+  - 0 clippy warnings (`cargo clippy -p openz -j 1`).
+
+### v0.0.195
 - **Ideas**:
   - Comprehensive headless subagent validation across the Self-Management & Diagnostics Suite (`diagnose_system`, `manage_backups`, `manage_config`, `curate_skill`, `manage_sessions`, `diagnose_tool`, `openz_inventory`, `tool_catalog`, `optimize_tool_scope`, `request_tool_scope`).
   - Safe-Key Session Path Resolution: Fixed an issue in `manage_sessions` where `archive` and `delete` actions looked for raw `session_key.json` without resolving keys containing colons or slashes (e.g. `cli:headless_...`), which are stored on disk with `SessionManager::safe_key` (`cli_headless_...`). Implemented `resolve_session_path` across `archive`, `delete`, and `export` to check both `safe_key` and raw filename paths, ensuring 100% interoperability with channel and headless session identifiers.

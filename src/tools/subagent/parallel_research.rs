@@ -132,21 +132,24 @@ impl Tool for ParallelResearchTool {
         let mut max_child_timeout_secs = 1;
 
         for (idx, task_val) in tasks_val.iter().enumerate() {
-            let goal = match task_val.get("goal").and_then(|v| v.as_str()) {
-                Some(g) => g.to_string(),
+            let goal = match super::extract_string_arg(
+                task_val,
+                &["goal", "task", "prompt", "instruction", "description"],
+            ) {
+                Some(g) => g,
                 None => continue,
             };
-            let context = task_val
-                .get("context")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let model_override = task_val
-                .get("model")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+            let context = super::extract_string_arg(
+                task_val,
+                &["context", "background", "details"],
+            )
+            .unwrap_or_default();
+            let model_override = super::extract_string_arg(
+                task_val,
+                &["model", "model_override"],
+            );
             let timeout_secs = super::resolve_subagent_timeout_secs(
-                task_val.get("timeout_secs").and_then(|v| v.as_u64()),
+                super::extract_u64_arg(task_val, &["timeout_secs", "timeout"]),
                 self.config.agents.defaults.tool_timeout_secs,
             );
             max_child_timeout_secs = max_child_timeout_secs.max(timeout_secs);

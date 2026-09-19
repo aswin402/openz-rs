@@ -67,6 +67,51 @@ pub(crate) fn filesystem_write_denied_by_policy(
         .unwrap_or(false)
 }
 
+pub(crate) fn extract_string_arg(arguments: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(val) = arguments.get(*key) {
+            if let Some(s) = val.as_str() {
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            } else if val.is_number() || val.is_boolean() {
+                let s = val.to_string();
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+pub(crate) fn extract_u64_arg(arguments: &serde_json::Value, keys: &[&str]) -> Option<u64> {
+    for key in keys {
+        if let Some(val) = arguments.get(*key) {
+            if let Some(n) = val.as_u64() {
+                return Some(n);
+            }
+            if let Some(n) = val.as_i64() {
+                if n >= 0 {
+                    return Some(n as u64);
+                }
+            }
+            if let Some(f) = val.as_f64() {
+                if f >= 0.0 {
+                    return Some(f as u64);
+                }
+            }
+            if let Some(s) = val.as_str() {
+                if let Ok(n) = s.trim().parse::<u64>() {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
+}
 
 pub mod runner;
 pub use runner::*;

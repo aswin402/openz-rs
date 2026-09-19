@@ -74,20 +74,33 @@ impl Tool for DelegateTaskTool {
             return Err(anyhow!("Delegation limit reached. Max nesting depth is 3."));
         }
 
-        let goal = arguments.get("goal").and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'goal' argument"))?;
-        let context = arguments.get("context").and_then(|v| v.as_str()).unwrap_or("");
-        let model_override = arguments.get("model").and_then(|v| v.as_str());
+        let goal = super::extract_string_arg(
+            arguments,
+            &["goal", "task", "prompt", "instruction", "description"],
+        )
+        .ok_or_else(|| anyhow!("Missing 'goal' argument"))?;
+        let context = super::extract_string_arg(
+            arguments,
+            &["context", "background", "details"],
+        )
+        .unwrap_or_default();
+        let model_override = super::extract_string_arg(
+            arguments,
+            &["model", "model_override"],
+        );
         let json_schema = arguments.get("json_schema").cloned();
-        let timeout_secs = arguments.get("timeout_secs").and_then(|v| v.as_u64());
+        let timeout_secs = super::extract_u64_arg(
+            arguments,
+            &["timeout_secs", "timeout"],
+        );
 
-        let clean_goal = ensure_markdown_images(goal);
-        let clean_context = ensure_markdown_images(context);
+        let clean_goal = ensure_markdown_images(&goal);
+        let clean_context = ensure_markdown_images(&context);
 
         let has_images = crate::providers::parse_multimodal_content(&clean_goal).await.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }))
             || crate::providers::parse_multimodal_content(&clean_context).await.iter().any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
 
-        let models_to_try = delegate_task_models_to_try(&self.config, model_override, has_images);
+        let models_to_try = delegate_task_models_to_try(&self.config, model_override.as_deref(), has_images);
         let mut selected_model = self.config.agents.defaults.model.clone();
         let mut selected_fallback_models: Vec<String> = Vec::new();
         let provider = if std::env::var("OPENZ_USE_MOCK_PROVIDER").is_ok() {

@@ -68,16 +68,37 @@ impl Tool for EvaluatorOptimizerLoopTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         crate::agent::style::spinner::IS_SILENT.scope(crate::agent::style::is_silent(), async {
-            let optimizer_name = arguments.get("optimizer").and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Missing 'optimizer' argument"))?;
-        let evaluator_name = arguments.get("evaluator").and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'evaluator' argument"))?;
-        let goal = arguments.get("goal").and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'goal' argument"))?;
-        let context = arguments.get("context").and_then(|v| v.as_str()).unwrap_or("");
-        let checklist = arguments.get("checklist").and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'checklist' argument"))?;
-        let max_iterations = arguments.get("max_iterations").and_then(|v| v.as_i64()).unwrap_or(3) as usize;
+        let optimizer_name = super::extract_string_arg(
+            arguments,
+            &["optimizer", "optimizer_profile", "optimizer_name", "generator"],
+        )
+        .ok_or_else(|| anyhow!("Missing 'optimizer' argument"))?;
+        let evaluator_name = super::extract_string_arg(
+            arguments,
+            &["evaluator", "evaluator_profile", "evaluator_name", "reviewer", "critic"],
+        )
+        .ok_or_else(|| anyhow!("Missing 'evaluator' argument"))?;
+        let goal = super::extract_string_arg(
+            arguments,
+            &["goal", "task", "prompt", "instruction", "description"],
+        )
+        .ok_or_else(|| anyhow!("Missing 'goal' argument"))?;
+        let context = super::extract_string_arg(
+            arguments,
+            &["context", "background", "details"],
+        )
+        .unwrap_or_default();
+        let checklist = super::extract_string_arg(
+            arguments,
+            &["checklist", "criteria", "rubric", "requirements"],
+        )
+        .ok_or_else(|| anyhow!("Missing 'checklist' argument"))?;
+        let max_iterations = super::extract_u64_arg(
+            arguments,
+            &["max_iterations", "iterations", "rounds"],
+        )
+        .map(|n| n as usize)
+        .unwrap_or(3);
 
         let profiles = crate::subagents::load_profiles()?;
         let optimizer_profile = profiles.iter().find(|p| p.name == optimizer_name)

@@ -40,14 +40,16 @@ impl Tool for OptimizeSubagentTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let subagent_name = arguments
-            .get("subagent_name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'subagent_name' argument"))?;
-        let feedback = arguments
-            .get("feedback")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'feedback' argument"))?;
+        let subagent_name = super::extract_string_arg(
+            arguments,
+            &["subagent_name", "name", "profile", "profile_name"],
+        )
+        .ok_or_else(|| anyhow!("Missing 'subagent_name' argument"))?;
+        let feedback = super::extract_string_arg(
+            arguments,
+            &["feedback", "error", "logs", "reason", "details"],
+        )
+        .ok_or_else(|| anyhow!("Missing 'feedback' argument"))?;
 
         let mut profiles = crate::subagents::load_profiles()?;
         let pos = profiles
@@ -194,12 +196,11 @@ impl Tool for UpdateSubagentSettingsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let name = arguments
-            .get("name")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .ok_or_else(|| anyhow!("Missing name argument"))?;
+        let name = super::extract_string_arg(
+            arguments,
+            &["name", "subagent_name", "profile"],
+        )
+        .ok_or_else(|| anyhow!("Missing 'name' argument"))?;
         let mut profiles = crate::subagents::load_profiles()?;
         let requested_model = arguments.get("model").and_then(Value::as_str);
         let requested_fallbacks = if arguments.get("fallbacks").is_some() {
@@ -285,28 +286,16 @@ impl Tool for CreateSubagentTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let name = arguments
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'name' argument"))?
-            .trim()
-            .to_string();
-        let description = arguments
-            .get("description")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'description' argument"))?
-            .trim()
-            .to_string();
-        let system_prompt = arguments
-            .get("system_prompt")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'system_prompt' argument"))?
-            .trim()
-            .to_string();
-        let model = arguments
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string());
+        let name = super::extract_string_arg(arguments, &["name", "subagent_name"])
+            .ok_or_else(|| anyhow!("Missing 'name' argument"))?;
+        let description = super::extract_string_arg(arguments, &["description", "summary"])
+            .ok_or_else(|| anyhow!("Missing 'description' argument"))?;
+        let system_prompt = super::extract_string_arg(
+            arguments,
+            &["system_prompt", "prompt", "instructions"],
+        )
+        .ok_or_else(|| anyhow!("Missing 'system_prompt' argument"))?;
+        let model = super::extract_string_arg(arguments, &["model", "model_name"]);
 
         let mut fallbacks = Vec::new();
         if let Some(arr) = arguments.get("fallbacks").and_then(|v| v.as_array()) {
@@ -399,12 +388,8 @@ impl Tool for DeleteSubagentTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let name = arguments
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'name' argument"))?
-            .trim()
-            .to_string();
+        let name = super::extract_string_arg(arguments, &["name", "subagent_name"])
+            .ok_or_else(|| anyhow!("Missing 'name' argument"))?;
 
         if crate::subagents::is_default_subagent(&name) {
             return Err(anyhow!("Cannot delete default subagent '{}'", name));

@@ -315,3 +315,45 @@ async fn test_delegate_task_cancellation_propagation() -> Result<()> {
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
 }
+
+#[tokio::test]
+async fn test_delegate_task_accepts_task_and_prompt_aliases() -> Result<()> {
+    let _guard = cancel_test_guard().await;
+    let temp_dir = std::env::temp_dir().join(format!("openz_alias_test_{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::create_dir_all(&temp_dir);
+
+    std::env::set_var("OPENZ_USE_MOCK_PROVIDER", "1");
+    let (started_tx, _started_rx) = tokio::sync::watch::channel(false);
+    let (_release_tx, release_rx) = tokio::sync::watch::channel(true);
+
+    let provider = Arc::new(BlockingMockProvider {
+        started_tx,
+        release_rx,
+    });
+
+    let tool = DelegateTaskTool {
+        config: Config::default(),
+        parent_provider: provider.clone(),
+        session_manager: SessionManager::new(temp_dir.clone()),
+        parent_tools: Vec::new(),
+        cancellation_token: CancellationToken::new(),
+        capability_policy: None,
+    };
+
+    let res = crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async move {
+            tool.call(&serde_json::json!({
+                "task": "Summarize async benefits using task alias",
+                "timeout_secs": "30"
+            }))
+            .await
+        })
+        .await;
+
+    assert!(res.is_ok(), "delegate_task should accept 'task' alias and string 'timeout_secs'");
+
+    std::env::remove_var("OPENZ_USE_MOCK_PROVIDER");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+
