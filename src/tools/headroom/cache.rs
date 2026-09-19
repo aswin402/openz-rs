@@ -241,9 +241,15 @@ impl Tool for CacheStatsTool {
         "Returns statistics about the context cache."
     }
     fn parameters(&self) -> Value {
-        json!({ "type": "object", "properties": {} })
+        json!({
+            "type": "object",
+            "properties": {
+                "limit": { "type": "integer", "description": "Maximum number of recent cache items to return (default 50, max 500)." },
+                "query": { "type": "string", "description": "Optional keyword or CCR ID prefix to filter cached items." }
+            }
+        })
     }
-    async fn call(&self, _arguments: &Value) -> Result<Value> {
+    async fn call(&self, arguments: &Value) -> Result<Value> {
         let conn = get_cache_connection()?;
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM cache_entries", [], |r| r.get(0))
@@ -256,18 +262,49 @@ impl Tool for CacheStatsTool {
             )
             .unwrap_or(0);
 
-        let mut stmt = conn.prepare(
-            "SELECT ccr_id, size_bytes FROM cache_entries ORDER BY accessed_at DESC LIMIT 50",
-        )?;
-        let items: Vec<Value> = stmt
-            .query_map([], |row| {
-                Ok(json!({
-                    "ccr_id": row.get::<_, String>(0)?,
-                    "size_bytes": row.get::<_, i64>(1)?,
-                }))
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
+        let limit = arguments
+            .get("limit")
+            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+            .unwrap_or(50)
+            .clamp(1, 500) as i64;
+
+        let query = arguments
+            .get("query")
+            .or_else(|| arguments.get("filter"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+
+        let items: Vec<Value> = if query.is_empty() {
+            let mut stmt = conn.prepare(
+                "SELECT ccr_id, size_bytes FROM cache_entries ORDER BY accessed_at DESC LIMIT ?1",
+            )?;
+            let rows: Vec<Value> = stmt
+                .query_map([limit], |row| {
+                    Ok(json!({
+                        "ccr_id": row.get::<_, String>(0)?,
+                        "size_bytes": row.get::<_, i64>(1)?,
+                    }))
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+            rows
+        } else {
+            let pattern = format!("%{}%", query);
+            let mut stmt = conn.prepare(
+                "SELECT ccr_id, size_bytes FROM cache_entries WHERE ccr_id LIKE ?1 OR content LIKE ?1 ORDER BY accessed_at DESC LIMIT ?2",
+            )?;
+            let rows: Vec<Value> = stmt
+                .query_map(rusqlite::params![pattern, limit], |row| {
+                    Ok(json!({
+                        "ccr_id": row.get::<_, String>(0)?,
+                        "size_bytes": row.get::<_, i64>(1)?,
+                    }))
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+            rows
+        };
 
         Ok(json!({
             "total_items": count,

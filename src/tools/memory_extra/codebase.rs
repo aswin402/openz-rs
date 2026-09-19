@@ -160,12 +160,25 @@ impl Tool for CompressContextTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let text = arguments["text"]
-            .as_str()
-            .ok_or_else(|| anyhow!("Missing 'text'"))?;
+        let text = if let Some(s) = arguments.as_str() {
+            s
+        } else {
+            arguments
+                .get("text")
+                .or_else(|| arguments.get("content"))
+                .or_else(|| arguments.get("context"))
+                .or_else(|| arguments.get("raw_text"))
+                .or_else(|| arguments.get("input"))
+                .or_else(|| arguments.get("body"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Missing 'text'"))?
+        };
         let ratio = arguments
             .get("ratio")
-            .and_then(|v| v.as_f64())
+            .and_then(|v| {
+                v.as_f64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+            })
             .unwrap_or(0.5)
             .clamp(0.0, 1.0);
 

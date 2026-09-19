@@ -1,4 +1,50 @@
-### v0.0.198 (Latest Release)
+### v0.0.199 (Latest Release)
+- **Ideas**:
+  - Comprehensive real-world headless evaluation and hardening of the Headroom & Context Compression Suite (`compress_context`, `retrieve_original`, `scope_context`, `count_tokens` / `analyze_tokens`, `cache_stats` / `inspect_cache`).
+  - Resilient Scope Directory Hierarchy Traversal: Enhanced `ScopeContextTool` to gracefully resolve non-existent or planned file paths by walking upward to the nearest existing ancestor directory instead of aborting with canonicalization OS error 2.
+  - Multi-File Context Scoping: Expanded `SCOPE_FILES` to search for `GEMINI.md` alongside `AGENTS.md`, `CLAUDE.md`, `CURSOR.md`, and `.cursorrules`.
+  - Rich Token Analysis & File Reading in `CountTokensTool`:
+    - Added direct file-reading capability so agents can pass `path`/`file` instead of parroting large payloads into tool call JSON arguments, eliminating token limit truncations.
+    - Recovered gracefully from partial or truncated tool calls containing `parse_error`.
+    - Enriched response with `words`, `lines`, `token_density` (chars/token), and `estimate` string.
+  - CCR Reference Token Cleaning & Safe File Retrieval in `RetrieveOriginalTool`:
+    - Added automated cleaning to strip model prefixes (`"CCR Ref:"`, `"[CCR Ref: ...]"`, brackets `< >`).
+    - Handled tilde (`~`) prefixes and user paths securely with Headroom sensitive-path boundary enforcement.
+  - Content-Type Normalization in `CompressContentTool`:
+    - Transparently normalized common model aliases (`"text"`, `"log"`, `"logs"` -> `"text_logs"`, `"rust"`, `"python"`, `"js"`, `"ts"`, `"source"` -> `"code"`, `"md"` -> `"markdown"`), with fallback to auto-detection.
+  - Filtered Cache Inspection in `CacheStatsTool`:
+    - Added configurable `limit` and `query` filter parameters to inspect specific CCR IDs or cached text snippets.
+  - Curated Static Tool Definitions & Aliases in `STATIC_TOOL_DEFS`:
+    - Registered curated specifications for `scope_context`, `count_tokens`, `cache_stats`, and `compress_context`.
+    - Provided alias resolution for `analyze_tokens` -> `count_tokens`, `inspect_cache` -> `cache_stats`, `context_scope` -> `scope_context`, and `context_compress` -> `compress_context`.
+- **Inspirations**:
+  - Headroom (CCR - Context Compression & Retrieval) protocol and Z-Context headroom design.
+  - Real-world headless trace showing argument JSON truncation when parrot-echoing full file text into `count_tokens`.
+  - Robustness Principle: graceful fallback for non-existent planned target files and flexible type coercion.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/headroom/scoping.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/scoping.rs): Parameter extraction, default target path, GEMINI.md support, and ancestor directory walking.
+    - [`src/tools/headroom/stats.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/stats.rs): `CountTokensTool` aliases, direct file reading, truncation recovery, and multi-metric token analysis.
+    - [`src/tools/headroom/compress.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/compress.rs): `CompressContentTool` content_type normalization, and `RetrieveOriginalTool` CCR token prefix cleaning.
+    - [`src/tools/headroom/cache.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/cache.rs): `CacheStatsTool` limit and query filtering.
+    - [`src/tools/memory_extra/codebase.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/memory_extra/codebase.rs): `CompressContextTool` aliases and ratio coercion.
+    - [`src/tools/defs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/defs.rs): Curated static definitions and alias mappings in `STATIC_TOOL_DEFS`.
+  - Test Modules:
+    - [`src/tools/headroom/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/tests.rs): `test_headroom_suite_hardening_and_aliases`.
+- **Details & Metrics**:
+  - Headless subagent validation completed across real-world execution scenarios:
+    - Scenario A (Context Scoping & Token Counting): Verified `scope_context` and token analysis, observed LLM token parrot-overflow and implemented path-based token estimation.
+    - Scenario B (Content Compression & CCR Retrieval): 9.8s execution time, 0 errors, generated CCR token and retrieved original content from cache.
+    - Scenario C (TF-IDF Context Compression & Cache Stats): 9.5s execution time, 0 errors, reduced 203 chars to 96 chars with ratio 0.5 and verified cache stats.
+  - 100% backward compatibility maintained across all 21 headroom tools and memory codebase tools.
+- **Verification**:
+  - 46 headroom unit tests passing (`cargo test -p openz --lib tools::headroom -j 1`).
+  - Static tool definition sync and duplicate invariant passing (`cargo test -p openz --lib test_curated_defs_have_no_duplicate_names -j 1`).
+  - Full tool registry drift guard passing (`cargo test -p openz --lib tool_registry_exposes_every_registered_tool -j 1`).
+  - Exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`).
+  - 0 clippy warnings (`cargo clippy -p openz -j 1`).
+
+### v0.0.198
 - **Ideas**:
   - Comprehensive headless subagent validation across the Knowledge Graph & Memory Suite (`create_entities`, `create_relations`, `add_observations`, `read_graph`, `search_nodes`, `open_nodes`, `delete_entities`, `delete_observations`, `delete_relations`, `create_database_branch`, `commit_database_branch`, `rollback_database_branch`, `store_memory`, `recall_memory`, `update_memory`, `delete_memory`, `clear_memory`).
   - Graph Entity Observation Merging: Enhanced `create_entities` so that when invoked for an entity that already exists in the graph, it merges new observations into the existing entity instead of silently dropping them.

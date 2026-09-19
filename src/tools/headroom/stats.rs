@@ -90,20 +90,66 @@ impl Tool for CountTokensTool {
         json!({
             "type": "object",
             "properties": {
-                "text": { "type": "string", "description": "The text to estimate tokens for." }
-            },
-            "required": ["text"]
+                "text": { "type": "string", "description": "The text to estimate tokens for (aliases: content, context, raw_text, input, code)." },
+                "path": { "type": "string", "description": "Optional file path to read and count tokens directly without pasting text." }
+            }
         })
     }
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let text = arguments["text"]
-            .as_str()
-            .ok_or_else(|| anyhow!("Missing text parameter"))?;
-        let tokens = estimate_tokens(text);
+        let mut text = if let Some(s) = arguments.as_str() {
+            s.to_string()
+        } else if let Some(s) = arguments
+            .get("text")
+            .or_else(|| arguments.get("content"))
+            .or_else(|| arguments.get("context"))
+            .or_else(|| arguments.get("raw_text"))
+            .or_else(|| arguments.get("input"))
+            .or_else(|| arguments.get("code"))
+            .and_then(|v| v.as_str())
+        {
+            s.to_string()
+        } else if let Some(p) = arguments
+            .get("path")
+            .or_else(|| arguments.get("file"))
+            .or_else(|| arguments.get("filepath"))
+            .and_then(|v| v.as_str())
+        {
+            let path = std::path::Path::new(p);
+            std::fs::read_to_string(path).map_err(|e| anyhow!("Failed to read file '{}': {}", p, e))?
+        } else if let Some(err) = arguments.get("parse_error").and_then(|v| v.as_str()) {
+            err.to_string()
+        } else {
+            return Err(anyhow!("Missing text or path parameter"));
+        };
+
+        // If text is a single path-like string pointing to a readable file, read the file
+        if text.len() < 256 && !text.contains('\n') && !text.contains(' ') {
+            let path = std::path::Path::new(&text);
+            if path.is_file() {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    text = content;
+                }
+            }
+        }
+
+        let tokens = estimate_tokens(&text);
         let chars = text.chars().count();
-        Ok(
-            json!({ "tokens": tokens, "characters": chars, "estimate": format!("~{} tokens ({} characters)", tokens, chars) }),
-        )
+        let words = text.split_whitespace().count();
+        let lines = if text.is_empty() { 0 } else { text.lines().count() };
+        let density = if tokens > 0 {
+            format!("{:.2} chars/token", chars as f64 / tokens as f64)
+        } else {
+            "0.00 chars/token".to_string()
+        };
+
+        Ok(json!({
+            "tokens": tokens,
+            "characters": chars,
+            "words": words,
+            "lines": lines,
+            "token_density": density,
+            "estimate": format!("~{} tokens ({} characters, {} words, {} lines)", tokens, chars, words, lines)
+        }))
     }
 }
 

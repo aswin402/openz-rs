@@ -703,3 +703,74 @@ async fn test_scope_context_yagni_disabled() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[tokio::test]
+async fn test_headroom_suite_hardening_and_aliases() {
+    let _l = test_lock().lock().await;
+
+    // 1. ScopeContextTool resilience: default path and non-existent planned file path
+    let scope_tool = ScopeContextTool;
+    let res_default = scope_tool.call(&json!({})).await.unwrap();
+    assert!(res_default["status"] == "empty" || res_default["content"].as_str().is_some());
+
+    // Non-existent target file should walk to parent directory without failing
+    let res_nonexistent = scope_tool
+        .call(&json!({ "path": "src/tools/planned_future_file.rs" }))
+        .await
+        .unwrap();
+    assert!(res_nonexistent["content"].as_str().is_some() || res_nonexistent["status"] == "empty");
+
+    // 2. CountTokensTool: aliases, string argument, and rich token analysis
+    let count_tool = CountTokensTool;
+    let res_count = count_tool
+        .call(&json!({ "content": "The quick brown fox jumps over the lazy dog." }))
+        .await
+        .unwrap();
+    assert_eq!(res_count["words"], 9);
+    assert_eq!(res_count["lines"], 1);
+    assert!(res_count["tokens"].as_u64().unwrap() > 0);
+    assert!(res_count["token_density"].as_str().unwrap().contains("chars/token"));
+
+    let res_str = count_tool.call(&json!("Direct string input")).await.unwrap();
+    assert_eq!(res_str["words"], 3);
+
+    // 3. CacheStatsTool: limit and query filtering
+    let stats_tool = CacheStatsTool;
+    let res_stats = stats_tool.call(&json!({ "limit": "5", "query": "ccr_" })).await.unwrap();
+    assert!(res_stats["total_items"].as_i64().is_some());
+    assert!(res_stats["items"].as_array().unwrap().len() <= 5);
+
+    // 4. CompressContentTool content_type normalization & RetrieveOriginalTool prefix cleaning
+    let compress_tool = CompressContentTool;
+    let res_comp = compress_tool
+        .call(&json!({
+            "text": "fn calculate_total(price: f64) -> f64 { price * 1.15 }",
+            "type": "rust",
+            "preview": false
+        }))
+        .await
+        .unwrap();
+    let ccr_id = res_comp["ccr_id"].as_str().unwrap();
+
+    let retrieve_tool = RetrieveOriginalTool;
+    // Call with dirty CCR Ref prefix as commonly emitted by LLMs
+    let dirty_ref = format!("[CCR Ref: {}]", ccr_id);
+    let res_ret = retrieve_tool.call(&json!({ "token": dirty_ref })).await.unwrap();
+    assert_eq!(
+        res_ret["content"].as_str().unwrap(),
+        "fn calculate_total(price: f64) -> f64 { price * 1.15 }"
+    );
+
+    // 5. CompressContextTool ratio coercion
+    let ctx_tool = crate::tools::memory_extra::CompressContextTool;
+    let res_ctx = ctx_tool
+        .call(&json!({
+            "content": "First sentence. Second sentence. Third sentence. Fourth sentence.",
+            "ratio": "0.5"
+        }))
+        .await
+        .unwrap();
+    assert_eq!(res_ctx["ratio"], 0.5);
+    assert!(res_ctx["compressedText"].as_str().unwrap().len() > 0);
+}
+

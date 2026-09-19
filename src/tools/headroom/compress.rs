@@ -689,6 +689,91 @@ fn safe_threshold_text(text: &str, limit: usize) -> String {
     format!("{}\n... [TRUNCATED TO {} CHARS] ...\n{}", head, limit, tail)
 }
 
+fn extract_string_arg(arguments: &Value, keys: &[&str]) -> Option<String> {
+    if let Some(s) = arguments.as_str() {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    for key in keys {
+        if let Some(val) = arguments.get(key) {
+            if let Some(s) = val.as_str() {
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_bool_arg(arguments: &Value, keys: &[&str]) -> Option<bool> {
+    for key in keys {
+        if let Some(val) = arguments.get(key) {
+            if let Some(b) = val.as_bool() {
+                return Some(b);
+            }
+            if let Some(s) = val.as_str() {
+                match s.trim().to_lowercase().as_str() {
+                    "true" | "1" | "yes" => return Some(true),
+                    "false" | "0" | "no" => return Some(false),
+                    _ => {}
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_usize_arg(arguments: &Value, keys: &[&str]) -> Option<usize> {
+    for key in keys {
+        if let Some(val) = arguments.get(key) {
+            if let Some(n) = val.as_u64() {
+                return Some(n as usize);
+            }
+            if let Some(s) = val.as_str() {
+                if let Ok(n) = s.trim().parse::<usize>() {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn clean_ccr_id_token(raw: &str) -> String {
+    let mut s = raw.trim();
+    s = s
+        .trim_start_matches('[')
+        .trim_start_matches('<')
+        .trim_start_matches('"')
+        .trim_start_matches('\'');
+    s = s
+        .trim_end_matches(']')
+        .trim_end_matches('>')
+        .trim_end_matches('"')
+        .trim_end_matches('\'');
+    s = s.trim();
+
+    for prefix in &[
+        "CCR Ref:",
+        "ccr ref:",
+        "CCR Ref",
+        "ccr ref",
+        "CCR:",
+        "ccr:",
+        "Ref:",
+        "ref:",
+    ] {
+        if let Some(stripped) = s.strip_prefix(prefix) {
+            s = stripped.trim();
+        }
+    }
+    s.to_string()
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Tool 2: CompressContentTool
 // ═══════════════════════════════════════════════════════════════════
@@ -709,7 +794,7 @@ impl Tool for CompressContentTool {
         json!({
             "type": "object",
             "properties": {
-                "raw_text": { "type": "string", "description": "The raw content to compress." },
+                "raw_text": { "type": "string", "description": "The raw content to compress (aliases: text, content, context, data, input)." },
                 "content_type": {
                     "type": "string",
                     "enum": ["auto", "json", "code", "text_logs", "csv", "markdown", "yaml"],
@@ -726,11 +811,14 @@ impl Tool for CompressContentTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let raw_text = arguments["raw_text"]
-            .as_str()
-            .ok_or_else(|| anyhow!("Missing raw_text"))?
-            .trim()
-            .to_string();
+        let raw_text = extract_string_arg(
+            arguments,
+            &["raw_text", "text", "content", "context", "data", "input", "raw"],
+        )
+        .ok_or_else(|| anyhow!("Missing raw_text parameter"))?
+        .trim()
+        .to_string();
+
         if raw_text.is_empty() {
             return Ok(
                 json!({ "compressed": "", "ccr_id": null, "note": "Empty content provided." }),
@@ -744,31 +832,31 @@ impl Tool for CompressContentTool {
             ));
         }
 
-        let content_type = arguments["content_type"]
-            .as_str()
+        let raw_content_type = arguments
+            .get("content_type")
+            .or_else(|| arguments.get("type"))
+            .and_then(|v| v.as_str())
             .unwrap_or("auto")
+            .trim()
             .to_lowercase();
-        let content_type = if content_type == "auto" || content_type.is_empty() {
-            auto_detect_type(&raw_text)
-        } else {
-            match content_type.as_str() {
-                "json" | "code" | "text_logs" | "csv" | "markdown" | "yaml" => {
-                    content_type.as_str()
-                }
-                other => {
-                    return Err(anyhow!(
-                        "Unknown content_type '{}'. Use 'json', 'code', 'text_logs', 'csv', 'markdown', 'yaml', or 'auto'.",
-                        other
-                    ));
-                }
-            }
+
+        let content_type = match raw_content_type.as_str() {
+            "" | "auto" => auto_detect_type(&raw_text),
+            "json" => "json",
+            "code" | "rust" | "python" | "js" | "ts" | "javascript" | "typescript" | "go"
+            | "c" | "cpp" | "source" => "code",
+            "text_logs" | "text" | "log" | "logs" => "text_logs",
+            "csv" => "csv",
+            "markdown" | "md" => "markdown",
+            "yaml" | "yml" => "yaml",
+            _ => auto_detect_type(&raw_text),
         };
 
-        let threshold = arguments["threshold"].as_u64().map(|v| v as usize);
-        let signatures_only = arguments["signatures_only"].as_bool().unwrap_or(false);
+        let threshold = extract_usize_arg(arguments, &["threshold", "limit", "max_lines"]);
+        let signatures_only = extract_bool_arg(arguments, &["signatures_only", "signatures"]).unwrap_or(false);
         let compressed = compress_by_type(&raw_text, content_type, threshold, signatures_only, "");
 
-        let is_preview = arguments["preview"].as_bool().unwrap_or(false);
+        let is_preview = extract_bool_arg(arguments, &["preview", "dry_run"]).unwrap_or(false);
 
         let ccr_id = if is_preview {
             None
@@ -817,7 +905,7 @@ impl Tool for RetrieveOriginalTool {
             "properties": {
                 "ccr_id": {
                     "type": "string",
-                    "description": "CCR reference ID (e.g. ccr_a1b2c3) or file:// path to retrieve."
+                    "description": "CCR reference ID (e.g. ccr_a1b2c3) or file:// path to retrieve (aliases: id, ccr, token, path, file, ref)."
                 }
             },
             "required": ["ccr_id"]
@@ -825,13 +913,16 @@ impl Tool for RetrieveOriginalTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let input = arguments["ccr_id"]
-            .as_str()
-            .ok_or_else(|| anyhow!("Missing ccr_id parameter"))?
-            .trim();
+        let raw_input = extract_string_arg(
+            arguments,
+            &["ccr_id", "id", "ccr", "token", "path", "file", "file_path", "ref", "url"],
+        )
+        .ok_or_else(|| anyhow!("Missing ccr_id parameter"))?;
+        let input = clean_ccr_id_token(&raw_input);
 
         if input.starts_with("file://")
             || input.starts_with('/')
+            || input.starts_with('~')
             || input.contains('/')
             || input.contains('\\')
         {

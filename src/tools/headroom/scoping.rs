@@ -6,7 +6,13 @@ use std::path::{Path, PathBuf};
 
 // ─── Constants ───────────────────────────────────────────────────
 
-const SCOPE_FILES: &[&str] = &["AGENTS.md", "CLAUDE.md", "CURSOR.md", ".cursorrules"];
+const SCOPE_FILES: &[&str] = &[
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    "CURSOR.md",
+    ".cursorrules",
+];
 
 pub const YAGNI_DIRECTIVES: &str = r#"
 ---
@@ -184,17 +190,29 @@ impl Tool for ScopeContextTool {
             "properties": {
                 "target_path": {
                     "type": "string",
-                    "description": "Absolute or relative path to the file/directory the agent is working with."
+                    "description": "Absolute or relative path to the file/directory the agent is working with (aliases: path, target, dir, directory, file). Defaults to current directory."
                 }
-            },
-            "required": ["target_path"]
+            }
         })
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let target_path = arguments["target_path"]
-            .as_str()
-            .ok_or_else(|| anyhow!("Missing target_path parameter"))?;
+        let target_path = if let Some(s) = arguments.as_str() {
+            s.trim()
+        } else if let Some(s) = arguments
+            .get("target_path")
+            .or_else(|| arguments.get("path"))
+            .or_else(|| arguments.get("target"))
+            .or_else(|| arguments.get("dir"))
+            .or_else(|| arguments.get("directory"))
+            .or_else(|| arguments.get("file"))
+            .or_else(|| arguments.get("filepath"))
+            .and_then(|v| v.as_str())
+        {
+            s.trim()
+        } else {
+            "."
+        };
 
         let cwd = std::env::current_dir().map_err(|e| anyhow!("Failed to get cwd: {}", e))?;
         let path = Path::new(target_path);
@@ -204,17 +222,35 @@ impl Tool for ScopeContextTool {
             cwd.join(path)
         };
 
-        let resolved_path = absolute_path
-            .canonicalize()
-            .map_err(|e| anyhow!("Failed to resolve path '{}': {}", target_path, e))?;
-
-        let target_dir = if resolved_path.is_dir() {
-            resolved_path.clone()
+        // If path exists, canonicalize. If path is a planned or non-existent file,
+        // walk up parent directories to find the nearest existing directory.
+        let target_dir = if let Ok(canonical) = absolute_path.canonicalize() {
+            if canonical.is_dir() {
+                canonical
+            } else {
+                canonical
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| cwd.clone())
+            }
         } else {
-            resolved_path
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| cwd.clone())
+            let mut ancestor = absolute_path.parent();
+            let mut resolved = None;
+            while let Some(parent) = ancestor {
+                if let Ok(canonical) = parent.canonicalize() {
+                    resolved = Some(if canonical.is_dir() {
+                        canonical
+                    } else {
+                        canonical
+                            .parent()
+                            .map(|p| p.to_path_buf())
+                            .unwrap_or_else(|| cwd.clone())
+                    });
+                    break;
+                }
+                ancestor = parent.parent();
+            }
+            resolved.unwrap_or_else(|| cwd.clone())
         };
 
         let mut found_files: Vec<PathBuf> = Vec::new();
