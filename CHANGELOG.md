@@ -1,4 +1,63 @@
-### v0.0.201 (Latest Release)
+### v0.0.202 (Latest Release)
+- **Ideas**:
+  - Comprehensive headless evaluation, live agent testing, and hardening of the SearchXyz Subsystem Suite (17 native tools):
+    - Web & Search Tools: `searchxyz_doctor`, `searchxyz_search_web`, `searchxyz_browser_search`, `searchxyz_read_url`, `searchxyz_search_and_read`, `searchxyz_deep_research`, `searchxyz_site_map`.
+    - Index & Recall Tools: `searchxyz_recall`, `searchxyz_list_sources`, `searchxyz_index_content`, `searchxyz_export_research`, `searchxyz_import_research`, `searchxyz_delete_source`, `searchxyz_clear_index`.
+    - Graph & Repo Tools: `searchxyz_index_relationship`, `searchxyz_query_graph`, `searchxyz_read_github_repo`.
+  - Shared Parsing & Normalization Infrastructure:
+    - Extended boolean coercion in `coerce_bool_fields` to support truthy (`"true"`, `"1"`, `"yes"`, `"on"`, `1`) and falsy (`"false"`, `"0"`, `"no"`, `"off"`, `0`) values across strings and numbers.
+    - Added `map_field_alias` helper to resolve common LLM parameter variants across all 17 tools without code duplication.
+    - Added `normalize_query_arg` supporting direct string inputs and aliases (`q`, `search`, `prompt`, `term`, `keywords`, `text`).
+    - Added `normalize_url_arg` supporting direct string inputs, URL aliases (`target_url`, `uri`, `link`, `target`, `href`, `page`, `endpoint`, `address`, `site`, `domain`), and scheme-less URL auto-prefixing (`normalize_web_url`).
+  - Web & Search Hardening:
+    - `searchxyz_doctor`: direct string boolean coercion for `include_paths` and aliases (`includePaths`, `paths`, `include_path`).
+    - `searchxyz_search_web`: direct string queries, query aliases, domain filter aliases, limit aliases (`limit`, `count`, `max_pages`), and boolean coercion for `merge_backends` and `include_diagnostics`.
+    - `searchxyz_browser_search`: direct string queries, aliases for `max_results`, `timeout_secs`, `read_top_results`, `max_pages`, `save_mode`, with boolean and numeric coercion propagated to browser reads.
+    - `searchxyz_read_url`: direct string inputs, URL scheme-less normalization, depth/char limit coercion, render_js boolean coercion, and cache/save mode aliases.
+    - `searchxyz_search_and_read`: direct string queries, aliases for `max_pages`, `max_chars`, `merge_backends`, `render_js`, and domain filtering.
+    - `searchxyz_deep_research`: direct string queries, aliases for `breadth`, `max_pages_per_query`, `max_chars`, and execution flags.
+    - `searchxyz_site_map`: direct string inputs, scheme-less URL normalization, aliases for `max_links`, and boolean coercion for `use_sitemap` and `crawl_links`.
+  - Index & Recall Hardening:
+    - `searchxyz_recall`: direct string query, query aliases, semantic vector search aliases (`vector`, `embedding`) with boolean coercion.
+    - `searchxyz_list_sources`: direct string filter, pagination aliases (`skip`, `count`), and numeric coercion.
+    - `searchxyz_index_content`: URL normalization, aliases for `url` (`link`, `id`), `title` (`name`, `heading`), and `content` (`text`, `body`, `data`).
+    - `searchxyz_export_research`: direct string filter, aliases for query, limit, and max_chars.
+    - `searchxyz_import_research`: direct string payload, bundle/data/content aliases, and root documents/graph auto-nesting.
+    - `searchxyz_delete_source`: direct string deletion auto-confirms, scheme-less URL normalization, and `confirm`/`force` aliases.
+    - `searchxyz_clear_index`: direct string auto-confirms, and `confirm`/`yes`/`force` aliases with boolean coercion.
+  - Graph & Repository Hardening:
+    - `searchxyz_index_relationship`: entity and relation aliases (`from`, `to`, `rel`, `relation`, `source_type`, `target_type`).
+    - `searchxyz_query_graph`: direct string traversal target, aliases (`node`, `depth`), and numeric depth coercion.
+    - `searchxyz_read_github_repo`: direct string repo URLs, scheme-less normalization, aliases for `max_files`, `max_total_bytes`, `git_timeout_secs`, `max_chars`, `auto_expand_max_files`, and branches/tags.
+- **Inspirations**:
+  - Headless multi-turn agent runs where LLMs invoke specialized SearchXyz tools with shorthand parameters, direct URLs, or direct strings without wrapping objects.
+  - Enterprise search pipelines requiring robust parameter coercion to prevent JSON deserialization panics on numeric strings or boolean strings.
+  - Tantivy search index and knowledge graph traversal conventions.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/searchxyz/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/mod.rs): Enhanced `coerce_bool_fields`, `map_field_alias`, `normalize_query_arg`, `normalize_url_arg`.
+    - [`src/tools/searchxyz/web.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/web.rs): Hardened `searchxyz_doctor`, `searchxyz_search_web`, `searchxyz_browser_search`, `searchxyz_read_url`, `searchxyz_search_and_read`, `searchxyz_deep_research`, `searchxyz_site_map`.
+    - [`src/tools/searchxyz/index.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/index.rs): Hardened `searchxyz_recall`, `searchxyz_list_sources`, `searchxyz_index_content`, `searchxyz_export_research`, `searchxyz_import_research`, `searchxyz_delete_source`, `searchxyz_clear_index`.
+    - [`src/tools/searchxyz/graph.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/graph.rs): Hardened `searchxyz_index_relationship`, `searchxyz_query_graph`, `searchxyz_read_github_repo`.
+  - Test Modules:
+    - [`src/tools/searchxyz/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/mod_tests.rs): Tests for boolean coercion, alias mapping, query normalization, and URL normalization.
+    - [`src/tools/searchxyz/web_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/web_tests.rs): Tests for doctor direct strings, search args, read_url normalization, and sitemap args.
+    - [`src/tools/searchxyz/index_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/index_tests.rs): Tests for recall, list_sources, index_content, delete_source, and clear_index normalization.
+    - [`src/tools/searchxyz/graph_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/graph_tests.rs): Tests for index_relationship, query_graph, and read_github_repo normalization and auto-expand limits.
+- **Details & Metrics**:
+  - Test Suite: 38 SearchXyz tests passing (0 failures).
+  - Native Tool Invariant: Exactly 260 registered native tools verified and maintained.
+  - Compiler & Clippy Health: 0 errors, 0 warnings under `-j 1`.
+  - Live Real-time Headless Testing:
+    - Executed live `searchxyz_doctor` with `include_paths=false`, successfully returning complete native health diagnostic table in 11.2s.
+    - Executed live `searchxyz_query_graph` with entity `"openz"`, traversing 16 documents and 1 technology connection in 8.0s.
+- **Verification**:
+  - `cargo test -p openz --lib tools::searchxyz -j 1` (38 passed)
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1` (1 passed, 260 tools verified)
+  - `cargo clippy -p openz -j 1` (0 warnings)
+  - `target/debug/openz run -y --output-format json -p "..."` (live headless execution verified)
+
+### v0.0.201
 - **Ideas**:
   - Comprehensive headless evaluation, testing, and hardening of the Web & Crawling Suite (`web_fetch`, `web_search`, `crawl_website`, `obscura_browser`, `gsd_browser`).
   - Unified URL Normalization (`normalize_web_url`):

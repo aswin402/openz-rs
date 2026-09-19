@@ -48,7 +48,13 @@ impl Tool for SearchXyzIndexRelationshipTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: IndexRelationshipRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        super::map_field_alias(&mut normalized, "source", &["from", "src", "source_entity", "sourceEntity"]);
+        super::map_field_alias(&mut normalized, "source_type", &["sourceType", "from_type", "src_type"]);
+        super::map_field_alias(&mut normalized, "target", &["to", "dst", "target_entity", "targetEntity"]);
+        super::map_field_alias(&mut normalized, "target_type", &["targetType", "to_type", "dst_type"]);
+        super::map_field_alias(&mut normalized, "relationship", &["rel", "relation", "type", "predicate", "edge"]);
+        let req: IndexRelationshipRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .index_relationship(Parameters(req))
             .await
@@ -88,7 +94,13 @@ impl Tool for SearchXyzQueryGraphTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
+        let mut normalized = if let Some(s) = arguments.as_str() {
+            json!({ "entity": s.trim() })
+        } else {
+            arguments.clone()
+        };
+        super::map_field_alias(&mut normalized, "entity", &["name", "node", "query", "target"]);
+        super::map_field_alias(&mut normalized, "max_depth", &["depth", "maxDepth"]);
         super::coerce_numeric_fields(&mut normalized, &["max_depth"]);
         let req: QueryGraphRequest = serde_json::from_value(normalized)?;
         let res = get_server()
@@ -211,11 +223,28 @@ impl Tool for SearchXyzReadGithubRepoTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
+        let mut normalized = if let Some(s) = arguments.as_str() {
+            json!({ "repo_url": crate::tools::web::normalize_web_url(s) })
+        } else {
+            arguments.clone()
+        };
+        super::map_field_alias(&mut normalized, "repo_url", &["repoUrl", "url", "repo", "repository", "target", "link"]);
+        if let Some(u) = normalized.get("repo_url").and_then(|v| v.as_str()) {
+            normalized["repo_url"] = json!(crate::tools::web::normalize_web_url(u));
+        }
+        super::map_field_alias(&mut normalized, "branch", &["ref", "tag"]);
+        super::map_field_alias(&mut normalized, "include_extensions", &["includeExtensions", "extensions"]);
+        super::map_field_alias(&mut normalized, "exclude_paths", &["excludePaths", "ignore_paths", "ignore"]);
+        super::map_field_alias(&mut normalized, "max_files", &["maxFiles", "files_limit", "limit"]);
+        super::map_field_alias(&mut normalized, "max_total_bytes", &["maxTotalBytes", "max_bytes", "bytes_limit"]);
+        super::map_field_alias(&mut normalized, "auto_expand_max_files", &["autoExpandMaxFiles", "auto_expand"]);
+        super::map_field_alias(&mut normalized, "git_timeout_secs", &["gitTimeoutSecs", "timeout_secs", "timeout"]);
+        super::map_field_alias(&mut normalized, "max_chars", &["maxChars", "limit_chars", "maxLength"]);
         super::coerce_numeric_fields(
             &mut normalized,
             &["max_files", "max_total_bytes", "git_timeout_secs", "max_chars"],
         );
+        super::coerce_bool_fields(&mut normalized, &["auto_expand_max_files"]);
         let req: ReadGithubRepoRequest = serde_json::from_value(normalized.clone())?;
         let res = match get_server().read_github_repo(Parameters(req)).await {
             Ok(res) => res,

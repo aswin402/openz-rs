@@ -1,4 +1,8 @@
 use super::*;
+use crate::tools::searchxyz::{
+    coerce_bool_fields, coerce_numeric_fields, map_field_alias, normalize_query_arg,
+    normalize_url_arg,
+};
 
 #[test]
 fn backend_health_labels_cover_expected_states() {
@@ -225,3 +229,72 @@ async fn searchxyz_doctor_mentions_automatic_browser_fallback() -> Result<()> {
     assert!(report.contains("Provider-free browser fallback is automatic"));
     Ok(())
 }
+
+#[tokio::test]
+async fn searchxyz_doctor_accepts_direct_string_and_aliases() -> Result<()> {
+    let tool = SearchXyzDoctorTool;
+    let res = tool.call(&json!("false")).await?;
+    let text = res.as_str().expect("string report");
+    assert!(!text.contains("Index path:"));
+
+    let res_alias = tool.call(&json!({ "paths": false })).await?;
+    let text_alias = res_alias.as_str().expect("string report");
+    assert!(!text_alias.contains("Index path:"));
+    Ok(())
+}
+
+#[test]
+fn searchxyz_web_args_normalization_and_aliases() {
+    let raw = json!({
+        "q": "rust async framework",
+        "limit": "8",
+        "merge": "1",
+        "diagnostics": "true"
+    });
+    let mut normalized = normalize_query_arg(&raw);
+    map_field_alias(&mut normalized, "max_results", &["limit", "count", "maxResults", "max_pages"]);
+    map_field_alias(&mut normalized, "merge_backends", &["mergeBackends", "merge"]);
+    map_field_alias(&mut normalized, "include_diagnostics", &["includeDiagnostics", "diagnostics"]);
+    coerce_numeric_fields(&mut normalized, &["max_results"]);
+    coerce_bool_fields(&mut normalized, &["merge_backends", "include_diagnostics"]);
+
+    assert_eq!(normalized["query"], "rust async framework");
+    assert_eq!(normalized["max_results"], json!(8));
+    assert_eq!(normalized["merge_backends"], json!(true));
+    assert_eq!(normalized["include_diagnostics"], json!(true));
+}
+
+#[test]
+fn searchxyz_read_url_args_normalization_and_aliases() {
+    let raw = json!("docs.rs/tokio");
+    let mut normalized = normalize_url_arg(&raw);
+    map_field_alias(&mut normalized, "depth", &["max_depth", "crawl_depth", "maxDepth"]);
+    map_field_alias(&mut normalized, "max_chars", &["maxChars", "limit", "max_length", "maxLength"]);
+    map_field_alias(&mut normalized, "render_js", &["renderJs", "js"]);
+    coerce_numeric_fields(&mut normalized, &["depth", "max_chars"]);
+    coerce_bool_fields(&mut normalized, &["render_js"]);
+
+    assert_eq!(normalized["url"], "https://docs.rs/tokio");
+}
+
+#[test]
+fn searchxyz_site_map_args_normalization_and_aliases() {
+    let raw = json!({
+        "link": "example.com",
+        "sitemap": "0",
+        "crawl": "yes",
+        "limit": "25"
+    });
+    let mut normalized = normalize_url_arg(&raw);
+    map_field_alias(&mut normalized, "max_links", &["limit", "max_results", "maxLinks", "count"]);
+    map_field_alias(&mut normalized, "use_sitemap", &["useSitemap", "sitemap"]);
+    map_field_alias(&mut normalized, "crawl_links", &["crawlLinks", "crawl"]);
+    coerce_numeric_fields(&mut normalized, &["max_links"]);
+    coerce_bool_fields(&mut normalized, &["use_sitemap", "crawl_links"]);
+
+    assert_eq!(normalized["url"], "https://example.com");
+    assert_eq!(normalized["max_links"], json!(25));
+    assert_eq!(normalized["use_sitemap"], json!(false));
+    assert_eq!(normalized["crawl_links"], json!(true));
+}
+

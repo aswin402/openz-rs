@@ -86,10 +86,78 @@ fn test_searchxyz_coerce_bool_fields() {
     let mut val = serde_json::json!({
         "confirm": "true",
         "dry_run": "FALSE",
+        "flag_1": "1",
+        "flag_0": "0",
+        "flag_yes": "yes",
+        "flag_no": "NO",
+        "num_1": 1,
+        "num_0": 0,
         "other": "not_bool"
     });
-    coerce_bool_fields(&mut val, &["confirm", "dry_run"]);
+    coerce_bool_fields(
+        &mut val,
+        &[
+            "confirm", "dry_run", "flag_1", "flag_0", "flag_yes", "flag_no", "num_1", "num_0",
+            "other",
+        ],
+    );
     assert_eq!(val["confirm"], serde_json::json!(true));
     assert_eq!(val["dry_run"], serde_json::json!(false));
+    assert_eq!(val["flag_1"], serde_json::json!(true));
+    assert_eq!(val["flag_0"], serde_json::json!(false));
+    assert_eq!(val["flag_yes"], serde_json::json!(true));
+    assert_eq!(val["flag_no"], serde_json::json!(false));
+    assert_eq!(val["num_1"], serde_json::json!(true));
+    assert_eq!(val["num_0"], serde_json::json!(false));
     assert_eq!(val["other"], serde_json::json!("not_bool"));
 }
+
+#[test]
+fn test_searchxyz_map_field_alias() {
+    let mut val = serde_json::json!({
+        "limit": 25,
+        "q": "rust async",
+        "link": "https://example.com"
+    });
+    map_field_alias(&mut val, "max_results", &["limit", "count"]);
+    map_field_alias(&mut val, "query", &["q", "search"]);
+    map_field_alias(&mut val, "url", &["link", "uri"]);
+    assert_eq!(val["max_results"], serde_json::json!(25));
+    assert_eq!(val["query"], serde_json::json!("rust async"));
+    assert_eq!(val["url"], serde_json::json!("https://example.com"));
+}
+
+#[test]
+fn test_searchxyz_normalize_query_arg() {
+    // Direct string
+    let from_str = normalize_query_arg(&serde_json::json!("  openz search  "));
+    assert_eq!(from_str["query"], "openz search");
+
+    // Object with q alias
+    let from_alias = normalize_query_arg(&serde_json::json!({ "q": "tokio" }));
+    assert_eq!(from_alias["query"], "tokio");
+
+    // Existing query preserved
+    let existing = normalize_query_arg(&serde_json::json!({ "query": "actix", "q": "other" }));
+    assert_eq!(existing["query"], "actix");
+}
+
+#[test]
+fn test_searchxyz_normalize_url_arg() {
+    // Direct string scheme-less
+    let from_str = normalize_url_arg(&serde_json::json!("docs.rs/tokio"));
+    assert_eq!(from_str["url"], "https://docs.rs/tokio");
+
+    // Wrapped in brackets and quotes
+    let from_wrapped = normalize_url_arg(&serde_json::json!("<https://example.com>"));
+    assert_eq!(from_wrapped["url"], "https://example.com");
+
+    // Object with uri alias and scheme-less
+    let from_alias = normalize_url_arg(&serde_json::json!({ "uri": "github.com/aswin402/openz-rs" }));
+    assert_eq!(from_alias["url"], "https://github.com/aswin402/openz-rs");
+
+    // Existing url normalized
+    let existing = normalize_url_arg(&serde_json::json!({ "url": "example.org" }));
+    assert_eq!(existing["url"], "https://example.org");
+}
+

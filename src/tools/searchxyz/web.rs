@@ -712,7 +712,13 @@ impl Tool for SearchXyzBrowserSearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
+        let mut normalized = super::normalize_query_arg(arguments);
+        super::map_field_alias(&mut normalized, "max_results", &["limit", "count", "maxResults"]);
+        super::map_field_alias(&mut normalized, "timeout_secs", &["timeout", "timeoutSecs"]);
+        super::map_field_alias(&mut normalized, "read_top_results", &["readTopResults", "read_results", "fetch_top_results"]);
+        super::map_field_alias(&mut normalized, "max_pages", &["maxPages", "pages"]);
+        super::map_field_alias(&mut normalized, "save_mode", &["saveMode"]);
+        super::coerce_bool_fields(&mut normalized, &["read_top_results"]);
         super::coerce_numeric_fields(&mut normalized, &["max_results", "timeout_secs", "max_pages"]);
         let query = normalized
             .get("query")
@@ -809,8 +815,8 @@ impl Tool for SearchXyzBrowserSearchTool {
             }));
         }
 
-        let read_results = if browser_search_read_top_results_enabled(arguments) {
-            read_browser_search_results(&results, arguments, max_results).await
+        let read_results = if browser_search_read_top_results_enabled(&normalized) {
+            read_browser_search_results(&results, &normalized, max_results).await
         } else {
             Vec::new()
         };
@@ -820,7 +826,7 @@ impl Tool for SearchXyzBrowserSearchTool {
             .count();
         let status = if results.is_empty() {
             "no_results"
-        } else if browser_search_read_top_results_enabled(arguments) && read_errors > 0 {
+        } else if browser_search_read_top_results_enabled(&normalized) && read_errors > 0 {
             "partial_success"
         } else {
             "success"
@@ -871,7 +877,16 @@ impl Tool for SearchXyzDoctorTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let include_paths = arguments
+        let mut normalized = if arguments.is_string() {
+            let mut obj = json!({ "include_paths": arguments.clone() });
+            super::coerce_bool_fields(&mut obj, &["include_paths"]);
+            obj
+        } else {
+            arguments.clone()
+        };
+        super::map_field_alias(&mut normalized, "include_paths", &["includePaths", "paths", "include_path"]);
+        super::coerce_bool_fields(&mut normalized, &["include_paths"]);
+        let include_paths = normalized
             .get("include_paths")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
@@ -928,8 +943,14 @@ impl Tool for SearchXyzSearchWebTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
+        let mut normalized = super::normalize_query_arg(arguments);
+        super::map_field_alias(&mut normalized, "max_results", &["limit", "count", "maxResults", "max_pages"]);
+        super::map_field_alias(&mut normalized, "merge_backends", &["mergeBackends", "merge"]);
+        super::map_field_alias(&mut normalized, "include_diagnostics", &["includeDiagnostics", "diagnostics"]);
+        super::map_field_alias(&mut normalized, "include_domains", &["includeDomains", "domains"]);
+        super::map_field_alias(&mut normalized, "exclude_domains", &["excludeDomains"]);
         super::coerce_numeric_fields(&mut normalized, &["max_results"]);
+        super::coerce_bool_fields(&mut normalized, &["merge_backends", "include_diagnostics"]);
         let req: SearchWebRequest = serde_json::from_value(normalized)?;
         let server = get_server();
         let configured_backends = server.config.search.backends.clone();
@@ -1001,8 +1022,15 @@ impl Tool for SearchXyzReadUrlTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
+        let mut normalized = super::normalize_url_arg(arguments);
+        super::map_field_alias(&mut normalized, "depth", &["max_depth", "crawl_depth", "maxDepth"]);
+        super::map_field_alias(&mut normalized, "max_chars", &["maxChars", "limit", "max_length", "maxLength"]);
+        super::map_field_alias(&mut normalized, "render_js", &["renderJs", "js"]);
+        super::map_field_alias(&mut normalized, "cache_mode", &["cacheMode"]);
+        super::map_field_alias(&mut normalized, "save_mode", &["saveMode"]);
+        super::map_field_alias(&mut normalized, "include_diagnostics", &["includeDiagnostics", "diagnostics"]);
         super::coerce_numeric_fields(&mut normalized, &["depth", "max_chars"]);
+        super::coerce_bool_fields(&mut normalized, &["render_js", "include_diagnostics"]);
         let req: ReadUrlRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .read_url(Parameters(req))
@@ -1079,8 +1107,18 @@ impl Tool for SearchXyzSearchAndReadTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
+        let mut normalized = super::normalize_query_arg(arguments);
+        super::map_field_alias(&mut normalized, "max_pages", &["limit", "max_results", "maxPages", "pages", "count"]);
+        super::map_field_alias(&mut normalized, "max_chars", &["maxChars", "limit_chars", "maxLength"]);
+        super::map_field_alias(&mut normalized, "merge_backends", &["mergeBackends", "merge"]);
+        super::map_field_alias(&mut normalized, "render_js", &["renderJs", "js"]);
+        super::map_field_alias(&mut normalized, "include_diagnostics", &["includeDiagnostics", "diagnostics"]);
+        super::map_field_alias(&mut normalized, "cache_mode", &["cacheMode"]);
+        super::map_field_alias(&mut normalized, "save_mode", &["saveMode"]);
+        super::map_field_alias(&mut normalized, "include_domains", &["includeDomains", "domains"]);
+        super::map_field_alias(&mut normalized, "exclude_domains", &["excludeDomains"]);
         super::coerce_numeric_fields(&mut normalized, &["max_pages", "max_chars"]);
+        super::coerce_bool_fields(&mut normalized, &["merge_backends", "render_js", "include_diagnostics"]);
         let req: SearchAndReadRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .search_and_read(Parameters(req))
@@ -1161,11 +1199,22 @@ impl Tool for SearchXyzDeepResearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
+        let mut normalized = super::normalize_query_arg(arguments);
+        super::map_field_alias(&mut normalized, "breadth", &["depth", "max_depth", "max_breadth", "maxBreadth"]);
+        super::map_field_alias(&mut normalized, "max_pages_per_query", &["maxPagesPerQuery", "max_pages", "pages_per_query", "limit"]);
+        super::map_field_alias(&mut normalized, "max_chars", &["maxChars", "limit_chars", "maxLength"]);
+        super::map_field_alias(&mut normalized, "merge_backends", &["mergeBackends", "merge"]);
+        super::map_field_alias(&mut normalized, "render_js", &["renderJs", "js"]);
+        super::map_field_alias(&mut normalized, "include_diagnostics", &["includeDiagnostics", "diagnostics"]);
+        super::map_field_alias(&mut normalized, "cache_mode", &["cacheMode"]);
+        super::map_field_alias(&mut normalized, "save_mode", &["saveMode"]);
+        super::map_field_alias(&mut normalized, "include_domains", &["includeDomains", "domains"]);
+        super::map_field_alias(&mut normalized, "exclude_domains", &["excludeDomains"]);
         super::coerce_numeric_fields(
             &mut normalized,
             &["breadth", "max_pages_per_query", "max_chars"],
         );
+        super::coerce_bool_fields(&mut normalized, &["merge_backends", "render_js", "include_diagnostics"]);
         let req: DeepResearchRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .deep_research(Parameters(req))
@@ -1214,8 +1263,12 @@ impl Tool for SearchXyzSiteMapTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
+        let mut normalized = super::normalize_url_arg(arguments);
+        super::map_field_alias(&mut normalized, "max_links", &["limit", "max_results", "maxLinks", "count"]);
+        super::map_field_alias(&mut normalized, "use_sitemap", &["useSitemap", "sitemap"]);
+        super::map_field_alias(&mut normalized, "crawl_links", &["crawlLinks", "crawl"]);
         super::coerce_numeric_fields(&mut normalized, &["max_links"]);
+        super::coerce_bool_fields(&mut normalized, &["use_sitemap", "crawl_links"]);
         let req: SiteMapRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .site_map(Parameters(req))

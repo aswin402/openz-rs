@@ -92,17 +92,125 @@ pub(crate) fn coerce_numeric_fields(val: &mut serde_json::Value, field_names: &[
 pub(crate) fn coerce_bool_fields(val: &mut serde_json::Value, field_names: &[&str]) {
     if let serde_json::Value::Object(map) = val {
         for &name in field_names {
-            if let Some(serde_json::Value::String(s)) = map.get(name) {
-                let lower = s.trim().to_lowercase();
-                if lower == "true" {
-                    map.insert(name.to_string(), serde_json::Value::Bool(true));
-                } else if lower == "false" {
-                    map.insert(name.to_string(), serde_json::Value::Bool(false));
+            if let Some(entry) = map.get(name) {
+                if let serde_json::Value::String(s) = entry {
+                    let lower = s.trim().to_lowercase();
+                    if lower == "true" || lower == "1" || lower == "yes" || lower == "on" {
+                        map.insert(name.to_string(), serde_json::Value::Bool(true));
+                    } else if lower == "false" || lower == "0" || lower == "no" || lower == "off" {
+                        map.insert(name.to_string(), serde_json::Value::Bool(false));
+                    }
+                } else if let serde_json::Value::Number(n) = entry {
+                    if let Some(i) = n.as_i64() {
+                        if i == 1 {
+                            map.insert(name.to_string(), serde_json::Value::Bool(true));
+                        } else if i == 0 {
+                            map.insert(name.to_string(), serde_json::Value::Bool(false));
+                        }
+                    }
                 }
             }
         }
     }
 }
+
+pub(crate) fn map_field_alias(val: &mut serde_json::Value, canonical: &str, aliases: &[&str]) {
+    if let serde_json::Value::Object(map) = val {
+        let has_canonical = map.get(canonical).is_some_and(|v| !v.is_null());
+        if !has_canonical {
+            for &alias in aliases {
+                if let Some(v) = map.get(alias) {
+                    if !v.is_null() {
+                        let cloned = v.clone();
+                        map.insert(canonical.to_string(), cloned);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn normalize_query_arg(val: &serde_json::Value) -> serde_json::Value {
+    match val {
+        serde_json::Value::String(s) => {
+            serde_json::json!({ "query": s.trim() })
+        }
+        serde_json::Value::Object(map) => {
+            let mut normalized = val.clone();
+            let has_valid_query = map
+                .get("query")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+
+            if !has_valid_query {
+                let aliases = ["q", "search", "prompt", "term", "keywords", "text"];
+                for alias in aliases {
+                    if let Some(v) = map.get(alias).and_then(|v| v.as_str()) {
+                        if !v.trim().is_empty() {
+                            normalized["query"] = serde_json::Value::String(v.trim().to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+            normalized
+        }
+        _ => val.clone(),
+    }
+}
+
+pub(crate) fn normalize_url_arg(val: &serde_json::Value) -> serde_json::Value {
+    match val {
+        serde_json::Value::String(s) => {
+            let norm_url = crate::tools::web::normalize_web_url(s);
+            serde_json::json!({ "url": norm_url })
+        }
+        serde_json::Value::Object(map) => {
+            let mut normalized = val.clone();
+            let mut url_val = map
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            if url_val.is_none() {
+                let aliases = [
+                    "target_url",
+                    "targetUrl",
+                    "uri",
+                    "link",
+                    "target",
+                    "href",
+                    "page",
+                    "endpoint",
+                    "address",
+                    "site",
+                    "domain",
+                ];
+                for alias in aliases {
+                    if let Some(v) = map.get(alias).and_then(|v| v.as_str()) {
+                        let trimmed = v.trim();
+                        if !trimmed.is_empty() {
+                            url_val = Some(trimmed.to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if let Some(u) = url_val {
+                let norm = crate::tools::web::normalize_web_url(&u);
+                normalized["url"] = serde_json::Value::String(norm);
+            }
+            normalized
+        }
+        _ => val.clone(),
+    }
+}
+
 
 pub fn get_server() -> &'static SearchXyzServer {
     static SERVER: OnceLock<SearchXyzServer> = OnceLock::new();

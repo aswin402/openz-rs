@@ -43,8 +43,11 @@ impl Tool for SearchXyzRecallTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
+        let mut normalized = super::normalize_query_arg(arguments);
+        super::map_field_alias(&mut normalized, "max_results", &["limit", "count", "maxResults"]);
+        super::map_field_alias(&mut normalized, "semantic", &["vector", "embedding"]);
         super::coerce_numeric_fields(&mut normalized, &["max_results"]);
+        super::coerce_bool_fields(&mut normalized, &["semantic"]);
         let req: RecallRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .recall(Parameters(req))
@@ -88,7 +91,14 @@ impl Tool for SearchXyzListSourcesTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
+        let mut normalized = if let Some(s) = arguments.as_str() {
+            json!({ "source": s.trim() })
+        } else {
+            arguments.clone()
+        };
+        super::map_field_alias(&mut normalized, "limit", &["max_results", "count"]);
+        super::map_field_alias(&mut normalized, "offset", &["skip"]);
+        super::map_field_alias(&mut normalized, "source", &["source_name", "type", "filter"]);
         super::coerce_numeric_fields(&mut normalized, &["limit", "offset"]);
         let req: ListSourcesRequest = serde_json::from_value(normalized)?;
         let res = get_server()
@@ -134,7 +144,17 @@ impl Tool for SearchXyzIndexContentTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let req: IndexContentRequest = serde_json::from_value(arguments.clone())?;
+        let mut normalized = arguments.clone();
+        super::map_field_alias(&mut normalized, "url", &["uri", "link", "id", "source"]);
+        if let Some(u) = normalized.get("url").and_then(|v| v.as_str()) {
+            let trimmed = u.trim();
+            if trimmed.contains("://") || trimmed.contains('.') || trimmed.starts_with("//") {
+                normalized["url"] = json!(crate::tools::web::normalize_web_url(trimmed));
+            }
+        }
+        super::map_field_alias(&mut normalized, "title", &["name", "heading", "subject"]);
+        super::map_field_alias(&mut normalized, "content", &["text", "body", "data"]);
+        let req: IndexContentRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .index_content(Parameters(req))
             .await
@@ -177,7 +197,14 @@ impl Tool for SearchXyzExportResearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
+        let mut normalized = if let Some(s) = arguments.as_str() {
+            json!({ "query": s.trim() })
+        } else {
+            arguments.clone()
+        };
+        super::map_field_alias(&mut normalized, "query", &["q", "search", "filter"]);
+        super::map_field_alias(&mut normalized, "limit", &["max_results", "count"]);
+        super::map_field_alias(&mut normalized, "max_chars", &["maxChars", "limit_chars", "maxLength"]);
         super::coerce_numeric_fields(&mut normalized, &["limit", "max_chars"]);
         let req: ExportResearchRequest = serde_json::from_value(normalized)?;
         let res = get_server()
@@ -215,7 +242,12 @@ impl Tool for SearchXyzImportResearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
+        let mut normalized = if let Some(s) = arguments.as_str() {
+            json!({ "payload": s.trim() })
+        } else {
+            arguments.clone()
+        };
+        super::map_field_alias(&mut normalized, "payload", &["bundle", "data", "content"]);
         if let Some(payload_val) = normalized.get("payload") {
             if payload_val.is_object() || payload_val.is_array() {
                 normalized["payload"] = Value::String(payload_val.to_string());
@@ -265,7 +297,19 @@ impl Tool for SearchXyzDeleteSourceTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
+        let mut normalized = if let Some(s) = arguments.as_str() {
+            json!({
+                "url": crate::tools::web::normalize_web_url(s),
+                "confirm": true
+            })
+        } else {
+            arguments.clone()
+        };
+        super::map_field_alias(&mut normalized, "url", &["uri", "link", "source", "target"]);
+        super::map_field_alias(&mut normalized, "confirm", &["force", "yes", "confirmed"]);
+        if let Some(u) = normalized.get("url").and_then(|v| v.as_str()) {
+            normalized["url"] = json!(crate::tools::web::normalize_web_url(u));
+        }
         super::coerce_bool_fields(&mut normalized, &["confirm"]);
         let req: DeleteSourceRequest = serde_json::from_value(normalized)?;
         let res = get_server()
@@ -303,7 +347,12 @@ impl Tool for SearchXyzClearIndexTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
+        let mut normalized = if arguments.is_string() {
+            json!({ "confirm": true })
+        } else {
+            arguments.clone()
+        };
+        super::map_field_alias(&mut normalized, "confirm", &["force", "yes", "confirmed"]);
         super::coerce_bool_fields(&mut normalized, &["confirm"]);
         let req: ClearIndexRequest = serde_json::from_value(normalized)?;
         let res = get_server()
@@ -313,3 +362,8 @@ impl Tool for SearchXyzClearIndexTool {
         Ok(json!(res))
     }
 }
+
+#[cfg(test)]
+#[path = "index_tests.rs"]
+mod tests;
+
