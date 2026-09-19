@@ -243,3 +243,55 @@ fn zenflow_edit_source_does_not_use_hard_reset() {
         "zenflow_edit must not use destructive worktree-wide rollback"
     );
 }
+
+#[tokio::test]
+async fn test_filesystem_stringified_lines_and_target_file_aliases() -> Result<()> {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_fs_string_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+    let file_path = temp_dir.join("string_coercion.txt");
+
+    // Test write_file with target_file and code alias
+    let write = WriteFileTool;
+    let write_res = write
+        .call(&serde_json::json!({
+            "target_file": file_path.to_str().unwrap(),
+            "code": "alpha\nbeta\ngamma\ndelta\n"
+        }))
+        .await?;
+    assert_eq!(write_res["status"], "success");
+
+    // Test read_file with targetFile and string startLine/endLine
+    let read = ReadFileTool;
+    let read_res = read
+        .call(&serde_json::json!({
+            "targetFile": file_path.to_str().unwrap(),
+            "startLine": "2",
+            "endLine": "3"
+        }))
+        .await?;
+    assert_eq!(read_res, serde_json::Value::String("beta\ngamma".to_string()));
+
+    // Test replace_lines with string numbers and 0-index clamping
+    let replace = ReplaceLinesTool;
+    let replace_res = replace
+        .call(&serde_json::json!({
+            "target_file": file_path.to_str().unwrap(),
+            "start_line": "0",
+            "end_line": "1",
+            "new_content": "ALPHA_MODIFIED"
+        }))
+        .await?;
+    assert_eq!(replace_res["status"], "success");
+    let content = std::fs::read_to_string(&file_path)?;
+    assert!(content.starts_with("ALPHA_MODIFIED\nbeta\n"));
+
+    // Test list_dir with empty args (defaults to current dir)
+    let list = ListDirTool;
+    let list_res = list.call(&serde_json::json!({})).await?;
+    assert!(list_res["entries"].as_array().is_some());
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+

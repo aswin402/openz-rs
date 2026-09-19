@@ -4,54 +4,205 @@ use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use std::fs;
 
+fn deserialize_flexible_opt_usize<'de, D>(deserializer: D) -> std::result::Result<Option<usize>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match opt {
+        Some(serde_json::Value::Number(n)) => {
+            if let Some(u) = n.as_u64() {
+                Ok(Some(u as usize))
+            } else if let Some(i) = n.as_i64() {
+                if i >= 0 {
+                    Ok(Some(i as usize))
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
+        }
+        Some(serde_json::Value::String(s)) => {
+            if let Ok(u) = s.trim().parse::<usize>() {
+                Ok(Some(u))
+            } else {
+                Ok(None)
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
+fn deserialize_flexible_usize<'de, D>(deserializer: D) -> std::result::Result<usize, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let val = serde_json::Value::deserialize(deserializer)?;
+    match val {
+        serde_json::Value::Number(n) => {
+            if let Some(u) = n.as_u64() {
+                Ok(u as usize)
+            } else if let Some(i) = n.as_i64() {
+                if i >= 0 {
+                    Ok(i as usize)
+                } else {
+                    Err(serde::de::Error::custom("expected positive number"))
+                }
+            } else {
+                Err(serde::de::Error::custom("expected integer"))
+            }
+        }
+        serde_json::Value::String(s) => s
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| serde::de::Error::custom("expected integer string")),
+        _ => Err(serde::de::Error::custom("expected number or string integer")),
+    }
+}
+
 #[derive(Deserialize)]
 struct PathArg {
-    #[serde(alias = "file_path", alias = "filePath")]
+    #[serde(
+        default = "default_find_dir",
+        alias = "file_path",
+        alias = "filePath",
+        alias = "dir",
+        alias = "directory",
+        alias = "target_dir",
+        alias = "folder"
+    )]
     path: String,
 }
 
 #[derive(Deserialize)]
 struct ReadFileArgs {
-    #[serde(alias = "file_path", alias = "filePath")]
+    #[serde(
+        alias = "file_path",
+        alias = "filePath",
+        alias = "target_file",
+        alias = "targetFile",
+        alias = "file",
+        alias = "filename",
+        alias = "uri"
+    )]
     path: String,
-    #[serde(default, alias = "startLine")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_flexible_opt_usize",
+        alias = "startLine",
+        alias = "start",
+        alias = "from_line"
+    )]
     start_line: Option<usize>,
-    #[serde(default, alias = "endLine")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_flexible_opt_usize",
+        alias = "endLine",
+        alias = "end",
+        alias = "to_line"
+    )]
     end_line: Option<usize>,
 }
 
 #[derive(Deserialize)]
 struct WriteFileArgs {
-    #[serde(alias = "file_path", alias = "filePath")]
+    #[serde(
+        alias = "file_path",
+        alias = "filePath",
+        alias = "target_file",
+        alias = "targetFile",
+        alias = "file",
+        alias = "filename",
+        alias = "output_path",
+        alias = "outputPath"
+    )]
     path: String,
+    #[serde(
+        alias = "text",
+        alias = "code",
+        alias = "data",
+        alias = "body"
+    )]
     content: String,
 }
 
 #[derive(Deserialize)]
 struct PatchFileArgs {
-    #[serde(alias = "file_path", alias = "filePath")]
+    #[serde(
+        alias = "file_path",
+        alias = "filePath",
+        alias = "target_file",
+        alias = "targetFile",
+        alias = "file"
+    )]
     path: String,
+    #[serde(
+        alias = "diff",
+        alias = "unified_diff",
+        alias = "unifiedDiff",
+        alias = "content"
+    )]
     patch: String,
 }
 
 #[derive(Deserialize)]
 struct ReplaceLinesArgs {
-    #[serde(alias = "file_path", alias = "filePath")]
+    #[serde(
+        alias = "file_path",
+        alias = "filePath",
+        alias = "target_file",
+        alias = "targetFile",
+        alias = "file"
+    )]
     path: String,
-    #[serde(alias = "startLine")]
+    #[serde(
+        deserialize_with = "deserialize_flexible_usize",
+        alias = "startLine",
+        alias = "start",
+        alias = "from_line"
+    )]
     start_line: usize,
-    #[serde(alias = "endLine")]
+    #[serde(
+        deserialize_with = "deserialize_flexible_usize",
+        alias = "endLine",
+        alias = "end",
+        alias = "to_line"
+    )]
     end_line: usize,
-    #[serde(alias = "content")]
+    #[serde(
+        alias = "content",
+        alias = "new_content",
+        alias = "newContent",
+        alias = "text",
+        alias = "code"
+    )]
     replacement: String,
 }
 
 #[derive(Deserialize)]
 struct FindFilesArgs {
-    #[serde(alias = "glob")]
+    #[serde(
+        default = "default_find_pattern",
+        alias = "glob",
+        alias = "query",
+        alias = "search",
+        alias = "name",
+        alias = "filename_pattern"
+    )]
     pattern: String,
-    #[serde(default = "default_find_dir", alias = "directory", alias = "root")]
+    #[serde(
+        default = "default_find_dir",
+        alias = "directory",
+        alias = "root",
+        alias = "path",
+        alias = "folder"
+    )]
     dir: String,
+}
+
+fn default_find_pattern() -> String {
+    "*".to_string()
 }
 
 fn default_find_dir() -> String {
@@ -291,13 +442,13 @@ impl Tool for ReplaceLinesTool {
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
         let args: ReplaceLinesArgs = serde_json::from_value(arguments.clone())
             .map_err(|e| anyhow!("Invalid replace_lines arguments: {}", e))?;
-        let start_line = args.start_line;
-        let end_line = args.end_line;
+        let start_line = if args.start_line == 0 { 1 } else { args.start_line };
+        let end_line = if args.end_line == 0 { 1 } else { args.end_line };
         let replacement = args.replacement;
 
-        if start_line == 0 || end_line == 0 || start_line > end_line {
+        if start_line > end_line {
             return Err(anyhow!(
-                "Invalid line range: {} to {}",
+                "Invalid line range: {} to {} (start_line cannot be greater than end_line)",
                 start_line,
                 end_line
             ));

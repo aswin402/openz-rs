@@ -254,15 +254,35 @@ impl Tool for GrepSearchTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let query = arguments
             .get("query")
+            .or_else(|| arguments.get("pattern"))
+            .or_else(|| arguments.get("search"))
+            .or_else(|| arguments.get("term"))
+            .or_else(|| arguments.get("text"))
             .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
 
         let is_regex = arguments
             .get("is_regex")
-            .and_then(|v| v.as_bool())
+            .or_else(|| arguments.get("regex"))
+            .and_then(|v| {
+                v.as_bool().or_else(|| {
+                    v.as_str().map(|s| s.eq_ignore_ascii_case("true") || s == "1")
+                })
+            })
             .unwrap_or(false);
 
-        let search_dir_str = arguments.get("dir").and_then(|v| v.as_str()).unwrap_or(".");
+        let search_dir_str = arguments
+            .get("dir")
+            .or_else(|| arguments.get("directory"))
+            .or_else(|| arguments.get("path"))
+            .or_else(|| arguments.get("root"))
+            .or_else(|| arguments.get("folder"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(".");
         let search_dir =
             Self::scoped_search_dir(crate::config::loader::resolve_path(search_dir_str));
 

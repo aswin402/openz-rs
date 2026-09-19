@@ -1,4 +1,46 @@
-### v0.0.196 (Latest Release)
+### v0.0.197 (Latest Release)
+- **Ideas**:
+  - Comprehensive headless subagent validation of the Filesystem & Search Suite (`read_file`, `write_file`, `patch_file`, `replace_lines`, `list_dir`, `find_files`, `grep_search`, `ast_grep`, `code_outline`).
+  - Path Resolution & Tilde Normalization: Integrated `crate::config::resolve_path()` into `code_outline` to resolve non-canonical relative paths and tilde (`~/...`) path prefixes seamlessly.
+  - Serde String/Numeric Coercion: Implemented `deserialize_flexible_usize` and `deserialize_flexible_opt_usize` in `src/tools/filesystem.rs` to transparently parse stringified integers (e.g. `"startLine": "2"`, `"endLine": "10"`).
+  - Tolerant Parameter Aliasing across Native Tools:
+    - `list_dir`: Defaulted `path` to `"."` for zero-arg calls, added aliases `dir`, `directory`, `target_dir`, `folder`, `filePath`.
+    - `read_file`: Supported path aliases (`target_file`, `targetFile`, `file`, `filename`, `uri`) and line range aliases (`start`, `from_line`, `end`, `to_line`).
+    - `write_file`: Supported path aliases (`target_file`, `targetFile`, `file`, `filename`, `output_path`, `outputPath`) and content aliases (`text`, `code`, `data`, `body`).
+    - `patch_file`: Supported path aliases (`target_file`, `targetFile`, `file`) and patch aliases (`diff`, `unified_diff`, `unifiedDiff`, `content`).
+    - `replace_lines`: Supported path, line, and replacement aliases (`content`, `new_content`, `newContent`, `text`, `code`), plus 0-indexed line clamping (`0` clamped to `1`).
+    - `find_files`: Defaulted pattern to `*`, supported pattern aliases (`glob`, `query`, `search`, `name`, `filename_pattern`) and directory aliases (`directory`, `root`, `path`, `folder`).
+    - `grep_search`: Supported query aliases (`pattern`, `search`, `term`, `text`), string boolean coercion for `is_regex` (`regex`, `"true"`/`"false"`, `"1"`), and dir aliases (`directory`, `path`, `root`, `folder`).
+    - `ast_grep`: Supported pattern aliases (`query`, `ast_pattern`, `rule`), lang aliases (`language`), and path aliases (`dir`, `directory`, `file`, `file_path`).
+    - `code_outline`: Supported path aliases (`filePath`, `path`, `file`, `target_file`, `targetFile`).
+- **Inspirations**:
+  - Headless subagent evaluation findings and real-world friction point remediation.
+  - Robustness Principle (Postel's Law): Be liberal in what you accept from LLMs.
+  - Uniform parameter ergonomics across Claude Code, Cursor, and OpenZ toolcalling formats.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs): String-to-usize deserializers, `list_dir` default path, path/content/line aliases for `read_file`, `write_file`, `patch_file`, `replace_lines`, `find_files`, and 0-index line clamping.
+    - [`src/tools/grep.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/grep.rs): Parameter aliases and flexible boolean coercion for `grep_search`.
+    - [`src/tools/ast_grep.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/ast_grep.rs): Structural search pattern, language, and path parameter aliases.
+    - [`src/tools/outline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/outline.rs): Tilde/relative path resolution via `resolve_path()` and path argument aliases.
+  - Test Modules:
+    - [`src/tools/filesystem_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem_tests.rs): `test_filesystem_stringified_lines_and_target_file_aliases`.
+    - [`src/tools/grep_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/grep_tests.rs): `test_grep_search_aliases_and_string_regex`.
+    - [`src/tools/ast_grep_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/ast_grep_tests.rs): `test_ast_grep_aliases`.
+    - [`src/tools/outline_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/outline_tests.rs): `test_code_outline_aliases`.
+- **Details & Metrics**:
+  - Headless subagent multi-tool execution verified across 3 parallel scenarios:
+    - Scenario 1 (`code_outline` + `grep_search`): 10.1s execution time, 0 errors, accurate symbol extraction and AST visitor location.
+    - Scenario 2 (`find_files` + `ast_grep`): 7.0s execution time, 0 errors, structural AST pattern matching and file discovery.
+    - Scenario 3 (`write_file` + `read_file` + `replace_lines`): 11.0s execution time, 0 errors, verified write, read, line edit, and disk persistence.
+  - Zero schema regressions, 100% backward compatibility maintained.
+- **Verification**:
+  - All unit tests passing (`cargo test -p openz --lib test_filesystem_stringified_lines_and_target_file_aliases -j 1`, `cargo test -p openz --lib test_grep_search_aliases_and_string_regex -j 1`, `cargo test -p openz --lib test_ast_grep_aliases -j 1`, `cargo test -p openz --lib test_code_outline_aliases -j 1`).
+  - Invariant of 260 registered native tools verified (`cargo test -p openz --lib test_native_tool_registration_names -j 1`).
+  - Version synchronization verified (`cargo test -p openz --lib version_sync_tests -j 1`).
+  - 0 clippy warnings (`cargo clippy -p openz -j 1`).
+
+### v0.0.196
 - **Ideas**:
   - Comprehensive headless subagent validation of the Subagent Orchestration & SOP Workflow Engine (`orchestrate_workflow`, `delegate_task`, `parallel_research`, `evaluator_optimizer_loop`, `optimize_subagent`, `update_subagent_settings`, `create_subagent`, `delete_subagent`, and stateful SOP workflows).
   - CLI Subcommand Process Exit Hardening: Fixed an issue where CLI subcommands (`openz sop list`, `openz sop instances`, `openz changelog`, `openz doctor`, etc.) hung upon completion when returning from `async_main()` because Tokio runtime drop blocked on background logger threads in `logs.db` (`rx.blocking_recv()`). Added clean process termination via `std::process::exit(0)` / `std::process::exit(1)` in `src/main.rs`.

@@ -3,7 +3,6 @@ use anyhow::{anyhow, Result};
 use regex::Regex;
 use serde_json::{json, Value};
 use std::fs;
-use std::path::PathBuf;
 use std::sync::LazyLock;
 
 static RE_RUST: LazyLock<Regex> = LazyLock::new(|| {
@@ -60,9 +59,16 @@ impl Tool for CodeOutlineTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let file_path_str = arguments
             .get("file_path")
+            .or_else(|| arguments.get("filePath"))
+            .or_else(|| arguments.get("path"))
+            .or_else(|| arguments.get("file"))
+            .or_else(|| arguments.get("target_file"))
+            .or_else(|| arguments.get("targetFile"))
             .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .ok_or_else(|| anyhow!("Missing 'file_path' parameter"))?;
-        let file_path = PathBuf::from(file_path_str);
+        let file_path = crate::config::resolve_path(file_path_str);
 
         if !file_path.exists() {
             return Err(anyhow!("File '{}' does not exist", file_path_str));

@@ -41,11 +41,19 @@ impl Tool for AstGrepTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let pattern = arguments
             .get("pattern")
+            .or_else(|| arguments.get("query"))
+            .or_else(|| arguments.get("ast_pattern"))
+            .or_else(|| arguments.get("rule"))
             .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .ok_or_else(|| anyhow!("Missing 'pattern' parameter"))?;
         let lang = arguments
             .get("lang")
+            .or_else(|| arguments.get("language"))
             .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .ok_or_else(|| anyhow!("Missing 'lang' parameter"))?;
 
         let bin_path = if let Some(home) = dirs::home_dir() {
@@ -64,7 +72,13 @@ impl Tool for AstGrepTool {
         let lang_for_spawn = lang.to_string();
         let path_arg = arguments
             .get("path")
+            .or_else(|| arguments.get("dir"))
+            .or_else(|| arguments.get("directory"))
+            .or_else(|| arguments.get("file"))
+            .or_else(|| arguments.get("file_path"))
             .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .map(crate::config::resolve_path);
 
         let mut cmd = Command::new(&bin_path_for_spawn);

@@ -89,3 +89,29 @@ async fn test_code_outline_js_ts() -> Result<()> {
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
 }
+
+#[tokio::test]
+async fn test_code_outline_aliases() -> Result<()> {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_outline_alias_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let rust_file = temp_dir.join("lib.rs");
+    std::fs::write(&rust_file, "pub fn helper() {}\n")?;
+
+    let tool = CodeOutlineTool;
+    let res = tool
+        .call(&json!({
+            "target_file": rust_file.to_str().unwrap()
+        }))
+        .await?;
+
+    assert_eq!(res["status"], "success");
+    let symbols = res["symbols"].as_array().unwrap();
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0]["name"], "helper");
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+

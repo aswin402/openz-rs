@@ -58,3 +58,18 @@ async fn test_ast_grep_status() -> Result<()> {
     assert!(tool.description().contains("structural"));
     Ok(())
 }
+
+#[tokio::test]
+async fn test_ast_grep_aliases() -> Result<()> {
+    let tool = AstGrepTool;
+    let args = json!({
+        "query": "fn $X($$$)",
+        "language": "rust",
+        "dir": "src/tools"
+    });
+
+    let res = tool.call(&args).await?;
+    assert!(res.is_array());
+    Ok(())
+}
+

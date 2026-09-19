@@ -48,3 +48,30 @@ async fn test_grep_search() -> Result<()> {
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
 }
+
+#[tokio::test]
+async fn test_grep_search_aliases_and_string_regex() -> Result<()> {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_grep_alias_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let file_path = temp_dir.join("test.txt");
+    std::fs::write(&file_path, "Error: 404 not found\nWarning: 200 ok\n")?;
+
+    let tool = GrepSearchTool;
+    let args = json!({
+        "pattern": r"Error:\s+\d+",
+        "is_regex": "true",
+        "directory": temp_dir.to_str().unwrap()
+    });
+
+    let res = tool.call(&args).await?;
+    assert_eq!(res["status"], "success");
+    let results = res["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["line"], 1);
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+
