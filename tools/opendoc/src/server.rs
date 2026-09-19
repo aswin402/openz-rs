@@ -118,8 +118,12 @@ impl OpendocServer {
         let file_path = validate_path!(file_path);
         match handlers::load_to_ir_with_password(&file_path, password.as_deref()) {
             Ok(ir) => {
-                let text: Vec<String> = ir.paragraphs.iter().map(|p| p.text.clone()).collect();
-                let content = text.join("\n");
+                let content = if !ir.paragraphs.is_empty() {
+                    let text: Vec<String> = ir.paragraphs.iter().map(|p| p.text.clone()).collect();
+                    text.join("\n")
+                } else {
+                    ir.text.clone().unwrap_or_default()
+                };
                 serde_json::json!({
                     "success": true,
                     "text": content,

@@ -113,6 +113,12 @@ pub fn load_to_ir_with_password(
             let content = std::fs::read_to_string(file_path)
                 .map_err(|e| LoadError::IoError(e.to_string()))?;
             let mut doc = Document::new("txt");
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    doc.paragraphs.push(crate::ir::Paragraph::new(trimmed.to_string()));
+                }
+            }
             doc.text = Some(content);
             Ok(doc)
         }

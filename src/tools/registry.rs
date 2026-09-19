@@ -84,11 +84,18 @@ pub(crate) fn resolve_static_name(
             let aliases = tool_spec(&canonical)
                 .map(|spec| spec.aliases)
                 .unwrap_or(&[]);
-            if canonical == requested
+            let is_match = canonical == requested
                 || aliases
                     .iter()
                     .any(|alias| normalize_tool_name(alias) == requested)
-            {
+                || match requested.as_str() {
+                    "doc_reader" | "read_document_file" => canonical == "read_doc",
+                    "read_document" => canonical == "opendoc_read_document_text",
+                    "opendoc_extract_tables" => canonical == "opendoc_find_tables",
+                    "opendoc_convert_document" => canonical == "opendoc_convert",
+                    _ => false,
+                };
+            if is_match {
                 Some(tool.name().to_string())
             } else {
                 None

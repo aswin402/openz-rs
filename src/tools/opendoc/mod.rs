@@ -9,6 +9,561 @@ pub fn get_server() -> &'static OpendocServer {
     SERVER.get_or_init(OpendocServer::new)
 }
 
+fn clean_and_resolve_path(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let unquoted = trimmed.trim_matches('"').trim_matches('\'');
+    let clean = unquoted.strip_prefix("file://").unwrap_or(unquoted);
+    crate::config::loader::resolve_path(clean)
+        .to_string_lossy()
+        .to_string()
+}
+
+fn coerce_bool(v: &Value) -> Option<bool> {
+    match v {
+        Value::Bool(b) => Some(*b),
+        Value::String(s) => match s.trim().to_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => Some(true),
+            "false" | "0" | "no" | "off" => Some(false),
+            _ => None,
+        },
+        Value::Number(n) => match n.as_i64() {
+            Some(1) => Some(true),
+            Some(0) => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn coerce_u32(v: &Value) -> Option<u32> {
+    match v {
+        Value::Number(n) => n.as_u64().map(|u| u as u32),
+        Value::String(s) => s.trim().parse::<u32>().ok(),
+        _ => None,
+    }
+}
+
+fn coerce_usize(v: &Value) -> Option<usize> {
+    match v {
+        Value::Number(n) => n.as_u64().map(|u| u as usize),
+        Value::String(s) => s.trim().parse::<usize>().ok(),
+        _ => None,
+    }
+}
+
+fn coerce_f64(v: &Value) -> Option<f64> {
+    match v {
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
+fn coerce_f32(v: &Value) -> Option<f32> {
+    match v {
+        Value::Number(n) => n.as_f64().map(|f| f as f32),
+        Value::String(s) => s.trim().parse::<f32>().ok(),
+        _ => None,
+    }
+}
+
+fn normalize_opendoc_args(tool_name: &str, arguments: &Value) -> Value {
+    match arguments {
+        Value::String(s) => {
+            let resolved = clean_and_resolve_path(s);
+            let mut map = serde_json::Map::new();
+            match tool_name {
+                "opendoc_extract_archive_digest" => {
+                    map.insert("archive_path".to_string(), Value::String(resolved));
+                }
+                "opendoc_convert" => {
+                    map.insert("source".to_string(), Value::String(resolved.clone()));
+                    map.insert("target_format".to_string(), Value::String("txt".to_string()));
+                    map.insert("output".to_string(), Value::String(format!("{}.txt", resolved)));
+                }
+                "opendoc_create_docx" => {
+                    map.insert("file_path".to_string(), Value::String(resolved));
+                }
+                "opendoc_create_pptx" => {
+                    map.insert("file_path".to_string(), Value::String(resolved));
+                }
+                "opendoc_create_xlsx" => {
+                    map.insert("file_path".to_string(), Value::String(resolved));
+                    map.insert(
+                        "sheets".to_string(),
+                        json!([{"name": "Sheet1", "headers": [], "data": []}]),
+                    );
+                }
+                "opendoc_create_pdf" | "opendoc_create_formatted_pdf" => {
+                    map.insert("file_path".to_string(), Value::String(resolved));
+                    map.insert("text".to_string(), Value::String("Document".to_string()));
+                }
+                "opendoc_create_html" => {
+                    map.insert("file_path".to_string(), Value::String(resolved));
+                    map.insert("body".to_string(), Value::String(String::new()));
+                }
+                "opendoc_batch_convert" => {
+                    map.insert("input_dir".to_string(), Value::String(resolved.clone()));
+                    map.insert("pattern".to_string(), Value::String("*.*".to_string()));
+                    map.insert("target_format".to_string(), Value::String("pdf".to_string()));
+                    map.insert("output_dir".to_string(), Value::String(resolved));
+                }
+                "opendoc_merge_pdfs" => {
+                    map.insert("sources".to_string(), json!([resolved.clone()]));
+                    map.insert(
+                        "output_path".to_string(),
+                        Value::String(format!("{}_merged.pdf", resolved)),
+                    );
+                }
+                "opendoc_extract_images" => {
+                    map.insert("file_path".to_string(), Value::String(resolved));
+                    let out_dir = std::env::temp_dir()
+                        .join("opendoc_extracted_images")
+                        .to_string_lossy()
+                        .to_string();
+                    map.insert("output_dir".to_string(), Value::String(out_dir));
+                }
+                "opendoc_split_pdf" => {
+                    map.insert("file_path".to_string(), Value::String(resolved.clone()));
+                    map.insert(
+                        "output_path".to_string(),
+                        Value::String(format!("{}_split.pdf", resolved)),
+                    );
+                    map.insert("start_page".to_string(), json!(1));
+                    map.insert("end_page".to_string(), json!(1));
+                }
+                "opendoc_search_document" => {
+                    map.insert("file_path".to_string(), Value::String(resolved));
+                    map.insert("query".to_string(), Value::String(String::new()));
+                }
+                _ => {
+                    map.insert("file_path".to_string(), Value::String(resolved));
+                }
+            }
+            Value::Object(map)
+        }
+        Value::Object(orig_map) => {
+            let mut map = orig_map.clone();
+
+            let get_alias = |m: &serde_json::Map<String, Value>, aliases: &[&str]| -> Option<Value> {
+                for alias in aliases {
+                    if let Some(v) = m.get(*alias) {
+                        return Some(v.clone());
+                    }
+                }
+                None
+            };
+
+            // 1. file_path
+            if !map.contains_key("file_path") {
+                if let Some(val) = get_alias(
+                    &map,
+                    &[
+                        "path", "filePath", "file", "document", "doc", "input_path", "inputPath",
+                        "input_file", "inputFile", "target", "uri", "url",
+                    ],
+                ) {
+                    map.insert("file_path".to_string(), val);
+                }
+            }
+            if let Some(Value::String(fp)) = map.get("file_path") {
+                map.insert(
+                    "file_path".to_string(),
+                    Value::String(clean_and_resolve_path(fp)),
+                );
+            }
+
+            // 2. Convert tool: source, target_format, output
+            if tool_name == "opendoc_convert" {
+                if !map.contains_key("source") {
+                    if let Some(val) = get_alias(
+                        &map,
+                        &[
+                            "file_path", "filePath", "input", "input_path", "inputPath", "path",
+                            "file", "document", "src",
+                        ],
+                    ) {
+                        map.insert("source".to_string(), val);
+                    }
+                }
+                if let Some(Value::String(src)) = map.get("source") {
+                    map.insert("source".to_string(), Value::String(clean_and_resolve_path(src)));
+                }
+                if !map.contains_key("target_format") {
+                    if let Some(val) = get_alias(
+                        &map,
+                        &["targetFormat", "format", "to_format", "toFormat", "to", "type"],
+                    ) {
+                        map.insert("target_format".to_string(), val);
+                    }
+                }
+                if !map.contains_key("output") {
+                    if let Some(val) = get_alias(
+                        &map,
+                        &[
+                            "output_path", "outputPath", "dest", "destination", "out", "target",
+                        ],
+                    ) {
+                        map.insert("output".to_string(), val);
+                    } else if let (Some(Value::String(src)), Some(Value::String(fmt))) =
+                        (map.get("source"), map.get("target_format"))
+                    {
+                        map.insert("output".to_string(), Value::String(format!("{}.{}", src, fmt)));
+                    }
+                }
+                if let Some(Value::String(out)) = map.get("output") {
+                    map.insert("output".to_string(), Value::String(clean_and_resolve_path(out)));
+                }
+            }
+
+            // 3. output_path
+            if !map.contains_key("output_path") {
+                if let Some(val) = get_alias(
+                    &map,
+                    &[
+                        "outputPath", "output", "out", "dest", "destination", "target_path",
+                        "targetPath", "file_path", "filePath", "path",
+                    ],
+                ) {
+                    map.insert("output_path".to_string(), val);
+                }
+            }
+            if let Some(Value::String(op)) = map.get("output_path") {
+                map.insert(
+                    "output_path".to_string(),
+                    Value::String(clean_and_resolve_path(op)),
+                );
+            }
+
+            // 4. input_dir
+            if !map.contains_key("input_dir") {
+                if let Some(val) = get_alias(
+                    &map,
+                    &["inputDir", "dir", "directory", "folder", "path"],
+                ) {
+                    map.insert("input_dir".to_string(), val);
+                }
+            }
+            if let Some(Value::String(id)) = map.get("input_dir") {
+                map.insert("input_dir".to_string(), Value::String(clean_and_resolve_path(id)));
+            }
+
+            // 5. output_dir
+            if !map.contains_key("output_dir") {
+                if let Some(val) = get_alias(
+                    &map,
+                    &[
+                        "outputDir", "out_dir", "outDir", "dest_dir", "destDir", "destination",
+                        "dir",
+                    ],
+                ) {
+                    map.insert("output_dir".to_string(), val);
+                } else if tool_name == "opendoc_extract_images" || tool_name == "opendoc_render_document_pages" {
+                    let temp = std::env::temp_dir()
+                        .join("opendoc_extracted_output")
+                        .to_string_lossy()
+                        .to_string();
+                    map.insert("output_dir".to_string(), Value::String(temp));
+                }
+            }
+            if let Some(Value::String(od)) = map.get("output_dir") {
+                map.insert("output_dir".to_string(), Value::String(clean_and_resolve_path(od)));
+            }
+
+            // 6. archive_path
+            if !map.contains_key("archive_path") {
+                if let Some(val) = get_alias(
+                    &map,
+                    &[
+                        "archivePath", "path", "file_path", "filePath", "file", "archive",
+                        "zip_path", "zipPath",
+                    ],
+                ) {
+                    map.insert("archive_path".to_string(), val);
+                }
+            }
+            if let Some(Value::String(ap)) = map.get("archive_path") {
+                map.insert(
+                    "archive_path".to_string(),
+                    Value::String(clean_and_resolve_path(ap)),
+                );
+            }
+
+            // 7. diff tools: file_path_a & file_path_b
+            if !map.contains_key("file_path_a") {
+                if let Some(val) = get_alias(
+                    &map,
+                    &[
+                        "filePathA", "path_a", "pathA", "file_a", "fileA", "doc_a", "source",
+                    ],
+                ) {
+                    map.insert("file_path_a".to_string(), val);
+                }
+            }
+            if let Some(Value::String(fpa)) = map.get("file_path_a") {
+                map.insert(
+                    "file_path_a".to_string(),
+                    Value::String(clean_and_resolve_path(fpa)),
+                );
+            }
+            if !map.contains_key("file_path_b") {
+                if let Some(val) = get_alias(
+                    &map,
+                    &[
+                        "filePathB", "path_b", "pathB", "file_b", "fileB", "doc_b", "target",
+                    ],
+                ) {
+                    map.insert("file_path_b".to_string(), val);
+                }
+            }
+            if let Some(Value::String(fpb)) = map.get("file_path_b") {
+                map.insert(
+                    "file_path_b".to_string(),
+                    Value::String(clean_and_resolve_path(fpb)),
+                );
+            }
+
+            // 8. template_path & image_path
+            if !map.contains_key("template_path") {
+                if let Some(val) = get_alias(
+                    &map,
+                    &["templatePath", "template", "file_path", "path", "source"],
+                ) {
+                    map.insert("template_path".to_string(), val);
+                }
+            }
+            if let Some(Value::String(tp)) = map.get("template_path") {
+                map.insert(
+                    "template_path".to_string(),
+                    Value::String(clean_and_resolve_path(tp)),
+                );
+            }
+            if !map.contains_key("image_path") {
+                if let Some(val) = get_alias(
+                    &map,
+                    &["imagePath", "image", "img", "src", "source", "path"],
+                ) {
+                    map.insert("image_path".to_string(), val);
+                }
+            }
+            if let Some(Value::String(ip)) = map.get("image_path") {
+                map.insert(
+                    "image_path".to_string(),
+                    Value::String(clean_and_resolve_path(ip)),
+                );
+            }
+
+            // 9. sources (opendoc_merge_pdfs)
+            if !map.contains_key("sources") {
+                if let Some(val) = get_alias(
+                    &map,
+                    &["input_paths", "inputPaths", "files", "paths", "inputs"],
+                ) {
+                    map.insert("sources".to_string(), val);
+                }
+            }
+            if let Some(sources_val) = map.get("sources").cloned() {
+                match sources_val {
+                    Value::Array(arr) => {
+                        let cleaned: Vec<Value> = arr
+                            .into_iter()
+                            .map(|item| match item {
+                                Value::String(s) => Value::String(clean_and_resolve_path(&s)),
+                                other => other,
+                            })
+                            .collect();
+                        map.insert("sources".to_string(), Value::Array(cleaned));
+                    }
+                    Value::String(s) => {
+                        let cleaned: Vec<Value> = s
+                            .split([',', '\n'])
+                            .filter(|p| !p.trim().is_empty())
+                            .map(|p| Value::String(clean_and_resolve_path(p)))
+                            .collect();
+                        map.insert("sources".to_string(), Value::Array(cleaned));
+                    }
+                    _ => {}
+                }
+            }
+
+            // 10. query (opendoc_search_document)
+            if !map.contains_key("query") {
+                if let Some(val) = get_alias(
+                    &map,
+                    &["q", "search", "pattern", "text", "term", "filter"],
+                ) {
+                    map.insert("query".to_string(), val);
+                }
+            }
+
+            // 11. text (create_pdf, create_formatted_pdf, docx_add_paragraph)
+            if !map.contains_key("text") {
+                if let Some(val) = get_alias(
+                    &map,
+                    &["content", "body", "markdown", "text_content", "paragraph", "line"],
+                ) {
+                    map.insert("text".to_string(), val);
+                }
+            }
+
+            // 12. body (create_html)
+            if !map.contains_key("body") {
+                if let Some(val) = get_alias(
+                    &map,
+                    &["content", "text", "html", "markdown", "body_markdown"],
+                ) {
+                    map.insert("body".to_string(), val);
+                }
+            }
+
+            // 13. body in pptx_add_slide
+            if tool_name == "opendoc_pptx_add_slide" {
+                if !map.contains_key("body") {
+                    if let Some(val) = get_alias(
+                        &map,
+                        &["bullets", "bullet_points", "bulletPoints", "points", "content", "text"],
+                    ) {
+                        map.insert("body".to_string(), val);
+                    }
+                }
+                if let Some(Value::String(s)) = map.get("body") {
+                    let lines: Vec<Value> = s
+                        .lines()
+                        .map(|l| l.trim().trim_start_matches('-').trim_start_matches('*').trim())
+                        .filter(|l| !l.is_empty())
+                        .map(|l| Value::String(l.to_string()))
+                        .collect();
+                    map.insert("body".to_string(), Value::Array(lines));
+                }
+            }
+
+            // 14. sheets (create_xlsx)
+            if tool_name == "opendoc_create_xlsx" {
+                if !map.contains_key("sheets") {
+                    map.insert(
+                        "sheets".to_string(),
+                        json!([{"name": "Sheet1", "headers": [], "data": []}]),
+                    );
+                } else if let Some(Value::String(s)) = map.get("sheets") {
+                    if let Ok(parsed) = serde_json::from_str(s) {
+                        map.insert("sheets".to_string(), parsed);
+                    }
+                }
+            }
+
+            // 15. values (fill_pdf_form)
+            if tool_name == "opendoc_fill_pdf_form" {
+                if !map.contains_key("values") {
+                    if let Some(val) = get_alias(
+                        &map,
+                        &["fields", "field_values", "fieldValues", "data", "form_data", "formData"],
+                    ) {
+                        map.insert("values".to_string(), val);
+                    }
+                }
+                if let Some(Value::String(s)) = map.get("values") {
+                    if let Ok(parsed) = serde_json::from_str(s) {
+                        map.insert("values".to_string(), parsed);
+                    }
+                }
+            }
+
+            // 16. variables (fill_template)
+            if tool_name == "opendoc_fill_template" {
+                if !map.contains_key("variables") {
+                    if let Some(val) = get_alias(&map, &["vars", "data", "values", "context"]) {
+                        map.insert("variables".to_string(), val);
+                    }
+                }
+                if let Some(Value::String(s)) = map.get("variables") {
+                    if let Ok(parsed) = serde_json::from_str(s) {
+                        map.insert("variables".to_string(), parsed);
+                    }
+                }
+            }
+
+            // 17. split_pdf (start_page, end_page)
+            if tool_name == "opendoc_split_pdf" {
+                if !map.contains_key("start_page") {
+                    if let Some(val) = get_alias(
+                        &map,
+                        &["startPage", "start", "from_page", "fromPage", "page_start", "first_page"],
+                    ) {
+                        map.insert("start_page".to_string(), val);
+                    }
+                }
+                let start = map.get("start_page").and_then(coerce_u32).unwrap_or(1);
+                map.insert("start_page".to_string(), json!(start));
+
+                if !map.contains_key("end_page") {
+                    if let Some(val) = get_alias(
+                        &map,
+                        &["endPage", "end", "to_page", "toPage", "page_end", "last_page"],
+                    ) {
+                        map.insert("end_page".to_string(), val);
+                    }
+                }
+                let end = map.get("end_page").and_then(coerce_u32).unwrap_or(start);
+                map.insert("end_page".to_string(), json!(end));
+            }
+
+            // 18. batch_convert pattern
+            if tool_name == "opendoc_batch_convert" && !map.contains_key("pattern") {
+                if let Some(val) = get_alias(&map, &["filter", "glob"]) {
+                    map.insert("pattern".to_string(), val);
+                } else {
+                    map.insert("pattern".to_string(), Value::String("*.*".to_string()));
+                }
+            }
+
+            // 19. Numeric fields coercions
+            for num_key in &["page", "page_number", "rows", "cols", "dpi", "width_emu", "height_emu"] {
+                if let Some(val) = map.get(*num_key) {
+                    if let Some(coerced) = coerce_u32(val) {
+                        map.insert(num_key.to_string(), json!(coerced));
+                    }
+                }
+            }
+            for usize_key in &["chunk_size", "overlap", "concurrency"] {
+                if let Some(val) = map.get(*usize_key) {
+                    if let Some(coerced) = coerce_usize(val) {
+                        map.insert(usize_key.to_string(), json!(coerced));
+                    }
+                }
+            }
+            for f32_key in &["font_size"] {
+                if let Some(val) = map.get(*f32_key) {
+                    if let Some(coerced) = coerce_f32(val) {
+                        map.insert(f32_key.to_string(), json!(coerced));
+                    }
+                }
+            }
+            for f64_key in &["margin_top", "margin_bottom", "margin_left", "margin_right", "line_spacing"] {
+                if let Some(val) = map.get(*f64_key) {
+                    if let Some(coerced) = coerce_f64(val) {
+                        map.insert(f64_key.to_string(), json!(coerced));
+                    }
+                }
+            }
+
+            // 20. Boolean fields coercions
+            for bool_key in &[
+                "use_regex", "is_regex", "recursive", "flatten", "page_numbers", "bold",
+                "italic", "underline", "keep_with_next", "keep_together", "page_break_before",
+            ] {
+                if let Some(val) = map.get(*bool_key) {
+                    if let Some(coerced) = coerce_bool(val) {
+                        map.insert(bool_key.to_string(), Value::Bool(coerced));
+                    }
+                }
+            }
+
+            Value::Object(map)
+        }
+        other => other.clone(),
+    }
+}
+
 macro_rules! define_opendoc_tool {
     ($struct_name:ident, $tool_name:expr, $description:expr, $params_struct:ident, $body:expr) => {
         pub struct $struct_name;
@@ -29,7 +584,8 @@ macro_rules! define_opendoc_tool {
             }
 
             async fn call(&self, arguments: &Value) -> Result<Value> {
-                let req: $params_struct = serde_json::from_value(arguments.clone())?;
+                let normalized = normalize_opendoc_args($tool_name, arguments);
+                let req: $params_struct = serde_json::from_value(normalized)?;
                 let caller = $body;
                 let res_str = caller(req);
                 let res_val: Value = serde_json::from_str(&res_str).unwrap_or_else(|_| json!({

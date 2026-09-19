@@ -198,9 +198,30 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                     format!("action: \"{}\"", action)
                 }
             }
-            "doc_reader" => string_arg(map, PATH_KEYS)
+            "doc_reader" | "read_doc" => string_arg(map, PATH_KEYS)
                 .map(|path| format!("file: \"{}\"", file_name_of(path)))
                 .unwrap_or_default(),
+            "opendoc_open_document"
+            | "opendoc_read_document_text"
+            | "opendoc_search_document"
+            | "opendoc_find_tables"
+            | "opendoc_convert"
+            | "opendoc_create_pdf"
+            | "opendoc_create_formatted_pdf"
+            | "opendoc_create_docx"
+            | "opendoc_create_pptx"
+            | "opendoc_create_xlsx"
+            | "opendoc_create_html"
+            | "opendoc_extract_images"
+            | "opendoc_analyze_document_complexity"
+            | "opendoc_ocr_document"
+            | "opendoc_split_pdf"
+            | "opendoc_merge_pdfs"
+            | "opendoc_extract_archive_digest" => {
+                string_arg(map, &["file_path", "source", "output_path", "archive_path", "path", "file"])
+                    .map(|path| format!("file: \"{}\"", file_name_of(path)))
+                    .unwrap_or_default()
+            }
             "wasm_sandbox" => string_arg(map, &["wasm_path", "wasmPath"])
                 .map(|path| format!("wasm: \"{}\"", file_name_of(path)))
                 .unwrap_or_default(),

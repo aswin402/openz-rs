@@ -1,4 +1,50 @@
-### v0.0.204 (Latest Release)
+### v0.0.205 (Latest Release)
+- **Ideas**:
+  - Comprehensive evaluation, live headless validation, and hardening of the OpenDoc Document Reading, Generation & OCR Suite (native tools):
+    - `doc_reader`: Universal document parser for PDF, DOCX, XLSX, spreadsheets, text documents, and images with automatic OCR fallbacks and complexity profiling.
+    - `read_document` (`opendoc_read_document_text`), `opendoc_open_document`: High-fidelity document inspection and text extraction with IR fallback.
+    - `opendoc_extract_tables` (`opendoc_find_tables`), `opendoc_extract_images`, `opendoc_search_document`: Structural content extraction and search inside multi-page documents.
+    - Generation & Conversion: `opendoc_convert_document` (`opendoc_convert`), `opendoc_batch_convert`, `opendoc_create_pdf`, `opendoc_create_formatted_pdf`, `opendoc_create_docx`, `opendoc_create_pptx`, `opendoc_create_xlsx`, `opendoc_create_html`.
+    - Manipulation & Forms: `opendoc_split_pdf`, `opendoc_merge_pdfs`, `opendoc_fill_pdf_form`, `opendoc_list_pdf_fields`, `opendoc_extract_pdf_text`.
+    - OCR & Complexity: `opendoc_check_ocr_available`, `opendoc_ocr_document`, `opendoc_analyze_document_complexity`, `opendoc_extract_archive_digest`.
+  - Resilient Parameter Normalization & Direct String Support:
+    - Direct string argument parsing across `doc_reader` and all 35 OpenDoc native tools (e.g. `call("README.md")`, `call("document.pdf")`, `call("report.docx")`).
+    - Comprehensive parameter alias support (`file_path`, `filePath`, `file`, `document`, `doc`, `target`, `uri`, `url`, `output_path`, `outputPath`, `output`, `out`, `dest`, `source`, `src`, `input_dir`, `output_dir`, `archive_path`, `query`, `text`, `body`, `sheets`, `values`, `variables`).
+    - Robust path cleaning and resolution: stripping `file://` scheme prefixes, expanding tilde (`~`) paths, resolving relative paths against working directory, and probing file extensions.
+    - Resilient numeric and boolean coercion: coercing boolean strings/flags (`"true"`, `"1"`, `"yes"`), string numbers to integers/floats, and providing smart defaults for optional parameters (e.g., `output_dir`, `pattern`, `sheets`, `start_page`, `end_page`).
+  - Bug Fix in `opendoc-mcp` IR Loading:
+    - Fixed a bug where reading plain text / markdown files resulted in empty text because `doc.paragraphs` was unpopulated. Populated `doc.paragraphs` from non-empty lines and added fallback to `ir.text` in `read_document_text`.
+  - Seamless Tool Resolution in Registry:
+    - Added alias mapping in `resolve_static_name` for `doc_reader` -> `read_doc`, `read_document` -> `opendoc_read_document_text`, `opendoc_extract_tables` -> `opendoc_find_tables`, and `opendoc_convert_document` -> `opendoc_convert`, ensuring zero LLM tool call rejections.
+    - Added OpenDoc tool call argument formatting in `format_tool_args` for clean TUI log output.
+- **Inspirations**:
+  - Resilient document automation patterns where LLMs supply shorthand file paths, `file://` URIs, or alternate argument names (`doc`, `target`, `filePath`, `out`).
+  - Zero-friction universal document inspection combining native Rust decoders (`calamine`, `docx-rs`, `pdf-extract`) with OpenDoc MCP engine.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/doc_reader.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/doc_reader.rs): Universal reader with direct string path parsing, aliases, URI stripping, and extension probing.
+    - [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs): Universal `normalize_opendoc_args` preprocessor with alias mapping, path resolution, and type coercions across all OpenDoc tools.
+    - [`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs): Dynamic static tool alias resolution for OpenDoc tool names.
+    - [`src/agent/agent_loop/tool_execution.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/tool_execution.rs): Added OpenDoc tool log formatting.
+    - [`tools/opendoc/src/handlers/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/opendoc/src/handlers/mod.rs) & [`tools/opendoc/src/server.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/tools/opendoc/src/server.rs): Fixed plain text and markdown IR loading and text retrieval.
+  - Test Modules:
+    - [`src/tools/doc_reader_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/doc_reader_tests.rs): Added unit tests for direct string arguments, aliases, and URI scheme stripping.
+    - [`src/tools/opendoc/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod_tests.rs): Added unit tests for OpenDoc normalization, OCR tools, complexity analysis, table/image extraction, and creation tools.
+- **Details & Metrics**:
+  - Test Suite: All unit tests passing (9 in doc_reader, 7 in opendoc, 12 in cli::tools).
+  - Native Tool Invariant: Exactly 260 registered native tools verified and maintained.
+  - Compiler & Clippy Health: 0 errors, 0 warnings under `-j 1`.
+  - Live Real-time Headless Testing:
+    - Executed live headless `opendoc_check_ocr_available` checking OCR backend readiness in 5.8s.
+    - Executed live headless `opendoc_read_document_text` reading `README.md` in 9.3s with clean text extraction and exit code 0.
+- **Verification**:
+  - `cargo test -p openz --lib "tools::opendoc" -j 1` (7 passed)
+  - `cargo test -p openz --lib "tools::doc_reader" -j 1` (9 passed)
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1` (1 passed, 260 tools verified)
+  - `cargo clippy -p openz -j 1` (0 warnings)
+  - `target/debug/openz run -y --output-format json -p "..."` (live headless execution verified with exit code 0)
+
+### v0.0.204
 - **Ideas**:
   - Comprehensive evaluation, live headless validation, and hardening of the Code Execution, Sandboxing & Automation Suite (6 native tools):
     - `exec_command`: Sandboxed and guarded subprocess execution with working directory (`cwd`), custom timeout (`timeout_secs`), and robust shell execution.

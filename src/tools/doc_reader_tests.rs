@@ -69,3 +69,29 @@ async fn test_doc_reader_metadata() -> Result<()> {
     assert!(res.is_err());
     Ok(())
 }
+
+#[tokio::test]
+async fn test_doc_reader_direct_string_and_aliases() {
+    let tool = DocReaderTool;
+
+    // Direct string argument
+    let err = tool.call(&json!("nonexistent_sample.pdf")).await.unwrap_err();
+    assert!(err.to_string().contains("File does not exist: nonexistent_sample.pdf"));
+
+    // file_path alias
+    let err = tool.call(&json!({ "file_path": "missing_doc.docx" })).await.unwrap_err();
+    assert!(err.to_string().contains("File does not exist: missing_doc.docx"));
+
+    // file:// prefix stripping
+    let err = tool.call(&json!({ "file": "file:///tmp/missing_file.xlsx" })).await.unwrap_err();
+    assert!(err.to_string().contains("File does not exist"));
+
+    // document alias with boolean string auto_ocr
+    let err = tool.call(&json!({
+        "document": "missing.pdf",
+        "auto_ocr": "false",
+        "analyze_complexity": "0"
+    })).await.unwrap_err();
+    assert!(err.to_string().contains("File does not exist: missing.pdf"));
+}
+

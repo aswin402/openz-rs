@@ -135,10 +135,18 @@ fn run_opendoc_ocr(path: &std::path::Path, language: Option<&str>) -> Value {
 }
 
 fn should_analyze_document_complexity(extension: Option<&str>, arguments: &Value) -> bool {
-    let explicit = arguments
-        .get("analyze_complexity")
-        .or_else(|| arguments.get("analyzeComplexity"))
-        .and_then(|value| value.as_bool());
+    let explicit = match arguments {
+        Value::Object(map) => map
+            .get("analyze_complexity")
+            .or_else(|| map.get("analyzeComplexity"))
+            .and_then(|value| match value {
+                Value::Bool(b) => Some(*b),
+                Value::String(s) => Some(s.eq_ignore_ascii_case("true") || s == "1"),
+                Value::Number(n) => Some(n.as_i64() == Some(1)),
+                _ => None,
+            }),
+        _ => None,
+    };
 
     if let Some(enabled) = explicit {
         return enabled;
@@ -198,12 +206,35 @@ impl Tool for DocReaderTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let path_str = arguments
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'path' parameter"))?;
+        let path_str = match arguments {
+            Value::String(s) => s.trim().to_string(),
+            Value::Object(map) => map
+                .get("path")
+                .or_else(|| map.get("file_path"))
+                .or_else(|| map.get("filePath"))
+                .or_else(|| map.get("file"))
+                .or_else(|| map.get("document"))
+                .or_else(|| map.get("doc"))
+                .or_else(|| map.get("target"))
+                .or_else(|| map.get("uri"))
+                .or_else(|| map.get("url"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .ok_or_else(|| anyhow!("Missing 'path' parameter"))?,
+            _ => return Err(anyhow!("Missing 'path' parameter")),
+        };
 
-        let resolved_path = crate::config::loader::resolve_path(path_str);
+        let clean_path = path_str.strip_prefix("file://").unwrap_or(&path_str);
+        let mut resolved_path = crate::config::loader::resolve_path(clean_path);
+        if !resolved_path.exists() && resolved_path.extension().is_none() {
+            for ext in &["pdf", "docx", "xlsx", "xls", "ods"] {
+                let with_ext = resolved_path.with_extension(ext);
+                if with_ext.exists() {
+                    resolved_path = with_ext;
+                    break;
+                }
+            }
+        }
         if !resolved_path.exists() {
             return Err(anyhow!("File does not exist: {}", path_str));
         }
@@ -223,15 +254,28 @@ impl Tool for DocReaderTool {
             .extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.to_lowercase());
-        let auto_ocr = arguments
-            .get("auto_ocr")
-            .or_else(|| arguments.get("autoOcr"))
-            .and_then(|value| value.as_bool())
-            .unwrap_or(true);
-        let ocr_language = arguments
-            .get("ocr_language")
-            .or_else(|| arguments.get("ocrLanguage"))
-            .and_then(|value| value.as_str());
+        let auto_ocr = match arguments {
+            Value::Object(map) => map
+                .get("auto_ocr")
+                .or_else(|| map.get("autoOcr"))
+                .and_then(|v| match v {
+                    Value::Bool(b) => Some(*b),
+                    Value::String(s) => Some(s.eq_ignore_ascii_case("true") || s == "1"),
+                    Value::Number(n) => Some(n.as_i64() == Some(1)),
+                    _ => None,
+                })
+                .unwrap_or(true),
+            _ => true,
+        };
+        let ocr_language = match arguments {
+            Value::Object(map) => map
+                .get("ocr_language")
+                .or_else(|| map.get("ocrLanguage"))
+                .or_else(|| map.get("language"))
+                .or_else(|| map.get("lang"))
+                .and_then(|value| value.as_str()),
+            _ => None,
+        };
 
         let mut complexity_analyzed = false;
         let mut complexity_result: Option<Value> = None;
@@ -310,7 +354,7 @@ impl Tool for DocReaderTool {
         }
 
         let _ = crate::tools::shared_memory::archive_research_entry(
-            path_str,
+            &path_str,
             &content,
             &format!("doc_reader: {}", path_str),
         )
