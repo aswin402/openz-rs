@@ -105,4 +105,67 @@ fn test_build_gsd_browser_command_aliases_and_action_normalization() {
     let debug4 = format!("{:?}", cmd4);
     assert!(debug4.contains("screenshot"));
     assert!(debug4.contains("--output"));
+
+    // action inference: missing action with url -> navigate + schemeless auto-prefix
+    let cmd5 = build_gsd_browser_command(&bin, &json!({
+        "url": "example.com"
+    })).expect("inferred navigate command");
+    let debug5 = format!("{:?}", cmd5);
+    assert!(debug5.contains("navigate"));
+    assert!(debug5.contains("https://example.com"));
+
+    // action inference: missing action without url -> snapshot
+    let cmd6 = build_gsd_browser_command(&bin, &json!({})).expect("inferred snapshot command");
+    let debug6 = format!("{:?}", cmd6);
+    assert!(debug6.contains("snapshot"));
+
+    // direct string -> navigate
+    let cmd7 = build_gsd_browser_command(&bin, &json!("docs.rs/tokio")).expect("direct string navigate");
+    let debug7 = format!("{:?}", cmd7);
+    assert!(debug7.contains("navigate"));
+    assert!(debug7.contains("https://docs.rs/tokio"));
+
+    // extra action aliases: visit, dom, press, input, capture, a11y, html, pdf
+    let cmd8 = build_gsd_browser_command(&bin, &json!({
+        "action": "visit",
+        "href": "https://crates.io"
+    })).expect("visit command");
+    assert!(format!("{:?}", cmd8).contains("navigate"));
+
+    let cmd9 = build_gsd_browser_command(&bin, &json!({ "action": "dom" })).expect("dom command");
+    assert!(format!("{:?}", cmd9).contains("snapshot"));
+
+    let cmd10 = build_gsd_browser_command(&bin, &json!({
+        "action": "press",
+        "targetRef": "@v1:e3"
+    })).expect("press command");
+    assert!(format!("{:?}", cmd10).contains("click-ref"));
+
+    let cmd11 = build_gsd_browser_command(&bin, &json!({
+        "action": "input",
+        "ref": "@v1:e4",
+        "string": "hello world"
+    })).expect("input command");
+    let debug11 = format!("{:?}", cmd11);
+    assert!(debug11.contains("fill-ref"));
+    assert!(debug11.contains("hello world"));
+
+    let cmd12 = build_gsd_browser_command(&bin, &json!({
+        "action": "capture",
+        "dest": "/tmp/capture.png"
+    })).expect("capture command");
+    assert!(format!("{:?}", cmd12).contains("screenshot"));
+
+    let cmd13 = build_gsd_browser_command(&bin, &json!({ "action": "a11y" })).expect("a11y command");
+    assert!(format!("{:?}", cmd13).contains("accessibility-tree"));
+
+    let cmd14 = build_gsd_browser_command(&bin, &json!({ "action": "html" })).expect("html command");
+    assert!(format!("{:?}", cmd14).contains("page-source"));
+
+    let cmd15 = build_gsd_browser_command(&bin, &json!({
+        "action": "pdf",
+        "dest": "/tmp/page.pdf"
+    })).expect("pdf command");
+    assert!(format!("{:?}", cmd15).contains("save-pdf"));
 }
+

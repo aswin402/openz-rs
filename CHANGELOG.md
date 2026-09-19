@@ -1,4 +1,77 @@
-### v0.0.200 (Latest Release)
+### v0.0.201 (Latest Release)
+- **Ideas**:
+  - Comprehensive headless evaluation, testing, and hardening of the Web & Crawling Suite (`web_fetch`, `web_search`, `crawl_website`, `obscura_browser`, `gsd_browser`).
+  - Unified URL Normalization (`normalize_web_url`):
+    - Added shared URL normalization helper stripping quotation marks (`"`, `'`) and angle brackets (`<...>`) commonly produced by LLMs.
+    - Automatic `https://` prefixing for scheme-less URLs (e.g. `example.com`, `docs.rs/tokio`) and protocol-relative URLs (`//cdn.org`).
+  - `web_fetch` Truncation & Input Ergonomics:
+    - Supported direct string argument passing (`arguments.as_str()`).
+    - Added parameter aliases: `href`, `page`, `endpoint`, `address` alongside `url`, `target_url`, `uri`, `link`, `target`.
+    - Added optional `max_length` / `limit` / `max_chars` truncation support across live responses, cached returns, and 304 Not Modified revalidations with standard notice: `[Content truncated at {limit} chars; total length: {total} chars]`, while preserving full text in database and shared research cache.
+  - `web_search` Input & Domain Filter Resilience:
+    - Supported direct string argument parsing (`extract_web_search_query`).
+    - Added query aliases: `q`, `search`, `prompt`, `term`, `keywords`, `text` alongside `query`.
+    - Added `domain` / `site` filter parameter that automatically appends `site:<domain>` to query without double-appending.
+    - Added numeric string coercion for `max_pages`, `limit`, and `max_results`.
+    - Added boolean string coercion (`"true"`, `"false"`, `"1"`, `"0"`, `"yes"`, `"no"`) for `read_top_results` and `diagnose_on_failure`.
+  - `crawl_website` URL & Parameter Hardening:
+    - Added `extract_crawl_url` supporting direct string arguments and scheme-less URL normalization.
+    - Added URL aliases: `site`, `domain`, `start_url`, `startUrl`.
+    - Added alias support and string coercion for `max_results` and `count` for page limits.
+  - `obscura_browser` CDP Navigation & Action Hardening:
+    - Added `extract_obscura_url` supporting direct string arguments and scheme-less URL normalization.
+    - Added URL aliases: `page`, `endpoint`, `href`, `address`, `site`.
+    - Added action recognition helper `is_obscura_eval_action` supporting action aliases: `view`, `markdown`, `html`, `content`, `read`, `get` -> render; `eval_js`, `eval`, `evaluate`, `js`, `script`, `expr` -> eval.
+    - Added script aliases: `script`, `expression`, `code`, `js`, `expr`.
+    - Clamped page load timeout to 1..300s with string coercion.
+  - `gsd_browser` Action Auto-Inference & Comprehensive Aliases:
+    - Added `resolve_gsd_browser_action_and_url`: direct string arguments auto-route to `navigate`; missing `action` auto-infers `navigate` when URL is present or `snapshot` when omitted.
+    - Scheme-less URL normalization on navigate actions via `normalize_web_url`.
+    - Expanded action aliases:
+      - `"navigate"` | `"goto"` | `"open"` | `"url"` | `"visit"`
+      - `"snapshot"` | `"interactive"` | `"elements"` | `"dom"`
+      - `"click"` | `"click_ref"` | `"press"`
+      - `"hover"` | `"hover_ref"`
+      - `"fill"` | `"fill_ref"` | `"type"` | `"input"`
+      - `"screenshot"` | `"capture"`
+      - `"eval"` | `"eval_js"` | `"evaluate"` | `"js"`
+      - `"accessibility_tree"` | `"a11y"` | `"a11y_tree"`
+      - `"page_source"` | `"source"` | `"html"`
+      - `"save_pdf"` | `"pdf"`
+    - Added aliases for refs (`target_ref`, `targetRef`), text (`input`, `string`), paths (`dest`), and script (`expr`).
+- **Inspirations**:
+  - Real-world headless executions where LLMs call `web_fetch` with bare domains like `"url": "example.com"` or `{"action": "goto"}` on browsers, encountering schema or relative URL rejections.
+  - Postel's Law: Be conservative in what you send, be liberal in what you accept.
+  - Production agent patterns where research summaries need character-capped outputs to prevent context pollution while retaining full content in vector/shared memory.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/web.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web.rs): `normalize_web_url`, `parse_max_length`, `truncate_web_fetch_output`, direct string arguments, parameter aliases.
+    - [`src/tools/web_search.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_search.rs): `extract_web_search_query`, direct string arguments, query aliases, domain filter, numeric/bool string coercion.
+    - [`src/tools/crawl.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/crawl.rs): `extract_crawl_url`, direct string arguments, URL aliases, extra limit aliases.
+    - [`src/tools/browser/obscura.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/obscura.rs): `extract_obscura_url`, `is_obscura_eval_action`, direct string arguments, action and script aliases.
+    - [`src/tools/browser/gsd.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/gsd.rs): `resolve_gsd_browser_action_and_url`, action auto-inference, action/ref/text/path aliases.
+  - Test Modules:
+    - [`src/tools/web_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_tests.rs): `test_normalize_web_url`, `test_parse_max_length`, `test_truncate_web_fetch_output`, schema tests.
+    - [`src/tools/web_search_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_search_tests.rs): `test_extract_web_search_query_aliases_and_direct_string`, `test_extract_web_search_query_domain_filter`, string coercion tests.
+    - [`src/tools/crawl_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/crawl_tests.rs): `test_extract_crawl_url_supports_aliases_and_schemeless`, `test_crawl_arg_coercion_extra_aliases`.
+    - [`src/tools/browser/obscura_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/obscura_tests.rs): `test_obscura_action_recognition`, `test_extract_obscura_url_supports_schemeless_and_aliases`.
+    - [`src/tools/browser/gsd_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/gsd_tests.rs): Action auto-inference, direct string, scheme-less URL normalization, and comprehensive alias tests.
+- **Details & Metrics**:
+  - Live headless verification: Successfully executed live agent turns utilizing `web_fetch` with bare domain `"example.com"` and `max_length: 100`, accurately auto-prefixing `https://` and returning truncated content with length notice in 6.9s.
+  - Exact 260 registered native tools invariant maintained with 0 drift.
+  - Zero compiler warnings and 0 clippy warnings.
+- **Verification**:
+  - All unit test modules passing:
+    - `cargo test -p openz --lib tools::web -j 1`
+    - `cargo test -p openz --lib tools::web_search -j 1`
+    - `cargo test -p openz --lib tools::crawl -j 1`
+    - `cargo test -p openz --lib tools::browser::obscura -j 1`
+    - `cargo test -p openz --lib tools::browser::gsd -j 1`
+    - `cargo test -p openz --lib test_native_tool_registration_names -j 1`
+  - Clippy verification:
+    - `cargo clippy -p openz -j 1` (0 warnings).
+
+### v0.0.200
 - **Ideas**:
   - Comprehensive real-world headless evaluation and hardening of the Developer & Tooling Operations Suite (`cargo_manager`, `git_manager`, `git_provider`, `db_inspector`, `db_write`, `check_port`, `onpkg`).
   - `cargo_manager` Toolchain Expansion & Self-Healing:

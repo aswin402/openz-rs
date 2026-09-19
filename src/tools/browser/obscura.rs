@@ -138,6 +138,42 @@ impl ObscuraBrowserTool {
     }
 }
 
+pub fn extract_obscura_url(arguments: &Value) -> Result<String> {
+    let raw_url = if let Some(s) = arguments.as_str() {
+        s.trim()
+    } else {
+        arguments
+            .get("url")
+            .or_else(|| arguments.get("target_url"))
+            .or_else(|| arguments.get("targetUrl"))
+            .or_else(|| arguments.get("uri"))
+            .or_else(|| arguments.get("link"))
+            .or_else(|| arguments.get("target"))
+            .or_else(|| arguments.get("page"))
+            .or_else(|| arguments.get("endpoint"))
+            .or_else(|| arguments.get("href"))
+            .or_else(|| arguments.get("address"))
+            .or_else(|| arguments.get("site"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'url' parameter"))?
+            .trim()
+    };
+
+    if raw_url.is_empty() {
+        return Err(anyhow!("Missing 'url' parameter (received empty string)"));
+    }
+
+    Ok(crate::tools::web::normalize_web_url(raw_url))
+}
+
+pub fn is_obscura_eval_action(action: &str) -> bool {
+    let norm = action.trim().to_lowercase().replace('-', "_");
+    matches!(
+        norm.as_str(),
+        "eval_js" | "eval" | "evaluate" | "js" | "script" | "expr"
+    )
+}
+
 #[async_trait::async_trait]
 impl Tool for ObscuraBrowserTool {
     fn name(&self) -> &str {
@@ -154,12 +190,12 @@ impl Tool for ObscuraBrowserTool {
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "The URL to navigate the browser to."
+                    "description": "The URL to navigate the browser to (supports bare domains, href/target aliases, or direct string)."
                 },
                 "action": {
                     "type": "string",
                     "enum": ["render", "eval_js"],
-                    "description": "The action to perform: 'render' (default, returns Markdown structure of the page) or 'eval_js' (evaluates custom JavaScript expression)."
+                    "description": "The action to perform: 'render' (default, returns Markdown structure; aliases: view, markdown, read, content) or 'eval_js' (evaluates JavaScript; aliases: eval, evaluate, js, script)."
                 },
                 "script": {
                     "type": "string",
@@ -175,16 +211,8 @@ impl Tool for ObscuraBrowserTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let url_str = arguments
-            .get("url")
-            .or_else(|| arguments.get("target_url"))
-            .or_else(|| arguments.get("targetUrl"))
-            .or_else(|| arguments.get("uri"))
-            .or_else(|| arguments.get("link"))
-            .or_else(|| arguments.get("target"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'url' parameter"))?
-            .trim();
+        let normalized_url = extract_obscura_url(arguments)?;
+        let url_str = &normalized_url;
 
         validate_url(url_str).await?;
 
@@ -192,17 +220,14 @@ impl Tool for ObscuraBrowserTool {
             .get("action")
             .and_then(|v| v.as_str())
             .unwrap_or("render");
-        let action_normalized = raw_action.trim().to_lowercase().replace('-', "_");
-        let is_eval = matches!(
-            action_normalized.as_str(),
-            "eval_js" | "eval" | "evaluate" | "js"
-        );
+        let is_eval = is_obscura_eval_action(raw_action);
 
         let script_str = arguments
             .get("script")
             .or_else(|| arguments.get("expression"))
             .or_else(|| arguments.get("code"))
             .or_else(|| arguments.get("js"))
+            .or_else(|| arguments.get("expr"))
             .and_then(|v| v.as_str());
 
         let timeout_secs = arguments
@@ -215,7 +240,8 @@ impl Tool for ObscuraBrowserTool {
                         .and_then(|s| s.trim().parse::<u64>().ok())
                 })
             })
-            .unwrap_or(15);
+            .unwrap_or(15)
+            .clamp(1, 300);
 
         // Ensure browser is running
         if let Err(e) = ensure_browser_running().await {

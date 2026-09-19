@@ -53,3 +53,44 @@ fn crawl_timeout_response_preserves_partial_pages() {
     assert_eq!(response["pages_crawled"], 1);
     assert_eq!(response["pages"][0]["title"], "Example");
 }
+
+#[test]
+fn test_extract_crawl_url_supports_aliases_and_schemeless() {
+    assert_eq!(
+        extract_crawl_url(&json!("example.com")).unwrap(),
+        "https://example.com"
+    );
+    assert_eq!(
+        extract_crawl_url(&json!({ "site": "docs.rs" })).unwrap(),
+        "https://docs.rs"
+    );
+    assert_eq!(
+        extract_crawl_url(&json!({ "start_url": "https://crates.io" })).unwrap(),
+        "https://crates.io"
+    );
+    assert_eq!(
+        extract_crawl_url(&json!({ "domain": "my-site.org" })).unwrap(),
+        "https://my-site.org"
+    );
+    assert_eq!(
+        extract_crawl_url(&json!({ "targetUrl": "http://insecure.org" })).unwrap(),
+        "http://insecure.org"
+    );
+    assert!(extract_crawl_url(&json!({})).is_err());
+    assert!(extract_crawl_url(&json!("")).is_err());
+}
+
+#[test]
+fn test_crawl_arg_coercion_extra_aliases() {
+    let args1 = json!({ "max_results": "15" });
+    assert_eq!(
+        get_u64_arg(&args1, &["limit", "max_pages", "maxPages", "max_results", "count"], 10),
+        15
+    );
+    let args2 = json!({ "count": 25 });
+    assert_eq!(
+        get_u64_arg(&args2, &["limit", "max_pages", "maxPages", "max_results", "count"], 10),
+        25
+    );
+}
+

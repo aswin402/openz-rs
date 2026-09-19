@@ -172,3 +172,78 @@ async fn test_validate_url() {
     assert!(validate_url("http://[fc00::1]").await.is_err());
     assert!(validate_url("http://[::ffff:127.0.0.1]").await.is_err());
 }
+
+#[test]
+fn test_normalize_web_url() {
+    assert_eq!(normalize_web_url("example.com"), "https://example.com");
+    assert_eq!(normalize_web_url("docs.rs/tokio"), "https://docs.rs/tokio");
+    assert_eq!(
+        normalize_web_url("http://already.http.com"),
+        "http://already.http.com"
+    );
+    assert_eq!(
+        normalize_web_url("https://already.https.com"),
+        "https://already.https.com"
+    );
+    assert_eq!(normalize_web_url("//cdn.example.org"), "https://cdn.example.org");
+    assert_eq!(
+        normalize_web_url("<https://wrapped.example.com>"),
+        "https://wrapped.example.com"
+    );
+    assert_eq!(
+        normalize_web_url("\"https://quoted.example.com\""),
+        "https://quoted.example.com"
+    );
+    assert_eq!(
+        normalize_web_url("'https://singlequote.example.com'"),
+        "https://singlequote.example.com"
+    );
+    assert_eq!(
+        normalize_web_url("  crates.io/crates/serde  "),
+        "https://crates.io/crates/serde"
+    );
+}
+
+#[test]
+fn test_parse_max_length() {
+    assert_eq!(parse_max_length(&serde_json::json!({})), None);
+    assert_eq!(
+        parse_max_length(&serde_json::json!({ "max_length": 500 })),
+        Some(500)
+    );
+    assert_eq!(
+        parse_max_length(&serde_json::json!({ "limit": "250" })),
+        Some(250)
+    );
+    assert_eq!(
+        parse_max_length(&serde_json::json!({ "maxChars": "120" })),
+        Some(120)
+    );
+    assert_eq!(
+        parse_max_length(&serde_json::json!({ "maxLength": 75 })),
+        Some(75)
+    );
+}
+
+#[test]
+fn test_truncate_web_fetch_output() {
+    let full = "abcdefghijklmnopqrstuvwxyz";
+    assert_eq!(truncate_web_fetch_output(full.to_string(), None), full);
+    assert_eq!(
+        truncate_web_fetch_output(full.to_string(), Some(50)),
+        full
+    );
+    let truncated = truncate_web_fetch_output(full.to_string(), Some(10));
+    assert!(truncated.starts_with("abcdefghij"));
+    assert!(truncated.contains("[Content truncated at 10 chars; total length: 26 chars]"));
+}
+
+#[test]
+fn test_web_fetch_parameters_schema_includes_max_length() {
+    let tool = WebFetchTool::new();
+    let params = tool.parameters();
+    let props = params["properties"].as_object().expect("properties object");
+    assert!(props.contains_key("max_length"));
+    assert!(props.contains_key("url"));
+}
+

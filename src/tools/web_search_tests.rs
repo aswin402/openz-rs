@@ -191,3 +191,82 @@ fn native_rescue_ignores_unknown_rust_query() {
     let results = native_rescue_results("rust totallyunknowncrate async runtime");
     assert!(results.is_empty());
 }
+
+#[test]
+fn test_extract_web_search_query_aliases_and_direct_string() {
+    assert_eq!(
+        extract_web_search_query(&json!("tokio async")).unwrap(),
+        "tokio async"
+    );
+    assert_eq!(
+        extract_web_search_query(&json!({ "q": "serde derive" })).unwrap(),
+        "serde derive"
+    );
+    assert_eq!(
+        extract_web_search_query(&json!({ "search": "tracing subscriber" })).unwrap(),
+        "tracing subscriber"
+    );
+    assert_eq!(
+        extract_web_search_query(&json!({ "prompt": "reqwest client" })).unwrap(),
+        "reqwest client"
+    );
+    assert_eq!(
+        extract_web_search_query(&json!({ "term": "axum router" })).unwrap(),
+        "axum router"
+    );
+    assert_eq!(
+        extract_web_search_query(&json!({ "keywords": "hyper server" })).unwrap(),
+        "hyper server"
+    );
+    assert_eq!(
+        extract_web_search_query(&json!({ "text": "clap parser" })).unwrap(),
+        "clap parser"
+    );
+    assert!(extract_web_search_query(&json!({})).is_err());
+    assert!(extract_web_search_query(&json!("")).is_err());
+}
+
+#[test]
+fn test_extract_web_search_query_domain_filter() {
+    assert_eq!(
+        extract_web_search_query(&json!({ "query": "tokio spawn", "domain": "docs.rs" })).unwrap(),
+        "tokio spawn site:docs.rs"
+    );
+    assert_eq!(
+        extract_web_search_query(&json!({ "query": "tokio spawn site:docs.rs", "domain": "docs.rs" })).unwrap(),
+        "tokio spawn site:docs.rs"
+    );
+    assert_eq!(
+        extract_web_search_query(&json!({ "q": "ratatui tui", "site": "github.com" })).unwrap(),
+        "ratatui tui site:github.com"
+    );
+}
+
+#[test]
+fn test_web_search_coerces_numeric_and_bool_strings() {
+    assert!(web_search_should_auto_read_top_results(
+        "query",
+        &json!({ "read_top_results": "true" })
+    ));
+    assert!(!web_search_should_auto_read_top_results(
+        "research deep dive",
+        &json!({ "read_top_results": "false" })
+    ));
+    assert_eq!(
+        web_search_auto_read_max_pages(&json!({ "max_pages": "4" }), true),
+        4
+    );
+    assert_eq!(
+        web_search_auto_read_max_pages(&json!({ "limit": "2" }), true),
+        2
+    );
+    assert!(!web_search_should_diagnose_on_failure(&json!({ "diagnose_on_failure": "false" })));
+    assert!(!web_search_should_diagnose_on_failure(&json!({ "diagnoseOnFailure": "0" })));
+}
+
+#[test]
+fn test_web_search_schema_exposes_domain_parameter() {
+    let schema = WebSearchTool::new().parameters();
+    assert!(schema["properties"].get("domain").is_some());
+}
+

@@ -140,6 +140,33 @@ fn crawl_timeout_response(
     })
 }
 
+pub fn extract_crawl_url(arguments: &Value) -> Result<String> {
+    let raw_url = if let Some(s) = arguments.as_str() {
+        s.trim()
+    } else {
+        arguments
+            .get("url")
+            .or_else(|| arguments.get("target_url"))
+            .or_else(|| arguments.get("targetUrl"))
+            .or_else(|| arguments.get("uri"))
+            .or_else(|| arguments.get("link"))
+            .or_else(|| arguments.get("target"))
+            .or_else(|| arguments.get("site"))
+            .or_else(|| arguments.get("domain"))
+            .or_else(|| arguments.get("start_url"))
+            .or_else(|| arguments.get("startUrl"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'url' parameter"))?
+            .trim()
+    };
+
+    if raw_url.is_empty() {
+        return Err(anyhow!("Missing 'url' parameter (received empty string)"));
+    }
+
+    Ok(crate::tools::web::normalize_web_url(raw_url))
+}
+
 #[async_trait::async_trait]
 impl Tool for CrawlSiteTool {
     fn name(&self) -> &str {
@@ -156,7 +183,7 @@ impl Tool for CrawlSiteTool {
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "The starting URL of the website to crawl."
+                    "description": "The starting URL of the website to crawl (supports bare domains, site/domain aliases, or direct string)."
                 },
                 "limit": {
                     "type": "integer",
@@ -184,22 +211,28 @@ impl Tool for CrawlSiteTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let url_str = arguments
-            .get("url")
-            .or_else(|| arguments.get("target_url"))
-            .or_else(|| arguments.get("targetUrl"))
-            .or_else(|| arguments.get("uri"))
-            .or_else(|| arguments.get("link"))
-            .or_else(|| arguments.get("target"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'url' parameter"))?
-            .trim();
+        let normalized_url = extract_crawl_url(arguments)?;
+        let url_str = &normalized_url;
 
         validate_url(url_str).await?;
 
-        let limit = get_u64_arg(arguments, &["limit", "max_pages", "maxPages"], 10).min(1000) as u32;
+        let limit = get_u64_arg(
+            arguments,
+            &["limit", "max_pages", "maxPages", "max_results", "count"],
+            10,
+        )
+        .min(1000) as u32;
         let depth = get_u64_arg(arguments, &["depth", "max_depth", "maxDepth"], 3).min(10) as usize;
-        let respect = get_bool_arg(arguments, &["respect_robots_txt", "respectRobotsTxt", "respect_robots"], true);
+        let respect = get_bool_arg(
+            arguments,
+            &[
+                "respect_robots_txt",
+                "respectRobotsTxt",
+                "respect_robots",
+                "respectRobots",
+            ],
+            true,
+        );
         let delay = get_u64_arg(arguments, &["delay", "delay_ms", "delayMs"], 250).max(50);
         let timeout_secs = crawl_timeout_secs(arguments);
 

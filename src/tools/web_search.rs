@@ -134,11 +134,21 @@ fn searchxyz_results_to_json(results: Vec<searchxyz::search::SearchResult>) -> V
 }
 
 fn web_search_should_auto_read_top_results(query: &str, arguments: &Value) -> bool {
-    if let Some(explicit) = arguments
+    if let Some(val) = arguments
         .get("read_top_results")
-        .and_then(|value| value.as_bool())
+        .or_else(|| arguments.get("readTopResults"))
     {
-        return explicit;
+        if let Some(explicit) = val.as_bool() {
+            return explicit;
+        }
+        if let Some(s) = val.as_str() {
+            let lower = s.trim().to_lowercase();
+            if lower == "true" || lower == "1" || lower == "yes" {
+                return true;
+            } else if lower == "false" || lower == "0" || lower == "no" {
+                return false;
+            }
+        }
     }
 
     let normalized = query.to_ascii_lowercase();
@@ -170,16 +180,71 @@ fn web_search_auto_read_max_pages(arguments: &Value, should_read: bool) -> usize
     }
     arguments
         .get("max_pages")
-        .and_then(|value| value.as_u64())
+        .or_else(|| arguments.get("maxPages"))
+        .or_else(|| arguments.get("limit"))
+        .or_else(|| arguments.get("max_results"))
+        .and_then(|value| {
+            value.as_u64().or_else(|| {
+                value.as_str().and_then(|s| s.trim().parse::<u64>().ok())
+            })
+        })
         .map(|value| value.clamp(1, 5) as usize)
         .unwrap_or(3)
 }
 
 fn web_search_should_diagnose_on_failure(arguments: &Value) -> bool {
-    arguments
+    if let Some(val) = arguments
         .get("diagnose_on_failure")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(true)
+        .or_else(|| arguments.get("diagnoseOnFailure"))
+    {
+        if let Some(b) = val.as_bool() {
+            return b;
+        }
+        if let Some(s) = val.as_str() {
+            let lower = s.trim().to_lowercase();
+            if lower == "false" || lower == "0" || lower == "no" {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+pub fn extract_web_search_query(arguments: &Value) -> Result<String> {
+    let raw_query = if let Some(s) = arguments.as_str() {
+        s.trim()
+    } else {
+        arguments
+            .get("query")
+            .or_else(|| arguments.get("q"))
+            .or_else(|| arguments.get("search"))
+            .or_else(|| arguments.get("prompt"))
+            .or_else(|| arguments.get("term"))
+            .or_else(|| arguments.get("keywords"))
+            .or_else(|| arguments.get("text"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing 'query' parameter"))?
+            .trim()
+    };
+
+    if raw_query.is_empty() {
+        return Err(anyhow!("Missing 'query' parameter (received empty string)"));
+    }
+
+    let domain = arguments
+        .get("domain")
+        .or_else(|| arguments.get("site"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|d| !d.is_empty());
+
+    if let Some(dom) = domain {
+        if !raw_query.contains("site:") {
+            return Ok(format!("{} site:{}", raw_query, dom));
+        }
+    }
+
+    Ok(raw_query.to_string())
 }
 
 fn browser_search_value_to_web_search_result(value: Value) -> Value {
@@ -325,7 +390,11 @@ impl Tool for WebSearchTool {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The search query term."
+                    "description": "The search query term (supports q/search/prompt aliases or direct string)."
+                },
+                "domain": {
+                    "type": "string",
+                    "description": "Optional domain or website to restrict search to (e.g. 'docs.rs', 'github.com'). Automatically appends site:<domain> to query."
                 },
                 "search_policy": {
                     "type": "string",
@@ -350,16 +419,13 @@ impl Tool for WebSearchTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments
-            .get("query")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
+        let query = extract_web_search_query(arguments)?;
 
-        let search_res = self.perform_search(arguments).await?;
+        let search_res = self.perform_search(&query, arguments).await?;
 
         if let Some(results_str) = web_search_archive_text(&search_res) {
             let _ = crate::tools::shared_memory::archive_research_entry(
-                query,
+                &query,
                 &results_str,
                 "web_search",
             )
@@ -371,12 +437,7 @@ impl Tool for WebSearchTool {
 }
 
 impl WebSearchTool {
-    async fn perform_search(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments
-            .get("query")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
-
+    async fn perform_search(&self, query: &str, arguments: &Value) -> Result<Value> {
         let policy =
             WebSearchPolicy::parse(arguments.get("search_policy").and_then(|v| v.as_str()));
         let diagnose_on_failure = web_search_should_diagnose_on_failure(arguments);

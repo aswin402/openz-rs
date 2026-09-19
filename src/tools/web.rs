@@ -595,6 +595,52 @@ fn walk_nodes(node: ego_tree::NodeRef<'_, Node>, text: &mut String) {
     }
 }
 
+/// Normalize web URL by trimming, stripping wrapper characters, and auto-prefixing https:// for scheme-less URLs.
+pub fn normalize_web_url(raw: &str) -> String {
+    let mut trimmed = raw.trim();
+    if (trimmed.starts_with('<') && trimmed.ends_with('>'))
+        || (trimmed.starts_with('"') && trimmed.ends_with('"'))
+        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+    {
+        trimmed = trimmed[1..trimmed.len() - 1].trim();
+    }
+    if trimmed.starts_with("//") {
+        format!("https:{}", trimmed)
+    } else if !trimmed.contains("://") {
+        format!("https://{}", trimmed)
+    } else {
+        trimmed.to_string()
+    }
+}
+
+pub fn parse_max_length(arguments: &serde_json::Value) -> Option<usize> {
+    arguments
+        .get("max_length")
+        .or_else(|| arguments.get("maxLength"))
+        .or_else(|| arguments.get("limit"))
+        .or_else(|| arguments.get("max_chars"))
+        .or_else(|| arguments.get("maxChars"))
+        .and_then(|v| {
+            v.as_u64()
+                .map(|n| n as usize)
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<usize>().ok()))
+        })
+}
+
+pub fn truncate_web_fetch_output(text: String, max_length: Option<usize>) -> String {
+    if let Some(limit) = max_length {
+        if limit > 0 && text.chars().count() > limit {
+            let total = text.chars().count();
+            let truncated: String = text.chars().take(limit).collect();
+            return format!(
+                "{}\n\n[Content truncated at {} chars; total length: {} chars]",
+                truncated, limit, total
+            );
+        }
+    }
+    text
+}
+
 #[async_trait::async_trait]
 impl Tool for WebFetchTool {
     fn name(&self) -> &str {
@@ -609,7 +655,7 @@ impl Tool for WebFetchTool {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "url": { "type": "string", "description": "The URL to fetch" },
+                "url": { "type": "string", "description": "The URL to fetch (supports bare domains, href/target aliases, or direct string)" },
                 "cache_mode": {
                     "type": "string",
                     "enum": ["auto", "prefer_cache", "revalidate", "bypass"],
@@ -618,6 +664,10 @@ impl Tool for WebFetchTool {
                 "render_js": {
                     "type": "boolean",
                     "description": "Automatically retry through local browser rendering when static fetch looks like an empty JavaScript app shell. Defaults to true; set false to opt out."
+                },
+                "max_length": {
+                    "type": "integer",
+                    "description": "Optional maximum character limit for returned text. Truncated output includes a notice with the total length."
                 }
             },
             "required": ["url"]
@@ -625,16 +675,32 @@ impl Tool for WebFetchTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let url_str = arguments
-            .get("url")
-            .or_else(|| arguments.get("target_url"))
-            .or_else(|| arguments.get("targetUrl"))
-            .or_else(|| arguments.get("uri"))
-            .or_else(|| arguments.get("link"))
-            .or_else(|| arguments.get("target"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'url' argument"))?
-            .trim();
+        let raw_url = if let Some(s) = arguments.as_str() {
+            s.trim()
+        } else {
+            arguments
+                .get("url")
+                .or_else(|| arguments.get("target_url"))
+                .or_else(|| arguments.get("targetUrl"))
+                .or_else(|| arguments.get("uri"))
+                .or_else(|| arguments.get("link"))
+                .or_else(|| arguments.get("target"))
+                .or_else(|| arguments.get("href"))
+                .or_else(|| arguments.get("page"))
+                .or_else(|| arguments.get("endpoint"))
+                .or_else(|| arguments.get("address"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Missing 'url' argument"))?
+                .trim()
+        };
+
+        if raw_url.is_empty() {
+            return Err(anyhow!("Missing 'url' argument (received empty string)"));
+        }
+
+        let normalized_url = normalize_web_url(raw_url);
+        let url_str = &normalized_url;
+        let max_length = parse_max_length(arguments);
         let cache_mode = WebFetchCacheMode::from_args(arguments)?;
         let cached = load_cached_web_fetch(url_str).unwrap_or_else(|err| {
             tracing::debug!(error = ?err, url = %url_str, "web_fetch cache lookup skipped");
@@ -645,11 +711,17 @@ impl Tool for WebFetchTool {
             match cache_mode {
                 WebFetchCacheMode::PreferCache => {
                     let _ = mark_cached_web_fetch_used(url_str);
-                    return Ok(serde_json::Value::String(cached_item.body_text.clone()));
+                    return Ok(serde_json::Value::String(truncate_web_fetch_output(
+                        cached_item.body_text.clone(),
+                        max_length,
+                    )));
                 }
                 WebFetchCacheMode::Auto if is_cache_fresh(&cached_item.expires_at, now_utc()) => {
                     let _ = mark_cached_web_fetch_used(url_str);
-                    return Ok(serde_json::Value::String(cached_item.body_text.clone()));
+                    return Ok(serde_json::Value::String(truncate_web_fetch_output(
+                        cached_item.body_text.clone(),
+                        max_length,
+                    )));
                 }
                 _ => {}
             }
@@ -703,7 +775,10 @@ impl Tool for WebFetchTool {
                 if let Some(cached_item) = cached {
                     tracing::warn!(error = ?err, url = %url_str, "web_fetch live request failed; using stale cached response");
                     let _ = mark_cached_web_fetch_used(url_str);
-                    return Ok(serde_json::Value::String(cached_item.body_text));
+                    return Ok(serde_json::Value::String(truncate_web_fetch_output(
+                        cached_item.body_text,
+                        max_length,
+                    )));
                 }
                 return Err(err.into());
             }
@@ -714,7 +789,10 @@ impl Tool for WebFetchTool {
             if let Some(cached_item) = cached {
                 let _ = refresh_cached_web_fetch_validators(url_str, &headers)
                     .or_else(|_| mark_cached_web_fetch_used(url_str));
-                return Ok(serde_json::Value::String(cached_item.body_text));
+                return Ok(serde_json::Value::String(truncate_web_fetch_output(
+                    cached_item.body_text,
+                    max_length,
+                )));
             }
         }
 
@@ -722,7 +800,10 @@ impl Tool for WebFetchTool {
             if let Some(cached_item) = cached {
                 tracing::warn!(status = %res.status(), url = %url_str, "web_fetch live request returned error; using stale cached response");
                 let _ = mark_cached_web_fetch_used(url_str);
-                return Ok(serde_json::Value::String(cached_item.body_text));
+                return Ok(serde_json::Value::String(truncate_web_fetch_output(
+                    cached_item.body_text,
+                    max_length,
+                )));
             }
             return Err(anyhow!("Failed to fetch URL: HTTP {}", res.status()));
         }
@@ -785,7 +866,10 @@ impl Tool for WebFetchTool {
         )
         .await;
 
-        Ok(serde_json::Value::String(result_text))
+        Ok(serde_json::Value::String(truncate_web_fetch_output(
+            result_text,
+            max_length,
+        )))
     }
 }
 

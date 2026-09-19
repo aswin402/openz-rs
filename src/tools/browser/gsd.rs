@@ -66,39 +66,77 @@ async fn restart_gsd_browser_daemon(bin_path: &PathBuf) {
         .await;
 }
 
-fn build_gsd_browser_command(bin_path: &PathBuf, arguments: &Value) -> Result<Command> {
-    let raw_action = arguments
-        .get("action")
+fn resolve_gsd_browser_action_and_url(arguments: &Value) -> (String, Option<String>) {
+    if let Some(s) = arguments.as_str() {
+        return ("navigate".to_string(), Some(s.trim().to_string()));
+    }
+
+    let url_opt = arguments
+        .get("url")
+        .or_else(|| arguments.get("target_url"))
+        .or_else(|| arguments.get("targetUrl"))
+        .or_else(|| arguments.get("uri"))
+        .or_else(|| arguments.get("link"))
+        .or_else(|| arguments.get("target"))
+        .or_else(|| arguments.get("site"))
+        .or_else(|| arguments.get("domain"))
+        .or_else(|| arguments.get("page"))
+        .or_else(|| arguments.get("endpoint"))
+        .or_else(|| arguments.get("href"))
+        .or_else(|| arguments.get("address"))
         .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let explicit_action = arguments
+        .get("action")
+        .or_else(|| arguments.get("act"))
+        .or_else(|| arguments.get("command"))
+        .or_else(|| arguments.get("cmd"))
+        .or_else(|| arguments.get("method"))
+        .and_then(|v| v.as_str())
+        .map(str::trim);
+
+    let action = match explicit_action {
+        Some(a) if !a.is_empty() => a.to_string(),
+        _ => {
+            if url_opt.is_some() {
+                "navigate".to_string()
+            } else {
+                "snapshot".to_string()
+            }
+        }
+    };
+
+    (action, url_opt)
+}
+
+fn build_gsd_browser_command(bin_path: &PathBuf, arguments: &Value) -> Result<Command> {
+    let (raw_action, url_arg) = resolve_gsd_browser_action_and_url(arguments);
     let action_normalized = raw_action.trim().to_lowercase().replace('-', "_");
 
     let mut cmd = Command::new(bin_path);
 
     match action_normalized.as_str() {
-        "navigate" | "goto" | "open" => {
-            let url = arguments
-                .get("url")
-                .or_else(|| arguments.get("target_url"))
-                .or_else(|| arguments.get("targetUrl"))
-                .or_else(|| arguments.get("uri"))
-                .or_else(|| arguments.get("link"))
-                .or_else(|| arguments.get("target"))
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Missing 'url' parameter for navigate action"))?
-                .trim();
-            cmd.arg("navigate").arg(url);
+        "navigate" | "goto" | "open" | "url" | "visit" => {
+            let raw_url = url_arg
+                .ok_or_else(|| anyhow!("Missing 'url' parameter for navigate action"))?;
+            let normalized_url = crate::tools::web::normalize_web_url(&raw_url);
+            cmd.arg("navigate").arg(normalized_url);
         }
-        "snapshot" => {
+        "snapshot" | "interactive" | "elements" | "dom" => {
             cmd.arg("snapshot");
         }
-        "click" | "click_ref" => {
+        "click" | "click_ref" | "press" => {
             let ref_id = arguments
                 .get("ref_id")
                 .or_else(|| arguments.get("refId"))
                 .or_else(|| arguments.get("ref"))
                 .or_else(|| arguments.get("element"))
                 .or_else(|| arguments.get("id"))
+                .or_else(|| arguments.get("target_ref"))
+                .or_else(|| arguments.get("targetRef"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for click action"))?
                 .trim();
@@ -111,18 +149,22 @@ fn build_gsd_browser_command(bin_path: &PathBuf, arguments: &Value) -> Result<Co
                 .or_else(|| arguments.get("ref"))
                 .or_else(|| arguments.get("element"))
                 .or_else(|| arguments.get("id"))
+                .or_else(|| arguments.get("target_ref"))
+                .or_else(|| arguments.get("targetRef"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for hover action"))?
                 .trim();
             cmd.arg("hover-ref").arg(ref_id);
         }
-        "fill" | "fill_ref" | "type" => {
+        "fill" | "fill_ref" | "type" | "input" => {
             let ref_id = arguments
                 .get("ref_id")
                 .or_else(|| arguments.get("refId"))
                 .or_else(|| arguments.get("ref"))
                 .or_else(|| arguments.get("element"))
                 .or_else(|| arguments.get("id"))
+                .or_else(|| arguments.get("target_ref"))
+                .or_else(|| arguments.get("targetRef"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for fill action"))?
                 .trim();
@@ -131,6 +173,8 @@ fn build_gsd_browser_command(bin_path: &PathBuf, arguments: &Value) -> Result<Co
                 .or_else(|| arguments.get("value"))
                 .or_else(|| arguments.get("query"))
                 .or_else(|| arguments.get("content"))
+                .or_else(|| arguments.get("input"))
+                .or_else(|| arguments.get("string"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| {
                     anyhow!(
@@ -139,7 +183,7 @@ fn build_gsd_browser_command(bin_path: &PathBuf, arguments: &Value) -> Result<Co
                 })?;
             cmd.arg("fill-ref").arg(ref_id).arg(text);
         }
-        "screenshot" => {
+        "screenshot" | "capture" => {
             let path = arguments
                 .get("path")
                 .or_else(|| arguments.get("output"))
@@ -147,6 +191,7 @@ fn build_gsd_browser_command(bin_path: &PathBuf, arguments: &Value) -> Result<Co
                 .or_else(|| arguments.get("outputPath"))
                 .or_else(|| arguments.get("file_path"))
                 .or_else(|| arguments.get("file"))
+                .or_else(|| arguments.get("dest"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Missing 'path' parameter for screenshot action"))?
                 .trim();
@@ -159,17 +204,18 @@ fn build_gsd_browser_command(bin_path: &PathBuf, arguments: &Value) -> Result<Co
                 .or_else(|| arguments.get("expression"))
                 .or_else(|| arguments.get("code"))
                 .or_else(|| arguments.get("js"))
+                .or_else(|| arguments.get("expr"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Missing 'script' parameter for eval action"))?;
             cmd.arg("eval").arg(script);
         }
-        "accessibility_tree" => {
+        "accessibility_tree" | "a11y" | "a11y_tree" => {
             cmd.arg("accessibility-tree");
         }
-        "page_source" => {
+        "page_source" | "source" | "html" => {
             cmd.arg("page-source");
         }
-        "save_pdf" => {
+        "save_pdf" | "pdf" => {
             let path = arguments
                 .get("path")
                 .or_else(|| arguments.get("output"))
@@ -177,6 +223,7 @@ fn build_gsd_browser_command(bin_path: &PathBuf, arguments: &Value) -> Result<Co
                 .or_else(|| arguments.get("outputPath"))
                 .or_else(|| arguments.get("file_path"))
                 .or_else(|| arguments.get("file"))
+                .or_else(|| arguments.get("dest"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("Missing 'path' parameter for save_pdf action"))?
                 .trim();
@@ -217,11 +264,11 @@ impl Tool for GsdBrowserTool {
                         "page_source",
                         "save_pdf"
                     ],
-                    "description": "The browser action: 'navigate' to a URL, 'snapshot' to get interactive elements, 'click' or 'hover' on an element ref, 'fill' text input ref, 'screenshot' to capture image, 'eval' to run custom JavaScript, 'accessibility_tree' for roles/a11y tree, 'page_source' for HTML, 'save_pdf' to save as PDF."
+                    "description": "The browser action (automatically inferred if omitted: defaults to 'navigate' when url is present, else 'snapshot'): 'navigate' (aliases: goto, open, visit), 'snapshot' (aliases: dom, elements), 'click' (alias: press), 'hover', 'fill' (aliases: type, input), 'screenshot' (alias: capture), 'eval', 'accessibility_tree' (alias: a11y), 'page_source' (alias: html, source), 'save_pdf' (alias: pdf)."
                 },
                 "url": {
                     "type": "string",
-                    "description": "URL to navigate to (required for 'navigate')."
+                    "description": "URL to navigate to (supports bare domains, href/target aliases, or direct string; automatically selects 'navigate' action)."
                 },
                 "ref_id": {
                     "type": "string",
@@ -247,8 +294,7 @@ impl Tool for GsdBrowserTool {
                     "type": "string",
                     "description": "JavaScript expression to evaluate (required for 'eval')."
                 }
-            },
-            "required": ["action"]
+            }
         })
     }
 
