@@ -128,6 +128,25 @@ async fn test_db_inspector_actions() -> Result<()> {
         .await;
     assert!(res.is_err());
 
+    // Test auto-inferred query action with parameter aliases
+    let res = tool
+        .call(&json!({
+            "path": db_path_str,
+            "query": "SELECT name FROM users;"
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+    assert!(res["stdout"].as_str().unwrap().contains("Alice"));
+
+    // Test auto-inferred schema action (no action, no query)
+    let res = tool
+        .call(&json!({
+            "path": db_path_str
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+    assert!(res["stdout"].as_str().unwrap().contains("CREATE TABLE users"));
+
     // Clean up
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())

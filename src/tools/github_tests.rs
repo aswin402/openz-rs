@@ -54,3 +54,25 @@ async fn test_git_provider_ssrf_blocking() {
         "Localhost API base should be blocked by SSRF filter"
     );
 }
+
+#[test]
+fn test_parse_repo_from_git_url() {
+    assert_eq!(
+        parse_repo_from_git_url("git@github.com:aswin402/openz-rs.git"),
+        Some("aswin402/openz-rs".to_string())
+    );
+    assert_eq!(
+        parse_repo_from_git_url("https://github.com/aswin402/openz-rs.git"),
+        Some("aswin402/openz-rs".to_string())
+    );
+    assert_eq!(
+        parse_repo_from_git_url("https://github.com/tokio-rs/tokio"),
+        Some("tokio-rs/tokio".to_string())
+    );
+    assert_eq!(
+        parse_repo_from_git_url("git@gitlab.com:group/subgroup/project.git"),
+        Some("subgroup/project".to_string())
+    );
+    assert_eq!(parse_repo_from_git_url(""), None);
+}
+

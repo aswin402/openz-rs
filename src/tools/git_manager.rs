@@ -12,7 +12,7 @@ impl Tool for GitManagerTool {
     }
 
     fn description(&self) -> &str {
-        "Perform Git version control operations (status, diff, add, commit, log) directly within the codebase workspace."
+        "Perform Git version control operations (status, diff, add, commit, log, branch, show) directly within the codebase workspace."
     }
 
     fn parameters(&self) -> Value {
@@ -21,75 +21,158 @@ impl Tool for GitManagerTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["status", "diff", "add", "commit", "log"],
-                    "description": "The Git subcommand/action to run."
+                    "enum": ["status", "diff", "add", "commit", "log", "branch", "show"],
+                    "description": "The Git subcommand/action to run (defaults to 'status')."
                 },
                 "files": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "description": "Files to stage/add. Required for 'add'."
+                    "description": "Files to stage/add (array of file paths or single string path/comma-separated). Required for 'add'.",
+                    "oneOf": [
+                        { "type": "array", "items": { "type": "string" } },
+                        { "type": "string" }
+                    ]
                 },
                 "message": {
                     "type": "string",
                     "description": "The commit message. Required for 'commit'."
                 },
                 "limit": {
-                    "type": "integer",
-                    "description": "Limit the number of commits shown in the log. Optional, defaults to 5."
+                    "description": "Limit the number of commits shown in the log (integer or numeric string). Optional, defaults to 5.",
+                    "oneOf": [
+                        { "type": "integer" },
+                        { "type": "string" }
+                    ]
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Target commit hash, revision, or branch for 'show' or 'diff'."
+                },
+                "staged": {
+                    "type": "boolean",
+                    "description": "If true for 'diff', compare staged changes (--staged/--cached)."
                 },
                 "cwd": {
                     "type": "string",
                     "description": "Optional working directory to run the git command in (defaults to current directory)."
                 }
-            },
-            "required": ["action"]
+            }
         })
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments
-            .get("action")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
+        let action_raw = if let Some(s) = arguments.as_str() {
+            s.to_string()
+        } else {
+            arguments
+                .get("action")
+                .or_else(|| arguments.get("command"))
+                .or_else(|| arguments.get("subcommand"))
+                .or_else(|| arguments.get("cmd"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("status")
+                .to_string()
+        };
+        let action = action_raw.trim().to_lowercase();
 
         let mut cmd = Command::new("git");
 
-        if let Some(cwd_str) = arguments.get("cwd").and_then(|v| v.as_str()) {
+        if let Some(cwd_str) = arguments
+            .get("cwd")
+            .or_else(|| arguments.get("dir"))
+            .or_else(|| arguments.get("path"))
+            .and_then(|v| v.as_str())
+        {
             let path = crate::config::loader::resolve_path(cwd_str);
             cmd.current_dir(path);
         } else {
             crate::config::loader::set_tokio_command_cwd(&mut cmd);
         }
 
-        match action {
-            "status" => {
+        match action.as_str() {
+            "status" | "st" | "s" => {
                 cmd.arg("status");
             }
-            "diff" => {
-                cmd.args(["diff", "HEAD"]);
+            "diff" | "d" => {
+                let is_staged = arguments
+                    .get("staged")
+                    .or_else(|| arguments.get("cached"))
+                    .and_then(|v| {
+                        v.as_bool().or_else(|| {
+                            v.as_str().map(|s| s.trim().eq_ignore_ascii_case("true"))
+                        })
+                    })
+                    .unwrap_or(false);
+
+                if is_staged {
+                    cmd.args(["diff", "--staged"]);
+                } else if let Some(target_ref) = arguments
+                    .get("ref")
+                    .or_else(|| arguments.get("commit"))
+                    .or_else(|| arguments.get("revision"))
+                    .and_then(|v| v.as_str())
+                {
+                    cmd.args(["diff", target_ref]);
+                } else {
+                    cmd.args(["diff", "HEAD"]);
+                }
             }
-            "add" => {
-                let files_arr = arguments
+            "branch" | "branches" | "br" => {
+                cmd.args(["branch", "-a"]);
+            }
+            "show" => {
+                if let Some(target_ref) = arguments
+                    .get("ref")
+                    .or_else(|| arguments.get("commit"))
+                    .or_else(|| arguments.get("revision"))
+                    .and_then(|v| v.as_str())
+                {
+                    cmd.args(["show", target_ref]);
+                } else {
+                    cmd.args(["show", "HEAD"]);
+                }
+            }
+            "add" | "stage" => {
+                let mut files_to_add = Vec::new();
+                if let Some(files_val) = arguments
                     .get("files")
-                    .and_then(|v| v.as_array())
-                    .ok_or_else(|| anyhow!("Missing 'files' argument for 'add' action"))?;
-                if files_arr.is_empty() {
+                    .or_else(|| arguments.get("file"))
+                    .or_else(|| arguments.get("path"))
+                {
+                    if let Some(arr) = files_val.as_array() {
+                        for item in arr {
+                            if let Some(s) = item.as_str() {
+                                files_to_add.push(s.to_string());
+                            }
+                        }
+                    } else if let Some(s) = files_val.as_str() {
+                        if s.contains(',') {
+                            for part in s.split(',') {
+                                let trimmed = part.trim();
+                                if !trimmed.is_empty() {
+                                    files_to_add.push(trimmed.to_string());
+                                }
+                            }
+                        } else {
+                            files_to_add.push(s.to_string());
+                        }
+                    }
+                }
+                if files_to_add.is_empty() {
                     return Err(anyhow!(
                         "At least one file must be specified for 'add' action"
                     ));
                 }
                 cmd.arg("add");
-                for f in files_arr {
-                    if let Some(s) = f.as_str() {
-                        cmd.arg(s);
-                    }
+                for f in files_to_add {
+                    cmd.arg(f);
                 }
             }
-            "commit" => {
+            "commit" | "ci" => {
                 let message = arguments
                     .get("message")
+                    .or_else(|| arguments.get("msg"))
+                    .or_else(|| arguments.get("m"))
+                    .or_else(|| arguments.get("description"))
+                    .or_else(|| arguments.get("text"))
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'message' argument for 'commit' action"))?
                     .trim();
@@ -98,8 +181,16 @@ impl Tool for GitManagerTool {
                 }
                 cmd.args(["commit", "-m", message]);
             }
-            "log" => {
-                let limit = arguments.get("limit").and_then(|v| v.as_u64()).unwrap_or(5);
+            "log" | "history" | "l" => {
+                let limit = arguments
+                    .get("limit")
+                    .or_else(|| arguments.get("n"))
+                    .and_then(|v| {
+                        v.as_u64().or_else(|| {
+                            v.as_str().and_then(|s| s.trim().parse::<u64>().ok())
+                        })
+                    })
+                    .unwrap_or(5);
                 cmd.args(["log", &format!("-n{}", limit), "--oneline"]);
             }
             _ => return Err(anyhow!("Unsupported git action: {}", action)),

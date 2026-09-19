@@ -15,7 +15,12 @@ impl CargoManagerTool {
     }
 }
 
-async fn run_cargo_cmd(action: &str, cwd: &Option<String>) -> Result<std::process::Output> {
+async fn run_cargo_cmd(
+    action: &str,
+    cwd: &Option<String>,
+    extra_args: &[String],
+    package: Option<&str>,
+) -> Result<std::process::Output> {
     let mut std_cmd = std::process::Command::new("cargo");
 
     if let Some(ref cwd_str) = cwd {
@@ -25,11 +30,14 @@ async fn run_cargo_cmd(action: &str, cwd: &Option<String>) -> Result<std::proces
         crate::config::loader::set_command_cwd(&mut std_cmd);
     }
 
-    match action {
-        "build" => {
+    match action.trim().to_lowercase().as_str() {
+        "build" | "b" => {
             std_cmd.arg("build");
         }
-        "test" => {
+        "check" | "c" => {
+            std_cmd.arg("check");
+        }
+        "test" | "t" => {
             std_cmd.arg("test");
         }
         "clippy" => {
@@ -38,7 +46,27 @@ async fn run_cargo_cmd(action: &str, cwd: &Option<String>) -> Result<std::proces
         "fmt" => {
             std_cmd.args(["fmt", "--", "--check"]);
         }
+        "clean" => {
+            std_cmd.arg("clean");
+        }
+        "doc" => {
+            std_cmd.arg("doc");
+        }
+        "bench" => {
+            std_cmd.arg("bench");
+        }
+        "run" => {
+            std_cmd.arg("run");
+        }
         _ => return Err(anyhow!("Unsupported cargo action: {}", action)),
+    }
+
+    if let Some(pkg) = package {
+        std_cmd.args(["-p", pkg]);
+    }
+
+    for arg in extra_args {
+        std_cmd.arg(arg);
     }
 
     let mut tokio_cmd = tokio::process::Command::from(std_cmd);
@@ -53,7 +81,7 @@ impl Tool for CargoManagerTool {
     }
 
     fn description(&self) -> &str {
-        "Execute cargo toolchain commands (build, test, clippy, fmt) in a workspace with optional self-healing for compilation errors."
+        "Execute cargo toolchain commands (check, build, test, clippy, fmt, clean, doc, bench) in a workspace with optional self-healing for compilation errors."
     }
 
     fn parameters(&self) -> Value {
@@ -62,41 +90,94 @@ impl Tool for CargoManagerTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["build", "test", "clippy", "fmt"],
-                    "description": "The cargo command to execute."
+                    "enum": ["check", "build", "test", "clippy", "fmt", "clean", "doc", "bench", "run"],
+                    "description": "The cargo command to execute (defaults to 'check')."
                 },
                 "cwd": {
                     "type": "string",
                     "description": "Optional working directory to run the cargo command in (defaults to current directory)."
                 },
+                "package": {
+                    "type": "string",
+                    "description": "Optional package name to target with -p <package>."
+                },
+                "args": {
+                    "description": "Optional additional arguments or flags to pass to cargo (array or string).",
+                    "type": "array",
+                    "items": { "type": "string" }
+                },
                 "self_heal": {
                     "type": "boolean",
                     "description": "If true, automatically attempt to patch and compile any files that generate compiler errors (defaults to true)."
                 }
-            },
-            "required": ["action"]
+            }
         })
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = arguments
-            .get("action")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
+        let action = if let Some(s) = arguments.as_str() {
+            s.to_string()
+        } else {
+            arguments
+                .get("action")
+                .or_else(|| arguments.get("command"))
+                .or_else(|| arguments.get("cmd"))
+                .or_else(|| arguments.get("subcommand"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("check")
+                .to_string()
+        };
         let cwd = arguments
             .get("cwd")
+            .or_else(|| arguments.get("path"))
+            .or_else(|| arguments.get("dir"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let package = arguments
+            .get("package")
+            .or_else(|| arguments.get("pkg"))
+            .or_else(|| arguments.get("package_name"))
+            .and_then(|v| v.as_str());
+
+        let mut extra_args = Vec::new();
+        if let Some(args_val) = arguments.get("args").or_else(|| arguments.get("extra_args")) {
+            if let Some(arr) = args_val.as_array() {
+                for item in arr {
+                    if let Some(s) = item.as_str() {
+                        extra_args.push(s.to_string());
+                    }
+                }
+            } else if let Some(s) = args_val.as_str() {
+                extra_args.extend(s.split_whitespace().map(|x| x.to_string()));
+            }
+        }
+        if arguments.get("release").and_then(|v| v.as_bool()).unwrap_or(false)
+            && !extra_args.iter().any(|a| a == "--release")
+        {
+            extra_args.push("--release".to_string());
+        }
+
         let self_heal = arguments
             .get("self_heal")
-            .and_then(|v| v.as_bool())
+            .map(|v| {
+                v.as_bool().unwrap_or_else(|| {
+                    v.as_str()
+                        .map(|s| s.trim().eq_ignore_ascii_case("true"))
+                        .unwrap_or(true)
+                })
+            })
             .unwrap_or(true);
 
-        let mut output = run_cargo_cmd(action, &cwd).await?;
+        let mut output = run_cargo_cmd(&action, &cwd, &extra_args, package).await?;
         let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-        if action == "build" && !output.status.success() && self_heal {
+        let can_self_heal = action.eq_ignore_ascii_case("build")
+            || action.eq_ignore_ascii_case("check")
+            || action.eq_ignore_ascii_case("b")
+            || action.eq_ignore_ascii_case("c");
+
+        if can_self_heal && !output.status.success() && self_heal {
             let mut retries = 0;
             const MAX_RETRIES: usize = 2;
 
@@ -220,7 +301,7 @@ impl Tool for CargoManagerTool {
                                                 COLOR_RESET
                                             );
                                             // Re-run cargo build
-                                            output = run_cargo_cmd(action, &cwd).await?;
+                                            output = run_cargo_cmd(&action, &cwd, &extra_args, package).await?;
                                             stdout =
                                                 String::from_utf8_lossy(&output.stdout).to_string();
                                             stderr =

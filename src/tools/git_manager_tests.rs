@@ -66,16 +66,64 @@ async fn test_git_manager_actions() -> Result<()> {
         .await?;
     assert_eq!(res["status"], "success");
 
-    // 4. Git Log
+    // 4. Git Log (with string limit and alias)
     let res = tool
         .call(&json!({
-            "action": "log",
-            "limit": 1,
+            "action": "history",
+            "limit": "1",
             "cwd": cwd_str
         }))
         .await?;
     assert_eq!(res["status"], "success");
     assert!(res["stdout"].as_str().unwrap().contains("initial commit"));
+
+    // 5. Git Branch
+    let res = tool
+        .call(&json!({
+            "action": "branch",
+            "cwd": cwd_str
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+
+    // 6. Git Show
+    let res = tool
+        .call(&json!({
+            "action": "show",
+            "cwd": cwd_str
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+    assert!(res["stdout"].as_str().unwrap().contains("initial commit"));
+
+    // 7. Git Diff (with modification and single string file add)
+    std::fs::write(&file_path, "modified content")?;
+    let res = tool
+        .call(&json!({
+            "action": "diff",
+            "cwd": cwd_str
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+    assert!(res["stdout"].as_str().unwrap().contains("modified content"));
+
+    // Stage using single string path and alias "stage"
+    let res = tool
+        .call(&json!({
+            "action": "stage",
+            "file": "test.txt",
+            "cwd": cwd_str
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+
+    // 8. Default action (omitted action defaults to status)
+    let res = tool
+        .call(&json!({
+            "cwd": cwd_str
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
 
     // Clean up
     let _ = std::fs::remove_dir_all(&temp_dir);

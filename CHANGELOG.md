@@ -1,4 +1,71 @@
-### v0.0.199 (Latest Release)
+### v0.0.200 (Latest Release)
+- **Ideas**:
+  - Comprehensive real-world headless evaluation and hardening of the Developer & Tooling Operations Suite (`cargo_manager`, `git_manager`, `git_provider`, `db_inspector`, `db_write`, `check_port`, `onpkg`).
+  - `cargo_manager` Toolchain Expansion & Self-Healing:
+    - Expanded supported subcommands beyond build/test/clippy/fmt to include `"check"`, `"clean"`, `"doc"`, `"bench"`, `"run"` with single-letter aliases (`"c"`, `"b"`, `"t"`).
+    - Enabled compiler self-healing on `check` compilation failures as well as `build`.
+    - Added package targeting (`package`/`pkg`/`package_name` -> `-p <pkg>`), custom extra arguments (`args`/`extra_args`), and `--release` flag handling.
+    - Added boolean and string coercion for `self_heal` (`"true"`/`"false"`).
+  - `git_manager` Subcommand and Input Hardening:
+    - Added support for `"branch"` (`git branch -a`) and `"show"` (`git show`) actions.
+    - Defaulted `action` to `"status"` when omitted.
+    - Added action aliases: `"status"` | `"st"` | `"s"`, `"diff"` | `"d"`, `"branch"` | `"branches"` | `"br"`, `"add"` | `"stage"`, `"commit"` | `"ci"`, `"log"` | `"history"` | `"l"`.
+    - Flexible files staging: `files` now accepts either an array of paths or a single string path / comma-separated string, with `file`/`path` aliases.
+    - Extended commit message aliases: `message`, `msg`, `m`, `description`, `text`.
+    - Added string-to-integer coercion for `limit` in git log queries.
+    - Added `--staged` / `--cached` support and target `ref`/`commit` specification in `diff`.
+  - `git_provider` Native GitHub/GitLab API Resilience:
+    - Added zero-config git remote `origin` auto-detection for repository paths (`owner/repo`), parsing SSH (`git@...`) and HTTPS URLs.
+    - Supported action aliases: `"pr"`, `"issues"`, `"search"`, `"diff"`.
+    - Added integer/string coercion and parameter aliases for `pr_number` (`pr`, `number`, `id`).
+  - `db_inspector` and `db_write` Ergonomics & Auto-Inference:
+    - Auto-infer action in `db_inspector`: defaults to `"query"` if `sql`/`query`/`statement` is provided, and `"schema"` otherwise.
+    - Added parameter aliases across both inspector and writer: `path`/`database`/`db`/`file` for `db_path`, and `query`/`statement`/`mutation` for `sql`.
+    - Added action aliases: `"schema"` | `"tables"` | `"structure"`, `"query"` | `"select"` | `"run"` | `"sql"`.
+  - `check_port` Network Diagnostic Hardening:
+    - Defaulted `action` to `"check_listening"`.
+    - Added action aliases: `"listen"` | `"listening"` | `"active"` | `"open"` | `"status"` for listening checks, and `"free"` | `"available"` | `"bind"` for free checks.
+    - Coerced string port representations (`"8080"` -> `8080`) with `port_number` alias and `ip`/`target` aliases for `host`.
+  - `onpkg` Template and Stack Hardening:
+    - Defaulted `action` to `"list_stacks"`.
+    - Added action aliases: `"list"`, `"show"`, `"init"` / `"create"`, `"health"` / `"check"`.
+    - Added parameter aliases: `stack`/`template`, `path`/`directory`, `pkg`/`package`/`skill`, `src`/`url`.
+- **Inspirations**:
+  - Real-world subagent execution trace where `cargo_manager` failed with "Unsupported cargo action: check" because `check` was not in the hardcoded match block.
+  - Common agent patterns where subagents call `git_manager` with a single file string (`"files": "src/main.rs"`) or omit explicit actions when executing database queries.
+  - Robustness Principle: accept flexible input representations (strings, arrays, numbers, aliases) while producing strictly typed, reliable outputs.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/cargo_manager.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/cargo_manager.rs): Check/clean/doc/bench/run actions, package targeting, extra args, self-heal on check.
+    - [`src/tools/git_manager.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/git_manager.rs): Default status action, branch/show commands, staged diffs, files coercion, aliases.
+    - [`src/tools/github.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github.rs): Git remote origin auto-detection, URL parsing, action aliases, string pr_number coercion.
+    - [`src/tools/db_inspector.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/db_inspector.rs): Auto-inferred action, db_path and sql parameter aliases.
+    - [`src/tools/network.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/network.rs): String port coercion, default check_listening action, aliases.
+    - [`src/tools/onpkg.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/onpkg.rs): Default list_stacks action, parameter and action aliases.
+  - Test Modules:
+    - [`src/tools/cargo_manager_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/cargo_manager_tests.rs): Check action and extra args unit test.
+    - [`src/tools/git_manager_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/git_manager_tests.rs): Branch, show, staged diff, single file add, string limit tests.
+    - [`src/tools/github_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github_tests.rs): Git URL parsing and validation tests.
+    - [`src/tools/db_inspector_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/db_inspector_tests.rs): Auto-inference query/schema tests.
+    - [`src/tools/network_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/network_tests.rs): String port and default action tests.
+    - [`src/tools/onpkg_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/onpkg_tests.rs): Default action and alias tests.
+- **Details & Metrics**:
+  - Headless live verification: Successfully executed live agent turns utilizing `cargo_manager` with action `check` and args `["--quiet"]`, achieving clean 0 exit codes.
+  - Exact 260 registered native tools invariant maintained with 0 drift.
+  - Zero compiler warnings and 0 clippy warnings.
+- **Verification**:
+  - All unit test modules passing:
+    - `cargo test -p openz --lib tools::cargo_manager -j 1`
+    - `cargo test -p openz --lib tools::git_manager -j 1`
+    - `cargo test -p openz --lib tools::github -j 1`
+    - `cargo test -p openz --lib tools::db_inspector -j 1`
+    - `cargo test -p openz --lib tools::network -j 1`
+    - `cargo test -p openz --lib tools::onpkg -j 1`
+  - Invariant test passing: `cargo test -p openz --lib test_native_tool_registration_names -j 1`.
+  - Zero clippy warnings: `cargo clippy -p openz -j 1`.
+  - Headless verification passing: `target/debug/openz run -y --output-format json -p "..."`.
+
+### v0.0.199
 - **Ideas**:
   - Comprehensive real-world headless evaluation and hardening of the Headroom & Context Compression Suite (`compress_context`, `retrieve_original`, `scope_context`, `count_tokens` / `analyze_tokens`, `cache_stats` / `inspect_cache`).
   - Resilient Scope Directory Hierarchy Traversal: Enhanced `ScopeContextTool` to gracefully resolve non-existent or planned file paths by walking upward to the nearest existing ancestor directory instead of aborting with canonicalization OS error 2.

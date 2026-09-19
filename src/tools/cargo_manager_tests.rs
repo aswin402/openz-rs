@@ -29,10 +29,22 @@ async fn test_cargo_manager() -> Result<()> {
         }))
         .await?;
 
-    let _ = std::fs::remove_dir_all(&project_dir);
-
     assert_eq!(res["status"], "success");
     assert!(res["diagnostics"].is_array());
 
+    // Test action: check with args
+    let res_check = tool
+        .call(&json!({
+            "action": "check",
+            "cwd": project_dir.to_string_lossy(),
+            "args": ["--quiet"],
+            "self_heal": "false"
+        }))
+        .await?;
+    assert_eq!(res_check["status"], "success");
+
+    let _ = std::fs::remove_dir_all(&project_dir);
+
     Ok(())
 }
+

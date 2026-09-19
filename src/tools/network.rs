@@ -20,31 +20,51 @@ impl Tool for CheckPortTool {
         json!({
             "type": "object",
             "properties": {
-                "port": { "type": "integer", "description": "The TCP port to inspect" },
+                "port": {
+                    "description": "The TCP port to inspect (integer or numeric string).",
+                    "oneOf": [
+                        { "type": "integer" },
+                        { "type": "string" }
+                    ]
+                },
                 "host": { "type": "string", "description": "The host or IP to check (defaults to '127.0.0.1')" },
                 "action": {
                     "type": "string",
                     "enum": ["check_free", "check_listening"],
-                    "description": "Whether to check if the port is free to bind (check_free) or active and listening (check_listening)."
+                    "description": "Whether to check if the port is free to bind (check_free) or active and listening (check_listening, default)."
                 }
             },
-            "required": ["port", "action"]
+            "required": ["port"]
         })
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let port = arguments
             .get("port")
-            .and_then(|v| v.as_u64())
+            .or_else(|| arguments.get("port_number"))
+            .and_then(|v| {
+                v.as_u64().or_else(|| {
+                    v.as_str().and_then(|s| s.trim().parse::<u64>().ok())
+                })
+            })
             .ok_or_else(|| anyhow!("Missing 'port' parameter"))?;
         let host = arguments
             .get("host")
+            .or_else(|| arguments.get("ip"))
+            .or_else(|| arguments.get("target"))
             .and_then(|v| v.as_str())
             .unwrap_or("127.0.0.1");
-        let action = arguments
+        let action_raw = arguments
             .get("action")
+            .or_else(|| arguments.get("command"))
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
+            .unwrap_or("check_listening");
+        let action_norm = action_raw.trim().to_lowercase();
+        let action = match action_norm.as_str() {
+            "check_listening" | "listen" | "listening" | "active" | "open" | "status" => "check_listening",
+            "check_free" | "free" | "available" | "bind" => "check_free",
+            _ => action_norm.as_str(),
+        };
 
         // Restrict to localhost to prevent internal network enumeration
         let allowed_hosts = ["127.0.0.1", "localhost", "::1", "[::1]"];

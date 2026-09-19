@@ -40,33 +40,57 @@ impl Tool for DbInspectorTool {
             "properties": {
                 "db_path": {
                     "type": "string",
-                    "description": "Path to the SQLite database file."
+                    "description": "Path to the SQLite database file (aliases: path, database, db, file)."
                 },
                 "action": {
                     "type": "string",
                     "enum": ["schema", "query"],
-                    "description": "The action to perform."
+                    "description": "The action to perform (defaults to 'query' if sql is provided, otherwise 'schema')."
                 },
                 "sql": {
                     "type": "string",
-                    "description": "The SELECT query to run (required for 'query')."
+                    "description": "The SELECT query to run (required for 'query' action, aliases: query, statement)."
                 }
             },
-            "required": ["db_path", "action"]
+            "required": ["db_path"]
         })
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let db_path_raw = arguments
             .get("db_path")
+            .or_else(|| arguments.get("path"))
+            .or_else(|| arguments.get("database"))
+            .or_else(|| arguments.get("db"))
+            .or_else(|| arguments.get("file"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'db_path' parameter"))?;
         let db_path = crate::config::loader::resolve_path(db_path_raw);
         crate::config::loader::verify_safe_path(&db_path)?;
-        let action = arguments
+
+        let sql_opt = arguments
+            .get("sql")
+            .or_else(|| arguments.get("query"))
+            .or_else(|| arguments.get("statement"))
+            .and_then(|v| v.as_str());
+
+        let action_raw = arguments
             .get("action")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
+            .or_else(|| arguments.get("command"))
+            .and_then(|v| v.as_str());
+        let action_norm = action_raw.map(|a| a.trim().to_lowercase());
+        let action = match action_norm.as_deref() {
+            Some("schema" | "tables" | "structure") => "schema",
+            Some("query" | "select" | "run" | "sql") => "query",
+            Some(other) => other,
+            None => {
+                if sql_opt.is_some() {
+                    "query"
+                } else {
+                    "schema"
+                }
+            }
+        };
 
         let conn =
             Connection::open(&db_path).map_err(|e| anyhow!("Failed to open database: {}", e))?;
@@ -86,9 +110,7 @@ impl Tool for DbInspectorTool {
                 (schema, "success")
             }
             "query" => {
-                let sql = arguments
-                    .get("sql")
-                    .and_then(|v| v.as_str())
+                let sql = sql_opt
                     .ok_or_else(|| anyhow!("Missing 'sql' parameter for query action"))?;
 
                 // Block dangerous SQL operations — use a strict blocklist
@@ -198,11 +220,11 @@ impl Tool for DbWriteTool {
             "properties": {
                 "db_path": {
                     "type": "string",
-                    "description": "Path to the SQLite database file."
+                    "description": "Path to the SQLite database file (aliases: path, database, db, file)."
                 },
                 "sql": {
                     "type": "string",
-                    "description": "The mutation query statement to execute."
+                    "description": "The mutation query statement to execute (aliases: query, statement, mutation)."
                 }
             },
             "required": ["db_path", "sql"]
@@ -212,12 +234,19 @@ impl Tool for DbWriteTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let db_path_raw = arguments
             .get("db_path")
+            .or_else(|| arguments.get("path"))
+            .or_else(|| arguments.get("database"))
+            .or_else(|| arguments.get("db"))
+            .or_else(|| arguments.get("file"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'db_path' parameter"))?;
         let db_path = crate::config::loader::resolve_path(db_path_raw);
         crate::config::loader::verify_safe_path(&db_path)?;
         let sql = arguments
             .get("sql")
+            .or_else(|| arguments.get("query"))
+            .or_else(|| arguments.get("statement"))
+            .or_else(|| arguments.get("mutation"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'sql' parameter"))?;
 

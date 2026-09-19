@@ -25,6 +25,55 @@ fn configured_git_token(
     })
 }
 
+pub fn parse_repo_from_git_url(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = if let Some(stripped) = trimmed.strip_prefix("git@") {
+        let parts: Vec<&str> = stripped.splitn(2, ':').collect();
+        if parts.len() == 2 {
+            parts[1]
+        } else {
+            return None;
+        }
+    } else if let Some(pos) = trimmed.find("://") {
+        let after_scheme = &trimmed[pos + 3..];
+        let parts: Vec<&str> = after_scheme.splitn(2, '/').collect();
+        if parts.len() == 2 {
+            parts[1]
+        } else {
+            return None;
+        }
+    } else {
+        trimmed
+    };
+
+    let repo_path = path.strip_suffix(".git").unwrap_or(path).trim_matches('/');
+    let parts: Vec<&str> = repo_path.split('/').collect();
+    if parts.len() >= 2 {
+        Some(format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1]))
+    } else {
+        None
+    }
+}
+
+pub fn detect_git_remote_repo(cwd: Option<&str>) -> Option<String> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["config", "--get", "remote.origin.url"]);
+    if let Some(c) = cwd {
+        cmd.current_dir(crate::config::loader::resolve_path(c));
+    } else {
+        crate::config::loader::set_command_cwd(&mut cmd);
+    }
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    parse_repo_from_git_url(&url)
+}
+
 pub struct GitProviderTool;
 
 #[async_trait::async_trait]
@@ -49,11 +98,11 @@ impl Tool for GitProviderTool {
                 "action": {
                     "type": "string",
                     "enum": ["create_pr", "list_issues", "search_code", "get_pr_diff"],
-                    "description": "The action to perform"
+                    "description": "The action to perform (aliases: pr, issues, search, diff)"
                 },
                 "repo": {
                     "type": "string",
-                    "description": "Repository path formatted as 'owner/repo' (e.g. 'tokio-rs/tokio')"
+                    "description": "Repository path formatted as 'owner/repo' (e.g. 'tokio-rs/tokio'). If omitted or 'auto', auto-detected from local git origin."
                 },
                 "title": {
                     "type": "string",
@@ -81,8 +130,11 @@ impl Tool for GitProviderTool {
                     "description": "Search query or term (required for search_code)"
                 },
                 "pr_number": {
-                    "type": "integer",
-                    "description": "Pull/Merge request number (required for get_pr_diff)"
+                    "description": "Pull/Merge request number (required for get_pr_diff, integer or string).",
+                    "oneOf": [
+                        { "type": "integer" },
+                        { "type": "string" }
+                    ]
                 },
                 "token": {
                     "type": "string",
@@ -93,7 +145,7 @@ impl Tool for GitProviderTool {
                     "description": "Custom API base URL (optional, e.g. for self-hosted instances)"
                 }
             },
-            "required": ["action", "repo"]
+            "required": ["action"]
         })
     }
 
@@ -102,14 +154,42 @@ impl Tool for GitProviderTool {
             .get("platform")
             .and_then(|p| p.as_str())
             .unwrap_or("github");
-        let action = arguments
+        let action_raw = arguments
             .get("action")
+            .or_else(|| arguments.get("command"))
+            .or_else(|| arguments.get("operation"))
             .and_then(|a| a.as_str())
             .ok_or_else(|| anyhow!("Missing action parameter"))?;
-        let repo = arguments
+        let action_norm = action_raw.trim().to_lowercase();
+        let action = match action_norm.as_str() {
+            "create_pr" | "pr" | "create_pull_request" | "pull_request" | "create_mr" => "create_pr",
+            "list_issues" | "issues" | "list_issue" => "list_issues",
+            "search_code" | "search" | "code_search" => "search_code",
+            "get_pr_diff" | "diff" | "pr_diff" | "mr_diff" => "get_pr_diff",
+            _ => action_norm.as_str(),
+        };
+
+        let cwd = arguments
+            .get("cwd")
+            .or_else(|| arguments.get("dir"))
+            .and_then(|v| v.as_str());
+        let repo_arg = arguments
             .get("repo")
+            .or_else(|| arguments.get("repository"))
             .and_then(|r| r.as_str())
-            .ok_or_else(|| anyhow!("Missing repo parameter"))?;
+            .map(|s| s.to_string());
+        let repo = if let Some(r) = repo_arg {
+            if r.trim().eq_ignore_ascii_case("auto") {
+                detect_git_remote_repo(cwd).ok_or_else(|| anyhow!("Missing repo parameter (could not auto-detect git origin)"))?
+            } else {
+                r
+            }
+        } else if let Some(detected) = detect_git_remote_repo(cwd) {
+            detected
+        } else {
+            return Err(anyhow!("Missing repo parameter"));
+        };
+        let repo = repo.as_str();
 
         let token_arg = arguments
             .get("token")
@@ -247,7 +327,13 @@ impl Tool for GitProviderTool {
                     "get_pr_diff" => {
                         let pr_number = arguments
                             .get("pr_number")
-                            .and_then(|n| n.as_i64())
+                            .or_else(|| arguments.get("number"))
+                            .or_else(|| arguments.get("pr"))
+                            .and_then(|n| {
+                                n.as_i64().or_else(|| {
+                                    n.as_str().and_then(|s| s.trim().parse::<i64>().ok())
+                                })
+                            })
                             .ok_or_else(|| anyhow!("Missing pr_number for get_pr_diff"))?;
                         let url = format!("{}/repos/{}/pulls/{}", api_base, repo, pr_number);
 
@@ -409,7 +495,13 @@ impl Tool for GitProviderTool {
                     "get_pr_diff" => {
                         let pr_number = arguments
                             .get("pr_number")
-                            .and_then(|n| n.as_i64())
+                            .or_else(|| arguments.get("number"))
+                            .or_else(|| arguments.get("pr"))
+                            .and_then(|n| {
+                                n.as_i64().or_else(|| {
+                                    n.as_str().and_then(|s| s.trim().parse::<i64>().ok())
+                                })
+                            })
                             .ok_or_else(|| anyhow!("Missing pr_number for get_pr_diff"))?;
                         let url = format!(
                             "{}/projects/{}/merge_requests/{}/diffs",
