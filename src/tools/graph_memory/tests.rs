@@ -288,3 +288,149 @@ async fn test_branch_commit_rollback() {
         .unwrap();
     assert_eq!(res2["entities"].as_array().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn test_graph_memory_aliases_and_resilience() {
+    let _l = test_lock().lock().await;
+    let scope_id = unique_scope("test_resilience");
+
+    // 1. Create entity with single object, entity_type (snake_case), and string observation
+    let res = CreateEntitiesTool
+        .call(&json!({
+            "name": "Alpha",
+            "entity_type": "Component",
+            "observation": "Initial observation",
+            "sessionId": scope_id
+        }))
+        .await
+        .unwrap();
+    assert_eq!(res["result"].as_array().unwrap().len(), 1);
+
+    // 2. Calling create_entities again with same entity merges new observations
+    let res_merge = CreateEntitiesTool
+        .call(&json!({
+            "entities": [{
+                "name": "Alpha",
+                "type": "CoreComponent",
+                "observations": ["Second observation"]
+            }],
+            "sessionId": scope_id
+        }))
+        .await
+        .unwrap();
+    let obs = res_merge["result"][0]["observations"].as_array().unwrap();
+    assert_eq!(obs.len(), 2);
+
+    // 3. Create second entity using 'node' alias
+    CreateEntitiesTool
+        .call(&json!({
+            "node": {
+                "entity_name": "Beta",
+                "category": "Service",
+                "notes": "Backend service"
+            },
+            "sessionId": scope_id
+        }))
+        .await
+        .unwrap();
+
+    // 4. Create relation using source/target and relation_type
+    let rel_res = CreateRelationsTool
+        .call(&json!({
+            "source": "Alpha",
+            "target": "Beta",
+            "relation_type": "calls",
+            "sessionId": scope_id
+        }))
+        .await
+        .unwrap();
+    assert_eq!(rel_res["result"].as_array().unwrap().len(), 1);
+
+    // 5. Add observation using top-level entity_name and single content string
+    let add_res = AddObservationsTool
+        .call(&json!({
+            "entity_name": "Alpha",
+            "content": "Third observation",
+            "sessionId": scope_id
+        }))
+        .await
+        .unwrap();
+    assert_eq!(add_res["result"][0]["addedObservations"].as_array().unwrap().len(), 1);
+
+    // 6. Add observation for non-existent node auto-creates it
+    let auto_node = AddObservationsTool
+        .call(&json!({
+            "entityName": "Gamma",
+            "contents": ["Auto-created node observation"],
+            "sessionId": scope_id
+        }))
+        .await
+        .unwrap();
+    assert_eq!(auto_node["result"][0]["entityName"], "Gamma");
+
+    // 7. Search nodes using 'q' alias
+    let srch = SearchNodesTool
+        .call(&json!({ "q": "Alpha", "sessionId": scope_id }))
+        .await
+        .unwrap();
+    assert!(!srch["entities"].as_array().unwrap().is_empty());
+
+    // 8. Open nodes with comma-separated string
+    let opened = OpenNodesTool
+        .call(&json!({ "names": "Alpha, Beta", "sessionId": scope_id }))
+        .await
+        .unwrap();
+    assert_eq!(opened["entities"].as_array().unwrap().len(), 2);
+    assert_eq!(opened["relations"].as_array().unwrap().len(), 1);
+
+    // 9. Delete observation using top-level deletion
+    DeleteObservationsTool
+        .call(&json!({
+            "entity_name": "Alpha",
+            "observation": "Initial observation",
+            "sessionId": scope_id
+        }))
+        .await
+        .unwrap();
+    let check_alpha = OpenNodesTool
+        .call(&json!({ "names": ["Alpha"], "sessionId": scope_id }))
+        .await
+        .unwrap();
+    let cur_obs = check_alpha["entities"][0]["observations"].as_array().unwrap();
+    assert_eq!(cur_obs.len(), 2); // 3 - 1 = 2
+
+    // 10. Delete relation with omitted relationType (removes all between Alpha and Beta)
+    DeleteRelationsTool
+        .call(&json!({
+            "source": "Alpha",
+            "target": "Beta",
+            "sessionId": scope_id
+        }))
+        .await
+        .unwrap();
+    let check_rels = ReadGraphTool
+        .call(&json!({ "sessionId": scope_id }))
+        .await
+        .unwrap();
+    assert!(check_rels["relations"].as_array().unwrap().is_empty());
+
+    // 11. Delete entities using comma-separated string
+    DeleteEntitiesTool
+        .call(&json!({
+            "entity_names": "Alpha, Beta, Gamma",
+            "sessionId": scope_id
+        }))
+        .await
+        .unwrap();
+    let final_graph = ReadGraphTool
+        .call(&json!({ "sessionId": scope_id }))
+        .await
+        .unwrap();
+    assert!(final_graph["entities"].as_array().unwrap().is_empty());
+
+    // 12. Create database branch with fallback generated branchId
+    let branch_res = CreateDatabaseBranchTool.call(&json!({})).await.unwrap();
+    assert!(branch_res["status"].as_str().unwrap().contains("Created branch"));
+    RollbackDatabaseBranchTool.call(&json!({})).await.unwrap();
+}
+

@@ -1,4 +1,47 @@
-### v0.0.197 (Latest Release)
+### v0.0.198 (Latest Release)
+- **Ideas**:
+  - Comprehensive headless subagent validation across the Knowledge Graph & Memory Suite (`create_entities`, `create_relations`, `add_observations`, `read_graph`, `search_nodes`, `open_nodes`, `delete_entities`, `delete_observations`, `delete_relations`, `create_database_branch`, `commit_database_branch`, `rollback_database_branch`, `store_memory`, `recall_memory`, `update_memory`, `delete_memory`, `clear_memory`).
+  - Graph Entity Observation Merging: Enhanced `create_entities` so that when invoked for an entity that already exists in the graph, it merges new observations into the existing entity instead of silently dropping them.
+  - Auto-Creation in Observation Injection: Enhanced `add_observations` to automatically provision a new graph entity with type `Entity` if the target entity does not yet exist, preventing brittle execution aborts.
+  - Flexible Argument Extraction and Normalization across Knowledge Graph and Cognitive Memory tools:
+    - `create_entities`: Supported single entity objects, top-level argument fallback, `entity_type`/`type`/`kind` aliases, and comma-separated/single string observations.
+    - `create_relations`: Supported single relation objects, top-level argument fallback, `source`/`target`, and `relation_type`/`type`/`relation` aliases.
+    - `add_observations`: Supported top-level entity names, single observation strings, and `content`/`notes` aliases.
+    - `delete_entities`: Supported array and comma-separated string names, and `entity_names`/`names`/`entities` aliases.
+    - `delete_observations`: Supported top-level entity/observation pairs and single observation strings.
+    - `delete_relations`: Supported top-level relation fallback and omitting `relation_type` to delete all relations between two nodes.
+    - `search_nodes`: Supported `q`, `search`, `term`, and `pattern` aliases.
+    - `open_nodes`: Supported comma-separated strings, single string names, and resolved parameter index binding in SQL queries.
+    - `create_database_branch`: Supported `branch_id`/`name` aliases and auto-generated fallback branch identifiers.
+    - `store_memory`: Supported `content`/`fact`/`data` aliases, comma-separated string tags, and string-to-float coercion for `importance` and `decay_rate`.
+    - `recall_memory`: Supported `q`/`search` aliases, string `top_k` coercion, comma-separated string tags, and case-insensitive scope parsing.
+    - `update_memory`, `delete_memory`, `clear_memory`: Supported `memory_id` and content aliases.
+- **Inspirations**:
+  - Headless subagent evaluation findings across 3 real-world multi-step scenarios.
+  - Robustness Principle (Postel's Law): Be liberal in what you accept from LLMs.
+  - Knowledge graph deduplication and progressive memory enrichment patterns.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/graph_memory/graph.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/graph_memory/graph.rs): Extraction helpers, entity observation merging, relation/observation aliases, and parameter index normalization.
+    - [`src/tools/graph_memory/branch.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/graph_memory/branch.rs): `CreateDatabaseBranchTool` aliases and default branch ID generation.
+    - [`src/tools/shared_memory/cognitive.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/cognitive.rs): Extraction helpers, float/usize coercion, and memory parameter aliases across `store_memory`, `recall_memory`, `update_memory`, `delete_memory`, and `clear_memory`.
+  - Test Modules:
+    - [`src/tools/graph_memory/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/graph_memory/tests.rs): `test_graph_memory_aliases_and_resilience`.
+    - [`src/tools/shared_memory/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/tests.rs): `test_cognitive_memory_aliases_and_coercion`.
+- **Details & Metrics**:
+  - Headless subagent validation completed across 3 distinct real-world execution scenarios:
+    - Scenario A (Entities, Relations, Search, Open, Read): 24.1s execution time, 0 errors, created entities and relations, resolved graph search.
+    - Scenario B (Entity Creation, Add/Delete Observations, Delete Entities): 12.5s execution time, 0 errors, verified 4-step lifecycle.
+    - Scenario C (Cognitive Memory Store, Semantic Recall, Update, Verification): 16.9s execution time, 0 errors, ONNX FastEmbed embedding pipeline verified.
+  - 100% backward compatibility maintained.
+- **Verification**:
+  - 11 graph memory tests passing (`cargo test -p openz --lib tools::graph_memory -j 1`).
+  - Shared memory tests passing (`cargo test -p openz --lib test_cognitive_memory_aliases_and_coercion -j 1`).
+  - Exact 260 registered native tools invariant verified (`cargo test -p openz --lib test_native_tool_registration_names -j 1`).
+  - Version synchronization verified (`cargo test -p openz --lib version_sync_tests -j 1`).
+  - 0 clippy warnings (`cargo clippy -p openz -j 1`).
+
+### v0.0.197
 - **Ideas**:
   - Comprehensive headless subagent validation of the Filesystem & Search Suite (`read_file`, `write_file`, `patch_file`, `replace_lines`, `list_dir`, `find_files`, `grep_search`, `ast_grep`, `code_outline`).
   - Path Resolution & Tilde Normalization: Integrated `crate::config::resolve_path()` into `code_outline` to resolve non-canonical relative paths and tilde (`~/...`) path prefixes seamlessly.

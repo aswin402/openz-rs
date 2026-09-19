@@ -45,9 +45,15 @@ impl Tool for CreateDatabaseBranchTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let branch_id = arguments
             .get("branchId")
+            .or_else(|| arguments.get("branch_id"))
+            .or_else(|| arguments.get("branch"))
+            .or_else(|| arguments.get("name"))
+            .or_else(|| arguments.get("id"))
             .and_then(|value| value.as_str())
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| anyhow!("Missing 'branchId'"))?;
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]));
 
         // Lock static db connection first
         let db_mutex = db_mutex()?;
@@ -64,7 +70,7 @@ impl Tool for CreateDatabaseBranchTool {
         }
 
         let src = get_db_path();
-        let dst = branch_db_path(branch_id);
+        let dst = branch_db_path(&branch_id);
 
         // Flush WAL before copying
         let _ = db_guard.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");

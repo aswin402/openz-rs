@@ -330,3 +330,83 @@ fn test_chunk_content_by_headings() {
     assert_eq!(chunks[2].0, "my query - --- Sheet: Sheet1 ---");
     assert!(chunks[2].1.contains("Line 4"));
 }
+
+#[tokio::test]
+async fn test_cognitive_memory_aliases_and_coercion() -> Result<()> {
+    let _lock = TestLock::acquire();
+    let temp_dir = std::env::temp_dir().join(format!("openz_cog_alias_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+    std::env::set_var("OPENZ_CONFIG_DIR", &temp_dir);
+
+    let store_tool = StoreMemoryTool;
+    let recall_tool = RecallMemoryTool;
+    let update_tool = UpdateMemoryTool;
+    let delete_tool = DeleteMemoryTool;
+    let clear_tool = ClearMemoryTool;
+
+    // Clear all
+    let _ = clear_tool.call(&json!({ "scope": "all" })).await?;
+
+    // 1. Store with 'content', comma-separated tags string, and string importance
+    let store_res = store_tool
+        .call(&json!({
+            "content": "Async closures in Rust allow capturing by reference across awaits.",
+            "tags": "rust, async, closure",
+            "importance": "0.92"
+        }))
+        .await?;
+    assert_eq!(store_res["status"], "success");
+
+    // 2. Recall with 'q' alias, string 'top_k', and comma-separated tags
+    let recall_res = recall_tool
+        .call(&json!({
+            "q": "capturing by reference in async closures",
+            "top_k": "2",
+            "tags": "async, closure",
+            "scope": "global"
+        }))
+        .await?;
+    assert_eq!(recall_res["status"], "success");
+    let matches = recall_res["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 1);
+    let mem_id = matches[0]["id"].as_str().unwrap();
+
+    // 3. Update with 'memory_id', 'fact' alias, and string importance
+    let update_res = update_tool
+        .call(&json!({
+            "memory_id": mem_id,
+            "fact": "Async closures in Rust 2024 allow capturing by reference across awaits safely.",
+            "importance": "0.98"
+        }))
+        .await?;
+    assert_eq!(update_res["status"], "success");
+
+    // 4. Verify updated text via recall
+    let verify_res = recall_tool
+        .call(&json!({
+            "query": "Rust 2024 async closures",
+            "scope": "global"
+        }))
+        .await?;
+    let updated_text = verify_res["matches"][0]["text"].as_str().unwrap();
+    assert!(updated_text.contains("Rust 2024"));
+
+    // 5. Delete with 'memory_id'
+    let del_res = delete_tool.call(&json!({ "memory_id": mem_id })).await?;
+    assert_eq!(del_res["status"], "success");
+
+    // 6. Confirm deleted
+    let empty_res = recall_tool
+        .call(&json!({
+            "query": "Rust 2024 async closures",
+            "scope": "global"
+        }))
+        .await?;
+    assert_eq!(empty_res["matches"].as_array().unwrap().len(), 0);
+
+    // Cleanup
+    std::env::remove_var("OPENZ_CONFIG_DIR");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+

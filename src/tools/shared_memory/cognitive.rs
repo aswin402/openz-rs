@@ -58,6 +58,111 @@ pub fn prune_decayed_memories(conn: &Connection) -> Result<usize> {
     Ok(count)
 }
 
+// ─── Extraction Helpers ─────────────────────────────────────────
+
+fn extract_string_field(val: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(v) = val.get(*key) {
+            if let Some(s) = v.as_str() {
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            } else if v.is_number() || v.is_boolean() {
+                let s = v.to_string();
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_string_list_field(val: &Value, keys: &[&str]) -> Vec<String> {
+    for key in keys {
+        if let Some(v) = val.get(*key) {
+            if let Some(arr) = v.as_array() {
+                let list: Vec<String> = arr
+                    .iter()
+                    .filter_map(|item| {
+                        if let Some(s) = item.as_str() {
+                            let trimmed = s.trim();
+                            if !trimmed.is_empty() {
+                                Some(trimmed.to_string())
+                            } else {
+                                None
+                            }
+                        } else if item.is_number() || item.is_boolean() {
+                            Some(item.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if !list.is_empty() {
+                    return list;
+                }
+            } else if let Some(s) = v.as_str() {
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    if trimmed.contains(',') {
+                        return trimmed
+                            .split(',')
+                            .map(|part| part.trim().to_string())
+                            .filter(|p| !p.is_empty())
+                            .collect();
+                    } else {
+                        return vec![trimmed.to_string()];
+                    }
+                }
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn extract_f32_arg(val: &Value, keys: &[&str]) -> Option<f32> {
+    for key in keys {
+        if let Some(v) = val.get(*key) {
+            if let Some(f) = v.as_f64() {
+                return Some(f as f32);
+            }
+            if let Some(i) = v.as_i64() {
+                return Some(i as f32);
+            }
+            if let Some(s) = v.as_str() {
+                if let Ok(f) = s.trim().parse::<f32>() {
+                    return Some(f);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_usize_arg(val: &Value, keys: &[&str]) -> Option<usize> {
+    for key in keys {
+        if let Some(v) = val.get(*key) {
+            if let Some(u) = v.as_u64() {
+                return Some(u as usize);
+            }
+            if let Some(i) = v.as_i64() {
+                if i >= 0 {
+                    return Some(i as usize);
+                }
+            }
+            if let Some(s) = v.as_str() {
+                if let Ok(u) = s.trim().parse::<usize>() {
+                    return Some(u);
+                }
+            }
+        }
+    }
+    None
+}
+
 // 1. StoreMemoryTool
 pub struct StoreMemoryTool;
 
@@ -77,22 +182,22 @@ impl Tool for StoreMemoryTool {
             "properties": {
                 "text": {
                     "type": "string",
-                    "description": "The description of the fact, key solution, API usage, or decision to remember."
+                    "description": "The description of the fact, key solution, API usage, or decision to remember (aliases: content, memory, fact)."
                 },
                 "tags": {
                     "type": "array",
                     "items": {
                         "type": "string"
                     },
-                    "description": "Optional category tags (e.g. ['auth', 'cargo', 'setup', 'sqlite'])."
+                    "description": "Optional category tags or comma-separated string (e.g. ['auth', 'cargo'] or 'auth, cargo')."
                 },
                 "importance": {
                     "type": "number",
-                    "description": "Optional importance score from 0.0 (low) to 1.0 (high) (default 0.8)."
+                    "description": "Optional importance score from 0.0 (low) to 1.0 (high) (default 0.8, aliases: priority, weight, score)."
                 },
                 "decay_rate": {
                     "type": "number",
-                    "description": "Optional decay rate for time-based forgetting (default 0.05)."
+                    "description": "Optional decay rate for time-based forgetting (default 0.05, alias: decayRate)."
                 }
             },
             "required": ["text"]
@@ -100,29 +205,25 @@ impl Tool for StoreMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let text = arguments
-            .get("text")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'text' parameter"))?;
+        let text = extract_string_field(
+            arguments,
+            &["text", "content", "memory", "fact", "data", "body", "value"],
+        )
+        .ok_or_else(|| anyhow!("Missing 'text' parameter"))?;
 
-        let tags = if let Some(arr) = arguments.get("tags").and_then(|v| v.as_array()) {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let tags = extract_string_list_field(
+            arguments,
+            &["tags", "tag", "categories", "category"],
+        );
 
-        let importance = arguments
-            .get("importance")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.8) as f32;
-        let decay_rate = arguments
-            .get("decay_rate")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.05) as f32;
+        let importance = extract_f32_arg(arguments, &["importance", "priority", "weight", "score"])
+            .unwrap_or(0.8)
+            .clamp(0.0, 1.0);
+        let decay_rate = extract_f32_arg(arguments, &["decay_rate", "decayRate", "decay"])
+            .unwrap_or(0.05)
+            .clamp(0.0, 1.0);
 
-        let embedding = get_embedding(text, false).await?;
+        let embedding = get_embedding(&text, false).await?;
         let workspace = get_current_workspace();
         let timestamp = chrono::Utc::now().to_rfc3339();
         let id = uuid::Uuid::new_v4().to_string();
@@ -170,11 +271,11 @@ impl Tool for RecallMemoryTool {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The query to search for in memory (e.g. 'cargo check workflow issue')."
+                    "description": "The query to search for in memory (e.g. 'cargo check workflow issue', aliases: q, search, term)."
                 },
                 "top_k": {
                     "type": "integer",
-                    "description": "Optional number of top matches to return (default 5)."
+                    "description": "Optional number of top matches to return (default 5, aliases: topK, limit, count)."
                 },
                 "scope": {
                     "type": "string",
@@ -186,7 +287,7 @@ impl Tool for RecallMemoryTool {
                     "items": {
                         "type": "string"
                     },
-                    "description": "Optional list of tags to filter by. Matches entries containing at least one tag."
+                    "description": "Optional list of tags (or comma-separated string) to filter by. Matches entries containing at least one tag."
                 }
             },
             "required": ["query"]
@@ -194,27 +295,28 @@ impl Tool for RecallMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments
-            .get("query")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
+        let query = extract_string_field(
+            arguments,
+            &["query", "q", "search", "text", "prompt", "term", "filter"],
+        )
+        .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
 
-        let top_k = arguments.get("top_k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
-        let scope = arguments
-            .get("scope")
-            .and_then(|v| v.as_str())
-            .unwrap_or("workspace");
+        let top_k = extract_usize_arg(arguments, &["top_k", "topK", "limit", "count", "n"])
+            .unwrap_or(5);
+        let raw_scope = extract_string_field(arguments, &["scope", "domain", "workspace_scope"])
+            .unwrap_or_else(|| "workspace".to_string());
+        let scope = if raw_scope.eq_ignore_ascii_case("global") || raw_scope.eq_ignore_ascii_case("all") {
+            "global"
+        } else {
+            "workspace"
+        };
 
-        let filter_tags: Vec<String> =
-            if let Some(arr) = arguments.get("tags").and_then(|v| v.as_array()) {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            } else {
-                Vec::new()
-            };
+        let filter_tags: Vec<String> = extract_string_list_field(
+            arguments,
+            &["tags", "tag", "category", "categories"],
+        );
 
-        let query_embed = get_embedding(query, true).await?;
+        let query_embed = get_embedding(&query, true).await?;
         let current_ws = get_current_workspace();
 
         let _lock = get_db_mutex().lock().await;
@@ -348,10 +450,15 @@ impl Tool for ClearMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let scope = arguments
-            .get("scope")
-            .and_then(|v| v.as_str())
-            .unwrap_or("workspace");
+        let raw_scope = extract_string_field(arguments, &["scope", "target", "mode", "domain"])
+            .unwrap_or_else(|| "workspace".to_string());
+        let scope = if raw_scope.eq_ignore_ascii_case("all") || raw_scope.eq_ignore_ascii_case("global") {
+            "all"
+        } else if raw_scope.eq_ignore_ascii_case("prune") || raw_scope.eq_ignore_ascii_case("decayed") {
+            "prune"
+        } else {
+            "workspace"
+        };
 
         let _lock = get_db_mutex().lock().await;
         with_db(|conn| {
@@ -401,7 +508,7 @@ impl Tool for DeleteMemoryTool {
             "properties": {
                 "id": {
                     "type": "string",
-                    "description": "The ID of the memory to delete (returned by recall_memory)."
+                    "description": "The ID of the memory to delete (aliases: memory_id, memoryId, key)."
                 }
             },
             "required": ["id"]
@@ -409,9 +516,7 @@ impl Tool for DeleteMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let id = arguments
-            .get("id")
-            .and_then(|v| v.as_str())
+        let id = extract_string_field(arguments, &["id", "memory_id", "memoryId", "key"])
             .ok_or_else(|| anyhow!("Missing 'id' parameter"))?;
 
         let _lock = get_db_mutex().lock().await;
@@ -453,15 +558,15 @@ impl Tool for UpdateMemoryTool {
             "properties": {
                 "id": {
                     "type": "string",
-                    "description": "The ID of the memory to update (returned by recall_memory)."
+                    "description": "The ID of the memory to update (aliases: memory_id, memoryId, key)."
                 },
                 "text": {
                     "type": "string",
-                    "description": "The new text content for the memory."
+                    "description": "The new text content for the memory (aliases: content, memory, fact)."
                 },
                 "importance": {
                     "type": "number",
-                    "description": "Optional new importance score (0.0 to 1.0)."
+                    "description": "Optional new importance score (0.0 to 1.0, aliases: priority, weight, score)."
                 }
             },
             "required": ["id", "text"]
@@ -469,20 +574,17 @@ impl Tool for UpdateMemoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let id = arguments
-            .get("id")
-            .and_then(|v| v.as_str())
+        let id = extract_string_field(arguments, &["id", "memory_id", "memoryId", "key"])
             .ok_or_else(|| anyhow!("Missing 'id' parameter"))?;
-        let text = arguments
-            .get("text")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'text' parameter"))?;
-        let importance = arguments
-            .get("importance")
-            .and_then(|v| v.as_f64())
-            .map(|v| v as f32);
+        let text = extract_string_field(
+            arguments,
+            &["text", "content", "memory", "fact", "body", "value"],
+        )
+        .ok_or_else(|| anyhow!("Missing 'text' parameter"))?;
+        let importance = extract_f32_arg(arguments, &["importance", "priority", "weight", "score"])
+            .map(|v| v.clamp(0.0, 1.0));
 
-        let new_embedding = get_embedding(text, false).await?;
+        let new_embedding = get_embedding(&text, false).await?;
         let embedding_json = serde_json::to_string(&new_embedding)?;
 
         let _lock = get_db_mutex().lock().await;
