@@ -65,8 +65,8 @@ impl SequentialThinkingEngine {
 
     pub(crate) fn process_thought(&mut self, mut input: ThoughtData) -> Result<ToolResult, String> {
         let session_id = match input.session_id.as_ref() {
-            Some(id) => id.clone(),
-            None => {
+            Some(id) if !id.trim().is_empty() => id.clone(),
+            _ => {
                 let generated = uuid::Uuid::new_v4().to_string();
                 input.session_id = Some(generated.clone());
                 generated
@@ -116,6 +116,299 @@ impl SequentialThinkingEngine {
     }
 }
 
+// ─── Input Normalization Helpers ─────────────────────────────────
+
+fn get_string_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<String> {
+    for &k in aliases {
+        if let Some(v) = map.get(k) {
+            if let Some(s) = v.as_str() {
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            } else if v.is_number() || v.is_boolean() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn get_usize_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<usize> {
+    for &k in aliases {
+        if let Some(v) = map.get(k) {
+            if let Some(n) = v.as_u64() {
+                return Some(n as usize);
+            } else if let Some(n) = v.as_i64() {
+                if n >= 0 {
+                    return Some(n as usize);
+                }
+            } else if let Some(s) = v.as_str() {
+                if let Ok(n) = s.trim().parse::<usize>() {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn get_f64_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<f64> {
+    for &k in aliases {
+        if let Some(v) = map.get(k) {
+            if let Some(f) = v.as_f64() {
+                return Some(f);
+            } else if let Some(s) = v.as_str() {
+                if let Ok(f) = s.trim().parse::<f64>() {
+                    return Some(f);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn get_bool_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<bool> {
+    for &k in aliases {
+        if let Some(v) = map.get(k) {
+            if let Some(b) = v.as_bool() {
+                return Some(b);
+            } else if let Some(s) = v.as_str() {
+                match s.trim().to_lowercase().as_str() {
+                    "true" | "1" | "yes" | "y" => return Some(true),
+                    "false" | "0" | "no" | "n" => return Some(false),
+                    _ => {}
+                }
+            } else if let Some(n) = v.as_i64() {
+                return Some(n != 0);
+            }
+        }
+    }
+    None
+}
+
+fn get_string_vec_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<Vec<String>> {
+    for &k in aliases {
+        if let Some(v) = map.get(k) {
+            if let Some(arr) = v.as_array() {
+                let items: Vec<String> = arr
+                    .iter()
+                    .filter_map(|item| {
+                        if let Some(s) = item.as_str() {
+                            let trimmed = s.trim();
+                            if !trimmed.is_empty() {
+                                Some(trimmed.to_string())
+                            } else {
+                                None
+                            }
+                        } else if item.is_number() || item.is_boolean() {
+                            Some(item.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if !items.is_empty() {
+                    return Some(items);
+                }
+            } else if let Some(s) = v.as_str() {
+                let trimmed = s.trim();
+                if !trimmed.is_empty() {
+                    return Some(vec![trimmed.to_string()]);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn get_usize_vec_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<Vec<usize>> {
+    for &k in aliases {
+        if let Some(v) = map.get(k) {
+            if let Some(arr) = v.as_array() {
+                let items: Vec<usize> = arr
+                    .iter()
+                    .filter_map(|item| {
+                        if let Some(n) = item.as_u64() {
+                            Some(n as usize)
+                        } else if let Some(s) = item.as_str() {
+                            s.trim().parse::<usize>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if !items.is_empty() {
+                    return Some(items);
+                }
+            } else if let Some(n) = v.as_u64() {
+                return Some(vec![n as usize]);
+            } else if let Some(s) = v.as_str() {
+                if let Ok(n) = s.trim().parse::<usize>() {
+                    return Some(vec![n]);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn parse_thought_data(arguments: &Value, current_len: usize) -> Result<ThoughtData> {
+    match arguments {
+        Value::String(s) => {
+            let thought = s.trim().to_string();
+            if thought.is_empty() {
+                return Err(anyhow!("Missing 'thought' parameter"));
+            }
+            let thought_number = current_len + 1;
+            let total_thoughts = std::cmp::max(thought_number + 2, 3);
+            let next_thought_needed = thought_number < total_thoughts;
+            Ok(ThoughtData {
+                thought,
+                thought_number,
+                total_thoughts,
+                next_thought_needed,
+                is_revision: None,
+                revises_thought: None,
+                branch_from_thought: None,
+                branch_id: None,
+                needs_more_thoughts: None,
+                parent_thoughts: None,
+                assumptions: None,
+                verified_assumptions: None,
+                confidence_score: None,
+                criticism: None,
+                hypothesis: None,
+                verification_method: None,
+                left_to_be_done: None,
+                timestamp: None,
+                session_id: None,
+            })
+        }
+        Value::Object(map) => {
+            let thought = get_string_field(
+                map,
+                &[
+                    "thought",
+                    "content",
+                    "text",
+                    "step",
+                    "thinking",
+                    "message",
+                    "description",
+                ],
+            )
+            .ok_or_else(|| anyhow!("Missing 'thought' parameter"))?;
+
+            let thought_number = get_usize_field(
+                map,
+                &[
+                    "thoughtNumber",
+                    "thought_number",
+                    "thought_num",
+                    "number",
+                    "step_number",
+                    "stepNumber",
+                ],
+            )
+            .filter(|&n| n > 0)
+            .unwrap_or(current_len + 1);
+
+            let total_thoughts = get_usize_field(
+                map,
+                &[
+                    "totalThoughts",
+                    "total_thoughts",
+                    "estimated_thoughts",
+                    "total_steps",
+                    "totalSteps",
+                ],
+            )
+            .filter(|&n| n > 0)
+            .unwrap_or_else(|| std::cmp::max(thought_number + 2, 3));
+
+            let next_thought_needed = get_bool_field(
+                map,
+                &[
+                    "nextThoughtNeeded",
+                    "next_thought_needed",
+                    "next_thought",
+                    "nextThought",
+                    "more_thoughts",
+                ],
+            )
+            .unwrap_or(thought_number < total_thoughts);
+
+            let is_revision = get_bool_field(map, &["isRevision", "is_revision", "revision"]);
+            let revises_thought =
+                get_usize_field(map, &["revisesThought", "revises_thought", "revises"]);
+            let branch_from_thought = get_usize_field(
+                map,
+                &[
+                    "branchFromThought",
+                    "branch_from_thought",
+                    "branch_from",
+                    "branchFrom",
+                ],
+            );
+            let branch_id = get_string_field(map, &["branchId", "branch_id", "branch"]);
+            let needs_more_thoughts =
+                get_bool_field(map, &["needsMoreThoughts", "needs_more_thoughts"]);
+            let parent_thoughts =
+                get_usize_vec_field(map, &["parentThoughts", "parent_thoughts", "parents"]);
+            let assumptions = get_string_vec_field(map, &["assumptions"]);
+            let verified_assumptions = get_string_vec_field(
+                map,
+                &["verifiedAssumptions", "verified_assumptions", "verified"],
+            );
+            let confidence_score = get_f64_field(
+                map,
+                &["confidenceScore", "confidence_score", "confidence", "score"],
+            );
+            let criticism =
+                get_string_field(map, &["criticism", "self_criticism", "critique"]);
+            let hypothesis = get_string_field(map, &["hypothesis"]);
+            let verification_method = get_string_field(
+                map,
+                &[
+                    "verificationMethod",
+                    "verification_method",
+                    "verification",
+                ],
+            );
+            let left_to_be_done = get_string_vec_field(
+                map,
+                &["leftToBeDone", "left_to_be_done", "todo", "todos", "open_todos"],
+            );
+            let session_id =
+                get_string_field(map, &["sessionId", "session_id", "session", "id"]);
+
+            Ok(ThoughtData {
+                thought,
+                thought_number,
+                total_thoughts,
+                next_thought_needed,
+                is_revision,
+                revises_thought,
+                branch_from_thought,
+                branch_id,
+                needs_more_thoughts,
+                parent_thoughts,
+                assumptions,
+                verified_assumptions,
+                confidence_score,
+                criticism,
+                hypothesis,
+                verification_method,
+                left_to_be_done,
+                timestamp: None,
+                session_id,
+            })
+        }
+        _ => Err(anyhow!("Invalid arguments: expected object or string")),
+    }
+}
+
 // ─── Tool 1: SequentialThinkingTool ──────────────────────────────
 
 pub struct SequentialThinkingTool;
@@ -158,11 +451,21 @@ impl Tool for SequentialThinkingTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let thought_data: ThoughtData = serde_json::from_value(arguments.clone())
-            .map_err(|e| anyhow!("Invalid arguments: {}", e))?;
-
         let engine = get_engine();
         let mut guard = engine.lock().await;
+
+        if let Value::Object(map) = arguments {
+            if let Some(sid) = get_string_field(map, &["sessionId", "session_id", "session", "id"]) {
+                let _ = guard.load_session(&sid);
+            }
+        }
+
+        let current_len = guard.thought_history.len();
+        let mut thought_data = parse_thought_data(arguments, current_len)?;
+        if thought_data.session_id.is_none() && !guard.current_session_id.is_empty() {
+            thought_data.session_id = Some(guard.current_session_id.clone());
+        }
+
         let result = guard
             .process_thought(thought_data)
             .map_err(|e| anyhow!("{}", e))?;
@@ -204,24 +507,71 @@ impl Tool for AnalyzeGraphTool {
         let engine = get_engine();
         let mut guard = engine.lock().await;
 
-        let session_id = arguments["sessionId"]
-            .as_str()
-            .map(String::from)
-            .unwrap_or_else(|| guard.current_session_id.clone());
-        if session_id.is_empty() {
-            return Err(anyhow!("No active session and no sessionId provided"));
-        }
-        guard
-            .load_session(&session_id)
-            .map_err(|e| anyhow!("{}", e))?;
+        let (query_arg, session_id_arg, threshold_arg) = match arguments {
+            Value::String(s) => (Some(s.trim().to_string()), None, None),
+            Value::Object(map) => {
+                let q = get_string_field(map, &["query", "type", "mode", "action", "analysis"]);
+                let sid = get_string_field(map, &["sessionId", "session_id", "session", "id"]);
+                let th = get_f64_field(
+                    map,
+                    &[
+                        "confidenceThreshold",
+                        "confidence_threshold",
+                        "threshold",
+                        "confidence",
+                    ],
+                );
+                (q, sid, th)
+            }
+            _ => (None, None, None),
+        };
 
-        let query = arguments["query"]
-            .as_str()
-            .ok_or_else(|| anyhow!("Missing query parameter"))?;
+        let session_id = session_id_arg
+            .or_else(|| {
+                if !guard.current_session_id.is_empty() {
+                    Some(guard.current_session_id.clone())
+                } else {
+                    guard
+                        .store
+                        .list_sessions()
+                        .ok()
+                        .and_then(|list| list.into_iter().next().map(|s| s.id))
+                }
+            });
+
+        let session_id = match session_id {
+            Some(id) if !id.trim().is_empty() => id,
+            _ => {
+                return Ok(json!({
+                    "status": "no_session",
+                    "message": "No active thinking session found. Create thoughts using sequentialthinking first."
+                }));
+            }
+        };
+
+        if let Err(e) = guard.load_session(&session_id) {
+            return Ok(json!({
+                "status": "not_found",
+                "sessionId": session_id,
+                "error": format!("Session not found: {}", e)
+            }));
+        }
+
+        let raw_query = query_arg.unwrap_or_else(|| "summary_stats".to_string());
+        let normalized = raw_query.trim().to_lowercase().replace('-', "_");
+        let query = match normalized.as_str() {
+            "low_confidence" | "low" | "confidence" => "low_confidence",
+            "contradictions" | "contradiction" | "conflicts" => "contradictions",
+            "unverified_assumptions" | "unverified" | "assumptions" => "unverified_assumptions",
+            "dead_branches" | "dead" | "dead_branch" => "dead_branches",
+            "summary_stats" | "summary" | "stats" => "summary_stats",
+            "quality_report" | "quality" | "report" => "quality_report",
+            _ => "summary_stats",
+        };
 
         match query {
             "low_confidence" => {
-                let threshold = arguments["confidenceThreshold"].as_f64().unwrap_or(0.5);
+                let threshold = threshold_arg.unwrap_or(0.5);
                 let low: Vec<ThoughtData> = guard
                     .thought_history
                     .iter()
@@ -393,20 +743,66 @@ impl Tool for ExportSessionTool {
         let engine = get_engine();
         let mut guard = engine.lock().await;
 
-        let session_id = arguments["sessionId"]
-            .as_str()
-            .map(String::from)
-            .unwrap_or_else(|| guard.current_session_id.clone());
-        if session_id.is_empty() {
-            return Err(anyhow!("No active session and no sessionId provided"));
-        }
-        guard
-            .load_session(&session_id)
-            .map_err(|e| anyhow!("{}", e))?;
+        let (format_arg, session_id_arg) = match arguments {
+            Value::String(s) => {
+                let lower = s.trim().to_lowercase();
+                if matches!(
+                    lower.as_str(),
+                    "mermaid" | "json" | "markdown" | "md" | "dot" | "graph"
+                ) {
+                    (Some(lower), None)
+                } else {
+                    (None, Some(s.trim().to_string()))
+                }
+            }
+            Value::Object(map) => {
+                let fmt = get_string_field(map, &["format", "type", "export_format", "as"]);
+                let sid = get_string_field(map, &["sessionId", "session_id", "session", "id"]);
+                (fmt, sid)
+            }
+            _ => (None, None),
+        };
 
-        let format = arguments["format"]
-            .as_str()
-            .ok_or_else(|| anyhow!("Missing format parameter"))?;
+        let session_id = session_id_arg
+            .or_else(|| {
+                if !guard.current_session_id.is_empty() {
+                    Some(guard.current_session_id.clone())
+                } else {
+                    guard
+                        .store
+                        .list_sessions()
+                        .ok()
+                        .and_then(|list| list.into_iter().next().map(|s| s.id))
+                }
+            });
+
+        let session_id = match session_id {
+            Some(id) if !id.trim().is_empty() => id,
+            _ => {
+                return Ok(json!({
+                    "status": "no_session",
+                    "message": "No thinking sessions found to export. Create thoughts using sequentialthinking first."
+                }));
+            }
+        };
+
+        if let Err(e) = guard.load_session(&session_id) {
+            return Ok(json!({
+                "status": "not_found",
+                "sessionId": session_id,
+                "error": format!("Session not found: {}", e)
+            }));
+        }
+
+        let raw_format = format_arg.unwrap_or_else(|| "markdown".to_string());
+        let normalized = raw_format.trim().to_lowercase().replace('-', "_");
+        let format = match normalized.as_str() {
+            "mermaid" | "graph" => "mermaid",
+            "json" => "json",
+            "markdown" | "md" | "text" => "markdown",
+            "dot" | "graphviz" => "dot",
+            _ => "markdown",
+        };
 
         match format {
             "mermaid" => {
@@ -577,16 +973,44 @@ impl Tool for SummarizeReasoningTool {
         let engine = get_engine();
         let mut guard = engine.lock().await;
 
-        let session_id = arguments["sessionId"]
-            .as_str()
-            .map(String::from)
-            .unwrap_or_else(|| guard.current_session_id.clone());
-        if session_id.is_empty() {
-            return Err(anyhow!("No active session and no sessionId provided"));
+        let session_id_arg = match arguments {
+            Value::String(s) => Some(s.trim().to_string()),
+            Value::Object(map) => {
+                get_string_field(map, &["sessionId", "session_id", "session", "id"])
+            }
+            _ => None,
+        };
+
+        let session_id = session_id_arg
+            .or_else(|| {
+                if !guard.current_session_id.is_empty() {
+                    Some(guard.current_session_id.clone())
+                } else {
+                    guard
+                        .store
+                        .list_sessions()
+                        .ok()
+                        .and_then(|list| list.into_iter().next().map(|s| s.id))
+                }
+            });
+
+        let session_id = match session_id {
+            Some(id) if !id.trim().is_empty() => id,
+            _ => {
+                return Ok(json!({
+                    "status": "no_session",
+                    "message": "No thinking sessions found to summarize. Create thoughts using sequentialthinking first."
+                }));
+            }
+        };
+
+        if let Err(e) = guard.load_session(&session_id) {
+            return Ok(json!({
+                "status": "not_found",
+                "sessionId": session_id,
+                "error": format!("Session not found: {}", e)
+            }));
         }
-        guard
-            .load_session(&session_id)
-            .map_err(|e| anyhow!("{}", e))?;
 
         let total_thoughts = guard.thought_history.len();
         let total_branches = guard.branches.len();
@@ -698,7 +1122,22 @@ impl Tool for TemplatesTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let template_name = arguments["template"].as_str().unwrap_or("all");
+        let raw_name = match arguments {
+            Value::String(s) => s.trim().to_string(),
+            Value::Object(map) => {
+                get_string_field(map, &["template", "name", "type", "template_name", "id"])
+                    .unwrap_or_else(|| "all".to_string())
+            }
+            _ => "all".to_string(),
+        };
+
+        let normalized = raw_name.trim().to_lowercase().replace('_', "-");
+        let template_name = match normalized.as_str() {
+            "divide-and-conquer" | "divide_and_conquer" | "divide" => "divide-and-conquer",
+            "hypothesis-test" | "hypothesis_test" | "hypothesis" => "hypothesis-test",
+            "devils-advocate" | "devils_advocate" | "devil" => "devils-advocate",
+            _ => "all",
+        };
 
         let divide_and_conquer = json!({
             "name": "Divide and Conquer", "id": "divide-and-conquer",

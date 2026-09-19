@@ -11,40 +11,42 @@ use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThoughtData {
+    #[serde(alias = "content", alias = "text", alias = "step", alias = "thinking", alias = "message")]
     pub thought: String,
-    #[serde(rename = "thoughtNumber")]
+    #[serde(rename = "thoughtNumber", alias = "thought_number", alias = "thought_num", alias = "number")]
     pub thought_number: usize,
-    #[serde(rename = "totalThoughts")]
+    #[serde(rename = "totalThoughts", alias = "total_thoughts", alias = "estimated_thoughts", alias = "total_steps", alias = "totalSteps")]
     pub total_thoughts: usize,
-    #[serde(rename = "nextThoughtNeeded")]
+    #[serde(rename = "nextThoughtNeeded", alias = "next_thought_needed", alias = "next_thought", alias = "nextThought", alias = "more_thoughts")]
     pub next_thought_needed: bool,
 
-    #[serde(rename = "isRevision")]
+    #[serde(rename = "isRevision", alias = "is_revision", alias = "revision")]
     pub is_revision: Option<bool>,
-    #[serde(rename = "revisesThought")]
+    #[serde(rename = "revisesThought", alias = "revises_thought", alias = "revises")]
     pub revises_thought: Option<usize>,
-    #[serde(rename = "branchFromThought")]
+    #[serde(rename = "branchFromThought", alias = "branch_from_thought", alias = "branch_from", alias = "branchFrom")]
     pub branch_from_thought: Option<usize>,
-    #[serde(rename = "branchId")]
+    #[serde(rename = "branchId", alias = "branch_id", alias = "branch")]
     pub branch_id: Option<String>,
-    #[serde(rename = "needsMoreThoughts")]
+    #[serde(rename = "needsMoreThoughts", alias = "needs_more_thoughts", alias = "needsMoreThoughts")]
     pub needs_more_thoughts: Option<bool>,
 
-    #[serde(rename = "parentThoughts")]
+    #[serde(rename = "parentThoughts", alias = "parent_thoughts", alias = "parents")]
     pub parent_thoughts: Option<Vec<usize>>,
     pub assumptions: Option<Vec<String>>,
-    #[serde(rename = "verifiedAssumptions")]
+    #[serde(rename = "verifiedAssumptions", alias = "verified_assumptions", alias = "verified")]
     pub verified_assumptions: Option<Vec<String>>,
-    #[serde(rename = "confidenceScore")]
+    #[serde(rename = "confidenceScore", alias = "confidence_score", alias = "confidence", alias = "score")]
     pub confidence_score: Option<f64>,
+    #[serde(alias = "self_criticism", alias = "critique")]
     pub criticism: Option<String>,
     pub hypothesis: Option<String>,
-    #[serde(rename = "verificationMethod")]
+    #[serde(rename = "verificationMethod", alias = "verification_method", alias = "verification")]
     pub verification_method: Option<String>,
-    #[serde(rename = "leftToBeDone")]
+    #[serde(rename = "leftToBeDone", alias = "left_to_be_done", alias = "todo", alias = "todos", alias = "open_todos")]
     pub left_to_be_done: Option<Vec<String>>,
     pub timestamp: Option<DateTime<Utc>>,
-    #[serde(rename = "sessionId")]
+    #[serde(rename = "sessionId", alias = "session_id", alias = "session", alias = "id")]
     pub session_id: Option<String>,
 }
 

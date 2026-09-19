@@ -87,6 +87,10 @@ async fn test_basic_thought() {
     let _l = test_lock().lock().await;
     let engine = tools::get_engine();
     let mut guard = engine.lock().await;
+    guard.store = Box::new(MemoryThoughtStore::new());
+    guard.current_session_id = String::new();
+    guard.thought_history.clear();
+    guard.branches.clear();
 
     let input = ThoughtData {
         thought: "First thought".to_string(),
@@ -470,4 +474,120 @@ fn test_quality_contradiction() {
     let thoughts = vec![t1, t2];
     let report = analyze_quality("test", &thoughts);
     assert_eq!(report.contradictions_count, 1);
+}
+
+#[tokio::test]
+async fn test_sequential_thinking_direct_string() {
+    let _l = test_lock().lock().await;
+    let engine = tools::get_engine();
+    {
+        let mut guard = engine.lock().await;
+        guard.store = Box::new(MemoryThoughtStore::new());
+        guard.current_session_id = String::new();
+        guard.thought_history.clear();
+        guard.branches.clear();
+    }
+    let tool = SequentialThinkingTool;
+    let res = tool.call(&json!("Direct string thought step")).await.unwrap();
+    assert_eq!(res["thoughtNumber"], 1);
+    assert_eq!(res["totalThoughts"], 3);
+    assert_eq!(res["nextThoughtNeeded"], true);
+}
+
+#[tokio::test]
+async fn test_sequential_thinking_defaults_and_coercion() {
+    let _l = test_lock().lock().await;
+    let engine = tools::get_engine();
+    {
+        let mut guard = engine.lock().await;
+        guard.store = Box::new(MemoryThoughtStore::new());
+        guard.current_session_id = String::new();
+        guard.thought_history.clear();
+        guard.branches.clear();
+    }
+    let tool = SequentialThinkingTool;
+    let res = tool.call(&json!({
+        "thought": "Coerced step",
+        "thought_number": "2",
+        "total_thoughts": "4",
+        "next_thought_needed": "true",
+        "confidence_score": "0.85",
+        "parent_thoughts": "1",
+        "assumptions": "Single assumption",
+        "session_id": "test-coercion-session"
+    })).await.unwrap();
+    assert_eq!(res["thoughtNumber"], 2);
+    assert_eq!(res["totalThoughts"], 4);
+    assert_eq!(res["nextThoughtNeeded"], true);
+    assert_eq!(res["sessionId"], "test-coercion-session");
+}
+
+#[tokio::test]
+async fn test_analyze_graph_direct_string_and_aliases() {
+    let _l = test_lock().lock().await;
+    seed_engine("test-analyze-direct").await;
+    let tool = AnalyzeGraphTool;
+
+    // Direct string "low-confidence"
+    let res = tool.call(&json!("low-confidence")).await.unwrap();
+    assert!(res.is_array());
+
+    // Object with aliases
+    let res2 = tool.call(&json!({
+        "mode": "summary-stats",
+        "session": "test-analyze-direct"
+    })).await.unwrap();
+    assert_eq!(res2["totalThoughts"], 3);
+}
+
+#[tokio::test]
+async fn test_export_session_direct_string_and_aliases() {
+    let _l = test_lock().lock().await;
+    seed_engine("test-export-direct").await;
+    let tool = ExportSessionTool;
+
+    // Direct string "mermaid"
+    let res = tool.call(&json!("mermaid")).await.unwrap();
+    assert_eq!(res["format"], "mermaid");
+    assert!(res["data"].as_str().unwrap().contains("graph TD"));
+
+    // Alias export_format
+    let res2 = tool.call(&json!({
+        "export_format": "json",
+        "session_id": "test-export-direct"
+    })).await.unwrap();
+    assert_eq!(res2["format"], "json");
+}
+
+#[tokio::test]
+async fn test_summarize_reasoning_direct_string_and_aliases() {
+    let _l = test_lock().lock().await;
+    seed_engine("test-summarize-direct").await;
+    let tool = SummarizeReasoningTool;
+
+    // Direct string session ID
+    let res = tool.call(&json!("test-summarize-direct")).await.unwrap();
+    assert_eq!(res["sessionId"], "test-summarize-direct");
+    assert_eq!(res["totalThoughts"], 3);
+
+    // Alias session
+    let res2 = tool.call(&json!({"session": "test-summarize-direct"})).await.unwrap();
+    assert_eq!(res2["totalThoughts"], 3);
+}
+
+#[tokio::test]
+async fn test_templates_tool_direct_string_and_aliases() {
+    let tool = TemplatesTool;
+
+    // Direct string with underscore
+    let res = tool.call(&json!("divide_and_conquer")).await.unwrap();
+    assert_eq!(res["id"], "divide-and-conquer");
+
+    // Alias name
+    let res2 = tool.call(&json!({"name": "hypothesis_test"})).await.unwrap();
+    assert_eq!(res2["id"], "hypothesis-test");
+
+    // Default all
+    let res3 = tool.call(&json!({})).await.unwrap();
+    assert!(res3["templates"].is_array());
 }
