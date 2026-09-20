@@ -443,6 +443,15 @@ Manage multi-agent workflows, coordinate subagent delegations, and execute basic
   - `telegram` / `discord` / `whatsapp`: Launch listener channel servers.
   - `sop`: Manage stateful SOP workflows."),
 
+        ("openz", "openz_fullstack_playbook", "# Skill: OpenZ Fullstack Playbook
+
+Execute autonomous end-to-end tasks across codebase search, file manipulation, cognitive memory, bookmarks, procedural skills, and tool catalog inspection with high reliability:
+1. Inspect codebase and project layout before making changes (`list_dir`, `view_file`, `grep_search`).
+2. Store workspace-critical context using `store_memory` and recall relevant information with `recall_memory`.
+3. Save external documentation, package registries, and git repos with `knowledge_source`.
+4. Persist newly discovered patterns or repetitive troubleshooting procedures via `curate_skill`.
+5. Verify changes with focused compilation checks and tests (`exec_command`)."),
+
         ("sop_designer", "sop_workflow_design", "# Skill: SOP Workflow Design
 
 Design, structure, and optimize Standard Operating Procedure (SOP) JSON definitions for execution:
@@ -891,8 +900,9 @@ pub fn scan_skill_content(content: &str) -> Result<bool> {
     static BLACKLIST_RE: std::sync::OnceLock<Vec<regex::Regex>> = std::sync::OnceLock::new();
     let regexes = BLACKLIST_RE.get_or_init(|| {
         let patterns = [
-            r"(?i)curl.*http",
-            r"(?i)wget.*http",
+            r"(?i)(?:curl|wget)\s+[^\n|;]+(?:\|\s*(?:bash|sh|zsh|dash)|;\s*(?:bash|sh|zsh))",
+            r"(?i)(?:curl|wget)\s+[^\n|;]+(?:evil\.com|leak|steal|exfiltrat)",
+            r"(?i)\|\s*(?:bash|sh|zsh|dash)\s*$",
             r"(?i)rm\s+-rf\s+/",
             r"(?i)chmod\s+777",
             r"(?i)/dev/tcp/\d",
@@ -913,15 +923,21 @@ pub fn scan_skill_content(content: &str) -> Result<bool> {
 }
 
 pub fn save_skill(name: &str, content: &str) -> Result<()> {
-    if !scan_skill_content(content).unwrap_or(false) {
+    let safe_name = name
+        .to_lowercase()
+        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
+
+    let normalized_content = if !content.trim_start().starts_with('#') {
+        format!("# {}\n\n{}", safe_name.replace('_', " "), content.trim())
+    } else {
+        content.to_string()
+    };
+
+    if !scan_skill_content(&normalized_content).unwrap_or(false) {
         anyhow::bail!(
             "Skill validation failed: content contains potentially unsafe commands or patterns."
         );
     }
-
-    let safe_name = name
-        .to_lowercase()
-        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
 
     let conn = get_connection()?;
     let now = chrono::Utc::now().to_rfc3339();
@@ -929,7 +945,7 @@ pub fn save_skill(name: &str, content: &str) -> Result<()> {
         "INSERT INTO skills (name, content, profile, created_at, last_used)
          VALUES (?1, ?2, NULL, ?3, ?3)
          ON CONFLICT(name, profile) DO UPDATE SET content = ?2, last_used = ?3",
-        params![safe_name, content, now],
+        params![safe_name, normalized_content, now],
     )?;
 
     Ok(())
@@ -968,15 +984,21 @@ pub fn clear_skills() -> Result<()> {
 }
 
 pub fn save_subagent_skill(profile: &str, name: &str, content: &str) -> Result<()> {
-    if !scan_skill_content(content).unwrap_or(false) {
+    let safe_name = name
+        .to_lowercase()
+        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
+
+    let normalized_content = if !content.trim_start().starts_with('#') {
+        format!("# {}\n\n{}", safe_name.replace('_', " "), content.trim())
+    } else {
+        content.to_string()
+    };
+
+    if !scan_skill_content(&normalized_content).unwrap_or(false) {
         anyhow::bail!(
             "Skill validation failed: content contains potentially unsafe commands or patterns."
         );
     }
-
-    let safe_name = name
-        .to_lowercase()
-        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
 
     let conn = get_connection()?;
     let now = chrono::Utc::now().to_rfc3339();
@@ -984,7 +1006,7 @@ pub fn save_subagent_skill(profile: &str, name: &str, content: &str) -> Result<(
         "INSERT INTO skills (name, content, profile, created_at, last_used)
          VALUES (?1, ?2, ?3, ?4, ?4)
          ON CONFLICT(name, profile) DO UPDATE SET content = ?2, last_used = ?4",
-        params![safe_name, content, profile, now],
+        params![safe_name, normalized_content, profile, now],
     )?;
     Ok(())
 }

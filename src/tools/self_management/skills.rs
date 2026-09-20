@@ -50,6 +50,17 @@ impl Tool for CurateSkillTool {
                 .or_else(|| obj.get("cmd"))
                 .or_else(|| obj.get("op"))
                 .and_then(|v| v.as_str())
+                .or_else(|| {
+                    if obj.contains_key("content")
+                        || obj.contains_key("instructions")
+                        || obj.contains_key("body")
+                        || obj.contains_key("text")
+                    {
+                        Some("add")
+                    } else {
+                        None
+                    }
+                })
         } else {
             None
         };

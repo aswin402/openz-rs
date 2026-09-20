@@ -61,6 +61,18 @@ pub fn prune_decayed_memories(conn: &Connection) -> Result<usize> {
 // ─── Extraction Helpers ─────────────────────────────────────────
 
 fn extract_string_field(val: &Value, keys: &[&str]) -> Option<String> {
+    if let Some(s) = val.as_str() {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    } else if val.is_number() || val.is_boolean() {
+        let s = val.to_string();
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
     for key in keys {
         if let Some(v) = val.get(*key) {
             if let Some(s) = v.as_str() {
@@ -299,7 +311,7 @@ impl Tool for RecallMemoryTool {
             arguments,
             &["query", "q", "search", "text", "prompt", "term", "filter"],
         )
-        .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
+        .unwrap_or_else(|| "*".to_string());
 
         let top_k = extract_usize_arg(arguments, &["top_k", "topK", "limit", "count", "n"])
             .unwrap_or(5);
@@ -316,7 +328,15 @@ impl Tool for RecallMemoryTool {
             &["tags", "tag", "category", "categories"],
         );
 
-        let query_embed = get_embedding(&query, true).await?;
+        let is_wildcard = query == "*"
+            || query.eq_ignore_ascii_case("all")
+            || query.eq_ignore_ascii_case("recent")
+            || query.trim().is_empty();
+        let query_embed = if is_wildcard {
+            Vec::new()
+        } else {
+            get_embedding(&query, true).await?
+        };
         let current_ws = get_current_workspace();
 
         let _lock = get_db_mutex().lock().await;
@@ -376,10 +396,19 @@ impl Tool for RecallMemoryTool {
             let decay_factor = (-entry.decay_rate * days_elapsed).exp();
             let decayed_importance = entry.importance * decay_factor;
 
-            let sim = cosine_similarity(&query_embed, &entry.embedding);
-
-            // Combine similarity (70% weight) and decayed importance (30% weight)
-            let cognitive_score = sim * 0.7 + decayed_importance * 0.3;
+            let cognitive_score = if is_wildcard {
+                decayed_importance
+            } else {
+                let sim = cosine_similarity(&query_embed, &entry.embedding);
+                let query_lower = query.to_lowercase();
+                let keyword_match = query_lower.split_whitespace().any(|w| {
+                    w.len() >= 3
+                        && (entry.text.to_lowercase().contains(w)
+                            || entry.tags.iter().any(|t| t.to_lowercase().contains(w)))
+                });
+                let keyword_boost = if keyword_match { 0.2 } else { 0.0 };
+                (sim * 0.7 + decayed_importance * 0.3 + keyword_boost).min(1.0)
+            };
 
             scored_results.push((cognitive_score, entry));
         }

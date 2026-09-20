@@ -109,6 +109,7 @@ pub fn presentation_name(name: &str) -> String {
         "ast_searcher" => "AST Searcher".to_string(),
         "git_ops_agent" => "Git Operations Agent".to_string(),
         "mcps_manager" => "MCPs Manager".to_string(),
+        "openz" => "OpenZ".to_string(),
         "openz_coordinator" | "openz_maintainer" => {
             format!(
                 "OpenZ {}",
@@ -159,6 +160,7 @@ pub fn compact_presentation_name(name: &str) -> String {
         "wasm_sandbox" => "Wasm".to_string(),
         "cron" => "Cron".to_string(),
         "watcher" => "Watcher".to_string(),
+        "openz" => "OpenZ".to_string(),
         _ => canonical,
     }
 }

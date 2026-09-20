@@ -125,3 +125,33 @@ async fn test_curate_skills_aliases_and_case() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[tokio::test]
+async fn test_curate_skills_infers_add_without_explicit_action() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_skills_infer_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            let tool = CurateSkillTool;
+
+            let res = tool
+                .call(&serde_json::json!({
+                    "skill_name": "inferred_skill",
+                    "content": "This action was automatically inferred."
+                }))
+                .await
+                .unwrap();
+            assert!(res["success"].as_bool().unwrap());
+
+            let list_res = tool.call(&serde_json::json!("list")).await.unwrap();
+            let skills = list_res["skills"].as_array().unwrap();
+            assert!(skills.iter().any(|s| s["name"].as_str().unwrap() == "inferred_skill"));
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

@@ -47,7 +47,7 @@ pub use parallel_research::ParallelResearchTool;
 pub fn can_spawn_nested_subagents(profile_name: &str) -> bool {
     matches!(
         profile_name,
-        "planner" | "sop_designer" | "openz_coordinator"
+        "planner" | "sop_designer" | "openz_coordinator" | "openz"
     )
 }
 

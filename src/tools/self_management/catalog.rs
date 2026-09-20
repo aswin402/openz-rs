@@ -68,10 +68,28 @@ impl Tool for ToolCatalogTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
+        let str_arg = arguments.as_str().map(|s| s.trim()).filter(|s| !s.is_empty());
+        let (raw_domain, raw_risk) = if let Some(s) = str_arg {
+            let lower = s.to_lowercase();
+            if matches!(lower.as_str(), "low" | "medium" | "high") {
+                (None, Some(lower))
+            } else {
+                (Some(lower), None)
+            }
+        } else {
+            (None, None)
+        };
+
         let include_schema = parse_bool_value(arguments.get("include_schema"), false);
         let only_exposed = parse_bool_value(arguments.get("only_exposed"), false);
-        let domain_filter = arguments.get("domain").and_then(|v| v.as_str());
-        let risk_filter = arguments.get("risk").and_then(|v| v.as_str());
+        let domain_filter = arguments
+            .get("domain")
+            .and_then(|v| v.as_str())
+            .or(raw_domain.as_deref());
+        let risk_filter = arguments
+            .get("risk")
+            .and_then(|v| v.as_str())
+            .or(raw_risk.as_deref());
         let prompt = arguments
             .get("prompt")
             .and_then(|v| v.as_str())

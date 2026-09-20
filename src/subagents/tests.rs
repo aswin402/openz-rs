@@ -30,6 +30,7 @@ fn subagent_health_registry_is_keyed_by_profile_name() {
 fn default_subagent_policy_includes_orchestrator() {
     assert!(is_default_subagent("orchestrator"));
     assert!(is_default_subagent("planner"));
+    assert!(is_default_subagent("openz"));
     assert!(!is_default_subagent("custom_planner"));
     assert_eq!(MAX_SUBAGENT_FALLBACKS, 3);
 }

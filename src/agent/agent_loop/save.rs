@@ -207,8 +207,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             } else {
                 for tool in &tools_used {
                     let t = tool.to_lowercase();
-                    // Only trigger curator for state-modifying tools, not
-                    // research-only tools (web_search, web_fetch, crawl).
+                    // Trigger curator for state-modifying, memory, skill, or execution tools
                     if t.contains("write_file")
                         || t.contains("patch_file")
                         || t.contains("replace_lines")
@@ -220,9 +219,32 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         || t.contains("gsd_browser")
                         || t.contains("remote_input")
                         || t.contains("mcp")
+                        || t.contains("curate_skill")
+                        || t.contains("store_memory")
+                        || t.contains("knowledge_source")
+                        || t.contains("workflow_memory")
+                        || t.contains("graph_memory")
                     {
                         should_run = true;
                         break;
+                    }
+                }
+                if !should_run {
+                    // Check if the user prompt explicitly expresses learning or memory intent
+                    for msg in messages.iter().rev().take(3) {
+                        if msg.role == "user" {
+                            let text = msg.content.to_lowercase();
+                            if text.contains("remember")
+                                || text.contains("learn")
+                                || text.contains("preference")
+                                || text.contains("guideline")
+                                || text.contains("save this")
+                                || text.contains("skill")
+                            {
+                                should_run = true;
+                                break;
+                            }
+                        }
                     }
                 }
             }

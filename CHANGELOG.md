@@ -1,4 +1,41 @@
-### v0.0.208 (Latest Release)
+### v0.0.209 (Latest Release)
+- **Ideas**:
+  - Registered `openz` as a first-class autonomous subagent profile in OpenZ and thoroughly hardened, tested, and eliminated hardcoded/brittle logic across the 5 core built-in capability suites:
+    - **OpenZ Subagent Profile**: Added `"openz"` to default subagent profiles with unrestricted tool access, nested subagent delegation rights (`can_spawn_nested_subagents`), full-stack playbook skill initialization, and title case presentation metadata (`"OpenZ"`).
+    - **Link Saving & Technical Registries Bookmarking (`knowledge_source`)**: Replaced GitHub-only URI parsing with domain-aware extractors for GitLab (`gitlab:group/repo`), Crates.io (`crates.io: {crate}`), Docs.rs (`docs.rs: {crate}`), npm (`npm: {pkg}`), PyPI (`pypi: {pkg}`), arXiv (`arxiv: {id}`), and Wikipedia (`wiki: {article}`). Updated low-quality label detection to support these registries cleanly.
+    - **Workspace Cognitive Memory (`store_memory` & `recall_memory`)**: Enabled direct raw string parameter extraction in `extract_string_field` so calling `store_memory("fact")` or `recall_memory("query")` operates directly. Added wildcard query handling (`*`, `""`, `all`, `recent`) in `recall_memory` to rank primarily by decayed importance, and introduced keyword matching relevance boost (+0.2 capped at 1.0) on top of cosine similarity.
+    - **Procedural Skills System (`curate_skill`)**: Fixed safety scanner false-positives by replacing broad `curl.*http` / `wget.*http` checks with dangerous piped shell execution patterns (`(?:curl|wget)\s+.*\|\s*bash`) and exfiltration protection. Auto-normalizes skill content missing Markdown headings by prepending `# {skill_name}\n\n`. Enhanced `curate_skill` to automatically infer action `"add"` when `content` is provided without an explicit `action` parameter.
+    - **Self-Improvement Curator Pipeline**: Expanded curator triggering criteria in `src/agent/agent_loop/save.rs` to detect memory and skills tools (`curate_skill`, `store_memory`, `knowledge_source`, `workflow_memory`, `graph_memory`) and parse explicit conversational learning intent keywords (`remember`, `learn`, `preference`, `guideline`, `save this`, `skill`).
+    - **Runtime Inventory & Tool Catalog (`openz_inventory` & `tool_catalog`)**: Added missing `run` and `exec` subcommands to the CLI commands inventory. Added string argument handling for `openz_inventory` (auto-enabling `include_tools` or `include_subagents`) and `tool_catalog` (mapping raw string queries directly to domain or risk filters).
+- **Inspirations**:
+  - Autonomous recursive agent delegation, cognitive knowledge graphs, and forgiving tool argument ergonomics that minimize agent retries and prevent brittle failure modes.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/subagents/defaults.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/defaults.rs): Registered `"openz"` in `DEFAULT_SUBAGENT_NAMES` and default profiles.
+    - [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs): Added `"openz"` to `can_spawn_nested_subagents`.
+    - [`src/tools/metadata.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/metadata.rs): Added presentation and compact labels for `"openz"`.
+    - [`src/agent/skills.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/skills.rs): Added `openz_fullstack_playbook`, refined `scan_skill_content`, and normalized Markdown headings in `save_skill`.
+    - [`src/tools/self_management/skills.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/skills.rs): Added action inference in `curate_skill`.
+    - [`src/tools/shared_memory/knowledge.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/knowledge.rs): Added technical registry parsers for GitLab, Crates.io, Docs.rs, npm, PyPI, arXiv, and Wikipedia.
+    - [`src/tools/shared_memory/cognitive.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/cognitive.rs): Added raw string extraction, wildcard query support, and keyword relevance boost.
+    - [`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs): Added string query handling for domain and risk filters.
+    - [`src/tools/self_management/inventory.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/inventory.rs): Added `run` and `exec` commands and string argument support.
+    - [`src/agent/agent_loop/save.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/save.rs): Expanded curator triggering logic for memory tools and learning keywords.
+  - Test Modules:
+    - [`src/subagents/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/tests.rs): Added subagent default policy assertion for `openz`.
+    - [`src/tools/subagent/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod_tests.rs): Added nested delegation test for `openz`.
+    - [`src/tools/shared_memory/knowledge_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/knowledge_tests.rs): Added technical registry URI parsing tests.
+    - [`src/tools/self_management/skills_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/skills_tests.rs): Added inferred action test for `curate_skill`.
+- **Details & Metrics**:
+  - Subagent ecosystem extended with `openz` primary autonomous profile.
+  - 14 modified files across subagents, memory, skills, inventory, catalog, and curator subsystems.
+  - 6 live headless turns executed with exit code 0 verifying subagent profile, nested delegation, link bookmarking, cognitive memory recall, inferred skill curation, and `--wait-curator` learning pipeline.
+- **Verification**:
+  - Exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`).
+  - 0 compiler and clippy warnings (`cargo clippy -p openz -j 1`).
+  - All unit tests passed across subagents, knowledge, and skills modules.
+
+### v0.0.208
 - **Ideas**:
   - Live real-time validation and hardening of OpenZ's core built-in capabilities:
     - **Self-Improvement Curator**: Validated background curator execution pipeline (`~/.openz/curator_status.json`). Added `LAST_CURATOR_HANDLE` tracking with `set_last_curator_handle` and async `wait_for_curator` timeout barrier. Added `--wait-curator` CLI flag to `HeadlessArgs` in headless mode so automated scripts and test pipelines can synchronously await background conversation review, memory extraction, and procedural skill curation before process termination.

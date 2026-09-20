@@ -55,12 +55,15 @@ impl Tool for OpenZInventoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let include_tools = parse_bool_value(arguments.get("include_tools"), false);
-        let include_subagents = parse_bool_value(arguments.get("include_subagents"), false);
+        let str_arg = arguments.as_str().map(|s| s.trim()).unwrap_or("");
+        let include_tools = parse_bool_value(arguments.get("include_tools"), false)
+            || str_arg.contains("tool");
+        let include_subagents = parse_bool_value(arguments.get("include_subagents"), false)
+            || str_arg.contains("subagent");
         let prompt = arguments
             .get("prompt")
             .and_then(|v| v.as_str())
-            .unwrap_or("");
+            .unwrap_or(str_arg);
 
         let entries = self.registry.catalog_entries_for_prompt(false, prompt);
         let mut domains = std::collections::BTreeMap::<String, usize>::new();
@@ -133,6 +136,8 @@ impl Tool for OpenZInventoryTool {
             "email_imap_smtp",
         ];
         let commands = vec![
+            "run",
+            "exec",
             "onboard",
             "configure",
             "agent",

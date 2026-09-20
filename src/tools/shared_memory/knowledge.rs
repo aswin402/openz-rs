@@ -139,19 +139,48 @@ fn source_label_from_uri(uri: &str) -> Option<String> {
             }
             return Some(repo);
         }
+        if host == "gitlab.com" && parts.len() >= 2 {
+            return Some(format!("gitlab:{}/{}", parts[0], parts[1]));
+        }
+        if host == "crates.io" && parts.len() >= 2 && parts[0] == "crates" {
+            return Some(format!("crates.io: {}", parts[1]));
+        }
+        if host == "docs.rs" && !parts.is_empty() {
+            return Some(format!("docs.rs: {}", parts[0]));
+        }
+        if host == "npmjs.com" && parts.len() >= 2 && parts[0] == "package" {
+            return Some(format!("npm: {}", parts[1]));
+        }
+        if host == "pypi.org" && parts.len() >= 2 && parts[0] == "project" {
+            return Some(format!("pypi: {}", parts[1]));
+        }
+        if host == "arxiv.org" && parts.len() >= 2 {
+            return Some(format!("arxiv: {}", parts[1]));
+        }
+        if host.ends_with("wikipedia.org") && parts.len() >= 2 && parts[0] == "wiki" {
+            return Some(format!("wiki: {}", parts[1].replace('_', " ")));
+        }
         None
     })
 }
 
 fn is_low_quality_source_label(label: &str, uri: &str) -> bool {
     let lower = label.to_lowercase();
-    if lower.starts_with("github.com - ") || lower.starts_with("raw.githubusercontent.com - ") {
+    if lower.starts_with("github.com - ")
+        || lower.starts_with("raw.githubusercontent.com - ")
+        || lower.starts_with("gitlab.com - ")
+    {
         return true;
     }
     if let Some(derived) = source_label_from_uri(uri) {
         let derived_lower = derived.to_lowercase();
         return lower == "github.com"
             || lower == "raw.githubusercontent.com"
+            || lower == "gitlab.com"
+            || lower == "crates.io"
+            || lower == "docs.rs"
+            || lower == "npmjs.com"
+            || lower == "pypi.org"
             || lower == "github"
             || lower == "pulls"
             || lower == "issues"

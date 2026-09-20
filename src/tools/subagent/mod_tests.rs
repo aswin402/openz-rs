@@ -126,3 +126,10 @@ fn test_extract_u64_arg_coercions() {
     assert!(extract_u64_arg(&args_invalid, &["timeout"]).is_none());
 }
 
+#[test]
+fn openz_subagent_can_spawn_nested_delegations() {
+    assert!(can_spawn_nested_subagents("openz"));
+    assert!(can_spawn_nested_subagents("openz_coordinator"));
+    assert!(can_spawn_nested_subagents("planner"));
+    assert!(!can_spawn_nested_subagents("researcher"));
+}

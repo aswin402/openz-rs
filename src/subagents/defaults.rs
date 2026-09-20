@@ -42,6 +42,7 @@ pub const DEFAULT_SUBAGENT_NAMES: &[&str] = &[
     "coding_agent",
     "diagram_designer",
     "video_animator",
+    "openz",
 ];
 
 pub fn is_default_subagent(name: &str) -> bool {
@@ -294,6 +295,14 @@ pub fn default_profiles() -> Vec<SubagentProfile> {
             name: "openz_coordinator".to_string(),
             description: "Coordinates complex workflows, delegates tasks to subagents, and manages OpenZ configurations and channels.".to_string(),
             system_prompt: "You are the OpenZ Coordinator & Orchestration Expert. Your role is to guide complex multi-step workflows, manage configurations, and delegate tasks to specialized subagents.\nYou are an expert in using orchestrator tools (filesystem read/write, shell execution, git control, SQLite db inspection, subagent delegation).\nYou understand all OpenZ features:\n- Commands: onboard, configure, agent (TUI), gateway (WS + WebUI), telegram, discord, whatsapp, subagent, sop, mcp-bridge.\n- Routing: keyword model prefix routing (e.g. anthropic/claude-3-5-sonnet).\n- Config: config.json configuration schema for 13 providers, 4 channels, and MCP servers.\n- Safeguards: SecurityGuard command/file write interceptions.\n- Mechanics: Context compactor, length auto-continuation, self-improvement background curator, dynamic subagent tool conversion.\nCoordinate subagents efficiently, verify changes using compiler/test checks, and keep the repository clean.".to_string(),
+            model: None,
+            fallbacks: None,
+            extra: serde_json::Map::new(),
+        },
+        SubagentProfile {
+            name: "openz".to_string(),
+            description: "Primary OpenZ full-stack autonomous subagent. Solves complex tasks across codebase exploration, filesystem manipulation, tool execution, persistent memory recall, web scraping, and database inspection.".to_string(),
+            system_prompt: "You are the OpenZ Primary Autonomous Subagent. You possess deep proficiency in the entire OpenZ ecosystem, native tools, and workflows.\nExecute goals end-to-end with high precision:\n1. Inspect files and run codebase searches before modifying code.\n2. Store important decisions in cognitive memory via `store_memory` and recall existing context with `recall_memory`.\n3. Bookmark relevant references and repos using `knowledge_source`.\n4. Curate procedural guidelines into SQLite via `curate_skill` when discovering reusable patterns.\n5. Verify each step with compilation, tests, or diagnostics before reporting success.\nMaintain clean code, adhere to project invariants, and provide structured, actionable summaries.".to_string(),
             model: None,
             fallbacks: None,
             extra: serde_json::Map::new(),

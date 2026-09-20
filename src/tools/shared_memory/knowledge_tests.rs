@@ -250,6 +250,38 @@ fn display_source_label_repairs_legacy_github_labels() {
 }
 
 #[test]
+fn display_source_label_parses_technical_registries() {
+    assert_eq!(
+        display_source_label("", "https://crates.io/crates/tokio"),
+        "crates.io: tokio"
+    );
+    assert_eq!(
+        display_source_label("", "https://docs.rs/tokio/latest/tokio/"),
+        "docs.rs: tokio"
+    );
+    assert_eq!(
+        display_source_label("", "https://gitlab.com/freedesktop-sdk/mirrors/llvm"),
+        "gitlab:freedesktop-sdk/mirrors"
+    );
+    assert_eq!(
+        display_source_label("", "https://www.npmjs.com/package/express"),
+        "npm: express"
+    );
+    assert_eq!(
+        display_source_label("", "https://pypi.org/project/fastapi"),
+        "pypi: fastapi"
+    );
+    assert_eq!(
+        display_source_label("", "https://arxiv.org/abs/2312.12345"),
+        "arxiv: 2312.12345"
+    );
+    assert_eq!(
+        display_source_label("", "https://en.wikipedia.org/wiki/Artificial_intelligence"),
+        "wiki: Artificial intelligence"
+    );
+}
+
+#[test]
 fn research_brief_quality_rejects_github_ui_chrome() {
     let noisy = "assignee: Filter by this user Sort Sort by Newest Oldest Most commented Least commented Recently updated Least recently updated Best match Most reactions Pull requests list feat: HadamardRotation #12 Footer navigation Terms Privacy Security Status Community Docs Contact Manage cookies You can’t perform that action at this time";
     assert!(!is_useful_research_brief_summary(noisy));
