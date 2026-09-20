@@ -15,6 +15,7 @@ pub fn get_provider_api_key(config: &Config, provider_name: &str) -> Option<Stri
 }
 
 pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
+    let _ = crate::core::vault::ensure_vault_initialized(&config);
     let resolved =
         crate::providers::resolver::resolve_provider_full(&config, &config.agents.defaults.model)?;
     let provider = resolved.instance;

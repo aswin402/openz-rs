@@ -505,6 +505,28 @@ pub async fn handle_doctor(scrub_secrets: bool, clean_target: bool) -> Result<()
     print_disk_report(&data_dir);
     println!();
 
+    // ── Step 7: OpenZ Vault deliverables verification ──
+    println!("📦 Checking OpenZ Vault deliverables workspace...");
+    let config = loader::load_config().unwrap_or_default();
+    match crate::core::vault::ensure_vault_initialized(&config) {
+        Ok(vault_path) => {
+            let summary = crate::core::vault::scan_vault(&config);
+            println!(
+                "✅ OpenZ Vault is active at: {} ({} deliverable(s) across {} categories)",
+                vault_path.display(),
+                summary.total_items,
+                summary.categories.len()
+            );
+            for cat in &summary.categories {
+                if cat.item_count > 0 {
+                    println!("   • {}/{}: {} item(s)", config.vault.name, cat.name, cat.item_count);
+                }
+            }
+        }
+        Err(err) => println!("⚠️  OpenZ Vault initialization error: {err}"),
+    }
+    println!();
+
     // ── Close ──
     println!(
         "🩺 Doctor check complete. Runtime state resolves under: {}",

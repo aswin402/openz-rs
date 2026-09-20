@@ -603,6 +603,46 @@ pub struct IntegrationsConfig {
     pub others: HashMap<String, GitIntegrationConfig>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultConfig {
+    #[serde(default = "default_vault_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_vault_path")]
+    pub path: String,
+    #[serde(default = "default_vault_name")]
+    pub name: String,
+    #[serde(default = "default_vault_auto_create")]
+    pub auto_create: bool,
+}
+
+fn default_vault_enabled() -> bool {
+    true
+}
+
+fn default_vault_path() -> String {
+    "~/openz_vault".to_string()
+}
+
+fn default_vault_name() -> String {
+    "openz_vault".to_string()
+}
+
+fn default_vault_auto_create() -> bool {
+    true
+}
+
+impl Default for VaultConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_vault_enabled(),
+            path: default_vault_path(),
+            name: default_vault_name(),
+            auto_create: default_vault_auto_create(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -623,6 +663,8 @@ pub struct Config {
     pub research: ResearchConfig,
     #[serde(default)]
     pub integrations: IntegrationsConfig,
+    #[serde(default)]
+    pub vault: VaultConfig,
 }
 
 impl Default for ChannelsConfig {
@@ -671,6 +713,7 @@ impl Default for Config {
             skills: SkillsConfig::default(),
             research: ResearchConfig::default(),
             integrations: IntegrationsConfig::default(),
+            vault: VaultConfig::default(),
         }
     }
 }

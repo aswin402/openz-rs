@@ -4,5 +4,6 @@ pub mod inventory;
 pub mod process;
 pub mod secrets;
 pub mod sqlite;
+pub mod vault;
 
 

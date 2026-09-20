@@ -743,6 +743,42 @@ impl Tool for ManageConfigTool {
                             git_config.token = v.as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
                             config.integrations.gitlab = Some(git_config);
                         }
+                        "vault_path" | "vault_dir" => {
+                            if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                                config.vault.path = s.to_string();
+                            }
+                        }
+                        "vault_name" => {
+                            if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                                config.vault.name = s.to_string();
+                            }
+                        }
+                        "vault_enabled" => {
+                            if let Some(b) = parse_bool_value(v) {
+                                config.vault.enabled = b;
+                            }
+                        }
+                        "vault_auto_create" => {
+                            if let Some(b) = parse_bool_value(v) {
+                                config.vault.auto_create = b;
+                            }
+                        }
+                        "vault" => {
+                            if let Some(obj) = v.as_object() {
+                                if let Some(path) = obj.get("path").and_then(|p| p.as_str()) {
+                                    config.vault.path = path.trim().to_string();
+                                }
+                                if let Some(name) = obj.get("name").and_then(|p| p.as_str()) {
+                                    config.vault.name = name.trim().to_string();
+                                }
+                                if let Some(enabled) = obj.get("enabled").and_then(|p| p.as_bool()) {
+                                    config.vault.enabled = enabled;
+                                }
+                                if let Some(auto_create) = obj.get("auto_create").or_else(|| obj.get("autoCreate")).and_then(|p| p.as_bool()) {
+                                    config.vault.auto_create = auto_create;
+                                }
+                            }
+                        }
                         "target" => {
                             let target_str = v.as_str().unwrap_or("").trim().to_lowercase();
                             match target_str.as_str() {
@@ -773,6 +809,7 @@ impl Tool for ManageConfigTool {
                 }
 
                 crate::config::loader::save_config(&config)?;
+                let _ = crate::core::vault::ensure_vault_initialized(&config);
                 Ok(serde_json::json!({
                     "success": true,
                     "message": "Configuration successfully updated."

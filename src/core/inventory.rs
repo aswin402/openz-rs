@@ -19,6 +19,8 @@ pub struct RuntimeInventory {
     pub memory: MemoryInventory,
     pub tools: Vec<ToolInventoryItem>,
     pub cron: CronInventory,
+    #[serde(default)]
+    pub vault: Option<crate::core::vault::VaultSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +34,8 @@ pub struct RuntimePaths {
     pub skills_dir: String,
     pub workspace_skills_dir: String,
     pub sessions_dir: String,
+    #[serde(default)]
+    pub vault_dir: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +65,8 @@ pub struct RuntimeCounts {
     pub running_cron_jobs: usize,
     pub sessions: usize,
     pub active_ui_sessions: usize,
+    #[serde(default)]
+    pub vault_items: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -216,6 +222,9 @@ pub fn build_runtime_inventory(
     let cron = build_cron_inventory();
     let memory_db = crate::config::loader::runtime_db_path("memory.db");
     let graph_db = crate::config::loader::runtime_db_path("graph_memory.db");
+    let vault_summary = crate::core::vault::scan_vault(config);
+    let vault_items = vault_summary.total_items;
+    let vault_dir = vault_summary.root_path.clone();
 
     RuntimeInventory {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -228,6 +237,7 @@ pub fn build_runtime_inventory(
             skills_dir: path_display(&crate::agent::skills::get_skills_dir()),
             workspace_skills_dir: path_display(&crate::agent::skills::get_workspace_skills_dir()),
             sessions_dir: path_display(&sessions_dir_path()),
+            vault_dir,
         },
         defaults: RuntimeDefaults {
             model: config.agents.defaults.model.clone(),
@@ -251,6 +261,7 @@ pub fn build_runtime_inventory(
             running_cron_jobs: cron.jobs.iter().filter(|j| j.status == "running").count(),
             sessions: sessions.recent_sessions.len(),
             active_ui_sessions: sessions.active_ui_sessions.len(),
+            vault_items,
         },
         channels,
         sessions,
@@ -262,6 +273,7 @@ pub fn build_runtime_inventory(
         },
         tools: tool_inventory,
         cron,
+        vault: Some(vault_summary),
     }
 }
 

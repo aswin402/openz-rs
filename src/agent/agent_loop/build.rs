@@ -64,6 +64,23 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         "planner, researcher, debugger, DevOps, skill_improvement, openz_maintainer, mcps_manager"
             .to_string()
     };
+    let vault_path = crate::core::vault::resolve_vault_path(config);
+    let vault_display = vault_path.display().to_string();
+    let vault_name = &config.vault.name;
+    let vault_guideline = format!(
+        "The user's creative deliverables vault is active at '{vault_display}' (name: '{vault_name}'). When the user asks you to create, generate, build, or scrape content (websites, apps, scripts, images, videos, reports, presentations, datasets, diagrams, templates, or exports), ALWAYS organize and save deliverables in the user's OpenZ Vault under the appropriate category:\n\
+         - Websites & Web Apps: {vault_display}/websites/<project_name>/ (e.g. index.html, styles.css, app.js)\n\
+         - Scripts & Automations: {vault_display}/scripts/<script_name> (e.g. scraper.py, backup.sh)\n\
+         - Images & Renders: {vault_display}/images/<image_name> (e.g. logo.png, mockup.png)\n\
+         - Programmatic Videos: {vault_display}/videos/<video_name> (e.g. explainer.mp4)\n\
+         - Documents & Reports: {vault_display}/documents/<doc_name> (e.g. report.pdf, spec.docx)\n\
+         - Presentations & Slides: {vault_display}/presentations/<deck_name> (e.g. pitch.pptx)\n\
+         - Extracted Data & Crawls: {vault_display}/data/<data_name> (e.g. jobs.csv, dataset.json)\n\
+         - Architecture & Diagrams: {vault_display}/diagrams/<diagram_name> (e.g. architecture.svg, flow.mermaid)\n\
+         - Templates & Starter Kits: {vault_display}/templates/<template_name>/\n\
+         - Chat & Knowledge Exports: {vault_display}/exports/<export_name> (e.g. chat_summary.md)\n\
+         Ensure you create and write to this vault path so the user can easily find, preview, and use their deliverables. Never store user project outputs inside internal configuration ~/.openz/ (which is reserved exclusively for system configs, sessions, and SQLite databases)."
+    );
     let system_guidelines = format!(
         "\n\nYou are OpenZ, a high-performance personal AI agent framework built in Rust, vibe-coded by Aswin. Your official GitHub repository and source code resides at https://github.com/aswin402/openz-rs. You are inspired by Zeroclaw, Nanobot, hermes-agent, loops!, and DOX. Your architecture is structured as follows:\n\
          * Creator & Inspiration: Vibe-coded by Aswin. Inspired by Zeroclaw, Nanobot, hermes-agent, loops!, and DOX. Official Repository: https://github.com/aswin402/openz-rs\n\
@@ -85,6 +102,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
           * Local Tools & MCP: {}\n\
           * Runtime Tool Discipline:\n\
     {}\n\
+          * OpenZ Vault (User Deliverables & Projects Workspace): {}\n\
           * Context Scoping & Compression: You have native tools for context management:\n\
             - 'scope_context' (with target_path): Walks up the tree and compiles relevant AGENTS.md instructions. Use this BEFORE editing files to retrieve rules.\n\
             - 'web_fetch' cache discipline: for direct URL checks or when the user asks to verify/check again/refresh/browse, pass cache_mode=\"revalidate\"; use cache_mode=\"bypass\" only when the user explicitly requests a fresh uncached fetch.\n\
@@ -103,6 +121,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         get_version_history(),
         get_dynamic_tools_guideline(&loop_ref.tools),
         runtime_tool_discipline_rules(),
+        vault_guideline,
         subagents_list
     );
 
@@ -337,7 +356,8 @@ fn runtime_tool_discipline_rules() -> &'static str {
             - Task lifecycle discipline: OpenZ tracks OpenZ-owned browsers, servers, agents, subagents, MCP bridges, watchers, and background jobs automatically. Use 'manage_tasks' internally to clean/list/stop OpenZ-owned resources when their purpose ends, when the user says done/stop/cleanup, or before finalizing verification-only resources. Never ask the user to run manual task-management slash commands. Never stop external/user-owned resources unless the user explicitly asks and approval flow allows it. When 'exec_command' launches a dev server/background server and returns server_registered=true, treat the launch as complete. Do not retry with pkill/ps guesses. If the user is actively previewing a server, report the server id and leave it running until no longer needed.\n\
             - When creating large websites, generated source files, or video timelines, avoid one huge 'write_file' payload. Prefer chunked file creation/append steps or smaller artifacts, then verify file exists. For 20s+ HTML videos, render in shorter segments and concatenate. After a repeated successful workaround, save it with 'workflow_memory' or 'curate_skill'.\n\
             - When answering from recent memory or saved research, do not scold the user for repeating a question. Answer normally and mention the saved context only if useful.\n\
-            - Credential & Configuration Management: When the user provides an API key, personal access token (e.g. GitHub/GitLab token), or asks to store credentials, invoke 'manage_config' (with action 'set_credential' or target/token fields) to persist it. OpenZ will automatically prompt the user for confirmation via SecurityGuard with secret redaction before writing to ~/.openz/config.json. Never claim that OpenZ cannot store credentials, never claim that config only stores LLM providers, and never tell the user to manually export env vars when 'manage_config' is available."
+            - Credential & Configuration Management: When the user provides an API key, personal access token (e.g. GitHub/GitLab token), or asks to store credentials, invoke 'manage_config' (with action 'set_credential' or target/token fields) to persist it. OpenZ will automatically prompt the user for confirmation via SecurityGuard with secret redaction before writing to ~/.openz/config.json. Never claim that OpenZ cannot store credentials, never claim that config only stores LLM providers, and never tell the user to manually export env vars when 'manage_config' is available.\n\
+            - Deliverables & Artifact Storage (OpenZ Vault): When the user requests the creation of a website, web application, script, document, image, video, presentation, or dataset, write the generated files into the OpenZ Vault under the appropriate category folder (websites, scripts, images, videos, documents, presentations, data, diagrams, templates, exports). If the user asks where their creations are or how to customize the vault, explain that the vault is located at the configured path, customizable in config.json under 'vault.path' or via the OPENZ_VAULT_DIR environment variable."
 }
 
 fn model_name_suggests_strong(model: &str) -> bool {

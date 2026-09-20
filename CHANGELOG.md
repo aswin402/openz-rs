@@ -1,4 +1,51 @@
-### v0.0.211 (Latest Release)
+### v0.0.212 (Latest Release)
+- **Ideas**:
+  - Implemented the **OpenZ Vault (`openz_vault`)** — a dedicated personal workspace for user-facing deliverables, creative projects, generated websites, scripts, media, and exports.
+  - Resolved architectural clutter by establishing a strict separation of concerns:
+    1. **Internal System State (`~/.openz/`)**: Settings, API keys, credentials, SQLite vector/graph databases (`memory.db`, `graph_memory.db`, `thoughts.db`, `ccr_cache.db`), session logs, and cron jobs remain strictly inside `~/.openz/` and are never exposed or polluted with user deliverables.
+    2. **User Deliverables Workspace (`~/openz_vault/`)**: Automatically initialized on startup at the user's home directory (or custom path). Pre-structured into 10 canonical deliverable categories:
+       - `websites/`: Complete standalone websites, landing pages, and interactive web applications.
+       - `scripts/`: Python, Bash, Node.js scripts, scrapers, and data pipelines.
+       - `images/`: High-fidelity renders, UI mockups, logos, and visual assets.
+       - `videos/`: Programmatic MP4 animations, timeline videos, and explainer media.
+       - `documents/`: Research reports, whitepapers, PDF and DOCX specifications.
+       - `presentations/`: Slide decks, pitch decks, and PowerPoint presentations.
+       - `data/`: Scraped datasets, CSV tables, JSON files, and web crawl dumps.
+       - `diagrams/`: Architecture charts, Mermaid sequence diagrams, and SVG maps.
+       - `templates/`: Reusable prompt templates, SOP workflows, and project starter kits.
+       - `exports/`: Session markdown summaries, knowledge graph exports, and skill backups.
+    3. **First-Class Agent Awareness**: Injected vault routing and category guidelines into the system prompt and runtime tool discipline. Agents automatically identify the active vault root and place user creations into the appropriate category folder rather than dumping them into the current working directory.
+    4. **Full Customizability**: Users can customize the vault location and folder name via `vault.path` and `vault.name` in `config.json`, the `OPENZ_VAULT_DIR` environment variable, or through the native `manage_config` tool.
+    5. **System Diagnostics & Health Check**: Added Step 7 to `openz doctor`, validating vault directory existence, read/write permissions, category health, and reporting deliverable item counts per category.
+    6. **Runtime Inventory Integration**: Extended `RuntimeInventory` and `openz_inventory` with `vault` summary metrics (`active`, `path`, `category_count`, `total_items`), `vault_dir` path, and `vault_items` count.
+- **Inspirations**:
+  - Obsidian/Notion personal vaults, Unix clean workspace hierarchy, principle of least privilege, and local-first creative deliverables management.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/config/schema.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/schema.rs): Added `VaultConfig` with defaults, camelCase serialization, and `Config.vault`.
+    - [`src/core/vault.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/vault.rs): Core module implementing 10 categories, path expansion, auto-initialization, README generator, and deliverable scanning.
+    - [`src/core/inventory.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/inventory.rs): Added `VaultSummary` to `RuntimeInventory`, `vault_dir` to `RuntimePaths`, and `vault_items` to `RuntimeCounts`.
+    - [`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs): Injected vault guidelines, path mapping, and category discipline into system prompt.
+    - [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs): Ensured vault auto-initialization during agent loop construction.
+    - [`src/cli/doctor.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/doctor.rs): Added Step 7 OpenZ Vault inspection and deliverable counting.
+    - [`src/tools/self_management/config.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/config.rs): Enabled vault setting updates (`vault_path`, `vault_name`, `vault_enabled`, `vault_auto_create`) via `ManageConfigTool`.
+  - Test Modules:
+    - [`src/core/vault.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/vault.rs): Added unit tests for path expansion, initialization, and vault scanning.
+    - [`src/core/inventory_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/inventory_tests.rs): Verified runtime inventory paths and vault summary integration.
+    - [`src/tools/self_management/config_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/config_tests.rs): Added `test_manage_config_vault_settings`.
+- **Details & Metrics**:
+  - 1 new source file (`src/core/vault.rs`) and 9 modified core source/test files.
+  - 10 canonical deliverable categories introduced with auto-generated root `README.md`.
+  - Live headless verification turn executed with `exit_code: 0` (OpenZ inspected inventory, explained vault, and generated a complete dark-themed portfolio in `openz_vault/websites/portfolio/index.html`).
+- **Verification**:
+  - Exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`).
+  - 0 compiler and clippy warnings (`cargo clippy -p openz -j 1`).
+  - All vault unit tests passed (`cargo test -p openz --lib core::vault -j 1`).
+  - All inventory unit tests passed (`cargo test -p openz --lib core::inventory::tests -j 1`).
+  - All config unit tests passed (`cargo test -p openz --lib tools::self_management::config::tests -j 1`).
+  - `openz doctor` verified vault permissions and category structure.
+
+### v0.0.211
 - **Ideas**:
   - Addressed real-world friction and tripping points in OpenZ's scheduled task and cron job tooling uncovered during autonomous agent live testing:
     1. **Auto-Generated Job IDs**: When scheduling automated tasks, agents frequently omit the explicit `id` argument (focusing on `command` and `schedule`). `schedule_job` now automatically generates a clean, readable slug and unique identifier (e.g. `echo_cron_test_412b98db`) if omitted, preventing execution rejection.

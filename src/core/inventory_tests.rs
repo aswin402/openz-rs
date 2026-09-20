@@ -9,6 +9,9 @@ fn runtime_inventory_contains_core_paths_and_counts() {
     assert!(inventory.paths.memory_db.ends_with("memory.db"));
     assert!(inventory.paths.graph_db.ends_with("graph_memory.db"));
     assert!(inventory.paths.sessions_dir.ends_with("sessions"));
+    assert!(inventory.paths.vault_dir.contains("openz_vault"));
+    assert!(inventory.vault.is_some());
+    assert_eq!(inventory.vault.as_ref().unwrap().categories.len(), 10);
     assert!(inventory.counts.channels >= 4);
     assert!(
         inventory

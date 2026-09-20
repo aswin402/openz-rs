@@ -405,3 +405,61 @@ fn test_manage_config_credentials_flattened_and_inferred() {
     }
     let _ = std::fs::remove_dir_all(&openz_dir);
 }
+
+#[test]
+fn test_manage_config_vault_settings() {
+    let _lock = TestEnvLock::acquire();
+    let previous_config_dir = std::env::var("OPENZ_CONFIG_DIR").ok();
+
+    let openz_dir =
+        std::env::temp_dir().join(format!("openz_config_vault_test_{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::remove_dir_all(&openz_dir);
+    std::fs::create_dir_all(&openz_dir).unwrap();
+    std::env::set_var("OPENZ_CONFIG_DIR", &openz_dir);
+
+    let default_config = crate::config::schema::Config::default();
+    crate::config::loader::save_config(&default_config).unwrap();
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let tool = ManageConfigTool;
+
+    let vault_target_dir =
+        std::env::temp_dir().join(format!("openz_custom_vault_{}", uuid::Uuid::new_v4()));
+
+    let update_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "update",
+            "updates": {
+                "vault_path": vault_target_dir.display().to_string(),
+                "vault_name": "my_super_vault"
+            }
+        })))
+        .unwrap();
+    assert!(update_res["success"].as_bool().unwrap());
+
+    let reloaded = crate::config::loader::load_config().unwrap();
+    assert_eq!(reloaded.vault.path, vault_target_dir.display().to_string());
+    assert_eq!(reloaded.vault.name, "my_super_vault");
+
+    let view_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "view"
+        })))
+        .unwrap();
+    assert_eq!(
+        view_res["config"]["vault"]["name"],
+        "my_super_vault"
+    );
+
+    if let Some(prev) = previous_config_dir {
+        std::env::set_var("OPENZ_CONFIG_DIR", prev);
+    } else {
+        std::env::remove_var("OPENZ_CONFIG_DIR");
+    }
+    let _ = std::fs::remove_dir_all(&openz_dir);
+    let _ = std::fs::remove_dir_all(&vault_target_dir);
+}
+

@@ -18,6 +18,7 @@ fn blank_config() -> Config {
         research: ResearchConfig::default(),
         integrations: IntegrationsConfig::default(),
         browser: BrowserConfig::default(),
+        vault: VaultConfig::default(),
     }
 }
 
